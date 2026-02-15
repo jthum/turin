@@ -72,18 +72,37 @@ pub(crate) fn validate_workspace_path(
     path: &std::path::Path,
     workspace_root: &std::path::Path,
 ) -> Result<(), ToolError> {
-    // Canonicalize both paths for comparison
-    // If workspace_root doesn't exist yet, just allow it (dev convenience)
-    let canonical_root = workspace_root.canonicalize().unwrap_or_else(|_| workspace_root.to_path_buf());
+    // Canonicalize the workspace root once
+    let canonical_root = workspace_root.canonicalize().map_err(|e| {
+        ToolError::ExecutionError(format!(
+            "Failed to canonicalize workspace root '{}': {}",
+            workspace_root.display(),
+            e
+        ))
+    })?;
 
-    // For the target path, check the parent exists
+    // Resolving the path to check.
+    // If the path exists, canonicalize it.
+    // If it doesn't exist, we need to check its parent.
     let canonical_path = if path.exists() {
-        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-    } else if let Some(parent) = path.parent() {
-        let canonical_parent = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
-        canonical_parent.join(path.file_name().unwrap_or_default())
+        path.canonicalize().map_err(|e| {
+            ToolError::ExecutionError(format!("Failed to canonicalize path '{}': {}", path.display(), e))
+        })?
     } else {
-        path.to_path_buf()
+        // For non-existent files (e.g. write_file to new file), check the parent dir
+        let parent = path.parent().ok_or_else(|| {
+            ToolError::PermissionDenied(format!(
+                "Cannot write to root path '{}'",
+                path.display()
+            ))
+        })?;
+
+        let canonical_parent = parent.canonicalize().map_err(|e| {
+            ToolError::ExecutionError(format!("Failed to canonicalize parent directory '{}': {}", parent.display(), e))
+        })?;
+
+        // Construct the theoretical canonical path
+        canonical_parent.join(path.file_name().unwrap_or_default())
     };
 
     if !canonical_path.starts_with(&canonical_root) {

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use super::{Tool, ToolContext};
 
@@ -9,23 +9,24 @@ use super::{Tool, ToolContext};
 /// - JSON schema generation for LLM tool definitions
 /// - Tool execution dispatch
 pub struct ToolRegistry {
-    tools: HashMap<String, Box<dyn Tool>>,
+    tools: BTreeMap<String, Box<dyn Tool>>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
-            tools: HashMap::new(),
+            tools: BTreeMap::new(),
         }
     }
 
-    /// Register a tool. Panics if a tool with the same name is already registered.
-    pub fn register(&mut self, tool: Box<dyn Tool>) {
+    /// Register a tool. Returns error if a tool with the same name is already registered.
+    pub fn register(&mut self, tool: Box<dyn Tool>) -> anyhow::Result<()> {
         let name = tool.name().to_string();
         if self.tools.contains_key(&name) {
-            panic!("Tool '{}' already registered", name);
+            anyhow::bail!("Tool '{}' already registered", name);
         }
         self.tools.insert(name, tool);
+        Ok(())
     }
 
     /// Get a tool by name.

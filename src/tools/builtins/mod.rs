@@ -24,11 +24,11 @@ use super::registry::ToolRegistry;
 /// Create a ToolRegistry with all built-in tools registered.
 pub fn create_default_registry() -> ToolRegistry {
     let mut registry = ToolRegistry::new();
-    registry.register(Box::new(ReadFileTool));
-    registry.register(Box::new(WriteFileTool));
-    registry.register(Box::new(EditFileTool));
-    registry.register(Box::new(ShellExecTool));
-    registry.register(Box::new(SubmitTaskTool));
-    registry.register(Box::new(BridgeMcp));
+    registry.register(Box::new(ReadFileTool)).expect("Failed to register ReadFileTool");
+    registry.register(Box::new(WriteFileTool)).expect("Failed to register WriteFileTool");
+    registry.register(Box::new(EditFileTool)).expect("Failed to register EditFileTool");
+    registry.register(Box::new(ShellExecTool)).expect("Failed to register ShellExecTool");
+    registry.register(Box::new(SubmitTaskTool)).expect("Failed to register SubmitTaskTool");
+    registry.register(Box::new(BridgeMcp)).expect("Failed to register BridgeMcp");
     registry
 }

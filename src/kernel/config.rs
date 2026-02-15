@@ -172,16 +172,10 @@ impl BedrockConfig {
             "agent.model must not be empty"
         );
         if !self.providers.contains_key(&self.agent.provider) {
-             // It might be lazily initialized if it's a known type, but now strictly strictly check config?
-             // Actually, the user might want to use a provider that IS configured.
-             // We should check if `self.agent.provider` exists in `self.providers`.
-             // But wait, `ProviderKind` enum is gone? No, `ProviderKind` is still used in `ProviderClient`?
-             // We are refactoring away from `ProviderKind` for lookup, but maybe keeping it for internal typing?
-             // Let's ensure the default provider is in the map.
-             if ! self.providers.contains_key(&self.agent.provider) {
-                 // For backward compatibility or ease of use, we might NOT allow implicit defaults anymore.
-                 // The user MUST define [providers.current_provider_name]
-             }
+            anyhow::bail!(
+                "Provider '{}' configured in [agent] but not found in [providers]",
+                self.agent.provider
+            );
         }
         anyhow::ensure!(
             self.kernel.max_turns > 0,

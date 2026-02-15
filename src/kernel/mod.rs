@@ -50,9 +50,8 @@ pub struct Kernel {
     pub queue: Arc<Mutex<VecDeque<String>>>,
     pub session_id: String,
     pub history: Vec<InferenceMessage>,
-    pub turn_index: u32,
-    pub total_input_tokens: u32,
-    pub total_output_tokens: u32,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
     /// Active MCP clients (kept alive for tool execution). 
     /// TODO: Implement a way to cleanup or limit these for long-running sessions.
     pub mcp_clients: Vec<Arc<McpClient<StdioTransport>>>,
@@ -122,7 +121,7 @@ impl Kernel {
                         .with_context(|| "OpenAI embeddings selected but no OpenAI provider configured")?;
                         
                      crate::inference::embeddings::create_embedding_provider(&crate::inference::embeddings::EmbeddingConfig::OpenAI {
-                        api_key: openai_config.api_key_env.as_ref().map(|k| std::env::var(k).unwrap_or_default()).unwrap_or_default(),
+                        api_key: openai_config.api_key_env.as_ref().map(|k| std::env::var(k).context(format!("Environment variable '{}' not set", k)).unwrap()).unwrap(),
                         model: "text-embedding-3-small".to_string(),
                     })
                 },
@@ -463,12 +462,16 @@ impl Kernel {
              }
          }
          
+         Ok(())
+    }
+
+    /// End the session and emit AgentEnd event.
+    pub async fn end_session(&mut self) -> Result<()> {
          self.persist_event(&self.session_id.clone(), &KernelEvent::AgentEnd {
             message_count: self.turn_index,
             total_input_tokens: self.total_input_tokens,
             total_output_tokens: self.total_output_tokens,
          }).await;
-
          Ok(())
     }
 
@@ -634,8 +637,8 @@ impl Kernel {
                         self.persist_event(&session_id, &event).await;
                     }
                     KernelEvent::MessageEnd { input_tokens, output_tokens, .. } => {
-                        self.total_input_tokens += input_tokens;
-                        self.total_output_tokens += output_tokens;
+                        self.total_input_tokens += input_tokens as u64;
+                        self.total_output_tokens += output_tokens as u64;
                         self.persist_event(&session_id, &event).await;
                     }
                     KernelEvent::ToolCall { id, name, args } => {

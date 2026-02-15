@@ -126,6 +126,7 @@ async fn main() -> Result<()> {
             kernel.init_harness().await?;
             kernel.start_watcher()?;
             kernel.run(Some(prompt)).await?;
+            kernel.end_session().await?;
 
             Ok(())
         }
@@ -167,7 +168,7 @@ async fn main() -> Result<()> {
             if verbose {
                 eprintln!("[bedrock] REPL started. Type 'exit' or Ctrl+D to quit.");
             } else {
-                 println!("Bedrock REPL v0.6.0");
+                 println!("Bedrock REPL v{}", env!("CARGO_PKG_VERSION"));
                  println!("Type 'exit' or Ctrl+D to quit. Type '/reload' to reload harness.");
             }
 
@@ -208,7 +209,9 @@ async fn main() -> Result<()> {
                         break;
                     }
                 }
+                }
             }
+            kernel.end_session().await?;
             Ok(())
         }
         Commands::Script { path, config, model, provider } => {
