@@ -85,7 +85,7 @@ mod tests {
     #[test]
     fn test_registry_register_and_get() {
         let mut registry = ToolRegistry::new();
-        registry.register(Box::new(builtins::ReadFileTool));
+        registry.register(Box::new(builtins::ReadFileTool)).unwrap();
         assert!(registry.get("read_file").is_some());
         assert!(registry.get("nonexistent").is_none());
         assert_eq!(registry.len(), 1);
@@ -94,8 +94,8 @@ mod tests {
     #[test]
     fn test_tool_definitions() {
         let mut registry = ToolRegistry::new();
-        registry.register(Box::new(builtins::ReadFileTool));
-        registry.register(Box::new(builtins::WriteFileTool));
+        registry.register(Box::new(builtins::ReadFileTool)).unwrap();
+        registry.register(Box::new(builtins::WriteFileTool)).unwrap();
 
         let defs = registry.tool_definitions();
         assert_eq!(defs.len(), 2);
@@ -112,7 +112,7 @@ mod tests {
     #[should_panic(expected = "already registered")]
     fn test_duplicate_registration_panics() {
         let mut registry = ToolRegistry::new();
-        registry.register(Box::new(builtins::ReadFileTool));
+        registry.register(Box::new(builtins::ReadFileTool)).unwrap();
         registry.register(Box::new(builtins::ReadFileTool)); // should panic
     }
 }

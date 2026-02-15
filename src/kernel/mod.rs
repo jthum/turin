@@ -50,6 +50,7 @@ pub struct Kernel {
     pub queue: Arc<Mutex<VecDeque<String>>>,
     pub session_id: String,
     pub history: Vec<InferenceMessage>,
+    pub turn_index: u32,
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
     /// Active MCP clients (kept alive for tool execution). 
@@ -637,8 +638,8 @@ impl Kernel {
                         self.persist_event(&session_id, &event).await;
                     }
                     KernelEvent::MessageEnd { input_tokens, output_tokens, .. } => {
-                        self.total_input_tokens += input_tokens as u64;
-                        self.total_output_tokens += output_tokens as u64;
+                        self.total_input_tokens += *input_tokens as u64;
+                        self.total_output_tokens += *output_tokens as u64;
                         self.persist_event(&session_id, &event).await;
                     }
                     KernelEvent::ToolCall { id, name, args } => {
@@ -963,7 +964,7 @@ impl Kernel {
     /// logs but doesn't halt the loop (the harness can use `db.kv_set` to track state
     /// and reject tool calls instead).
 
-    async fn evaluate_token_usage(&self, input_tokens: u32, output_tokens: u32) {
+    async fn evaluate_token_usage(&self, input_tokens: u64, output_tokens: u64) {
         let harness = self.harness.lock().await;
         if let Some(ref engine) = *harness {
             let payload = serde_json::json!({
@@ -1038,7 +1039,8 @@ impl Kernel {
 
         for tool_def in list_result.tools {
             let proxy = McpToolProxy::new(client_arc.clone(), tool_def);
-            self.tool_registry.register(Box::new(proxy));
+            self.tool_registry.register(Box::new(proxy))
+                .with_context(|| "Failed to register MCP tool")?;
         }
 
         if self.verbose {

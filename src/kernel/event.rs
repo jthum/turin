@@ -17,8 +17,8 @@ pub enum KernelEvent {
     /// Agent session completes
     AgentEnd {
         message_count: u32,
-        total_input_tokens: u32,
-        total_output_tokens: u32,
+        total_input_tokens: u64,
+        total_output_tokens: u64,
     },
 
     /// New LLM call begins
@@ -51,8 +51,8 @@ pub enum KernelEvent {
     /// Complete message assembled
     MessageEnd {
         role: String,
-        input_tokens: u32,
-        output_tokens: u32,
+        input_tokens: u64,
+        output_tokens: u64,
     },
 
     /// LLM requests a tool execution
@@ -83,8 +83,8 @@ pub enum KernelEvent {
 
     /// Token/cost accounting update
     TokenUsage {
-        input_tokens: u32,
-        output_tokens: u32,
+        input_tokens: u64,
+        output_tokens: u64,
         cost_usd: f64,
     },
 

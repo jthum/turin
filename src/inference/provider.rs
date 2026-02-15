@@ -133,7 +133,7 @@ fn map_sdk_event(event: InferenceEvent) -> Result<KernelEvent> {
         InferenceEvent::MessageDelta { content } => Ok(KernelEvent::MessageDelta { content_delta: content }),
         InferenceEvent::ThinkingDelta { content } => Ok(KernelEvent::ThinkingDelta { thinking: content }),
         InferenceEvent::ToolCall { id, name, args } => Ok(KernelEvent::ToolCall { id, name, args }),
-        InferenceEvent::MessageEnd { input_tokens, output_tokens, .. } => Ok(KernelEvent::MessageEnd { role: "assistant".to_string(), input_tokens, output_tokens }),
+        InferenceEvent::MessageEnd { input_tokens, output_tokens, .. } => Ok(KernelEvent::MessageEnd { role: "assistant".to_string(), input_tokens: input_tokens as u64, output_tokens: output_tokens as u64 }),
         InferenceEvent::Error { message } => Err(anyhow::anyhow!("Provider stream error: {}", message)),
         _ => Err(anyhow::anyhow!("Unknown inference event type")),
     }

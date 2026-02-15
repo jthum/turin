@@ -285,7 +285,7 @@ impl StateStore {
         turn_index: u32,
         role: &str,
         content: &serde_json::Value,
-        token_count: Option<u32>,
+        token_count: Option<u64>,
     ) -> Result<()> {
         let content_str = serde_json::to_string(content)?;
         self.conn
@@ -322,7 +322,7 @@ impl StateStore {
                 turn_index: row.get::<i64>(2)? as u32,
                 role: row.get::<String>(3)?,
                 content: row.get::<String>(4)?,
-                token_count: row.get::<Option<i64>>(5)?.map(|t| t as u32),
+                token_count: row.get::<Option<i64>>(5)?.map(|t| t as u64),
                 created_at: row.get::<String>(6)?,
             });
         }
@@ -691,7 +691,7 @@ pub struct MessageRow {
     pub turn_index: u32,
     pub role: String,
     pub content: String,
-    pub token_count: Option<u32>,
+    pub token_count: Option<u64>,
     pub created_at: String,
 }
 
