@@ -643,7 +643,7 @@ fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
             let result = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
                     // Create sub-kernel
-                    let mut kernel = crate::kernel::Kernel::new(config, false, false); // Not verbose/json for subtask
+                    let mut kernel = crate::kernel::Kernel::new(config, false); // Not json mode for subtask
                     
                     // Inject shared components
                     kernel.clients = clients;

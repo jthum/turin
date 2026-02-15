@@ -152,9 +152,7 @@ impl Kernel {
         let store = StateStore::open(db_path).await.with_context(|| {
             format!("Failed to initialize state store at '{}'", db_path)
         })?;
-        if self.verbose {
-            info!(db_path = %db_path, "State store initialized");
-        }
+        info!(db_path = %db_path, "State store initialized");
         self.state = Some(store);
         Ok(())
     }
@@ -259,7 +257,7 @@ impl Kernel {
 
     /// Start watching the harness directory for changes (background thread).
     #[instrument(skip(self))]
-    pub fn start_watcher(&self) -> Result<()> {
+    pub fn start_watcher(&mut self) -> Result<()> {
         use notify::{RecursiveMode, Watcher};
         use std::time::Duration;
 
@@ -371,7 +369,7 @@ impl Kernel {
          
         loop {
             // Pop next task
-            let task = {
+            {
                 let mut q = self.queue.lock().await;
                 if q.is_empty() {
                     debug!("Queue empty, ending run");
@@ -382,7 +380,7 @@ impl Kernel {
                 
                 info!(task = %task, "Running task");
                 self.run_task(&task).await?;
-            };
+            }
             
             // ─── Harness Hook: on_task_complete ─────────────────────
             // Triggered when the queue is explicitly empty.
@@ -435,9 +433,6 @@ impl Kernel {
         }
         
         Ok(())
-    }
-         
-         Ok(())
     }
 
     /// End the session and emit AgentEnd event.
@@ -604,10 +599,7 @@ impl Kernel {
                         response_text.push_str(content_delta);
                     }
                     KernelEvent::ThinkingDelta { thinking } => {
-                        if self.verbose {
-                             eprint!("{}", thinking); // Print thinking to stderr in verbose mode
-                             io::stderr().flush().ok();
-                        }
+                        debug!(thinking = %thinking, "Thinking delta received");
                         // We don't append thinking to response_text (it's separate)
                         self.persist_event(&session_id, &event).await;
                     }
@@ -772,7 +764,7 @@ impl Kernel {
                                                       q.push_back(t.to_string());
                                                   }
                                               }
-                                               if self.verbose { debug!("tasks queued (MODIFIED by harness)"); }
+                                               debug!("tasks queued (MODIFIED by harness)");
                                           } else {
                                               warn!("Verdict::Modify returned non-array value, ignoring");
                                           }
@@ -913,6 +905,7 @@ impl Kernel {
                 "args": args,
             });
             match engine.evaluate("on_tool_call", payload) {
+                Ok(verdict) => {
                     if !verdict.is_allowed() {
                         info!(tool = %name, verdict = %verdict, "Harness verdict");
                     }
@@ -945,6 +938,7 @@ impl Kernel {
                 "total_tokens": input_tokens + output_tokens,
             });
             match engine.evaluate("on_token_usage", payload) {
+                Ok(verdict) => {
                     if verdict.is_rejected() {
                         warn!(reason = %verdict.reason().unwrap_or("budget exceeded"), "Token usage harness rejection");
                     }
