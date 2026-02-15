@@ -9,7 +9,7 @@ use crate::kernel::event::KernelEvent;
 // Use standardized types from SDK
 pub use inference_sdk_core::{
     InferenceEvent, InferenceProvider, InferenceRequest, InferenceMessage, 
-    InferenceRole, InferenceContent, ToolSpec, InferenceResult, Usage, SdkError, InferenceStream
+    InferenceRole, InferenceContent, Tool, InferenceResult, Usage, SdkError, InferenceStream, RequestOptions
 };
 use futures::future::BoxFuture;
 
@@ -66,8 +66,12 @@ impl ProviderClient {
         messages: &[InferenceMessage],
     ) -> Result<String> {
         let req = self.build_request(model, system_prompt, messages, &[], &InferenceOptions::default());
-        let result = self.provider.complete(req).await?;
-        Ok(result.content)
+        let result = self.provider.complete(req, None).await?;
+        Ok(result.content.iter().filter_map(|c| match c {
+            InferenceContent::Text { text } => Some(text.as_str()),
+            // We could include thinking here if desired, but typically completion() returns just the answer.
+            _ => None,
+        }).collect::<Vec<_>>().join(""))
     }
 
     /// Run a streaming completion.
@@ -80,7 +84,7 @@ impl ProviderClient {
         options: &InferenceOptions,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<KernelEvent>> + Send>>> {
         let req = self.build_request(model, system_prompt, messages, tools, options);
-        let sdk_stream = self.provider.stream(req).await?;
+        let sdk_stream = self.provider.stream(req, None).await?;
 
         // Map SDK InferenceEvents to Bedrock KernelEvents
         let kernel_stream = sdk_stream.map(|res| {
@@ -101,10 +105,10 @@ impl ProviderClient {
         tools: &[serde_json::Value],
         options: &InferenceOptions,
     ) -> InferenceRequest {
-        let sdk_tools: Vec<ToolSpec> = tools.iter().filter_map(|t| {
-             Some(ToolSpec {
+        let sdk_tools: Vec<Tool> = tools.iter().filter_map(|t| {
+             Some(Tool {
                 name: t.get("name")?.as_str()?.to_string(),
-                description: t.get("description").and_then(|d| d.as_str()).map(String::from),
+                description: t.get("description").and_then(|d| d.as_str()).unwrap_or_default().to_string(), // Tool defaults description to empty string if missing? Core Tool has String, not Option<String>?
                 input_schema: t.get("input_schema").cloned().unwrap_or(serde_json::json!({"type": "object"})),
              })
         }).collect();
@@ -129,8 +133,9 @@ fn map_sdk_event(event: InferenceEvent) -> Result<KernelEvent> {
         InferenceEvent::MessageDelta { content } => Ok(KernelEvent::MessageDelta { content_delta: content }),
         InferenceEvent::ThinkingDelta { content } => Ok(KernelEvent::ThinkingDelta { thinking: content }),
         InferenceEvent::ToolCall { id, name, args } => Ok(KernelEvent::ToolCall { id, name, args }),
-        InferenceEvent::MessageEnd { input_tokens, output_tokens } => Ok(KernelEvent::MessageEnd { role: "assistant".to_string(), input_tokens, output_tokens }),
+        InferenceEvent::MessageEnd { input_tokens, output_tokens, .. } => Ok(KernelEvent::MessageEnd { role: "assistant".to_string(), input_tokens, output_tokens }),
         InferenceEvent::Error { message } => Err(anyhow::anyhow!("Provider stream error: {}", message)),
+        _ => Err(anyhow::anyhow!("Unknown inference event type")),
     }
 }
 
@@ -167,17 +172,9 @@ pub struct MockProvider {
 }
 
 impl InferenceProvider for MockProvider {
-    fn complete<'a>(&'a self, _request: InferenceRequest) -> BoxFuture<'a, Result<InferenceResult, SdkError>> {
-        let content = self.response.clone();
-        Box::pin(async move {
-            Ok(InferenceResult {
-                content,
-                usage: Usage { input_tokens: 0, output_tokens: 0 },
-            })
-        })
-    }
+    // Use default complete() implementation
 
-    fn stream<'a>(&'a self, _request: InferenceRequest) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+    fn stream<'a>(&'a self, _request: InferenceRequest, _options: Option<RequestOptions>) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
         let content = self.response.clone();
         Box::pin(async move {
             let events = vec![
@@ -187,7 +184,7 @@ impl InferenceProvider for MockProvider {
                     provider_id: "mock".to_string(),
                 }),
                 Ok(InferenceEvent::MessageDelta { content }),
-                Ok(InferenceEvent::MessageEnd { input_tokens: 10, output_tokens: 5 }),
+                Ok(InferenceEvent::MessageEnd { input_tokens: 10, output_tokens: 5, stop_reason: None }),
             ];
             Ok(Box::pin(futures::stream::iter(events)) as InferenceStream)
         })

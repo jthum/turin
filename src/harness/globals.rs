@@ -474,6 +474,7 @@ fn register_bedrock_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()
                         crate::inference::provider::InferenceMessage {
                             role: crate::inference::provider::InferenceRole::User,
                             content: vec![crate::inference::provider::InferenceContent::Text { text: prompt }],
+                            tool_call_id: None,
                         }
                     ]).await
                 })

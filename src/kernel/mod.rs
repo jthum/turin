@@ -489,6 +489,7 @@ impl Kernel {
         self.history.push(InferenceMessage {
             role: InferenceRole::User,
             content: vec![InferenceContent::Text { text: prompt.to_string() }],
+            tool_call_id: None,
         });
 
         // Initial configuration (can be overridden by harness per turn)
@@ -686,6 +687,7 @@ impl Kernel {
             self.history.push(InferenceMessage {
                 role: InferenceRole::Assistant,
                 content: assistant_content,
+                tool_call_id: None,
             });
 
             if !has_tool_calls {
@@ -866,8 +868,9 @@ impl Kernel {
             }
 
             self.history.push(InferenceMessage {
-                role: InferenceRole::User,
+                role: InferenceRole::User, // Tool results are User role in Bedrock logic (OpenAI style)
                 content: tool_results.clone(),
+                tool_call_id: None,
             });
 
              if let Some(ref store) = self.state {
