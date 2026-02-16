@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
-use std::path::PathBuf;
 
 use crate::tools::{parse_args, Tool, ToolContext, ToolError, ToolOutput};
 
@@ -40,10 +39,9 @@ impl Tool for ReadFileTool {
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let args: ReadFileArgs = parse_args(params)?;
         tracing::info!(path = %args.path, "Reading file");
-        let path = resolve_path(&args.path, &ctx.workspace_root);
-
-        // Security: validate path is within workspace
-        validate_workspace_path(&path, &ctx.workspace_root)?;
+        
+        // Security: validate path is within workspace using centralized logic
+        let path = crate::tools::is_safe_path(&ctx.workspace_root, std::path::Path::new(&args.path))?;
 
         let content = tokio::fs::read_to_string(&path)
             .await
@@ -53,79 +51,16 @@ impl Tool for ReadFileTool {
             content,
             metadata: serde_json::json!({
                 "path": path.display().to_string(),
-                "bytes": path.metadata().map(|m| m.len()).unwrap_or(0),
+                "bytes": tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0),
             }),
         })
     }
 }
 
-/// Resolve a path relative to the workspace root.
-pub(crate) fn resolve_path(path: &str, workspace_root: &std::path::Path) -> PathBuf {
-    let p = PathBuf::from(path);
-    if p.is_absolute() {
-        p
-    } else {
-        workspace_root.join(p)
-    }
-}
-
-/// Validate that a resolved path is within the workspace root.
-pub(crate) fn validate_workspace_path(
-    path: &std::path::Path,
-    workspace_root: &std::path::Path,
-) -> Result<(), ToolError> {
-    // 1. Check for '..' components to prevent traversal in non-existent paths
-    for component in path.components() {
-        if component == std::path::Component::ParentDir {
-             return Err(ToolError::PermissionDenied(format!(
-                 "Path traversal (..) not allowed in '{}'",
-                 path.display()
-             )));
-        }
-    }
-
-    // 2. Canonicalize the workspace root
-    let canonical_root = workspace_root.canonicalize().map_err(|e| {
-        ToolError::ExecutionError(format!(
-            "Failed to canonicalize workspace root '{}': {}",
-            workspace_root.display(),
-            e
-        ))
-    })?;
-
-    // 3. Find the first existing ancestor
-    let mut current = path.to_path_buf();
-    while !current.exists() {
-        if let Some(parent) = current.parent() {
-            current = parent.to_path_buf();
-        } else {
-             // Reached root and it doesn't exist?
-             // If the root of the file system doesn't exist, we have bigger problems.
-             // But logical roots might not exist in some environments?
-             // Just break and try to canonicalize what we have.
-             break;
-        }
-    }
-    
-    let canonical_current = current.canonicalize().map_err(|e| {
-        ToolError::ExecutionError(format!("Failed to canonicalize path ancestor '{}': {}", current.display(), e))
-    })?;
-
-    if !canonical_current.starts_with(&canonical_root) {
-        return Err(ToolError::PermissionDenied(format!(
-            "Path '{}' is outside workspace root '{}'",
-            path.display(),
-            workspace_root.display()
-        )));
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -160,17 +95,5 @@ mod tests {
             .execute(serde_json::json!({ "path": "nonexistent.txt" }), &ctx)
             .await;
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_resolve_path_relative() {
-        let root = Path::new("/workspace");
-        assert_eq!(resolve_path("foo.txt", root), PathBuf::from("/workspace/foo.txt"));
-    }
-
-    #[test]
-    fn test_resolve_path_absolute() {
-        let root = Path::new("/workspace");
-        assert_eq!(resolve_path("/etc/passwd", root), PathBuf::from("/etc/passwd"));
     }
 }

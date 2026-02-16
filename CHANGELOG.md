@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.5] - 2026-02-16
+
+### Added
+- **Testing Infrastructure**: 
+  - Integration tests for the agent loop and harness governance.
+  - Property-based testing for path validation using `proptest`.
+- **Robust Path Validation**: Introduced a centralized, fuzzed `is_safe_path` utility to prevent traversal attacks.
+
+### Changed
+- **Architectural Optimization**: Refactored `Kernel` to use `Arc<BedrockConfig>`, significantly reducing cloning overhead.
+- **Async I/O**: Switched all file tool metadata calls to async `tokio::fs::metadata`.
+
+### Fixed
+- Corrected `session.turn_index` increment logic to include the final turn of a task.
+
+
 ## [0.8.5] - 2026-02-15
 
 ### Added

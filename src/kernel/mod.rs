@@ -40,7 +40,7 @@ use notify::{RecommendedWatcher, Event};
 /// transport, streaming, tool execution, persistence, and event hooks.
 /// Harness scripts define the behavior.
 pub struct Kernel {
-    pub(crate) config: BedrockConfig,
+    pub(crate) config: Arc<BedrockConfig>,
     pub(crate) json: bool,
     pub(crate) tool_registry: ToolRegistry,
     pub(crate) state: Option<StateStore>,
@@ -75,7 +75,7 @@ impl Kernel {
     #[deprecated(since = "0.9.0", note = "Use Kernel::builder() instead")]
     pub fn new(config: BedrockConfig, json: bool) -> Self {
         Self {
-            config,
+            config: Arc::new(config),
             json,
             tool_registry: crate::tools::builtins::create_default_registry(),
             state: None,
@@ -125,6 +125,11 @@ impl Kernel {
              }
         }
         session
+    }
+
+    /// Add a provider client manually (e.g. for testing).
+    pub fn add_client(&mut self, name: String, client: ProviderClient) {
+        self.clients.insert(name, client);
     }
 
     /// Initialize all configured provider clients. Call before `init_harness()` and `run()`.
@@ -224,7 +229,7 @@ impl Kernel {
             clients: self.clients.clone(),
             embedding_provider: self.embedding_provider.clone(),
             queue: self.active_queue.clone(),
-            config: Arc::new(self.config.clone()),
+            config: self.config.clone(),
         };
 
         let mut engine = HarnessEngine::new(app_data)
@@ -260,7 +265,7 @@ impl Kernel {
     #[instrument(skip_all)]
     pub async fn reload_harness_static(
         harness: Arc<Mutex<Option<HarnessEngine>>>,
-        config: BedrockConfig,
+        config: Arc<BedrockConfig>,
         clients: HashMap<String, ProviderClient>,
         state: Option<StateStore>,
         embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
@@ -280,7 +285,7 @@ impl Kernel {
             clients,
             embedding_provider,
             queue: active_queue,
-            config: Arc::new(config),
+            config: config,
         };
 
         match HarnessEngine::new(app_data) {
@@ -540,13 +545,15 @@ impl Kernel {
                 break;
             }
 
-            if !self.execute_turn(session, &tool_ctx).await? {
-                break;
-            }
+            let completed_turn = self.execute_turn(session, &tool_ctx).await?;
 
             self.evaluate_token_usage(session.total_input_tokens, session.total_output_tokens).await;
             session.turn_index += 1;
             task_turn_count += 1;
+
+            if !completed_turn {
+                break;
+            }
         }
         Ok(())
     }

@@ -3,7 +3,6 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::tools::{parse_args, Tool, ToolContext, ToolError, ToolOutput};
-use super::read_file::{resolve_path, validate_workspace_path};
 
 pub struct WriteFileTool;
 
@@ -46,10 +45,9 @@ impl Tool for WriteFileTool {
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
         let args: WriteFileArgs = parse_args(params)?;
         tracing::info!(path = %args.path, "Writing file");
-        let path = resolve_path(&args.path, &ctx.workspace_root);
-
-        // Security: validate path is within workspace
-        validate_workspace_path(&path, &ctx.workspace_root)?;
+        
+        // Security: validate path is within workspace using centralized logic
+        let path = crate::tools::is_safe_path(&ctx.workspace_root, std::path::Path::new(&args.path))?;
 
         // Create parent directories if needed
         if let Some(parent) = path.parent() {

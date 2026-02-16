@@ -3,8 +3,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::process::Stdio;
 
-use crate::tools::{parse_args, Tool, ToolContext, ToolError, ToolOutput};
-use super::read_file::validate_workspace_path;
+use crate::tools::{parse_args, Tool, ToolContext, ToolError, ToolOutput, is_safe_path};
 
 pub struct ShellExecTool;
 
@@ -63,9 +62,7 @@ impl Tool for ShellExecTool {
 
         // Resolve working directory
         let cwd = if let Some(ref dir) = args.cwd {
-            let resolved = ctx.workspace_root.join(dir);
-            validate_workspace_path(&resolved, &ctx.workspace_root)?;
-            resolved
+            is_safe_path(&ctx.workspace_root, std::path::Path::new(dir))?
         } else {
             ctx.workspace_root.clone()
         };

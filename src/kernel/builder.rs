@@ -51,7 +51,7 @@ impl RuntimeBuilder {
     /// Build the Kernel.
     pub fn build(self) -> Result<Kernel> {
         Ok(Kernel {
-            config: self.config,
+            config: Arc::new(self.config),
             json: self.json,
             tool_registry: self.tool_registry,
             state: self.state,
