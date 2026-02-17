@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::kernel::{Kernel, BedrockConfig};
+use crate::kernel::{Kernel, TurinConfig};
 use crate::tools::registry::ToolRegistry;
 use crate::tools::builtins::create_default_registry;
 use crate::persistence::state::StateStore;
@@ -11,7 +11,7 @@ use crate::inference::embeddings::EmbeddingProvider;
 
 /// Builder for constructing a `Kernel` instance.
 pub struct RuntimeBuilder {
-    config: BedrockConfig,
+    config: TurinConfig,
     json: bool,
     tool_registry: ToolRegistry,
     state: Option<StateStore>,
@@ -20,7 +20,7 @@ pub struct RuntimeBuilder {
 
 impl RuntimeBuilder {
     /// Create a new builder with the given configuration.
-    pub fn new(config: BedrockConfig) -> Self {
+    pub fn new(config: TurinConfig) -> Self {
         Self {
             config,
             json: false,

@@ -7,14 +7,14 @@ local function test_memory_flow()
     -- 1. Store some facts
     log("Storing facts...")
     local facts = {
-        "The project codename is Project Bedrock.",
+        "The project codename is Project Turin.",
         "The lead developer is Jane Doe.",
         "We are using Rust for the kernel implementation.",
         "The database is powered by Turso and libSQL."
     }
 
     for _, fact in ipairs(facts) do
-        local ok, err = bedrock.memory.store(fact, { source = "test_script", timestamp = time.now_utc() })
+        local ok, err = turin.memory.store(fact, { source = "test_script", timestamp = time.now_utc() })
         if not ok then
             log("Failed to store fact: " .. fact .. " Error: " .. tostring(err))
             return false
@@ -24,7 +24,7 @@ local function test_memory_flow()
 
     -- 2. Search for related information
     log("Searching for 'who is the lead dev'...")
-    local results = bedrock.memory.search("who is the lead dev", 1)
+    local results = turin.memory.search("who is the lead dev", 1)
     
     if #results == 0 then
         log("No results found!")
@@ -43,7 +43,7 @@ local function test_memory_flow()
 
     -- 3. Search for technical details
     log("Searching for 'database technology'...")
-    local tech_results = bedrock.memory.search("database technology", 1)
+    local tech_results = turin.memory.search("database technology", 1)
     if #tech_results > 0 then
         log("Top match: " .. tech_results[1].content)
         if string.find(tech_results[1].content, "Turso") then

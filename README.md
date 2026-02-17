@@ -1,8 +1,8 @@
-# Bedrock
+# Turin
 
 **A single-binary runtime for building AI agents you can actually control.**
 
-Bedrock is not an agent. It's the substrate agents run on. It provides everything an autonomous agent needs — LLM inference, tool execution, persistence, memory — and lets you define how the agent behaves through composable Lua scripts called **harnesses**.
+Turin is not an agent. It's the substrate agents run on. It provides everything an autonomous agent needs — LLM inference, tool execution, persistence, memory — and lets you define how the agent behaves through composable Lua scripts called **harnesses**.
 
 The Kernel provides the physics. Your harness defines the universe.
 
@@ -12,11 +12,11 @@ Inference proposes. Harness decides. Kernel enforces.
 
 ---
 
-## Why Bedrock
+## Why Turin
 
 Most agent frameworks bake behavior into their core: how the agent plans, what it's allowed to do, how it manages context. If you want something different, you fork or fight the framework.
 
-Bedrock takes the opposite approach. The Kernel is deliberately unopinionated — it handles transport, streaming, tool execution, and persistence. Everything else lives in harness scripts: governance, workflows, context engineering, memory strategies, even personality. Same binary, different harness, completely different agent.
+Turin takes the opposite approach. The Kernel is deliberately unopinionated — it handles transport, streaming, tool execution, and persistence. Everything else lives in harness scripts: governance, workflows, context engineering, memory strategies, even personality. Same binary, different harness, completely different agent.
 
 This means:
 
@@ -25,7 +25,7 @@ This means:
 - A **planning-first agent** that must submit a task plan before taking any action
 - A **conversation-only coach** that has no tool access at all
 
-...are all the same Bedrock binary with different `.lua` files in the harness directory.
+...are all the same Turin binary with different `.lua` files in the harness directory.
 
 ---
 
@@ -56,7 +56,7 @@ cargo build --release
 
 ### Configure
 
-Create a `bedrock.toml`:
+Create a `turin.toml`:
 
 ```toml
 [agent]
@@ -69,10 +69,10 @@ workspace_root = "."
 max_turns = 50
 
 [persistence]
-database_path = ".bedrock/state.db"
+database_path = ".turin/state.db"
 
 [harness]
-directory = ".bedrock/harnesses"
+directory = ".turin/harnesses"
 
 [providers.anthropic]
 api_key_env = "ANTHROPIC_API_KEY"
@@ -91,16 +91,16 @@ export ANTHROPIC_API_KEY="sk-..."
 
 ```bash
 # One-shot execution
-bedrock run --prompt "Read main.rs and explain what it does"
+turin run --prompt "Read main.rs and explain what it does"
 
 # Interactive REPL
-bedrock repl
+turin repl
 
 # With verbose event output
-bedrock run --verbose --prompt "Fix the bug in utils.rs"
+turin run --verbose --prompt "Fix the bug in utils.rs"
 
 # Override provider from CLI
-bedrock run --provider openai --model gpt-4o --prompt "Explain this codebase"
+turin run --provider openai --model gpt-4o --prompt "Explain this codebase"
 ```
 
 ---
@@ -112,7 +112,7 @@ Harness scripts are `.lua` files in your harness directory. They hook into the k
 ### Governance: Block Dangerous Commands
 
 ```lua
--- .bedrock/harnesses/safety.lua
+-- .turin/harnesses/safety.lua
 
 function on_tool_call(call)
     if call.name == "shell_exec" then
@@ -128,7 +128,7 @@ end
 ### Workflow: Budget Enforcement
 
 ```lua
--- .bedrock/harnesses/budget.lua
+-- .turin/harnesses/budget.lua
 
 local BUDGET_LIMIT = 50000
 
@@ -153,22 +153,22 @@ end
 ### Context Engineering: Project Instructions + Memory
 
 ```lua
--- .bedrock/harnesses/coding_agent.lua
+-- .turin/harnesses/coding_agent.lua
 
 function on_before_inference(ctx)
     -- Inject project instructions
-    if fs.exists("BEDROCK.md") then
-        local instructions = fs.read("BEDROCK.md")
+    if fs.exists("TURIN.md") then
+        local instructions = fs.read("TURIN.md")
         ctx.system_prompt = ctx.system_prompt .. "\n\n=== Project Instructions ===\n" .. instructions
     end
 
     -- Recall relevant memories
-    if bedrock.memory and bedrock.memory.search then
+    if turin.memory and turin.memory.search then
         local messages = ctx.messages
         if messages and #messages > 0 then
             for i = #messages, 1, -1 do
                 if messages[i].role == "user" then
-                    local results = bedrock.memory.search(messages[i].content, 3)
+                    local results = turin.memory.search(messages[i].content, 3)
                     if results and #results > 0 then
                         local block = "\n\n=== Relevant Memories ===\n"
                         for _, mem in ipairs(results) do
@@ -189,7 +189,7 @@ end
 ### Workflow: Force Planning Before Action
 
 ```lua
--- .bedrock/harnesses/planning.lua
+-- .turin/harnesses/planning.lua
 
 function on_before_inference(ctx)
     local msgs = ctx.messages
@@ -228,7 +228,7 @@ This lets you layer concerns: `01_safety.lua` for hard constraints, `02_budget.l
 
 ## Architecture
 
-Bedrock has three layers:
+Turin has three layers:
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -282,7 +282,7 @@ For the full harness scripting guide, see [Writing Harnesses](docs/HARNESS_GUIDE
 
 ## Kernel Primitives
 
-These are available to harness scripts via the Bedrock Standard Library:
+These are available to harness scripts via the Turin Standard Library:
 
 | Module | Functions | Description |
 |--------|-----------|-------------|
@@ -293,10 +293,10 @@ These are available to harness scripts via the Bedrock Standard Library:
 | **time** | `now_utc` | Timestamps |
 | **log** | `log(message)` | Write to kernel event log |
 | **session** | `id`, `list`, `load`, `queue`, `queue_next` | Session management and task queuing |
-| **bedrock.memory** | `store`, `search` | Semantic memory (vector + FTS5) |
-| **bedrock.agent** | `spawn` | Nested subagent execution |
-| **bedrock.context** | `glob` | Safe workspace file search |
-| **bedrock.import** | `import(name)` | Import harness modules |
+| **turin.memory** | `store`, `search` | Semantic memory (vector + FTS5) |
+| **turin.agent** | `spawn` | Nested subagent execution |
+| **turin.context** | `glob` | Safe workspace file search |
+| **turin.import** | `import(name)` | Import harness modules |
 
 ---
 
@@ -333,10 +333,10 @@ max_turns = 50                   # Max agent loop iterations
 heartbeat_interval_secs = 30     # Liveness check interval
 
 [persistence]
-database_path = ".bedrock/state.db"  # SQLite database location
+database_path = ".turin/state.db"  # SQLite database location
 
 [harness]
-directory = ".bedrock/harnesses"     # Harness script directory
+directory = ".turin/harnesses"     # Harness script directory
 
 [providers.anthropic]
 api_key_env = "ANTHROPIC_API_KEY"    # Env var containing API key
@@ -359,7 +359,7 @@ type = "openai"  # or "no_op" for environments without embedding support
 
 ## Project Status
 
-Bedrock is at **v0.9.0**. The core runtime is functional and tested. What's implemented:
+Turin is at **v0.9.0**. The core runtime is functional and tested. What's implemented:
 
 - Multi-provider inference (Anthropic, OpenAI) with streaming
 - Full tool execution loop (read, write, edit, shell, submit_task, bridge_mcp)

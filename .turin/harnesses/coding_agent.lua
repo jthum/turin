@@ -2,22 +2,22 @@ function on_before_inference(ctx)
     log(">>> coding_agent.lua: on_before_inference <<<")
 
     -- 1. Project Instructions
-    if fs.exists("BEDROCK.md") then
-        local instructions = fs.read("BEDROCK.md")
+    if fs.exists("TURIN.md") then
+        local instructions = fs.read("TURIN.md")
         if instructions then
-            log("Injecting BEDROCK.md (" .. #instructions .. " bytes)")
+            log("Injecting TURIN.md (" .. #instructions .. " bytes)")
             -- Append to system prompt
             ctx.system_prompt = ctx.system_prompt .. "\n\n=== Project Instructions ===\n" .. instructions
         else
-            log("Failed to read BEDROCK.md")
+            log("Failed to read TURIN.md")
         end
     else
-        log("BEDROCK.md not found")
+        log("TURIN.md not found")
     end
 
     -- 2. Automatic Memory Recall
     -- If the memory module is available, search for relevant facts.
-    if bedrock.memory and bedrock.memory.search then
+    if turin.memory and turin.memory.search then
         -- Get the last user message to use as a query
         local last_message = nil
         -- Context is dynamic, we need to inspect the messages. 
@@ -42,7 +42,7 @@ function on_before_inference(ctx)
              -- We only query if the message is substantial
              if type(last_message) == "string" and #last_message > 10 then
                  log("Searching memories for: " .. string.sub(last_message, 1, 50) .. "...")
-                 local status, memories = pcall(bedrock.memory.search, last_message, 3)
+                 local status, memories = pcall(turin.memory.search, last_message, 3)
                  if status and memories and #memories > 0 then
                      log("Recalled " .. #memories .. " memories.")
                      local memory_block = "\n\n=== Relevant Memories ===\n"
@@ -93,9 +93,9 @@ function on_task_complete(event)
     local session_id = event.session_id
     
     -- Anchorage: Summarize and store session learnings
-    if bedrock.session and bedrock.session.load and bedrock.memory and bedrock.memory.store and bedrock.agent and bedrock.agent.spawn then
+    if turin.session and turin.session.load and turin.memory and turin.memory.store and turin.agent and turin.agent.spawn then
         log("Analyzing session for anchorage...")
-        local history = bedrock.session.load(session_id)
+        local history = turin.session.load(session_id)
         if history and #history > 0 then
             -- Construct a transcript
             local transcript = ""
@@ -126,7 +126,7 @@ function on_task_complete(event)
                 
                 -- Spawn subagent
                 log("Spawning summarizer agent...")
-                local summary, err = bedrock.agent.spawn(prompt, {
+                local summary, err = turin.agent.spawn(prompt, {
                     system_prompt = "You are a concise technical summarizer.",
                     max_turns = 1
                 })
@@ -134,7 +134,7 @@ function on_task_complete(event)
                 if summary and summary ~= "" then
                     log("ANCHOR: " .. summary)
                     -- Store in memory
-                    local status, err = pcall(bedrock.memory.store, summary, { session_id = session_id, type = "anchorage" })
+                    local status, err = pcall(turin.memory.store, summary, { session_id = session_id, type = "anchorage" })
                     if not status then
                         log("Failed to store memory: " .. tostring(err))
                     else

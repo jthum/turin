@@ -86,7 +86,7 @@ impl ProviderClient {
         let req = self.build_request(model, system_prompt, messages, tools, options);
         let sdk_stream = self.provider.stream(req, None).await?;
 
-        // Map SDK InferenceEvents to Bedrock KernelEvents
+        // Map SDK InferenceEvents to Turin KernelEvents
         let kernel_stream = sdk_stream.map(|res| {
             match res {
                 Ok(event) => map_sdk_event(event),

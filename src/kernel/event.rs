@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-/// Every action in Bedrock produces a typed `KernelEvent`.
+/// Every action in Turin produces a typed `KernelEvent`.
 ///
 /// Events are:
 /// 1. **Typed** — Each event has a specific variant

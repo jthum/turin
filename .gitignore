@@ -3,13 +3,13 @@
 **/*.rs.bk
 Cargo.lock
 
-# Bedrock Execution Artifacts
-.bedrock/*.db
-.bedrock/*.db-journal
-.bedrock/*.db-journal
+# Turin Execution Artifacts
+.turin/*.db
+.turin/*.db-journal
+.turin/*.db-journal
 /harnesses/
 run.log
-bedrock.toml
+turin.toml
 
 # Working Docs
 /docs/

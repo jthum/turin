@@ -1,12 +1,12 @@
 use anyhow::Result;
-use bedrock::kernel::config::{BedrockConfig, ProviderConfig, AgentConfig, PersistenceConfig, HarnessConfig, EmbeddingConfig};
-use bedrock::kernel::Kernel;
-use bedrock::inference::provider::{
+use turin::kernel::config::{TurinConfig, ProviderConfig, AgentConfig, PersistenceConfig, HarnessConfig, EmbeddingConfig};
+use turin::kernel::Kernel;
+use turin::inference::provider::{
     InferenceEvent, InferenceProvider, InferenceRequest, InferenceMessage, 
     InferenceRole, InferenceContent, Tool, SdkError, InferenceStream, RequestOptions,
     ProviderClient, ProviderKind
 };
-use bedrock::kernel::event::KernelEvent;
+use turin::kernel::event::KernelEvent;
 use std::collections::HashMap;
 use tempfile::tempdir;
 use std::sync::Arc;
@@ -67,14 +67,14 @@ async fn test_harness_rejection() -> Result<()> {
         base_url: None,
     });
 
-    let config = BedrockConfig {
+    let config = TurinConfig {
         agent: AgentConfig {
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
             system_prompt: "You are a test assistant.".to_string(),
             thinking: None,
         },
-        kernel: bedrock::kernel::config::KernelConfig {
+        kernel: turin::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 5,
             heartbeat_interval_secs: 30,

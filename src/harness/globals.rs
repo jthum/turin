@@ -1,4 +1,4 @@
-//! Bedrock-SL globals injected into the Luau harness VM.
+//! Turin-SL globals injected into the Luau harness VM.
 //!
 //! These provide all capabilities that harness scripts have access to.
 //! The harness VM itself is sandboxed — these are the only OS-touching APIs.
@@ -27,10 +27,10 @@ pub struct HarnessAppData {
     pub clients: HashMap<String, ProviderClient>,
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     pub queue: ActiveSessionQueue,
-    pub config: Arc<crate::kernel::config::BedrockConfig>, // Full type path to avoid cycle if needed
+    pub config: Arc<crate::kernel::config::TurinConfig>, // Full type path to avoid cycle if needed
 }
 
-/// Register all Bedrock-SL globals into the Lua VM.
+/// Register all Turin-SL globals into the Lua VM.
 pub fn register_globals(lua: &Lua, app_data: HarnessAppData) -> LuaResult<()> {
     register_verdict_constants(lua)?;
     register_fs_module(lua, &app_data)?;
@@ -38,7 +38,7 @@ pub fn register_globals(lua: &Lua, app_data: HarnessAppData) -> LuaResult<()> {
     register_json_module(lua)?;
     register_time_module(lua)?;
     register_session_module(lua, &app_data)?;
-    register_bedrock_module(lua, &app_data)?;
+    register_turin_module(lua, &app_data)?;
     register_agent_module(lua, &app_data)?;
     register_log_function(lua)?;
 
@@ -402,13 +402,13 @@ fn register_session_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()
     Ok(())
 }
 
-/// Register `bedrock` table: context
-fn register_bedrock_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
-    let bedrock_table = lua.create_table()?;
+/// Register `turin` table: context
+fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
+    let turin_table = lua.create_table()?;
     let context_table = lua.create_table()?;
     let fs_root = app_data.fs_root.clone();
 
-    // bedrock.context.glob(pattern) -> { "file1", "file2" }
+    // turin.context.glob(pattern) -> { "file1", "file2" }
     {
         let root = fs_root.clone();
         context_table.set("glob", lua.create_function(move |_lua, pattern: String| {
@@ -444,21 +444,21 @@ fn register_bedrock_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()
         })?)?;
     }
 
-    bedrock_table.set("context", context_table)?;
+    turin_table.set("context", context_table)?;
 
-    // bedrock.import(name) -> table | nil
-    bedrock_table.set("import", lua.create_function(|lua, name: String| {
+    // turin.import(name) -> table | nil
+    turin_table.set("import", lua.create_function(|lua, name: String| {
         let globals = lua.globals();
         let modules: Table = globals.get("__harness_modules")?;
         Ok(modules.get::<Value>(name)?)
     })?)?;
 
-    // bedrock.complete(prompt, options) -> string | nil
+    // turin.complete(prompt, options) -> string | nil
     {
         let clients = app_data.clients.clone();
         let config_arc = app_data.config.clone();
         
-        bedrock_table.set("complete", lua.create_function(move |_lua, (prompt, options): (String, Option<mlua::Table>)| {
+        turin_table.set("complete", lua.create_function(move |_lua, (prompt, options): (String, Option<mlua::Table>)| {
             let mut model = config_arc.agent.model.clone();
             let mut provider = config_arc.agent.provider.clone(); 
             // Default provider from config.
@@ -497,13 +497,13 @@ fn register_bedrock_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()
         })?)?;
     }
     
-    // bedrock.memory sub-module
+    // turin.memory sub-module
     {
         let memory_table = lua.create_table()?;
         let store = app_data.state_store.clone();
         let embedding_provider = app_data.embedding_provider.clone();
 
-        // bedrock.memory.store(content, metadata) -> boolean
+        // turin.memory.store(content, metadata) -> boolean
         // This is a heavy operation (embedding + db insert), so we block carefully.
         {
              let store = store.clone();
@@ -545,7 +545,7 @@ fn register_bedrock_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()
              })?)?;
         }
 
-        // bedrock.memory.search(query, limit) -> { {content=..., score=...}, ... }
+        // turin.memory.search(query, limit) -> { {content=..., score=...}, ... }
         {
              let store = store.clone();
              let embedding_provider = embedding_provider.clone();
@@ -604,23 +604,23 @@ fn register_bedrock_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()
              })?)?;
         }
 
-        bedrock_table.set("memory", memory_table)?;
+        turin_table.set("memory", memory_table)?;
     }
 
-    lua.globals().set("bedrock", bedrock_table)?;
+    lua.globals().set("turin", turin_table)?;
     Ok(())
 }
 
-/// Register `bedrock.agent` table: spawn
+/// Register `turin.agent` table: spawn
 fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
     let agent_table = lua.create_table()?;
-    let bedrock_table: mlua::Table = lua.globals().get("bedrock")?; // Get existing table or fail? 
-    // Wait, register_bedrock_module creates "bedrock" global. We should probably attach to it?
-    // But `register_bedrock_module` sets "bedrock" global at the end.
-    // Order matters. `register_bedrock_module` is called before this.
-    // So we can get "bedrock" global and add "agent" to it.
+    let turin_table: mlua::Table = lua.globals().get("turin")?; // Get existing table or fail? 
+    // Wait, register_turin_module creates "turin" global. We should probably attach to it?
+    // But `register_turin_module` sets "turin" global at the end.
+    // Order matters. `register_turin_module` is called before this.
+    // So we can get "turin" global and add "agent" to it.
     
-    // bedrock.agent.spawn(prompt, options) -> string | nil
+    // turin.agent.spawn(prompt, options) -> string | nil
     {
         let config_arc = app_data.config.clone();
         let clients = app_data.clients.clone();
@@ -698,7 +698,7 @@ fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
         })?)?;
     }
     
-    bedrock_table.set("agent", agent_table)?;
+    turin_table.set("agent", agent_table)?;
     Ok(())
 }
 
@@ -724,7 +724,7 @@ mod tests {
             clients: HashMap::new(),
             embedding_provider: None,
             queue: Arc::new(Mutex::new(Some(Arc::new(Mutex::new(VecDeque::new()))))),
-            config: Arc::new(crate::kernel::config::BedrockConfig {
+            config: Arc::new(crate::kernel::config::TurinConfig {
                 agent: crate::kernel::config::AgentConfig {
                     system_prompt: "test".to_string(),
                     model: "test".to_string(),
@@ -827,7 +827,7 @@ mod tests {
             clients: HashMap::new(),
             embedding_provider: None,
             queue: Arc::new(Mutex::new(Some(Arc::new(Mutex::new(VecDeque::new()))))),
-            config: Arc::new(crate::kernel::config::BedrockConfig {
+            config: Arc::new(crate::kernel::config::TurinConfig {
                 agent: crate::kernel::config::AgentConfig {
                     system_prompt: "test".to_string(),
                     model: "test".to_string(),
@@ -843,9 +843,9 @@ mod tests {
         };
         register_globals(&lua, app_data).unwrap();
 
-        let result: String = lua.load(r#"return json.encode({name = "bedrock", version = 1})"#).eval().unwrap();
+        let result: String = lua.load(r#"return json.encode({name = "turin", version = 1})"#).eval().unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(parsed["name"], "bedrock");
+        assert_eq!(parsed["name"], "turin");
 
         let decoded: String = lua.load(r#"
             local t = json.decode('{"key": "value"}')
@@ -864,7 +864,7 @@ mod tests {
             clients: HashMap::new(),
             embedding_provider: None,
             queue: Arc::new(Mutex::new(Some(Arc::new(Mutex::new(VecDeque::new()))))),
-            config: Arc::new(crate::kernel::config::BedrockConfig {
+            config: Arc::new(crate::kernel::config::TurinConfig {
                 agent: crate::kernel::config::AgentConfig {
                     system_prompt: "test".to_string(),
                     model: "test".to_string(),
@@ -894,7 +894,7 @@ mod tests {
             clients: HashMap::new(),
             embedding_provider: None,
             queue: Arc::new(Mutex::new(Some(Arc::new(Mutex::new(VecDeque::new()))))),
-            config: Arc::new(crate::kernel::config::BedrockConfig {
+            config: Arc::new(crate::kernel::config::TurinConfig {
                 agent: crate::kernel::config::AgentConfig {
                     system_prompt: "test".to_string(),
                     model: "test".to_string(),

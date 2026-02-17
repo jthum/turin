@@ -1,5 +1,5 @@
-# Bedrock Example Configuration
-# Copy this to bedrock.toml and customize.
+# Turin Example Configuration
+# Copy this to turin.toml and customize.
 
 [agent]
 system_prompt = "You are a helpful coding assistant."
@@ -16,10 +16,10 @@ max_turns = 50
 heartbeat_interval_secs = 30
 
 [persistence]
-database_path = ".bedrock/state.db"
+database_path = ".turin/state.db"
 
 [harness]
-directory = ".bedrock/harnesses"
+directory = ".turin/harnesses"
 # hot_reload = false  # Future feature
 
 [providers.anthropic]

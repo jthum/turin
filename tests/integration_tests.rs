@@ -1,7 +1,7 @@
 use anyhow::Result;
-use bedrock::kernel::config::{BedrockConfig, ProviderConfig, AgentConfig, PersistenceConfig, HarnessConfig, EmbeddingConfig};
-use bedrock::kernel::Kernel;
-use bedrock::kernel::session::SessionState;
+use turin::kernel::config::{TurinConfig, ProviderConfig, AgentConfig, PersistenceConfig, HarnessConfig, EmbeddingConfig};
+use turin::kernel::Kernel;
+use turin::kernel::session::SessionState;
 use std::collections::HashMap;
 use tempfile::tempdir;
 
@@ -19,14 +19,14 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
         base_url: Some("Mock response content".to_string()),
     });
 
-    let config = BedrockConfig {
+    let config = TurinConfig {
         agent: AgentConfig {
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
             system_prompt: "You are a test assistant.".to_string(),
             thinking: None,
         },
-        kernel: bedrock::kernel::config::KernelConfig {
+        kernel: turin::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 5,
             heartbeat_interval_secs: 30,
@@ -59,7 +59,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
     assert!(!session.history.is_empty());
     
     let last_msg = session.history.last().unwrap();
-    assert_eq!(last_msg.role, bedrock::inference::provider::InferenceRole::Assistant);
+    assert_eq!(last_msg.role, turin::inference::provider::InferenceRole::Assistant);
     
     // Check content (mock returns "Mock response content")
     // Note: The history might contain multiple items if there were tool calls, 

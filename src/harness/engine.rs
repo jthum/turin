@@ -25,7 +25,7 @@ impl HarnessEngine {
     pub fn new(app_data: HarnessAppData) -> Result<Self> {
         let lua = Lua::new();
 
-        // Register all Bedrock-SL globals before sandboxing.
+        // Register all Turin-SL globals before sandboxing.
         // This makes them available but read-only once sandbox is enabled.
         globals::register_globals(&lua, app_data)
             .map_err(|e| anyhow::anyhow!("Failed to register harness globals: {}", e))?;
@@ -246,7 +246,7 @@ impl HarnessEngine {
                             }
                         }
                         Err(e) => {
-                            eprintln!("[bedrock] Error in hook '{}' (script '{}'): {}", hook_name, name, e);
+                            eprintln!("[turin] Error in hook '{}' (script '{}'): {}", hook_name, name, e);
                         }
                     }
                 }
@@ -324,7 +324,7 @@ mod tests {
             clients: std::collections::HashMap::new(),
             embedding_provider: None,
             queue: std::sync::Arc::new(tokio::sync::Mutex::new(Some(std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new()))))),
-            config: std::sync::Arc::new(crate::kernel::config::BedrockConfig::default()),
+            config: std::sync::Arc::new(crate::kernel::config::TurinConfig::default()),
         }
     }
 

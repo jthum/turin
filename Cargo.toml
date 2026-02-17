@@ -1,15 +1,15 @@
 [package]
-name = "bedrock"
+name = "turin"
 version = "0.9.5"
 edition = "2021"
 description = "A single-binary, event-driven LLM execution runtime with composable Lua harness scripts"
 
 [[bin]]
-name = "bedrock"
+name = "turin"
 path = "src/main.rs"
 
 [lib]
-name = "bedrock"
+name = "turin"
 path = "src/lib.rs"
 
 [dependencies]

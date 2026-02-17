@@ -4,12 +4,12 @@ use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::path::PathBuf;
 
-use bedrock::kernel::config::BedrockConfig;
-use bedrock::kernel::Kernel;
+use turin::kernel::config::TurinConfig;
+use turin::kernel::Kernel;
 
-/// Bedrock: A single-binary, event-driven LLM execution runtime
+/// Turin: A single-binary, event-driven LLM execution runtime
 #[derive(Parser, Debug)]
-#[command(name = "bedrock", version, about)]
+#[command(name = "turin", version, about)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -31,8 +31,8 @@ enum Commands {
         #[arg(long)]
         prompt: String,
 
-        /// Path to bedrock.toml config file
-        #[arg(long, default_value = "bedrock.toml")]
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
         config: PathBuf,
 
         /// Override the model from config
@@ -54,8 +54,8 @@ enum Commands {
 
     /// Start an interactive REPL session
     Repl {
-        /// Path to bedrock.toml config file
-        #[arg(long, default_value = "bedrock.toml")]
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
         config: PathBuf,
 
         /// Override the model from config
@@ -76,8 +76,8 @@ enum Commands {
         /// Path to the Lua script to run
         path: PathBuf,
 
-        /// Path to bedrock.toml config file
-        #[arg(long, default_value = "bedrock.toml")]
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
         config: PathBuf,
 
         /// Override the model from config
@@ -134,7 +134,7 @@ async fn main() -> Result<()> {
         } => {
             // Load config
             let mut config =
-                BedrockConfig::from_file(&config).with_context(|| "Failed to load config")?;
+                TurinConfig::from_file(&config).with_context(|| "Failed to load config")?;
 
             // Apply CLI overrides
             if let Some(m) = model {
@@ -175,7 +175,7 @@ async fn main() -> Result<()> {
         } => {
             // Load config
             let mut config =
-                BedrockConfig::from_file(&config).with_context(|| "Failed to load config")?;
+                TurinConfig::from_file(&config).with_context(|| "Failed to load config")?;
 
             // Apply CLI overrides
             if let Some(m) = model {
@@ -203,7 +203,7 @@ async fn main() -> Result<()> {
             let mut rl = DefaultEditor::new()?;
             tracing::info!("REPL started. Type 'exit' or Ctrl+D to quit.");
             if !verbose {
-                println!("Bedrock REPL v{}", env!("CARGO_PKG_VERSION"));
+                println!("Turin REPL v{}", env!("CARGO_PKG_VERSION"));
                 println!("Type 'exit' or Ctrl+D to quit. Type '/reload' to reload harness.");
             }
 
@@ -261,7 +261,7 @@ async fn main() -> Result<()> {
         } => {
             // Load config
             let mut config =
-                BedrockConfig::from_file(&config).with_context(|| "Failed to load config")?;
+                TurinConfig::from_file(&config).with_context(|| "Failed to load config")?;
 
             // Apply CLI overrides
             if let Some(m) = model {

@@ -1,4 +1,4 @@
-//! turso-backed state store for Bedrock.
+//! turso-backed state store for Turin.
 //!
 //! Provides persistent storage for:
 //! - Event log (append-only)
@@ -10,10 +10,10 @@
 use anyhow::{Context, Result};
 use turso::{Connection, Database};
 
-/// The state store manages all Bedrock persistence.
+/// The state store manages all Turin persistence.
 use std::sync::Arc;
 
-/// The state store manages all Bedrock persistence.
+/// The state store manages all Turin persistence.
 ///
 /// It holds a reference to the database engine and spawns connections on demand.
 /// This allows it to be efficiently Cloned and shared across threads.

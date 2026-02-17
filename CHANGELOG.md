@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Robust Path Validation**: Introduced a centralized, fuzzed `is_safe_path` utility to prevent traversal attacks.
 
 ### Changed
-- **Architectural Optimization**: Refactored `Kernel` to use `Arc<BedrockConfig>`, significantly reducing cloning overhead.
+- **Architectural Optimization**: Refactored `Kernel` to use `Arc<TurinConfig>`, significantly reducing cloning overhead.
 - **Async I/O**: Switched all file tool metadata calls to async `tokio::fs::metadata`.
 
 ### Fixed
@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Harness Module System & Hot-Reload**:
   - **Atomic Hot-Reload**: Implemented a "fail-safe" swapping mechanism for harness scripts via a directory watcher (Phase 2) and `/reload` command.
   - **First-Class Module System**: Harness scripts can now `return` tables, enabling clean exported APIs.
-  - **bedrock.import(name)**: New global helper to access exported modules from other scripts.
+  - **turin.import(name)**: New global helper to access exported modules from other scripts.
   - **Prioritized Hook Discovery**: Unified discovery logic that prioritizes hooks in a script's return table over the global environment.
   - **Debounced Watcher**: Added an asynchronous file watcher in the `Kernel` to automatically trigger reloads on script changes with 200ms debouncing.
 
@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Named Providers & Multi-Instance Support**:
-  - Supported arbitrary naming for provider instances in `bedrock.toml` (e.g., `[providers.my-fast-client]`).
+  - Supported arbitrary naming for provider instances in `turin.toml` (e.g., `[providers.my-fast-client]`).
   - Introduced `type` field in provider configuration to support multiple instances of the same provider kind.
   - Exposed `ctx.provider` setter in Lua `on_before_inference` hook for dynamic, mid-turn switching.
   - Refactored internal `Kernel` and `Harness` logic to resolve clients by their configured string names.
@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Capability Normalizer Architecture**:
   - Refactored `ProviderClient` to be provider-agnostic by utilizing the `InferenceProvider` trait from the normalized SDK.
-  - Standardized streaming event handling: Bedrock now consumes a unified `InferenceEvent` stream regardless of the backend (OpenAI or Anthropic).
+  - Standardized streaming event handling: Turin now consumes a unified `InferenceEvent` stream regardless of the backend (OpenAI or Anthropic).
   - Decoupled inference and embeddings logic: Embeddings are now handled through a dedicated `EmbeddingProvider` abstraction.
   - Simplified kernel-to-provider communication, removing thousands of lines of provider-specific boilerplate and mapping logic.
 
@@ -70,18 +70,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Automated session summarization and fact anchorage via `on_task_complete` hooks.
 - **Multi-Provider Support & Mid-Turn Switching**:
   - Enabled coexistence and switching between Anthropic and OpenAI within the same session.
-  - Support for `ctx.provider` overrides in `bedrock.agent.spawn` and `on_before_inference`.
+  - Support for `ctx.provider` overrides in `turin.agent.spawn` and `on_before_inference`.
 
 ## [0.4.0] - 2026-02-13
 
 ### Added
-- **MCP SDK Support**: Integrated a custom, lightweight Rust-based MCP SDK (`mcp-sdk-rust`) into Bedrock.
+- **MCP SDK Support**: Integrated a custom, lightweight Rust-based MCP SDK (`mcp-sdk-rust`) into Turin.
 - **Dynamic Tool Loading**:
   - `bridge_mcp` tool: Allows agents to request spawning and connecting to external MCP servers.
-  - `McpToolProxy`: Automatically registers tools from MCP servers as native Bedrock tools.
+  - `McpToolProxy`: Automatically registers tools from MCP servers as native Turin tools.
 - **Ecosystem Stability Primitives**:
   - `on_task_complete` hook: Enables harnesses to validate state and re-queue tasks when the queue is exhausted.
-  - `bedrock.context` module: New Lua global module providing `context.glob(pattern)` for safe, workspace-aware file discovery.
+  - `turin.context` module: New Lua global module providing `context.glob(pattern)` for safe, workspace-aware file discovery.
 - **Internal Stability**:
   - Optimized binary size through LTO and symbol stripping (achieving ~11MB).
   - Hardened `run_task` loop with better error recovery and multi-turn consistency.
@@ -96,7 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Steerable Command Queue**: Added a per-session task queue in the Kernel allowing for persistent, asynchronous steering by humans or harnesses.
-- **Interactive REPL**: New `bedrock repl` command for persistent conversational interaction with the workspace.
+- **Interactive REPL**: New `turin repl` command for persistent conversational interaction with the workspace.
 - **Task Decomposition Primitives**:
   - `submit_task` tool: Allows agents to propose a multi-step plan.
   - `on_task_submit` hook: Enables harnesses to intercept, approve, reject, or modify agent plans.
@@ -116,7 +116,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **on_agent_start** hook: Allows harness scripts to initialize state at session startup.
 - **Session Globals**: `session.list(limit, offset)` and `session.load(id)` exposed to Lua.
 - **Context Globals**: `ctx.summarize()`, `ctx.add_message()`, and `ctx.system_prompt` access.
-- **Coding Agent**: Experimental `coding_agent.lua` for automatic `BEDROCK.md` injection.
+- **Coding Agent**: Experimental `coding_agent.lua` for automatic `TURIN.md` injection.
 
 ### Changed
 - **Synchronous Bridge**: Refactored `ctx.summarize` to be synchronous via `block_in_place`, ensuring compatibility with the synchronous Luau VM.

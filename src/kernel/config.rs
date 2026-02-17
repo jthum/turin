@@ -3,9 +3,9 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 
-/// Top-level Bedrock configuration, parsed from `bedrock.toml`.
+/// Top-level Turin configuration, parsed from `turin.toml`.
 #[derive(Debug, Clone, Deserialize)]
-pub struct BedrockConfig {
+pub struct TurinConfig {
     pub agent: AgentConfig,
     #[serde(default)]
     pub kernel: KernelConfig,
@@ -136,11 +136,11 @@ fn default_heartbeat_interval() -> u32 {
 }
 
 fn default_database_path() -> String {
-    ".bedrock/state.db".to_string()
+    ".turin/state.db".to_string()
 }
 
 fn default_harness_directory() -> String {
-    ".bedrock/harnesses".to_string()
+    ".turin/harnesses".to_string()
 }
 
 fn default_harness_fs_root() -> String {
@@ -149,7 +149,7 @@ fn default_harness_fs_root() -> String {
 
 // ─── Loading ─────────────────────────────────────────────────────
 
-impl BedrockConfig {
+impl TurinConfig {
     /// Load configuration from a TOML file.
     pub fn from_file(path: &Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path)
@@ -159,8 +159,8 @@ impl BedrockConfig {
 
     /// Parse configuration from a TOML string.
     pub fn from_str(toml_str: &str) -> Result<Self> {
-        let config: BedrockConfig = toml::from_str(toml_str)
-            .with_context(|| "Failed to parse bedrock.toml")?;
+        let config: TurinConfig = toml::from_str(toml_str)
+            .with_context(|| "Failed to parse turin.toml")?;
         config.validate()?;
         Ok(config)
     }
@@ -210,7 +210,7 @@ impl Default for AgentConfig {
     }
 }
 
-impl Default for BedrockConfig {
+impl Default for TurinConfig {
     fn default() -> Self {
         Self {
             agent: AgentConfig::default(),
@@ -246,10 +246,10 @@ max_turns = 50
 heartbeat_interval_secs = 30
 
 [persistence]
-database_path = ".bedrock/state.db"
+database_path = ".turin/state.db"
 
 [harness]
-directory = ".bedrock/harnesses"
+directory = ".turin/harnesses"
 
 [providers.anthropic]
 type = "anthropic"
@@ -260,12 +260,12 @@ type = "openai"
 api_key_env = "OPENAI_API_KEY"
 "#;
 
-        let config = BedrockConfig::from_str(toml).unwrap();
+        let config = TurinConfig::from_str(toml).unwrap();
         assert_eq!(config.agent.model, "claude-sonnet-4-20250514");
         assert_eq!(config.agent.provider, "anthropic");
         assert_eq!(config.kernel.max_turns, 50);
-        assert_eq!(config.persistence.database_path, ".bedrock/state.db");
-        assert_eq!(config.harness.directory, ".bedrock/harnesses");
+        assert_eq!(config.persistence.database_path, ".turin/state.db");
+        assert_eq!(config.harness.directory, ".turin/harnesses");
         assert_eq!(
             config.providers.get("anthropic").unwrap().api_key_env.as_ref().unwrap(),
             "ANTHROPIC_API_KEY"
@@ -283,14 +283,14 @@ provider = "openai"
 type = "openai"
 "#;
 
-        let config = BedrockConfig::from_str(toml).unwrap();
+        let config = TurinConfig::from_str(toml).unwrap();
         assert_eq!(config.agent.model, "gpt-4o");
         assert_eq!(config.agent.provider, "openai");
         // Defaults should be applied
         assert_eq!(config.kernel.workspace_root, ".");
         assert_eq!(config.kernel.max_turns, 50);
-        assert_eq!(config.persistence.database_path, ".bedrock/state.db");
-        assert_eq!(config.harness.directory, ".bedrock/harnesses");
+        assert_eq!(config.persistence.database_path, ".turin/state.db");
+        assert_eq!(config.harness.directory, ".turin/harnesses");
     }
 
     #[test]
@@ -306,7 +306,7 @@ api_key_env = "ANTHROPIC_API_KEY"
 base_url = "https://my-proxy.example.com/v1"
 "#;
 
-        let config = BedrockConfig::from_str(toml).unwrap();
+        let config = TurinConfig::from_str(toml).unwrap();
         let provider = config.providers.get("anthropic").unwrap();
         assert_eq!(
             provider.base_url.as_ref().unwrap(),
@@ -328,7 +328,7 @@ type = "anthropic"
 workspace_root = "src"
 "#;
 
-        let config = BedrockConfig::from_str(toml).unwrap();
+        let config = TurinConfig::from_str(toml).unwrap();
         let resolved = config.resolve_workspace_root(Path::new("/home/user/project"));
         assert_eq!(resolved, PathBuf::from("/home/user/project/src"));
     }
@@ -347,7 +347,7 @@ type = "anthropic"
 workspace_root = "/absolute/path"
 "#;
 
-        let config = BedrockConfig::from_str(toml).unwrap();
+        let config = TurinConfig::from_str(toml).unwrap();
         let resolved = config.resolve_workspace_root(Path::new("/home/user/project"));
         assert_eq!(resolved, PathBuf::from("/absolute/path"));
     }
@@ -359,7 +359,7 @@ workspace_root = "/absolute/path"
 model = ""
 provider = "anthropic"
 "#;
-        assert!(BedrockConfig::from_str(toml).is_err());
+        assert!(TurinConfig::from_str(toml).is_err());
     }
 
     #[test]
@@ -369,7 +369,7 @@ provider = "anthropic"
 model = "gpt-4o"
 provider = "google"
 "#;
-        let err = BedrockConfig::from_str(toml).unwrap_err();
+        let err = TurinConfig::from_str(toml).unwrap_err();
         assert!(err.to_string().contains("google"));
     }
 
@@ -383,6 +383,6 @@ provider = "openai"
 [kernel]
 max_turns = 0
 "#;
-        assert!(BedrockConfig::from_str(toml).is_err());
+        assert!(TurinConfig::from_str(toml).is_err());
     }
 }

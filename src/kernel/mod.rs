@@ -6,7 +6,7 @@ pub mod session;
 use anyhow::{Context, Result};
 use builder::RuntimeBuilder;
 use session::SessionState;
-use config::BedrockConfig;
+use config::TurinConfig;
 use event::KernelEvent;
 use futures::StreamExt;
 use std::io::{self, BufRead, Write};
@@ -34,13 +34,13 @@ use mcp_sdk::transport::StdioTransport;
 use crate::inference::embeddings::EmbeddingProvider;
 use notify::{RecommendedWatcher, Event};
 
-/// The Bedrock Kernel — manages the agent loop, event system, and tool execution.
+/// The Turin Kernel — manages the agent loop, event system, and tool execution.
 ///
 /// The Kernel has no opinions about agent behavior. It provides the physics:
 /// transport, streaming, tool execution, persistence, and event hooks.
 /// Harness scripts define the behavior.
 pub struct Kernel {
-    pub(crate) config: Arc<BedrockConfig>,
+    pub(crate) config: Arc<TurinConfig>,
     pub(crate) json: bool,
     pub(crate) tool_registry: ToolRegistry,
     pub(crate) state: Option<StateStore>,
@@ -66,14 +66,14 @@ struct PendingToolCall {
 impl Kernel {
     /// Create a new Kernel with the given configuration.
     /// Create a new builder for Kernel.
-    pub fn builder(config: BedrockConfig) -> RuntimeBuilder {
+    pub fn builder(config: TurinConfig) -> RuntimeBuilder {
         RuntimeBuilder::new(config)
     }
 
     /// Create a new Kernel with the given configuration.
     /// DEPRECATED: Use `Kernel::builder(config).build()` instead.
     #[deprecated(since = "0.9.0", note = "Use Kernel::builder() instead")]
-    pub fn new(config: BedrockConfig, json: bool) -> Self {
+    pub fn new(config: TurinConfig, json: bool) -> Self {
         Self {
             config: Arc::new(config),
             json,
@@ -265,7 +265,7 @@ impl Kernel {
     #[instrument(skip_all)]
     pub async fn reload_harness_static(
         harness: Arc<Mutex<Option<HarnessEngine>>>,
-        config: Arc<BedrockConfig>,
+        config: Arc<TurinConfig>,
         clients: HashMap<String, ProviderClient>,
         state: Option<StateStore>,
         embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
@@ -735,7 +735,7 @@ impl Kernel {
                 }
                 Verdict::Escalate(reason) => {
                      warn!(tool = %tc.name, reason = %reason, "ESCALATION: Tool requires approval");
-                     eprint!("[bedrock] Allow? (y/n): ");
+                     eprint!("[turin] Allow? (y/n): ");
                      io::stderr().flush().ok();
                      let mut input = String::new();
                      let approved = io::stdin().lock().read_line(&mut input).is_ok() && input.trim().eq_ignore_ascii_case("y");

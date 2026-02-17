@@ -1,4 +1,4 @@
-//! Built-in tool implementations for Bedrock.
+//! Built-in tool implementations for Turin.
 //!
 //! These are the core tools available out of the box:
 //! - `read_file` — Read file contents

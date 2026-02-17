@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bedrock::tools::{is_safe_path, ToolError};
+use turin::tools::{is_safe_path, ToolError};
 use proptest::prelude::*;
 use std::path::{Path, PathBuf};
 use tempfile::tempdir;

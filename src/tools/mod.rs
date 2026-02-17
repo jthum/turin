@@ -45,7 +45,7 @@ pub struct ToolContext {
     pub session_id: String,
 }
 
-/// The Tool trait — every tool in Bedrock implements this.
+/// The Tool trait — every tool in Turin implements this.
 ///
 /// Tools are the only way the agent interacts with the outside world.
 /// They are pure I/O: no direct access to the harness engine or LLM.
