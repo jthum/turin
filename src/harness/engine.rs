@@ -27,13 +27,11 @@ fn format_lua_error(e: &mlua::Error) -> String {
             
             if line_num.chars().all(|c| c.is_ascii_digit()) {
                 // Clean up the prefix (remove [string "@..."] wrapper if present)
-                let cleaned_prefix = if prefix.starts_with("[string \"@") && prefix.ends_with("\"]") {
-                    &prefix[9..prefix.len() - 2]
-                } else if prefix.starts_with('@') {
-                    &prefix[1..]
-                } else {
-                    prefix
-                };
+                let cleaned_prefix = prefix
+                    .strip_prefix("[string \"@")
+                    .and_then(|s| s.strip_suffix("\"]"))
+                    .or_else(|| prefix.strip_prefix('@'))
+                    .unwrap_or(prefix);
                 
                 return format!(
                     "\x1b[31m\x1b[1mScript Error\x1b[0m \x1b[31min {}\x1b[0m:\x1b[1m{}\x1b[0m\n\x1b[31m  Line {}: {}\x1b[0m",
