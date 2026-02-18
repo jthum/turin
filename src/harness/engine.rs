@@ -12,6 +12,40 @@ use tracing::error;
 use crate::harness::globals::{self, HarnessAppData};
 use crate::harness::verdict::{Verdict, compose_verdicts};
 
+fn format_lua_error(e: &mlua::Error) -> String {
+    let err_str = e.to_string();
+    
+    // Attempt to parse standard Lua error format: "@path:line: message"
+    // or mlua's "[string \"@path\"]:line: message"
+    if let Some(first_colon) = err_str.find(':') {
+        let prefix = &err_str[..first_colon];
+        let rest = &err_str[first_colon + 1..];
+        
+        if let Some(second_colon) = rest.find(':') {
+            let line_num = rest[..second_colon].trim();
+            let message = rest[second_colon + 1..].trim();
+            
+            if line_num.chars().all(|c| c.is_ascii_digit()) {
+                // Clean up the prefix (remove [string "@..."] wrapper if present)
+                let cleaned_prefix = if prefix.starts_with("[string \"@") && prefix.ends_with("\"]") {
+                    &prefix[9..prefix.len() - 2]
+                } else if prefix.starts_with('@') {
+                    &prefix[1..]
+                } else {
+                    prefix
+                };
+                
+                return format!(
+                    "\x1b[31m\x1b[1mScript Error\x1b[0m \x1b[31min {}\x1b[0m:\x1b[1m{}\x1b[0m\n\x1b[31m  Line {}: {}\x1b[0m",
+                    cleaned_prefix, "", line_num, message
+                );
+            }
+        }
+    }
+    
+    format!("\x1b[31m\x1b[1mLua Error:\x1b[0m {}", err_str)
+}
+
 /// The harness engine manages script loading and hook evaluation.
 pub struct HarnessEngine {
     lua: Lua,
@@ -121,7 +155,7 @@ impl HarnessEngine {
             .set_name(format!("@{}", path.display()))
             .set_environment(env.clone())
             .eval()
-            .map_err(|e| anyhow::anyhow!("Failed to load harness script '{}': {}", path.display(), e))?;
+            .map_err(|e| anyhow::anyhow!(format!("Failed to load harness script '{}':\n{}", path.display(), format_lua_error(&e))))?;
 
         // Extract known hooks: priority to return value (module table), fallback to env (globals)
         let module_exports = match retval {
@@ -169,7 +203,7 @@ impl HarnessEngine {
         self.lua
             .load(script)
             .exec()
-            .map_err(|e| anyhow::anyhow!("Script execution failed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!(format_lua_error(&e)))?;
         Ok(())
     }
 
@@ -211,8 +245,8 @@ impl HarnessEngine {
                 Value::Function(func) => {
                     let result = func.call::<MultiValue>(lua_payload.clone())
                         .map_err(|e| anyhow::anyhow!(
-                            "Harness '{}' hook '{}' failed: {}",
-                            script_name, hook_name, e
+                            "Harness '{}' hook '{}' failed:\n{}",
+                            script_name, hook_name, format_lua_error(&e)
                         ))?;
 
                     let verdict = parse_verdict(&self.lua, result)?;
@@ -256,7 +290,7 @@ impl HarnessEngine {
                             }
                         }
                         Err(e) => {
-                            error!(hook = %hook_name, script = %name, error = %e, "Error in harness hook");
+                            error!(hook = %hook_name, script = %name, "Error in harness hook:\n{}", format_lua_error(&e));
                         }
                     }
                 }

@@ -30,6 +30,10 @@ impl Kernel {
         let mut provider_name = self.config.agent.provider.clone();
         let mut system_prompt = self.config.agent.system_prompt.clone();
 
+        if !self.json {
+            println!("\n\x1b[36m\x1b[1m── Turn {} ──\x1b[0m", session.turn_index + 1);
+        }
+
         self.persist_event(session, &KernelEvent::Lifecycle(LifecycleEvent::TurnStart { turn_index: session.turn_index }));
 
         // ─── Harness Hook: on_before_inference ───────────────────────
@@ -102,12 +106,25 @@ impl Kernel {
         
         let mut response_text = String::with_capacity(4096);
         let mut pending_tool_calls: Vec<PendingToolCall> = Vec::new();
+        let mut is_thinking = false;
 
         while let Some(event_result) = stream.next().await {
              let event = event_result?;
              match &event {
                 KernelEvent::Stream(e) => match e {
+                    StreamEvent::ThinkingDelta { .. } => {
+                        if !self.json && !is_thinking {
+                            print!("\x1b[35m💭 Thinking...\x1b[0m");
+                            io::stdout().flush().ok();
+                            is_thinking = true;
+                        }
+                        self.persist_event(session, &event);
+                    }
                     StreamEvent::MessageDelta { content_delta } => {
+                        if is_thinking {
+                            println!();
+                            is_thinking = false;
+                        }
                         if !self.json {
                             print!("{}", content_delta);
                             io::stdout().flush().ok();
@@ -115,15 +132,23 @@ impl Kernel {
                         self.persist_event(session, &event);
                         response_text.push_str(content_delta);
                     }
-                    StreamEvent::ThinkingDelta { thinking: _ } => {
-                        self.persist_event(session, &event);
-                    }
                     StreamEvent::MessageEnd { input_tokens, output_tokens, .. } => {
+                        if is_thinking {
+                            println!();
+                            is_thinking = false;
+                        }
                         session.total_input_tokens += *input_tokens;
                         session.total_output_tokens += *output_tokens;
                         self.persist_event(session, &event);
                     }
                     StreamEvent::ToolCall { id, name, args } => {
+                        if is_thinking {
+                            println!();
+                            is_thinking = false;
+                        }
+                        if !self.json {
+                            println!("\n\x1b[33m⚒️  Tool Call:\x1b[0m \x1b[1m{}\x1b[0m({})", name, args);
+                        }
                         self.persist_event(session, &event);
                         pending_tool_calls.push(PendingToolCall {
                             id: id.clone(), name: name.clone(), args: args.clone()
@@ -199,6 +224,9 @@ impl Kernel {
             let verdict = self.evaluate_tool_call(&tc.name, &tc.id, &tc.args);
             match &verdict {
                 Verdict::Reject(reason) => {
+                     if !self.json {
+                         println!("\x1b[31m✗ Rejected by harness:\x1b[0m {}", reason);
+                     }
                      warn!(tool = %tc.name, reason = %reason, "Tool REJECTED by harness");
                      let msg = format!("[HARNESS REJECTED] Tool '{}' blocked: {}", tc.name, reason);
                      self.persist_event(session, &KernelEvent::Audit(AuditEvent::ToolExecStart { id: tc.id.clone(), name: tc.name.clone() }));
@@ -212,11 +240,14 @@ impl Kernel {
                 }
                 Verdict::Escalate(reason) => {
                      warn!(tool = %tc.name, reason = %reason, "ESCALATION: Tool requires approval");
-                     eprint!("[turin] Allow? (y/n): ");
+                     eprint!("\x1b[33m\x1b[1m! Approval Required:\x1b[0m {} Allow? (y/n): ", reason);
                      io::stderr().flush().ok();
                      let mut input = String::new();
                      let approved = io::stdin().lock().read_line(&mut input).is_ok() && input.trim().eq_ignore_ascii_case("y");
                      if !approved {
+                          if !self.json {
+                              println!("\x1b[31m✗ Denied by user\x1b[0m");
+                          }
                           warn!(tool = %tc.name, "Tool DENIED by user");
                           let msg = format!("[ESCALATION DENIED] Tool '{}' denied: {}", tc.name, reason);
                            self.persist_event(session, &KernelEvent::Audit(AuditEvent::ToolExecStart { id: tc.id.clone(), name: tc.name.clone() }));
@@ -227,6 +258,9 @@ impl Kernel {
                            }
                            tool_results.push(InferenceContent::ToolResult { tool_use_id: tc.id.clone(), content: msg, is_error: true });
                      } else {
+                         if !self.json {
+                             println!("\x1b[32m✓ Approved by user\x1b[0m");
+                         }
                          info!(tool = %tc.name, "Tool APPROVED by user");
                          validated_calls.push((tc, verdict));
                      }
@@ -358,6 +392,13 @@ impl Kernel {
                          }
                      }
                 }
+            }
+            if !self.json {
+                 if is_error {
+                     println!("\x1b[31m✗ Tool '{}' failed\x1b[0m", tc.name);
+                 } else {
+                     println!("\x1b[32m✓ Tool '{}' complete\x1b[0m", tc.name);
+                 }
             }
             tool_results.push(InferenceContent::ToolResult { tool_use_id: tc.id.clone(), content, is_error });
         }

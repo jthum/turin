@@ -5,12 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-02-18
+
+### Added
+- **Project Scaffolding (`turin init`)**:
+  - New command to bootstrap Turin projects with default `turin.toml` and starter harness scripts.
+- **Static Validation (`turin check`)**:
+  - Validation engine for project configurations, API keys, and harness script syntax with line-specific Lua diagnostics.
+- **Enhanced Developer Experience (DX)**:
+  - **Richer REPL**: Added slash commands (`/status`, `/history`, `/reload`, `/clear`, `/help`), colored prompts.
+  - **Streaming Indicators**: Visual markers for "Thinking" blocks, turn headers, tool call verdicts, and execution results.
+  - **Session Summary**: Automated token usage and turn count reports.
+
+### Changed
+- **Dependency Modernization**:
+  - Upgraded to `reqwest 0.13` and `hyper 1.0`.
+  - Migrated to **Rustls (with aws-lc-rs)** as the primary TLS backend, eliminating `native-tls` and its transitive C dependencies for a fully portable binary.
+- **Public API Refinement**: 
+  - Exposed `Kernel::config()` and `Kernel::loaded_scripts()` for command-line introspection.
+
 ## [0.12.0] - 2026-02-18
 
 ### Added
 - **Core State Store Modularization**:
   - Split the monolithic `persistence/state.rs` (1,000+ lines) into three focused modules: `schema.rs` (schema and DDL), `search.rs` (cognitive/hybrid search), and `state.rs` (lifecycle, CRUD, and KV logic).
-  - Improved code maintainability and separation of concerns in the persistence layer.
 - **Robust Persistence Gating**: 
   - Implemented a mandatory `busy_timeout` (5000ms) on all database connections to prevent `SQLITE_BUSY` errors during concurrent access (e.g., nested sub-agents writing to DB while background event persistence is active).
 - **Automated Quality Controls**:

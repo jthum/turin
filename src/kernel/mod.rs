@@ -69,13 +69,28 @@ impl Kernel {
         self.state.as_ref()
     }
 
+    /// Access the configuration.
+    pub fn config(&self) -> &TurinConfig {
+        &self.config
+    }
+
     /// Lock the harness mutex.
     ///
     /// Panics if the mutex is poisoned (previous holder panicked).
     /// A poisoned harness is an unrecoverable state — continuing would
     /// risk executing tool calls with a partially-updated engine.
-    pub(crate) fn lock_harness(&self) -> std::sync::MutexGuard<'_, Option<HarnessEngine>> {
+    pub fn lock_harness(&self) -> std::sync::MutexGuard<'_, Option<HarnessEngine>> {
         self.harness.lock().expect("harness mutex poisoned")
+    }
+
+    /// Get names of all loaded harness scripts.
+    pub fn loaded_scripts(&self) -> Vec<String> {
+        let lock = self.lock_harness();
+        if let Some(ref engine) = *lock {
+            engine.loaded_scripts().to_vec()
+        } else {
+            Vec::new()
+        }
     }
 
     /// Create a new session.

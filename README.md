@@ -38,7 +38,8 @@ All the same binary. Different `.lua` files in the harness directory.
 
 - **Harness Scripts** — Define agent behavior in hot-reloadable Lua (Luau). Governance, workflows, context engineering — all in scripts you can read, modify, and share.
 - **Deterministic Governance** — When a harness returns `REJECT`, the kernel physically cannot execute the action. This is code, not a suggestion.
-- **Single Binary** — Rust. ~11MB. No runtime dependencies. `cargo build --release` and deploy.
+- **Single Binary** — Rust. ~13MB. No runtime dependencies. `cargo build --release` and deploy.
+- **Scaffolding & Validation** — Built-in `turin init` to bootstrap projects and `turin check` for static config/harness verification.
 - **Multi-Provider** — Anthropic, OpenAI, or any OpenAI-compatible API. Multiple named providers in the same session. Switch mid-turn from a harness script.
 - **Persistent State** — Every event, message, and tool execution logged to a portable SQLite database (Turso). Modular architecture with per-connection busy timeouts ensures reliability under contention.
 - **Cognitive Memory** — Semantic memory with hybrid search (vector + FTS5 + Reciprocal Rank Fusion). Agents remember across sessions.
@@ -365,7 +366,7 @@ type = "openai"  # or "no_op" for environments without embedding support
 
 ## Project Status
 
-Turin is at **v0.12.0**. The core runtime is functional, production-hardened, and verified. What's implemented:
+Turin is at **v0.13.0**. The core runtime is functional, production-hardened, and verified. What's implemented:
 
 - Multi-provider inference (Anthropic, OpenAI) with streaming
 - Full tool execution loop (read, write, edit, shell, submit_task, bridge_mcp)

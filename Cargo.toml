@@ -1,6 +1,6 @@
 [package]
 name = "turin"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2024"
 description = "A single-binary, event-driven LLM execution runtime with composable Lua harness scripts"
 
@@ -71,3 +71,4 @@ lto = true          # Enable Link Time Optimization
 codegen-units = 1   # Reduce parallel codegen to improve optimization
 panic = "abort"     # Remove panic unwinding to save space
 strip = true        # Automatically strip symbols from binary
+
