@@ -10,6 +10,7 @@
 //! Schema definitions live in [`super::schema`], memory search in [`super::search`].
 
 use anyhow::{Context, Result};
+use tracing::warn;
 use turso::{Connection, Database};
 use std::sync::Arc;
 
@@ -25,6 +26,18 @@ pub struct StateStore {
 }
 
 impl StateStore {
+    /// Obtain a database connection with pragmas applied.
+    ///
+    /// Every connection gets `busy_timeout = 5000` so concurrent writers
+    /// (e.g. background persistence + sub-agent KV calls) don't hit
+    /// SQLITE_BUSY immediately.
+    pub(crate) async fn connect(&self) -> Result<Connection> {
+        let conn = self.db.connect()?;
+        // busy_timeout is connection-local in SQLite; must be set per connection.
+        conn.execute("PRAGMA busy_timeout = 5000;", ()).await.ok();
+        Ok(conn)
+    }
+
     /// Open or create a state store at the given path.
     ///
     /// Creates parent directories and initializes the schema if the database is new.
@@ -64,11 +77,10 @@ impl StateStore {
 
     /// Initialize the database schema.
     async fn init_schema(&self) -> Result<()> {
-        let conn = self.db.connect()?;
+        let conn = self.connect().await?;
 
         // 1. Init Core Schema
         conn.execute("PRAGMA journal_mode = WAL;", ()).await.ok();
-        conn.execute("PRAGMA busy_timeout = 5000;", ()).await.ok();
 
         conn
             .execute_batch(INIT_SCHEMA_CORE)
@@ -79,7 +91,7 @@ impl StateStore {
         if let Err(e) = conn.execute_batch(INIT_SCHEMA_FTS).await {
             let err_str = e.to_string();
             if err_str.contains("no such module: fts5") {
-                eprintln!("[WARN] FTS5 extension not available. Hybrid search will be degraded.");
+                warn!("FTS5 extension not available. Hybrid search will be degraded.");
             } else {
                  return Err(anyhow::anyhow!("Failed to initialize FTS schema: {}", e));
             }
@@ -129,7 +141,7 @@ impl StateStore {
         event_type: &str,
         payload: &serde_json::Value,
     ) -> Result<()> {
-        let conn = self.db.connect()?;
+        let conn = self.connect().await?;
         let payload_str = serde_json::to_string(payload)?;
         conn
             .execute(
@@ -143,7 +155,7 @@ impl StateStore {
 
     /// Get all events for a session, ordered by creation time.
     pub async fn get_events(&self, session_id: &str) -> Result<Vec<EventRow>> {
-        let conn = self.db.connect()?;
+        let conn = self.connect().await?;
         let mut rows = conn
             .query(
                 "SELECT id, session_id, event_type, payload, created_at FROM events WHERE session_id = ?1 ORDER BY id",
@@ -166,7 +178,7 @@ impl StateStore {
 
     /// List recent sessions, ordered by last activity.
     pub async fn list_sessions(&self, limit: usize, offset: usize) -> Result<Vec<String>> {
-        let conn = self.db.connect()?;
+        let conn = self.connect().await?;
         let mut rows = conn
             .query(
                 "SELECT session_id FROM events GROUP BY session_id ORDER BY MAX(id) DESC LIMIT ?1 OFFSET ?2",
@@ -192,7 +204,7 @@ impl StateStore {
         content: &serde_json::Value,
         token_count: Option<u64>,
     ) -> Result<()> {
-        let conn = self.db.connect()?;
+        let conn = self.connect().await?;
         let content_str = serde_json::to_string(content)?;
         conn
             .execute(
@@ -212,7 +224,7 @@ impl StateStore {
 
     /// Get all messages for a session.
     pub async fn get_messages(&self, session_id: &str) -> Result<Vec<MessageRow>> {
-        let conn = self.db.connect()?;
+        let conn = self.connect().await?;
         let mut rows = conn
             .query(
                 "SELECT id, session_id, turn_index, role, content, token_count, created_at FROM messages WHERE session_id = ?1 ORDER BY id",
@@ -251,7 +263,7 @@ impl StateStore {
         duration_ms: Option<u64>,
         verdict: &str,
     ) -> Result<()> {
-        let conn = self.db.connect()?;
+        let conn = self.connect().await?;
         let args_str = serde_json::to_string(args)?;
         conn
             .execute(
@@ -275,7 +287,7 @@ impl StateStore {
 
     /// Get all tool executions for a session.
     pub async fn get_tool_executions(&self, session_id: &str) -> Result<Vec<ToolExecutionRow>> {
-        let conn = self.db.connect()?;
+        let conn = self.connect().await?;
         let mut rows = conn
             .query(
                 "SELECT id, session_id, turn_index, tool_call_id, tool_name, args, output, is_error, duration_ms, verdict, created_at FROM tool_executions WHERE session_id = ?1 ORDER BY id",
@@ -316,7 +328,7 @@ impl StateStore {
             );
         }
 
-        let conn = self.db.connect()?;
+        let conn = self.connect().await?;
         conn
             .execute(
                 "INSERT OR REPLACE INTO harness_kv (key, value, updated_at) VALUES (?1, ?2, datetime('now'))",
@@ -329,7 +341,7 @@ impl StateStore {
 
     /// Get a value from the harness store.
     pub async fn kv_get(&self, key: &str) -> Result<Option<String>> {
-        let conn = self.db.connect()?;
+        let conn = self.connect().await?;
         let mut rows = conn
             .query(
                 "SELECT value FROM harness_kv WHERE key = ?1 AND (expires_at IS NULL OR expires_at > datetime('now'))",
@@ -346,7 +358,7 @@ impl StateStore {
 
     /// Delete a key from the harness store.
     pub async fn kv_delete(&self, key: &str) -> Result<()> {
-        let conn = self.db.connect()?;
+        let conn = self.connect().await?;
         conn
             .execute("DELETE FROM harness_kv WHERE key = ?1", [key])
             .await?;
@@ -354,8 +366,8 @@ impl StateStore {
     }
 
     /// Get a new database connection (for advanced operations).
-    pub fn get_connection(&self) -> Result<Connection> {
-        self.db.connect().map_err(|e| anyhow::anyhow!("Failed to connect: {}", e))
+    pub async fn get_connection(&self) -> Result<Connection> {
+        self.connect().await
     }
 
     /// Get the underlying database (for advanced ops, e.g. shutdown).
@@ -377,7 +389,7 @@ mod tests {
         let store = StateStore::open_memory().await.unwrap();
 
         // Check schema version
-        let conn = store.get_connection().unwrap();
+        let conn = store.get_connection().await.unwrap();
         let mut rows = conn
             .query("SELECT value FROM schema_info WHERE key = 'version'", ())
             .await
@@ -563,7 +575,7 @@ mod tests {
         let store = StateStore::open_memory().await.expect("Failed to open state store");
 
         // Check if FTS5 table was created
-        let conn = store.get_connection().unwrap();
+        let conn = store.get_connection().await.unwrap();
         let fts_available = conn
             .query("SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts'", ())
             .await

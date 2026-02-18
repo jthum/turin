@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-02-18
+
+### Added
+- **Core State Store Modularization**:
+  - Split the monolithic `persistence/state.rs` (1,000+ lines) into three focused modules: `schema.rs` (schema and DDL), `search.rs` (cognitive/hybrid search), and `state.rs` (lifecycle, CRUD, and KV logic).
+  - Improved code maintainability and separation of concerns in the persistence layer.
+- **Robust Persistence Gating**: 
+  - Implemented a mandatory `busy_timeout` (5000ms) on all database connections to prevent `SQLITE_BUSY` errors during concurrent access (e.g., nested sub-agents writing to DB while background event persistence is active).
+- **Automated Quality Controls**:
+  - Added **GitHub Actions CI** for automated testing, clippy auditing, and release builds.
+  - Integrated **cargo-deny** for vulnerability auditing and license compliance.
+
+### Changed
+- **Unified Logging Architecture**:
+  - Migrated remaining internal `eprintln!` calls to structured `tracing` events (`warn`, `error`).
+  - Harness `log()` calls remain on `eprintln!` for clear separation between kernel diagnostics and harness output.
+
+### Fixed
+- Resolved a race condition in `test_nested_agent_spawning` caused by connection-local database pragmas.
+- Fixed 2 pre-existing clippy warnings in `session_tests.rs`.
+
+
 ## [0.11.0] - 2026-02-18
 
 ### Added

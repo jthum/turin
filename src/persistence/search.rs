@@ -1,6 +1,7 @@
 //! Cognitive memory storage and hybrid search (Vector + FTS5 + LIKE fallback).
 
 use anyhow::{Context, Result};
+use tracing::warn;
 
 use super::schema::MemoryRow;
 use super::state::StateStore;
@@ -24,7 +25,7 @@ impl StateStore {
 
         let metadata_str = serde_json::to_string(metadata)?;
         
-        let conn = self.db.connect()?;
+        let conn = self.connect().await?;
         conn
             .execute(
                 "INSERT INTO memories (session_id, content, embedding, metadata) VALUES (?1, ?2, ?3, ?4)",
@@ -59,7 +60,7 @@ impl StateStore {
         let mut scores: HashMap<i64, f64> = HashMap::new();
         let mut rows_data: HashMap<i64, MemoryRow> = HashMap::new();
 
-        let conn = self.db.connect()?;
+        let conn = self.connect().await?;
 
         // 1. Vector Search
         if let Some(vec) = vector {
@@ -147,7 +148,7 @@ impl StateStore {
                         // Check if error is due to missing FTS table
                         let err_str = e.to_string();
                         if !err_str.contains("no such table") && !err_str.contains("no such module") {
-                             eprintln!("[WARN] FTS search failed: {}", e);
+                             warn!(error = %e, "FTS search failed");
                         }
                     }
                 }

@@ -40,8 +40,9 @@ All the same binary. Different `.lua` files in the harness directory.
 - **Deterministic Governance** — When a harness returns `REJECT`, the kernel physically cannot execute the action. This is code, not a suggestion.
 - **Single Binary** — Rust. ~11MB. No runtime dependencies. `cargo build --release` and deploy.
 - **Multi-Provider** — Anthropic, OpenAI, or any OpenAI-compatible API. Multiple named providers in the same session. Switch mid-turn from a harness script.
-- **Persistent State** — Every event, message, and tool execution logged to a portable SQLite database (Turso).
+- **Persistent State** — Every event, message, and tool execution logged to a portable SQLite database (Turso). Modular architecture with per-connection busy timeouts ensures reliability under contention.
 - **Cognitive Memory** — Semantic memory with hybrid search (vector + FTS5 + Reciprocal Rank Fusion). Agents remember across sessions.
+- **Automated Quality Controls** — GitHub Actions CI for automated testing and builds, with `cargo-deny` for security and license auditing.
 - **Context Engineering** — The `on_before_inference` hook gives harness scripts full control over what the LLM sees: inject instructions, compact history, swap providers, adjust thinking budgets.
 - **Task Decomposition** — Built-in `submit_task` tool with harness hooks for plan review, modification, and steering.
 - **Subagents** — Spawn isolated nested kernel instances for recursive task delegation, with independent provider and harness configurations.
@@ -364,7 +365,7 @@ type = "openai"  # or "no_op" for environments without embedding support
 
 ## Project Status
 
-Turin is at **v0.11.0**. The core runtime is functional, tested, and security-hardened. What's implemented:
+Turin is at **v0.12.0**. The core runtime is functional, production-hardened, and verified. What's implemented:
 
 - Multi-provider inference (Anthropic, OpenAI) with streaming
 - Full tool execution loop (read, write, edit, shell, submit_task, bridge_mcp)

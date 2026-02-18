@@ -7,6 +7,7 @@
 use anyhow::{Context, Result};
 use mlua::{Function, Lua, LuaOptions, LuaSerdeExt, MultiValue, StdLib, Table, Value};
 use std::path::Path;
+use tracing::error;
 
 use crate::harness::globals::{self, HarnessAppData};
 use crate::harness::verdict::{Verdict, compose_verdicts};
@@ -255,7 +256,7 @@ impl HarnessEngine {
                             }
                         }
                         Err(e) => {
-                            eprintln!("[turin] Error in hook '{}' (script '{}'): {}", hook_name, name, e);
+                            error!(hook = %hook_name, script = %name, error = %e, "Error in harness hook");
                         }
                     }
                 }

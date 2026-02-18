@@ -7,6 +7,7 @@ use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Value, Table};
 use std::path::{Path, PathBuf};
 use tokio::sync::Mutex;
 use glob::glob;
+use tracing::warn;
 
 use crate::persistence::state::StateStore;
 use crate::inference::provider::{
@@ -347,7 +348,7 @@ fn register_session_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()
                         let mut q = queue.lock().await;
                         q.push_back(command);
                     } else {
-                        eprintln!("[harness] WARN: session.queue called without active session");
+                        warn!("session.queue called without active session");
                     }
                 })
             });
@@ -556,7 +557,7 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
                                     },
                                     Err(e) => {
                                         // Log warning but continue with text-only search
-                                        eprintln!("[WARN] Embedding failed for memory search: {}. Falling back to text-only.", e);
+                                        warn!(error = %e, "Embedding failed for memory search, falling back to text-only");
                                     }
                                 }
                             } else {
