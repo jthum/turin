@@ -38,7 +38,7 @@ impl Kernel {
             .unwrap_or(0);
 
         {
-            let harness = self.harness.lock().unwrap();
+            let harness = self.lock_harness();
             if let Some(ref engine) = *harness {
                 let ctx = ContextWrapper::new(
                     model.clone(),
@@ -303,7 +303,7 @@ impl Kernel {
                 }
                 crate::tools::ToolEffect::EnqueueTask { title, subtasks, clear_existing } => {
                     let verdict_result = {
-                        let harness = self.harness.lock().unwrap();
+                        let harness = self.lock_harness();
                         if let Some(engine) = &*harness {
                             // Map ToolEffect to a metadata-like structure for the harness legacy hook
                             let metadata = serde_json::json!({

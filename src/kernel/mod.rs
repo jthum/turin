@@ -69,6 +69,15 @@ impl Kernel {
         self.state.as_ref()
     }
 
+    /// Lock the harness mutex.
+    ///
+    /// Panics if the mutex is poisoned (previous holder panicked).
+    /// A poisoned harness is an unrecoverable state — continuing would
+    /// risk executing tool calls with a partially-updated engine.
+    pub(crate) fn lock_harness(&self) -> std::sync::MutexGuard<'_, Option<HarnessEngine>> {
+        self.harness.lock().expect("harness mutex poisoned")
+    }
+
     /// Create a new session.
     pub fn create_session(&self) -> SessionState {
         let mut session = SessionState::new();
@@ -108,7 +117,7 @@ impl Kernel {
 
     /// Run a Lua script directly in the harness (for testing/verification).
     pub fn run_script(&self, script: &str) -> Result<()> {
-        let mut harness_lock = self.harness.lock().unwrap();
+        let mut harness_lock = self.lock_harness();
         if let Some(ref mut engine) = *harness_lock {
              engine.load_script_str(script)?;
         } else {
@@ -133,7 +142,7 @@ impl Kernel {
 
         // Trigger on_agent_start harness hook
         {
-            let harness = self.harness.lock().unwrap();
+            let harness = self.lock_harness();
             if let Some(ref engine) = *harness
                 && let Err(e) = engine.evaluate("on_agent_start", serde_json::json!({ "session_id": session_id })) {
                      warn!(error = %e, "Harness on_agent_start failed");
@@ -205,7 +214,7 @@ impl Kernel {
             let mut recheck = false;
             
             let verdict_result = {
-                let harness = self.harness.lock().unwrap();
+                let harness = self.lock_harness();
                 if let Some(ref engine) = *harness {
                     let payload = serde_json::json!({
                         "session_id": session.id,
@@ -312,7 +321,7 @@ impl Kernel {
     ///
     /// Returns the composed verdict. If no harness is loaded, returns `Allow`.
     pub(crate) fn evaluate_tool_call(&self, name: &str, id: &str, args: &serde_json::Value) -> Verdict {
-        let harness = self.harness.lock().unwrap();
+        let harness = self.lock_harness();
         if let Some(ref engine) = *harness {
             let payload = serde_json::json!({
                 "name": name,
@@ -344,7 +353,7 @@ impl Kernel {
     /// logs but doesn't halt the loop (the harness can use `db.kv_set` to track state
     /// and reject tool calls instead).
     pub fn evaluate_token_usage(&self, input_tokens: u64, output_tokens: u64) {
-        let harness = self.harness.lock().unwrap();
+        let harness = self.lock_harness();
         if let Some(ref engine) = *harness {
             let payload = serde_json::json!({
                 "input_tokens": input_tokens,

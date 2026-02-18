@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use mlua::{UserData, UserDataMethods, MetaMethod, Value, LuaSerdeExt};
 
 use crate::inference::provider::{InferenceMessage, ProviderClient};
@@ -59,9 +59,16 @@ impl ContextWrapper {
         }
     }
 
+    /// Lock the context state mutex.
+    ///
+    /// Panics if poisoned (previous holder panicked — unrecoverable).
+    fn lock_state(&self) -> MutexGuard<'_, ContextState> {
+        self.state.lock().expect("context state mutex poisoned")
+    }
+
     /// Retrieve the inner state (cloning the data out)
     pub fn get_state(&self) -> ContextState {
-        self.state.lock().unwrap().clone()
+        self.lock_state().clone()
     }
 }
 
@@ -69,58 +76,49 @@ impl UserData for ContextWrapper {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // Properties
         methods.add_method("get_model", |_, this, ()| {
-            let state = this.state.lock().unwrap();
-            Ok(state.model.clone())
+            Ok(this.lock_state().model.clone())
         });
         
         methods.add_method("get_provider", |_, this, ()| {
-            let state = this.state.lock().unwrap();
-            Ok(state.provider.clone())
+            Ok(this.lock_state().provider.clone())
         });
 
         methods.add_method("get_token_count", |_, this, ()| {
-            let state = this.state.lock().unwrap();
-            Ok(state.token_count)
+            Ok(this.lock_state().token_count)
         });
 
         methods.add_method("get_token_limit", |_, this, ()| {
-            let state = this.state.lock().unwrap();
-            Ok(state.token_limit)
+            Ok(this.lock_state().token_limit)
         });
 
         methods.add_method("get_system_prompt", |_, this, ()| {
-            let state = this.state.lock().unwrap();
-            Ok(state.system_prompt.clone())
+            Ok(this.lock_state().system_prompt.clone())
         });
 
         methods.add_method("set_system_prompt", |_, this, val: String| {
-            let mut state = this.state.lock().unwrap();
-            state.system_prompt = val;
+            this.lock_state().system_prompt = val;
             Ok(())
         });
 
         methods.add_method("get_thinking_budget", |_, this, ()| {
-            let state = this.state.lock().unwrap();
-            Ok(state.thinking_budget)
+            Ok(this.lock_state().thinking_budget)
         });
 
         methods.add_method("set_thinking_budget", |_, this, val: u32| {
-            let mut state = this.state.lock().unwrap();
-            state.thinking_budget = val;
+            this.lock_state().thinking_budget = val;
             Ok(())
         });
 
         // Messages Property (Copy)
         methods.add_method("get_messages", |lua, this: &ContextWrapper, ()| {
-            let state = this.state.lock().unwrap();
+            let state = this.lock_state();
             let val = lua.to_value(&state.messages).map_err(mlua::Error::external)?;
             Ok(val)
         });
 
         methods.add_method("set_messages", |lua, this: &ContextWrapper, val: Value| {
             let messages: Vec<InferenceMessage> = lua.from_value(val).map_err(mlua::Error::external)?;
-            let mut state = this.state.lock().unwrap();
-            state.messages = messages;
+            this.lock_state().messages = messages;
             Ok(())
         });
 
@@ -128,35 +126,35 @@ impl UserData for ContextWrapper {
         methods.add_meta_method(MetaMethod::Index, |lua, this: &ContextWrapper, key: String| {
             match key.as_str() {
                 "model" => {
-                    let state = this.state.lock().unwrap();
+                    let state = this.lock_state();
                     Ok(Value::String(lua.create_string(&state.model)?))
                 }
                 "provider" => {
-                    let state = this.state.lock().unwrap();
+                    let state = this.lock_state();
                     Ok(Value::String(lua.create_string(&state.provider)?))
                 }
                 "token_count" => {
-                    let state = this.state.lock().unwrap();
+                    let state = this.lock_state();
                     Ok(Value::Integer(state.token_count as i64)) 
                 }
                 "token_limit" => {
-                    let state = this.state.lock().unwrap();
+                    let state = this.lock_state();
                     Ok(Value::Integer(state.token_limit as i64))
                 }
                 "system_prompt" => {
-                    let state = this.state.lock().unwrap();
+                    let state = this.lock_state();
                     Ok(Value::String(lua.create_string(&state.system_prompt)?))
                 }
                 "thinking_budget" => {
-                    let state = this.state.lock().unwrap();
+                    let state = this.lock_state();
                     Ok(Value::Integer(state.thinking_budget as i64))
                 }
                 "prompt" => {
-                    let state = this.state.lock().unwrap();
+                    let state = this.lock_state();
                     Ok(state.prompt.clone().map(|s| Value::String(lua.create_string(&s).unwrap())).unwrap_or(Value::Nil))
                 }
                 "messages" => {
-                    let state = this.state.lock().unwrap();
+                    let state = this.lock_state();
                     lua.to_value(&state.messages).map_err(mlua::Error::external)
                 }
                 _ => Ok(Value::Nil),
@@ -167,25 +165,22 @@ impl UserData for ContextWrapper {
             match key.as_str() {
                 "system_prompt" => {
                     let s: String = lua.from_value(val).map_err(mlua::Error::external)?;
-                    let mut state = this.state.lock().unwrap();
-                    state.system_prompt = s;
+                    this.lock_state().system_prompt = s;
                     Ok(())
                 }
                 "provider" => {
                     let s: String = lua.from_value(val).map_err(mlua::Error::external)?;
-                    let mut state = this.state.lock().unwrap();
-                    state.provider = s;
+                    this.lock_state().provider = s;
                     Ok(())
                 }
                 "thinking_budget" => {
                     let b: u32 = lua.from_value(val).map_err(mlua::Error::external)?;
-                    let mut state = this.state.lock().unwrap();
-                    state.thinking_budget = b;
+                    this.lock_state().thinking_budget = b;
                     Ok(())
                 }
                 "prompt" => {
                     let s: Option<String> = lua.from_value(val).map_err(mlua::Error::external)?;
-                    let mut state = this.state.lock().unwrap();
+                    let mut state = this.lock_state();
                     state.prompt = s.clone();
                     // Sync back to messages if it's the last message
                     if let Some(msg) = state.messages.last_mut()
@@ -197,8 +192,7 @@ impl UserData for ContextWrapper {
                 }
                 "messages" => {
                     let msgs: Vec<InferenceMessage> = lua.from_value(val).map_err(mlua::Error::external)?;
-                    let mut state = this.state.lock().unwrap();
-                    state.messages = msgs;
+                    this.lock_state().messages = msgs;
                     Ok(())
                 }
                  _ => Err(mlua::Error::RuntimeError(format!("Cannot set read-only or unknown property: {}", key))),
@@ -208,13 +202,12 @@ impl UserData for ContextWrapper {
         // Mutation Helpers
         methods.add_method("add_message", |lua, this: &ContextWrapper, val: Value| {
             let msg: InferenceMessage = lua.from_value(val).map_err(mlua::Error::external)?;
-            let mut state = this.state.lock().unwrap();
-            state.messages.push(msg);
+            this.lock_state().messages.push(msg);
             Ok(())
         });
 
         methods.add_method("remove_message", |_, this, idx: usize| {
-            let mut state = this.state.lock().unwrap();
+            let mut state = this.lock_state();
             // Lua is 1-indexed, Rust is 0-indexed
             if idx > 0 && idx <= state.messages.len() {
                 state.messages.remove(idx - 1);
@@ -225,14 +218,10 @@ impl UserData for ContextWrapper {
         });
 
         methods.add_method("clear_messages", |_, this, ()| {
-            let mut state = this.state.lock().unwrap();
-            state.messages.clear();
+            this.lock_state().messages.clear();
             Ok(())
         });
 
-        // Summarize Capability
-        // Takes a table of messages (optional) or uses current messages
-        // Summarize Capability (Sync wrapper)
         // Summarize Capability (Sync wrapper)
         methods.add_method("summarize", |lua, this: &ContextWrapper, args: Value| {
              let clients = this.clients.clone();
@@ -248,7 +237,7 @@ impl UserData for ContextWrapper {
              let res = tokio::task::block_in_place(|| {
                  tokio::runtime::Handle::current().block_on(async {
                      let (messages, model, provider_name) = {
-                         let state = state_arc.lock().unwrap();
+                         let state = state_arc.lock().expect("context state mutex poisoned");
                          let msgs = messages_opt.unwrap_or_else(|| state.messages.clone());
                          (msgs, state.model.clone(), state.provider.clone())
                      };

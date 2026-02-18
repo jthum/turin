@@ -87,11 +87,13 @@ pub trait Tool: Send + Sync {
 }
 
 /// Helper to deserialize tool arguments from a JSON Value.
+#[must_use = "parse result should be checked for InvalidParams errors"]
 pub fn parse_args<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, ToolError> {
     serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))
 }
 
 /// Centralized path validation to prevent traversal attacks.
+#[must_use = "path validation result must be checked before file operations"]
 pub fn is_safe_path(root: &Path, path: &Path) -> Result<PathBuf, ToolError> {
     // 1. Resolve to absolute-ish path within root
     let resolved = if path.is_absolute() {

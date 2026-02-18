@@ -122,7 +122,7 @@ impl Kernel {
         }
 
         {
-            let mut h = self.harness.lock().unwrap();
+            let mut h = self.lock_harness();
             *h = Some(engine);
         }
         Ok(())
@@ -168,7 +168,7 @@ impl Kernel {
                         match engine.load_dir(&harness_dir) {
                             Ok(_) => {
                                 let script_count = engine.loaded_scripts().len();
-                                let mut h = harness.lock().unwrap();
+                                let mut h = harness.lock().expect("harness mutex poisoned");
                                 *h = Some(engine);
                                 info!(count = script_count, "Harness reloaded successfully");
                             }

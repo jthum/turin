@@ -42,6 +42,10 @@ impl HarnessEngine {
         lua.sandbox(true)
             .map_err(|e| anyhow::anyhow!("Failed to enable Luau sandbox: {}", e))?;
 
+        // Defense-in-depth: cap Lua memory at 32MB to prevent OOM from runaway scripts.
+        const MAX_LUA_MEMORY: usize = 32 * 1024 * 1024;
+        lua.set_memory_limit(MAX_LUA_MEMORY)?;
+
         Ok(Self {
             lua,
             scripts: Vec::new(),
