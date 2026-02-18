@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+// Mutex removed
 
 use crate::kernel::{Kernel, TurinConfig};
 use crate::tools::registry::ToolRegistry;
@@ -55,7 +55,7 @@ impl RuntimeBuilder {
             json: self.json,
             tool_registry: self.tool_registry,
             state: self.state,
-            harness: Arc::new(Mutex::new(None)),
+            harness: Arc::new(std::sync::Mutex::new(None)),
             check_watcher: None,
             clients: HashMap::new(),
             embedding_provider: self.embedding_provider,

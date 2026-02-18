@@ -126,6 +126,7 @@ impl HarnessEngine {
             "on_agent_end",
             "on_before_inference",
             "on_task_submit",
+            "on_kernel_event",
         ];
 
         for hook in known_hooks {

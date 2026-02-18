@@ -45,6 +45,24 @@ pub struct ToolContext {
     pub session_id: String,
 }
 
+/// The effect of a tool execution.
+#[derive(Debug, Clone)]
+pub enum ToolEffect {
+    /// Standard output — return to LLM
+    Output(ToolOutput),
+    /// Enqueue new tasks (usually from `submit_task`)
+    EnqueueTask {
+        title: String,
+        subtasks: Vec<String>,
+        clear_existing: bool,
+    },
+    /// Register new tools from an MCP server (usually from `bridge_mcp`)
+    SpawnMcp {
+        command: String,
+        args: Vec<String>,
+    },
+}
+
 /// The Tool trait — every tool in Turin implements this.
 ///
 /// Tools are the only way the agent interacts with the outside world.
@@ -65,7 +83,7 @@ pub trait Tool: Send + Sync {
         &self,
         params: Value,
         ctx: &ToolContext,
-    ) -> Result<ToolOutput, ToolError>;
+    ) -> Result<ToolEffect, ToolError>;
 }
 
 /// Helper to deserialize tool arguments from a JSON Value.

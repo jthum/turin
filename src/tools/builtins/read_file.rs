@@ -36,7 +36,7 @@ impl Tool for ReadFileTool {
     }
 
     #[tracing::instrument(skip(self, params, ctx), fields(path = %params["path"].as_str().unwrap_or("unknown")))]
-    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<crate::tools::ToolEffect, ToolError> {
         let args: ReadFileArgs = parse_args(params)?;
         tracing::info!(path = %args.path, "Reading file");
         
@@ -47,19 +47,20 @@ impl Tool for ReadFileTool {
             .await
             .map_err(|e| ToolError::ExecutionError(format!("Failed to read {}: {}", path.display(), e)))?;
 
-        Ok(ToolOutput {
+        Ok(crate::tools::ToolEffect::Output(ToolOutput {
             content,
             metadata: serde_json::json!({
                 "path": path.display().to_string(),
                 "bytes": tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0),
             }),
-        })
+        }))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::ToolEffect;
     use std::path::PathBuf;
     use tempfile::TempDir;
 
@@ -79,7 +80,12 @@ mod tests {
             .execute(serde_json::json!({ "path": "test.txt" }), &ctx)
             .await
             .unwrap();
-        assert_eq!(result.content, "hello world");
+        
+        if let ToolEffect::Output(output) = result {
+            assert_eq!(output.content, "hello world");
+        } else {
+            panic!("Expected ToolEffect::Output");
+        }
     }
 
     #[tokio::test]

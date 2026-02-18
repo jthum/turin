@@ -1,14 +1,21 @@
 # Turin
 
-**A single-binary runtime for building AI agents you can actually control.**
+**A programmable runtime for AI agents, delivered as a single binary.**
 
-Turin is not an agent. It's the substrate agents run on. It provides everything an autonomous agent needs — LLM inference, tool execution, persistence, memory — and lets you define how the agent behaves through composable Lua scripts called **harnesses**.
+LLMs are probabilistic by nature. Turin lets you shape the environment in which inference becomes action.
 
-The Kernel provides the physics. Your harness defines the universe.
+Through hot-swappable harness scripts, Turin can:
 
-```
-Inference proposes. Harness decides. Kernel enforces.
-```
+- Intercept and modify model inputs and outputs
+- Inject and enrich context before every inference call
+- Enforce hard execution boundaries on tool usage
+- Control tool access and arguments deterministically
+- Shape memory, task flow, and multi-step plans
+- Route between providers mid-session
+
+The model remains probabilistic. The execution layer becomes programmable and enforceable.
+
+Turin sits between inference and action — shaping how AI outputs become structured, reliable execution. It does not replace prompts. It engineers the conditions under which prompts operate.
 
 ---
 
@@ -16,16 +23,14 @@ Inference proposes. Harness decides. Kernel enforces.
 
 Most agent frameworks bake behavior into their core: how the agent plans, what it's allowed to do, how it manages context. If you want something different, you fork or fight the framework.
 
-Turin takes the opposite approach. The Kernel is deliberately unopinionated — it handles transport, streaming, tool execution, and persistence. Everything else lives in harness scripts: governance, workflows, context engineering, memory strategies, even personality. Same binary, different harness, completely different agent.
-
-This means:
+Turin takes the opposite approach. The Kernel handles inference, streaming, tool execution, and persistence. Everything else lives in harness scripts — governance, workflows, context engineering, memory strategies, even personality. Same binary, different harness, completely different agent.
 
 - A **coding assistant** that injects project instructions, compacts context at 80% capacity, and blocks destructive shell commands
 - A **research agent** that routes queries to different LLM providers based on task type
 - A **planning-first agent** that must submit a task plan before taking any action
-- A **conversation-only coach** that has no tool access at all
+- A **conversation-only coach** with no tool access at all
 
-...are all the same Turin binary with different `.lua` files in the harness directory.
+All the same binary. Different `.lua` files in the harness directory.
 
 ---
 
@@ -276,7 +281,7 @@ For a deeper technical walkthrough, see [Architecture](docs/ARCHITECTURE.md).
 | `on_turn_end` | LLM turn completes | — | Post-turn analysis |
 | `on_agent_end` | Session completes | — | Cleanup, final reporting |
 
-For the full harness scripting guide, see [Writing Harnesses](docs/HARNESS_GUIDE.md).
+For the full harness scripting guide, see [Writing Harnesses](docs/HARNESS_GUIDE.md), [Harness Hooks](docs/HOOKS.md), and [Harness Primitives](docs/PRIMITIVES.md).
 
 ---
 
@@ -359,7 +364,7 @@ type = "openai"  # or "no_op" for environments without embedding support
 
 ## Project Status
 
-Turin is at **v0.9.0**. The core runtime is functional and tested. What's implemented:
+Turin is at **v0.10.0**. The core runtime is functional and tested. What's implemented:
 
 - Multi-provider inference (Anthropic, OpenAI) with streaming
 - Full tool execution loop (read, write, edit, shell, submit_task, bridge_mcp)
@@ -370,7 +375,7 @@ Turin is at **v0.9.0**. The core runtime is functional and tested. What's implem
 - Extended thinking with harness-controlled budgets
 - REPL mode with live harness reloading
 
-See [Architecture](docs/ARCHITECTURE.md) for technical details and [Writing Harnesses](docs/HARNESS_GUIDE.md) for the scripting guide.
+See [Architecture](docs/ARCHITECTURE.md) for technical details and the [Harness Reference](docs/HOOKS.md) for hooks and [primitives](docs/PRIMITIVES.md).
 
 ---
 

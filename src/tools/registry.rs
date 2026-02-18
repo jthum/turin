@@ -59,7 +59,7 @@ impl ToolRegistry {
         name: &str,
         args: serde_json::Value,
         ctx: &ToolContext,
-    ) -> Result<super::ToolOutput, super::ToolError> {
+    ) -> Result<super::ToolEffect, super::ToolError> {
         let tool = self
             .get(name)
             .ok_or_else(|| super::ToolError::ExecutionError(format!("Unknown tool: {}", name)))?;

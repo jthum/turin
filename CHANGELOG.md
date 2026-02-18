@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-02-18
+
+### Added
+- **Advanced Observability**:
+  - `on_kernel_event` hook: Enables harness scripts to observe all internal kernel events (Lifecycle, Stream, Audit) in real-time.
+  - Flattened serialization for `KernelEvent` to improve Lua ergonomics.
+- **First-Class Nesting Support**: 
+  - Verified recursive agent spawning via `turin.agent.spawn` with isolated state and harness context.
+- **Harness Ergonomics**:
+  - Added `prompt` helper to `ContextWrapper` for simplified access and mutation of the last user message.
+
+### Changed
+- **Performance & Stability**:
+  - Enabled **WAL (Write-Ahead Logging)** mode in the Turso/SQLite backend to significantly improve concurrent write performance.
+  - Implemented a 5-second busy timeout for database operations to resolve contention during high-frequency event streaming.
+  - Refactored harness engine synchronization to use a blocking `std::sync::Mutex`, ensuring guaranteed sequential event capture for "god-view" observers.
+
 ## [0.9.5] - 2026-02-16
 
 ### Added

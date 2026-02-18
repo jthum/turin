@@ -39,7 +39,7 @@ impl Tool for BridgeMcp {
         })
     }
 
-    async fn execute(&self, params: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+    async fn execute(&self, params: Value, _ctx: &ToolContext) -> Result<crate::tools::ToolEffect, ToolError> {
         let command = params["command"].as_str()
             .ok_or_else(|| ToolError::InvalidParams("Missing 'command'".to_string()))?
             .to_string();
@@ -50,14 +50,7 @@ impl Tool for BridgeMcp {
             .map(|v| v.as_str().unwrap_or_default().to_string())
             .collect();
 
-        // We don't spawn here. We return metadata so the Kernel can spawn and register tools.
-        // This avoids needing to inject the ToolRegistry into this tool.
-        let mut output = ToolOutput::new(format!("Requesting MCP connection to: {} {:?}", command, args));
-        output.metadata["action"] = json!("spawn_mcp");
-        output.metadata["command"] = json!(command);
-        output.metadata["args"] = json!(args);
-
-        Ok(output)
+        Ok(crate::tools::ToolEffect::SpawnMcp { command, args })
     }
 }
 
@@ -87,7 +80,7 @@ impl Tool for McpToolProxy {
         self.def.input_schema.clone()
     }
 
-    async fn execute(&self, params: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+    async fn execute(&self, params: Value, _ctx: &ToolContext) -> Result<crate::tools::ToolEffect, ToolError> {
         let result = self.client.call_tool(&self.def.name, params).await
             .map_err(|e| ToolError::ExecutionError(format!("MCP Call Failed: {}", e)))?;
 
@@ -98,6 +91,6 @@ impl Tool for McpToolProxy {
             return Err(ToolError::ExecutionError(text_output));
         }
 
-        Ok(ToolOutput::new(text_output.trim().to_string()))
+        Ok(crate::tools::ToolEffect::Output(ToolOutput::new(text_output.trim().to_string())))
     }
 }

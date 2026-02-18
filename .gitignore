@@ -6,13 +6,13 @@ Cargo.lock
 # Turin Execution Artifacts
 .turin/*.db
 .turin/*.db-journal
-.turin/*.db-journal
+.turin/*.db-wal
 /harnesses/
 run.log
 turin.toml
 
 # Working Docs
-/docs/
+.workspace/
 
 # Environment / Secrets
 .env

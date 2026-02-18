@@ -42,7 +42,7 @@ impl Tool for WriteFileTool {
     }
 
     #[tracing::instrument(skip(self, params, ctx), fields(path = %params["path"].as_str().unwrap_or("unknown")))]
-    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<crate::tools::ToolEffect, ToolError> {
         let args: WriteFileArgs = parse_args(params)?;
         tracing::info!(path = %args.path, "Writing file");
         
@@ -65,19 +65,20 @@ impl Tool for WriteFileTool {
             ToolError::ExecutionError(format!("Failed to write {}: {}", path.display(), e))
         })?;
 
-        Ok(ToolOutput {
+        Ok(crate::tools::ToolEffect::Output(ToolOutput {
             content: format!("Successfully wrote {} bytes to {}", bytes, path.display()),
             metadata: serde_json::json!({
                 "path": path.display().to_string(),
                 "bytes": bytes,
             }),
-        })
+        }))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::ToolEffect;
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -97,7 +98,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.content.contains("6 bytes"));
+        if let ToolEffect::Output(output) = result {
+            assert!(output.content.contains("6 bytes"));
+        } else {
+            panic!("Expected ToolEffect::Output");
+        }
         let written = std::fs::read_to_string(dir.path().join("output.txt")).unwrap();
         assert_eq!(written, "hello!");
     }

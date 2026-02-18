@@ -203,6 +203,7 @@ fn register_db_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
                     });
                     match result {
                         Ok(Some(val)) => Ok(Value::String(lua.create_string(&val)?)),
+                        Ok(None) => Ok(Value::Nil),
                         _ => Ok(Value::Nil),
                     }
                 }

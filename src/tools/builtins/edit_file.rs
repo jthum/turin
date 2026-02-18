@@ -48,7 +48,7 @@ impl Tool for EditFileTool {
     }
 
     #[tracing::instrument(skip(self, params, ctx), fields(path = %params["path"].as_str().unwrap_or("unknown")))]
-    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<crate::tools::ToolEffect, ToolError> {
         let args: EditFileArgs = parse_args(params)?;
         tracing::info!(path = %args.path, "Editing file");
         
@@ -81,7 +81,7 @@ impl Tool for EditFileTool {
             ToolError::ExecutionError(format!("Failed to write {}: {}", path.display(), e))
         })?;
 
-        Ok(ToolOutput {
+        Ok(crate::tools::ToolEffect::Output(ToolOutput {
             content: format!(
                 "Successfully edited {}. Replaced {} bytes with {} bytes.",
                 path.display(),
@@ -93,13 +93,14 @@ impl Tool for EditFileTool {
                 "old_len": args.old_text.len(),
                 "new_len": args.new_text.len(),
             }),
-        })
+        }))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::ToolEffect;
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -126,7 +127,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.content.contains("Successfully edited"));
+        if let ToolEffect::Output(output) = result {
+            assert!(output.content.contains("Successfully edited"));
+        } else {
+            panic!("Expected ToolEffect::Output");
+        }
         let content = std::fs::read_to_string(&file_path).unwrap();
         assert_eq!(content, "hello rust");
     }

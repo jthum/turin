@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::tools::{parse_args, Tool, ToolContext, ToolError, ToolOutput};
+use crate::tools::{parse_args, Tool, ToolContext, ToolError};
 
 pub struct SubmitTaskTool;
 
@@ -50,20 +50,14 @@ impl Tool for SubmitTaskTool {
     }
 
     #[tracing::instrument(skip(self, params, _ctx), fields(title = %params["title"].as_str().unwrap_or("unknown")))]
-    async fn execute(&self, params: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+    async fn execute(&self, params: Value, _ctx: &ToolContext) -> Result<crate::tools::ToolEffect, ToolError> {
         let args: SubmitTaskArgs = parse_args(params)?;
         tracing::info!(title = %args.title, subtasks = args.subtasks.len(), "Submitting task plan");
         
-        // We just return the details. The Kernel will handle the actual queue manipulation
-        // by inspecting the metadata.
-        Ok(ToolOutput {
-            content: format!("Task '{}' submitted with {} subtasks.", args.title, args.subtasks.len()),
-            metadata: serde_json::json!({
-                "action": "submit_task",
-                "title": args.title,
-                "subtasks": args.subtasks,
-                "clear_existing": args.clear_existing
-            }),
+        Ok(crate::tools::ToolEffect::EnqueueTask {
+            title: args.title,
+            subtasks: args.subtasks,
+            clear_existing: args.clear_existing,
         })
     }
 }

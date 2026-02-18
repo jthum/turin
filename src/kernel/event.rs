@@ -1,93 +1,70 @@
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 
-/// Every action in Turin produces a typed `KernelEvent`.
-///
-/// Events are:
-/// 1. **Typed** — Each event has a specific variant
-/// 2. **Persisted** — Written to libSQL for auditability (Phase 3)
-/// 3. **Harness-gated** — Certain events pass through harness hooks before execution (Phase 4)
-#[derive(Debug, Clone, Serialize)]
+/// Events related to the overall lifecycle of an agent session or turn.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum KernelEvent {
+pub enum LifecycleEvent {
     /// Agent session begins
-    AgentStart {
-        session_id: String,
-    },
-
+    AgentStart { session_id: String },
     /// Agent session completes
     AgentEnd {
         message_count: u32,
         total_input_tokens: u64,
         total_output_tokens: u64,
     },
-
     /// New LLM call begins
-    TurnStart {
-        turn_index: u32,
-    },
-
+    TurnStart { turn_index: u32 },
     /// LLM call completes
     TurnEnd {
         turn_index: u32,
         has_tool_calls: bool,
     },
+}
 
+/// Ephemeral high-frequency events from the LLM provider's stream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StreamEvent {
     /// Streaming message begins
-    MessageStart {
-        role: String,
-        model: String,
-    },
-
+    MessageStart { role: String, model: String },
     /// Streaming text chunk received
-    MessageDelta {
-        content_delta: String,
-    },
-
+    MessageDelta { content_delta: String },
     /// Streaming thinking chunk received
-    ThinkingDelta {
-        thinking: String,
-    },
-
+    ThinkingDelta { thinking: String },
     /// Complete message assembled
     MessageEnd {
         role: String,
         input_tokens: u64,
         output_tokens: u64,
     },
-
-    /// LLM requests a tool execution
+    /// LLM requests a tool execution (produced by stream)
     ToolCall {
         id: String,
         name: String,
         args: serde_json::Value,
     },
+}
 
+/// Durable events for auditing, logging, and metrics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AuditEvent {
     /// Tool execution completed
     ToolResult {
         id: String,
         output: String,
         is_error: bool,
     },
-
     /// Tool execution begins (for logging/timing)
-    ToolExecStart {
-        id: String,
-        name: String,
-    },
-
+    ToolExecStart { id: String, name: String },
     /// Tool execution completes
-    ToolExecEnd {
-        id: String,
-        success: bool,
-    },
-
+    ToolExecEnd { id: String, success: bool },
     /// Token/cost accounting update
     TokenUsage {
         input_tokens: u64,
         output_tokens: u64,
         cost_usd: f64,
     },
-
     /// Harness engine rejected an action
     HarnessRejection {
         /// Which event type was rejected (e.g., "tool_call")
@@ -97,24 +74,44 @@ pub enum KernelEvent {
     },
 }
 
+/// Every action in Turin produces a typed `KernelEvent`.
+///
+/// Refactored to separate events by purpose:
+/// 1. **Lifecycle** — Session/Turn boundaries
+/// 2. **Stream** — Ephemeral LLM output
+/// 3. **Audit** — Durable execution logs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum KernelEvent {
+    Lifecycle(LifecycleEvent),
+    Stream(StreamEvent),
+    Audit(AuditEvent),
+}
+
 impl KernelEvent {
     /// Get the event type name as a string.
     pub fn event_type(&self) -> &'static str {
         match self {
-            KernelEvent::AgentStart { .. } => "agent_start",
-            KernelEvent::AgentEnd { .. } => "agent_end",
-            KernelEvent::TurnStart { .. } => "turn_start",
-            KernelEvent::TurnEnd { .. } => "turn_end",
-            KernelEvent::MessageStart { .. } => "message_start",
-            KernelEvent::MessageDelta { .. } => "message_delta",
-            KernelEvent::ThinkingDelta { .. } => "thinking_delta",
-            KernelEvent::MessageEnd { .. } => "message_end",
-            KernelEvent::ToolCall { .. } => "tool_call",
-            KernelEvent::ToolResult { .. } => "tool_result",
-            KernelEvent::ToolExecStart { .. } => "tool_exec_start",
-            KernelEvent::ToolExecEnd { .. } => "tool_exec_end",
-            KernelEvent::TokenUsage { .. } => "token_usage",
-            KernelEvent::HarnessRejection { .. } => "harness_rejection",
+            KernelEvent::Lifecycle(e) => match e {
+                LifecycleEvent::AgentStart { .. } => "agent_start",
+                LifecycleEvent::AgentEnd { .. } => "agent_end",
+                LifecycleEvent::TurnStart { .. } => "turn_start",
+                LifecycleEvent::TurnEnd { .. } => "turn_end",
+            },
+            KernelEvent::Stream(e) => match e {
+                StreamEvent::MessageStart { .. } => "message_start",
+                StreamEvent::MessageDelta { .. } => "message_delta",
+                StreamEvent::ThinkingDelta { .. } => "thinking_delta",
+                StreamEvent::MessageEnd { .. } => "message_end",
+                StreamEvent::ToolCall { .. } => "tool_call",
+            },
+            KernelEvent::Audit(e) => match e {
+                AuditEvent::ToolResult { .. } => "tool_result",
+                AuditEvent::ToolExecStart { .. } => "tool_exec_start",
+                AuditEvent::ToolExecEnd { .. } => "tool_exec_end",
+                AuditEvent::TokenUsage { .. } => "token_usage",
+                AuditEvent::HarnessRejection { .. } => "harness_rejection",
+            },
         }
     }
 }
@@ -125,9 +122,9 @@ mod tests {
 
     #[test]
     fn test_event_serialization() {
-        let event = KernelEvent::AgentStart {
+        let event = KernelEvent::Lifecycle(LifecycleEvent::AgentStart {
             session_id: "test-123".to_string(),
-        };
+        });
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"agent_start\""));
         assert!(json.contains("\"session_id\":\"test-123\""));
@@ -136,17 +133,17 @@ mod tests {
     #[test]
     fn test_event_type_names() {
         assert_eq!(
-            KernelEvent::AgentStart {
+            KernelEvent::Lifecycle(LifecycleEvent::AgentStart {
                 session_id: "x".into()
-            }
+            })
             .event_type(),
             "agent_start"
         );
         assert_eq!(
-            KernelEvent::HarnessRejection {
+            KernelEvent::Audit(AuditEvent::HarnessRejection {
                 event: "tool_call".into(),
                 reason: "blocked".into()
-            }
+            })
             .event_type(),
             "harness_rejection"
         );
@@ -154,11 +151,11 @@ mod tests {
 
     #[test]
     fn test_tool_call_event_serialization() {
-        let event = KernelEvent::ToolCall {
+        let event = KernelEvent::Stream(StreamEvent::ToolCall {
             id: "call_1".to_string(),
             name: "read_file".to_string(),
             args: serde_json::json!({ "path": "main.rs" }),
-        };
+        });
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"tool_call\""));
         assert!(json.contains("\"name\":\"read_file\""));

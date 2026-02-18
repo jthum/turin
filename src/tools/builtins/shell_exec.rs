@@ -56,7 +56,7 @@ impl Tool for ShellExecTool {
     }
 
     #[tracing::instrument(skip(self, params, ctx), fields(command = %params["command"].as_str().unwrap_or("unknown")))]
-    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<crate::tools::ToolEffect, ToolError> {
         let args: ShellExecArgs = parse_args(params)?;
         tracing::info!(command = %args.command, "Executing shell command");
 
@@ -115,7 +115,7 @@ impl Tool for ShellExecTool {
             content.push_str("\n... [output truncated]");
         }
 
-        Ok(ToolOutput {
+        Ok(crate::tools::ToolEffect::Output(ToolOutput {
             content,
             metadata: serde_json::json!({
                 "command": args.command,
@@ -124,13 +124,14 @@ impl Tool for ShellExecTool {
                 "stderr_bytes": stderr.len(),
                 "cwd": cwd.display().to_string(),
             }),
-        })
+        }))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::ToolEffect;
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -147,8 +148,12 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.content.trim(), "hello");
-        assert_eq!(result.metadata["exit_code"], 0);
+        if let ToolEffect::Output(output) = result {
+            assert_eq!(output.content.trim(), "hello");
+            assert_eq!(output.metadata["exit_code"], 0);
+        } else {
+            panic!("Expected ToolEffect::Output");
+        }
     }
 
     #[tokio::test]
@@ -165,7 +170,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.metadata["exit_code"], 42);
+        if let ToolEffect::Output(output) = result {
+            assert_eq!(output.metadata["exit_code"], 42);
+        } else {
+            panic!("Expected ToolEffect::Output");
+        }
     }
 
     #[tokio::test]
@@ -185,8 +194,12 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.content.contains("[stderr]"));
-        assert!(result.content.contains("err"));
+        if let ToolEffect::Output(output) = result {
+            assert!(output.content.contains("[stderr]"));
+            assert!(output.content.contains("err"));
+        } else {
+            panic!("Expected ToolEffect::Output");
+        }
     }
 
     #[tokio::test]

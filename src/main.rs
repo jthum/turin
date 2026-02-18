@@ -162,6 +162,7 @@ async fn main() -> Result<()> {
             kernel.init_harness().await?;
             kernel.start_watcher()?;
             let mut session = kernel.create_session();
+            kernel.start_session(&mut session).await?;
             kernel.run(&mut session, Some(prompt)).await?;
             kernel.end_session(&mut session).await?;
 
@@ -209,7 +210,7 @@ async fn main() -> Result<()> {
 
             // Trigger AgentStart
             let mut session = kernel.create_session();
-            kernel.run(&mut session, None).await?;
+            kernel.start_session(&mut session).await?;
 
             loop {
                 let readline = rl.readline(">> ");
@@ -282,7 +283,7 @@ async fn main() -> Result<()> {
             let script_content = std::fs::read_to_string(&path)
                 .with_context(|| format!("Failed to read script: {}", path.display()))?;
 
-            kernel.run_script(&script_content).await?;
+            kernel.run_script(&script_content)?;
 
             Ok(())
         }

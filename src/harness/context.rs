@@ -11,6 +11,7 @@ pub struct ContextState {
     pub provider: String,
     pub system_prompt: String,
     pub messages: Vec<InferenceMessage>,
+    pub prompt: Option<String>,
     pub token_count: u32,
     pub token_limit: u32,
     pub thinking_budget: u32,
@@ -34,12 +35,21 @@ impl ContextWrapper {
         thinking_budget: u32,
         clients: HashMap<String, ProviderClient>,
     ) -> Self {
+        let prompt = messages.iter().last()
+            .and_then(|m| if m.role == crate::inference::provider::InferenceRole::User {
+                Some(m.content.iter().filter_map(|c| match c {
+                    crate::inference::provider::InferenceContent::Text { text } => Some(text.clone()),
+                    _ => None,
+                }).collect::<Vec<_>>().join("\n"))
+            } else { None });
+
         Self {
             state: Arc::new(Mutex::new(ContextState {
                 model,
                 provider,
                 system_prompt,
                 messages,
+                prompt,
                 token_count,
                 token_limit,
                 thinking_budget,
@@ -140,6 +150,10 @@ impl UserData for ContextWrapper {
                     let state = this.state.lock().unwrap();
                     Ok(Value::Integer(state.thinking_budget as i64))
                 }
+                "prompt" => {
+                    let state = this.state.lock().unwrap();
+                    Ok(state.prompt.clone().map(|s| Value::String(lua.create_string(&s).unwrap())).unwrap_or(Value::Nil))
+                }
                 "messages" => {
                     let state = this.state.lock().unwrap();
                     lua.to_value(&state.messages).map_err(mlua::Error::external)
@@ -166,6 +180,20 @@ impl UserData for ContextWrapper {
                     let b: u32 = lua.from_value(val).map_err(mlua::Error::external)?;
                     let mut state = this.state.lock().unwrap();
                     state.thinking_budget = b;
+                    Ok(())
+                }
+                "prompt" => {
+                    let s: Option<String> = lua.from_value(val).map_err(mlua::Error::external)?;
+                    let mut state = this.state.lock().unwrap();
+                    state.prompt = s.clone();
+                    // Sync back to messages if it's the last message
+                    if let Some(msg) = state.messages.last_mut() {
+                        if msg.role == crate::inference::provider::InferenceRole::User {
+                            if let Some(new_text) = s {
+                                msg.content = vec![crate::inference::provider::InferenceContent::Text { text: new_text }];
+                            }
+                        }
+                    }
                     Ok(())
                 }
                 "messages" => {

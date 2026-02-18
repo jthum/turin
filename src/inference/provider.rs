@@ -4,7 +4,7 @@ use futures::stream::{Stream, StreamExt};
 use std::pin::Pin;
 
 use crate::kernel::config::ProviderConfig;
-use crate::kernel::event::KernelEvent;
+use crate::kernel::event::{KernelEvent, StreamEvent};
 
 // Use standardized types from SDK
 pub use inference_sdk_core::{
@@ -129,11 +129,15 @@ impl ProviderClient {
 
 fn map_sdk_event(event: InferenceEvent) -> Result<KernelEvent> {
     match event {
-        InferenceEvent::MessageStart { role, model, .. } => Ok(KernelEvent::MessageStart { role, model }),
-        InferenceEvent::MessageDelta { content } => Ok(KernelEvent::MessageDelta { content_delta: content }),
-        InferenceEvent::ThinkingDelta { content } => Ok(KernelEvent::ThinkingDelta { thinking: content }),
-        InferenceEvent::ToolCall { id, name, args } => Ok(KernelEvent::ToolCall { id, name, args }),
-        InferenceEvent::MessageEnd { input_tokens, output_tokens, .. } => Ok(KernelEvent::MessageEnd { role: "assistant".to_string(), input_tokens: input_tokens as u64, output_tokens: output_tokens as u64 }),
+        InferenceEvent::MessageStart { role, model, .. } => Ok(KernelEvent::Stream(StreamEvent::MessageStart { role, model })),
+        InferenceEvent::MessageDelta { content } => Ok(KernelEvent::Stream(StreamEvent::MessageDelta { content_delta: content })),
+        InferenceEvent::ThinkingDelta { content } => Ok(KernelEvent::Stream(StreamEvent::ThinkingDelta { thinking: content })),
+        InferenceEvent::ToolCall { id, name, args } => Ok(KernelEvent::Stream(StreamEvent::ToolCall { id, name, args })),
+        InferenceEvent::MessageEnd { input_tokens, output_tokens, .. } => Ok(KernelEvent::Stream(StreamEvent::MessageEnd { 
+            role: "assistant".to_string(), 
+            input_tokens: input_tokens as u64, 
+            output_tokens: output_tokens as u64 
+        })),
         InferenceEvent::Error { message } => Err(anyhow::anyhow!("Provider stream error: {}", message)),
         _ => Err(anyhow::anyhow!("Unknown inference event type")),
     }

@@ -157,6 +157,9 @@ impl StateStore {
         let conn = self.db.connect()?;
 
         // 1. Init Core Schema
+        conn.execute("PRAGMA journal_mode = WAL;", ()).await.ok();
+        conn.execute("PRAGMA busy_timeout = 5000;", ()).await.ok();
+
         conn
             .execute_batch(INIT_SCHEMA_CORE)
             .await
