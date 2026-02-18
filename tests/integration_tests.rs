@@ -1,7 +1,6 @@
 use anyhow::Result;
 use turin::kernel::config::{TurinConfig, ProviderConfig, AgentConfig, PersistenceConfig, HarnessConfig, EmbeddingConfig};
 use turin::kernel::Kernel;
-use turin::kernel::session::SessionState;
 use std::collections::HashMap;
 use tempfile::tempdir;
 

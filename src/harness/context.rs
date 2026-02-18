@@ -25,6 +25,7 @@ pub struct ContextWrapper {
 }
 
 impl ContextWrapper {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         model: String,
         provider: String,

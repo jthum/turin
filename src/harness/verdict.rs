@@ -17,7 +17,6 @@ pub enum Verdict {
     /// The reason is injected into the LLM context as structured feedback.
     Reject(String),
     /// Pause execution and escalate to a human for approval.
-    /// Pause execution and escalate to a human for approval.
     Escalate(String),
     /// Modify the parameters or content of the action.
     Modify(serde_json::Value),

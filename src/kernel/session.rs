@@ -30,6 +30,12 @@ pub struct SessionState {
     pub status: SessionStatus,
 }
 
+impl Default for SessionState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SessionState {
     pub fn new() -> Self {
         let (tx, _rx) = broadcast::channel(1024);

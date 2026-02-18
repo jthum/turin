@@ -330,6 +330,7 @@ impl StateStore {
     // ─── Tool Executions ─────────────────────────────────────────
 
     /// Log a tool execution.
+    #[allow(clippy::too_many_arguments)]
     pub async fn insert_tool_execution(
         &self,
         session_id: &str,
@@ -470,8 +471,8 @@ impl StateStore {
                 let id: i64 = row.get(0)?;
                 
                 // Track row data if not seen
-                if !rows_data.contains_key(&id) {
-                    rows_data.insert(id, MemoryRow {
+                if let std::collections::hash_map::Entry::Vacant(e) = rows_data.entry(id) {
+                    e.insert(MemoryRow {
                         id,
                         session_id: row.get(1)?,
                         content: row.get(2)?,
@@ -506,14 +507,14 @@ impl StateStore {
                             let id: i64 = row.get(0)?;
         
                             // If we haven't fetched this row's data yet (from vector search), we need to fetch it
-                            if !rows_data.contains_key(&id) {
+                            if let std::collections::hash_map::Entry::Vacant(e) = rows_data.entry(id) {
                                     // Fetch full row data
                                 let mut full_row_q = conn.query(
                                     "SELECT session_id, content, metadata, created_at FROM memories WHERE id = ?1", 
                                     [id]
                                 ).await?;
                                 if let Some(full_row) = full_row_q.next().await? {
-                                    rows_data.insert(id, MemoryRow {
+                                    e.insert(MemoryRow {
                                         id,
                                         session_id: full_row.get(0)?,
                                         content: full_row.get(1)?,

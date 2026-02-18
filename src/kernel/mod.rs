@@ -70,23 +70,7 @@ impl Kernel {
         RuntimeBuilder::new(config)
     }
 
-    /// Create a new Kernel with the given configuration.
-    /// DEPRECATED: Use `Kernel::builder(config).build()` instead.
-    #[deprecated(since = "0.9.0", note = "Use Kernel::builder() instead")]
-    pub fn new(config: TurinConfig, json: bool) -> Self {
-        Self {
-            config: Arc::new(config),
-            json,
-            tool_registry: crate::tools::builtins::create_default_registry(),
-            state: None,
-            harness: Arc::new(std::sync::Mutex::new(None)),
-            check_watcher: None,
-            clients: HashMap::new(),
-            embedding_provider: None,
-            active_queue: Arc::new(AsyncMutex::new(None)),
-            mcp_clients: Vec::new(),
-        }
-    }
+
 
     /// Create a new session.
     pub fn create_session(&self) -> SessionState {
@@ -269,7 +253,7 @@ impl Kernel {
                     clients,
                     embedding_provider,
                     queue: active_queue,
-                    config: config,
+                    config,
                 };
 
                 match HarnessEngine::new(app_data) {
@@ -315,11 +299,11 @@ impl Kernel {
 
         // Spawn background task to handle reloads with debouncing
         tokio::spawn(async move {
-            while let Some(_) = rx.recv().await {
+            while rx.recv().await.is_some() {
                 // Debounce: Wait for more events
                 tokio::time::sleep(Duration::from_millis(200)).await;
                 // Clear any pending events that arrived during sleep
-                while let Ok(_) = rx.try_recv() {}
+                while rx.try_recv().is_ok() {}
 
                 info!("Hot-reload triggered by file change");
                 let h = harness_clone.clone();
@@ -655,8 +639,8 @@ impl Kernel {
                         self.persist_event(session, &event);
                     }
                     StreamEvent::MessageEnd { input_tokens, output_tokens, .. } => {
-                        session.total_input_tokens += *input_tokens as u64;
-                        session.total_output_tokens += *output_tokens as u64;
+                        session.total_input_tokens += *input_tokens;
+                        session.total_output_tokens += *output_tokens;
                         self.persist_event(session, &event);
                     }
                     StreamEvent::ToolCall { id, name, args } => {
@@ -940,7 +924,7 @@ impl Kernel {
     /// Evaluate harness `on_tool_call` hook.
     ///
     /// Returns the composed verdict. If no harness is loaded, returns `Allow`.
-
+    ///
     fn evaluate_tool_call(&self, name: &str, id: &str, args: &serde_json::Value) -> Verdict {
         let harness = self.harness.lock().unwrap();
         if let Some(ref engine) = *harness {
@@ -973,7 +957,7 @@ impl Kernel {
     /// Budget enforcement via token hooks is informational in v0.1 — a REJECT here
     /// logs but doesn't halt the loop (the harness can use `db.kv_set` to track state
     /// and reject tool calls instead).
-
+    ///
     pub fn evaluate_token_usage(&self, input_tokens: u64, output_tokens: u64) {
         let harness = self.harness.lock().unwrap();
         if let Some(ref engine) = *harness {
@@ -1020,7 +1004,9 @@ impl Kernel {
             // In JSON mode, all events go to stdout as NDJSON
             println!("{}", serde_json::to_string(event).unwrap_or_default());
         }
-        let _ = tx.send((session_id.to_string(), event.clone()));
+        if tx.send((session_id.to_string(), event.clone())).is_err() {
+            warn!("Event broadcast failed — no active receivers");
+        }
     }
 
     /// Connect to an MCP server, initialize it, and register its tools.

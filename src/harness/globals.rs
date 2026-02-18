@@ -15,6 +15,16 @@ use crate::inference::provider::{
 use crate::inference::embeddings::EmbeddingProvider;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// Maximum file size for harness `fs.write()` operations (10 MB).
+const MAX_HARNESS_FILE_SIZE: usize = 10 * 1024 * 1024;
+
+/// Maximum recursion depth for `turin.agent.spawn()`.
+const MAX_SPAWN_DEPTH: u32 = 3;
+
+/// Global spawn depth counter (incremented on entry, decremented on exit).
+static SPAWN_DEPTH: AtomicU32 = AtomicU32::new(0);
 
 pub type SessionQueue = Arc<Mutex<VecDeque<String>>>;
 pub type ActiveSessionQueue = Arc<Mutex<Option<SessionQueue>>>;
@@ -117,6 +127,13 @@ fn register_fs_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
     {
         let root = fs_root.clone();
         fs_table.set("write", lua.create_function(move |_lua, (path, content): (String, String)| {
+            // Enforce file size limit to prevent disk exhaustion
+            if content.len() > MAX_HARNESS_FILE_SIZE {
+                return Err(mlua::Error::runtime(format!(
+                    "fs.write: content exceeds maximum size ({} bytes > {} byte limit)",
+                    content.len(), MAX_HARNESS_FILE_SIZE
+                )));
+            }
             match resolve_safe_path(&root, &path) {
                 Some(safe_path) => {
                     // Create parent directories if needed
@@ -263,14 +280,13 @@ fn register_json_module(lua: &Lua) -> LuaResult<()> {
 fn register_time_module(lua: &Lua) -> LuaResult<()> {
     let time_table = lua.create_table()?;
 
-    // time.now_utc() -> string (ISO 8601)
+    // time.now_utc() -> string (Unix timestamp in seconds)
     time_table.set("now_utc", lua.create_function(|_lua, ()| {
         use std::time::SystemTime;
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        // Format as ISO 8601 (basic — no chrono dependency)
         Ok(format!("{}", now))
     })?)?;
 
@@ -425,19 +441,17 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
             }
 
             if let Ok(paths) = glob(&full_pattern_str) {
-                for entry in paths {
-                    if let Ok(path) = entry {
-                        // Ensure path is within root
-                        if let Ok(canonical) = path.canonicalize() {
-                             if let Ok(canonical_root) = root.canonicalize() {
-                                 if canonical.starts_with(&canonical_root) {
-                                     // Return relative path string
-                                     if let Ok(relative) = path.strip_prefix(&root) {
-                                         matches.push(relative.to_string_lossy().to_string());
-                                     }
+                for path in paths.flatten() {
+                    // Ensure path is within root
+                    if let Ok(canonical) = path.canonicalize() {
+                         if let Ok(canonical_root) = root.canonicalize() {
+                             if canonical.starts_with(&canonical_root) {
+                                 // Return relative path string
+                                 if let Ok(relative) = path.strip_prefix(&root) {
+                                     matches.push(relative.to_string_lossy().to_string());
                                  }
                              }
-                        }
+                         }
                     }
                 }
             }
@@ -451,7 +465,7 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
     turin_table.set("import", lua.create_function(|lua, name: String| {
         let globals = lua.globals();
         let modules: Table = globals.get("__harness_modules")?;
-        Ok(modules.get::<Value>(name)?)
+        modules.get::<Value>(name)
     })?)?;
 
     // turin.complete(prompt, options) -> string | nil
@@ -628,6 +642,16 @@ fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
         let state_store = app_data.state_store.clone();
         
         agent_table.set("spawn", lua.create_function(move |_lua, (prompt, options): (String, Option<mlua::Table>)| {
+            // Guard: prevent unbounded recursive agent spawning
+            let current_depth = SPAWN_DEPTH.fetch_add(1, Ordering::SeqCst);
+            if current_depth >= MAX_SPAWN_DEPTH {
+                SPAWN_DEPTH.fetch_sub(1, Ordering::SeqCst);
+                return Err(mlua::Error::runtime(format!(
+                    "agent.spawn depth limit exceeded (max {} levels)",
+                    MAX_SPAWN_DEPTH
+                )));
+            }
+
             let mut config = (*config_arc).clone();
             
             // Apply options
@@ -691,6 +715,9 @@ fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
                     }
                 })
             });
+
+            // Always decrement spawn depth counter after completion
+            SPAWN_DEPTH.fetch_sub(1, Ordering::SeqCst);
 
             match result {
                 Ok(s) => Ok(Some(s)),

@@ -2,8 +2,7 @@ use anyhow::Result;
 use turin::kernel::config::{TurinConfig, ProviderConfig, AgentConfig, PersistenceConfig, HarnessConfig, EmbeddingConfig};
 use turin::kernel::Kernel;
 use turin::inference::provider::{
-    InferenceEvent, InferenceProvider, InferenceRequest, InferenceMessage, 
-    InferenceRole, InferenceContent, SdkError, InferenceStream, RequestOptions,
+    InferenceEvent, InferenceProvider, InferenceRequest, SdkError, InferenceStream, RequestOptions,
     ProviderClient, ProviderKind
 };
 use turin::kernel::event::{KernelEvent, LifecycleEvent, StreamEvent, AuditEvent};

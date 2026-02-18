@@ -1,7 +1,6 @@
-use anyhow::Result;
 use turin::tools::{is_safe_path, ToolError};
 use proptest::prelude::*;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tempfile::tempdir;
 
 proptest! {

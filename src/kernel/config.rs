@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 /// Top-level Turin configuration, parsed from `turin.toml`.
 #[derive(Debug, Clone, Deserialize)]
+#[derive(Default)]
 pub struct TurinConfig {
     pub agent: AgentConfig,
     #[serde(default)]
@@ -158,6 +159,7 @@ impl TurinConfig {
     }
 
     /// Parse configuration from a TOML string.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(toml_str: &str) -> Result<Self> {
         let config: TurinConfig = toml::from_str(toml_str)
             .with_context(|| "Failed to parse turin.toml")?;
@@ -210,18 +212,6 @@ impl Default for AgentConfig {
     }
 }
 
-impl Default for TurinConfig {
-    fn default() -> Self {
-        Self {
-            agent: AgentConfig::default(),
-            kernel: KernelConfig::default(),
-            persistence: PersistenceConfig::default(),
-            harness: HarnessConfig::default(),
-            providers: ProvidersConfig::default(),
-            embeddings: None,
-        }
-    }
-}
 
 // ─── Tests ───────────────────────────────────────────────────────
 

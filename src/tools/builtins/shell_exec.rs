@@ -78,15 +78,19 @@ impl Tool for ShellExecTool {
             .map_err(|e| ToolError::ExecutionError(format!("Failed to spawn command: {}", e)))?;
 
         let timeout = std::time::Duration::from_secs(args.timeout_secs);
-        let output = tokio::time::timeout(timeout, child.wait_with_output())
-            .await
-            .map_err(|_| {
-                ToolError::ExecutionError(format!(
-                    "Command timed out after {} seconds",
+        let output = tokio::select! {
+            result = child.wait_with_output() => {
+                result.map_err(|e| ToolError::ExecutionError(format!("Command failed: {}", e)))?
+            }
+            _ = tokio::time::sleep(timeout) => {
+                // Timeout — the child process is killed when `child` is dropped
+                // because tokio::process::Child kills the process on drop.
+                return Err(ToolError::ExecutionError(format!(
+                    "Command timed out after {} seconds (process killed)",
                     args.timeout_secs
-                ))
-            })?
-            .map_err(|e| ToolError::ExecutionError(format!("Command failed: {}", e)))?;
+                )));
+            }
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();

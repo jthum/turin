@@ -2,11 +2,9 @@ use anyhow::Result;
 use turin::kernel::config::{TurinConfig, ProviderConfig, AgentConfig, PersistenceConfig, HarnessConfig, EmbeddingConfig};
 use turin::kernel::Kernel;
 use turin::inference::provider::{
-    InferenceEvent, InferenceProvider, InferenceRequest, InferenceMessage, 
-    InferenceRole, InferenceContent, Tool, SdkError, InferenceStream, RequestOptions,
+    InferenceEvent, InferenceProvider, InferenceRequest, InferenceContent, SdkError, InferenceStream, RequestOptions,
     ProviderClient, ProviderKind
 };
-use turin::kernel::event::KernelEvent;
 use std::collections::HashMap;
 use tempfile::tempdir;
 use std::sync::Arc;

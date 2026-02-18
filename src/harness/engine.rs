@@ -5,7 +5,7 @@
 //! using first-REJECT-wins semantics.
 
 use anyhow::{Context, Result};
-use mlua::{Function, Lua, LuaSerdeExt, MultiValue, Table, Value};
+use mlua::{Function, Lua, LuaOptions, LuaSerdeExt, MultiValue, StdLib, Table, Value};
 use std::path::Path;
 
 use crate::harness::globals::{self, HarnessAppData};
@@ -23,7 +23,12 @@ impl HarnessEngine {
     ///
     /// `app_data` provides the globals context (fs root, state store, etc.).
     pub fn new(app_data: HarnessAppData) -> Result<Self> {
-        let lua = Lua::new();
+        // Defense-in-depth: exclude IO, OS, FFI, PACKAGE standard library modules.
+        // Even though sandbox() removes access to dangerous functions, excluding
+        // them at VM creation ensures they cannot be reached even if sandbox is
+        // bypassed by a future mlua/Luau vulnerability.
+        let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())
+            .map_err(|e| anyhow::anyhow!("Failed to create Luau VM: {}", e))?;
 
         // Register all Turin-SL globals before sandboxing.
         // This makes them available but read-only once sandbox is enabled.
