@@ -13,7 +13,7 @@ use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{broadcast, mpsc, Mutex as AsyncMutex};
+use tokio::sync::{broadcast, Mutex as AsyncMutex};
 use tracing::{info, warn, error, debug, instrument};
 use futures::future::join_all;
 use std::collections::HashMap;

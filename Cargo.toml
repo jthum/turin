@@ -1,6 +1,6 @@
 [package]
 name = "turin"
-version = "0.9.5"
+version = "0.10.0"
 edition = "2021"
 description = "A single-binary, event-driven LLM execution runtime with composable Lua harness scripts"
 
@@ -28,11 +28,13 @@ tokio = { version = "1.0", features = ["full"] }
 thiserror = "1.0"
 anyhow = "1.0"
 
-# Inference SDK (path dependency during development)
-inference-sdk-core = { path = "../inference-sdk-rust/core" }
-anthropic-sdk = { path = "../inference-sdk-rust/anthropic" }
-openai-sdk = { path = "../inference-sdk-rust/openai" }
-mcp-sdk = { path = "../mcp-sdk-rust", version = "0.2.0" }
+# Inference SDK family (unified provider layer)
+inference-sdk-core = { git = "https://github.com/jthum/inference-sdk-rust", branch = "main" }
+anthropic-sdk = { git = "https://github.com/jthum/inference-sdk-rust", branch = "main" }
+openai-sdk = { git = "https://github.com/jthum/inference-sdk-rust", branch = "main" }
+
+# MCP SDK
+mcp-sdk = { git = "https://github.com/jthum/mcp-sdk-rust", branch = "main" }
 
 # Streaming
 futures = "0.3"
