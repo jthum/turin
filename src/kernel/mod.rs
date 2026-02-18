@@ -2,28 +2,23 @@ pub mod config;
 pub mod event;
 pub mod builder;
 pub mod session;
+mod init;
+mod turn;
 
 use anyhow::{Context, Result};
 use builder::RuntimeBuilder;
 use session::SessionState;
 use config::TurinConfig;
-use event::{KernelEvent, LifecycleEvent, StreamEvent, AuditEvent};
-use futures::StreamExt;
-use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
+use event::{KernelEvent, LifecycleEvent};
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
 use tracing::{info, warn, error, debug, instrument};
-use futures::future::join_all;
 use std::collections::HashMap;
 
 use crate::harness::engine::HarnessEngine;
-use crate::harness::globals::HarnessAppData;
-use crate::harness::context::ContextWrapper;
 use crate::harness::verdict::Verdict;
 use crate::inference::provider::{
-    self, InferenceContent, InferenceMessage, InferenceRole, ProviderClient, ProviderKind,
+    InferenceContent, InferenceMessage, InferenceRole, ProviderClient,
 };
 use crate::persistence::state::StateStore;
 use crate::tools::ToolContext;
@@ -32,7 +27,7 @@ use crate::tools::mcp::McpToolProxy;
 use mcp_sdk::client::McpClient;
 use mcp_sdk::transport::StdioTransport;
 use crate::inference::embeddings::EmbeddingProvider;
-use notify::{RecommendedWatcher, Event};
+use notify::RecommendedWatcher;
 
 /// The Turin Kernel — manages the agent loop, event system, and tool execution.
 ///
@@ -40,16 +35,16 @@ use notify::{RecommendedWatcher, Event};
 /// transport, streaming, tool execution, persistence, and event hooks.
 /// Harness scripts define the behavior.
 pub struct Kernel {
-    pub config: Arc<TurinConfig>,
-    pub json: bool,
-    pub tool_registry: ToolRegistry,
-    pub state: Option<StateStore>,
+    pub(crate) config: Arc<TurinConfig>,
+    pub(crate) json: bool,
+    pub(crate) tool_registry: ToolRegistry,
+    pub(crate) state: Option<StateStore>,
     /// Thread-safe harness engine for hot-reloading
-    pub harness: Arc<std::sync::Mutex<Option<HarnessEngine>>>,
+    pub(crate) harness: Arc<std::sync::Mutex<Option<HarnessEngine>>>,
     /// Watcher handle to keep it alive
-    pub check_watcher: Option<RecommendedWatcher>,
-    pub clients: HashMap<String, ProviderClient>,
-    pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    pub(crate) check_watcher: Option<RecommendedWatcher>,
+    pub(crate) clients: HashMap<String, ProviderClient>,
+    pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     /// Active session queue for harness interaction
     pub(crate) active_queue: crate::harness::globals::ActiveSessionQueue,
     pub(crate) mcp_clients: Vec<Arc<McpClient<mcp_sdk::transport::StdioTransport>>>,
@@ -57,20 +52,22 @@ pub struct Kernel {
 
 /// A pending tool call collected during streaming.
 #[derive(Debug, Clone)]
-struct PendingToolCall {
-    id: String,
-    name: String,
-    args: serde_json::Value,
+pub(crate) struct PendingToolCall {
+    pub id: String,
+    pub name: String,
+    pub args: serde_json::Value,
 }
 
 impl Kernel {
-    /// Create a new Kernel with the given configuration.
     /// Create a new builder for Kernel.
     pub fn builder(config: TurinConfig) -> RuntimeBuilder {
         RuntimeBuilder::new(config)
     }
 
-
+    /// Access the state store (if initialized).
+    pub fn state(&self) -> Option<&StateStore> {
+        self.state.as_ref()
+    }
 
     /// Create a new session.
     pub fn create_session(&self) -> SessionState {
@@ -79,12 +76,23 @@ impl Kernel {
         if let Some(ref store) = self.state {
             let mut rx = session.event_tx.subscribe();
             let store_clone = store.clone();
+            let cancel = session.cancel_token.clone();
             let handle = tokio::spawn(async move {
-                while let Ok((session_id, event)) = rx.recv().await {
-                    let event_type = event.event_type().to_string();
-                    let payload = serde_json::to_value(&event).unwrap_or_default();
-                    if let Err(e) = store_clone.insert_event(&session_id, &event_type, &payload).await {
-                        warn!(error = %e, "Background persistence error");
+                loop {
+                    tokio::select! {
+                        _ = cancel.cancelled() => break,
+                        result = rx.recv() => {
+                            match result {
+                                Ok((session_id, event)) => {
+                                    let event_type = event.event_type().to_string();
+                                    let payload = serde_json::to_value(&event).unwrap_or_default();
+                                    if let Err(e) = store_clone.insert_event(&session_id, &event_type, &payload).await {
+                                        warn!(error = %e, "Background persistence error");
+                                    }
+                                }
+                                Err(_) => break,
+                            }
+                        }
                     }
                 }
             });
@@ -96,248 +104,6 @@ impl Kernel {
     /// Add a provider client manually (e.g. for testing).
     pub fn add_client(&mut self, name: String, client: ProviderClient) {
         self.clients.insert(name, client);
-    }
-
-    /// Initialize all configured provider clients. Call before `init_harness()` and `run()`.
-    pub fn init_clients(&mut self) -> Result<()> {
-        for (name, config) in &self.config.providers {
-            let client = self.create_client(name, config)?;
-            self.clients.insert(name.clone(), client);
-        }
-        
-        // Ensure the default provider is available
-        let default_provider_name = &self.config.agent.provider;
-        
-        if !self.clients.contains_key(default_provider_name) {
-             // Try to init if it's in the config but failed? Or if it wasn't in the loop?
-             // The loop covers all in `self.config.providers`. 
-             // If default provider is NOT in `self.config.providers`, we can't init it unless it's a known implicit type.
-             // But we moved away from implicit.
-             // So we just error if it's missing.
-             if !self.config.providers.contains_key(default_provider_name) {
-                 anyhow::bail!("Default provider '{}' not found in [providers] configuration", default_provider_name);
-             }
-        }
-
-        // Initialize embedding provider
-        // WE need to find the openai provider config if selected.
-        let embedding_provider = if let Some(ref config) = self.config.embeddings {
-            match config {
-                crate::kernel::config::EmbeddingConfig::OpenAI => {
-                     // Find a provider with type="openai"
-                     let openai_config = self.config.providers.values()
-                        .find(|p| p.kind == "openai")
-                        .with_context(|| "OpenAI embeddings selected but no OpenAI provider configured")?;
-                        
-                     let api_key_env = openai_config.api_key_env.as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("OpenAI provider missing 'api_key_env' configuration"))?;
-                     let api_key = std::env::var(api_key_env)
-                        .with_context(|| format!("Environment variable '{}' not set", api_key_env))?;
-                     
-                     crate::inference::embeddings::create_embedding_provider(&crate::inference::embeddings::EmbeddingConfig::OpenAI {
-                        api_key,
-                        model: "text-embedding-3-small".to_string(),
-                    })
-                },                crate::kernel::config::EmbeddingConfig::NoOp => {
-                    crate::inference::embeddings::create_embedding_provider(&crate::inference::embeddings::EmbeddingConfig::NoOp)
-                }
-            }
-        } else {
-             // Default logic: if there is an openai provider, use it?
-             if let Some(openai_config) = self.config.providers.values().find(|p| p.kind == "openai") {
-                 crate::inference::embeddings::create_embedding_provider(&crate::inference::embeddings::EmbeddingConfig::OpenAI {
-                     api_key: openai_config.api_key_env.as_ref().map(|k| std::env::var(k).unwrap_or_default()).unwrap_or_default(),
-                     model: "text-embedding-3-small".to_string(),
-                 })
-             } else {
-                 crate::inference::embeddings::create_embedding_provider(&crate::inference::embeddings::EmbeddingConfig::NoOp)
-             }
-        };
-        
-        self.embedding_provider = Some(Arc::from(embedding_provider));
-
-        Ok(())
-    }
-
-    /// Initialize the state store. Call before `run()`.
-    pub async fn init_state(&mut self) -> Result<()> {
-        let db_path = &self.config.persistence.database_path;
-        let store = StateStore::open(db_path).await.with_context(|| {
-            format!("Failed to initialize state store at '{}'", db_path)
-        })?;
-        info!(db_path = %db_path, "State store initialized");
-        self.state = Some(store.clone());
-
-        // Start background persistence task - MOVED to create_session
-        // init_state now only initializes the store.
-        
-        Ok(())
-    }
-
-
-    /// Initialize the harness engine. Call after `init_state()` and before `run()`.
-    #[instrument(skip(self), fields(directory = %self.config.harness.directory))]
-    pub async fn init_harness(&mut self) -> Result<()> {
-        info!("Initializing harness");
-        let harness_dir = PathBuf::from(&self.config.harness.directory);
-
-        // Resolve fs_root: "." means workspace root, otherwise use as-is
-        let fs_root = if self.config.harness.fs_root == "." {
-            PathBuf::from(&self.config.kernel.workspace_root)
-        } else {
-            PathBuf::from(&self.config.harness.fs_root)
-        };
-
-        let app_data = HarnessAppData {
-            fs_root,
-            workspace_root: PathBuf::from(&self.config.kernel.workspace_root),
-            state_store: self.state.clone(),
-            clients: self.clients.clone(),
-            embedding_provider: self.embedding_provider.clone(),
-            queue: self.active_queue.clone(),
-            config: self.config.clone(),
-        };
-
-        let mut engine = HarnessEngine::new(app_data)
-            .with_context(|| "Failed to create harness engine")?;
-
-        engine.load_dir(&harness_dir)
-            .with_context(|| format!("Failed to load harness scripts from '{}'", harness_dir.display()))?;
-
-        let script_count = engine.loaded_scripts().len();
-        if script_count > 0 {
-            info!(count = script_count, directory = %harness_dir.display(), "Harness scripts loaded");
-            for name in engine.loaded_scripts() {
-                debug!(script = %name, "Loaded harness script");
-            }
-        } else {
-            warn!(directory = %harness_dir.display(), "No harness scripts found");
-        }
-
-        {
-            let mut h = self.harness.lock().unwrap();
-            *h = Some(engine);
-        }
-        Ok(())
-    }
-
-    /// Reload the harness from disk (atomic swap).
-    #[instrument(skip(self))]
-    pub async fn reload_harness(&mut self) -> Result<()> {
-        info!("Reloading harness");
-        self.init_harness().await
-    }
-
-    #[instrument(skip_all)]
-    pub fn reload_harness_static(
-        harness: Arc<std::sync::Mutex<Option<HarnessEngine>>>,
-        config: Arc<TurinConfig>,
-        clients: HashMap<String, ProviderClient>,
-        state: Option<StateStore>,
-        embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
-        active_queue: crate::harness::globals::ActiveSessionQueue,
-    ) -> Result<()> {
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                let harness_dir = PathBuf::from(&config.harness.directory);
-                let fs_root = if config.harness.fs_root == "." {
-                    PathBuf::from(&config.kernel.workspace_root)
-                } else {
-                    PathBuf::from(&config.harness.fs_root)
-                };
-
-                let app_data = HarnessAppData {
-                    fs_root,
-                    workspace_root: PathBuf::from(&config.kernel.workspace_root),
-                    state_store: state.clone(),
-                    clients,
-                    embedding_provider,
-                    queue: active_queue,
-                    config,
-                };
-
-                match HarnessEngine::new(app_data) {
-                    Ok(mut engine) => {
-                        match engine.load_dir(&harness_dir) {
-                            Ok(_) => {
-                                let script_count = engine.loaded_scripts().len();
-                                let mut h = harness.lock().unwrap();
-                                *h = Some(engine);
-                                info!(count = script_count, "Harness reloaded successfully");
-                            }
-                            Err(e) => error!(error = %e, "Failed to load harness scripts"),
-                        }
-                    }
-                    Err(e) => error!(error = %e, "Failed to create harness engine during static reload"),
-                }
-                Ok(())
-            })
-        })
-    }
-
-    /// Start watching the harness directory for changes (background thread).
-    #[instrument(skip(self))]
-    pub fn start_watcher(&mut self) -> Result<()> {
-        use notify::{RecursiveMode, Watcher};
-        use std::time::Duration;
-
-        let harness_clone = self.harness.clone();
-        let config_clone = self.config.clone();
-        let clients_clone = self.clients.clone();
-        let state_clone = self.state.clone();
-        let embedding_clone = self.embedding_provider.clone();
-        let queue_clone = self.active_queue.clone();
-        let harness_dir = PathBuf::from(&config_clone.harness.directory);
-
-        if !harness_dir.exists() {
-            warn!(directory = %harness_dir.display(), "Harness directory does not exist, skipping watcher");
-            return Ok(());
-        }
-
-        // We use an async channel to debounce events
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(10);
-
-        // Spawn background task to handle reloads with debouncing
-        tokio::spawn(async move {
-            while rx.recv().await.is_some() {
-                // Debounce: Wait for more events
-                tokio::time::sleep(Duration::from_millis(200)).await;
-                // Clear any pending events that arrived during sleep
-                while rx.try_recv().is_ok() {}
-
-                info!("Hot-reload triggered by file change");
-                let h = harness_clone.clone();
-                let c = config_clone.clone();
-                let cl = clients_clone.clone();
-                let s = state_clone.clone();
-                let e = embedding_clone.clone();
-                let q = queue_clone.clone();
-                
-                tokio::spawn(async move {
-                    if let Err(err) = Self::reload_harness_static(h, c, cl, s, e, q) {
-                        error!(error = %err, "Harness hot-reload failed");
-                    }
-                });
-            }
-        });
-
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
-            match res {
-                Ok(event) => {
-                    if event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove() {
-                        let _ = tx.blocking_send(());
-                    }
-                }
-                Err(e) => error!(error = ?e, "Watcher channel error"),
-            }
-        })?;
-
-        watcher.watch(&harness_dir, RecursiveMode::NonRecursive)?;
-        self.check_watcher = Some(watcher);
-
-        info!(directory = %harness_dir.display(), "Watching harness directory");
-
-        Ok(())
     }
 
     /// Run a Lua script directly in the harness (for testing/verification).
@@ -390,6 +156,9 @@ impl Kernel {
             total_input_tokens: session.total_input_tokens,
             total_output_tokens: session.total_output_tokens,
          }));
+         
+         // Cancel background event persistence task
+         session.cancel_token.cancel();
          
          // Clear active queue
          {
@@ -541,391 +310,10 @@ impl Kernel {
         Ok(())
     }
 
-    /// Execute a single turn of the agent loop. Returns true if loop should continue.
-    async fn execute_turn(&mut self, session: &mut SessionState, tool_ctx: &ToolContext) -> Result<bool> {
-        let session_id = session.id.clone();
-
-        // Turn-local configuration
-        let mut model = self.config.agent.model.clone();
-        let mut provider_name = self.config.agent.provider.clone();
-        let mut system_prompt = self.config.agent.system_prompt.clone();
-
-        self.persist_event(session, &KernelEvent::Lifecycle(LifecycleEvent::TurnStart { turn_index: session.turn_index }));
-
-        // ─── Harness Hook: on_before_inference ───────────────────────
-        let mut thinking_budget = self.config.agent.thinking.as_ref()
-            .and_then(|t| if t.enabled { t.budget_tokens } else { None })
-            .unwrap_or(0);
-
-        {
-            let harness = self.harness.lock().unwrap();
-            if let Some(ref engine) = *harness {
-                let ctx = ContextWrapper::new(
-                    model.clone(),
-                    provider_name.clone(),
-                    system_prompt.clone(),
-                    session.history.clone(),
-                    0, 128_000,
-                    thinking_budget,
-                    self.clients.clone(),
-                );
-                
-                match engine.evaluate_userdata("on_before_inference", ctx.clone()) {
-                    Ok(verdict) => {
-                         if verdict.is_rejected() {
-                             warn!(reason = %verdict.reason().unwrap_or(""), "Turn rejected by harness");
-                             return Ok(false);
-                         }
-                    }
-                    Err(e) => {
-                         warn!(error = %e, "Harness on_before_inference error");
-                    }
-                }
-
-                let state = ctx.get_state();
-                session.history = state.messages;
-                system_prompt = state.system_prompt;
-                model = state.model;
-                provider_name = state.provider;
-                thinking_budget = state.thinking_budget;
-            }
-        }
-
-        if !self.clients.contains_key(&provider_name) {
-             if let Some(config) = self.config.providers.get(&provider_name) {
-                 debug!(provider = %provider_name, "Lazily initializing provider");
-                 match self.create_client(&provider_name, config) {
-                     Ok(client) => { self.clients.insert(provider_name.clone(), client); },
-                     Err(e) => {
-                         error!(provider = %provider_name, error = %e, "Failed to initialize provider");
-                         anyhow::bail!("Failed to initialize provider '{}': {}", provider_name, e);
-                     }
-                 }
-             } else {
-                 anyhow::bail!("Provider '{}' not found in configuration", provider_name);
-             }
-        }
-
-        let client = self.clients.get(&provider_name)
-            .ok_or_else(|| anyhow::anyhow!("Provider '{}' not initialized", provider_name))?
-            .clone();
-
-        let tools = self.tool_registry.tool_definitions();
-
-        let options = provider::InferenceOptions {
-            max_tokens: None,
-            temperature: None,
-            thinking_budget: Some(thinking_budget),
-        };
-
-        let mut stream = client.stream(&model, &system_prompt, &session.history, &tools, &options).await?;
-        
-        let mut response_text = String::with_capacity(4096);
-        let mut pending_tool_calls: Vec<PendingToolCall> = Vec::new();
-
-        while let Some(event_result) = stream.next().await {
-             let event = event_result?;
-             match &event {
-                KernelEvent::Stream(e) => match e {
-                    StreamEvent::MessageDelta { content_delta } => {
-                        if !self.json {
-                            print!("{}", content_delta);
-                            io::stdout().flush().ok();
-                        }
-                        self.persist_event(session, &event);
-                        response_text.push_str(content_delta);
-                    }
-                    StreamEvent::ThinkingDelta { thinking: _ } => {
-                        self.persist_event(session, &event);
-                    }
-                    StreamEvent::MessageEnd { input_tokens, output_tokens, .. } => {
-                        session.total_input_tokens += *input_tokens;
-                        session.total_output_tokens += *output_tokens;
-                        self.persist_event(session, &event);
-                    }
-                    StreamEvent::ToolCall { id, name, args } => {
-                        self.persist_event(session, &event);
-                        pending_tool_calls.push(PendingToolCall {
-                            id: id.clone(), name: name.clone(), args: args.clone()
-                        });
-                    }
-                    _ => { self.persist_event(session, &event); }
-                },
-                _ => { self.persist_event(session, &event); }
-             }
-        }
-
-        if !response_text.is_empty() && !response_text.ends_with('\n') { println!(); }
-
-        let has_tool_calls = !pending_tool_calls.is_empty();
-
-        self.persist_event(session, &KernelEvent::Lifecycle(LifecycleEvent::TurnEnd {
-            turn_index: session.turn_index,
-            has_tool_calls,
-        }));
-
-         if let Some(ref store) = self.state {
-            let content: Vec<serde_json::Value> = {
-                let mut parts = Vec::new();
-                if !response_text.is_empty() {
-                    parts.push(serde_json::json!({"type": "text", "text": response_text}));
-                }
-                for tc in &pending_tool_calls {
-                    parts.push(serde_json::json!({
-                        "type": "tool_use", "id": tc.id, "name": tc.name, "input": tc.args,
-                    }));
-                }
-                parts
-            };
-            let _ = store.insert_message(&session_id, session.turn_index, "assistant", &serde_json::Value::Array(content), None).await;
-        }
-
-        let mut assistant_content: Vec<InferenceContent> = Vec::new();
-        if !response_text.is_empty() {
-            assistant_content.push(InferenceContent::Text { text: response_text.clone() });
-        }
-        for tc in &pending_tool_calls {
-            assistant_content.push(InferenceContent::ToolUse {
-                id: tc.id.clone(), name: tc.name.clone(), input: tc.args.clone(),
-            });
-        }
-        session.history.push(InferenceMessage {
-            role: InferenceRole::Assistant,
-            content: assistant_content,
-            tool_call_id: None,
-        });
-
-        if !has_tool_calls {
-            return Ok(false);
-        }
-
-        // Execute tools
-        // Phase 1: Evaluate verdicts
-        let mut validated_calls = Vec::new();
-        let mut tool_results: Vec<InferenceContent> = Vec::new();
-
-        for tc in &pending_tool_calls {
-            let verdict = self.evaluate_tool_call(&tc.name, &tc.id, &tc.args);
-            match &verdict {
-                Verdict::Reject(reason) => {
-                     warn!(tool = %tc.name, reason = %reason, "Tool REJECTED by harness");
-                     let msg = format!("[HARNESS REJECTED] Tool '{}' blocked: {}", tc.name, reason);
-                     self.persist_event(session, &KernelEvent::Audit(AuditEvent::ToolExecStart { id: tc.id.clone(), name: tc.name.clone() }));
-                     self.persist_event(session, &KernelEvent::Audit(AuditEvent::ToolResult { id: tc.id.clone(), output: msg.clone(), is_error: true }));
-                     self.persist_event(session, &KernelEvent::Audit(AuditEvent::ToolExecEnd { id: tc.id.clone(), success: false }));
-                     
-                     if let Some(ref store) = self.state {
-                          let _ = store.insert_tool_execution(&session_id, session.turn_index, &tc.id, &tc.name, &tc.args, Some(&msg), true, Some(0), &verdict.to_string()).await;
-                     }
-                     tool_results.push(InferenceContent::ToolResult { tool_use_id: tc.id.clone(), content: msg, is_error: true });
-                }
-                Verdict::Escalate(reason) => {
-                     warn!(tool = %tc.name, reason = %reason, "ESCALATION: Tool requires approval");
-                     eprint!("[turin] Allow? (y/n): ");
-                     io::stderr().flush().ok();
-                     let mut input = String::new();
-                     let approved = io::stdin().lock().read_line(&mut input).is_ok() && input.trim().eq_ignore_ascii_case("y");
-                     if !approved {
-                          warn!(tool = %tc.name, "Tool DENIED by user");
-                          let msg = format!("[ESCALATION DENIED] Tool '{}' denied: {}", tc.name, reason);
-                           self.persist_event(session, &KernelEvent::Audit(AuditEvent::ToolExecStart { id: tc.id.clone(), name: tc.name.clone() }));
-                           self.persist_event(session, &KernelEvent::Audit(AuditEvent::ToolResult { id: tc.id.clone(), output: msg.clone(), is_error: true }));
-                           self.persist_event(session, &KernelEvent::Audit(AuditEvent::ToolExecEnd { id: tc.id.clone(), success: false }));
-                           if let Some(ref store) = self.state {
-                                let _ = store.insert_tool_execution(&session_id, session.turn_index, &tc.id, &tc.name, &tc.args, Some(&msg), true, Some(0), "escalate_denied").await;
-                           }
-                           tool_results.push(InferenceContent::ToolResult { tool_use_id: tc.id.clone(), content: msg, is_error: true });
-                     } else {
-                         info!(tool = %tc.name, "Tool APPROVED by user");
-                         validated_calls.push((tc, verdict));
-                     }
-                }
-                Verdict::Allow | Verdict::Modify(_) => {
-                    validated_calls.push((tc, verdict));
-                }
-            }
-        }
-
-        // Phase 2: Parallel Execution
-        let kernel = &*self;
-        let event_tx = session.event_tx.clone();
-        let turn_index = session.turn_index;
-        let futures = validated_calls.into_iter().map(|(tc, verdict)| {
-            let session_id = session_id.clone();
-            let tool_ctx = tool_ctx.clone();
-            let event_tx = event_tx.clone();
-            async move {
-                let verdict_str = verdict.to_string();
-                let final_args = match verdict {
-                    Verdict::Modify(new_args) => {
-                         info!(tool = %tc.name, "Tool arguments MODIFIED by harness");
-                         new_args
-                    },
-                    _ => tc.args.clone()
-                };
-
-                let _ = event_tx.send((session_id.clone(), KernelEvent::Audit(AuditEvent::ToolExecStart { id: tc.id.clone(), name: tc.name.clone() })));
-                let start = Instant::now();
-                let effect_res = kernel.tool_registry.execute(&tc.name, final_args, &tool_ctx).await;
-                let duration_ms = start.elapsed().as_millis() as u64;
-                
-                let is_error = effect_res.is_err();
-                let effect = effect_res.unwrap_or_else(|e| {
-                    crate::tools::ToolEffect::Output(crate::tools::ToolOutput {
-                        content: format!("Error: {}", e),
-                        metadata: serde_json::Value::Null,
-                    })
-                });
-
-                let content = match &effect {
-                    crate::tools::ToolEffect::Output(o) => o.content.clone(),
-                    crate::tools::ToolEffect::EnqueueTask { title, .. } => format!("Task submitted: {}", title),
-                    crate::tools::ToolEffect::SpawnMcp { command, .. } => format!("MCP spawned: {}", command),
-                };
-
-                let _ = event_tx.send((session_id.clone(), KernelEvent::Audit(AuditEvent::ToolResult { id: tc.id.clone(), output: content, is_error })));
-                let _ = event_tx.send((session_id.clone(), KernelEvent::Audit(AuditEvent::ToolExecEnd { id: tc.id.clone(), success: !is_error })));
-
-                if let Some(ref store) = kernel.state {
-                     // For legacy compatibility in state store, we'll try to extract content/metadata from effect
-                     let (content, _metadata) = match &effect {
-                         crate::tools::ToolEffect::Output(o) => (o.content.clone(), o.metadata.clone()),
-                         crate::tools::ToolEffect::EnqueueTask { title, subtasks, .. } => (format!("Task '{}' submitted with {} subtasks.", title, subtasks.len()), serde_json::json!({"action": "submit_task"})),
-                         crate::tools::ToolEffect::SpawnMcp { command, .. } => (format!("Requesting MCP connection: {}", command), serde_json::json!({"action": "spawn_mcp"})),
-                     };
-
-                     let _ = store.insert_tool_execution(&session_id, turn_index, &tc.id, &tc.name, &tc.args, Some(&content), is_error, Some(duration_ms), &verdict_str).await;
-                }
-                (tc, effect, is_error)
-            }
-        });
-
-        let execution_results = join_all(futures).await;
-
-        // Phase 3: Side Effects & Result Collection
-        for (tc, effect, mut is_error) in execution_results {
-            let mut content;
-            
-            match effect {
-                crate::tools::ToolEffect::Output(o) => {
-                    content = o.content;
-                }
-                crate::tools::ToolEffect::EnqueueTask { title, subtasks, clear_existing } => {
-                    let verdict_result = {
-                        let harness = self.harness.lock().unwrap();
-                        if let Some(engine) = &*harness {
-                            // Map ToolEffect to a metadata-like structure for the harness legacy hook
-                            let metadata = serde_json::json!({
-                                "action": "submit_task",
-                                "title": title,
-                                "subtasks": subtasks,
-                                "clear_existing": clear_existing
-                            });
-                            Some(engine.evaluate("on_task_submit", metadata))
-                        } else { None }
-                    };
-
-                    content = format!("Task '{}' submitted with {} subtasks.", title, subtasks.len());
-                    
-                    match verdict_result {
-                        Some(Ok(Verdict::Allow)) | None => {
-                            let mut q = session.queue.lock().await;
-                            if clear_existing { q.clear(); }
-                            for task in subtasks { q.push_back(task); }
-                            debug!("Tasks queued from submit_task");
-                        }
-                        Some(Ok(Verdict::Modify(new_tasks_val))) => {
-                            if let Some(new_tasks) = new_tasks_val.as_array() {
-                                let mut q = session.queue.lock().await;
-                                if clear_existing { q.clear(); }
-                                for task in new_tasks {
-                                    if let Some(t) = task.as_str() { q.push_back(t.to_string()); }
-                                }
-                                debug!("Tasks queued (MODIFIED by harness)");
-                            }
-                        }
-                        Some(Ok(Verdict::Reject(reason))) => {
-                            content = format!("Plan REJECTED by Harness: {}", reason);
-                            is_error = true;
-                        }
-                        Some(Ok(Verdict::Escalate(reason))) => {
-                            content = format!("Plan paused for approval: {}", reason);
-                            // NOTE: In a more robust system, we'd handle this differently.
-                            // For now, it stays consistent with previous behavior.
-                        }
-                        Some(Err(e)) => {
-                            error!(error = %e, "Failed to evaluate on_task_submit");
-                        }
-                    }
-                }
-                crate::tools::ToolEffect::SpawnMcp { command, args } => {
-                     match self.spawn_mcp_server(&command, &args).await {
-                         Ok(count) => {
-                             content = format!("Successfully connected to MCP server. Loaded {} new tools.", count);
-                         },
-                         Err(e) => {
-                             content = format!("Failed to connect to MCP server: {}", e);
-                             is_error = true;
-                         }
-                     }
-                }
-            }
-            tool_results.push(InferenceContent::ToolResult { tool_use_id: tc.id.clone(), content, is_error });
-        }
-
-        session.history.push(InferenceMessage {
-            role: InferenceRole::User,
-            content: tool_results.clone(),
-            tool_call_id: None,
-        });
-
-         if let Some(ref store) = self.state {
-             let result_content: Vec<serde_json::Value> = tool_results.iter().map(|r| match r {
-                 InferenceContent::ToolResult { tool_use_id, content, is_error } => {
-                     serde_json::json!({ "type": "tool_result", "tool_use_id": tool_use_id, "content": content, "is_error": is_error })
-                 }
-                 _ => serde_json::json!({})
-             }).collect();
-             let _ = store.insert_message(&session_id, session.turn_index, "tool_result", &serde_json::Value::Array(result_content), None).await;
-         }
-
-         Ok(true)
-    }
-
-    /// Create the appropriate provider client from config.
-    fn create_client(&self, _name: &str, config: &crate::kernel::config::ProviderConfig) -> Result<ProviderClient> {
-        match config.kind.as_str() {
-            "anthropic" => {
-                let client = provider::create_anthropic_client(config)?;
-                Ok(ProviderClient::new(
-                    ProviderKind::Anthropic, // We might want to store the "kind" locally or make ProviderKind arbitrary? 
-                    // ProviderKind is an enum. We should probably keep it for now as "Type" info.
-                    client,
-                ))
-            }
-            "openai" => {
-                let client = provider::create_openai_client(config)?;
-                Ok(ProviderClient::new(
-                    ProviderKind::OpenAI,
-                    client,
-                ))
-            }
-            "mock" => {
-                let client = provider::create_mock_client(config);
-                 Ok(ProviderClient::new(
-                    ProviderKind::Mock,
-                    client,
-                ))
-            }
-            _ => anyhow::bail!("Unknown provider type: {}", config.kind),
-        }
-    }
-
     /// Evaluate harness `on_tool_call` hook.
     ///
     /// Returns the composed verdict. If no harness is loaded, returns `Allow`.
-    ///
-    fn evaluate_tool_call(&self, name: &str, id: &str, args: &serde_json::Value) -> Verdict {
+    pub(crate) fn evaluate_tool_call(&self, name: &str, id: &str, args: &serde_json::Value) -> Verdict {
         let harness = self.harness.lock().unwrap();
         if let Some(ref engine) = *harness {
             let payload = serde_json::json!({
@@ -957,7 +345,6 @@ impl Kernel {
     /// Budget enforcement via token hooks is informational in v0.1 — a REJECT here
     /// logs but doesn't halt the loop (the harness can use `db.kv_set` to track state
     /// and reject tool calls instead).
-    ///
     pub fn evaluate_token_usage(&self, input_tokens: u64, output_tokens: u64) {
         let harness = self.harness.lock().unwrap();
         if let Some(ref engine) = *harness {

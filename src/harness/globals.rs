@@ -75,33 +75,11 @@ fn register_verdict_constants(lua: &Lua) -> LuaResult<()> {
 
 /// Resolve a path relative to a root, ensuring it stays within the root.
 /// Returns None if the path escapes the root.
+///
+/// Delegates to `crate::tools::is_safe_path` — the single source of truth
+/// for path validation — and converts the Result to Option.
 fn resolve_safe_path(root: &Path, path_str: &str) -> Option<PathBuf> {
-    let path = Path::new(path_str);
-    let resolved = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        root.join(path)
-    };
-
-    // Canonicalize both, checking that resolved starts with root
-    // For non-existent paths, check the parent
-    let canonical_root = root.canonicalize().ok()?;
-
-    if let Ok(canonical) = resolved.canonicalize() {
-        if canonical.starts_with(&canonical_root) {
-            return Some(canonical);
-        }
-    } else {
-        // File doesn't exist yet — check parent directory
-        if let Some(parent) = resolved.parent() {
-            if let Ok(canonical_parent) = parent.canonicalize() {
-                if canonical_parent.starts_with(&canonical_root) {
-                    return Some(canonical_parent.join(resolved.file_name()?));
-                }
-            }
-        }
-    }
-    None
+    crate::tools::is_safe_path(root, Path::new(path_str)).ok()
 }
 
 /// Register `fs` table: read, write, exists, list, is_safe_path

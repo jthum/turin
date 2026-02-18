@@ -2,8 +2,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
-use mcp_sdk::client::McpClient;
-use mcp_sdk::transport::StdioTransport;
+use tokio_util::sync::CancellationToken;
 
 use crate::inference::provider::InferenceMessage;
 use crate::kernel::event::KernelEvent;
@@ -23,10 +22,11 @@ pub struct SessionState {
     pub turn_index: u32,
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
-    pub mcp_clients: Vec<Arc<McpClient<StdioTransport>>>,
     // Event channel for this session
     pub event_tx: broadcast::Sender<(String, KernelEvent)>,
     pub event_task: Option<Arc<Mutex<Option<JoinHandle<()>>>>>,
+    /// Token to cancel the background event persistence task.
+    pub cancel_token: CancellationToken,
     pub status: SessionStatus,
 }
 
@@ -46,9 +46,9 @@ impl SessionState {
             turn_index: 0,
             total_input_tokens: 0,
             total_output_tokens: 0,
-            mcp_clients: Vec::new(),
             event_tx: tx,
             event_task: Some(Arc::new(Mutex::new(None))),
+            cancel_token: CancellationToken::new(),
             status: SessionStatus::Inactive,
         }
     }

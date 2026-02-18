@@ -364,7 +364,7 @@ type = "openai"  # or "no_op" for environments without embedding support
 
 ## Project Status
 
-Turin is at **v0.10.0**. The core runtime is functional and tested. What's implemented:
+Turin is at **v0.11.0**. The core runtime is functional, tested, and security-hardened. What's implemented:
 
 - Multi-provider inference (Anthropic, OpenAI) with streaming
 - Full tool execution loop (read, write, edit, shell, submit_task, bridge_mcp)

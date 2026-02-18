@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-02-18
+
+### Added
+- **Defense-in-Depth Security**:
+  - **Lua Sandboxing**: Replaced `Lua::new()` with `Lua::new_with(StdLib::ALL_SAFE)`, excluding IO, OS, FFI, and PACKAGE from the Luau runtime.
+  - **Shell Timeout Kill**: `shell_exec` now uses `tokio::select!` to race execution against a timeout, properly killing orphaned child processes.
+  - **Agent Spawn Depth Limit**: `agent.spawn` enforces a max depth of 3 via `AtomicU32` counter, preventing infinite recursive spawning.
+  - **File Write Size Limit**: `fs.write` rejects content larger than 10MB to prevent disk exhaustion.
+- **Session Lifecycle**:
+  - Added `CancellationToken` to `SessionState` for clean background task shutdown on `end_session`.
+
+### Changed
+- **Kernel Modularization**: Split `kernel/mod.rs` from 1,041 → 413 lines into three focused files:
+  - `kernel/init.rs` — Provider clients, state store, harness initialization, file watcher.
+  - `kernel/turn.rs` — `execute_turn` and `execute_tool_calls` logic.
+  - `kernel/mod.rs` — Struct definition, session lifecycle, agent loop, event persistence.
+- **API Hygiene**:
+  - All `Kernel` struct fields narrowed from `pub` to `pub(crate)` with a new `state()` accessor.
+  - Removed implicit OpenAI embedding fallback — now defaults to NoOp when `[embeddings]` is not configured.
+- **Path Validation Consolidation**: `resolve_safe_path` (harness) now delegates to `is_safe_path` (tools), eliminating duplicated validation logic.
+- **Dependency Optimization**: Replaced `tokio = { features = ["full"] }` with explicit features, added `tokio-util` for `CancellationToken`.
+
+### Removed
+- Dead `mcp_clients` field from `SessionState` (MCP clients live on Kernel, not Session).
+- Deprecated `Kernel::new()` constructor (use `Kernel::builder()` instead).
+
+### Fixed
+- 17 clippy warnings resolved (zero remaining).
+- `persist_event_internal` no longer silently swallows broadcast failures (logs a warning).
+- Corrected misleading `time.now_utc` doc comment (returns Unix timestamp, not ISO 8601).
+
 ## [0.10.0] - 2026-02-18
 
 ### Added
