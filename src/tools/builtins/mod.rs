@@ -6,10 +6,10 @@
 //! - `edit_file` — Search-and-replace within a file
 //! - `shell_exec` — Execute a shell command
 
-mod read_file;
-mod write_file;
-mod edit_file;
-mod shell_exec;
+pub mod read_file;
+pub mod write_file;
+pub mod edit_file;
+pub mod shell_exec;
 mod submit_task;
 
 pub use read_file::ReadFileTool;
