@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Removed implicit OpenAI embedding fallback — now defaults to NoOp when `[embeddings]` is not configured.
 - **Path Validation Consolidation**: `resolve_safe_path` (harness) now delegates to `is_safe_path` (tools), eliminating duplicated validation logic.
 - **Dependency Optimization**: Replaced `tokio = { features = ["full"] }` with explicit features, added `tokio-util` for `CancellationToken`.
+- **Rust 2024 Edition**: Migrated from `edition = "2021"` to `edition = "2024"`, adopting the latest language defaults and lint rules.
 
 ### Removed
 - Dead `mcp_clients` field from `SessionState` (MCP clients live on Kernel, not Session).

@@ -1,7 +1,7 @@
 [package]
 name = "turin"
 version = "0.11.0"
-edition = "2021"
+edition = "2024"
 description = "A single-binary, event-driven LLM execution runtime with composable Lua harness scripts"
 
 [[bin]]

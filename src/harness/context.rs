@@ -188,13 +188,11 @@ impl UserData for ContextWrapper {
                     let mut state = this.state.lock().unwrap();
                     state.prompt = s.clone();
                     // Sync back to messages if it's the last message
-                    if let Some(msg) = state.messages.last_mut() {
-                        if msg.role == crate::inference::provider::InferenceRole::User {
-                            if let Some(new_text) = s {
+                    if let Some(msg) = state.messages.last_mut()
+                        && msg.role == crate::inference::provider::InferenceRole::User
+                            && let Some(new_text) = s {
                                 msg.content = vec![crate::inference::provider::InferenceContent::Text { text: new_text }];
                             }
-                        }
-                    }
                     Ok(())
                 }
                 "messages" => {

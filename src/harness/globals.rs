@@ -421,16 +421,14 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
             if let Ok(paths) = glob(&full_pattern_str) {
                 for path in paths.flatten() {
                     // Ensure path is within root
-                    if let Ok(canonical) = path.canonicalize() {
-                         if let Ok(canonical_root) = root.canonicalize() {
-                             if canonical.starts_with(&canonical_root) {
+                    if let Ok(canonical) = path.canonicalize()
+                         && let Ok(canonical_root) = root.canonicalize()
+                             && canonical.starts_with(&canonical_root) {
                                  // Return relative path string
                                  if let Ok(relative) = path.strip_prefix(&root) {
                                      matches.push(relative.to_string_lossy().to_string());
                                  }
                              }
-                         }
-                    }
                 }
             }
             Ok(matches)

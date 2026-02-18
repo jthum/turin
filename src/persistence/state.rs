@@ -120,13 +120,12 @@ impl StateStore {
     pub async fn open(db_path: &str) -> Result<Self> {
         // Create parent directories
         let path = std::path::Path::new(db_path);
-        if let Some(parent) = path.parent() {
-            if !parent.exists() {
+        if let Some(parent) = path.parent()
+            && !parent.exists() {
                 std::fs::create_dir_all(parent).with_context(|| {
                     format!("Failed to create database directory: {}", parent.display())
                 })?;
             }
-        }
 
         let db = turso::Builder::new_local(db_path)
             .build()
@@ -556,8 +555,8 @@ impl StateStore {
         // Let's do: If scores is empty (meaning Vector didn't find anything OR wasn't run) AND (FTS wasn't run OR failed/missing)
         // Actually, simpler: If scores is empty at this point, and we have a raw query, try to find SOMETHING.
         
-        if scores.is_empty() {
-             if let Some(query) = content_query {
+        if scores.is_empty()
+             && let Some(query) = content_query {
                 let query = query.trim();
                 // Tokenize by whitespace
                 let terms: Vec<&str> = query.split_whitespace().collect();
@@ -595,7 +594,6 @@ impl StateStore {
                      }
                 }
              }
-        }
 
         // 3. Sort by final score
         let mut results: Vec<MemoryRow> = scores.into_iter().filter_map(|(id, score)| {

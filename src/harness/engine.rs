@@ -137,11 +137,10 @@ impl HarnessEngine {
         for hook in known_hooks {
             // If hook is already in exports (from return table), keep it.
             // Otherwise, check if it exists in the script's global env.
-            if !module_exports.contains_key(hook)? {
-                if let Ok(func) = env.get::<Function>(hook) {
+            if !module_exports.contains_key(hook)?
+                && let Ok(func) = env.get::<Function>(hook) {
                     module_exports.set(hook, func)?;
                 }
-            }
         }
 
         // Register the module
@@ -237,8 +236,8 @@ impl HarnessEngine {
         };
 
         for name in &self.scripts {
-             if let Ok(module) = modules_table.get::<Table>(name.as_str()) {
-                if let Ok(func) = module.get::<Function>(hook_name) {
+             if let Ok(module) = modules_table.get::<Table>(name.as_str())
+                && let Ok(func) = module.get::<Function>(hook_name) {
                     let ud = self.lua.create_userdata(data.clone()).map_err(|e| {
                          anyhow::anyhow!("Failed to create userdata for hook '{}': {}", hook_name, e)
                     })?;
@@ -256,7 +255,6 @@ impl HarnessEngine {
                         }
                     }
                 }
-             }
         }
 
         Ok(verdicts)

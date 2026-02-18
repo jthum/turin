@@ -127,11 +127,10 @@ async fn test_harness_rejection() -> Result<()> {
     let mut found_rejection = false;
     for msg in &session.history {
         for content in &msg.content {
-            if let InferenceContent::ToolResult { content, .. } = content {
-                if content.contains("Security policy: shell_exec is forbidden") {
+            if let InferenceContent::ToolResult { content, .. } = content
+                && content.contains("Security policy: shell_exec is forbidden") {
                     found_rejection = true;
                 }
-            }
         }
     }
     

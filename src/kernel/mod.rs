@@ -134,11 +134,10 @@ impl Kernel {
         // Trigger on_agent_start harness hook
         {
             let harness = self.harness.lock().unwrap();
-            if let Some(ref engine) = *harness {
-                if let Err(e) = engine.evaluate("on_agent_start", serde_json::json!({ "session_id": session_id })) {
+            if let Some(ref engine) = *harness
+                && let Err(e) = engine.evaluate("on_agent_start", serde_json::json!({ "session_id": session_id })) {
                      warn!(error = %e, "Harness on_agent_start failed");
                 }
-            }
         }
 
         session.status = crate::kernel::session::SessionStatus::Active;
@@ -221,8 +220,8 @@ impl Kernel {
             if let Some(result) = verdict_result {
                 match result {
                     Ok(Verdict::Modify(new_tasks_val)) => {
-                        if let Some(new_tasks) = new_tasks_val.as_array() {
-                            if !new_tasks.is_empty() {
+                        if let Some(new_tasks) = new_tasks_val.as_array()
+                            && !new_tasks.is_empty() {
                                 let mut q = session.queue.lock().await;
                                 for task in new_tasks {
                                     if let Some(t) = task.as_str() {
@@ -232,7 +231,6 @@ impl Kernel {
                                 info!(count = new_tasks.len(), "Validation failed or extended by harness; new tasks queued");
                                 recheck = true;
                             }
-                        }
                     },
                     Ok(Verdict::Reject(reason)) => {
                         warn!(reason = %reason, "Session ended with REJECTION from harness");
@@ -370,18 +368,16 @@ impl Kernel {
     #[instrument(skip(self, session, event), fields(event_type = %event.event_type()))]
     pub fn persist_event(&self, session: &SessionState, event: &KernelEvent) {
         // Allow harness to observe/intercept any event
-        if let Ok(harness_guard) = self.harness.lock() {
-            if let Some(engine) = &*harness_guard {
+        if let Ok(harness_guard) = self.harness.lock()
+            && let Some(engine) = &*harness_guard {
                 let payload = serde_json::to_value(event).unwrap_or_default();
-                if let Ok(verdict) = engine.evaluate("on_kernel_event", payload) {
-                    if verdict.is_rejected() {
+                if let Ok(verdict) = engine.evaluate("on_kernel_event", payload)
+                    && verdict.is_rejected() {
                         warn!(event_type = %event.event_type(), "Event REJECTED by harness on_kernel_event");
                         return;
                     }
                     // Note: MODIFY is ignored for general events for now to avoid complexity
-                }
             }
-        }
         self.persist_event_internal(&session.event_tx, &session.id, event);
     }
 
