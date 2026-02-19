@@ -85,8 +85,8 @@ impl ToolRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::builtins;
+    use super::*;
 
     #[test]
     fn test_registry_register_and_get() {
@@ -101,7 +101,9 @@ mod tests {
     fn test_tool_definitions() {
         let mut registry = ToolRegistry::new();
         registry.register(Box::new(builtins::ReadFileTool)).unwrap();
-        registry.register(Box::new(builtins::WriteFileTool)).unwrap();
+        registry
+            .register(Box::new(builtins::WriteFileTool))
+            .unwrap();
 
         let defs = registry.tool_definitions();
         assert_eq!(defs.len(), 2);

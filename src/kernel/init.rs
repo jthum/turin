@@ -5,19 +5,19 @@
 //! each file focused on a single responsibility.
 
 use anyhow::{Context, Result};
+use notify::Event;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::collections::HashMap;
-use tracing::{info, warn, error, debug, instrument};
-use notify::Event;
+use tracing::{debug, error, info, instrument, warn};
 
+use super::Kernel;
+use super::config::TurinConfig;
 use crate::harness::engine::HarnessEngine;
 use crate::harness::globals::HarnessAppData;
+use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::{self, ProviderClient, ProviderKind};
 use crate::persistence::state::StateStore;
-use crate::inference::embeddings::EmbeddingProvider;
-use super::config::TurinConfig;
-use super::Kernel;
 
 impl Kernel {
     /// Initialize all configured provider clients. Call before `init_harness()` and `run()`.
@@ -26,42 +26,60 @@ impl Kernel {
             let client = self.create_client(name, config)?;
             self.clients.insert(name.clone(), client);
         }
-        
+
         // Ensure the default provider is available
         let default_provider_name = &self.config.agent.provider;
-        
+
         if !self.clients.contains_key(default_provider_name)
-             && !self.config.providers.contains_key(default_provider_name) {
-                 anyhow::bail!("Default provider '{}' not found in [providers] configuration", default_provider_name);
+            && !self.config.providers.contains_key(default_provider_name)
+        {
+            anyhow::bail!(
+                "Default provider '{}' not found in [providers] configuration",
+                default_provider_name
+            );
         }
 
         // Initialize embedding provider
         let embedding_provider = if let Some(ref config) = self.config.embeddings {
             match config {
                 crate::kernel::config::EmbeddingConfig::OpenAI => {
-                     // Find a provider with type="openai"
-                     let openai_config = self.config.providers.values()
+                    // Find a provider with type="openai"
+                    let openai_config = self
+                        .config
+                        .providers
+                        .values()
                         .find(|p| p.kind == "openai")
-                        .with_context(|| "OpenAI embeddings selected but no OpenAI provider configured")?;
-                        
-                     let api_key_env = openai_config.api_key_env.as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("OpenAI provider missing 'api_key_env' configuration"))?;
-                     let api_key = std::env::var(api_key_env)
-                        .with_context(|| format!("Environment variable '{}' not set", api_key_env))?;
-                     
-                     crate::inference::embeddings::create_embedding_provider(&crate::inference::embeddings::EmbeddingConfig::OpenAI {
-                        api_key,
-                        model: "text-embedding-3-small".to_string(),
-                    })
-                },                crate::kernel::config::EmbeddingConfig::NoOp => {
-                    crate::inference::embeddings::create_embedding_provider(&crate::inference::embeddings::EmbeddingConfig::NoOp)
+                        .with_context(
+                            || "OpenAI embeddings selected but no OpenAI provider configured",
+                        )?;
+
+                    let api_key_env = openai_config.api_key_env.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("OpenAI provider missing 'api_key_env' configuration")
+                    })?;
+                    let api_key = std::env::var(api_key_env).with_context(|| {
+                        format!("Environment variable '{}' not set", api_key_env)
+                    })?;
+
+                    crate::inference::embeddings::create_embedding_provider(
+                        &crate::inference::embeddings::EmbeddingConfig::OpenAI {
+                            api_key,
+                            model: "text-embedding-3-small".to_string(),
+                        },
+                    )
+                }
+                crate::kernel::config::EmbeddingConfig::NoOp => {
+                    crate::inference::embeddings::create_embedding_provider(
+                        &crate::inference::embeddings::EmbeddingConfig::NoOp,
+                    )
                 }
             }
         } else {
-             // No embeddings configured — use NoOp (no hidden fallback to OpenAI)
-             crate::inference::embeddings::create_embedding_provider(&crate::inference::embeddings::EmbeddingConfig::NoOp)
+            // No embeddings configured — use NoOp (no hidden fallback to OpenAI)
+            crate::inference::embeddings::create_embedding_provider(
+                &crate::inference::embeddings::EmbeddingConfig::NoOp,
+            )
         };
-        
+
         self.embedding_provider = Some(Arc::from(embedding_provider));
 
         Ok(())
@@ -70,15 +88,15 @@ impl Kernel {
     /// Initialize the state store. Call before `run()`.
     pub async fn init_state(&mut self) -> Result<()> {
         let db_path = &self.config.persistence.database_path;
-        let store = StateStore::open(db_path).await.with_context(|| {
-            format!("Failed to initialize state store at '{}'", db_path)
-        })?;
+        let store = StateStore::open(db_path)
+            .await
+            .with_context(|| format!("Failed to initialize state store at '{}'", db_path))?;
         info!(db_path = %db_path, "State store initialized");
         self.state = Some(store.clone());
 
         // Start background persistence task - MOVED to create_session
         // init_state now only initializes the store.
-        
+
         Ok(())
     }
 
@@ -107,11 +125,15 @@ impl Kernel {
             spawn_depth: self.config.kernel.initial_spawn_depth,
         };
 
-        let mut engine = HarnessEngine::new(app_data)
-            .with_context(|| "Failed to create harness engine")?;
+        let mut engine =
+            HarnessEngine::new(app_data).with_context(|| "Failed to create harness engine")?;
 
-        engine.load_dir(&harness_dir)
-            .with_context(|| format!("Failed to load harness scripts from '{}'", harness_dir.display()))?;
+        engine.load_dir(&harness_dir).with_context(|| {
+            format!(
+                "Failed to load harness scripts from '{}'",
+                harness_dir.display()
+            )
+        })?;
 
         let script_count = engine.loaded_scripts().len();
         if script_count > 0 {
@@ -168,18 +190,18 @@ impl Kernel {
                 };
 
                 match HarnessEngine::new(app_data) {
-                    Ok(mut engine) => {
-                        match engine.load_dir(&harness_dir) {
-                            Ok(_) => {
-                                let script_count = engine.loaded_scripts().len();
-                                let mut h = harness.lock().expect("harness mutex poisoned");
-                                *h = Some(engine);
-                                info!(count = script_count, "Harness reloaded successfully");
-                            }
-                            Err(e) => error!(error = %e, "Failed to load harness scripts"),
+                    Ok(mut engine) => match engine.load_dir(&harness_dir) {
+                        Ok(_) => {
+                            let script_count = engine.loaded_scripts().len();
+                            let mut h = harness.lock().expect("harness mutex poisoned");
+                            *h = Some(engine);
+                            info!(count = script_count, "Harness reloaded successfully");
                         }
+                        Err(e) => error!(error = %e, "Failed to load harness scripts"),
+                    },
+                    Err(e) => {
+                        error!(error = %e, "Failed to create harness engine during static reload")
                     }
-                    Err(e) => error!(error = %e, "Failed to create harness engine during static reload"),
                 }
                 Ok(())
             })
@@ -223,7 +245,7 @@ impl Kernel {
                 let s = state_clone.clone();
                 let e = embedding_clone.clone();
                 let q = queue_clone.clone();
-                
+
                 tokio::spawn(async move {
                     if let Err(err) = Self::reload_harness_static(h, c, cl, s, e, q) {
                         error!(error = %err, "Harness hot-reload failed");
@@ -232,16 +254,15 @@ impl Kernel {
             }
         });
 
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
-            match res {
+        let mut watcher =
+            notify::recommended_watcher(move |res: notify::Result<Event>| match res {
                 Ok(event) => {
                     if event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove() {
                         let _ = tx.blocking_send(());
                     }
                 }
                 Err(e) => error!(error = ?e, "Watcher channel error"),
-            }
-        })?;
+            })?;
 
         watcher.watch(&harness_dir, RecursiveMode::NonRecursive)?;
         self.check_watcher = Some(watcher);
@@ -252,28 +273,23 @@ impl Kernel {
     }
 
     /// Create the appropriate provider client from config.
-    pub(crate) fn create_client(&self, _name: &str, config: &crate::kernel::config::ProviderConfig) -> Result<ProviderClient> {
+    pub(crate) fn create_client(
+        &self,
+        _name: &str,
+        config: &crate::kernel::config::ProviderConfig,
+    ) -> Result<ProviderClient> {
         match config.kind.as_str() {
             "anthropic" => {
                 let client = provider::create_anthropic_client(config)?;
-                Ok(ProviderClient::new(
-                    ProviderKind::Anthropic,
-                    client,
-                ))
+                Ok(ProviderClient::new(ProviderKind::Anthropic, client))
             }
             "openai" => {
                 let client = provider::create_openai_client(config)?;
-                Ok(ProviderClient::new(
-                    ProviderKind::OpenAI,
-                    client,
-                ))
+                Ok(ProviderClient::new(ProviderKind::OpenAI, client))
             }
             "mock" => {
                 let client = provider::create_mock_client(config);
-                 Ok(ProviderClient::new(
-                    ProviderKind::Mock,
-                    client,
-                ))
+                Ok(ProviderClient::new(ProviderKind::Mock, client))
             }
             _ => anyhow::bail!("Unknown provider type: {}", config.kind),
         }

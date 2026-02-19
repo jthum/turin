@@ -1,17 +1,17 @@
-use std::str::FromStr;
 use anyhow::{Context, Result};
 use futures::stream::{Stream, StreamExt};
 use std::pin::Pin;
+use std::str::FromStr;
 
 use crate::kernel::config::ProviderConfig;
 use crate::kernel::event::{KernelEvent, StreamEvent};
 
 // Use standardized types from SDK
-pub use inference_sdk_core::{
-    InferenceEvent, InferenceProvider, InferenceRequest, InferenceMessage, 
-    InferenceRole, InferenceContent, Tool, InferenceResult, Usage, SdkError, InferenceStream, RequestOptions
-};
 use futures::future::BoxFuture;
+pub use inference_sdk_core::{
+    InferenceContent, InferenceEvent, InferenceMessage, InferenceProvider, InferenceRequest,
+    InferenceResult, InferenceRole, InferenceStream, RequestOptions, SdkError, Tool, Usage,
+};
 
 /// Which LLM provider to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -34,7 +34,6 @@ impl FromStr for ProviderKind {
     }
 }
 
-
 /// Options for inference execution
 #[derive(Debug, Clone, Default)]
 pub struct InferenceOptions {
@@ -51,10 +50,7 @@ pub struct ProviderClient {
 }
 
 impl ProviderClient {
-    pub fn new(
-        kind: ProviderKind,
-        provider: std::sync::Arc<dyn InferenceProvider>,
-    ) -> Self {
+    pub fn new(kind: ProviderKind, provider: std::sync::Arc<dyn InferenceProvider>) -> Self {
         Self { kind, provider }
     }
 
@@ -65,13 +61,24 @@ impl ProviderClient {
         system_prompt: &str,
         messages: &[InferenceMessage],
     ) -> Result<String> {
-        let req = self.build_request(model, system_prompt, messages, &[], &InferenceOptions::default());
+        let req = self.build_request(
+            model,
+            system_prompt,
+            messages,
+            &[],
+            &InferenceOptions::default(),
+        );
         let result = self.provider.complete(req, None).await?;
-        Ok(result.content.iter().filter_map(|c| match c {
-            InferenceContent::Text { text } => Some(text.as_str()),
-            // We could include thinking here if desired, but typically completion() returns just the answer.
-            _ => None,
-        }).collect::<Vec<_>>().join(""))
+        Ok(result
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                InferenceContent::Text { text } => Some(text.as_str()),
+                // We could include thinking here if desired, but typically completion() returns just the answer.
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(""))
     }
 
     /// Run a streaming completion.
@@ -87,16 +94,14 @@ impl ProviderClient {
         let sdk_stream = self.provider.stream(req, None).await?;
 
         // Map SDK InferenceEvents to Turin KernelEvents
-        let kernel_stream = sdk_stream.map(|res| {
-            match res {
-                Ok(event) => map_sdk_event(event),
-                Err(e) => Err(anyhow::anyhow!("Provider error: {}", e)),
-            }
+        let kernel_stream = sdk_stream.map(|res| match res {
+            Ok(event) => map_sdk_event(event),
+            Err(e) => Err(anyhow::anyhow!("Provider error: {}", e)),
         });
 
         Ok(Box::pin(kernel_stream))
     }
-    
+
     fn build_request(
         &self,
         model: &str,
@@ -105,19 +110,33 @@ impl ProviderClient {
         tools: &[serde_json::Value],
         options: &InferenceOptions,
     ) -> InferenceRequest {
-        let sdk_tools: Vec<Tool> = tools.iter().filter_map(|t| {
-             Some(Tool {
-                name: t.get("name")?.as_str()?.to_string(),
-                description: t.get("description").and_then(|d| d.as_str()).unwrap_or_default().to_string(), // Tool defaults description to empty string if missing? Core Tool has String, not Option<String>?
-                input_schema: t.get("input_schema").cloned().unwrap_or(serde_json::json!({"type": "object"})),
-             })
-        }).collect();
+        let sdk_tools: Vec<Tool> = tools
+            .iter()
+            .filter_map(|t| {
+                Some(Tool {
+                    name: t.get("name")?.as_str()?.to_string(),
+                    description: t
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or_default()
+                        .to_string(), // Tool defaults description to empty string if missing? Core Tool has String, not Option<String>?
+                    input_schema: t
+                        .get("input_schema")
+                        .cloned()
+                        .unwrap_or(serde_json::json!({"type": "object"})),
+                })
+            })
+            .collect();
 
         InferenceRequest::builder()
             .model(model)
             .messages(messages.to_vec())
             .system(system_prompt)
-            .maybe_tools(if sdk_tools.is_empty() { None } else { Some(sdk_tools) })
+            .maybe_tools(if sdk_tools.is_empty() {
+                None
+            } else {
+                Some(sdk_tools)
+            })
             .maybe_temperature(options.temperature)
             .maybe_max_tokens(options.max_tokens)
             .maybe_thinking_budget(options.thinking_budget)
@@ -129,45 +148,86 @@ impl ProviderClient {
 
 fn map_sdk_event(event: InferenceEvent) -> Result<KernelEvent> {
     match event {
-        InferenceEvent::MessageStart { role, model, .. } => Ok(KernelEvent::Stream(StreamEvent::MessageStart { role, model })),
-        InferenceEvent::MessageDelta { content } => Ok(KernelEvent::Stream(StreamEvent::MessageDelta { content_delta: content })),
-        InferenceEvent::ThinkingDelta { content } => Ok(KernelEvent::Stream(StreamEvent::ThinkingDelta { thinking: content })),
-        InferenceEvent::ToolCall { id, name, args } => Ok(KernelEvent::Stream(StreamEvent::ToolCall { id, name, args })),
-        InferenceEvent::MessageEnd { input_tokens, output_tokens, .. } => Ok(KernelEvent::Stream(StreamEvent::MessageEnd { 
-            role: "assistant".to_string(), 
-            input_tokens: input_tokens as u64, 
-            output_tokens: output_tokens as u64 
+        InferenceEvent::MessageStart { role, model, .. } => {
+            Ok(KernelEvent::Stream(StreamEvent::MessageStart {
+                role,
+                model,
+            }))
+        }
+        InferenceEvent::MessageDelta { content } => {
+            Ok(KernelEvent::Stream(StreamEvent::MessageDelta {
+                content_delta: content,
+            }))
+        }
+        InferenceEvent::ThinkingDelta { content } => {
+            Ok(KernelEvent::Stream(StreamEvent::ThinkingDelta {
+                thinking: content,
+            }))
+        }
+        InferenceEvent::ToolCall { id, name, args } => {
+            Ok(KernelEvent::Stream(StreamEvent::ToolCall {
+                id,
+                name,
+                args,
+            }))
+        }
+        InferenceEvent::MessageEnd {
+            input_tokens,
+            output_tokens,
+            ..
+        } => Ok(KernelEvent::Stream(StreamEvent::MessageEnd {
+            role: "assistant".to_string(),
+            input_tokens: input_tokens as u64,
+            output_tokens: output_tokens as u64,
         })),
-        InferenceEvent::Error { message } => Err(anyhow::anyhow!("Provider stream error: {}", message)),
+        InferenceEvent::Error { message } => {
+            Err(anyhow::anyhow!("Provider stream error: {}", message))
+        }
         _ => Err(anyhow::anyhow!("Unknown inference event type")),
     }
 }
 
 // ─── Provider Creation ───────────────────────────────────────────
 
-pub fn create_anthropic_client(provider_config: &ProviderConfig) -> Result<std::sync::Arc<dyn InferenceProvider>> {
-     let env_var = provider_config.api_key_env.as_ref().context("API key environment variable not configured")?;
-     let api_key = std::env::var(env_var).context("Missing API Key")?;
-     let mut config = anthropic_sdk::ClientConfig::new(api_key)?;
-     if let Some(url) = &provider_config.base_url { config = config.with_base_url(url); }
-     
-     let client = anthropic_sdk::Client::from_config(config)?;
-     Ok(std::sync::Arc::new(client))
+pub fn create_anthropic_client(
+    provider_config: &ProviderConfig,
+) -> Result<std::sync::Arc<dyn InferenceProvider>> {
+    let env_var = provider_config
+        .api_key_env
+        .as_ref()
+        .context("API key environment variable not configured")?;
+    let api_key = std::env::var(env_var).context("Missing API Key")?;
+    let mut config = anthropic_sdk::ClientConfig::new(api_key)?;
+    if let Some(url) = &provider_config.base_url {
+        config = config.with_base_url(url);
+    }
+
+    let client = anthropic_sdk::Client::from_config(config)?;
+    Ok(std::sync::Arc::new(client))
 }
 
+pub fn create_openai_client(
+    provider_config: &ProviderConfig,
+) -> Result<std::sync::Arc<dyn InferenceProvider>> {
+    let env_var = provider_config
+        .api_key_env
+        .as_ref()
+        .context("API key environment variable not configured")?;
+    let api_key = std::env::var(env_var).context("Missing API Key")?;
+    let mut config = openai_sdk::ClientConfig::new(api_key)?;
+    if let Some(url) = &provider_config.base_url {
+        config = config.with_base_url(url);
+    }
 
-pub fn create_openai_client(provider_config: &ProviderConfig) -> Result<std::sync::Arc<dyn InferenceProvider>> {
-     let env_var = provider_config.api_key_env.as_ref().context("API key environment variable not configured")?;
-     let api_key = std::env::var(env_var).context("Missing API Key")?;
-     let mut config = openai_sdk::ClientConfig::new(api_key)?;
-     if let Some(url) = &provider_config.base_url { config = config.with_base_url(url); }
-     
-     let client = openai_sdk::Client::from_config(config)?;
-     Ok(std::sync::Arc::new(client))
+    let client = openai_sdk::Client::from_config(config)?;
+    Ok(std::sync::Arc::new(client))
 }
 
 pub fn create_mock_client(config: &ProviderConfig) -> std::sync::Arc<dyn InferenceProvider> {
-    let response = config.base_url.clone().unwrap_or_else(|| "Mock response".to_string());
+    let response = config
+        .base_url
+        .clone()
+        .unwrap_or_else(|| "Mock response".to_string());
     std::sync::Arc::new(MockProvider { response })
 }
 
@@ -178,7 +238,11 @@ pub struct MockProvider {
 impl InferenceProvider for MockProvider {
     // Use default complete() implementation
 
-    fn stream<'a>(&'a self, _request: InferenceRequest, _options: Option<RequestOptions>) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+    fn stream<'a>(
+        &'a self,
+        _request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
         let content = self.response.clone();
         Box::pin(async move {
             let events = vec![
@@ -188,10 +252,13 @@ impl InferenceProvider for MockProvider {
                     provider_id: "mock".to_string(),
                 }),
                 Ok(InferenceEvent::MessageDelta { content }),
-                Ok(InferenceEvent::MessageEnd { input_tokens: 10, output_tokens: 5, stop_reason: None }),
+                Ok(InferenceEvent::MessageEnd {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                    stop_reason: None,
+                }),
             ];
             Ok(Box::pin(futures::stream::iter(events)) as InferenceStream)
         })
     }
 }
-

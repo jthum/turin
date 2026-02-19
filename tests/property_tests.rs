@@ -1,7 +1,7 @@
-use turin::tools::{is_safe_path, ToolError};
 use proptest::prelude::*;
 use std::path::Path;
 use tempfile::tempdir;
+use turin::tools::{ToolError, is_safe_path};
 
 proptest! {
     #[test]
@@ -16,7 +16,7 @@ proptest! {
             let res_path = result.unwrap();
             // Property 1: The resolved path must actually start with the root (canonicalized)
             let canonical_root = root.canonicalize().unwrap();
-            
+
             // If it exists, we can canonicalize it and check
             if res_path.exists() {
                 let canonical_res = res_path.canonicalize().unwrap();
@@ -50,17 +50,17 @@ proptest! {
 fn test_is_safe_path_known_attacks() {
     let tmp = tempdir().unwrap();
     let root = tmp.path();
-    
+
     // Explicit traversal
     assert!(is_safe_path(root, Path::new("../etc/passwd")).is_err());
     assert!(is_safe_path(root, Path::new("foo/../../etc/passwd")).is_err());
-    
+
     // Absolute path outside root
     assert!(is_safe_path(root, Path::new("/etc/passwd")).is_err());
-    
+
     // Valid path
     assert!(is_safe_path(root, Path::new("docs/manual.md")).is_ok());
-    
+
     // Path with dots but not traversal
     assert!(is_safe_path(root, Path::new(".hidden")).is_ok());
 }

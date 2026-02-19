@@ -1,67 +1,114 @@
-# Harness Hooks
+# Turin Hook Model (Draft)
 
-Harness scripts control Turin by implementing "hooks" — functions that the kernel calls at specific points in the agent's lifecycle.
+Status: Implemented in code (breaking changes) and reflected in `docs/HOOKS.md`.
 
-## Execution Model
+## Goals
+- Clear lifecycle semantics with no overloaded hook names.
+- Control points at every meaningful runtime stage.
+- Breaking changes are explicitly allowed for API coherence.
+- Keep internals pragmatic while improving harness DX.
 
-- **Synchronous**: Hooks are evaluated synchronously within the kernel's event loop.
-- **Composition**: If multiple harness scripts define the same hook, they are called in alphabetical order.
-- **Precedence**: For governing hooks (`on_tool_call`, `on_before_inference`, etc.), the first `REJECT` or `ESCALATE` wins. If all scripts return `ALLOW`, the action proceeds.
+## Core Terms
+- Session: One runtime conversation lifecycle.
+- Plan: A grouped set of tasks (agent-proposed via `submit_plan` or implicit).
+- Task: One atomic queued work item.
+- Turn: One model inference cycle inside a task.
 
----
+## Naming Decisions (Breaking Changes)
+- `on_before_inference` -> `on_turn_prepare`
+- Tool `submit_task` -> `submit_plan`
+- Hook `on_task_submit` -> `on_plan_submit`
+- Keep `on_task_complete` as per-task completion
+- Add `on_plan_complete` (one specific plan done)
+- Keep/add `on_all_tasks_complete` (global queue empty)
+- Prefer session terminology over agent terminology:
+- `on_agent_start` -> `on_session_start`
+- `on_agent_end` -> `on_session_end`
 
-## Lifecycle Hooks
+## Implemented Hook Lifecycle
+1. `on_session_start(event)`
+2. `on_task_start(event)`
+3. `on_turn_start(event)`
+4. `on_turn_prepare(ctx)` (mutable pre-inference checkpoint)
+5. Streaming/audit events through `on_kernel_event(event)`
+6. `on_tool_call(call)` (ALLOW/REJECT/ESCALATE/MODIFY)
+7. `on_tool_result(result)` (observe and optionally MODIFY before reinjection)
+8. `on_turn_end(event)`
+9. `on_task_complete(event)` (always once per task with terminal status)
+10. `on_plan_complete(event)` (when all tasks in a specific plan are terminal)
+11. `on_all_tasks_complete(event)` (fires when queue is empty; `MODIFY` can enqueue more work)
+12. `on_session_end(event)`
 
-### `on_agent_start(payload)`
-Triggered when a new agent session is initialized.
-- **Payload**: `{ session_id: string }`
-- **Use Cases**: Initialize session-specific state in `db`, queue initial tasks.
+## `on_turn_prepare(ctx)` Contract
+Purpose: Last mutable checkpoint before every provider inference call.
 
-### `on_agent_end(payload)`
-(Note: Triggered via `on_kernel_event` with type `agent_end`)
-Triggered when a session completes or is explicitly ended.
-- **Payload**: `{ message_count: number, total_input_tokens: number, total_output_tokens: number }`
+Current context fields:
+- `ctx.turn_index`: global/session turn index
+- `ctx.task_turn_index`: turn index within current task (0-based)
+- `ctx.is_first_turn_in_task`: boolean
+- `ctx.task_id`: current task identifier
+- `ctx.plan_id`: current plan identifier (or nil)
+- `ctx.system_prompt`: mutable
+- `ctx.messages`: mutable
+- `ctx.provider`: mutable
+- `ctx.model`: mutable
+- `ctx.thinking_budget`: mutable
 
----
+Use cases:
+- First-turn task context injection
+- Between-turn steering
+- Provider/model switching
+- Context compaction
+- Dynamic guidance between tool loops
 
-## Governing Hooks
+## Plan and Task Association Model
+Implemented model:
+- Task queue stores structured task items in memory (not just raw strings).
+- Each task has:
+`task_id`
+`plan_id` (nullable for ad-hoc queued tasks)
+`title` (optional display label)
+`prompt`
+- Plans are tracked in memory with lightweight counters:
+`total_tasks`
+`completed_tasks`
+`pending_tasks` (derived)
 
-### `on_before_inference(ctx)`
-Triggered immediately before an LLM call. Receives a **Context** object that can be mutated.
-- **Argument**: `ctx` (ContextWrapper)
-- **Context Properties**: `ctx.system_prompt`, `ctx.prompt` (last user message), `ctx.provider`, `ctx.model`.
-- **Verdict**: `ALLOW` or `REJECT`.
+Pragmatic persistence:
+- Keep `plan_id`/`task_id` as optional payload fields in events/messages/tool rows first.
+- Do not introduce heavyweight plan/task relational tables unless query requirements demand it.
 
-### `on_tool_call(call)`
-Triggered when the agent requests a tool execution.
-- **Payload**: `{ name: string, id: string, args: table }`
-- **Verdict**: 
-  - `ALLOW`: Execute the tool.
-  - `REJECT`: Block execution and return an error to the agent.
-  - `MODIFY, { ... }`: Execute the tool with modified arguments.
+## Hook Purposes
+### `on_turn_start`
+- Can reject/escalate to stop the current task before inference.
 
-### `on_task_submit(task)`
-Triggered when the agent uses the `submit_task` tool to propose a multi-step plan.
-- **Payload**: `{ title: string, steps: { string, ... } }`
-- **Verdict**:
-  - `ALLOW`: Enqueue the tasks.
-  - `MODIFY, { ... }`: Enqueue a modified list of tasks.
+### `on_plan_submit`
+- Workflow-specific checkpoint for proposed plan/task-set validation and rewriting before enqueue.
+- `MODIFY` can return an array of tasks or an object with `title`, `tasks`, `clear_existing`.
 
----
+### `on_tool_result`
+- Supports `MODIFY` to rewrite `output` and/or `is_error` before reinjection to the model.
 
-## Observability & Accounting Hooks
+### `on_task_complete`
+- Task-level finalization hook.
+- Payload includes terminal status:
+- `success`
+- `rejected`
+- `max_turns`
+- `error`
+- `cancelled`
 
-### `on_token_usage(usage)`
-Triggered after an LLM response to report consumption.
-- **Payload**: `{ input_tokens: number, output_tokens: number, total_tokens: number }`
-- **Verdict**: `ALLOW` or `REJECT` (to block further turns if budget is exceeded).
+### `on_plan_complete`
+- Plan-level completion hook once all tasks in that plan are terminal.
 
-### `on_task_complete(info)`
-Triggered when the agent's task queue becomes empty.
-- **Payload**: `{ session_id: string, turn_count: number }`
-- **Verdict**: `MODIFY, { "new prompt", ... }` to inject more tasks and keep the agent running.
+### `on_all_tasks_complete`
+- Session-level completion hook when the global pending queue is empty.
+- `MODIFY` can enqueue new tasks to continue the run loop.
 
-### `on_kernel_event(event)`
-The "God View" hook. Triggered for *every* event persisted by the kernel (Lifecycle, Stream, Audit).
-- **Payload**: The full `KernelEvent` JSON structure.
-- **Use Cases**: Real-time logging, external monitoring, complex state tracking.
+## Error Semantics
+- Do not split completion into separate error hooks by default.
+- Use terminal status on completion hooks to avoid duplicate/ambiguous firing.
+
+## Remaining Open Decisions
+- Whether to expose a dedicated stream hook (`on_stream_event`) in addition to `on_kernel_event`.
+- Whether to persist `task_id`/`plan_id` as first-class DB columns versus event payload only.

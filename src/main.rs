@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
+use rustyline::error::ReadlineError;
 use std::path::PathBuf;
 
-use turin::kernel::config::TurinConfig;
 use turin::kernel::Kernel;
+use turin::kernel::config::TurinConfig;
 
 mod commands;
 
@@ -102,7 +102,7 @@ enum Commands {
     },
 }
 
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 fn init_tracing(log_level: &str, log_file: Option<PathBuf>) -> Result<()> {
     let filter = EnvFilter::try_from_default_env()
@@ -179,7 +179,12 @@ async fn main() -> Result<()> {
             kernel.end_session(&mut session).await?;
             if !json {
                 println!("\n\x1b[36m\x1b[1m── Session Summary ──\x1b[0m");
-                println!("  \x1b[1mTotal Tokens:\x1b[0m  {} ({} in, {} out)", session.total_input_tokens + session.total_output_tokens, session.total_input_tokens, session.total_output_tokens);
+                println!(
+                    "  \x1b[1mTotal Tokens:\x1b[0m  {} ({} in, {} out)",
+                    session.total_input_tokens + session.total_output_tokens,
+                    session.total_input_tokens,
+                    session.total_output_tokens
+                );
                 println!("  \x1b[1mTurns:\x1b[0m         {}", session.turn_index);
             }
             Ok(())
@@ -224,11 +229,11 @@ async fn main() -> Result<()> {
                 println!("Type 'exit' or Ctrl+D to quit. Type '/reload' to reload harness.");
             }
 
-            // Trigger AgentStart
+            // Trigger SessionStart
             let mut session = kernel.create_session();
             kernel.start_session(&mut session).await?;
 
-use turin::inference::provider::{InferenceContent, InferenceRole};
+            use turin::inference::provider::{InferenceContent, InferenceRole};
 
             loop {
                 let readline = rl.readline("\x1b[36m\x1b[1mturin\x1b[0m\x1b[34m>\x1b[0m ");
@@ -248,8 +253,14 @@ use turin::inference::provider::{InferenceContent, InferenceRole};
                                 "/status" => {
                                     println!("\n\x1b[36m\x1b[1m── Session Status ──\x1b[0m");
                                     println!("  \x1b[1mSession ID:\x1b[0m {}", session.id);
-                                    println!("  \x1b[1mProvider:\x1b[0m   {}", kernel.config().agent.provider);
-                                    println!("  \x1b[1mModel:\x1b[0m      {}", kernel.config().agent.model);
+                                    println!(
+                                        "  \x1b[1mProvider:\x1b[0m   {}",
+                                        kernel.config().agent.provider
+                                    );
+                                    println!(
+                                        "  \x1b[1mModel:\x1b[0m      {}",
+                                        kernel.config().agent.model
+                                    );
                                     println!("  \x1b[1mTurns:\x1b[0m      {}", session.turn_index);
                                     println!(
                                         "  \x1b[1mTokens:\x1b[0m     {} total ({} in, {} out)",
@@ -280,7 +291,10 @@ use turin::inference::provider::{InferenceContent, InferenceRole};
                                                     content_summary.push_str(text);
                                                 }
                                                 InferenceContent::ToolUse { name, .. } => {
-                                                    content_summary.push_str(&format!("[Tool Call: {}] ", name));
+                                                    content_summary.push_str(&format!(
+                                                        "[Tool Call: {}] ",
+                                                        name
+                                                    ));
                                                 }
                                                 InferenceContent::ToolResult { .. } => {
                                                     content_summary.push_str("[Tool Result] ");
@@ -292,7 +306,8 @@ use turin::inference::provider::{InferenceContent, InferenceRole};
                                         }
 
                                         if content_summary.len() > 80 {
-                                            content_summary = format!("{}...", &content_summary[..77]);
+                                            content_summary =
+                                                format!("{}...", &content_summary[..77]);
                                         }
                                         // Replace newlines with spaces for summary
                                         let cleaned_summary = content_summary.replace('\n', " ");
@@ -309,7 +324,9 @@ use turin::inference::provider::{InferenceContent, InferenceRole};
                                     tracing::info!("Reloading harness...");
                                     match kernel.reload_harness().await {
                                         Ok(_) => tracing::info!("Harness reloaded successfully."),
-                                        Err(e) => tracing::error!(error = %e, "Failed to reload harness"),
+                                        Err(e) => {
+                                            tracing::error!(error = %e, "Failed to reload harness")
+                                        }
                                     }
                                     continue;
                                 }
@@ -318,15 +335,21 @@ use turin::inference::provider::{InferenceContent, InferenceRole};
                                     session.turn_index = 0;
                                     session.total_input_tokens = 0;
                                     session.total_output_tokens = 0;
-                                    println!("\x1b[32m\x1b[1m✓\x1b[0m Session history and stats cleared.");
+                                    println!(
+                                        "\x1b[32m\x1b[1m✓\x1b[0m Session history and stats cleared."
+                                    );
                                     continue;
                                 }
                                 "/help" => {
                                     println!("\n\x1b[36m\x1b[1m── Available Commands ──\x1b[0m");
                                     println!("  \x1b[1m/status\x1b[0m   - Show session statistics");
-                                    println!("  \x1b[1m/history\x1b[0m  - Show condensed message history");
+                                    println!(
+                                        "  \x1b[1m/history\x1b[0m  - Show condensed message history"
+                                    );
                                     println!("  \x1b[1m/reload\x1b[0m   - Reload harness scripts");
-                                    println!("  \x1b[1m/clear\x1b[0m    - Clear session history and reset stats");
+                                    println!(
+                                        "  \x1b[1m/clear\x1b[0m    - Clear session history and reset stats"
+                                    );
                                     println!("  \x1b[1m/help\x1b[0m     - Show this help message");
                                     println!("  \x1b[1m/quit\x1b[0m     - Exit the REPL");
                                     println!();
@@ -336,7 +359,10 @@ use turin::inference::provider::{InferenceContent, InferenceRole};
                                     break;
                                 }
                                 _ => {
-                                    println!("\x1b[31mUnknown command: {}\x1b[0m. Type /help for assistance.", cmd);
+                                    println!(
+                                        "\x1b[31mUnknown command: {}\x1b[0m. Type /help for assistance.",
+                                        cmd
+                                    );
                                     continue;
                                 }
                             }
@@ -367,7 +393,12 @@ use turin::inference::provider::{InferenceContent, InferenceRole};
             }
             kernel.end_session(&mut session).await?;
             println!("\n\x1b[36m\x1b[1m── Session Summary ──\x1b[0m");
-            println!("  \x1b[1mTotal Tokens:\x1b[0m  {} ({} in, {} out)", session.total_input_tokens + session.total_output_tokens, session.total_input_tokens, session.total_output_tokens);
+            println!(
+                "  \x1b[1mTotal Tokens:\x1b[0m  {} ({} in, {} out)",
+                session.total_input_tokens + session.total_output_tokens,
+                session.total_input_tokens,
+                session.total_output_tokens
+            );
             println!("  \x1b[1mTurns:\x1b[0m         {}", session.turn_index);
             Ok(())
         }

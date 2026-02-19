@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-02-19
+
+### Added
+- **Hook Lifecycle Overhaul (Breaking)**:
+  - Added explicit lifecycle hooks: `on_task_start`, `on_plan_complete`, `on_all_tasks_complete`.
+  - Added `turn_prepare` lifecycle event and richer task/plan lifecycle event payloads.
+- **Structured Task/Plan Runtime Model**:
+  - Queue now stores structured task items with `task_id`, `plan_id`, `title`, and `prompt`.
+  - Lightweight in-memory plan progress tracking for deterministic `on_plan_complete` firing.
+- **Mutable Tool Result Governance**:
+  - `on_tool_result` now supports `MODIFY` to rewrite tool output/error status before reinjection.
+
+### Changed
+- **Breaking Hook and Tool Renames**:
+  - `on_before_inference` -> `on_turn_prepare`
+  - `on_task_submit` -> `on_plan_submit`
+  - `on_agent_start` -> `on_session_start`
+  - `on_agent_end` -> `on_session_end`
+  - `submit_task` tool -> `submit_plan`
+- **Task Completion Semantics Clarified**:
+  - `on_task_complete` now fires per terminal task.
+  - Global queue-drain behavior moved to `on_all_tasks_complete`.
+- **Context Wrapper Enrichment**:
+  - `ctx` now exposes turn/task metadata (`turn_index`, `task_turn_index`, `is_first_turn_in_task`, `task_id`, `plan_id`).
+
+### Fixed
+- Fixed stale hook loading behavior by ensuring `on_task_complete` and new lifecycle hooks are discoverable in fallback script loading.
+- Fixed stale docs/examples that still referenced `subtasks`, queue-exhausted `on_task_complete`, and legacy lifecycle naming.
+- Removed temporary source artifact `src/harness/engine.rs_test_append`.
+
 ## [0.13.0] - 2026-02-18
 
 ### Added

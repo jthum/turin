@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 use crate::tools::{Tool, ToolContext, ToolError, ToolOutput};
@@ -39,12 +39,18 @@ impl Tool for BridgeMcp {
         })
     }
 
-    async fn execute(&self, params: Value, _ctx: &ToolContext) -> Result<crate::tools::ToolEffect, ToolError> {
-        let command = params["command"].as_str()
+    async fn execute(
+        &self,
+        params: Value,
+        _ctx: &ToolContext,
+    ) -> Result<crate::tools::ToolEffect, ToolError> {
+        let command = params["command"]
+            .as_str()
             .ok_or_else(|| ToolError::InvalidParams("Missing 'command'".to_string()))?
             .to_string();
-        
-        let args: Vec<String> = params["args"].as_array()
+
+        let args: Vec<String> = params["args"]
+            .as_array()
             .ok_or_else(|| ToolError::InvalidParams("Missing 'args' array".to_string()))?
             .iter()
             .map(|v| v.as_str().unwrap_or_default().to_string())
@@ -80,8 +86,15 @@ impl Tool for McpToolProxy {
         self.def.input_schema.clone()
     }
 
-    async fn execute(&self, params: Value, _ctx: &ToolContext) -> Result<crate::tools::ToolEffect, ToolError> {
-        let result = self.client.call_tool(&self.def.name, params).await
+    async fn execute(
+        &self,
+        params: Value,
+        _ctx: &ToolContext,
+    ) -> Result<crate::tools::ToolEffect, ToolError> {
+        let result = self
+            .client
+            .call_tool(&self.def.name, params)
+            .await
             .map_err(|e| ToolError::ExecutionError(format!("MCP Call Failed: {}", e)))?;
 
         // Convert MCP content to ToolOutput text
@@ -91,6 +104,8 @@ impl Tool for McpToolProxy {
             return Err(ToolError::ExecutionError(text_output));
         }
 
-        Ok(crate::tools::ToolEffect::Output(ToolOutput::new(text_output.trim().to_string())))
+        Ok(crate::tools::ToolEffect::Output(ToolOutput::new(
+            text_output.trim().to_string(),
+        )))
     }
 }

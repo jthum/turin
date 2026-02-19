@@ -3,11 +3,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 // Mutex removed
 
-use crate::kernel::{Kernel, TurinConfig};
-use crate::tools::registry::ToolRegistry;
-use crate::tools::builtins::create_default_registry;
-use crate::persistence::state::StateStore;
 use crate::inference::embeddings::EmbeddingProvider;
+use crate::kernel::{Kernel, TurinConfig};
+use crate::persistence::state::StateStore;
+use crate::tools::builtins::create_default_registry;
+use crate::tools::registry::ToolRegistry;
 
 /// Builder for constructing a `Kernel` instance.
 pub struct RuntimeBuilder {

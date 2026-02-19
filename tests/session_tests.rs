@@ -4,14 +4,14 @@
 //! harness hot-reload, and max_turns enforcement.
 
 use anyhow::Result;
-use turin::kernel::config::{
-    TurinConfig, ProviderConfig, AgentConfig, PersistenceConfig,
-    HarnessConfig, EmbeddingConfig, KernelConfig,
-};
-use turin::kernel::Kernel;
-use turin::kernel::session::SessionStatus;
 use std::collections::HashMap;
 use tempfile::tempdir;
+use turin::kernel::Kernel;
+use turin::kernel::config::{
+    AgentConfig, EmbeddingConfig, HarnessConfig, KernelConfig, PersistenceConfig, ProviderConfig,
+    TurinConfig,
+};
+use turin::kernel::session::{QueuedTask, SessionStatus};
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -21,11 +21,14 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
     std::fs::create_dir_all(&harness_dir).unwrap();
 
     let mut providers = HashMap::new();
-    providers.insert("mock".to_string(), ProviderConfig {
-        kind: "mock".to_string(),
-        api_key_env: None,
-        base_url: Some("Mock response".to_string()),
-    });
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("Mock response".to_string()),
+        },
+    );
 
     TurinConfig {
         agent: AgentConfig {
@@ -144,8 +147,14 @@ async fn test_run_with_mock_increments_turns() -> Result<()> {
     let mut session = kernel.create_session();
     kernel.run(&mut session, Some("Hello".to_string())).await?;
 
-    assert!(session.turn_index > 0, "Turn index should increment after run");
-    assert!(!session.history.is_empty(), "History should contain messages");
+    assert!(
+        session.turn_index > 0,
+        "Turn index should increment after run"
+    );
+    assert!(
+        !session.history.is_empty(),
+        "History should contain messages"
+    );
 
     kernel.end_session(&mut session).await?;
     Ok(())
@@ -157,7 +166,9 @@ async fn test_run_populates_token_counts() -> Result<()> {
     let mut kernel = make_kernel(tmp.path()).await?;
 
     let mut session = kernel.create_session();
-    kernel.run(&mut session, Some("Count my tokens".to_string())).await?;
+    kernel
+        .run(&mut session, Some("Count my tokens".to_string()))
+        .await?;
 
     // Mock provider may report 0 tokens — verify the fields are initialized
     // and accessible without panic (u64 is always >= 0, so we just read them).
@@ -177,7 +188,9 @@ async fn test_harness_reload_picks_up_new_scripts() -> Result<()> {
 
     // Initially no harness scripts — should work fine
     let mut session = kernel.create_session();
-    kernel.run(&mut session, Some("Before reload".to_string())).await?;
+    kernel
+        .run(&mut session, Some("Before reload".to_string()))
+        .await?;
     kernel.end_session(&mut session).await?;
 
     // Write a new harness script that logs
@@ -185,7 +198,7 @@ async fn test_harness_reload_picks_up_new_scripts() -> Result<()> {
     std::fs::write(
         harness_dir.join("logger.lua"),
         r#"
-            function on_agent_start(event)
+            function on_session_start(event)
                 return ALLOW
             end
         "#,
@@ -196,7 +209,9 @@ async fn test_harness_reload_picks_up_new_scripts() -> Result<()> {
 
     // Run again with new harness active
     let mut session2 = kernel.create_session();
-    kernel.run(&mut session2, Some("After reload".to_string())).await?;
+    kernel
+        .run(&mut session2, Some("After reload".to_string()))
+        .await?;
     assert!(session2.turn_index > 0);
 
     kernel.end_session(&mut session2).await?;
@@ -211,7 +226,9 @@ async fn test_events_persisted_to_state_store() -> Result<()> {
     let mut kernel = make_kernel(tmp.path()).await?;
 
     let mut session = kernel.create_session();
-    kernel.run(&mut session, Some("Persist me".to_string())).await?;
+    kernel
+        .run(&mut session, Some("Persist me".to_string()))
+        .await?;
 
     // Give background persistence task a moment to flush
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -233,11 +250,14 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
     std::fs::create_dir_all(&harness_dir)?;
 
     let mut providers = HashMap::new();
-    providers.insert("mock".to_string(), ProviderConfig {
-        kind: "mock".to_string(),
-        api_key_env: None,
-        base_url: Some("Mock response".to_string()),
-    });
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("Mock response".to_string()),
+        },
+    );
 
     let config = TurinConfig {
         agent: AgentConfig {
@@ -269,7 +289,9 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
     kernel.init_harness().await?;
 
     let mut session = kernel.create_session();
-    kernel.run(&mut session, Some("No persistence".to_string())).await?;
+    kernel
+        .run(&mut session, Some("No persistence".to_string()))
+        .await?;
 
     assert!(session.turn_index > 0);
     kernel.end_session(&mut session).await?;
@@ -282,23 +304,28 @@ async fn test_multitask_workflow_execution() -> Result<()> {
     let mut kernel = make_kernel(tmp.path()).await?;
 
     let mut session = kernel.create_session();
-    
+
     // Manually push 2 tasks
     // (We use a scope to drop the lock)
     {
         let mut q = session.queue.lock().await;
-        q.push_back("Task 1".to_string());
-        q.push_back("Task 2".to_string());
+        q.push_back(QueuedTask::ad_hoc("Task 1".to_string()));
+        q.push_back(QueuedTask::ad_hoc("Task 2".to_string()));
     }
-    
+
     // Run
     // Expected: Both tasks run.
     kernel.run(&mut session, None).await?;
-    
+
     // Check history length
     // Each task adds: User (queue prompt) + Assistant (mock response) = 2 messages.
     // Total should be 4 messages.
-    assert_eq!(session.history.len(), 4, "Expected 4 messages (2 tasks), got {}", session.history.len());
+    assert_eq!(
+        session.history.len(),
+        4,
+        "Expected 4 messages (2 tasks), got {}",
+        session.history.len()
+    );
 
     Ok(())
 }

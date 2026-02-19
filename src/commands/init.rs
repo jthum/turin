@@ -77,7 +77,7 @@ end
     let coding_agent_lua = r#"-- Coding Agent Harness: Injects TURIN.md into the system prompt
 -- This script runs before every inference call.
 
-function on_before_inference(ctx)
+function on_turn_prepare(ctx)
     local turin_md = fs.read("TURIN.md")
     
     if turin_md then

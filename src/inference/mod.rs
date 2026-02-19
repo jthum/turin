@@ -1,2 +1,2 @@
-pub mod provider;
 pub mod embeddings;
+pub mod provider;

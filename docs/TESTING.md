@@ -173,9 +173,9 @@ Turin supports multiple named provider instances.
     api_key_env = "BACKUP_KEY"
     ```
 2.  **Toggle via Harness**:
-    In `on_before_inference`, you can switch instances:
+    In `on_turn_prepare`, you can switch instances:
     ```lua
-    function on_before_inference(ctx)
+    function on_turn_prepare(ctx)
         if some_condition then
             ctx.provider = "backup"
         end

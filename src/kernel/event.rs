@@ -1,22 +1,69 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+
+/// Terminal status for a task.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskTerminalStatus {
+    Success,
+    Rejected,
+    MaxTurns,
+    Error,
+    Cancelled,
+}
 
 /// Events related to the overall lifecycle of an agent session or turn.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LifecycleEvent {
-    /// Agent session begins
-    AgentStart { session_id: String },
-    /// Agent session completes
-    AgentEnd {
-        message_count: u32,
+    /// Session begins
+    SessionStart { session_id: String },
+    /// Session completes
+    SessionEnd {
+        turn_count: u32,
         total_input_tokens: u64,
         total_output_tokens: u64,
     },
+    /// Task begins
+    TaskStart {
+        task_id: String,
+        plan_id: Option<String>,
+        title: Option<String>,
+        prompt: String,
+        queue_depth: usize,
+    },
+    /// Task reaches a terminal status
+    TaskComplete {
+        task_id: String,
+        plan_id: Option<String>,
+        status: TaskTerminalStatus,
+        task_turn_count: u32,
+    },
+    /// Plan reaches completion
+    PlanComplete {
+        plan_id: String,
+        title: String,
+        total_tasks: usize,
+        completed_tasks: usize,
+    },
+    /// No queued tasks remain
+    AllTasksComplete { session_id: String },
     /// New LLM call begins
-    TurnStart { turn_index: u32 },
+    TurnStart {
+        turn_index: u32,
+        task_id: String,
+        task_turn_index: u32,
+    },
+    /// Context assembled and mutable just before provider call
+    TurnPrepare {
+        turn_index: u32,
+        task_id: String,
+        task_turn_index: u32,
+    },
     /// LLM call completes
     TurnEnd {
         turn_index: u32,
+        task_id: String,
+        task_turn_index: u32,
         has_tool_calls: bool,
     },
 }
@@ -93,9 +140,14 @@ impl KernelEvent {
     pub fn event_type(&self) -> &'static str {
         match self {
             KernelEvent::Lifecycle(e) => match e {
-                LifecycleEvent::AgentStart { .. } => "agent_start",
-                LifecycleEvent::AgentEnd { .. } => "agent_end",
+                LifecycleEvent::SessionStart { .. } => "session_start",
+                LifecycleEvent::SessionEnd { .. } => "session_end",
+                LifecycleEvent::TaskStart { .. } => "task_start",
+                LifecycleEvent::TaskComplete { .. } => "task_complete",
+                LifecycleEvent::PlanComplete { .. } => "plan_complete",
+                LifecycleEvent::AllTasksComplete { .. } => "all_tasks_complete",
                 LifecycleEvent::TurnStart { .. } => "turn_start",
+                LifecycleEvent::TurnPrepare { .. } => "turn_prepare",
                 LifecycleEvent::TurnEnd { .. } => "turn_end",
             },
             KernelEvent::Stream(e) => match e {
@@ -122,22 +174,22 @@ mod tests {
 
     #[test]
     fn test_event_serialization() {
-        let event = KernelEvent::Lifecycle(LifecycleEvent::AgentStart {
+        let event = KernelEvent::Lifecycle(LifecycleEvent::SessionStart {
             session_id: "test-123".to_string(),
         });
         let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("\"type\":\"agent_start\""));
+        assert!(json.contains("\"type\":\"session_start\""));
         assert!(json.contains("\"session_id\":\"test-123\""));
     }
 
     #[test]
     fn test_event_type_names() {
         assert_eq!(
-            KernelEvent::Lifecycle(LifecycleEvent::AgentStart {
+            KernelEvent::Lifecycle(LifecycleEvent::SessionStart {
                 session_id: "x".into()
             })
             .event_type(),
-            "agent_start"
+            "session_start"
         );
         assert_eq!(
             KernelEvent::Audit(AuditEvent::HarnessRejection {

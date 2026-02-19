@@ -2,10 +2,8 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-
 /// Top-level Turin configuration, parsed from `turin.toml`.
-#[derive(Debug, Clone, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct TurinConfig {
     pub agent: AgentConfig,
     #[serde(default)]
@@ -165,8 +163,8 @@ impl TurinConfig {
     /// Parse configuration from a TOML string.
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(toml_str: &str) -> Result<Self> {
-        let config: TurinConfig = toml::from_str(toml_str)
-            .with_context(|| "Failed to parse turin.toml")?;
+        let config: TurinConfig =
+            toml::from_str(toml_str).with_context(|| "Failed to parse turin.toml")?;
         config.validate()?;
         Ok(config)
     }
@@ -216,7 +214,6 @@ impl Default for AgentConfig {
     }
 }
 
-
 // ─── Tests ───────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -261,7 +258,13 @@ api_key_env = "OPENAI_API_KEY"
         assert_eq!(config.persistence.database_path, ".turin/state.db");
         assert_eq!(config.harness.directory, ".turin/harnesses");
         assert_eq!(
-            config.providers.get("anthropic").unwrap().api_key_env.as_ref().unwrap(),
+            config
+                .providers
+                .get("anthropic")
+                .unwrap()
+                .api_key_env
+                .as_ref()
+                .unwrap(),
             "ANTHROPIC_API_KEY"
         );
     }

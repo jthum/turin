@@ -3,7 +3,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::process::Stdio;
 
-use crate::tools::{parse_args, Tool, ToolContext, ToolError, ToolOutput, is_safe_path};
+use crate::tools::{Tool, ToolContext, ToolError, ToolOutput, is_safe_path, parse_args};
 
 pub struct ShellExecTool;
 
@@ -56,7 +56,11 @@ impl Tool for ShellExecTool {
     }
 
     #[tracing::instrument(skip(self, params, ctx), fields(command = %params["command"].as_str().unwrap_or("unknown")))]
-    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<crate::tools::ToolEffect, ToolError> {
+    async fn execute(
+        &self,
+        params: Value,
+        ctx: &ToolContext,
+    ) -> Result<crate::tools::ToolEffect, ToolError> {
         let args: ShellExecArgs = parse_args(params)?;
         tracing::info!(command = %args.command, "Executing shell command");
 
@@ -82,36 +86,36 @@ impl Tool for ShellExecTool {
 
         let mut stdout = child.stdout.take().expect("Failed to open stdout");
         let mut stderr = child.stderr.take().expect("Failed to open stderr");
-        
+
         let mut stdout_buf = Vec::new();
         let mut stderr_buf = Vec::new();
-        
+
         // 100KB limit
         const MAX_OUTPUT_BYTES: usize = 100 * 1024;
-        
+
         let timeout = std::time::Duration::from_secs(args.timeout_secs);
         let _start = std::time::Instant::now();
 
         // Use a loop to read until both streams are closed or timeout
         // This is a simplified version; for robust streaming we'd use line framing or proper async reading.
         // Given we just need to grab output up to a limit, we can use `read_buf` or similar.
-        
+
         // But simpler: just use `tokio::time::timeout` wrapping the wait + background readers?
         // No, we need to stop reading if limit exceeded to save memory.
-        
+
         use tokio::io::AsyncReadExt;
-        
+
         let read_stream = async {
             let mut stdout_truncated = false;
             let mut stderr_truncated = false;
-            
+
             // We use small buffers for reading chunks
-            let mut buf_stdout = [0u8; 1024]; 
-            let mut buf_stderr = [0u8; 1024]; 
-            
+            let mut buf_stdout = [0u8; 1024];
+            let mut buf_stderr = [0u8; 1024];
+
             let mut stdout_done = false;
             let mut stderr_done = false;
-            
+
             loop {
                 tokio::select! {
                     res = stdout.read(&mut buf_stdout), if !stdout_done && !stdout_truncated => {
@@ -145,7 +149,7 @@ impl Tool for ShellExecTool {
                     else => break, // Both streams disabled (done or truncated)
                 }
             }
-            
+
             // Wait for clean exit
             child.wait().await
         };
@@ -154,7 +158,12 @@ impl Tool for ShellExecTool {
 
         let exit_code = match status_res {
             Ok(Ok(status)) => status.code().unwrap_or(-1),
-            Ok(Err(e)) => return Err(ToolError::ExecutionError(format!("Command execution failed: {}", e))),
+            Ok(Err(e)) => {
+                return Err(ToolError::ExecutionError(format!(
+                    "Command execution failed: {}",
+                    e
+                )));
+            }
             Err(_) => {
                 // Timeout
                 return Err(ToolError::ExecutionError(format!(
@@ -168,10 +177,10 @@ impl Tool for ShellExecTool {
         if stdout_buf.len() >= MAX_OUTPUT_BYTES {
             content.push_str("\n... [stdout truncated]");
         }
-        
+
         let stderr_str = String::from_utf8_lossy(&stderr_buf);
         if !stderr_str.is_empty() {
-             if !content.is_empty() {
+            if !content.is_empty() {
                 content.push('\n');
             }
             content.push_str("[stderr]\n");
@@ -257,10 +266,7 @@ mod tests {
         };
 
         let result = tool
-            .execute(
-                serde_json::json!({ "command": "echo err >&2" }),
-                &ctx,
-            )
+            .execute(serde_json::json!({ "command": "echo err >&2" }), &ctx)
             .await
             .unwrap();
 
@@ -306,7 +312,7 @@ mod tests {
         // 105000 bytes is > 100KB.
         let result = tool
             .execute(
-                serde_json::json!({ 
+                serde_json::json!({
                     "command": "yes '0123456789' | head -c 105000",
                     "timeout_secs": 10
                 }),
@@ -319,7 +325,7 @@ mod tests {
             assert!(output.content.contains("[stdout truncated]"));
             assert!(!output.content.contains("[stderr]")); // Should be no stderr
             // Content length should be roughly 100KB + message
-            assert!(output.content.len() < 105000); 
+            assert!(output.content.len() < 105000);
             assert!(output.content.len() >= 100000);
         } else {
             panic!("Expected ToolEffect::Output");

@@ -33,10 +33,7 @@ pub trait EmbeddingProvider: Send + Sync {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EmbeddingConfig {
-    OpenAI {
-        api_key: String,
-        model: String,
-    },
+    OpenAI { api_key: String, model: String },
     // Placeholder for future local/other providers
     NoOp,
 }
@@ -65,9 +62,9 @@ impl EmbeddingProvider for OpenAIEmbeddingProvider {
             .build();
 
         let response = self.client.embeddings().create(request).await?;
-        
+
         if let Some(data) = response.data.first() {
-             Ok(Embedding {
+            Ok(Embedding {
                 content: text.to_string(),
                 vector: data.embedding.clone(),
                 model: self.model.clone(),

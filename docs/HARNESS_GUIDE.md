@@ -8,7 +8,7 @@ This guide covers everything you need to write Turin harness scripts — from ba
 
 A harness is a Lua script that hooks into the kernel's event lifecycle. When the kernel is about to do something — call an LLM, execute a tool, start a session — it fires an event through the harness engine. Your script intercepts that event and returns a verdict: allow it, reject it, escalate it to a human, or modify it.
 
-But harnesses go beyond governance. The `on_before_inference` hook gives you full control over what the LLM sees. Combined with the kernel's primitives (filesystem, database, memory, session management, subagents), harness scripts define the agent's entire behavior: workflow, personality, context strategy, memory policy.
+But harnesses go beyond governance. The `on_turn_prepare` hook gives you full control over what the LLM sees. Combined with the kernel's primitives (filesystem, database, memory, session management, subagents), harness scripts define the agent's entire behavior: workflow, personality, context strategy, memory policy.
 
 The kernel provides the physics. Your harness defines the universe.
 
@@ -67,12 +67,12 @@ If your new script has a syntax error, the old harness keeps running and an erro
 
 ## Hooks Reference
 
-### `on_agent_start(event)`
+### `on_session_start(event)`
 
 Fires once when a session begins.
 
 ```lua
-function on_agent_start(event)
+function on_session_start(event)
     -- event.session_id: string
     log("Session started: " .. event.session_id)
 
@@ -83,12 +83,12 @@ function on_agent_start(event)
 end
 ```
 
-### `on_before_inference(ctx)`
+### `on_turn_prepare(ctx)`
 
 Fires before every LLM call. This is the most powerful hook — it gives you access to the full context and lets you modify it.
 
 ```lua
-function on_before_inference(ctx)
+function on_turn_prepare(ctx)
     -- Readable properties:
     -- ctx.model: string (current model)
     -- ctx.system_prompt: string (current system prompt)
@@ -114,7 +114,7 @@ end
 
 Inject project instructions:
 ```lua
-function on_before_inference(ctx)
+function on_turn_prepare(ctx)
     if fs.exists("TURIN.md") then
         ctx.system_prompt = ctx.system_prompt .. "\n\n" .. fs.read("TURIN.md")
     end
@@ -124,7 +124,7 @@ end
 
 Switch provider based on task:
 ```lua
-function on_before_inference(ctx)
+function on_turn_prepare(ctx)
     local msgs = ctx.messages
     if msgs and #msgs > 0 then
         local last = msgs[#msgs]
@@ -185,18 +185,18 @@ function on_tool_result(result)
 end
 ```
 
-### `on_task_submit(payload)`
+### `on_plan_submit(payload)`
 
-Fires when the agent calls `submit_task` to propose a plan.
+Fires when the agent calls `submit_plan` to propose a plan.
 
 ```lua
-function on_task_submit(payload)
+function on_plan_submit(payload)
     -- payload.title: string
-    -- payload.subtasks: table (list of task strings)
+    -- payload.tasks: table (list of task strings)
 
     -- Review the plan
     log("Agent proposed: " .. payload.title)
-    for i, task in ipairs(payload.subtasks) do
+    for i, task in ipairs(payload.tasks) do
         log("  " .. i .. ". " .. task)
     end
 
@@ -206,7 +206,7 @@ function on_task_submit(payload)
     end
 
     -- Reject the plan
-    if #payload.subtasks > 10 then
+    if #payload.tasks > 10 then
         return REJECT, "Plan is too complex. Break it into smaller chunks."
     end
 
@@ -216,13 +216,37 @@ end
 
 ### `on_task_complete(event)`
 
-Fires when the task queue is exhausted (all tasks done).
+Fires once per task when it reaches a terminal status (`success`, `rejected`, `max_turns`, `error`, `cancelled`).
 
 ```lua
 function on_task_complete(event)
     -- event.session_id: string
+    -- event.task_id: string
+    -- event.plan_id: string | nil
+    -- event.status: string
 
-    -- Store session learnings in memory
+    -- Retry policy example
+    if event.status == "error" then
+        return MODIFY, {
+            "Investigate failure for task " .. event.task_id,
+            "Re-attempt task " .. event.task_id .. " with a narrower scope"
+        }
+    end
+
+    return ALLOW
+end
+```
+
+### `on_all_tasks_complete(event)`
+
+Fires when the global queue is empty.
+
+```lua
+function on_all_tasks_complete(event)
+    -- event.session_id: string
+    -- event.turn_count: number
+
+    -- Optional end-of-run anchoring
     if turin.memory and turin.agent then
         local history = turin.session.load(event.session_id)
         if history and #history > 2 then
@@ -271,12 +295,12 @@ function on_turn_end(event)
 end
 ```
 
-### `on_agent_end(event)`
+### `on_session_end(event)`
 
 Fires when the session completes.
 
 ```lua
-function on_agent_end(event)
+function on_session_end(event)
     -- event.message_count: number
     -- event.total_input_tokens: number
     -- event.total_output_tokens: number
@@ -458,7 +482,7 @@ end
 ```lua
 -- 03_coding.lua
 
-function on_before_inference(ctx)
+function on_turn_prepare(ctx)
     -- Inject project instructions
     if fs.exists("TURIN.md") then
         ctx.system_prompt = ctx.system_prompt ..
@@ -496,7 +520,7 @@ end
 ```lua
 -- 04_resume.lua
 
-function on_agent_start(event)
+function on_session_start(event)
     local sessions = session.list()
     if #sessions > 0 then
         local prev = session.load(sessions[#sessions])
@@ -513,7 +537,7 @@ function on_agent_start(event)
     return ALLOW
 end
 
-function on_before_inference(ctx)
+function on_turn_prepare(ctx)
     local summary = db.kv_get("prev_session_summary")
     if summary and #ctx.messages <= 1 then
         ctx.system_prompt = ctx.system_prompt ..
@@ -547,7 +571,7 @@ end
 ```lua
 -- 01_no_tools.lua
 
-function on_before_inference(ctx)
+function on_turn_prepare(ctx)
     ctx.system_prompt = [[
 You are a thoughtful advisor. You provide guidance through conversation only.
 You do not write code, modify files, or run commands.
@@ -565,7 +589,7 @@ end
 ```lua
 -- 03_planning.lua
 
-function on_before_inference(ctx)
+function on_turn_prepare(ctx)
     local msgs = ctx.messages
     if msgs and #msgs > 0 then
         local last = msgs[#msgs]
@@ -576,7 +600,7 @@ function on_before_inference(ctx)
                 text = text:lower()
                 if text:find("build") or text:find("implement") or text:find("create") then
                     ctx.system_prompt = ctx.system_prompt ..
-                        "\n\nIMPORTANT: Before taking any action, use 'submit_task' to propose your plan."
+                        "\n\nIMPORTANT: Before taking any action, use 'submit_plan' to propose your plan."
                 end
             end
         end
@@ -584,11 +608,11 @@ function on_before_inference(ctx)
     return ALLOW
 end
 
-function on_task_submit(payload)
-    if #payload.subtasks > 8 then
-        return REJECT, "Too many subtasks. Break this into phases of 5 or fewer steps."
+function on_plan_submit(payload)
+    if #payload.tasks > 8 then
+        return REJECT, "Too many tasks. Break this into phases of 5 or fewer steps."
     end
-    log("Plan approved: " .. payload.title .. " (" .. #payload.subtasks .. " steps)")
+    log("Plan approved: " .. payload.title .. " (" .. #payload.tasks .. " steps)")
     return ALLOW
 end
 ```

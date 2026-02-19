@@ -3,8 +3,8 @@
 //! Tests for path traversal prevention, workspace escaping,
 //! and tool error handling across all built-in tools.
 
-use turin::tools::{Tool, ToolContext, ToolError};
 use tempfile::TempDir;
+use turin::tools::{Tool, ToolContext, ToolError};
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -27,10 +27,9 @@ mod read_file_security {
         let tool = ReadFileTool;
         let ctx = make_ctx(dir.path());
 
-        let result: Result<_, ToolError> = tool.execute(
-            serde_json::json!({ "path": "../../../etc/passwd" }),
-            &ctx,
-        ).await;
+        let result: Result<_, ToolError> = tool
+            .execute(serde_json::json!({ "path": "../../../etc/passwd" }), &ctx)
+            .await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -43,10 +42,9 @@ mod read_file_security {
         let tool = ReadFileTool;
         let ctx = make_ctx(dir.path());
 
-        let result: Result<_, ToolError> = tool.execute(
-            serde_json::json!({ "path": "/etc/passwd" }),
-            &ctx,
-        ).await;
+        let result: Result<_, ToolError> = tool
+            .execute(serde_json::json!({ "path": "/etc/passwd" }), &ctx)
+            .await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -63,10 +61,9 @@ mod read_file_security {
         let tool = ReadFileTool;
         let ctx = make_ctx(dir.path());
 
-        let result: Result<_, ToolError> = tool.execute(
-            serde_json::json!({ "path": "sub/dir/file.txt" }),
-            &ctx,
-        ).await;
+        let result: Result<_, ToolError> = tool
+            .execute(serde_json::json!({ "path": "sub/dir/file.txt" }), &ctx)
+            .await;
 
         assert!(result.is_ok());
         if let Ok(turin::tools::ToolEffect::Output(output)) = result {
@@ -96,13 +93,18 @@ mod write_file_security {
         let tool = WriteFileTool;
         let ctx = make_ctx(dir.path());
 
-        let result: Result<_, ToolError> = tool.execute(
-            serde_json::json!({ "path": "../../evil.txt", "content": "pwned" }),
-            &ctx,
-        ).await;
+        let result: Result<_, ToolError> = tool
+            .execute(
+                serde_json::json!({ "path": "../../evil.txt", "content": "pwned" }),
+                &ctx,
+            )
+            .await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ToolError::PermissionDenied(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ToolError::PermissionDenied(_)
+        ));
     }
 
     #[tokio::test]
@@ -111,13 +113,18 @@ mod write_file_security {
         let tool = WriteFileTool;
         let ctx = make_ctx(dir.path());
 
-        let result: Result<_, ToolError> = tool.execute(
-            serde_json::json!({ "path": "/tmp/evil.txt", "content": "pwned" }),
-            &ctx,
-        ).await;
+        let result: Result<_, ToolError> = tool
+            .execute(
+                serde_json::json!({ "path": "/tmp/evil.txt", "content": "pwned" }),
+                &ctx,
+            )
+            .await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ToolError::PermissionDenied(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ToolError::PermissionDenied(_)
+        ));
     }
 
     #[tokio::test]
@@ -126,10 +133,12 @@ mod write_file_security {
         let tool = WriteFileTool;
         let ctx = make_ctx(dir.path());
 
-        let result: Result<_, ToolError> = tool.execute(
-            serde_json::json!({ "path": "output.txt", "content": "safe" }),
-            &ctx,
-        ).await;
+        let result: Result<_, ToolError> = tool
+            .execute(
+                serde_json::json!({ "path": "output.txt", "content": "safe" }),
+                &ctx,
+            )
+            .await;
 
         assert!(result.is_ok());
         let written = std::fs::read_to_string(dir.path().join("output.txt")).unwrap();
@@ -147,17 +156,22 @@ mod edit_file_security {
         let tool = EditFileTool;
         let ctx = make_ctx(dir.path());
 
-        let result: Result<_, ToolError> = tool.execute(
-            serde_json::json!({
-                "path": "../../etc/hosts",
-                "old_text": "127.0.0.1",
-                "new_text": "evil"
-            }),
-            &ctx,
-        ).await;
+        let result: Result<_, ToolError> = tool
+            .execute(
+                serde_json::json!({
+                    "path": "../../etc/hosts",
+                    "old_text": "127.0.0.1",
+                    "new_text": "evil"
+                }),
+                &ctx,
+            )
+            .await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ToolError::PermissionDenied(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ToolError::PermissionDenied(_)
+        ));
     }
 
     #[tokio::test]
@@ -166,14 +180,16 @@ mod edit_file_security {
         let tool = EditFileTool;
         let ctx = make_ctx(dir.path());
 
-        let result: Result<_, ToolError> = tool.execute(
-            serde_json::json!({
-                "path": "nonexistent.txt",
-                "old_text": "foo",
-                "new_text": "bar"
-            }),
-            &ctx,
-        ).await;
+        let result: Result<_, ToolError> = tool
+            .execute(
+                serde_json::json!({
+                    "path": "nonexistent.txt",
+                    "old_text": "foo",
+                    "new_text": "bar"
+                }),
+                &ctx,
+            )
+            .await;
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ToolError::ExecutionError(_)));
@@ -190,13 +206,18 @@ mod shell_exec_security {
         let tool = ShellExecTool;
         let ctx = make_ctx(dir.path());
 
-        let result: Result<_, ToolError> = tool.execute(
-            serde_json::json!({ "command": "ls", "cwd": "../../" }),
-            &ctx,
-        ).await;
+        let result: Result<_, ToolError> = tool
+            .execute(
+                serde_json::json!({ "command": "ls", "cwd": "../../" }),
+                &ctx,
+            )
+            .await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ToolError::PermissionDenied(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ToolError::PermissionDenied(_)
+        ));
     }
 
     #[tokio::test]
@@ -205,10 +226,12 @@ mod shell_exec_security {
         let tool = ShellExecTool;
         let ctx = make_ctx(dir.path());
 
-        let result: Result<_, ToolError> = tool.execute(
-            serde_json::json!({ "command": "echo -e 'line1\nline2\nline3'" }),
-            &ctx,
-        ).await;
+        let result: Result<_, ToolError> = tool
+            .execute(
+                serde_json::json!({ "command": "echo -e 'line1\nline2\nline3'" }),
+                &ctx,
+            )
+            .await;
         let result = result.unwrap();
 
         if let turin::tools::ToolEffect::Output(output) = result {
@@ -226,14 +249,20 @@ mod shell_exec_security {
         let ctx = make_ctx(dir.path());
 
         let start = std::time::Instant::now();
-        let result: Result<_, ToolError> = tool.execute(
-            serde_json::json!({ "command": "sleep 60", "timeout_secs": 1 }),
-            &ctx,
-        ).await;
+        let result: Result<_, ToolError> = tool
+            .execute(
+                serde_json::json!({ "command": "sleep 60", "timeout_secs": 1 }),
+                &ctx,
+            )
+            .await;
 
         let elapsed = start.elapsed();
         assert!(result.is_err());
-        assert!(elapsed.as_secs() < 5, "Timeout took too long: {:?}", elapsed);
+        assert!(
+            elapsed.as_secs() < 5,
+            "Timeout took too long: {:?}",
+            elapsed
+        );
         assert!(result.unwrap_err().to_string().contains("timed out"));
     }
 }

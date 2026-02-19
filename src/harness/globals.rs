@@ -3,20 +3,18 @@
 //! These provide all capabilities that harness scripts have access to.
 //! The harness VM itself is sandboxed — these are the only OS-touching APIs.
 
-use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Value, Table};
+use glob::glob;
+use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 use std::path::{Path, PathBuf};
 use tokio::sync::Mutex;
-use glob::glob;
 use tracing::warn;
 
-use crate::persistence::state::StateStore;
-use crate::inference::provider::{
-    ProviderClient
-};
 use crate::inference::embeddings::EmbeddingProvider;
+use crate::inference::provider::ProviderClient;
+use crate::kernel::session::QueuedTask;
+use crate::persistence::state::StateStore;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-
 
 /// Maximum file size for harness `fs.write()` operations (10 MB).
 const MAX_HARNESS_FILE_SIZE: usize = 10 * 1024 * 1024;
@@ -24,9 +22,7 @@ const MAX_HARNESS_FILE_SIZE: usize = 10 * 1024 * 1024;
 /// Maximum recursion depth for `turin.agent.spawn()`.
 const MAX_SPAWN_DEPTH: u32 = 3;
 
-
-
-pub type SessionQueue = Arc<Mutex<VecDeque<String>>>;
+pub type SessionQueue = Arc<Mutex<VecDeque<QueuedTask>>>;
 pub type ActiveSessionQueue = Arc<Mutex<Option<SessionQueue>>>;
 
 /// Shared state passed to async Lua callbacks via app data.
@@ -92,62 +88,73 @@ fn register_fs_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
     // fs.read(path) -> string | nil
     {
         let root = fs_root.clone();
-        fs_table.set("read", lua.create_function(move |_lua, path: String| {
-            match resolve_safe_path(&root, &path) {
-                Some(safe_path) => match std::fs::read_to_string(&safe_path) {
-                    Ok(content) => Ok(Value::String(_lua.create_string(&content)?)),
-                    Err(_) => Ok(Value::Nil),
+        fs_table.set(
+            "read",
+            lua.create_function(
+                move |_lua, path: String| match resolve_safe_path(&root, &path) {
+                    Some(safe_path) => match std::fs::read_to_string(&safe_path) {
+                        Ok(content) => Ok(Value::String(_lua.create_string(&content)?)),
+                        Err(_) => Ok(Value::Nil),
+                    },
+                    None => Ok(Value::Nil),
                 },
-                None => Ok(Value::Nil),
-            }
-        })?)?;
+            )?,
+        )?;
     }
 
     // fs.write(path, content) -> boolean
     {
         let root = fs_root.clone();
-        fs_table.set("write", lua.create_function(move |_lua, (path, content): (String, String)| {
-            // Enforce file size limit to prevent disk exhaustion
-            if content.len() > MAX_HARNESS_FILE_SIZE {
-                return Err(mlua::Error::runtime(format!(
-                    "fs.write: content exceeds maximum size ({} bytes > {} byte limit)",
-                    content.len(), MAX_HARNESS_FILE_SIZE
-                )));
-            }
-            match resolve_safe_path(&root, &path) {
-                Some(safe_path) => {
-                    // Create parent directories if needed
-                    if let Some(parent) = safe_path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
+        fs_table.set(
+            "write",
+            lua.create_function(move |_lua, (path, content): (String, String)| {
+                // Enforce file size limit to prevent disk exhaustion
+                if content.len() > MAX_HARNESS_FILE_SIZE {
+                    return Err(mlua::Error::runtime(format!(
+                        "fs.write: content exceeds maximum size ({} bytes > {} byte limit)",
+                        content.len(),
+                        MAX_HARNESS_FILE_SIZE
+                    )));
+                }
+                match resolve_safe_path(&root, &path) {
+                    Some(safe_path) => {
+                        // Create parent directories if needed
+                        if let Some(parent) = safe_path.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        match std::fs::write(&safe_path, &content) {
+                            Ok(_) => Ok(true),
+                            Err(_) => Ok(false),
+                        }
                     }
-                    match std::fs::write(&safe_path, &content) {
-                        Ok(_) => Ok(true),
-                        Err(_) => Ok(false),
-                    }
-                },
-                None => Ok(false),
-            }
-        })?)?;
+                    None => Ok(false),
+                }
+            })?,
+        )?;
     }
 
     // fs.exists(path) -> boolean
     {
         let root = fs_root.clone();
-        fs_table.set("exists", lua.create_function(move |_lua, path: String| {
-            match resolve_safe_path(&root, &path) {
-                Some(safe_path) => Ok(safe_path.exists()),
-                None => Ok(false),
-            }
-        })?)?;
+        fs_table.set(
+            "exists",
+            lua.create_function(
+                move |_lua, path: String| match resolve_safe_path(&root, &path) {
+                    Some(safe_path) => Ok(safe_path.exists()),
+                    None => Ok(false),
+                },
+            )?,
+        )?;
     }
 
     // fs.list(path) -> table | nil
     {
         let root = fs_root.clone();
-        fs_table.set("list", lua.create_function(move |lua, path: String| {
-            match resolve_safe_path(&root, &path) {
-                Some(safe_path) => {
-                    match std::fs::read_dir(&safe_path) {
+        fs_table.set(
+            "list",
+            lua.create_function(
+                move |lua, path: String| match resolve_safe_path(&root, &path) {
+                    Some(safe_path) => match std::fs::read_dir(&safe_path) {
                         Ok(entries) => {
                             let tbl = lua.create_table()?;
                             let mut i = 1;
@@ -158,19 +165,22 @@ fn register_fs_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
                             Ok(Value::Table(tbl))
                         }
                         Err(_) => Ok(Value::Nil),
-                    }
-                }
-                None => Ok(Value::Nil),
-            }
-        })?)?;
+                    },
+                    None => Ok(Value::Nil),
+                },
+            )?,
+        )?;
     }
 
     // fs.is_safe_path(path) -> boolean
     {
         let root = fs_root.clone();
-        fs_table.set("is_safe_path", lua.create_function(move |_lua, path: String| {
-            Ok(resolve_safe_path(&root, &path).is_some())
-        })?)?;
+        fs_table.set(
+            "is_safe_path",
+            lua.create_function(move |_lua, path: String| {
+                Ok(resolve_safe_path(&root, &path).is_some())
+            })?,
+        )?;
     }
 
     lua.globals().set("fs", fs_table)?;
@@ -189,14 +199,14 @@ fn register_db_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
     // db.kv_get(key) -> string | nil
     {
         let store = app_data.state_store.clone();
-        db_table.set("kv_get", lua.create_function(move |lua, key: String| {
-            match &store {
+        db_table.set(
+            "kv_get",
+            lua.create_function(move |lua, key: String| match &store {
                 Some(store) => {
                     let store = store.clone();
                     let result = tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current().block_on(async {
-                            store.kv_get(&key).await
-                        })
+                        tokio::runtime::Handle::current()
+                            .block_on(async { store.kv_get(&key).await })
                     });
                     match result {
                         Ok(Some(val)) => Ok(Value::String(lua.create_string(&val)?)),
@@ -205,27 +215,27 @@ fn register_db_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
                     }
                 }
                 None => Ok(Value::Nil),
-            }
-        })?)?;
+            })?,
+        )?;
     }
 
     // db.kv_set(key, value) -> boolean
     {
         let store = app_data.state_store.clone();
-        db_table.set("kv_set", lua.create_function(move |_lua, (key, value): (String, String)| {
-            match &store {
+        db_table.set(
+            "kv_set",
+            lua.create_function(move |_lua, (key, value): (String, String)| match &store {
                 Some(store) => {
                     let store = store.clone();
                     let result = tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current().block_on(async {
-                            store.kv_set(&key, &value).await
-                        })
+                        tokio::runtime::Handle::current()
+                            .block_on(async { store.kv_set(&key, &value).await })
                     });
                     Ok(result.is_ok())
                 }
                 None => Ok(false),
-            }
-        })?)?;
+            })?,
+        )?;
     }
 
     lua.globals().set("db", db_table)?;
@@ -237,20 +247,26 @@ fn register_json_module(lua: &Lua) -> LuaResult<()> {
     let json_table = lua.create_table()?;
 
     // json.encode(table) -> string
-    json_table.set("encode", lua.create_function(|lua, value: Value| {
-        let json_val: serde_json::Value = lua.from_value(value)?;
-        let s = serde_json::to_string(&json_val)
-            .map_err(|e| mlua::Error::runtime(format!("JSON encode error: {}", e)))?;
-        Ok(s)
-    })?)?;
+    json_table.set(
+        "encode",
+        lua.create_function(|lua, value: Value| {
+            let json_val: serde_json::Value = lua.from_value(value)?;
+            let s = serde_json::to_string(&json_val)
+                .map_err(|e| mlua::Error::runtime(format!("JSON encode error: {}", e)))?;
+            Ok(s)
+        })?,
+    )?;
 
     // json.decode(string) -> table
-    json_table.set("decode", lua.create_function(|lua, s: String| {
-        let json_val: serde_json::Value = serde_json::from_str(&s)
-            .map_err(|e| mlua::Error::runtime(format!("JSON decode error: {}", e)))?;
-        let lua_val = lua.to_value(&json_val)?;
-        Ok(lua_val)
-    })?)?;
+    json_table.set(
+        "decode",
+        lua.create_function(|lua, s: String| {
+            let json_val: serde_json::Value = serde_json::from_str(&s)
+                .map_err(|e| mlua::Error::runtime(format!("JSON decode error: {}", e)))?;
+            let lua_val = lua.to_value(&json_val)?;
+            Ok(lua_val)
+        })?,
+    )?;
 
     lua.globals().set("json", json_table)?;
     Ok(())
@@ -261,14 +277,17 @@ fn register_time_module(lua: &Lua) -> LuaResult<()> {
     let time_table = lua.create_table()?;
 
     // time.now_utc() -> string (Unix timestamp in seconds)
-    time_table.set("now_utc", lua.create_function(|_lua, ()| {
-        use std::time::SystemTime;
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        Ok(format!("{}", now))
-    })?)?;
+    time_table.set(
+        "now_utc",
+        lua.create_function(|_lua, ()| {
+            use std::time::SystemTime;
+            let now = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            Ok(format!("{}", now))
+        })?,
+    )?;
 
     lua.globals().set("time", time_table)?;
     Ok(())
@@ -281,118 +300,144 @@ fn register_session_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()
     // session.list(limit?, offset?) -> { "id1", "id2", ... }
     {
         let store = app_data.state_store.clone();
-        session_table.set("list", lua.create_function(move |_lua, (limit, offset): (Option<usize>, Option<usize>)| {
-            let limit = limit.unwrap_or(10);
-            let offset = offset.unwrap_or(0);
-            match &store {
-                Some(store) => {
-                    let store = store.clone();
-                    let result = tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current().block_on(async {
-                            store.list_sessions(limit, offset).await
-                        })
-                    });
-                    match result {
-                        Ok(sessions) => Ok(sessions),
-                        Err(e) => Err(mlua::Error::runtime(format!("Failed to list sessions: {}", e))),
+        session_table.set(
+            "list",
+            lua.create_function(
+                move |_lua, (limit, offset): (Option<usize>, Option<usize>)| {
+                    let limit = limit.unwrap_or(10);
+                    let offset = offset.unwrap_or(0);
+                    match &store {
+                        Some(store) => {
+                            let store = store.clone();
+                            let result = tokio::task::block_in_place(|| {
+                                tokio::runtime::Handle::current()
+                                    .block_on(async { store.list_sessions(limit, offset).await })
+                            });
+                            match result {
+                                Ok(sessions) => Ok(sessions),
+                                Err(e) => Err(mlua::Error::runtime(format!(
+                                    "Failed to list sessions: {}",
+                                    e
+                                ))),
+                            }
+                        }
+                        None => Ok(Vec::new()),
                     }
-                }
-                None => Ok(Vec::new()),
-            }
-        })?)?;
+                },
+            )?,
+        )?;
     }
 
     // session.load(id) -> { {role=..., content=...}, ... }
     {
         let store = app_data.state_store.clone();
-        session_table.set("load", lua.create_function(move |lua, id: String| {
-             match &store {
-                Some(store) => {
-                    let store = store.clone();
-                    let result = tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current().block_on(async {
-                            store.get_messages(&id).await
-                        })
-                    });
-                    
-                    match result {
-                        Ok(rows) => {
-                            let tbl = lua.create_table()?;
-                            for (i, row) in rows.into_iter().enumerate() {
-                                let msg_tbl = lua.create_table()?;
-                                msg_tbl.set("role", row.role)?;
-                                // content is JSON string. Decode it.
-                                let content_json: serde_json::Value = serde_json::from_str(&row.content)
-                                    .map_err(|e| mlua::Error::runtime(format!("Failed to parse message content: {}", e)))?;
-                                msg_tbl.set("content", lua.to_value(&content_json)?)?;
-                                tbl.set(i + 1, msg_tbl)?;
+        session_table.set(
+            "load",
+            lua.create_function(move |lua, id: String| {
+                match &store {
+                    Some(store) => {
+                        let store = store.clone();
+                        let result = tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current()
+                                .block_on(async { store.get_messages(&id).await })
+                        });
+
+                        match result {
+                            Ok(rows) => {
+                                let tbl = lua.create_table()?;
+                                for (i, row) in rows.into_iter().enumerate() {
+                                    let msg_tbl = lua.create_table()?;
+                                    msg_tbl.set("role", row.role)?;
+                                    // content is JSON string. Decode it.
+                                    let content_json: serde_json::Value =
+                                        serde_json::from_str(&row.content).map_err(|e| {
+                                            mlua::Error::runtime(format!(
+                                                "Failed to parse message content: {}",
+                                                e
+                                            ))
+                                        })?;
+                                    msg_tbl.set("content", lua.to_value(&content_json)?)?;
+                                    tbl.set(i + 1, msg_tbl)?;
+                                }
+                                Ok(Value::Table(tbl))
                             }
-                            Ok(Value::Table(tbl))
+                            Err(e) => Err(mlua::Error::runtime(format!(
+                                "Failed to load session '{}': {}",
+                                id, e
+                            ))),
                         }
-                         Err(e) => Err(mlua::Error::runtime(format!("Failed to load session '{}': {}", id, e))),
                     }
+                    None => Ok(Value::Nil),
                 }
-                None => Ok(Value::Nil),
-             }
-        })?)?;
+            })?,
+        )?;
     }
 
     // session.queue(command) -> void
     {
         let active_queue = app_data.queue.clone();
-        session_table.set("queue", lua.create_function(move |_lua, command: String| {
-            let active_queue = active_queue.clone();
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    let queue_opt = active_queue.lock().await;
-                    if let Some(queue) = &*queue_opt {
-                        let mut q = queue.lock().await;
-                        q.push_back(command);
-                    } else {
-                        warn!("session.queue called without active session");
-                    }
-                })
-            });
-            Ok(())
-        })?)?;
+        session_table.set(
+            "queue",
+            lua.create_function(move |_lua, command: String| {
+                let active_queue = active_queue.clone();
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        let queue_opt = active_queue.lock().await;
+                        if let Some(queue) = &*queue_opt {
+                            let mut q = queue.lock().await;
+                            q.push_back(QueuedTask::ad_hoc(command));
+                        } else {
+                            warn!("session.queue called without active session");
+                        }
+                    })
+                });
+                Ok(())
+            })?,
+        )?;
     }
-    
+
     // session.queue_all(commands) -> void
     {
         let active_queue = app_data.queue.clone();
-        session_table.set("queue_all", lua.create_function(move |_lua, commands: Vec<String>| {
-            let active_queue = active_queue.clone();
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    let queue_opt = active_queue.lock().await;
-                     if let Some(queue) = &*queue_opt {
-                        let mut q = queue.lock().await;
-                        for cmd in commands {
-                             q.push_back(cmd);
+        session_table.set(
+            "queue_all",
+            lua.create_function(move |_lua, commands: Vec<String>| {
+                let active_queue = active_queue.clone();
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        let queue_opt = active_queue.lock().await;
+                        if let Some(queue) = &*queue_opt {
+                            let mut q = queue.lock().await;
+                            for cmd in commands {
+                                q.push_back(QueuedTask::ad_hoc(cmd));
+                            }
                         }
-                     }
-                })
-            });
-            Ok(())
-        })?)?;
+                    })
+                });
+                Ok(())
+            })?,
+        )?;
     }
 
     // session.queue_next(command) -> void
     {
         let active_queue = app_data.queue.clone();
-        session_table.set("queue_next", lua.create_function(move |_lua, command: String| {
-            let active_queue = active_queue.clone();
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                     let queue_opt = active_queue.lock().await;
-                     if let Some(queue) = &*queue_opt {
-                         let mut q = queue.lock().await;
-                         q.push_front(command);
-                     }
-                })
-            });
-            Ok(())
-        })?)?;
+        session_table.set(
+            "queue_next",
+            lua.create_function(move |_lua, command: String| {
+                let active_queue = active_queue.clone();
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        let queue_opt = active_queue.lock().await;
+                        if let Some(queue) = &*queue_opt {
+                            let mut q = queue.lock().await;
+                            q.push_front(QueuedTask::ad_hoc(command));
+                        }
+                    })
+                });
+                Ok(())
+            })?,
+        )?;
     }
 
     lua.globals().set("session", session_table)?;
@@ -408,88 +453,117 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
     // turin.context.glob(pattern) -> { "file1", "file2" }
     {
         let root = fs_root.clone();
-        context_table.set("glob", lua.create_function(move |_lua, pattern: String| {
-            let mut matches = Vec::new();
-            // Construct absolute pattern
-            let full_pattern = root.join(&pattern);
-            let full_pattern_str = full_pattern.to_string_lossy();
-            
-            // Check for obvious traversal attempts in pattern itself before globbing
-            if pattern.contains("..") {
-                 // Simple safety check, though glob crate handles some traversals
-                 return Ok(Vec::new());
-            }
+        context_table.set(
+            "glob",
+            lua.create_function(move |_lua, pattern: String| {
+                let mut matches = Vec::new();
+                // Construct absolute pattern
+                let full_pattern = root.join(&pattern);
+                let full_pattern_str = full_pattern.to_string_lossy();
 
-            if let Ok(paths) = glob(&full_pattern_str) {
-                for path in paths.flatten() {
-                    // Ensure path is within root
-                    if let Ok(canonical) = path.canonicalize()
-                         && let Ok(canonical_root) = root.canonicalize()
-                             && canonical.starts_with(&canonical_root) {
-                                 // Return relative path string
-                                 if let Ok(relative) = path.strip_prefix(&root) {
-                                     matches.push(relative.to_string_lossy().to_string());
-                                 }
-                             }
+                // Check for obvious traversal attempts in pattern itself before globbing
+                if pattern.contains("..") {
+                    // Simple safety check, though glob crate handles some traversals
+                    return Ok(Vec::new());
                 }
-            }
-            Ok(matches)
-        })?)?;
+
+                if let Ok(paths) = glob(&full_pattern_str) {
+                    for path in paths.flatten() {
+                        // Ensure path is within root
+                        if let Ok(canonical) = path.canonicalize()
+                            && let Ok(canonical_root) = root.canonicalize()
+                            && canonical.starts_with(&canonical_root)
+                        {
+                            // Return relative path string
+                            if let Ok(relative) = path.strip_prefix(&root) {
+                                matches.push(relative.to_string_lossy().to_string());
+                            }
+                        }
+                    }
+                }
+                Ok(matches)
+            })?,
+        )?;
     }
 
     turin_table.set("context", context_table)?;
 
     // turin.import(name) -> table | nil
-    turin_table.set("import", lua.create_function(|lua, name: String| {
-        let globals = lua.globals();
-        let modules: Table = globals.get("__harness_modules")?;
-        modules.get::<Value>(name)
-    })?)?;
+    turin_table.set(
+        "import",
+        lua.create_function(|lua, name: String| {
+            let globals = lua.globals();
+            let modules: Table = globals.get("__harness_modules")?;
+            modules.get::<Value>(name)
+        })?,
+    )?;
 
     // turin.complete(prompt, options) -> string | nil
     {
         let clients = app_data.clients.clone();
         let config_arc = app_data.config.clone();
-        
-        turin_table.set("complete", lua.create_function(move |_lua, (prompt, options): (String, Option<mlua::Table>)| {
-            let mut model = config_arc.agent.model.clone();
-            let mut provider = config_arc.agent.provider.clone(); 
-            // Default provider from config.
-            
-            // Check options for overrides
-            if let Some(opts) = options {
-                if let Ok(m) = opts.get("model") {
-                    model = m;
-                }
-                if let Ok(p) = opts.get("provider") {
-                    provider = p;
-                }
-            }
 
-            // Lookup client by name directly
-            let client = clients.get(&provider)
-                 .ok_or_else(|| mlua::Error::RuntimeError(format!("Provider '{}' not initialized", provider)))?
-                 .clone();
+        turin_table.set(
+            "complete",
+            lua.create_function(
+                move |_lua, (prompt, options): (String, Option<mlua::Table>)| {
+                    let mut model = config_arc.agent.model.clone();
+                    let mut provider = config_arc.agent.provider.clone();
+                    // Default provider from config.
 
-            let result = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    client.completion(&model, "You are a helpful assistant.", &[
-                        crate::inference::provider::InferenceMessage {
-                            role: crate::inference::provider::InferenceRole::User,
-                            content: vec![crate::inference::provider::InferenceContent::Text { text: prompt }],
-                            tool_call_id: None,
+                    // Check options for overrides
+                    if let Some(opts) = options {
+                        if let Ok(m) = opts.get("model") {
+                            model = m;
                         }
-                    ]).await
-                })
-            });
+                        if let Ok(p) = opts.get("provider") {
+                            provider = p;
+                        }
+                    }
 
-            match result {
-                Ok(content) => Ok(Some(content)),
-                Err(e) => Err(mlua::Error::RuntimeError(format!("Completion failed: {}", e))),
-            }
-        })?)?;
+                    // Lookup client by name directly
+                    let client = clients
+                        .get(&provider)
+                        .ok_or_else(|| {
+                            mlua::Error::RuntimeError(format!(
+                                "Provider '{}' not initialized",
+                                provider
+                            ))
+                        })?
+                        .clone();
+
+                    let result = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(async {
+                            client
+                                .completion(
+                                    &model,
+                                    "You are a helpful assistant.",
+                                    &[crate::inference::provider::InferenceMessage {
+                                        role: crate::inference::provider::InferenceRole::User,
+                                        content: vec![
+                                            crate::inference::provider::InferenceContent::Text {
+                                                text: prompt,
+                                            },
+                                        ],
+                                        tool_call_id: None,
+                                    }],
+                                )
+                                .await
+                        })
+                    });
+
+                    match result {
+                        Ok(content) => Ok(Some(content)),
+                        Err(e) => Err(mlua::Error::RuntimeError(format!(
+                            "Completion failed: {}",
+                            e
+                        ))),
+                    }
+                },
+            )?,
+        )?;
     }
-    
+
     // turin.memory sub-module
     {
         let memory_table = lua.create_table()?;
@@ -499,56 +573,69 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
         // turin.memory.store(content, metadata) -> boolean
         // This is a heavy operation (embedding + db insert), so we block carefully.
         {
-             let store = store.clone();
-             let embedding_provider = embedding_provider.clone();
-             let active_session = app_data.active_session_id.clone();
-             memory_table.set("store", lua.create_function(move |lua, (content, metadata): (String, Option<Value>)| {
-                 let store = store.clone();
-                 let embedding_provider = embedding_provider.clone();
-                 let active_session = active_session.clone();
-                 let metadata_json: serde_json::Value = if let Some(meta) = metadata {
-                     lua.from_value(meta)?
-                 } else {
-                     serde_json::json!({})
-                 };
+            let store = store.clone();
+            let embedding_provider = embedding_provider.clone();
+            let active_session = app_data.active_session_id.clone();
+            memory_table.set(
+                "store",
+                lua.create_function(move |lua, (content, metadata): (String, Option<Value>)| {
+                    let store = store.clone();
+                    let embedding_provider = embedding_provider.clone();
+                    let active_session = active_session.clone();
+                    let metadata_json: serde_json::Value = if let Some(meta) = metadata {
+                        lua.from_value(meta)?
+                    } else {
+                        serde_json::json!({})
+                    };
 
-                 let result = tokio::task::block_in_place(|| {
-                     tokio::runtime::Handle::current().block_on(async {
-                         // 1. Generate embedding
-                         if let Some(provider) = &embedding_provider {
-                             let embedding = provider.embed(&content).await
-                                 .map_err(|e| format!("Embedding failed: {}", e))?;
-                             
-                             // 2. Insert into DB
-                             if let Some(store) = &store {
-                                 let session_id = active_session.lock().unwrap().clone()
-                                     .ok_or_else(|| "No active session context".to_string())?;
-                                 store.insert_memory(&session_id, &content, &embedding.vector, &metadata_json).await
-                                     .map_err(|e| format!("DB insert failed: {}", e))?;
-                                 Ok(true)
-                             } else {
-                                 Err("No state store available".to_string())
-                             }
-                         } else {
-                             Err("No embedding provider available".to_string())
-                         }
-                     })
-                 });
+                    let result = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(async {
+                            // 1. Generate embedding
+                            if let Some(provider) = &embedding_provider {
+                                let embedding = provider
+                                    .embed(&content)
+                                    .await
+                                    .map_err(|e| format!("Embedding failed: {}", e))?;
 
-                 match result {
-                     Ok(_) => Ok(true),
-                     Err(e) => Err(mlua::Error::runtime(e)),
-                 }
-             })?)?;
+                                // 2. Insert into DB
+                                if let Some(store) = &store {
+                                    let session_id =
+                                        active_session.lock().unwrap().clone().ok_or_else(
+                                            || "No active session context".to_string(),
+                                        )?;
+                                    store
+                                        .insert_memory(
+                                            &session_id,
+                                            &content,
+                                            &embedding.vector,
+                                            &metadata_json,
+                                        )
+                                        .await
+                                        .map_err(|e| format!("DB insert failed: {}", e))?;
+                                    Ok(true)
+                                } else {
+                                    Err("No state store available".to_string())
+                                }
+                            } else {
+                                Err("No embedding provider available".to_string())
+                            }
+                        })
+                    });
+
+                    match result {
+                        Ok(_) => Ok(true),
+                        Err(e) => Err(mlua::Error::runtime(e)),
+                    }
+                })?,
+            )?;
         }
-
 
         // turin.memory.search(query, limit) -> { {content=..., score=...}, ... }
         {
-             let store = store.clone();
-             let embedding_provider = embedding_provider.clone();
-             let active_session = app_data.active_session_id.clone();
-             memory_table.set("search", lua.create_function(move |lua, (query, limit): (String, Option<usize>)| {
+            let store = store.clone();
+            let embedding_provider = embedding_provider.clone();
+            let active_session = app_data.active_session_id.clone();
+            memory_table.set("search", lua.create_function(move |lua, (query, limit): (String, Option<usize>)| {
                  let store = store.clone();
                  let embedding_provider = embedding_provider.clone();
                  let active_session = active_session.clone();
@@ -596,7 +683,7 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
                              row_tbl.set("content", row.content)?;
                              row_tbl.set("score", row.score)?;
                              // Parse metadata if needed, for now just raw string or ignore
-                             // row_tbl.set("metadata", ...)?; 
+                             // row_tbl.set("metadata", ...)?;
                              tbl.set(i + 1, row_tbl)?;
                          }
                          Ok(Value::Table(tbl))
@@ -616,19 +703,19 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
 /// Register `turin.agent` table: spawn
 fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
     let agent_table = lua.create_table()?;
-    let turin_table: mlua::Table = lua.globals().get("turin")?; // Get existing table or fail? 
+    let turin_table: mlua::Table = lua.globals().get("turin")?; // Get existing table or fail?
     // Wait, register_turin_module creates "turin" global. We should probably attach to it?
     // But `register_turin_module` sets "turin" global at the end.
     // Order matters. `register_turin_module` is called before this.
     // So we can get "turin" global and add "agent" to it.
-    
+
     // turin.agent.spawn(prompt, options) -> string | nil
     {
         let config_arc = app_data.config.clone();
         let clients = app_data.clients.clone();
         let state_store = app_data.state_store.clone();
         let spawn_depth = app_data.spawn_depth;
-        
+
         agent_table.set("spawn", lua.create_function(move |_lua, (prompt, options): (String, Option<mlua::Table>)| {
             // Guard: prevent unbounded recursive agent spawning
             let current_depth = spawn_depth;
@@ -640,7 +727,7 @@ fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
             }
 
             let mut config = (*config_arc).clone();
-            
+
             // Apply options
             if let Some(opts) = options {
                 if let Ok(m) = opts.get("model") {
@@ -667,18 +754,18 @@ fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
                 tokio::runtime::Handle::current().block_on(async {
                     // Create sub-kernel
                     let mut kernel = crate::kernel::Kernel::builder(config).json_mode(false).build().map_err(|e| e.to_string())?;
-                    
+
                     // Inject shared components
                     kernel.clients = clients;
                     if let Some(s) = state_store {
                          kernel.state = Some(s);
                     }
-                    
+
                     // Init harness for sub-kernel
                     if let Err(e) = kernel.init_harness().await {
                         return Err(format!("Sub-kernel harness init failed: {}", e));
                     }
-                    
+
                     // Create session for sub-kernel
                     let mut session = kernel.create_session();
 
@@ -686,7 +773,7 @@ fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
                     if let Err(e) = kernel.run(&mut session, Some(prompt)).await {
                         return Err(format!("Sub-kernel run failed: {}", e));
                     }
-                    
+
                     // Extract result
                     // Get last message from assistant
                     if let Some(last) = session.history.last() {
@@ -714,17 +801,20 @@ fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
             }
         })?)?;
     }
-    
+
     turin_table.set("agent", agent_table)?;
     Ok(())
 }
 
 /// Register `log(msg)` global function
 fn register_log_function(lua: &Lua) -> LuaResult<()> {
-    lua.globals().set("log", lua.create_function(|_lua, msg: String| {
-        eprintln!("[harness] {}", msg);
-        Ok(())
-    })?)?;
+    lua.globals().set(
+        "log",
+        lua.create_function(|_lua, msg: String| {
+            eprintln!("[harness] {}", msg);
+            Ok(())
+        })?,
+    )?;
     Ok(())
 }
 
@@ -800,7 +890,10 @@ mod tests {
         register_globals(&lua, app_data).unwrap();
 
         // Write a file
-        let ok: bool = lua.load("return fs.write('output.txt', 'written by lua')").eval().unwrap();
+        let ok: bool = lua
+            .load("return fs.write('output.txt', 'written by lua')")
+            .eval()
+            .unwrap();
         assert!(ok);
 
         let content = std::fs::read_to_string(dir.path().join("output.txt")).unwrap();
@@ -815,10 +908,16 @@ mod tests {
         register_globals(&lua, app_data).unwrap();
 
         // Path traversal should return nil/false
-        let result: Value = lua.load("return fs.read('../../../etc/passwd')").eval().unwrap();
+        let result: Value = lua
+            .load("return fs.read('../../../etc/passwd')")
+            .eval()
+            .unwrap();
         assert_eq!(result, Value::Nil);
 
-        let safe: bool = lua.load("return fs.is_safe_path('../../../etc/passwd')").eval().unwrap();
+        let safe: bool = lua
+            .load("return fs.is_safe_path('../../../etc/passwd')")
+            .eval()
+            .unwrap();
         assert!(!safe);
     }
 
@@ -864,14 +963,22 @@ mod tests {
         };
         register_globals(&lua, app_data).unwrap();
 
-        let result: String = lua.load(r#"return json.encode({name = "turin", version = 1})"#).eval().unwrap();
+        let result: String = lua
+            .load(r#"return json.encode({name = "turin", version = 1})"#)
+            .eval()
+            .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["name"], "turin");
 
-        let decoded: String = lua.load(r#"
+        let decoded: String = lua
+            .load(
+                r#"
             local t = json.decode('{"key": "value"}')
             return t.key
-        "#).eval().unwrap();
+        "#,
+            )
+            .eval()
+            .unwrap();
         assert_eq!(decoded, "value");
     }
 
@@ -947,13 +1054,15 @@ mod tests {
         let db_path = dir.path().join("test.db").to_str().unwrap().to_string();
         // Initialize StateStore (this runs migrations)
         let store = StateStore::open(&db_path).await.unwrap();
-        
+
         // Mock embedding provider that returns zero vector
-        let embedding_provider = crate::inference::embeddings::create_embedding_provider(&crate::inference::embeddings::EmbeddingConfig::NoOp);
-        
+        let embedding_provider = crate::inference::embeddings::create_embedding_provider(
+            &crate::inference::embeddings::EmbeddingConfig::NoOp,
+        );
+
         let lua = Lua::new();
         let active_session = Arc::new(std::sync::Mutex::new(None));
-        
+
         let app_data = HarnessAppData {
             fs_root: dir.path().to_path_buf(),
             workspace_root: dir.path().to_path_buf(),
@@ -972,20 +1081,29 @@ mod tests {
             let mut lock = active_session.lock().unwrap();
             *lock = Some("session_a".to_string());
         }
-        
-        lua.load(r#"
+
+        lua.load(
+            r#"
             turin.memory.store("secret_a", {source="a"})
-        "#).exec().unwrap();
+        "#,
+        )
+        .exec()
+        .unwrap();
 
         // 2. Session B tries to find it (should fail)
         {
             let mut lock = active_session.lock().unwrap();
             *lock = Some("session_b".to_string());
         }
-        
-        let results: Table = lua.load(r#"
+
+        let results: Table = lua
+            .load(
+                r#"
             return turin.memory.search("secret", 5)
-        "#).eval().unwrap();
+        "#,
+            )
+            .eval()
+            .unwrap();
         assert_eq!(results.len().unwrap(), 0);
 
         // 3. Session A finds it
@@ -994,10 +1112,15 @@ mod tests {
             *lock = Some("session_a".to_string());
         }
 
-        let results_a: Table = lua.load(r#"
+        let results_a: Table = lua
+            .load(
+                r#"
             return turin.memory.search("secret", 5)
-        "#).eval().unwrap();
-        
+        "#,
+            )
+            .eval()
+            .unwrap();
+
         assert!(results_a.len().unwrap() > 0);
         let first: Table = results_a.get(1).unwrap();
         let content: String = first.get("content").unwrap();

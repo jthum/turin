@@ -23,7 +23,7 @@ The kernel is the execution substrate. It knows *how* to do things but has no op
 | Responsibility | Description |
 |----------------|-------------|
 | **Event Loop** | Turn-by-turn agent execution with streaming |
-| **Session Lifecycle** | Managed `AgentStart` and `AgentEnd` boundaries for clean state transitions |
+| **Session Lifecycle** | Managed `SessionStart` and `SessionEnd` boundaries for clean state transitions |
 | **Inference Transport** | HTTP connections to LLM providers via the `InferenceProvider` trait |
 | **Stream Parsing** | MSE/SSE events into structured `KernelEvent`s |
 | **Tool Execution** | Runs tools via the `ToolRegistry`, handles side-effects through `ToolEffect` |
@@ -51,7 +51,7 @@ The harness is not just a governance layer. It's the entire behavioral layer. Co
 
 The LLM proposes actions. It has no ability to enforce them. It is a brain in a room with a microphone — the kernel only uses its "hands" (tools) if the harness says the request is allowed.
 
-Turin supports multiple LLM providers through a standardized `InferenceProvider` trait. Providers are configured by name and can be switched at runtime from harness scripts via the `on_before_inference` hook.
+Turin supports multiple LLM providers through a standardized `InferenceProvider` trait. Providers are configured by name and can be switched at runtime from harness scripts via the `on_turn_prepare` hook.
 
 ---
 
@@ -65,12 +65,12 @@ turin run --prompt "Fix the bug in main.rs"
 ├─ INIT Turso state store (WAL mode + busy timeout)
 │
 ├─ start_session()
-│   └─ EMIT Lifecycle::AgentStart → on_agent_start hook
+│   └─ EMIT Lifecycle::SessionStart → on_session_start hook
 │
 ├─ run() loop (turns)
 │   ├─ EMIT Lifecycle::TurnStart → on_turn_start hook
 │   ├─ ASSEMBLE context (system prompt + messages + tool results)
-│   ├─ CALL on_before_inference(ctx) → harness
+│   ├─ CALL on_turn_prepare(ctx) → harness
 │   │   └─ Harness may: modify system prompt, inject/remove messages,
 │   │      swap provider, adjust thinking budget
 │   ├─ CALL LLM (stream)
@@ -86,7 +86,7 @@ turin run --prompt "Fix the bug in main.rs"
 │   │   │   │   ├─ MODIFY? → use modified arguments
 │   │   │   │   └─ ALLOW? ▼
 │   │   │   ├─ EXECUTE tool
-│   │   │   ├─ CAPTURE ToolEffect (e.g., submit_task side-effects)
+│   │   │   ├─ CAPTURE ToolEffect (e.g., submit_plan side-effects)
 │   │   │   ├─ EMIT audit::ToolResult → on_tool_result hook
 │   │   │   └─ PERSIST event
 │   │   └─ CONTINUE to next turn
@@ -97,18 +97,20 @@ turin run --prompt "Fix the bug in main.rs"
 │   ├─ EMIT audit::TokenUsage → on_token_usage hook
 │   └─ EMIT Lifecycle::TurnEnd → on_turn_end hook
 │
+├─ EMIT Lifecycle::TaskComplete → on_task_complete hook (per task, terminal status)
+│
 ├─ IF queue empty:
-│   └─ EMIT on_task_complete → harness (can MODIFY queue to continue)
+│   └─ EMIT Lifecycle::AllTasksComplete → on_all_tasks_complete hook (can MODIFY queue to continue)
 │
 ├─ end_session()
-│   ├─ EMIT Lifecycle::AgentEnd → on_agent_end hook
+│   ├─ EMIT Lifecycle::SessionEnd → on_session_end hook
 │   └─ CLEAR session_active_queue
 └─ EXIT
 ```
 
 ### The Queue
 
-The kernel maintains a task queue. When `run()` is called with a prompt, the prompt is the first task. Harness scripts and the `submit_task` tool can add tasks to the queue. The kernel processes tasks sequentially until the queue is empty.
+The kernel maintains a task queue. When `run()` is called with a prompt, the prompt is the first task. Harness scripts and the `submit_plan` tool can add tasks to the queue. The kernel processes tasks sequentially until the queue is empty.
 
 In REPL mode, each user input becomes a new task. Harness scripts can use `session.queue()` and `session.queue_next()` to inject follow-up work.
 
@@ -120,7 +122,7 @@ Every action in Turin produces a categorized `KernelEvent`. This categorization 
 
 ```rust
 pub enum KernelEvent {
-    Lifecycle(LifecycleEvent), // AgentStart, AgentEnd, TurnStart, TurnEnd
+    Lifecycle(LifecycleEvent), // SessionStart/End, TaskStart/Complete, TurnStart/Prepare/End
     Stream(StreamEvent),       // MessageStart/Delta/End, ThinkingDelta
     Audit(AuditEvent),         // ToolCall, ToolResult, TokenUsage, HarnessRejection
 }
@@ -174,13 +176,13 @@ Tools receive a `ToolContext` with workspace root and session ID. They have **no
 
 `ToolOutput` has two fields:
 - `content` — returned to the LLM
-- `metadata` — structured data for logging and kernel-level side effects (e.g., `submit_task` uses metadata to signal queue operations)
+- `metadata` — structured data for logging.
 
 ### Tool Side-Effects (`ToolEffect`)
 
-Rather than letting tools modify kernel state directly, the kernel processes "hints" in the tool result metadata. 
-- **Task Submission**: `submit_task` returns metadata that the kernel maps to a `ToolEffect::SubmitTask`, which appends new prompts to the session queue.
-- **Workflow Control**: Metadata can signal the kernel to terminate a session or switch modes.
+Rather than letting tools modify kernel state directly, the kernel processes explicit side effects.
+- **Plan Submission**: `submit_plan` returns `ToolEffect::EnqueuePlan`, which is governed via `on_plan_submit`, then enqueued as structured tasks with `task_id` and `plan_id`.
+- **MCP Bridge**: `bridge_mcp` returns `ToolEffect::SpawnMcp`, which connects a server and registers discovered tools.
 
 ### Built-in Tools
 
@@ -190,7 +192,7 @@ Rather than letting tools modify kernel state directly, the kernel processes "hi
 | `write_file` | Create or overwrite a file |
 | `edit_file` | Apply targeted string replacements |
 | `shell_exec` | Execute shell commands with stdout/stderr/exit code capture |
-| `submit_task` | Propose a multi-step plan (triggers `on_task_submit` hook) |
+| `submit_plan` | Propose a multi-step plan (triggers `on_plan_submit` hook) |
 | `bridge_mcp` | Connect to an MCP server and register its tools |
 
 ### MCP Integration
@@ -292,7 +294,7 @@ api_key_env = "OPENAI_API_KEY"
 base_url = "https://custom-endpoint.example.com/v1"
 ```
 
-The default provider is set in `[agent].provider`. Harness scripts can switch providers mid-turn via `ctx.provider = "fast"` in `on_before_inference`.
+The default provider is set in `[agent].provider`. Harness scripts can switch providers mid-turn via `ctx.provider = "fast"` in `on_turn_prepare`.
 
 Provider-specific SDK events are mapped to `KernelEvent`s at the boundary, so the rest of the system is provider-agnostic.
 

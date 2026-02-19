@@ -44,8 +44,8 @@ All the same binary. Different `.lua` files in the harness directory.
 - **Persistent State** — Every event, message, and tool execution logged to a portable SQLite database (Turso). Modular architecture with per-connection busy timeouts ensures reliability under contention.
 - **Cognitive Memory** — Semantic memory with hybrid search (vector + FTS5 + Reciprocal Rank Fusion). Agents remember across sessions.
 - **Automated Quality Controls** — GitHub Actions CI for automated testing and builds, with `cargo-deny` for security and license auditing.
-- **Context Engineering** — The `on_before_inference` hook gives harness scripts full control over what the LLM sees: inject instructions, compact history, swap providers, adjust thinking budgets.
-- **Task Decomposition** — Built-in `submit_task` tool with harness hooks for plan review, modification, and steering.
+- **Context Engineering** — The `on_turn_prepare` hook gives harness scripts full control over what the LLM sees: inject instructions, compact history, swap providers, adjust thinking budgets.
+- **Task Decomposition** — Built-in `submit_plan` tool with harness hooks for plan review, modification, and steering.
 - **Subagents** — Spawn isolated nested kernel instances for recursive task delegation, with independent provider and harness configurations.
 - **MCP Bridge** — Dynamic tool discovery via Model Context Protocol. Connect to any MCP server at runtime.
 - **Hot Reload** — Edit harness scripts while the agent is running. Changes take effect immediately with atomic swap (bad scripts don't crash the running harness).
@@ -162,7 +162,7 @@ end
 ```lua
 -- .turin/harnesses/coding_agent.lua
 
-function on_before_inference(ctx)
+function on_turn_prepare(ctx)
     -- Inject project instructions
     if fs.exists("TURIN.md") then
         local instructions = fs.read("TURIN.md")
@@ -198,7 +198,7 @@ end
 ```lua
 -- .turin/harnesses/planning.lua
 
-function on_before_inference(ctx)
+function on_turn_prepare(ctx)
     local msgs = ctx.messages
     if msgs and #msgs > 0 then
         local latest = msgs[#msgs]
@@ -207,14 +207,14 @@ function on_before_inference(ctx)
             if type(text) == "table" and text[1] then text = text[1].text or "" end
             if text:lower():find("plan") or text:lower():find("complex") then
                 ctx.system_prompt = ctx.system_prompt ..
-                    "\n\nYour first step MUST be to use 'submit_task' to break this down."
+                    "\n\nYour first step MUST be to use 'submit_plan' to break this down."
             end
         end
     end
     return ALLOW
 end
 
-function on_task_submit(payload)
+function on_plan_submit(payload)
     log("Plan submitted: " .. payload.title)
     -- You could MODIFY the plan here, or REJECT it
     return ALLOW
@@ -245,7 +245,7 @@ Turin has three layers:
 │           Layer 2: Harness (Lua)                │
 │           Your scripts decide what's allowed     │
 │                                                  │
-│  on_tool_call  on_before_inference  on_turn_end  │
+│  on_tool_call  on_turn_prepare  on_turn_end  │
 │       │               │                │         │
 │       ▼               ▼                ▼         │
 │  ALLOW / REJECT / ESCALATE / MODIFY              │
@@ -272,16 +272,17 @@ For a deeper technical walkthrough, see [Architecture](docs/ARCHITECTURE.md).
 
 | Hook | Trigger | Can Modify | Use Cases |
 |------|---------|-----------|-----------|
-| `on_agent_start` | Session begins | Queue tasks | Session setup, queue initial tasks |
-| `on_before_inference` | Before each LLM call | System prompt, messages, provider, thinking budget | Context engineering, instruction injection, compaction |
+| `on_session_start` | Session begins | Queue tasks | Session setup, queue initial tasks |
+| `on_turn_prepare` | Before each LLM call | System prompt, messages, provider, thinking budget | Context engineering, instruction injection, compaction |
 | `on_tool_call` | LLM requests a tool | Tool args (via MODIFY) | Governance, safety, allowlisting |
-| `on_tool_result` | Tool execution completes | — | Logging, post-processing |
-| `on_task_submit` | Agent proposes a plan | Task list (via MODIFY) | Plan review, steering, modification |
-| `on_task_complete` | Task queue exhausted | — | Validation, memory anchoring |
+| `on_tool_result` | Tool execution completes | Tool output / error flag | Post-processing, result redaction, normalization |
+| `on_plan_submit` | Agent proposes a plan | Task list (via MODIFY) | Plan review, steering, modification |
+| `on_task_complete` | A task reaches terminal status | Additional tasks (via MODIFY) | Per-task validation, retry/branch flows |
+| `on_all_tasks_complete` | Global queue is empty | Additional tasks (via MODIFY) | End-of-run validation and continuation |
 | `on_token_usage` | Token accounting update | — | Budget enforcement, cost tracking |
 | `on_turn_start` | New LLM turn begins | — | Logging, turn-level logic |
 | `on_turn_end` | LLM turn completes | — | Post-turn analysis |
-| `on_agent_end` | Session completes | — | Cleanup, final reporting |
+| `on_session_end` | Session completes | — | Cleanup, final reporting |
 
 For the full harness scripting guide, see [Writing Harnesses](docs/HARNESS_GUIDE.md), [Harness Hooks](docs/HOOKS.md), and [Harness Primitives](docs/PRIMITIVES.md).
 
@@ -315,7 +316,7 @@ These are available to harness scripts via the Turin Standard Library:
 | `write_file` | Create or overwrite a file |
 | `edit_file` | Apply targeted string replacements |
 | `shell_exec` | Execute shell commands |
-| `submit_task` | Propose a multi-step plan |
+| `submit_plan` | Propose a multi-step plan |
 | `bridge_mcp` | Connect to an MCP server for dynamic tool discovery |
 
 All tool calls pass through the harness before execution. The kernel provides the capability; your harness decides whether to allow it.
@@ -366,10 +367,10 @@ type = "openai"  # or "no_op" for environments without embedding support
 
 ## Project Status
 
-Turin is at **v0.13.0**. The core runtime is functional, production-hardened, and verified. What's implemented:
+Turin is at **v0.14.0**. The core runtime is functional, production-hardened, and verified. What's implemented:
 
 - Multi-provider inference (Anthropic, OpenAI) with streaming
-- Full tool execution loop (read, write, edit, shell, submit_task, bridge_mcp)
+- Full tool execution loop (read, write, edit, shell, submit_plan, bridge_mcp)
 - Harness engine with all hooks, verdict composition, hot-reload, and module system
 - Persistent state (events, messages, tool log, KV store) via Turso
 - Cognitive memory with hybrid search (vector + FTS5 + RRF)

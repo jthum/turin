@@ -2,29 +2,29 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::tools::{parse_args, Tool, ToolContext, ToolError};
+use crate::tools::{Tool, ToolContext, ToolError, parse_args};
 
-pub struct SubmitTaskTool;
+pub struct SubmitPlanTool;
 
 #[derive(Deserialize)]
-struct SubmitTaskArgs {
-    /// Title of the task/plan
+struct SubmitPlanArgs {
+    /// Title of the proposed plan
     title: String,
-    /// List of subtasks to execute
-    subtasks: Vec<String>,
+    /// List of tasks to execute
+    tasks: Vec<String>,
     /// Whether to clear the existing queue before adding these tasks
     #[serde(default)]
     clear_existing: bool,
 }
 
 #[async_trait]
-impl Tool for SubmitTaskTool {
+impl Tool for SubmitPlanTool {
     fn name(&self) -> &str {
-        "submit_task"
+        "submit_plan"
     }
 
     fn description(&self) -> &str {
-        "Submit a breakdown of tasks to be executed. Use this to plan complex workflows."
+        "Submit a plan with one or more tasks to execute in order."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -33,30 +33,34 @@ impl Tool for SubmitTaskTool {
             "properties": {
                 "title": {
                     "type": "string",
-                    "description": "Title of the overall task or plan"
+                    "description": "Title of the overall plan"
                 },
-                "subtasks": {
+                "tasks": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "List of subtasks to execute in order"
+                    "description": "List of tasks to execute in order"
                 },
                 "clear_existing": {
                     "type": "boolean",
                     "description": "If true, clears the current queue before adding these tasks. Default is false."
                 }
             },
-            "required": ["title", "subtasks"]
+            "required": ["title", "tasks"]
         })
     }
 
     #[tracing::instrument(skip(self, params, _ctx), fields(title = %params["title"].as_str().unwrap_or("unknown")))]
-    async fn execute(&self, params: Value, _ctx: &ToolContext) -> Result<crate::tools::ToolEffect, ToolError> {
-        let args: SubmitTaskArgs = parse_args(params)?;
-        tracing::info!(title = %args.title, subtasks = args.subtasks.len(), "Submitting task plan");
-        
-        Ok(crate::tools::ToolEffect::EnqueueTask {
+    async fn execute(
+        &self,
+        params: Value,
+        _ctx: &ToolContext,
+    ) -> Result<crate::tools::ToolEffect, ToolError> {
+        let args: SubmitPlanArgs = parse_args(params)?;
+        tracing::info!(title = %args.title, tasks = args.tasks.len(), "Submitting plan");
+
+        Ok(crate::tools::ToolEffect::EnqueuePlan {
             title: args.title,
-            subtasks: args.subtasks,
+            tasks: args.tasks,
             clear_existing: args.clear_existing,
         })
     }

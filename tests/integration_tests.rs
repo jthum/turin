@@ -1,8 +1,10 @@
 use anyhow::Result;
-use turin::kernel::config::{TurinConfig, ProviderConfig, AgentConfig, PersistenceConfig, HarnessConfig, EmbeddingConfig};
-use turin::kernel::Kernel;
 use std::collections::HashMap;
 use tempfile::tempdir;
+use turin::kernel::Kernel;
+use turin::kernel::config::{
+    AgentConfig, EmbeddingConfig, HarnessConfig, PersistenceConfig, ProviderConfig, TurinConfig,
+};
 
 #[tokio::test]
 async fn test_agent_loop_basic_flow() -> Result<()> {
@@ -12,11 +14,14 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
     std::fs::create_dir(&harness_dir)?;
 
     let mut providers = HashMap::new();
-    providers.insert("mock".to_string(), ProviderConfig {
-        kind: "mock".to_string(),
-        api_key_env: None,
-        base_url: Some("Mock response content".to_string()),
-    });
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("Mock response content".to_string()),
+        },
+    );
 
     let config = TurinConfig {
         agent: AgentConfig {
@@ -48,24 +53,29 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
     kernel.init_harness().await?;
 
     let mut session = kernel.create_session();
-    
+
     // Run with a prompt
-    kernel.run(&mut session, Some("Hello mock".to_string())).await?;
+    kernel
+        .run(&mut session, Some("Hello mock".to_string()))
+        .await?;
 
     // Verify turn index increased
     assert!(session.turn_index > 0);
-    
+
     // Verify results in history
     assert!(!session.history.is_empty());
-    
+
     let last_msg = session.history.last().unwrap();
-    assert_eq!(last_msg.role, turin::inference::provider::InferenceRole::Assistant);
-    
+    assert_eq!(
+        last_msg.role,
+        turin::inference::provider::InferenceRole::Assistant
+    );
+
     // Check content (mock returns "Mock response content")
-    // Note: The history might contain multiple items if there were tool calls, 
+    // Note: The history might contain multiple items if there were tool calls,
     // but here it's a simple interaction.
-    
+
     kernel.end_session(&mut session).await?;
-    
+
     Ok(())
 }

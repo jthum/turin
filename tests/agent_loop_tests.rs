@@ -1,17 +1,19 @@
 use anyhow::Result;
-use turin::kernel::config::{TurinConfig, ProviderConfig, AgentConfig, PersistenceConfig, HarnessConfig, EmbeddingConfig};
-use turin::kernel::Kernel;
-use turin::inference::provider::{
-    InferenceEvent, InferenceProvider, InferenceRequest, SdkError, InferenceStream, RequestOptions,
-    ProviderClient, ProviderKind
-};
-use turin::kernel::event::{KernelEvent, LifecycleEvent, StreamEvent, AuditEvent};
-use std::collections::HashMap;
-use tempfile::tempdir;
-use std::sync::Arc;
-use futures::stream;
-use futures::future::BoxFuture;
 use futures::StreamExt;
+use futures::future::BoxFuture;
+use futures::stream;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tempfile::tempdir;
+use turin::inference::provider::{
+    InferenceEvent, InferenceProvider, InferenceRequest, InferenceStream, ProviderClient,
+    ProviderKind, RequestOptions, SdkError,
+};
+use turin::kernel::Kernel;
+use turin::kernel::config::{
+    AgentConfig, EmbeddingConfig, HarnessConfig, PersistenceConfig, ProviderConfig, TurinConfig,
+};
+use turin::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent, StreamEvent};
 
 /// A mock provider that returns a text response followed by a tool call in the next turn.
 struct SequenceMockProvider {
@@ -19,7 +21,11 @@ struct SequenceMockProvider {
 }
 
 impl InferenceProvider for SequenceMockProvider {
-    fn stream<'a>(&'a self, _request: InferenceRequest, _options: Option<RequestOptions>) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+    fn stream<'a>(
+        &'a self,
+        _request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
         let responses = self.responses.clone();
         Box::pin(async move {
             let mut guard = responses.lock().unwrap();
@@ -32,8 +38,14 @@ impl InferenceProvider for SequenceMockProvider {
                         model: "mock-model".to_string(),
                         provider_id: "mock".to_string(),
                     }),
-                    Ok(InferenceEvent::MessageDelta { content: "Finishing.".to_string() }),
-                    Ok(InferenceEvent::MessageEnd { input_tokens: 1, output_tokens: 1, stop_reason: None }),
+                    Ok(InferenceEvent::MessageDelta {
+                        content: "Finishing.".to_string(),
+                    }),
+                    Ok(InferenceEvent::MessageEnd {
+                        input_tokens: 1,
+                        output_tokens: 1,
+                        stop_reason: None,
+                    }),
                 ]
             };
             let stream = stream::iter(events).then(|event| async move {
@@ -53,11 +65,14 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
     std::fs::create_dir(&harness_dir)?;
 
     let mut providers = HashMap::new();
-    providers.insert("mock".to_string(), ProviderConfig {
-        kind: "mock".to_string(),
-        api_key_env: None,
-        base_url: None,
-    });
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+        },
+    );
 
     let config = TurinConfig {
         agent: AgentConfig {
@@ -85,33 +100,58 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
 
     let mut kernel = Kernel::builder(config).build()?;
     kernel.init_state().await?;
-    
-    // Setup multi-turn sequence: 
+
+    // Setup multi-turn sequence:
     // Turn 1: Tool Call
     // Turn 2: Final response
     let responses = vec![
         vec![
-            InferenceEvent::MessageStart { role: "assistant".to_string(), model: "mock-model".to_string(), provider_id: "mock".to_string() },
-            InferenceEvent::ToolCall { id: "call_1".to_string(), name: "read_file".to_string(), args: serde_json::json!({"path": "test.txt"}) },
-            InferenceEvent::MessageEnd { input_tokens: 10, output_tokens: 5, stop_reason: None },
+            InferenceEvent::MessageStart {
+                role: "assistant".to_string(),
+                model: "mock-model".to_string(),
+                provider_id: "mock".to_string(),
+            },
+            InferenceEvent::ToolCall {
+                id: "call_1".to_string(),
+                name: "read_file".to_string(),
+                args: serde_json::json!({"path": "test.txt"}),
+            },
+            InferenceEvent::MessageEnd {
+                input_tokens: 10,
+                output_tokens: 5,
+                stop_reason: None,
+            },
         ],
         vec![
-            InferenceEvent::MessageStart { role: "assistant".to_string(), model: "mock-model".to_string(), provider_id: "mock".to_string() },
-            InferenceEvent::MessageDelta { content: "I read it.".to_string() },
-            InferenceEvent::MessageEnd { input_tokens: 5, output_tokens: 2, stop_reason: None },
-        ]
+            InferenceEvent::MessageStart {
+                role: "assistant".to_string(),
+                model: "mock-model".to_string(),
+                provider_id: "mock".to_string(),
+            },
+            InferenceEvent::MessageDelta {
+                content: "I read it.".to_string(),
+            },
+            InferenceEvent::MessageEnd {
+                input_tokens: 5,
+                output_tokens: 2,
+                stop_reason: None,
+            },
+        ],
     ];
-    
+
     let mock_provider = Arc::new(SequenceMockProvider {
         responses: Arc::new(std::sync::Mutex::new(responses)),
     });
-    kernel.add_client("mock".to_string(), ProviderClient::new(ProviderKind::Mock, mock_provider));
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(ProviderKind::Mock, mock_provider),
+    );
 
     let mut session = kernel.create_session();
-    
+
     // Capture events from the session broadcast
     let mut rx = session.event_tx.subscribe();
-    
+
     kernel.run(&mut session, Some("Hello".to_string())).await?;
 
     let mut events = Vec::new();
@@ -123,30 +163,67 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
     // --- Assertions on sequence and types ---
 
     // 1. Session Lifecycle
-    assert!(matches!(events[0], KernelEvent::Lifecycle(LifecycleEvent::AgentStart { .. })));
-    
+    assert!(matches!(
+        events[0],
+        KernelEvent::Lifecycle(LifecycleEvent::SessionStart { .. })
+    ));
+
     // 2. First Turn
-    assert!(events.iter().any(|e| matches!(e, KernelEvent::Lifecycle(LifecycleEvent::TurnStart { turn_index: 0 }))));
+    assert!(events.iter().any(|e| matches!(
+        e,
+        KernelEvent::Lifecycle(LifecycleEvent::TurnStart { turn_index: 0, .. })
+    )));
     assert!(events.iter().any(|e| matches!(e, KernelEvent::Stream(StreamEvent::ToolCall { name, .. }) if name == "read_file")));
-    assert!(events.iter().any(|e| matches!(e, KernelEvent::Lifecycle(LifecycleEvent::TurnEnd { turn_index: 0, has_tool_calls: true }))));
+    assert!(events.iter().any(|e| matches!(
+        e,
+        KernelEvent::Lifecycle(LifecycleEvent::TurnEnd {
+            turn_index: 0,
+            has_tool_calls: true,
+            ..
+        })
+    )));
 
     // 3. Tool Audit Events
     assert!(events.iter().any(|e| matches!(e, KernelEvent::Audit(AuditEvent::ToolExecStart { name, .. }) if name == "read_file")));
-    assert!(events.iter().any(|e| matches!(e, KernelEvent::Audit(AuditEvent::ToolResult { .. }))));
-    assert!(events.iter().any(|e| matches!(e, KernelEvent::Audit(AuditEvent::ToolExecEnd { success: false, .. })))); // read_file will fail because file doesn't exist
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, KernelEvent::Audit(AuditEvent::ToolResult { .. })))
+    );
+    assert!(events.iter().any(|e| matches!(
+        e,
+        KernelEvent::Audit(AuditEvent::ToolExecEnd { success: false, .. })
+    ))); // read_file will fail because file doesn't exist
 
     // 4. Second Turn
-    assert!(events.iter().any(|e| matches!(e, KernelEvent::Lifecycle(LifecycleEvent::TurnStart { turn_index: 1 }))));
-    assert!(events.iter().any(|e| matches!(e, KernelEvent::Stream(StreamEvent::MessageDelta { .. }))));
-    assert!(events.iter().any(|e| matches!(e, KernelEvent::Lifecycle(LifecycleEvent::TurnEnd { turn_index: 1, has_tool_calls: false }))));
+    assert!(events.iter().any(|e| matches!(
+        e,
+        KernelEvent::Lifecycle(LifecycleEvent::TurnStart { turn_index: 1, .. })
+    )));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, KernelEvent::Stream(StreamEvent::MessageDelta { .. })))
+    );
+    assert!(events.iter().any(|e| matches!(
+        e,
+        KernelEvent::Lifecycle(LifecycleEvent::TurnEnd {
+            turn_index: 1,
+            has_tool_calls: false,
+            ..
+        })
+    )));
 
     kernel.end_session(&mut session).await?;
-    
-    // Re-check for AgentEnd
+
+    // Re-check for SessionEnd
     while let Ok(event) = rx.try_recv() {
         events.push(event.1);
     }
-    assert!(matches!(events.last().unwrap(), KernelEvent::Lifecycle(LifecycleEvent::AgentEnd { .. })));
+    assert!(matches!(
+        events.last().unwrap(),
+        KernelEvent::Lifecycle(LifecycleEvent::SessionEnd { .. })
+    ));
 
     Ok(())
 }
@@ -171,11 +248,14 @@ async fn test_harness_observation() -> Result<()> {
     std::fs::write(harness_dir.join("observer.lua"), harness_code)?;
 
     let mut providers = HashMap::new();
-    providers.insert("mock".to_string(), ProviderConfig {
-        kind: "mock".to_string(),
-        api_key_env: None,
-        base_url: None,
-    });
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+        },
+    );
 
     let config = TurinConfig {
         agent: AgentConfig {
@@ -203,20 +283,33 @@ async fn test_harness_observation() -> Result<()> {
 
     let mut kernel = Kernel::builder(config).build()?;
     kernel.init_state().await?;
-    
-    let responses = vec![
-        vec![
-            InferenceEvent::MessageStart { role: "assistant".to_string(), model: "mock-model".to_string(), provider_id: "mock".to_string() },
-            InferenceEvent::MessageDelta { content: "Hello".to_string() },
-            InferenceEvent::MessageDelta { content: " World".to_string() },
-            InferenceEvent::MessageEnd { input_tokens: 1, output_tokens: 1, stop_reason: None },
-        ]
-    ];
-    
+
+    let responses = vec![vec![
+        InferenceEvent::MessageStart {
+            role: "assistant".to_string(),
+            model: "mock-model".to_string(),
+            provider_id: "mock".to_string(),
+        },
+        InferenceEvent::MessageDelta {
+            content: "Hello".to_string(),
+        },
+        InferenceEvent::MessageDelta {
+            content: " World".to_string(),
+        },
+        InferenceEvent::MessageEnd {
+            input_tokens: 1,
+            output_tokens: 1,
+            stop_reason: None,
+        },
+    ]];
+
     let mock_provider = Arc::new(SequenceMockProvider {
         responses: Arc::new(std::sync::Mutex::new(responses)),
     });
-    kernel.add_client("mock".to_string(), ProviderClient::new(ProviderKind::Mock, mock_provider));
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(ProviderKind::Mock, mock_provider),
+    );
     kernel.init_harness().await?;
 
     let mut session = kernel.create_session();
@@ -241,11 +334,12 @@ async fn test_nested_agent_spawning() -> Result<()> {
 
     // This harness script spawns a sub-agent when it sees a "nest" keyword
     let harness_code = r#"
-        function on_before_inference(ctx)
+        function on_turn_prepare(ctx)
             if ctx.prompt and ctx.prompt:find("trigger_nesting") then
                 -- Sub-agent will write to DB
                 local result = turin.agent.spawn("nest_inner_work")
-                return MODIFY, { prompt = "Sub-agent result: " .. result }
+                ctx.prompt = "Sub-agent result: " .. result
+                return ALLOW
             end
             if ctx.prompt and ctx.prompt:find("nest_inner_work") then
                 db.kv_set("nested_executed", "true")
@@ -256,11 +350,14 @@ async fn test_nested_agent_spawning() -> Result<()> {
     std::fs::write(harness_dir.join("nester.lua"), harness_code)?;
 
     let mut providers = HashMap::new();
-    providers.insert("mock".to_string(), ProviderConfig {
-        kind: "mock".to_string(),
-        api_key_env: None,
-        base_url: None,
-    });
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+        },
+    );
 
     let config = TurinConfig {
         agent: AgentConfig {
@@ -288,28 +385,53 @@ async fn test_nested_agent_spawning() -> Result<()> {
 
     let mut kernel = Kernel::builder(config).build()?;
     kernel.init_state().await?;
-    
+
     let responses = vec![
         vec![
-            InferenceEvent::MessageStart { role: "assistant".to_string(), model: "mock-model".to_string(), provider_id: "mock".to_string() },
-            InferenceEvent::MessageDelta { content: "NEST_SUCCESS".to_string() },
-            InferenceEvent::MessageEnd { input_tokens: 1, output_tokens: 1, stop_reason: None },
+            InferenceEvent::MessageStart {
+                role: "assistant".to_string(),
+                model: "mock-model".to_string(),
+                provider_id: "mock".to_string(),
+            },
+            InferenceEvent::MessageDelta {
+                content: "NEST_SUCCESS".to_string(),
+            },
+            InferenceEvent::MessageEnd {
+                input_tokens: 1,
+                output_tokens: 1,
+                stop_reason: None,
+            },
         ],
         vec![
-            InferenceEvent::MessageStart { role: "assistant".to_string(), model: "mock-model".to_string(), provider_id: "mock".to_string() },
-            InferenceEvent::MessageDelta { content: "Final Response".to_string() },
-            InferenceEvent::MessageEnd { input_tokens: 1, output_tokens: 1, stop_reason: None },
-        ]
+            InferenceEvent::MessageStart {
+                role: "assistant".to_string(),
+                model: "mock-model".to_string(),
+                provider_id: "mock".to_string(),
+            },
+            InferenceEvent::MessageDelta {
+                content: "Final Response".to_string(),
+            },
+            InferenceEvent::MessageEnd {
+                input_tokens: 1,
+                output_tokens: 1,
+                stop_reason: None,
+            },
+        ],
     ];
-    
+
     let mock_provider = Arc::new(SequenceMockProvider {
         responses: Arc::new(std::sync::Mutex::new(responses)),
     });
-    kernel.add_client("mock".to_string(), ProviderClient::new(ProviderKind::Mock, mock_provider));
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(ProviderKind::Mock, mock_provider),
+    );
     kernel.init_harness().await?;
 
     let mut session = kernel.create_session();
-    kernel.run(&mut session, Some("trigger_nesting now".to_string())).await?;
+    kernel
+        .run(&mut session, Some("trigger_nesting now".to_string()))
+        .await?;
 
     // Verify sub-agent work happened (observed via shared DB)
     if let Some(store) = kernel.state() {

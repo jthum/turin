@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::tools::{parse_args, Tool, ToolContext, ToolError, ToolOutput};
+use crate::tools::{Tool, ToolContext, ToolError, ToolOutput, parse_args};
 
 pub struct ReadFileTool;
 
@@ -36,16 +36,21 @@ impl Tool for ReadFileTool {
     }
 
     #[tracing::instrument(skip(self, params, ctx), fields(path = %params["path"].as_str().unwrap_or("unknown")))]
-    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<crate::tools::ToolEffect, ToolError> {
+    async fn execute(
+        &self,
+        params: Value,
+        ctx: &ToolContext,
+    ) -> Result<crate::tools::ToolEffect, ToolError> {
         let args: ReadFileArgs = parse_args(params)?;
         tracing::info!(path = %args.path, "Reading file");
-        
-        // Security: validate path is within workspace using centralized logic
-        let path = crate::tools::is_safe_path(&ctx.workspace_root, std::path::Path::new(&args.path))?;
 
-        let content = tokio::fs::read_to_string(&path)
-            .await
-            .map_err(|e| ToolError::ExecutionError(format!("Failed to read {}: {}", path.display(), e)))?;
+        // Security: validate path is within workspace using centralized logic
+        let path =
+            crate::tools::is_safe_path(&ctx.workspace_root, std::path::Path::new(&args.path))?;
+
+        let content = tokio::fs::read_to_string(&path).await.map_err(|e| {
+            ToolError::ExecutionError(format!("Failed to read {}: {}", path.display(), e))
+        })?;
 
         Ok(crate::tools::ToolEffect::Output(ToolOutput {
             content,
@@ -61,7 +66,7 @@ impl Tool for ReadFileTool {
 mod tests {
     use super::*;
     use crate::tools::ToolEffect;
-    
+
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -80,7 +85,7 @@ mod tests {
             .execute(serde_json::json!({ "path": "test.txt" }), &ctx)
             .await
             .unwrap();
-        
+
         if let ToolEffect::Output(output) = result {
             assert_eq!(output.content, "hello world");
         } else {

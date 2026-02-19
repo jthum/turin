@@ -63,19 +63,22 @@ Every action in Turin produces a typed `KernelEvent`. These events flow through 
 
 | Event | Payload | Harness Hook | Description |
 |-------|---------|-------------|-------------|
-| `agent_start` | `{ session_id }` | `on_agent_start` | Agent session begins |
-| `agent_end` | `{ messages, token_usage }` | `on_agent_end` | Agent session completes |
-| `turn_start` | `{ turn_index }` | `on_turn_start` | New LLM call begins |
-| `before_inference` | `{ messages, system_prompt, token_count }` | `on_before_inference` | Context assembled, about to call LLM |
-| `turn_end` | `{ message, tool_results }` | `on_turn_end` | LLM call completes |
+| `session_start` | `{ session_id }` | `on_session_start` | Agent session begins |
+| `session_end` | `{ session_id, turn_count, total_input_tokens, total_output_tokens }` | `on_session_end` | Agent session completes |
+| `task_start` | `{ session_id, task_id, plan_id?, title?, prompt, queue_depth }` | `on_task_start` | Queued task begins |
+| `task_complete` | `{ session_id, task_id, plan_id?, status, task_turn_count, turn_count }` | `on_task_complete` | Per-task terminal callback |
+| `plan_complete` | `{ session_id, plan_id, title, total_tasks, completed_tasks }` | `on_plan_complete` | Plan terminal callback |
+| `all_tasks_complete` | `{ session_id, turn_count }` | `on_all_tasks_complete` | Global queue exhausted |
+| `turn_start` | `{ session_id, task_id, plan_id?, turn_index, task_turn_index }` | `on_turn_start` | New LLM call begins |
+| `turn_prepare` | `{ turn_index, task_id, task_turn_index }` | `on_turn_prepare` | Context assembled, about to call LLM |
+| `turn_end` | `{ session_id, task_id, plan_id?, turn_index, task_turn_index, has_tool_calls }` | `on_turn_end` | LLM call completes |
 | `message_start` | `{ role, model }` | — | Streaming message begins |
 | `message_delta` | `{ content_delta }` | — | Streaming chunk received |
 | `thinking_delta` | `{ thinking }` | — | Streaming thinking chunk received |
 | `message_end` | `{ message, usage }` | — | Complete message assembled |
 | `tool_call` | `{ id, name, args }` | `on_tool_call` | LLM requests a tool execution |
 | `tool_result` | `{ id, output, is_error }` | `on_tool_result` | Tool execution completed |
-| `task_submit` | `{ title, subtasks }` | `on_task_submit` | Agent proposes a multi-step plan |
-| `task_complete` | `{ status, turn_index }` | `on_task_complete` | Queue exhausted, validation phase |
+| `plan_submit` | `{ title, tasks, clear_existing }` | `on_plan_submit` | Agent proposes a multi-step plan |
 | `token_usage` | `{ input, output, cost }` | `on_token_usage` | Token/cost accounting update |
 
 ### Harness Verdicts
@@ -89,9 +92,9 @@ return ESCALATE, "reason"             -- Pause and ask a human
 return MODIFY, { ... }                -- Carry modified data (args or tasks)
 ```
 
-### The `on_before_inference` Hook — Context Engineering
+### The `on_turn_prepare` Hook — Context Engineering
 
-The `on_before_inference` hook is uniquely powerful: it can **modify the context** before it reaches the LLM. This is how all "context engineering" workflows are implemented — not as Kernel features, but as harness scripts.
+The `on_turn_prepare` hook is uniquely powerful: it can **modify the context** before it reaches the LLM. This is how all "context engineering" workflows are implemented — not as Kernel features, but as harness scripts.
 
 The Kernel provides primitives (`context.summarize()`, `context.slice()`, `session.load()`, `fs.read()`), and the harness script decides _how_ to use them:
 
@@ -288,9 +291,9 @@ Turin will continue to prioritize the "boring" substrate. We won't implement a v
 Turin does not force agents to plan. However, it provides the **primitives** for a harness to enforce a planning-first discipline. 
 
 ### The Steering Circuit
-1.  **Harness Instruction**: Use `on_before_inference` to inject a requirement: *"You MUST use 'submit_task' before taking action."*
-2.  **Agent Proposal**: The agent calls the `submit_task` tool.
-3.  **Kernel Interception**: The Kernel emits `on_task_submit` to the harness.
+1.  **Harness Instruction**: Use `on_turn_prepare` to inject a requirement: *"You MUST use 'submit_plan' before taking action."*
+2.  **Agent Proposal**: The agent calls the `submit_plan` tool.
+3.  **Kernel Interception**: The Kernel emits `on_plan_submit` to the harness.
 4.  **Harness Revision**: The harness can `ALLOW` the plan, `REJECT` it, or `MODIFY` it to correct the agent's path.
 5.  **Execution**: The Kernel populates the session queue with the (potentially modified) tasks.
 

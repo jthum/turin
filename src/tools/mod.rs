@@ -1,11 +1,11 @@
-pub mod provider;
-pub mod registry;
 pub mod builtins;
 pub mod mcp;
+pub mod provider;
+pub mod registry;
 
 use async_trait::async_trait;
-use std::path::{Path, PathBuf, Component};
 use serde_json::{Value, json};
+use std::path::{Component, Path, PathBuf};
 
 /// Output from a tool execution.
 #[derive(Debug, Clone)]
@@ -50,17 +50,14 @@ pub struct ToolContext {
 pub enum ToolEffect {
     /// Standard output — return to LLM
     Output(ToolOutput),
-    /// Enqueue new tasks (usually from `submit_task`)
-    EnqueueTask {
+    /// Enqueue a proposed plan of tasks (usually from `submit_plan`)
+    EnqueuePlan {
         title: String,
-        subtasks: Vec<String>,
+        tasks: Vec<String>,
         clear_existing: bool,
     },
     /// Register new tools from an MCP server (usually from `bridge_mcp`)
-    SpawnMcp {
-        command: String,
-        args: Vec<String>,
-    },
+    SpawnMcp { command: String, args: Vec<String> },
 }
 
 /// The Tool trait — every tool in Turin implements this.
@@ -79,11 +76,7 @@ pub trait Tool: Send + Sync {
     fn parameters_schema(&self) -> Value;
 
     /// Execute the tool with validated parameters
-    async fn execute(
-        &self,
-        params: Value,
-        ctx: &ToolContext,
-    ) -> Result<ToolEffect, ToolError>;
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolEffect, ToolError>;
 }
 
 /// Helper to deserialize tool arguments from a JSON Value.
@@ -103,7 +96,10 @@ pub fn is_safe_path(root: &Path, path: &Path) -> Result<PathBuf, ToolError> {
     };
 
     // 2. Reject any path with '..' components to prevent traversal
-    if resolved.components().any(|c| matches!(c, Component::ParentDir)) {
+    if resolved
+        .components()
+        .any(|c| matches!(c, Component::ParentDir))
+    {
         return Err(ToolError::PermissionDenied(format!(
             "Path traversal (..) not allowed: {}",
             path.display()
@@ -125,9 +121,9 @@ pub fn is_safe_path(root: &Path, path: &Path) -> Result<PathBuf, ToolError> {
         }
     }
 
-    let canonical_current = current.canonicalize().map_err(|e| {
-        ToolError::ExecutionError(format!("Failed to canonicalize path: {}", e))
-    })?;
+    let canonical_current = current
+        .canonicalize()
+        .map_err(|e| ToolError::ExecutionError(format!("Failed to canonicalize path: {}", e)))?;
 
     if !canonical_current.starts_with(&canonical_root) {
         return Err(ToolError::PermissionDenied(format!(
@@ -138,4 +134,3 @@ pub fn is_safe_path(root: &Path, path: &Path) -> Result<PathBuf, ToolError> {
 
     Ok(resolved)
 }
-

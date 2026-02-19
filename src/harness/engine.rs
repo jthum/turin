@@ -14,17 +14,17 @@ use crate::harness::verdict::{Verdict, compose_verdicts};
 
 fn format_lua_error(e: &mlua::Error) -> String {
     let err_str = e.to_string();
-    
+
     // Attempt to parse standard Lua error format: "@path:line: message"
     // or mlua's "[string \"@path\"]:line: message"
     if let Some(first_colon) = err_str.find(':') {
         let prefix = &err_str[..first_colon];
         let rest = &err_str[first_colon + 1..];
-        
+
         if let Some(second_colon) = rest.find(':') {
             let line_num = rest[..second_colon].trim();
             let message = rest[second_colon + 1..].trim();
-            
+
             if line_num.chars().all(|c| c.is_ascii_digit()) {
                 // Clean up the prefix (remove [string "@..."] wrapper if present)
                 let cleaned_prefix = prefix
@@ -32,7 +32,7 @@ fn format_lua_error(e: &mlua::Error) -> String {
                     .and_then(|s| s.strip_suffix("\"]"))
                     .or_else(|| prefix.strip_prefix('@'))
                     .unwrap_or(prefix);
-                
+
                 return format!(
                     "\x1b[31m\x1b[1mScript Error\x1b[0m \x1b[31min {}\x1b[0m:\x1b[1m{}\x1b[0m\n\x1b[31m  Line {}: {}\x1b[0m",
                     cleaned_prefix, "", line_num, message
@@ -40,7 +40,7 @@ fn format_lua_error(e: &mlua::Error) -> String {
             }
         }
     }
-    
+
     format!("\x1b[31m\x1b[1mLua Error:\x1b[0m {}", err_str)
 }
 
@@ -149,11 +149,19 @@ impl HarnessEngine {
         let _ = env.set_metatable(Some(meta));
 
         // Load and execute string in the sandboxed environment, capturing return value
-        let retval: Value = self.lua.load(source)
+        let retval: Value = self
+            .lua
+            .load(source)
             .set_name(format!("@{}", path.display()))
             .set_environment(env.clone())
             .eval()
-            .map_err(|e| anyhow::anyhow!(format!("Failed to load harness script '{}':\n{}", path.display(), format_lua_error(&e))))?;
+            .map_err(|e| {
+                anyhow::anyhow!(format!(
+                    "Failed to load harness script '{}':\n{}",
+                    path.display(),
+                    format_lua_error(&e)
+                ))
+            })?;
 
         // Extract known hooks: priority to return value (module table), fallback to env (globals)
         let module_exports = match retval {
@@ -163,11 +171,18 @@ impl HarnessEngine {
 
         let known_hooks = [
             "on_tool_call",
+            "on_tool_result",
             "on_token_usage",
-            "on_agent_start",
-            "on_agent_end",
-            "on_before_inference",
-            "on_task_submit",
+            "on_session_start",
+            "on_session_end",
+            "on_task_start",
+            "on_turn_start",
+            "on_turn_prepare",
+            "on_turn_end",
+            "on_plan_submit",
+            "on_task_complete",
+            "on_plan_complete",
+            "on_all_tasks_complete",
             "on_kernel_event",
         ];
 
@@ -175,9 +190,10 @@ impl HarnessEngine {
             // If hook is already in exports (from return table), keep it.
             // Otherwise, check if it exists in the script's global env.
             if !module_exports.contains_key(hook)?
-                && let Ok(func) = env.get::<Function>(hook) {
-                    module_exports.set(hook, func)?;
-                }
+                && let Ok(func) = env.get::<Function>(hook)
+            {
+                module_exports.set(hook, func)?;
+            }
         }
 
         // Register the module
@@ -206,7 +222,11 @@ impl HarnessEngine {
     }
 
     /// Call a hook with a UserData argument (e.g. ContextWrapper).
-    pub fn evaluate_userdata(&self, hook_name: &str, data: impl mlua::UserData + Clone + Send + 'static) -> Result<Verdict> {
+    pub fn evaluate_userdata(
+        &self,
+        hook_name: &str,
+        data: impl mlua::UserData + Clone + Send + 'static,
+    ) -> Result<Verdict> {
         let verdicts = self.call_hook_userdata(hook_name, data)?;
         Ok(compose_verdicts(&verdicts))
     }
@@ -214,10 +234,10 @@ impl HarnessEngine {
     /// Set the active session ID for the current execution context.
     /// This is used by global functions (e.g. turin.memory) to isolate data.
     pub fn set_active_session(&self, session_id: Option<&str>) {
-        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>() {
-            if let Ok(mut lock) = app_data.active_session_id.lock() {
-                *lock = session_id.map(|s| s.to_string());
-            }
+        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
+            && let Ok(mut lock) = app_data.active_session_id.lock()
+        {
+            *lock = session_id.map(|s| s.to_string());
         }
     }
 
@@ -225,7 +245,10 @@ impl HarnessEngine {
     fn call_hook(&self, hook_name: &str, payload: serde_json::Value) -> Result<Vec<Verdict>> {
         let mut verdicts = Vec::new();
 
-        let modules: Value = self.lua.globals().get("__harness_modules")
+        let modules: Value = self
+            .lua
+            .globals()
+            .get("__harness_modules")
             .unwrap_or(Value::Nil);
 
         let modules_table = match modules {
@@ -234,11 +257,14 @@ impl HarnessEngine {
         };
 
         // Convert payload to Lua value
-        let lua_payload = self.lua.to_value(&payload)
+        let lua_payload = self
+            .lua
+            .to_value(&payload)
             .map_err(|e| anyhow::anyhow!("Failed to convert payload to Lua: {}", e))?;
 
         for script_name in &self.scripts {
-            let module: Value = modules_table.get(script_name.as_str())
+            let module: Value = modules_table
+                .get(script_name.as_str())
                 .unwrap_or(Value::Nil);
 
             let module_table = match module {
@@ -246,16 +272,18 @@ impl HarnessEngine {
                 _ => continue,
             };
 
-            let hook_fn: Value = module_table.get(hook_name)
-                .unwrap_or(Value::Nil);
+            let hook_fn: Value = module_table.get(hook_name).unwrap_or(Value::Nil);
 
             match hook_fn {
                 Value::Function(func) => {
-                    let result = func.call::<MultiValue>(lua_payload.clone())
-                        .map_err(|e| anyhow::anyhow!(
+                    let result = func.call::<MultiValue>(lua_payload.clone()).map_err(|e| {
+                        anyhow::anyhow!(
                             "Harness '{}' hook '{}' failed:\n{}",
-                            script_name, hook_name, format_lua_error(&e)
-                        ))?;
+                            script_name,
+                            hook_name,
+                            format_lua_error(&e)
+                        )
+                    })?;
 
                     let verdict = parse_verdict(&self.lua, result)?;
                     verdicts.push(verdict);
@@ -271,10 +299,17 @@ impl HarnessEngine {
     }
 
     /// Call a hook with UserData, returning individual verdicts.
-    fn call_hook_userdata(&self, hook_name: &str, data: impl mlua::UserData + Clone + Send + 'static) -> Result<Vec<Verdict>> {
+    fn call_hook_userdata(
+        &self,
+        hook_name: &str,
+        data: impl mlua::UserData + Clone + Send + 'static,
+    ) -> Result<Vec<Verdict>> {
         let mut verdicts = Vec::new();
 
-        let modules: Value = self.lua.globals().get("__harness_modules")
+        let modules: Value = self
+            .lua
+            .globals()
+            .get("__harness_modules")
             .unwrap_or(Value::Nil);
 
         let modules_table = match modules {
@@ -283,23 +318,24 @@ impl HarnessEngine {
         };
 
         for name in &self.scripts {
-             if let Ok(module) = modules_table.get::<Table>(name.as_str())
-                && let Ok(func) = module.get::<Function>(hook_name) {
-                    let ud = self.lua.create_userdata(data.clone()).map_err(|e| {
-                         anyhow::anyhow!("Failed to create userdata for hook '{}': {}", hook_name, e)
-                    })?;
+            if let Ok(module) = modules_table.get::<Table>(name.as_str())
+                && let Ok(func) = module.get::<Function>(hook_name)
+            {
+                let ud = self.lua.create_userdata(data.clone()).map_err(|e| {
+                    anyhow::anyhow!("Failed to create userdata for hook '{}': {}", hook_name, e)
+                })?;
 
-                    match func.call::<MultiValue>(ud) {
-                        Ok(result) => {
-                            if let Ok(v) = parse_verdict(&self.lua, result) {
-                                verdicts.push(v);
-                            }
-                        }
-                        Err(e) => {
-                            error!(hook = %hook_name, script = %name, "Error in harness hook:\n{}", format_lua_error(&e));
+                match func.call::<MultiValue>(ud) {
+                    Ok(result) => {
+                        if let Ok(v) = parse_verdict(&self.lua, result) {
+                            verdicts.push(v);
                         }
                     }
+                    Err(e) => {
+                        error!(hook = %hook_name, script = %name, "Error in harness hook:\n{}", format_lua_error(&e));
+                    }
                 }
+            }
         }
 
         Ok(verdicts)
@@ -336,7 +372,8 @@ fn parse_verdict(lua: &Lua, values: MultiValue) -> Result<Verdict> {
         1 => Ok(Verdict::Allow),
         2 | 3 => {
             let reason = match iter.next() {
-                Some(Value::String(s)) => s.to_str()
+                Some(Value::String(s)) => s
+                    .to_str()
                     .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in verdict reason: {}", e))?
                     .to_string(),
                 _ => String::new(),
@@ -346,15 +383,16 @@ fn parse_verdict(lua: &Lua, values: MultiValue) -> Result<Verdict> {
             } else {
                 Ok(Verdict::Escalate(reason))
             }
-        },
+        }
         4 => {
-             let val = match iter.next() {
-                Some(v) => lua.from_value::<serde_json::Value>(v)
-                    .map_err(|e| anyhow::anyhow!("Failed to convert MODIFY value to JSON: {}", e))?,
+            let val = match iter.next() {
+                Some(v) => lua.from_value::<serde_json::Value>(v).map_err(|e| {
+                    anyhow::anyhow!("Failed to convert MODIFY value to JSON: {}", e)
+                })?,
                 None => serde_json::Value::Null,
-             };
-             Ok(Verdict::Modify(val))
-        },
+            };
+            Ok(Verdict::Modify(val))
+        }
         _ => Err(anyhow::anyhow!("Unknown verdict code: {}", verdict_code)),
     }
 }
@@ -362,8 +400,8 @@ fn parse_verdict(lua: &Lua, values: MultiValue) -> Result<Verdict> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::path::PathBuf;
+    use tempfile::TempDir;
 
     fn test_app_data() -> HarnessAppData {
         HarnessAppData {
@@ -372,8 +410,12 @@ mod tests {
             state_store: None,
             clients: std::collections::HashMap::new(),
             embedding_provider: None,
-            queue: std::sync::Arc::new(tokio::sync::Mutex::new(Some(std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new()))))),
-            active_session_id: std::sync::Arc::new(std::sync::Mutex::new(Some("test-session".to_string()))),
+            queue: std::sync::Arc::new(tokio::sync::Mutex::new(Some(std::sync::Arc::new(
+                tokio::sync::Mutex::new(std::collections::VecDeque::new()),
+            )))),
+            active_session_id: std::sync::Arc::new(std::sync::Mutex::new(Some(
+                "test-session".to_string(),
+            ))),
             config: std::sync::Arc::new(crate::kernel::config::TurinConfig::default()),
             spawn_depth: 0,
         }
@@ -384,7 +426,9 @@ mod tests {
         let engine = HarnessEngine::new(test_app_data()).unwrap();
         assert!(engine.loaded_scripts().is_empty());
 
-        let verdict = engine.evaluate("on_tool_call", serde_json::json!({})).unwrap();
+        let verdict = engine
+            .evaluate("on_tool_call", serde_json::json!({}))
+            .unwrap();
         assert_eq!(verdict, Verdict::Allow);
     }
 
@@ -413,13 +457,17 @@ mod tests {
                 return ALLOW
             end
             "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut engine = HarnessEngine::new(test_app_data()).unwrap();
         engine.load_dir(dir.path()).unwrap();
 
         let verdict = engine
-            .evaluate("on_tool_call", serde_json::json!({"name": "read_file", "args": {}}))
+            .evaluate(
+                "on_tool_call",
+                serde_json::json!({"name": "read_file", "args": {}}),
+            )
             .unwrap();
         assert_eq!(verdict, Verdict::Allow);
     }
@@ -437,7 +485,8 @@ mod tests {
                 return ALLOW
             end
             "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut engine = HarnessEngine::new(test_app_data()).unwrap();
         engine.load_dir(dir.path()).unwrap();
@@ -475,7 +524,8 @@ mod tests {
                 return ALLOW
             end
             "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut engine = HarnessEngine::new(test_app_data()).unwrap();
         engine.load_dir(dir.path()).unwrap();
@@ -501,7 +551,8 @@ mod tests {
                 return ALLOW
             end
             "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Script "b" rejects shell_exec
         std::fs::write(
@@ -514,7 +565,8 @@ mod tests {
                 return ALLOW
             end
             "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut engine = HarnessEngine::new(test_app_data()).unwrap();
         engine.load_dir(dir.path()).unwrap();
@@ -549,7 +601,8 @@ mod tests {
                 return ALLOW
             end
             "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut engine = HarnessEngine::new(test_app_data()).unwrap();
         engine.load_dir(dir.path()).unwrap();
@@ -587,7 +640,8 @@ mod tests {
                 return ALLOW
             end
             "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut engine = HarnessEngine::new(test_app_data()).unwrap();
         engine.load_dir(dir.path()).unwrap();
@@ -612,7 +666,8 @@ mod tests {
                 return ALLOW
             end
             "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut engine = HarnessEngine::new(test_app_data()).unwrap();
         engine.load_dir(dir.path()).unwrap();
@@ -642,54 +697,57 @@ mod tests {
         std::fs::write(
             dir.path().join("modify.lua"),
             r#"
-            function on_task_submit(payload)
+            function on_plan_submit(payload)
                 return MODIFY, { "Modified Task 1", "Modified Task 2" }
             end
             "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut engine = HarnessEngine::new(test_app_data()).unwrap();
         engine.load_dir(dir.path()).unwrap();
 
         let verdict = engine
             .evaluate(
-                "on_task_submit",
-                serde_json::json!({"action": "submit_task"}),
+                "on_plan_submit",
+                serde_json::json!({"action": "submit_plan"}),
             )
             .unwrap();
 
         match verdict {
-             Verdict::Modify(val) => {
-                 let arr = val.as_array().unwrap();
-                 assert_eq!(arr.len(), 2);
-                 assert_eq!(arr[0].as_str().unwrap(), "Modified Task 1");
-                 assert_eq!(arr[1].as_str().unwrap(), "Modified Task 2");
-             },
-             _ => panic!("Expected Modify verdict, got {:?}", verdict),
+            Verdict::Modify(val) => {
+                let arr = val.as_array().unwrap();
+                assert_eq!(arr.len(), 2);
+                assert_eq!(arr[0].as_str().unwrap(), "Modified Task 1");
+                assert_eq!(arr[1].as_str().unwrap(), "Modified Task 2");
+            }
+            _ => panic!("Expected Modify verdict, got {:?}", verdict),
         }
     }
-
 
     #[derive(Clone)]
     struct MockContext;
     impl mlua::UserData for MockContext {}
 
     #[test]
-    fn test_on_before_inference_reject() {
+    fn test_on_turn_prepare_reject() {
         let dir = TempDir::new().unwrap();
         std::fs::write(
             dir.path().join("reject.lua"),
             r#"
-            function on_before_inference(ctx)
+            function on_turn_prepare(ctx)
                 return REJECT, "Blocked by harness"
             end
             "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut engine = HarnessEngine::new(test_app_data()).unwrap();
         engine.load_dir(dir.path()).unwrap();
 
-        let verdict = engine.evaluate_userdata("on_before_inference", MockContext).unwrap();
+        let verdict = engine
+            .evaluate_userdata("on_turn_prepare", MockContext)
+            .unwrap();
         assert!(verdict.is_rejected());
         assert_eq!(verdict.reason(), Some("Blocked by harness"));
     }

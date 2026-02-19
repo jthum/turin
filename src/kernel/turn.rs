@@ -1,28 +1,59 @@
 //! Agent turn execution — streaming, tool dispatch, and result collection.
 //!
-//! This module contains the `execute_turn` method, which handles a single turn
-//! of the agent loop: LLM inference, stream processing, verdict evaluation,
-//! parallel tool execution, and side-effect handling.
+//! This module contains turn-level execution for the agent loop: LLM inference,
+//! stream processing, hook evaluation, parallel tool execution, and side effects.
 
 use anyhow::Result;
 use futures::StreamExt;
 use futures::future::join_all;
+use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::time::Instant;
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 
 use crate::harness::context::ContextWrapper;
 use crate::harness::verdict::Verdict;
-use crate::inference::provider::{
-    self, InferenceContent, InferenceMessage, InferenceRole,
-};
-use crate::tools::ToolContext;
-use super::event::{KernelEvent, LifecycleEvent, StreamEvent, AuditEvent};
+use crate::inference::provider::{self, InferenceContent, InferenceMessage, InferenceRole};
+use crate::kernel::session::{PlanProgress, QueuedTask, SessionState};
+use crate::tools::{ToolContext, ToolEffect, ToolOutput};
+
+use super::event::{AuditEvent, KernelEvent, LifecycleEvent, StreamEvent};
 use super::{Kernel, PendingToolCall};
 
+#[derive(Debug, Clone)]
+pub(crate) struct TurnContext {
+    pub task_id: String,
+    pub plan_id: Option<String>,
+    pub task_turn_index: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TurnOutcome {
+    Continue,
+    Complete,
+    Rejected,
+}
+
+#[derive(Debug, Clone)]
+struct FinalToolRecord {
+    id: String,
+    name: String,
+    args: serde_json::Value,
+    verdict: String,
+    duration_ms: u64,
+    content: String,
+    is_error: bool,
+    emit_exec_start: bool,
+}
+
 impl Kernel {
-    /// Execute a single turn of the agent loop. Returns true if loop should continue.
-    pub(crate) async fn execute_turn(&mut self, session: &mut super::session::SessionState, tool_ctx: &ToolContext) -> Result<bool> {
+    /// Execute a single turn of the agent loop.
+    pub(crate) async fn execute_turn(
+        &mut self,
+        session: &mut SessionState,
+        tool_ctx: &ToolContext,
+        turn_ctx: &TurnContext,
+    ) -> Result<TurnOutcome> {
         let session_id = session.id.clone();
 
         // Turn-local configuration
@@ -31,13 +62,66 @@ impl Kernel {
         let mut system_prompt = self.config.agent.system_prompt.clone();
 
         if !self.json {
-            println!("\n\x1b[36m\x1b[1m── Turn {} ──\x1b[0m", session.turn_index + 1);
+            println!(
+                "\n\x1b[36m\x1b[1m── Turn {} ──\x1b[0m",
+                session.turn_index + 1
+            );
         }
 
-        self.persist_event(session, &KernelEvent::Lifecycle(LifecycleEvent::TurnStart { turn_index: session.turn_index }));
+        self.persist_event(
+            session,
+            &KernelEvent::Lifecycle(LifecycleEvent::TurnStart {
+                turn_index: session.turn_index,
+                task_id: turn_ctx.task_id.clone(),
+                task_turn_index: turn_ctx.task_turn_index,
+            }),
+        );
 
-        // ─── Harness Hook: on_before_inference ───────────────────────
-        let mut thinking_budget = self.config.agent.thinking.as_ref()
+        // Optional gate at turn start.
+        {
+            let harness = self.lock_harness();
+            if let Some(ref engine) = *harness {
+                match engine.evaluate(
+                    "on_turn_start",
+                    serde_json::json!({
+                        "session_id": session.id.clone(),
+                        "task_id": turn_ctx.task_id.clone(),
+                        "plan_id": turn_ctx.plan_id.clone(),
+                        "turn_index": session.turn_index,
+                        "task_turn_index": turn_ctx.task_turn_index,
+                    }),
+                ) {
+                    Ok(Verdict::Reject(reason)) => {
+                        warn!(reason = %reason, "Turn rejected by on_turn_start");
+                        return Ok(TurnOutcome::Rejected);
+                    }
+                    Ok(Verdict::Escalate(reason)) => {
+                        warn!(reason = %reason, "Turn escalated by on_turn_start; treating as rejected");
+                        return Ok(TurnOutcome::Rejected);
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        warn!(error = %e, "Harness on_turn_start error");
+                    }
+                }
+            }
+        }
+
+        self.persist_event(
+            session,
+            &KernelEvent::Lifecycle(LifecycleEvent::TurnPrepare {
+                turn_index: session.turn_index,
+                task_id: turn_ctx.task_id.clone(),
+                task_turn_index: turn_ctx.task_turn_index,
+            }),
+        );
+
+        // ─── Harness Hook: on_turn_prepare ─────────────────────────────
+        let mut thinking_budget = self
+            .config
+            .agent
+            .thinking
+            .as_ref()
             .and_then(|t| if t.enabled { t.budget_tokens } else { None })
             .unwrap_or(0);
 
@@ -49,20 +133,29 @@ impl Kernel {
                     provider_name.clone(),
                     system_prompt.clone(),
                     session.history.clone(),
-                    0, 128_000,
+                    session.turn_index,
+                    turn_ctx.task_turn_index,
+                    turn_ctx.task_turn_index == 0,
+                    turn_ctx.task_id.clone(),
+                    turn_ctx.plan_id.clone(),
+                    0,
+                    128_000,
                     thinking_budget,
                     self.clients.clone(),
                 );
-                
-                match engine.evaluate_userdata("on_before_inference", ctx.clone()) {
-                    Ok(verdict) => {
-                         if verdict.is_rejected() {
-                             warn!(reason = %verdict.reason().unwrap_or(""), "Turn rejected by harness");
-                             return Ok(false);
-                         }
+
+                match engine.evaluate_userdata("on_turn_prepare", ctx.clone()) {
+                    Ok(Verdict::Reject(reason)) => {
+                        warn!(reason = %reason, "Turn rejected by on_turn_prepare");
+                        return Ok(TurnOutcome::Rejected);
                     }
+                    Ok(Verdict::Escalate(reason)) => {
+                        warn!(reason = %reason, "Turn escalated by on_turn_prepare; treating as rejected");
+                        return Ok(TurnOutcome::Rejected);
+                    }
+                    Ok(_) => {}
                     Err(e) => {
-                         warn!(error = %e, "Harness on_before_inference error");
+                        warn!(error = %e, "Harness on_turn_prepare error");
                     }
                 }
 
@@ -76,21 +169,25 @@ impl Kernel {
         }
 
         if !self.clients.contains_key(&provider_name) {
-             if let Some(config) = self.config.providers.get(&provider_name) {
-                 debug!(provider = %provider_name, "Lazily initializing provider");
-                 match self.create_client(&provider_name, config) {
-                     Ok(client) => { self.clients.insert(provider_name.clone(), client); },
-                     Err(e) => {
-                         error!(provider = %provider_name, error = %e, "Failed to initialize provider");
-                         anyhow::bail!("Failed to initialize provider '{}': {}", provider_name, e);
-                     }
-                 }
-             } else {
-                 anyhow::bail!("Provider '{}' not found in configuration", provider_name);
-             }
+            if let Some(config) = self.config.providers.get(&provider_name) {
+                debug!(provider = %provider_name, "Lazily initializing provider");
+                match self.create_client(&provider_name, config) {
+                    Ok(client) => {
+                        self.clients.insert(provider_name.clone(), client);
+                    }
+                    Err(e) => {
+                        error!(provider = %provider_name, error = %e, "Failed to initialize provider");
+                        anyhow::bail!("Failed to initialize provider '{}': {}", provider_name, e);
+                    }
+                }
+            } else {
+                anyhow::bail!("Provider '{}' not found in configuration", provider_name);
+            }
         }
 
-        let client = self.clients.get(&provider_name)
+        let client = self
+            .clients
+            .get(&provider_name)
             .ok_or_else(|| anyhow::anyhow!("Provider '{}' not initialized", provider_name))?
             .clone();
 
@@ -102,15 +199,17 @@ impl Kernel {
             thinking_budget: Some(thinking_budget),
         };
 
-        let mut stream = client.stream(&model, &system_prompt, &session.history, &tools, &options).await?;
-        
+        let mut stream = client
+            .stream(&model, &system_prompt, &session.history, &tools, &options)
+            .await?;
+
         let mut response_text = String::with_capacity(4096);
         let mut pending_tool_calls: Vec<PendingToolCall> = Vec::new();
         let mut is_thinking = false;
 
         while let Some(event_result) = stream.next().await {
-             let event = event_result?;
-             match &event {
+            let event = event_result?;
+            match &event {
                 KernelEvent::Stream(e) => match e {
                     StreamEvent::ThinkingDelta { .. } => {
                         if !self.json && !is_thinking {
@@ -122,7 +221,9 @@ impl Kernel {
                     }
                     StreamEvent::MessageDelta { content_delta } => {
                         if is_thinking {
-                            if !self.json { println!(); }
+                            if !self.json {
+                                println!();
+                            }
                             is_thinking = false;
                         }
                         if !self.json {
@@ -132,9 +233,15 @@ impl Kernel {
                         self.persist_event(session, &event);
                         response_text.push_str(content_delta);
                     }
-                    StreamEvent::MessageEnd { input_tokens, output_tokens, .. } => {
+                    StreamEvent::MessageEnd {
+                        input_tokens,
+                        output_tokens,
+                        ..
+                    } => {
                         if is_thinking {
-                            if !self.json { println!(); }
+                            if !self.json {
+                                println!();
+                            }
                             is_thinking = false;
                         }
                         session.total_input_tokens += *input_tokens;
@@ -143,33 +250,70 @@ impl Kernel {
                     }
                     StreamEvent::ToolCall { id, name, args } => {
                         if is_thinking {
-                            if !self.json { println!(); }
+                            if !self.json {
+                                println!();
+                            }
                             is_thinking = false;
                         }
                         if !self.json {
-                            println!("\n\x1b[33m⚒️  Tool Call:\x1b[0m \x1b[1m{}\x1b[0m({})", name, args);
+                            println!(
+                                "\n\x1b[33m⚒️  Tool Call:\x1b[0m \x1b[1m{}\x1b[0m({})",
+                                name, args
+                            );
                         }
                         self.persist_event(session, &event);
                         pending_tool_calls.push(PendingToolCall {
-                            id: id.clone(), name: name.clone(), args: args.clone()
+                            id: id.clone(),
+                            name: name.clone(),
+                            args: args.clone(),
                         });
                     }
-                    _ => { self.persist_event(session, &event); }
+                    _ => {
+                        self.persist_event(session, &event);
+                    }
                 },
-                _ => { self.persist_event(session, &event); }
-             }
+                _ => {
+                    self.persist_event(session, &event);
+                }
+            }
         }
 
-        if !self.json && !response_text.is_empty() && !response_text.ends_with('\n') { println!(); }
+        if !self.json && !response_text.is_empty() && !response_text.ends_with('\n') {
+            println!();
+        }
 
         let has_tool_calls = !pending_tool_calls.is_empty();
 
-        self.persist_event(session, &KernelEvent::Lifecycle(LifecycleEvent::TurnEnd {
-            turn_index: session.turn_index,
-            has_tool_calls,
-        }));
+        self.persist_event(
+            session,
+            &KernelEvent::Lifecycle(LifecycleEvent::TurnEnd {
+                turn_index: session.turn_index,
+                task_id: turn_ctx.task_id.clone(),
+                task_turn_index: turn_ctx.task_turn_index,
+                has_tool_calls,
+            }),
+        );
 
-         if let Some(ref store) = self.state {
+        {
+            let harness = self.lock_harness();
+            if let Some(ref engine) = *harness
+                && let Err(e) = engine.evaluate(
+                    "on_turn_end",
+                    serde_json::json!({
+                        "session_id": session.id.clone(),
+                        "task_id": turn_ctx.task_id.clone(),
+                        "plan_id": turn_ctx.plan_id.clone(),
+                        "turn_index": session.turn_index,
+                        "task_turn_index": turn_ctx.task_turn_index,
+                        "has_tool_calls": has_tool_calls,
+                    }),
+                )
+            {
+                warn!(error = %e, "Harness on_turn_end error");
+            }
+        }
+
+        if let Some(ref store) = self.state {
             let content: Vec<serde_json::Value> = {
                 let mut parts = Vec::new();
                 if !response_text.is_empty() {
@@ -182,16 +326,28 @@ impl Kernel {
                 }
                 parts
             };
-            let _ = store.insert_message(&session_id, session.turn_index, "assistant", &serde_json::Value::Array(content), None).await;
+            let _ = store
+                .insert_message(
+                    &session_id,
+                    session.turn_index,
+                    "assistant",
+                    &serde_json::Value::Array(content),
+                    None,
+                )
+                .await;
         }
 
         let mut assistant_content: Vec<InferenceContent> = Vec::new();
         if !response_text.is_empty() {
-            assistant_content.push(InferenceContent::Text { text: response_text.clone() });
+            assistant_content.push(InferenceContent::Text {
+                text: response_text.clone(),
+            });
         }
         for tc in &pending_tool_calls {
             assistant_content.push(InferenceContent::ToolUse {
-                id: tc.id.clone(), name: tc.name.clone(), input: tc.args.clone(),
+                id: tc.id.clone(),
+                name: tc.name.clone(),
+                input: tc.args.clone(),
             });
         }
         session.history.push(InferenceMessage {
@@ -201,80 +357,79 @@ impl Kernel {
         });
 
         if !has_tool_calls {
-            return Ok(false);
+            return Ok(TurnOutcome::Complete);
         }
 
-        // Execute tools
-        self.execute_tool_calls(session, &session_id, tool_ctx, pending_tool_calls).await
+        // Execute tools.
+        self.execute_tool_calls(session, &session_id, tool_ctx, pending_tool_calls)
+            .await
     }
 
-    /// Phase 1-3 of tool execution: verdict evaluation, parallel execution, and side-effect handling.
+    /// Phase 1-3 of tool execution: verdict evaluation, parallel execution, side effects, and result collection.
     async fn execute_tool_calls(
         &mut self,
-        session: &mut super::session::SessionState,
+        session: &mut SessionState,
         session_id: &str,
         tool_ctx: &ToolContext,
         pending_tool_calls: Vec<PendingToolCall>,
-    ) -> Result<bool> {
-        // Phase 1: Evaluate verdicts
-        let mut validated_calls = Vec::new();
-        let mut tool_results: Vec<InferenceContent> = Vec::new();
+    ) -> Result<TurnOutcome> {
+        let mut immediate_records: Vec<FinalToolRecord> = Vec::new();
+        let mut validated_calls: Vec<(PendingToolCall, Verdict)> = Vec::new();
 
         for tc in &pending_tool_calls {
             let verdict = self.evaluate_tool_call(&tc.name, &tc.id, &tc.args);
             match &verdict {
                 Verdict::Reject(reason) => {
-                     if !self.json {
-                         println!("\x1b[31m✗ Rejected by harness:\x1b[0m {}", reason);
-                     }
-                     warn!(tool = %tc.name, reason = %reason, "Tool REJECTED by harness");
-                     let msg = format!("[HARNESS REJECTED] Tool '{}' blocked: {}", tc.name, reason);
-                     self.persist_event(session, &KernelEvent::Audit(AuditEvent::ToolExecStart { id: tc.id.clone(), name: tc.name.clone() }));
-                     self.persist_event(session, &KernelEvent::Audit(AuditEvent::ToolResult { id: tc.id.clone(), output: msg.clone(), is_error: true }));
-                     self.persist_event(session, &KernelEvent::Audit(AuditEvent::ToolExecEnd { id: tc.id.clone(), success: false }));
-                     
-                     if let Some(ref store) = self.state {
-                          let _ = store.insert_tool_execution(session_id, session.turn_index, &tc.id, &tc.name, &tc.args, Some(&msg), true, Some(0), &verdict.to_string()).await;
-                     }
-                     tool_results.push(InferenceContent::ToolResult { tool_use_id: tc.id.clone(), content: msg, is_error: true });
+                    if !self.json {
+                        println!("\x1b[31m✗ Rejected by harness:\x1b[0m {}", reason);
+                    }
+                    warn!(tool = %tc.name, reason = %reason, "Tool rejected by on_tool_call");
+                    let msg = format!("[HARNESS REJECTED] Tool '{}' blocked: {}", tc.name, reason);
+                    immediate_records.push(FinalToolRecord {
+                        id: tc.id.clone(),
+                        name: tc.name.clone(),
+                        args: tc.args.clone(),
+                        verdict: verdict.to_string(),
+                        duration_ms: 0,
+                        content: msg,
+                        is_error: true,
+                        emit_exec_start: true,
+                    });
                 }
                 Verdict::Escalate(reason) => {
-                     warn!(tool = %tc.name, reason = %reason, "ESCALATION: Tool requires approval");
-                     eprint!("\x1b[33m\x1b[1m! Approval Required:\x1b[0m {} Allow? (y/n): ", reason);
-                     io::stderr().flush().ok();
-                     let mut input = String::new();
-                     let approved = io::stdin().lock().read_line(&mut input).is_ok() && input.trim().eq_ignore_ascii_case("y");
-                     if !approved {
-                          if !self.json {
-                              println!("\x1b[31m✗ Denied by user\x1b[0m");
-                          }
-                          warn!(tool = %tc.name, "Tool DENIED by user");
-                          let msg = format!("[ESCALATION DENIED] Tool '{}' denied: {}", tc.name, reason);
-                           self.persist_event(session, &KernelEvent::Audit(AuditEvent::ToolExecStart { id: tc.id.clone(), name: tc.name.clone() }));
-                           self.persist_event(session, &KernelEvent::Audit(AuditEvent::ToolResult { id: tc.id.clone(), output: msg.clone(), is_error: true }));
-                           self.persist_event(session, &KernelEvent::Audit(AuditEvent::ToolExecEnd { id: tc.id.clone(), success: false }));
-                           if let Some(ref store) = self.state {
-                                let _ = store.insert_tool_execution(session_id, session.turn_index, &tc.id, &tc.name, &tc.args, Some(&msg), true, Some(0), "escalate_denied").await;
-                           }
-                           tool_results.push(InferenceContent::ToolResult { tool_use_id: tc.id.clone(), content: msg, is_error: true });
-                     } else {
-                         if !self.json {
-                             println!("\x1b[32m✓ Approved by user\x1b[0m");
-                         }
-                         info!(tool = %tc.name, "Tool APPROVED by user");
-                         validated_calls.push((tc, verdict));
-                     }
+                    warn!(tool = %tc.name, reason = %reason, "Tool requires escalation");
+                    if !self.prompt_for_approval(reason) {
+                        if !self.json {
+                            println!("\x1b[31m✗ Denied by user\x1b[0m");
+                        }
+                        let msg =
+                            format!("[ESCALATION DENIED] Tool '{}' denied: {}", tc.name, reason);
+                        immediate_records.push(FinalToolRecord {
+                            id: tc.id.clone(),
+                            name: tc.name.clone(),
+                            args: tc.args.clone(),
+                            verdict: "escalate_denied".to_string(),
+                            duration_ms: 0,
+                            content: msg,
+                            is_error: true,
+                            emit_exec_start: true,
+                        });
+                    } else {
+                        if !self.json {
+                            println!("\x1b[32m✓ Approved by user\x1b[0m");
+                        }
+                        validated_calls.push((tc.clone(), Verdict::Allow));
+                    }
                 }
                 Verdict::Allow | Verdict::Modify(_) => {
-                    validated_calls.push((tc, verdict));
+                    validated_calls.push((tc.clone(), verdict));
                 }
             }
         }
 
-        // Phase 2: Parallel Execution
+        // Parallel execution for approved calls.
         let kernel = &*self;
         let event_tx = session.event_tx.clone();
-        let turn_index = session.turn_index;
         let futures = validated_calls.into_iter().map(|(tc, verdict)| {
             let session_id = session_id.to_string();
             let tool_ctx = tool_ctx.clone();
@@ -283,124 +438,169 @@ impl Kernel {
                 let verdict_str = verdict.to_string();
                 let final_args = match verdict {
                     Verdict::Modify(new_args) => {
-                         info!(tool = %tc.name, "Tool arguments MODIFIED by harness");
-                         new_args
-                    },
-                    _ => tc.args.clone()
+                        info!(tool = %tc.name, "Tool arguments modified by harness");
+                        new_args
+                    }
+                    _ => tc.args.clone(),
                 };
 
-                let _ = event_tx.send((session_id.clone(), KernelEvent::Audit(AuditEvent::ToolExecStart { id: tc.id.clone(), name: tc.name.clone() })));
+                let _ = event_tx.send((
+                    session_id.clone(),
+                    KernelEvent::Audit(AuditEvent::ToolExecStart {
+                        id: tc.id.clone(),
+                        name: tc.name.clone(),
+                    }),
+                ));
+
                 let start = Instant::now();
-                let effect_res = kernel.tool_registry.execute(&tc.name, final_args, &tool_ctx).await;
+                let effect_res = kernel
+                    .tool_registry
+                    .execute(&tc.name, final_args.clone(), &tool_ctx)
+                    .await;
                 let duration_ms = start.elapsed().as_millis() as u64;
-                
+
                 let is_error = effect_res.is_err();
                 let effect = effect_res.unwrap_or_else(|e| {
-                    crate::tools::ToolEffect::Output(crate::tools::ToolOutput {
+                    ToolEffect::Output(ToolOutput {
                         content: format!("Error: {}", e),
                         metadata: serde_json::Value::Null,
                     })
                 });
 
-                let content = match &effect {
-                    crate::tools::ToolEffect::Output(o) => o.content.clone(),
-                    crate::tools::ToolEffect::EnqueueTask { title, .. } => format!("Task submitted: {}", title),
-                    crate::tools::ToolEffect::SpawnMcp { command, .. } => format!("MCP spawned: {}", command),
-                };
-
-                let _ = event_tx.send((session_id.clone(), KernelEvent::Audit(AuditEvent::ToolResult { id: tc.id.clone(), output: content, is_error })));
-                let _ = event_tx.send((session_id.clone(), KernelEvent::Audit(AuditEvent::ToolExecEnd { id: tc.id.clone(), success: !is_error })));
-
-                if let Some(ref store) = kernel.state {
-                     // For legacy compatibility in state store, we'll try to extract content/metadata from effect
-                     let (content, _metadata) = match &effect {
-                         crate::tools::ToolEffect::Output(o) => (o.content.clone(), o.metadata.clone()),
-                         crate::tools::ToolEffect::EnqueueTask { title, subtasks, .. } => (format!("Task '{}' submitted with {} subtasks.", title, subtasks.len()), serde_json::json!({"action": "submit_task"})),
-                         crate::tools::ToolEffect::SpawnMcp { command, .. } => (format!("Requesting MCP connection: {}", command), serde_json::json!({"action": "spawn_mcp"})),
-                     };
-
-                     let _ = store.insert_tool_execution(&session_id, turn_index, &tc.id, &tc.name, &tc.args, Some(&content), is_error, Some(duration_ms), &verdict_str).await;
-                }
-                (tc, effect, is_error)
+                (tc, final_args, verdict_str, duration_ms, effect, is_error)
             }
         });
 
         let execution_results = join_all(futures).await;
 
-        // Phase 3: Side Effects & Result Collection
-        for (tc, effect, mut is_error) in execution_results {
-            let mut content;
-            
+        let mut final_by_id: HashMap<String, FinalToolRecord> = HashMap::new();
+
+        for record in immediate_records {
+            final_by_id.insert(record.id.clone(), record);
+        }
+
+        for (tc, final_args, verdict_str, duration_ms, effect, mut is_error) in execution_results {
+            let content;
+
             match effect {
-                crate::tools::ToolEffect::Output(o) => {
+                ToolEffect::Output(o) => {
                     content = o.content;
                 }
-                crate::tools::ToolEffect::EnqueueTask { title, subtasks, clear_existing } => {
-                    let verdict_result = {
-                        let harness = self.lock_harness();
-                        if let Some(engine) = &*harness {
-                            // Map ToolEffect to a metadata-like structure for the harness legacy hook
-                            let metadata = serde_json::json!({
-                                "action": "submit_task",
-                                "title": title,
-                                "subtasks": subtasks,
-                                "clear_existing": clear_existing
-                            });
-                            Some(engine.evaluate("on_task_submit", metadata))
-                        } else { None }
-                    };
-
-                    content = format!("Task '{}' submitted with {} subtasks.", title, subtasks.len());
-                    
-                    match verdict_result {
-                        Some(Ok(Verdict::Allow)) | None => {
-                            let mut q = session.queue.lock().await;
-                            if clear_existing { q.clear(); }
-                            for task in subtasks { q.push_back(task); }
-                            debug!("Tasks queued from submit_task");
+                ToolEffect::EnqueuePlan {
+                    title,
+                    tasks,
+                    clear_existing,
+                } => {
+                    let (plan_content, plan_error) = self
+                        .handle_plan_submission(session, &title, tasks, clear_existing)
+                        .await;
+                    content = plan_content;
+                    is_error = is_error || plan_error;
+                }
+                ToolEffect::SpawnMcp { command, args } => {
+                    match self.spawn_mcp_server(&command, &args).await {
+                        Ok(count) => {
+                            content = format!(
+                                "Successfully connected to MCP server. Loaded {} new tools.",
+                                count
+                            );
                         }
-                        Some(Ok(Verdict::Modify(new_tasks_val))) => {
-                            if let Some(new_tasks) = new_tasks_val.as_array() {
-                                let mut q = session.queue.lock().await;
-                                if clear_existing { q.clear(); }
-                                for task in new_tasks {
-                                    if let Some(t) = task.as_str() { q.push_back(t.to_string()); }
-                                }
-                                debug!("Tasks queued (MODIFIED by harness)");
-                            }
-                        }
-                        Some(Ok(Verdict::Reject(reason))) => {
-                            content = format!("Plan REJECTED by Harness: {}", reason);
+                        Err(e) => {
+                            content = format!("Failed to connect to MCP server: {}", e);
                             is_error = true;
-                        }
-                        Some(Ok(Verdict::Escalate(reason))) => {
-                            content = format!("Plan paused for approval: {}", reason);
-                        }
-                        Some(Err(e)) => {
-                            error!(error = %e, "Failed to evaluate on_task_submit");
                         }
                     }
                 }
-                crate::tools::ToolEffect::SpawnMcp { command, args } => {
-                     match self.spawn_mcp_server(&command, &args).await {
-                         Ok(count) => {
-                             content = format!("Successfully connected to MCP server. Loaded {} new tools.", count);
-                         },
-                         Err(e) => {
-                             content = format!("Failed to connect to MCP server: {}", e);
-                             is_error = true;
-                         }
-                     }
+            }
+
+            final_by_id.insert(
+                tc.id.clone(),
+                FinalToolRecord {
+                    id: tc.id,
+                    name: tc.name,
+                    args: final_args,
+                    verdict: verdict_str,
+                    duration_ms,
+                    content,
+                    is_error,
+                    emit_exec_start: false,
+                },
+            );
+        }
+
+        let mut tool_results: Vec<InferenceContent> = Vec::new();
+
+        for tc in &pending_tool_calls {
+            let Some(mut record) = final_by_id.remove(&tc.id) else {
+                continue;
+            };
+
+            if record.emit_exec_start {
+                self.persist_event(
+                    session,
+                    &KernelEvent::Audit(AuditEvent::ToolExecStart {
+                        id: record.id.clone(),
+                        name: record.name.clone(),
+                    }),
+                );
+            }
+
+            let (content, is_error) = self.apply_tool_result_hook(
+                &record.id,
+                &record.name,
+                &record.args,
+                record.content,
+                record.is_error,
+            );
+
+            record.content = content;
+            record.is_error = is_error;
+
+            self.persist_event(
+                session,
+                &KernelEvent::Audit(AuditEvent::ToolResult {
+                    id: record.id.clone(),
+                    output: record.content.clone(),
+                    is_error: record.is_error,
+                }),
+            );
+            self.persist_event(
+                session,
+                &KernelEvent::Audit(AuditEvent::ToolExecEnd {
+                    id: record.id.clone(),
+                    success: !record.is_error,
+                }),
+            );
+
+            if let Some(ref store) = self.state {
+                let _ = store
+                    .insert_tool_execution(
+                        session_id,
+                        session.turn_index,
+                        &record.id,
+                        &record.name,
+                        &record.args,
+                        Some(&record.content),
+                        record.is_error,
+                        Some(record.duration_ms),
+                        &record.verdict,
+                    )
+                    .await;
+            }
+
+            if !self.json {
+                if record.is_error {
+                    println!("\x1b[31m✗ Tool '{}' failed\x1b[0m", record.name);
+                } else {
+                    println!("\x1b[32m✓ Tool '{}' complete\x1b[0m", record.name);
                 }
             }
-            if !self.json {
-                 if is_error {
-                     println!("\x1b[31m✗ Tool '{}' failed\x1b[0m", tc.name);
-                 } else {
-                     println!("\x1b[32m✓ Tool '{}' complete\x1b[0m", tc.name);
-                 }
-            }
-            tool_results.push(InferenceContent::ToolResult { tool_use_id: tc.id.clone(), content, is_error });
+
+            tool_results.push(InferenceContent::ToolResult {
+                tool_use_id: record.id,
+                content: record.content,
+                is_error: record.is_error,
+            });
         }
 
         session.history.push(InferenceMessage {
@@ -409,16 +609,243 @@ impl Kernel {
             tool_call_id: None,
         });
 
-         if let Some(ref store) = self.state {
-             let result_content: Vec<serde_json::Value> = tool_results.iter().map(|r| match r {
-                 InferenceContent::ToolResult { tool_use_id, content, is_error } => {
-                     serde_json::json!({ "type": "tool_result", "tool_use_id": tool_use_id, "content": content, "is_error": is_error })
-                 }
-                 _ => serde_json::json!({})
-             }).collect();
-             let _ = store.insert_message(session_id, session.turn_index, "tool_result", &serde_json::Value::Array(result_content), None).await;
-         }
+        if let Some(ref store) = self.state {
+            let result_content: Vec<serde_json::Value> = tool_results
+                .iter()
+                .map(|r| match r {
+                    InferenceContent::ToolResult {
+                        tool_use_id,
+                        content,
+                        is_error,
+                    } => {
+                        serde_json::json!({
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": content,
+                            "is_error": is_error
+                        })
+                    }
+                    _ => serde_json::json!({}),
+                })
+                .collect();
+            let _ = store
+                .insert_message(
+                    session_id,
+                    session.turn_index,
+                    "tool_result",
+                    &serde_json::Value::Array(result_content),
+                    None,
+                )
+                .await;
+        }
 
-         Ok(true)
+        Ok(TurnOutcome::Continue)
+    }
+
+    fn prompt_for_approval(&self, reason: &str) -> bool {
+        warn!(reason = %reason, "Escalation requires user approval");
+        eprint!(
+            "\x1b[33m\x1b[1m! Approval Required:\x1b[0m {} Allow? (y/n): ",
+            reason
+        );
+        io::stderr().flush().ok();
+
+        let mut input = String::new();
+        io::stdin().lock().read_line(&mut input).is_ok() && input.trim().eq_ignore_ascii_case("y")
+    }
+
+    fn apply_tool_result_hook(
+        &self,
+        id: &str,
+        name: &str,
+        args: &serde_json::Value,
+        content: String,
+        is_error: bool,
+    ) -> (String, bool) {
+        let harness = self.lock_harness();
+        let Some(engine) = &*harness else {
+            return (content, is_error);
+        };
+
+        let payload = serde_json::json!({
+            "id": id,
+            "name": name,
+            "args": args,
+            "output": content,
+            "is_error": is_error,
+        });
+
+        match engine.evaluate("on_tool_result", payload) {
+            Ok(Verdict::Allow) => (content, is_error),
+            Ok(Verdict::Reject(reason)) => (
+                format!(
+                    "[HARNESS REJECTED RESULT] Tool '{}' result blocked: {}",
+                    name, reason
+                ),
+                true,
+            ),
+            Ok(Verdict::Escalate(reason)) => {
+                if self.prompt_for_approval(&reason) {
+                    (content, is_error)
+                } else {
+                    (
+                        format!(
+                            "[ESCALATION DENIED] Tool '{}' result denied by user: {}",
+                            name, reason
+                        ),
+                        true,
+                    )
+                }
+            }
+            Ok(Verdict::Modify(val)) => {
+                if let Some(s) = val.as_str() {
+                    return (s.to_string(), is_error);
+                }
+                if let Some(obj) = val.as_object() {
+                    let new_content = obj
+                        .get("output")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| obj.get("content").and_then(|v| v.as_str()))
+                        .map(ToString::to_string)
+                        .unwrap_or(content);
+                    let new_is_error = obj
+                        .get("is_error")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(is_error);
+                    return (new_content, new_is_error);
+                }
+                warn!(tool = %name, "on_tool_result returned unsupported MODIFY payload; ignoring");
+                (content, is_error)
+            }
+            Err(e) => {
+                warn!(error = %e, "Harness on_tool_result error");
+                (content, is_error)
+            }
+        }
+    }
+
+    async fn handle_plan_submission(
+        &mut self,
+        session: &mut SessionState,
+        title: &str,
+        tasks: Vec<String>,
+        clear_existing: bool,
+    ) -> (String, bool) {
+        let mut plan_title = title.to_string();
+        let mut plan_tasks = tasks;
+        let mut should_clear_existing = clear_existing;
+
+        let verdict_result = {
+            let harness = self.lock_harness();
+            (*harness).as_ref().map(|engine| {
+                engine.evaluate(
+                    "on_plan_submit",
+                    serde_json::json!({
+                        "title": plan_title.clone(),
+                        "tasks": plan_tasks.clone(),
+                        "clear_existing": should_clear_existing,
+                    }),
+                )
+            })
+        };
+
+        match verdict_result {
+            Some(Ok(Verdict::Allow)) | None => {}
+            Some(Ok(Verdict::Reject(reason))) => {
+                return (format!("Plan rejected by harness: {}", reason), true);
+            }
+            Some(Ok(Verdict::Escalate(reason))) => {
+                if !self.prompt_for_approval(&reason) {
+                    return (format!("Plan escalation denied by user: {}", reason), true);
+                }
+            }
+            Some(Ok(Verdict::Modify(new_val))) => {
+                if let Some(obj) = new_val.as_object() {
+                    if let Some(new_title) = obj.get("title").and_then(|v| v.as_str()) {
+                        plan_title = new_title.to_string();
+                    }
+                    if let Some(new_clear) = obj.get("clear_existing").and_then(|v| v.as_bool()) {
+                        should_clear_existing = new_clear;
+                    }
+                    if let Some(new_tasks_val) = obj.get("tasks") {
+                        plan_tasks = Kernel::parse_task_list(new_tasks_val, None, None)
+                            .into_iter()
+                            .map(|t| t.prompt)
+                            .collect();
+                    }
+                } else if new_val.is_array() {
+                    plan_tasks = Kernel::parse_task_list(&new_val, None, None)
+                        .into_iter()
+                        .map(|t| t.prompt)
+                        .collect();
+                }
+            }
+            Some(Err(e)) => {
+                error!(error = %e, "Failed to evaluate on_plan_submit");
+            }
+        }
+
+        if plan_tasks.is_empty() {
+            return (
+                "Plan submission rejected: no tasks were provided".to_string(),
+                true,
+            );
+        }
+
+        let cancelled_count = if should_clear_existing {
+            match self.cancel_queued_tasks(session).await {
+                Ok(cancelled) => cancelled,
+                Err(e) => {
+                    return (
+                        format!("Plan submission failed while clearing queue: {}", e),
+                        true,
+                    );
+                }
+            }
+        } else {
+            0
+        };
+
+        let plan_id = uuid::Uuid::new_v4().to_string();
+        session.plans.insert(
+            plan_id.clone(),
+            PlanProgress {
+                plan_id: plan_id.clone(),
+                title: plan_title.clone(),
+                total_tasks: plan_tasks.len(),
+                completed_tasks: 0,
+            },
+        );
+
+        let queued_tasks: Vec<QueuedTask> = plan_tasks
+            .into_iter()
+            .map(|prompt| QueuedTask::with_plan(prompt, plan_id.clone(), Some(plan_title.clone())))
+            .collect();
+
+        let queued_count = queued_tasks.len();
+        {
+            let mut q = session.queue.lock().await;
+            for task in queued_tasks {
+                q.push_back(task);
+            }
+        }
+
+        if cancelled_count > 0 {
+            (
+                format!(
+                    "Plan '{}' submitted (plan_id: {}) with {} tasks. Cancelled {} queued tasks.",
+                    plan_title, plan_id, queued_count, cancelled_count
+                ),
+                false,
+            )
+        } else {
+            (
+                format!(
+                    "Plan '{}' submitted (plan_id: {}) with {} tasks.",
+                    plan_title, plan_id, queued_count
+                ),
+                false,
+            )
+        }
     }
 }

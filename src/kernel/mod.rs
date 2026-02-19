@@ -1,32 +1,32 @@
+pub mod builder;
 pub mod config;
 pub mod event;
-pub mod builder;
-pub mod session;
 mod init;
+pub mod session;
 mod turn;
 
 use anyhow::{Context, Result};
 use builder::RuntimeBuilder;
-use session::SessionState;
 use config::TurinConfig;
-use event::{KernelEvent, LifecycleEvent};
-use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex as AsyncMutex};
-use tracing::{info, warn, error, debug, instrument};
+use event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
+use session::{PlanProgress, QueuedTask, SessionState};
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::{Mutex as AsyncMutex, broadcast};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::harness::engine::HarnessEngine;
 use crate::harness::verdict::Verdict;
+use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::{
     InferenceContent, InferenceMessage, InferenceRole, ProviderClient,
 };
 use crate::persistence::state::StateStore;
 use crate::tools::ToolContext;
-use crate::tools::registry::ToolRegistry;
 use crate::tools::mcp::McpToolProxy;
+use crate::tools::registry::ToolRegistry;
 use mcp_sdk::client::McpClient;
 use mcp_sdk::transport::StdioTransport;
-use crate::inference::embeddings::EmbeddingProvider;
 use notify::RecommendedWatcher;
 
 /// The Turin Kernel — manages the agent loop, event system, and tool execution.
@@ -63,6 +63,12 @@ pub(crate) struct PendingToolCall {
     pub id: String,
     pub name: String,
     pub args: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TaskExecutionResult {
+    pub status: TaskTerminalStatus,
+    pub task_turn_count: u32,
 }
 
 impl Kernel {
@@ -141,7 +147,7 @@ impl Kernel {
     pub fn run_script(&self, script: &str) -> Result<()> {
         let mut harness_lock = self.lock_harness();
         if let Some(ref mut engine) = *harness_lock {
-             engine.load_script_str(script)?;
+            engine.load_script_str(script)?;
         } else {
             anyhow::bail!("Harness not initialized");
         }
@@ -155,49 +161,76 @@ impl Kernel {
         }
 
         let session_id = session.id.clone();
-        info!(session_id = %session_id, "Starting new agent session");
-        
-        // Emit AgentStart event
-        self.persist_event(session, &KernelEvent::Lifecycle(LifecycleEvent::AgentStart {
-            session_id: session_id.clone(),
-        }));
+        info!(session_id = %session_id, "Starting new session");
 
-        // Trigger on_agent_start harness hook
+        // Emit SessionStart event
+        self.persist_event(
+            session,
+            &KernelEvent::Lifecycle(LifecycleEvent::SessionStart {
+                session_id: session_id.clone(),
+            }),
+        );
+
+        // Trigger on_session_start harness hook
         {
             let harness = self.lock_harness();
             if let Some(ref engine) = *harness
-                && let Err(e) = engine.evaluate("on_agent_start", serde_json::json!({ "session_id": session_id })) {
-                     warn!(error = %e, "Harness on_agent_start failed");
-                }
+                && let Err(e) = engine.evaluate(
+                    "on_session_start",
+                    serde_json::json!({ "session_id": session_id }),
+                )
+            {
+                warn!(error = %e, "Harness on_session_start failed");
+            }
         }
 
         session.status = crate::kernel::session::SessionStatus::Active;
         Ok(())
     }
 
-    /// End the session and emit AgentEnd event.
+    /// End the session and emit SessionEnd event.
     pub async fn end_session(&self, session: &mut SessionState) -> Result<()> {
-         if session.status == crate::kernel::session::SessionStatus::Inactive {
-             return Ok(());
-         }
+        if session.status == crate::kernel::session::SessionStatus::Inactive {
+            return Ok(());
+        }
 
-         self.persist_event(session, &KernelEvent::Lifecycle(LifecycleEvent::AgentEnd {
-            message_count: session.turn_index,
-            total_input_tokens: session.total_input_tokens,
-            total_output_tokens: session.total_output_tokens,
-         }));
-         
-         // Cancel background event persistence task
-         session.cancel_token.cancel();
-         
-         // Clear active queue
-         {
-             let mut aq = self.active_queue.lock().await;
-             *aq = None;
-         }
-         
-         session.status = crate::kernel::session::SessionStatus::Inactive;
-         Ok(())
+        self.persist_event(
+            session,
+            &KernelEvent::Lifecycle(LifecycleEvent::SessionEnd {
+                turn_count: session.turn_index,
+                total_input_tokens: session.total_input_tokens,
+                total_output_tokens: session.total_output_tokens,
+            }),
+        );
+
+        {
+            let harness = self.lock_harness();
+            if let Some(ref engine) = *harness
+                && let Err(e) = engine.evaluate(
+                    "on_session_end",
+                    serde_json::json!({
+                        "session_id": session.id.clone(),
+                        "turn_count": session.turn_index,
+                        "total_input_tokens": session.total_input_tokens,
+                        "total_output_tokens": session.total_output_tokens,
+                    }),
+                )
+            {
+                warn!(error = %e, "Harness on_session_end failed");
+            }
+        }
+
+        // Cancel background event persistence task
+        session.cancel_token.cancel();
+
+        // Clear active queue
+        {
+            let mut aq = self.active_queue.lock().await;
+            *aq = None;
+        }
+
+        session.status = crate::kernel::session::SessionStatus::Inactive;
+        Ok(())
     }
 
     /// Run the agent loop with the given prompt.
@@ -213,91 +246,197 @@ impl Kernel {
         }
 
         if let Some(p) = prompt {
-            session.queue.lock().await.push_back(p);
+            let plan_id = uuid::Uuid::new_v4().to_string();
+            session.plans.insert(
+                plan_id.clone(),
+                PlanProgress {
+                    plan_id: plan_id.clone(),
+                    title: "user_request".to_string(),
+                    total_tasks: 1,
+                    completed_tasks: 0,
+                },
+            );
+            let mut q = session.queue.lock().await;
+            q.push_back(QueuedTask::with_plan(
+                p,
+                plan_id,
+                Some("user_request".to_string()),
+            ));
         }
 
         loop {
-            // Pop next task
-            {
+            let (mut task, queue_depth_after_pop) = {
                 let mut q = session.queue.lock().await;
                 if q.is_empty() {
-                    debug!("Queue empty, ending run");
+                    debug!("Queue empty, firing on_all_tasks_complete");
+                    drop(q);
+                    self.persist_event(
+                        session,
+                        &KernelEvent::Lifecycle(LifecycleEvent::AllTasksComplete {
+                            session_id: session.id.clone(),
+                        }),
+                    );
+                    let verdict = {
+                        let harness = self.lock_harness();
+                        if let Some(ref engine) = *harness {
+                            match engine.evaluate(
+                                "on_all_tasks_complete",
+                                serde_json::json!({
+                                    "session_id": session.id.clone(),
+                                    "turn_count": session.turn_index,
+                                }),
+                            ) {
+                                Ok(v) => Some(v),
+                                Err(e) => {
+                                    warn!(error = %e, "Harness on_all_tasks_complete failed");
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        }
+                    };
+
+                    if let Some(Verdict::Modify(new_tasks_val)) = verdict {
+                        let new_tasks = Self::parse_task_list(&new_tasks_val, None, None);
+                        if !new_tasks.is_empty() {
+                            let mut q = session.queue.lock().await;
+                            for task in new_tasks {
+                                q.push_back(task);
+                            }
+                            continue;
+                        }
+                    }
+
                     break;
                 }
-                let task = q.pop_front().unwrap();
-                drop(q);
-                
-                info!(task = %task, "Running task");
-                self.run_task(session, &task).await?;
-            }
-            
-            // ─── Harness Hook: on_task_complete ─────────────────────
-            // Triggered when the queue is explicitly empty.
-            let mut recheck = false;
-            
-            let verdict_result = {
+                let task = q.pop_front().expect("queue checked non-empty");
+                let depth = q.len();
+                (task, depth)
+            };
+
+            self.persist_event(
+                session,
+                &KernelEvent::Lifecycle(LifecycleEvent::TaskStart {
+                    task_id: task.task_id.clone(),
+                    plan_id: task.plan_id.clone(),
+                    title: task.title.clone(),
+                    prompt: task.prompt.clone(),
+                    queue_depth: queue_depth_after_pop,
+                }),
+            );
+
+            let task_start_verdict = {
                 let harness = self.lock_harness();
                 if let Some(ref engine) = *harness {
-                    let payload = serde_json::json!({
-                        "session_id": session.id,
-                        "turn_count": session.turn_index,
-                    });
-                     Some(engine.evaluate("on_task_complete", payload))
+                    match engine.evaluate(
+                        "on_task_start",
+                        serde_json::json!({
+                            "session_id": session.id.clone(),
+                            "task_id": task.task_id.clone(),
+                            "plan_id": task.plan_id.clone(),
+                            "title": task.title.clone(),
+                            "prompt": task.prompt.clone(),
+                            "queue_depth": queue_depth_after_pop,
+                        }),
+                    ) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            warn!(error = %e, "Harness on_task_start error");
+                            Verdict::Allow
+                        }
+                    }
                 } else {
-                    None
+                    Verdict::Allow
                 }
             };
 
-            if let Some(result) = verdict_result {
-                match result {
-                    Ok(Verdict::Modify(new_tasks_val)) => {
-                        if let Some(new_tasks) = new_tasks_val.as_array()
-                            && !new_tasks.is_empty() {
-                                let mut q = session.queue.lock().await;
-                                for task in new_tasks {
-                                    if let Some(t) = task.as_str() {
-                                        q.push_back(t.to_string());
-                                    }
-                                }
-                                info!(count = new_tasks.len(), "Validation failed or extended by harness; new tasks queued");
-                                recheck = true;
-                            }
-                    },
-                    Ok(Verdict::Reject(reason)) => {
-                        warn!(reason = %reason, "Session ended with REJECTION from harness");
-                        break;
-                    },
-                    Ok(_) => {},
-                    Err(e) => {
-                        warn!(error = %e, "Harness on_task_complete error");
+            match task_start_verdict {
+                Verdict::Reject(reason) => {
+                    warn!(task_id = %task.task_id, reason = %reason, "Task rejected by on_task_start");
+                    self.complete_task(session, &task, TaskTerminalStatus::Rejected, 0)
+                        .await?;
+                    continue;
+                }
+                Verdict::Modify(val) => {
+                    if let Some(obj) = val.as_object() {
+                        if let Some(prompt) = obj.get("prompt").and_then(|v| v.as_str()) {
+                            task.prompt = prompt.to_string();
+                        }
+                        if let Some(title) = obj.get("title").and_then(|v| v.as_str()) {
+                            task.title = Some(title.to_string());
+                        }
                     }
                 }
-            }
-            
-            if recheck {
-                continue;
+                Verdict::Escalate(reason) => {
+                    warn!(task_id = %task.task_id, reason = %reason, "Task escalated at on_task_start; treating as rejected");
+                    self.complete_task(session, &task, TaskTerminalStatus::Rejected, 0)
+                        .await?;
+                    continue;
+                }
+                Verdict::Allow => {}
             }
 
+            info!(task_id = %task.task_id, prompt = %task.prompt, "Running task");
+
+            let task_result = match self.run_task(session, &task).await {
+                Ok(result) => result,
+                Err(e) => {
+                    error!(task_id = %task.task_id, error = %e, "Task failed with runtime error");
+                    self.complete_task(session, &task, TaskTerminalStatus::Error, 0)
+                        .await?;
+                    return Err(e);
+                }
+            };
+
+            self.complete_task(
+                session,
+                &task,
+                task_result.status,
+                task_result.task_turn_count,
+            )
+            .await?;
         }
-        
+
         Ok(())
     }
 
-    /// Add a prompt to the end of the queue.
-    pub async fn queue_prompt(&self, session: &SessionState, prompt: String) {
+    /// Add a prompt to the end of the queue as an implicit single-task plan.
+    pub async fn queue_prompt(&self, session: &mut SessionState, prompt: String) {
+        let plan_id = uuid::Uuid::new_v4().to_string();
+        session.plans.insert(
+            plan_id.clone(),
+            PlanProgress {
+                plan_id: plan_id.clone(),
+                title: "queued_prompt".to_string(),
+                total_tasks: 1,
+                completed_tasks: 0,
+            },
+        );
         let mut q = session.queue.lock().await;
-        q.push_back(prompt);
+        q.push_back(QueuedTask::with_plan(
+            prompt,
+            plan_id,
+            Some("queued_prompt".to_string()),
+        ));
     }
-    
+
     /// Execute a single task (one specific prompt) within the persistent session.
-    #[instrument(skip(self, session, prompt), fields(task = %prompt))]
-    async fn run_task(&mut self, session: &mut SessionState, prompt: &str) -> Result<()> {
+    #[instrument(skip(self, session, task), fields(task_id = %task.task_id))]
+    async fn run_task(
+        &mut self,
+        session: &mut SessionState,
+        task: &QueuedTask,
+    ) -> Result<TaskExecutionResult> {
         let session_id = session.id.clone();
+        let prompt = task.prompt.as_str();
 
         // Append user message to history
         session.history.push(InferenceMessage {
             role: InferenceRole::User,
-            content: vec![InferenceContent::Text { text: prompt.to_string() }],
+            content: vec![InferenceContent::Text {
+                text: prompt.to_string(),
+            }],
             tool_call_id: None,
         });
 
@@ -308,13 +447,15 @@ impl Kernel {
 
         // Persist user message
         if let Some(ref store) = self.state {
-            let _ = store.insert_message(
-                &session_id,
-                session.turn_index,
-                "user",
-                &serde_json::json!([{"type": "text", "text": prompt}]),
-                None,
-            ).await;
+            let _ = store
+                .insert_message(
+                    &session_id,
+                    session.turn_index,
+                    "user",
+                    &serde_json::json!([{"type": "text", "text": prompt}]),
+                    None,
+                )
+                .await;
         }
 
         // Set active session for harness globals (memory etc)
@@ -328,23 +469,37 @@ impl Kernel {
         let mut task_turn_count = 0;
         let max_task_turns = self.config.kernel.max_turns;
 
-        loop {
+        let task_status = loop {
             if task_turn_count >= max_task_turns {
-                error!(max_turns = max_task_turns, "Max turns reached for this task");
-                break;
+                error!(
+                    max_turns = max_task_turns,
+                    "Max turns reached for this task"
+                );
+                break TaskTerminalStatus::MaxTurns;
             }
 
-            let completed_turn = self.execute_turn(session, &tool_ctx).await?;
+            let turn_ctx = turn::TurnContext {
+                task_id: task.task_id.clone(),
+                plan_id: task.plan_id.clone(),
+                task_turn_index: task_turn_count,
+            };
+            let completed_turn = self.execute_turn(session, &tool_ctx, &turn_ctx).await?;
 
             self.evaluate_token_usage(session.total_input_tokens, session.total_output_tokens);
             session.turn_index += 1;
             task_turn_count += 1;
 
-            if !completed_turn {
-                break;
+            match completed_turn {
+                turn::TurnOutcome::Continue => {}
+                turn::TurnOutcome::Complete => {
+                    break TaskTerminalStatus::Success;
+                }
+                turn::TurnOutcome::Rejected => {
+                    break TaskTerminalStatus::Rejected;
+                }
             }
-        }
-        
+        };
+
         // Clear active session
         {
             let harness = self.lock_harness();
@@ -352,13 +507,192 @@ impl Kernel {
                 engine.set_active_session(None);
             }
         }
+        Ok(TaskExecutionResult {
+            status: task_status,
+            task_turn_count,
+        })
+    }
+
+    pub(crate) fn parse_task_list(
+        tasks_val: &serde_json::Value,
+        default_plan_id: Option<&str>,
+        default_title: Option<&str>,
+    ) -> Vec<QueuedTask> {
+        let Some(items) = tasks_val.as_array() else {
+            return Vec::new();
+        };
+
+        items
+            .iter()
+            .filter_map(|item| {
+                if let Some(prompt) = item.as_str() {
+                    if let Some(plan_id) = default_plan_id {
+                        return Some(QueuedTask::with_plan(
+                            prompt.to_string(),
+                            plan_id.to_string(),
+                            default_title.map(ToString::to_string),
+                        ));
+                    }
+                    return Some(QueuedTask::ad_hoc(prompt.to_string()));
+                }
+
+                let obj = item.as_object()?;
+                let prompt = obj.get("prompt").and_then(|v| v.as_str())?;
+                let plan_id = obj
+                    .get("plan_id")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string)
+                    .or_else(|| default_plan_id.map(ToString::to_string));
+                let title = obj
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string)
+                    .or_else(|| default_title.map(ToString::to_string));
+                match plan_id {
+                    Some(plan_id) => {
+                        Some(QueuedTask::with_plan(prompt.to_string(), plan_id, title))
+                    }
+                    None => Some(QueuedTask::ad_hoc(prompt.to_string())),
+                }
+            })
+            .collect()
+    }
+
+    pub(crate) async fn complete_task(
+        &mut self,
+        session: &mut SessionState,
+        task: &QueuedTask,
+        status: TaskTerminalStatus,
+        task_turn_count: u32,
+    ) -> Result<()> {
+        self.persist_event(
+            session,
+            &KernelEvent::Lifecycle(LifecycleEvent::TaskComplete {
+                task_id: task.task_id.clone(),
+                plan_id: task.plan_id.clone(),
+                status,
+                task_turn_count,
+            }),
+        );
+
+        let verdict_result = {
+            let harness = self.lock_harness();
+            if let Some(ref engine) = *harness {
+                Some(engine.evaluate(
+                    "on_task_complete",
+                    serde_json::json!({
+                        "session_id": session.id.clone(),
+                        "task_id": task.task_id.clone(),
+                        "plan_id": task.plan_id.clone(),
+                        "status": status,
+                        "task_turn_count": task_turn_count,
+                        "turn_count": session.turn_index,
+                    }),
+                ))
+            } else {
+                None
+            }
+        };
+
+        if let Some(result) = verdict_result {
+            match result {
+                Ok(Verdict::Modify(new_tasks_val)) => {
+                    let new_tasks = Self::parse_task_list(&new_tasks_val, None, None);
+                    if !new_tasks.is_empty() {
+                        let mut q = session.queue.lock().await;
+                        for queued in new_tasks {
+                            q.push_back(queued);
+                        }
+                        info!("on_task_complete queued additional tasks via MODIFY");
+                    }
+                }
+                Ok(Verdict::Reject(reason)) => {
+                    warn!(task_id = %task.task_id, reason = %reason, "on_task_complete rejected");
+                }
+                Ok(Verdict::Escalate(reason)) => {
+                    warn!(task_id = %task.task_id, reason = %reason, "on_task_complete escalated");
+                }
+                Ok(Verdict::Allow) => {}
+                Err(e) => {
+                    warn!(error = %e, "Harness on_task_complete error");
+                }
+            }
+        }
+
+        if let Some(plan_id) = &task.plan_id {
+            let completed_plan = if let Some(progress) = session.plans.get_mut(plan_id) {
+                progress.completed_tasks += 1;
+                if progress.is_complete() {
+                    Some(progress.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if let Some(plan) = completed_plan {
+                self.persist_event(
+                    session,
+                    &KernelEvent::Lifecycle(LifecycleEvent::PlanComplete {
+                        plan_id: plan.plan_id.clone(),
+                        title: plan.title.clone(),
+                        total_tasks: plan.total_tasks,
+                        completed_tasks: plan.completed_tasks,
+                    }),
+                );
+
+                {
+                    let harness = self.lock_harness();
+                    if let Some(ref engine) = *harness
+                        && let Err(e) = engine.evaluate(
+                            "on_plan_complete",
+                            serde_json::json!({
+                                "session_id": session.id.clone(),
+                                "plan_id": plan.plan_id.clone(),
+                                "title": plan.title.clone(),
+                                "total_tasks": plan.total_tasks,
+                                "completed_tasks": plan.completed_tasks,
+                            }),
+                        )
+                    {
+                        warn!(error = %e, "Harness on_plan_complete failed");
+                    }
+                }
+
+                session.plans.remove(plan_id);
+            }
+        }
+
         Ok(())
+    }
+
+    pub(crate) async fn cancel_queued_tasks(
+        &mut self,
+        session: &mut SessionState,
+    ) -> Result<usize> {
+        let drained_tasks: Vec<QueuedTask> = {
+            let mut q = session.queue.lock().await;
+            q.drain(..).collect()
+        };
+
+        let cancelled = drained_tasks.len();
+        for queued in drained_tasks {
+            self.complete_task(session, &queued, TaskTerminalStatus::Cancelled, 0)
+                .await?;
+        }
+        Ok(cancelled)
     }
 
     /// Evaluate harness `on_tool_call` hook.
     ///
     /// Returns the composed verdict. If no harness is loaded, returns `Allow`.
-    pub(crate) fn evaluate_tool_call(&self, name: &str, id: &str, args: &serde_json::Value) -> Verdict {
+    pub(crate) fn evaluate_tool_call(
+        &self,
+        name: &str,
+        id: &str,
+        args: &serde_json::Value,
+    ) -> Verdict {
         let harness = self.lock_harness();
         if let Some(ref engine) = *harness {
             let payload = serde_json::json!({
@@ -416,20 +750,27 @@ impl Kernel {
     pub fn persist_event(&self, session: &SessionState, event: &KernelEvent) {
         // Allow harness to observe/intercept any event
         if let Ok(harness_guard) = self.harness.lock()
-            && let Some(engine) = &*harness_guard {
-                let payload = serde_json::to_value(event).unwrap_or_default();
-                if let Ok(verdict) = engine.evaluate("on_kernel_event", payload)
-                    && verdict.is_rejected() {
-                        warn!(event_type = %event.event_type(), "Event REJECTED by harness on_kernel_event");
-                        return;
-                    }
-                    // Note: MODIFY is ignored for general events for now to avoid complexity
+            && let Some(engine) = &*harness_guard
+        {
+            let payload = serde_json::to_value(event).unwrap_or_default();
+            if let Ok(verdict) = engine.evaluate("on_kernel_event", payload)
+                && verdict.is_rejected()
+            {
+                warn!(event_type = %event.event_type(), "Event REJECTED by harness on_kernel_event");
+                return;
             }
+            // Note: MODIFY is ignored for general events for now to avoid complexity
+        }
         self.persist_event_internal(&session.event_tx, &session.id, event);
     }
 
     /// Internal helper for persistence (used by parallel runners)
-    fn persist_event_internal(&self, tx: &broadcast::Sender<(String, KernelEvent)>, session_id: &str, event: &KernelEvent) {
+    fn persist_event_internal(
+        &self,
+        tx: &broadcast::Sender<(String, KernelEvent)>,
+        session_id: &str,
+        event: &KernelEvent,
+    ) {
         if self.json {
             // In JSON mode, all events go to stdout as NDJSON
             println!("{}", serde_json::to_string(event).unwrap_or_default());
@@ -443,45 +784,59 @@ impl Kernel {
     #[instrument(skip(self, args), fields(command = %command, args = ?args))]
     async fn spawn_mcp_server(&mut self, command: &str, args: &[String]) -> Result<usize> {
         let args_str: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        
+
         // Check for existing client
-        if let Some(entry) = self.mcp_clients.iter().find(|e| e.command == command && e.args == args) {
-             info!(command = %command, "Reusing existing MCP client");
-             // We can return the tool count from the existing client, 
-             // but we don't store tool count. We could just re-list or trust existing registry.
-             // If the registry already has the tools, we might be fine.
-             // But if specific tools were removed? 
-             // Simplest is to assume consistency.
-             // But evaluate_tool_call needs tool execution logic, which relies on ToolRegistry.
-             // If registry is wiped but client reused?
-             // ToolRegistry persists in Kernel.
-             
-             // Let's re-list to be safe and ensure tools are registered? 
-             // Listing is cheap.
-             let list_result = entry.client.list_tools().await.with_context(|| "Failed to list MCP tools on reused client")?;
-             let count = list_result.tools.len();
-             
-             // Update tool registry just in case
-             for tool_def in list_result.tools {
-                 // McpToolProxy needs an Arc<McpClient>. The entry has it.
-                 let proxy = McpToolProxy::new(entry.client.clone(), tool_def);
-                 let _ = self.tool_registry.register(Box::new(proxy)); 
-                 // Ignore error if duplicate (register returns Result<()>)
-             }
-             return Ok(count);
+        if let Some(entry) = self
+            .mcp_clients
+            .iter()
+            .find(|e| e.command == command && e.args == args)
+        {
+            info!(command = %command, "Reusing existing MCP client");
+            // We can return the tool count from the existing client,
+            // but we don't store tool count. We could just re-list or trust existing registry.
+            // If the registry already has the tools, we might be fine.
+            // But if specific tools were removed?
+            // Simplest is to assume consistency.
+            // But evaluate_tool_call needs tool execution logic, which relies on ToolRegistry.
+            // If registry is wiped but client reused?
+            // ToolRegistry persists in Kernel.
+
+            // Let's re-list to be safe and ensure tools are registered?
+            // Listing is cheap.
+            let list_result = entry
+                .client
+                .list_tools()
+                .await
+                .with_context(|| "Failed to list MCP tools on reused client")?;
+            let count = list_result.tools.len();
+
+            // Update tool registry just in case
+            for tool_def in list_result.tools {
+                // McpToolProxy needs an Arc<McpClient>. The entry has it.
+                let proxy = McpToolProxy::new(entry.client.clone(), tool_def);
+                let _ = self.tool_registry.register(Box::new(proxy));
+                // Ignore error if duplicate (register returns Result<()>)
+            }
+            return Ok(count);
         }
 
         info!("Connecting to MCP server");
 
         let transport = StdioTransport::new(command, &args_str)
             .with_context(|| format!("Failed to spawn MCP process: {}", command))?;
-        
+
         let client = McpClient::new(transport);
-        client.initialize().await.with_context(|| "Failed to initialize MCP client")?;
-        
-        let list_result = client.list_tools().await.with_context(|| "Failed to list MCP tools")?;
+        client
+            .initialize()
+            .await
+            .with_context(|| "Failed to initialize MCP client")?;
+
+        let list_result = client
+            .list_tools()
+            .await
+            .with_context(|| "Failed to list MCP tools")?;
         let count = list_result.tools.len();
-        
+
         let client_arc = Arc::new(client);
         self.mcp_clients.push(McpClientEntry {
             command: command.to_string(),
@@ -491,7 +846,8 @@ impl Kernel {
 
         for tool_def in list_result.tools {
             let proxy = McpToolProxy::new(client_arc.clone(), tool_def);
-            self.tool_registry.register(Box::new(proxy))
+            self.tool_registry
+                .register(Box::new(proxy))
                 .with_context(|| "Failed to register MCP tool")?;
         }
 
