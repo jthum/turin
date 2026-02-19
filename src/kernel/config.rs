@@ -58,6 +58,9 @@ pub struct KernelConfig {
     /// Heartbeat interval in seconds
     #[serde(default = "default_heartbeat_interval")]
     pub heartbeat_interval_secs: u32,
+    /// Initial spawn depth (for recursive agents)
+    #[serde(default)]
+    pub initial_spawn_depth: u32,
 }
 
 impl Default for KernelConfig {
@@ -66,6 +69,7 @@ impl Default for KernelConfig {
             workspace_root: default_workspace_root(),
             max_turns: default_max_turns(),
             heartbeat_interval_secs: default_heartbeat_interval(),
+            initial_spawn_depth: 0,
         }
     }
 }

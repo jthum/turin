@@ -38,6 +38,7 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
             workspace_root: tmp.to_str().unwrap().to_string(),
             max_turns: 5,
             heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
@@ -249,6 +250,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 3,
             heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
         },
         persistence: PersistenceConfig {
             database_path: "".to_string(), // Empty — no persistence
@@ -271,5 +273,32 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
 
     assert!(session.turn_index > 0);
     kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_multitask_workflow_execution() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut kernel = make_kernel(tmp.path()).await?;
+
+    let mut session = kernel.create_session();
+    
+    // Manually push 2 tasks
+    // (We use a scope to drop the lock)
+    {
+        let mut q = session.queue.lock().await;
+        q.push_back("Task 1".to_string());
+        q.push_back("Task 2".to_string());
+    }
+    
+    // Run
+    // Expected: Both tasks run.
+    kernel.run(&mut session, None).await?;
+    
+    // Check history length
+    // Each task adds: User (queue prompt) + Assistant (mock response) = 2 messages.
+    // Total should be 4 messages.
+    assert_eq!(session.history.len(), 4, "Expected 4 messages (2 tasks), got {}", session.history.len());
+
     Ok(())
 }

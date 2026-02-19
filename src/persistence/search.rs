@@ -108,11 +108,14 @@ impl StateStore {
             let query = query.trim();
             if !query.is_empty() {
                  match conn.query(
-                    "SELECT rowid, rank FROM memories_fts 
-                     WHERE memories_fts MATCH ?1 
-                     ORDER BY rank 
-                     LIMIT ?2",
-                    turso::params![query, limit as i64],
+                    "SELECT f.rowid, f.rank 
+                     FROM memories_fts f
+                     JOIN memories m ON f.rowid = m.id
+                     WHERE f.memories_fts MATCH ?1 
+                     AND m.session_id = ?2
+                     ORDER BY f.rank 
+                     LIMIT ?3",
+                    turso::params![query, session_id, limit as i64],
                 ).await {
                     Ok(mut rows) => {
                         let mut rank = 1;

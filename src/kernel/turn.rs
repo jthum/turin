@@ -122,7 +122,7 @@ impl Kernel {
                     }
                     StreamEvent::MessageDelta { content_delta } => {
                         if is_thinking {
-                            println!();
+                            if !self.json { println!(); }
                             is_thinking = false;
                         }
                         if !self.json {
@@ -134,7 +134,7 @@ impl Kernel {
                     }
                     StreamEvent::MessageEnd { input_tokens, output_tokens, .. } => {
                         if is_thinking {
-                            println!();
+                            if !self.json { println!(); }
                             is_thinking = false;
                         }
                         session.total_input_tokens += *input_tokens;
@@ -143,7 +143,7 @@ impl Kernel {
                     }
                     StreamEvent::ToolCall { id, name, args } => {
                         if is_thinking {
-                            println!();
+                            if !self.json { println!(); }
                             is_thinking = false;
                         }
                         if !self.json {
@@ -160,7 +160,7 @@ impl Kernel {
              }
         }
 
-        if !response_text.is_empty() && !response_text.ends_with('\n') { println!(); }
+        if !self.json && !response_text.is_empty() && !response_text.ends_with('\n') { println!(); }
 
         let has_tool_calls = !pending_tool_calls.is_empty();
 

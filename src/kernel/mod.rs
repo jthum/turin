@@ -47,7 +47,14 @@ pub struct Kernel {
     pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     /// Active session queue for harness interaction
     pub(crate) active_queue: crate::harness::globals::ActiveSessionQueue,
-    pub(crate) mcp_clients: Vec<Arc<McpClient<mcp_sdk::transport::StdioTransport>>>,
+
+    pub(crate) mcp_clients: Vec<McpClientEntry>,
+}
+
+pub(crate) struct McpClientEntry {
+    pub command: String,
+    pub args: Vec<String>,
+    pub client: Arc<McpClient<mcp_sdk::transport::StdioTransport>>,
 }
 
 /// A pending tool call collected during streaming.
@@ -270,7 +277,7 @@ impl Kernel {
             if recheck {
                 continue;
             }
-            break;
+
         }
         
         Ok(())
@@ -310,6 +317,14 @@ impl Kernel {
             ).await;
         }
 
+        // Set active session for harness globals (memory etc)
+        {
+            let harness = self.lock_harness();
+            if let Some(ref engine) = *harness {
+                engine.set_active_session(Some(&session_id));
+            }
+        }
+
         let mut task_turn_count = 0;
         let max_task_turns = self.config.kernel.max_turns;
 
@@ -327,6 +342,14 @@ impl Kernel {
 
             if !completed_turn {
                 break;
+            }
+        }
+        
+        // Clear active session
+        {
+            let harness = self.lock_harness();
+            if let Some(ref engine) = *harness {
+                engine.set_active_session(None);
             }
         }
         Ok(())
@@ -420,6 +443,34 @@ impl Kernel {
     #[instrument(skip(self, args), fields(command = %command, args = ?args))]
     async fn spawn_mcp_server(&mut self, command: &str, args: &[String]) -> Result<usize> {
         let args_str: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        
+        // Check for existing client
+        if let Some(entry) = self.mcp_clients.iter().find(|e| e.command == command && e.args == args) {
+             info!(command = %command, "Reusing existing MCP client");
+             // We can return the tool count from the existing client, 
+             // but we don't store tool count. We could just re-list or trust existing registry.
+             // If the registry already has the tools, we might be fine.
+             // But if specific tools were removed? 
+             // Simplest is to assume consistency.
+             // But evaluate_tool_call needs tool execution logic, which relies on ToolRegistry.
+             // If registry is wiped but client reused?
+             // ToolRegistry persists in Kernel.
+             
+             // Let's re-list to be safe and ensure tools are registered? 
+             // Listing is cheap.
+             let list_result = entry.client.list_tools().await.with_context(|| "Failed to list MCP tools on reused client")?;
+             let count = list_result.tools.len();
+             
+             // Update tool registry just in case
+             for tool_def in list_result.tools {
+                 // McpToolProxy needs an Arc<McpClient>. The entry has it.
+                 let proxy = McpToolProxy::new(entry.client.clone(), tool_def);
+                 let _ = self.tool_registry.register(Box::new(proxy)); 
+                 // Ignore error if duplicate (register returns Result<()>)
+             }
+             return Ok(count);
+        }
+
         info!("Connecting to MCP server");
 
         let transport = StdioTransport::new(command, &args_str)
@@ -432,7 +483,11 @@ impl Kernel {
         let count = list_result.tools.len();
         
         let client_arc = Arc::new(client);
-        self.mcp_clients.push(client_arc.clone());
+        self.mcp_clients.push(McpClientEntry {
+            command: command.to_string(),
+            args: args.to_vec(),
+            client: client_arc.clone(),
+        });
 
         for tool_def in list_result.tools {
             let proxy = McpToolProxy::new(client_arc.clone(), tool_def);

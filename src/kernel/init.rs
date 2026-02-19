@@ -102,7 +102,9 @@ impl Kernel {
             clients: self.clients.clone(),
             embedding_provider: self.embedding_provider.clone(),
             queue: self.active_queue.clone(),
+            active_session_id: Arc::new(std::sync::Mutex::new(None)),
             config: self.config.clone(),
+            spawn_depth: self.config.kernel.initial_spawn_depth,
         };
 
         let mut engine = HarnessEngine::new(app_data)
@@ -160,7 +162,9 @@ impl Kernel {
                     clients,
                     embedding_provider,
                     queue: active_queue,
-                    config,
+                    active_session_id: Arc::new(std::sync::Mutex::new(None)),
+                    config: config.clone(),
+                    spawn_depth: config.kernel.initial_spawn_depth,
                 };
 
                 match HarnessEngine::new(app_data) {

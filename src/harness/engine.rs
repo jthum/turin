@@ -211,6 +211,16 @@ impl HarnessEngine {
         Ok(compose_verdicts(&verdicts))
     }
 
+    /// Set the active session ID for the current execution context.
+    /// This is used by global functions (e.g. turin.memory) to isolate data.
+    pub fn set_active_session(&self, session_id: Option<&str>) {
+        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>() {
+            if let Ok(mut lock) = app_data.active_session_id.lock() {
+                *lock = session_id.map(|s| s.to_string());
+            }
+        }
+    }
+
     /// Call a hook across all loaded scripts, returning individual verdicts.
     fn call_hook(&self, hook_name: &str, payload: serde_json::Value) -> Result<Vec<Verdict>> {
         let mut verdicts = Vec::new();
@@ -279,11 +289,9 @@ impl HarnessEngine {
                          anyhow::anyhow!("Failed to create userdata for hook '{}': {}", hook_name, e)
                     })?;
 
-                    match func.call::<Value>(ud) {
+                    match func.call::<MultiValue>(ud) {
                         Ok(result) => {
-                            if let Ok(v) = serde_json::from_value::<Verdict>(
-                                self.lua.from_value(result.clone()).unwrap_or(serde_json::Value::Null)
-                            ) {
+                            if let Ok(v) = parse_verdict(&self.lua, result) {
                                 verdicts.push(v);
                             }
                         }
@@ -365,7 +373,9 @@ mod tests {
             clients: std::collections::HashMap::new(),
             embedding_provider: None,
             queue: std::sync::Arc::new(tokio::sync::Mutex::new(Some(std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new()))))),
+            active_session_id: std::sync::Arc::new(std::sync::Mutex::new(Some("test-session".to_string()))),
             config: std::sync::Arc::new(crate::kernel::config::TurinConfig::default()),
+            spawn_depth: 0,
         }
     }
 
@@ -657,5 +667,30 @@ mod tests {
              },
              _ => panic!("Expected Modify verdict, got {:?}", verdict),
         }
+    }
+
+
+    #[derive(Clone)]
+    struct MockContext;
+    impl mlua::UserData for MockContext {}
+
+    #[test]
+    fn test_on_before_inference_reject() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("reject.lua"),
+            r#"
+            function on_before_inference(ctx)
+                return REJECT, "Blocked by harness"
+            end
+            "#,
+        ).unwrap();
+
+        let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+        engine.load_dir(dir.path()).unwrap();
+
+        let verdict = engine.evaluate_userdata("on_before_inference", MockContext).unwrap();
+        assert!(verdict.is_rejected());
+        assert_eq!(verdict.reason(), Some("Blocked by harness"));
     }
 }

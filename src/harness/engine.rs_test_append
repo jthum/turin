@@ -1,0 +1,24 @@
+    #[derive(Clone)]
+    struct MockContext;
+    impl mlua::UserData for MockContext {}
+
+    #[test]
+    fn test_on_before_inference_reject() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("reject.lua"),
+            r#"
+            function on_before_inference(ctx)
+                return REJECT, "Blocked by harness"
+            end
+            "#,
+        ).unwrap();
+
+        let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+        engine.load_dir(dir.path()).unwrap();
+
+        let verdict = engine.evaluate_userdata("on_before_inference", MockContext).unwrap();
+        assert!(verdict.is_rejected());
+        assert_eq!(verdict.reason(), Some("Blocked by harness"));
+    }
+}

@@ -70,6 +70,7 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 5,
             heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
@@ -187,6 +188,7 @@ async fn test_harness_observation() -> Result<()> {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
@@ -271,6 +273,7 @@ async fn test_nested_agent_spawning() -> Result<()> {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),

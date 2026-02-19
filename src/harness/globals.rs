@@ -16,7 +16,7 @@ use crate::inference::provider::{
 use crate::inference::embeddings::EmbeddingProvider;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+
 
 /// Maximum file size for harness `fs.write()` operations (10 MB).
 const MAX_HARNESS_FILE_SIZE: usize = 10 * 1024 * 1024;
@@ -24,8 +24,7 @@ const MAX_HARNESS_FILE_SIZE: usize = 10 * 1024 * 1024;
 /// Maximum recursion depth for `turin.agent.spawn()`.
 const MAX_SPAWN_DEPTH: u32 = 3;
 
-/// Global spawn depth counter (incremented on entry, decremented on exit).
-static SPAWN_DEPTH: AtomicU32 = AtomicU32::new(0);
+
 
 pub type SessionQueue = Arc<Mutex<VecDeque<String>>>;
 pub type ActiveSessionQueue = Arc<Mutex<Option<SessionQueue>>>;
@@ -35,10 +34,12 @@ pub struct HarnessAppData {
     pub fs_root: PathBuf,
     pub workspace_root: PathBuf,
     pub state_store: Option<StateStore>,
+    pub active_session_id: Arc<std::sync::Mutex<Option<String>>>,
     pub clients: HashMap<String, ProviderClient>,
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     pub queue: ActiveSessionQueue,
     pub config: Arc<crate::kernel::config::TurinConfig>, // Full type path to avoid cycle if needed
+    pub spawn_depth: u32,
 }
 
 /// Register all Turin-SL globals into the Lua VM.
@@ -500,9 +501,11 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
         {
              let store = store.clone();
              let embedding_provider = embedding_provider.clone();
+             let active_session = app_data.active_session_id.clone();
              memory_table.set("store", lua.create_function(move |lua, (content, metadata): (String, Option<Value>)| {
                  let store = store.clone();
                  let embedding_provider = embedding_provider.clone();
+                 let active_session = active_session.clone();
                  let metadata_json: serde_json::Value = if let Some(meta) = metadata {
                      lua.from_value(meta)?
                  } else {
@@ -518,7 +521,9 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
                              
                              // 2. Insert into DB
                              if let Some(store) = &store {
-                                 store.insert_memory("current_session", &content, &embedding.vector, &metadata_json).await
+                                 let session_id = active_session.lock().unwrap().clone()
+                                     .ok_or_else(|| "No active session context".to_string())?;
+                                 store.insert_memory(&session_id, &content, &embedding.vector, &metadata_json).await
                                      .map_err(|e| format!("DB insert failed: {}", e))?;
                                  Ok(true)
                              } else {
@@ -537,13 +542,16 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
              })?)?;
         }
 
+
         // turin.memory.search(query, limit) -> { {content=..., score=...}, ... }
         {
              let store = store.clone();
              let embedding_provider = embedding_provider.clone();
+             let active_session = app_data.active_session_id.clone();
              memory_table.set("search", lua.create_function(move |lua, (query, limit): (String, Option<usize>)| {
                  let store = store.clone();
                  let embedding_provider = embedding_provider.clone();
+                 let active_session = active_session.clone();
                  let limit = limit.unwrap_or(5);
 
                  let result = tokio::task::block_in_place(|| {
@@ -569,7 +577,9 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
                             if let Some(store) = &store {
                                 // Pass vector (if successfully generated) and query (for FTS or fallback)
                                 // We always pass Some(query) now, to allow FTS/LIKE fallback
-                                let results = store.search_memories("current_session", vector.as_deref(), Some(&query), limit).await
+                                let session_id = active_session.lock().unwrap().clone()
+                                    .ok_or_else(|| "No active session context".to_string())?;
+                                let results = store.search_memories(&session_id, vector.as_deref(), Some(&query), limit).await
                                     .map_err(|e| format!("DB search failed: {}", e))?;
                                 Ok(results)
                             } else {
@@ -617,12 +627,12 @@ fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
         let config_arc = app_data.config.clone();
         let clients = app_data.clients.clone();
         let state_store = app_data.state_store.clone();
+        let spawn_depth = app_data.spawn_depth;
         
         agent_table.set("spawn", lua.create_function(move |_lua, (prompt, options): (String, Option<mlua::Table>)| {
             // Guard: prevent unbounded recursive agent spawning
-            let current_depth = SPAWN_DEPTH.fetch_add(1, Ordering::SeqCst);
+            let current_depth = spawn_depth;
             if current_depth >= MAX_SPAWN_DEPTH {
-                SPAWN_DEPTH.fetch_sub(1, Ordering::SeqCst);
                 return Err(mlua::Error::runtime(format!(
                     "agent.spawn depth limit exceeded (max {} levels)",
                     MAX_SPAWN_DEPTH
@@ -646,6 +656,9 @@ fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
                     config.agent.provider = p;
                 }
             }
+
+            // Increment depth for sub-kernel
+            config.kernel.initial_spawn_depth = current_depth + 1;
 
             let clients = clients.clone();
             let state_store = state_store.clone();
@@ -693,8 +706,7 @@ fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
                 })
             });
 
-            // Always decrement spawn depth counter after completion
-            SPAWN_DEPTH.fetch_sub(1, Ordering::SeqCst);
+
 
             match result {
                 Ok(s) => Ok(Some(s)),
@@ -726,6 +738,7 @@ mod tests {
             fs_root: dir.to_path_buf(),
             workspace_root: dir.to_path_buf(),
             state_store: None,
+            active_session_id: Arc::new(std::sync::Mutex::new(Some("test-session".to_string()))),
             clients: HashMap::new(),
             embedding_provider: None,
             queue: Arc::new(Mutex::new(Some(Arc::new(Mutex::new(VecDeque::new()))))),
@@ -742,6 +755,7 @@ mod tests {
                 providers: crate::kernel::config::ProvidersConfig::default(),
                 embeddings: None,
             }),
+            spawn_depth: 0,
         }
     }
 
@@ -829,6 +843,7 @@ mod tests {
             fs_root: PathBuf::from("."),
             workspace_root: PathBuf::from("."),
             state_store: None,
+            active_session_id: Arc::new(std::sync::Mutex::new(None)),
             clients: HashMap::new(),
             embedding_provider: None,
             queue: Arc::new(Mutex::new(Some(Arc::new(Mutex::new(VecDeque::new()))))),
@@ -845,6 +860,7 @@ mod tests {
                 providers: crate::kernel::config::ProvidersConfig::default(),
                 embeddings: None,
             }),
+            spawn_depth: 0,
         };
         register_globals(&lua, app_data).unwrap();
 
@@ -866,6 +882,7 @@ mod tests {
             fs_root: PathBuf::from("."),
             workspace_root: PathBuf::from("."),
             state_store: None,
+            active_session_id: Arc::new(std::sync::Mutex::new(None)),
             clients: HashMap::new(),
             embedding_provider: None,
             queue: Arc::new(Mutex::new(Some(Arc::new(Mutex::new(VecDeque::new()))))),
@@ -882,6 +899,7 @@ mod tests {
                 providers: crate::kernel::config::ProvidersConfig::default(),
                 embeddings: None,
             }),
+            spawn_depth: 0,
         };
         register_globals(&lua, app_data).unwrap();
 
@@ -896,6 +914,7 @@ mod tests {
             fs_root: PathBuf::from("."),
             workspace_root: PathBuf::from("."),
             state_store: None,
+            active_session_id: Arc::new(std::sync::Mutex::new(None)),
             clients: HashMap::new(),
             embedding_provider: None,
             queue: Arc::new(Mutex::new(Some(Arc::new(Mutex::new(VecDeque::new()))))),
@@ -912,6 +931,7 @@ mod tests {
                 providers: crate::kernel::config::ProvidersConfig::default(),
                 embeddings: None,
             }),
+            spawn_depth: 0,
         };
         register_globals(&lua, app_data).unwrap();
 
@@ -919,5 +939,68 @@ mod tests {
         // Should be a numeric string (Unix timestamp)
         let ts: u64 = timestamp.parse().unwrap();
         assert!(ts > 1_700_000_000); // After 2023
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_memory_isolation() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db").to_str().unwrap().to_string();
+        // Initialize StateStore (this runs migrations)
+        let store = StateStore::open(&db_path).await.unwrap();
+        
+        // Mock embedding provider that returns zero vector
+        let embedding_provider = crate::inference::embeddings::create_embedding_provider(&crate::inference::embeddings::EmbeddingConfig::NoOp);
+        
+        let lua = Lua::new();
+        let active_session = Arc::new(std::sync::Mutex::new(None));
+        
+        let app_data = HarnessAppData {
+            fs_root: dir.path().to_path_buf(),
+            workspace_root: dir.path().to_path_buf(),
+            state_store: Some(store),
+            active_session_id: active_session.clone(),
+            clients: HashMap::new(),
+            embedding_provider: Some(Arc::from(embedding_provider)),
+            queue: Arc::new(Mutex::new(Some(Arc::new(Mutex::new(VecDeque::new()))))),
+            config: Arc::new(crate::kernel::config::TurinConfig::default()),
+            spawn_depth: 0,
+        };
+        register_globals(&lua, app_data).unwrap();
+
+        // 1. Session A stores memory
+        {
+            let mut lock = active_session.lock().unwrap();
+            *lock = Some("session_a".to_string());
+        }
+        
+        lua.load(r#"
+            turin.memory.store("secret_a", {source="a"})
+        "#).exec().unwrap();
+
+        // 2. Session B tries to find it (should fail)
+        {
+            let mut lock = active_session.lock().unwrap();
+            *lock = Some("session_b".to_string());
+        }
+        
+        let results: Table = lua.load(r#"
+            return turin.memory.search("secret", 5)
+        "#).eval().unwrap();
+        assert_eq!(results.len().unwrap(), 0);
+
+        // 3. Session A finds it
+        {
+            let mut lock = active_session.lock().unwrap();
+            *lock = Some("session_a".to_string());
+        }
+
+        let results_a: Table = lua.load(r#"
+            return turin.memory.search("secret", 5)
+        "#).eval().unwrap();
+        
+        assert!(results_a.len().unwrap() > 0);
+        let first: Table = results_a.get(1).unwrap();
+        let content: String = first.get("content").unwrap();
+        assert_eq!(content, "secret_a");
     }
 }

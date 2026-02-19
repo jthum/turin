@@ -177,9 +177,11 @@ async fn main() -> Result<()> {
             kernel.start_session(&mut session).await?;
             kernel.run(&mut session, Some(prompt)).await?;
             kernel.end_session(&mut session).await?;
-            println!("\n\x1b[36m\x1b[1m── Session Summary ──\x1b[0m");
-            println!("  \x1b[1mTotal Tokens:\x1b[0m  {} ({} in, {} out)", session.total_input_tokens + session.total_output_tokens, session.total_input_tokens, session.total_output_tokens);
-            println!("  \x1b[1mTurns:\x1b[0m         {}", session.turn_index);
+            if !json {
+                println!("\n\x1b[36m\x1b[1m── Session Summary ──\x1b[0m");
+                println!("  \x1b[1mTotal Tokens:\x1b[0m  {} ({} in, {} out)", session.total_input_tokens + session.total_output_tokens, session.total_input_tokens, session.total_output_tokens);
+                println!("  \x1b[1mTurns:\x1b[0m         {}", session.turn_index);
+            }
             Ok(())
         }
         Commands::Repl {
