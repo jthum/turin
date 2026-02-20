@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tempfile::tempdir;
 use turin::inference::provider::{
     InferenceContent, InferenceEvent, InferenceProvider, InferenceRequest, InferenceStream,
-    ProviderClient, ProviderKind, RequestOptions, SdkError,
+    ProviderClient, RequestOptions, SdkError,
 };
 use turin::kernel::Kernel;
 use turin::kernel::config::{
@@ -158,7 +158,7 @@ async fn test_harness_rejection() -> Result<()> {
     });
     kernel.add_client(
         "mock".to_string(),
-        ProviderClient::new(ProviderKind::Mock, mock_provider),
+        ProviderClient::new("mock", mock_provider),
     );
 
     kernel.init_harness().await?;
@@ -275,10 +275,7 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
 
     let seen = Arc::new(std::sync::Mutex::new((false, false, None)));
     let provider = Arc::new(HeaderCaptureProvider { seen: seen.clone() });
-    kernel.add_client(
-        "mock".to_string(),
-        ProviderClient::new(ProviderKind::Mock, provider),
-    );
+    kernel.add_client("mock".to_string(), ProviderClient::new("mock", provider));
 
     let mut session = kernel.create_session();
     kernel

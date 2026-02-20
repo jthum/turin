@@ -16,7 +16,7 @@ use super::config::TurinConfig;
 use crate::harness::engine::HarnessEngine;
 use crate::harness::globals::HarnessAppData;
 use crate::inference::embeddings::EmbeddingProvider;
-use crate::inference::provider::{self, ProviderClient, ProviderKind};
+use crate::inference::provider::{self, ProviderClient};
 use crate::persistence::state::StateStore;
 
 impl Kernel {
@@ -278,20 +278,7 @@ impl Kernel {
         _name: &str,
         config: &crate::kernel::config::ProviderConfig,
     ) -> Result<ProviderClient> {
-        match config.kind.as_str() {
-            "anthropic" => {
-                let client = provider::create_anthropic_client(config)?;
-                Ok(ProviderClient::new(ProviderKind::Anthropic, client))
-            }
-            "openai" => {
-                let client = provider::create_openai_client(config)?;
-                Ok(ProviderClient::new(ProviderKind::OpenAI, client))
-            }
-            "mock" => {
-                let client = provider::create_mock_client(config);
-                Ok(ProviderClient::new(ProviderKind::Mock, client))
-            }
-            _ => anyhow::bail!("Unknown provider type: {}", config.kind),
-        }
+        let client = provider::create_provider_client(config)?;
+        Ok(ProviderClient::new(config.kind.clone(), client))
     }
 }

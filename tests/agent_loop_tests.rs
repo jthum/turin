@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tempfile::tempdir;
 use turin::inference::provider::{
     InferenceEvent, InferenceProvider, InferenceRequest, InferenceStream, ProviderClient,
-    ProviderKind, RequestOptions, SdkError,
+    RequestOptions, SdkError,
 };
 use turin::kernel::Kernel;
 use turin::kernel::config::{
@@ -188,7 +188,7 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
     });
     kernel.add_client(
         "mock".to_string(),
-        ProviderClient::new(ProviderKind::Mock, mock_provider),
+        ProviderClient::new("mock", mock_provider),
     );
 
     let mut session = kernel.create_session();
@@ -353,7 +353,7 @@ async fn test_harness_observation() -> Result<()> {
     });
     kernel.add_client(
         "mock".to_string(),
-        ProviderClient::new(ProviderKind::Mock, mock_provider),
+        ProviderClient::new("mock", mock_provider),
     );
     kernel.init_harness().await?;
 
@@ -470,7 +470,7 @@ async fn test_nested_agent_spawning() -> Result<()> {
     });
     kernel.add_client(
         "mock".to_string(),
-        ProviderClient::new(ProviderKind::Mock, mock_provider),
+        ProviderClient::new("mock", mock_provider),
     );
     kernel.init_harness().await?;
 
@@ -546,10 +546,7 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
     let provider = Arc::new(FailThenRecoverProvider {
         should_fail: Arc::new(std::sync::Mutex::new(true)),
     });
-    kernel.add_client(
-        "mock".to_string(),
-        ProviderClient::new(ProviderKind::Mock, provider),
-    );
+    kernel.add_client("mock".to_string(), ProviderClient::new("mock", provider));
 
     let mut session = kernel.create_session();
     kernel

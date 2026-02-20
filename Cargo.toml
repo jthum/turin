@@ -31,7 +31,7 @@ anyhow = "1.0"
 
 # Inference SDK family (unified provider layer)
 inference-sdk-core = { git = "https://github.com/jthum/inference-sdk-rust", branch = "main" }
-anthropic-sdk = { git = "https://github.com/jthum/inference-sdk-rust", branch = "main" }
+inference-sdk-registry = { git = "https://github.com/jthum/inference-sdk-rust", branch = "main" }
 openai-sdk = { git = "https://github.com/jthum/inference-sdk-rust", branch = "main" }
 
 # MCP SDK

@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use futures::stream::{Stream, StreamExt};
 use std::pin::Pin;
-use std::str::FromStr;
 use std::time::Duration;
 
 use crate::kernel::config::ProviderConfig;
@@ -14,27 +13,7 @@ pub use inference_sdk_core::{
     InferenceResult, InferenceRole, InferenceStream, RequestOptions, SdkError, TimeoutPolicy, Tool,
     Usage,
 };
-
-/// Which LLM provider to use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ProviderKind {
-    Anthropic,
-    OpenAI,
-    Mock,
-}
-
-impl FromStr for ProviderKind {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "anthropic" => Ok(ProviderKind::Anthropic),
-            "openai" => Ok(ProviderKind::OpenAI),
-            "mock" => Ok(ProviderKind::Mock),
-            _ => anyhow::bail!("Unknown provider kind: {}", s),
-        }
-    }
-}
+use inference_sdk_registry::{ProviderInit, ProviderRegistry};
 
 /// Options for inference execution
 #[derive(Debug, Clone, Default)]
@@ -44,10 +23,10 @@ pub struct InferenceOptions {
     pub thinking_budget: Option<u32>,
 }
 
-/// A unified wrapper around provider-specific clients.
+/// A unified wrapper around a provider driver instance.
 #[derive(Clone)]
 pub struct ProviderClient {
-    pub kind: ProviderKind,
+    pub driver: String,
     pub provider: std::sync::Arc<dyn InferenceProvider>,
 }
 
@@ -106,8 +85,11 @@ impl PendingToolCallEvent {
 }
 
 impl ProviderClient {
-    pub fn new(kind: ProviderKind, provider: std::sync::Arc<dyn InferenceProvider>) -> Self {
-        Self { kind, provider }
+    pub fn new(driver: impl Into<String>, provider: std::sync::Arc<dyn InferenceProvider>) -> Self {
+        Self {
+            driver: driver.into(),
+            provider,
+        }
     }
 
     /// Run a non-streaming completion (aggregates the stream).
@@ -180,7 +162,7 @@ impl ProviderClient {
                         .get("description")
                         .and_then(|d| d.as_str())
                         .unwrap_or_default()
-                        .to_string(), // Tool defaults description to empty string if missing? Core Tool has String, not Option<String>?
+                        .to_string(),
                     input_schema: t
                         .get("input_schema")
                         .cloned()
@@ -295,38 +277,34 @@ pub fn build_request_options(provider_config: &ProviderConfig) -> Result<Request
     Ok(options)
 }
 
-pub fn create_anthropic_client(
+pub fn create_provider_client(
     provider_config: &ProviderConfig,
 ) -> Result<std::sync::Arc<dyn InferenceProvider>> {
+    if provider_config.kind.eq_ignore_ascii_case("mock") {
+        return Ok(create_mock_client(provider_config));
+    }
+
     let env_var = provider_config
         .api_key_env
         .as_ref()
         .context("API key environment variable not configured")?;
-    let api_key = std::env::var(env_var).context("Missing API Key")?;
-    let mut config = anthropic_sdk::ClientConfig::new(api_key)?;
-    if let Some(url) = &provider_config.base_url {
-        config = config.with_base_url(url);
+    let api_key = std::env::var(env_var)
+        .with_context(|| format!("Missing API key in environment variable '{}'", env_var))?;
+
+    let mut init = ProviderInit::new(api_key);
+    if let Some(base_url) = &provider_config.base_url {
+        init = init.with_base_url(base_url.clone());
     }
 
-    let client = anthropic_sdk::Client::from_config(config)?;
-    Ok(std::sync::Arc::new(client))
-}
-
-pub fn create_openai_client(
-    provider_config: &ProviderConfig,
-) -> Result<std::sync::Arc<dyn InferenceProvider>> {
-    let env_var = provider_config
-        .api_key_env
-        .as_ref()
-        .context("API key environment variable not configured")?;
-    let api_key = std::env::var(env_var).context("Missing API Key")?;
-    let mut config = openai_sdk::ClientConfig::new(api_key)?;
-    if let Some(url) = &provider_config.base_url {
-        config = config.with_base_url(url);
-    }
-
-    let client = openai_sdk::Client::from_config(config)?;
-    Ok(std::sync::Arc::new(client))
+    ProviderRegistry::with_builtin_drivers()
+        .create(&provider_config.kind, &init)
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "failed to create provider driver '{}': {}",
+                provider_config.kind,
+                e
+            )
+        })
 }
 
 pub fn create_mock_client(config: &ProviderConfig) -> std::sync::Arc<dyn InferenceProvider> {
