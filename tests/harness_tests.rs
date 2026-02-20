@@ -33,14 +33,59 @@ impl InferenceProvider for ToolMockProvider {
                     model: "mock-model".to_string(),
                     provider_id: "mock".to_string(),
                 }),
-                Ok(InferenceEvent::ToolCall {
+                Ok(InferenceEvent::ToolCallStart {
                     id: "test-call-id".to_string(),
                     name: tool_name,
-                    args: tool_args,
+                }),
+                Ok(InferenceEvent::ToolCallDelta {
+                    delta: tool_args.to_string(),
                 }),
                 Ok(InferenceEvent::MessageEnd {
                     input_tokens: 10,
                     output_tokens: 5,
+                    stop_reason: None,
+                }),
+            ];
+            Ok(Box::pin(stream::iter(events)) as InferenceStream)
+        })
+    }
+}
+
+struct HeaderCaptureProvider {
+    seen: Arc<std::sync::Mutex<(bool, bool, Option<u32>)>>,
+}
+
+impl InferenceProvider for HeaderCaptureProvider {
+    fn stream<'a>(
+        &'a self,
+        _request: InferenceRequest,
+        options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+        let seen = self.seen.clone();
+        Box::pin(async move {
+            let (static_header, dynamic_header, max_retries) = if let Some(opts) = options {
+                (
+                    opts.headers.get("x-static").is_some(),
+                    opts.headers.get("x-dynamic").is_some(),
+                    opts.max_retries,
+                )
+            } else {
+                (false, false, None)
+            };
+            *seen.lock().unwrap() = (static_header, dynamic_header, max_retries);
+
+            let events = vec![
+                Ok(InferenceEvent::MessageStart {
+                    role: "assistant".to_string(),
+                    model: "mock-model".to_string(),
+                    provider_id: "mock".to_string(),
+                }),
+                Ok(InferenceEvent::MessageDelta {
+                    content: "ok".to_string(),
+                }),
+                Ok(InferenceEvent::MessageEnd {
+                    input_tokens: 1,
+                    output_tokens: 1,
                     stop_reason: None,
                 }),
             ];
@@ -75,6 +120,7 @@ async fn test_harness_rejection() -> Result<()> {
             kind: "mock".to_string(),
             api_key_env: None,
             base_url: None,
+            ..ProviderConfig::default()
         },
     );
 
@@ -160,6 +206,90 @@ async fn test_harness_rejection() -> Result<()> {
     );
 
     kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_harness_request_options_passthrough() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_headers.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    let harness_code = r#"
+        function on_turn_prepare(ctx)
+            local opts = ctx.request_options or {}
+            opts.headers = opts.headers or {}
+            opts.headers["x-dynamic"] = "from-harness"
+            opts.max_retries = 1
+            ctx.request_options = opts
+            return ALLOW
+        end
+    "#;
+    std::fs::write(harness_dir.join("headers.lua"), harness_code)?;
+
+    let mut static_headers = HashMap::new();
+    static_headers.insert("x-static".to_string(), "from-config".to_string());
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+            headers: static_headers,
+            max_retries: Some(2),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Header test".to_string(),
+            thinking: None,
+        },
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 2,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+
+    let seen = Arc::new(std::sync::Mutex::new((false, false, None)));
+    let provider = Arc::new(HeaderCaptureProvider { seen: seen.clone() });
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(ProviderKind::Mock, provider),
+    );
+
+    let mut session = kernel.create_session();
+    kernel
+        .run(&mut session, Some("emit headers".to_string()))
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    let captured = *seen.lock().unwrap();
+    assert!(captured.0, "expected config header to be passed through");
+    assert!(captured.1, "expected harness header to be passed through");
+    assert_eq!(captured.2, Some(1), "expected harness override for retries");
 
     Ok(())
 }

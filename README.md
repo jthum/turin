@@ -347,12 +347,24 @@ database_path = ".turin/state.db"  # SQLite database location
 directory = ".turin/harnesses"     # Harness script directory
 
 [providers.anthropic]
+type = "anthropic"
 api_key_env = "ANTHROPIC_API_KEY"    # Env var containing API key
 # base_url = "https://api.anthropic.com/v1"  # Optional override
+# max_retries = 2
+# request_timeout_secs = 60
+# total_timeout_secs = 120
+# [providers.anthropic.headers]
+# anthropic-beta = "output-128k-2025-02-19"
 
 [providers.openai]
+type = "openai"
 api_key_env = "OPENAI_API_KEY"
 # base_url = "https://api.openai.com/v1"
+# max_retries = 2
+# request_timeout_secs = 60
+# total_timeout_secs = 120
+# [providers.openai.headers]
+# x-foo = "bar"
 
 # Named providers for multi-provider setups
 [providers.fast]

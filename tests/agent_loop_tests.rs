@@ -57,6 +57,47 @@ impl InferenceProvider for SequenceMockProvider {
     }
 }
 
+struct FailThenRecoverProvider {
+    should_fail: Arc<std::sync::Mutex<bool>>,
+}
+
+impl InferenceProvider for FailThenRecoverProvider {
+    fn stream<'a>(
+        &'a self,
+        _request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+        let should_fail = self.should_fail.clone();
+        Box::pin(async move {
+            let mut fail_flag = should_fail.lock().unwrap();
+            if *fail_flag {
+                *fail_flag = false;
+                let events = vec![Err(SdkError::ProviderError(
+                    "simulated failure".to_string(),
+                ))];
+                return Ok(Box::pin(stream::iter(events)) as InferenceStream);
+            }
+
+            let events = vec![
+                Ok(InferenceEvent::MessageStart {
+                    role: "assistant".to_string(),
+                    model: "mock-model".to_string(),
+                    provider_id: "mock".to_string(),
+                }),
+                Ok(InferenceEvent::MessageDelta {
+                    content: "Recovered".to_string(),
+                }),
+                Ok(InferenceEvent::MessageEnd {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                    stop_reason: None,
+                }),
+            ];
+            Ok(Box::pin(stream::iter(events)) as InferenceStream)
+        })
+    }
+}
+
 #[tokio::test]
 async fn test_agent_loop_event_sequence() -> Result<()> {
     let tmp = tempdir()?;
@@ -71,6 +112,7 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
             kind: "mock".to_string(),
             api_key_env: None,
             base_url: None,
+            ..ProviderConfig::default()
         },
     );
 
@@ -111,10 +153,12 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
                 model: "mock-model".to_string(),
                 provider_id: "mock".to_string(),
             },
-            InferenceEvent::ToolCall {
+            InferenceEvent::ToolCallStart {
                 id: "call_1".to_string(),
                 name: "read_file".to_string(),
-                args: serde_json::json!({"path": "test.txt"}),
+            },
+            InferenceEvent::ToolCallDelta {
+                delta: serde_json::json!({"path": "test.txt"}).to_string(),
             },
             InferenceEvent::MessageEnd {
                 input_tokens: 10,
@@ -254,6 +298,7 @@ async fn test_harness_observation() -> Result<()> {
             kind: "mock".to_string(),
             api_key_env: None,
             base_url: None,
+            ..ProviderConfig::default()
         },
     );
 
@@ -356,6 +401,7 @@ async fn test_nested_agent_spawning() -> Result<()> {
             kind: "mock".to_string(),
             api_key_env: None,
             base_url: None,
+            ..ProviderConfig::default()
         },
     );
 
@@ -438,6 +484,90 @@ async fn test_nested_agent_spawning() -> Result<()> {
         let val: Option<String> = store.kv_get("nested_executed").await?;
         assert_eq!(val, Some("true".to_string()));
     }
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_inference_error.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    let harness_code = r#"
+        function on_inference_error(event)
+            db.kv_set("last_inference_error", tostring(event.error))
+            return MODIFY, { "retry with fallback task" }
+        end
+    "#;
+    std::fs::write(harness_dir.join("recover.lua"), harness_code)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Recover on stream errors".to_string(),
+            thinking: None,
+        },
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 3,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+
+    let provider = Arc::new(FailThenRecoverProvider {
+        should_fail: Arc::new(std::sync::Mutex::new(true)),
+    });
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(ProviderKind::Mock, provider),
+    );
+
+    let mut session = kernel.create_session();
+    kernel
+        .run(&mut session, Some("trigger".to_string()))
+        .await?;
+
+    let saw_recovered = session.history.iter().any(|msg| {
+        msg.content.iter().any(|content| {
+            matches!(
+                content,
+                turin::inference::provider::InferenceContent::Text { text } if text.contains("Recovered")
+            )
+        })
+    });
+    assert!(
+        saw_recovered,
+        "expected fallback task to complete successfully"
+    );
 
     kernel.end_session(&mut session).await?;
     Ok(())

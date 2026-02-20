@@ -179,6 +179,7 @@ impl HarnessEngine {
             "on_turn_start",
             "on_turn_prepare",
             "on_turn_end",
+            "on_inference_error",
             "on_plan_submit",
             "on_task_complete",
             "on_plan_complete",

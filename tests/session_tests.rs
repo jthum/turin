@@ -27,6 +27,7 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
             kind: "mock".to_string(),
             api_key_env: None,
             base_url: Some("Mock response".to_string()),
+            ..ProviderConfig::default()
         },
     );
 
@@ -256,6 +257,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
             kind: "mock".to_string(),
             api_key_env: None,
             base_url: Some("Mock response".to_string()),
+            ..ProviderConfig::default()
         },
     );
 

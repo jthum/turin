@@ -34,10 +34,11 @@ Status: Implemented in code (breaking changes) and reflected in `docs/HOOKS.md`.
 6. `on_tool_call(call)` (ALLOW/REJECT/ESCALATE/MODIFY)
 7. `on_tool_result(result)` (observe and optionally MODIFY before reinjection)
 8. `on_turn_end(event)`
-9. `on_task_complete(event)` (always once per task with terminal status)
-10. `on_plan_complete(event)` (when all tasks in a specific plan are terminal)
-11. `on_all_tasks_complete(event)` (fires when queue is empty; `MODIFY` can enqueue more work)
-12. `on_session_end(event)`
+9. `on_inference_error(event)` (fires when a task fails with an inference/runtime error)
+10. `on_task_complete(event)` (always once per task with terminal status)
+11. `on_plan_complete(event)` (when all tasks in a specific plan are terminal)
+12. `on_all_tasks_complete(event)` (fires when queue is empty; `MODIFY` can enqueue more work)
+13. `on_session_end(event)`
 
 ## `on_turn_prepare(ctx)` Contract
 Purpose: Last mutable checkpoint before every provider inference call.
@@ -53,6 +54,7 @@ Current context fields:
 - `ctx.provider`: mutable
 - `ctx.model`: mutable
 - `ctx.thinking_budget`: mutable
+- `ctx.request_options`: mutable (`headers`, `max_retries`, `request_timeout_secs`, `total_timeout_secs`)
 
 Use cases:
 - First-turn task context injection
@@ -97,6 +99,11 @@ Pragmatic persistence:
 - `max_turns`
 - `error`
 - `cancelled`
+- Includes optional `error` text when `status == "error"`.
+
+### `on_inference_error`
+- Error-handling control point for runtime inference failures.
+- `MODIFY` can enqueue fallback tasks immediately (e.g. reroute to backup provider).
 
 ### `on_plan_complete`
 - Plan-level completion hook once all tasks in that plan are terminal.
@@ -106,8 +113,8 @@ Pragmatic persistence:
 - `MODIFY` can enqueue new tasks to continue the run loop.
 
 ## Error Semantics
-- Do not split completion into separate error hooks by default.
-- Use terminal status on completion hooks to avoid duplicate/ambiguous firing.
+- Runtime failures emit `on_inference_error` before task completion.
+- `on_task_complete` still fires with `status = "error"` for durable lifecycle accounting.
 
 ## Remaining Open Decisions
 - Whether to expose a dedicated stream hook (`on_stream_event`) in addition to `on_kernel_event`.

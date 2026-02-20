@@ -96,16 +96,39 @@ function on_turn_prepare(ctx)
     -- ctx.token_count: number (current context size)
     -- ctx.provider: string (current provider name)
     -- ctx.thinking_budget: number (thinking token budget)
+    -- ctx.request_options: table (request overrides for this turn)
+    --   request_options.headers: table<string, string>
+    --   request_options.max_retries: number | nil
+    --   request_options.request_timeout_secs: number | nil
+    --   request_options.total_timeout_secs: number | nil
 
     -- Writable properties:
     -- ctx.system_prompt = "new prompt"
     -- ctx.provider = "different-provider"
     -- ctx.thinking_budget = 8192
+    -- ctx.request_options = {
+    --   headers = { ["anthropic-beta"] = "output-128k-2025-02-19" },
+    --   max_retries = 1,
+    --   request_timeout_secs = 45,
+    -- }
 
     -- Methods:
     -- ctx:add_message({ role = "user", content = {{type="text", text="..."}} })
     -- ctx:summarize() → string (calls LLM to summarize current messages)
 
+    return ALLOW
+end
+```
+
+Inject request headers dynamically:
+```lua
+function on_turn_prepare(ctx)
+    if ctx.provider == "anthropic" and ctx.thinking_budget > 0 then
+        local opts = ctx.request_options or {}
+        opts.headers = opts.headers or {}
+        opts.headers["anthropic-beta"] = "output-128k-2025-02-19"
+        ctx.request_options = opts
+    end
     return ALLOW
 end
 ```
@@ -234,6 +257,27 @@ function on_task_complete(event)
     end
 
     return ALLOW
+end
+```
+
+### `on_inference_error(event)`
+
+Fires when a task fails with a runtime inference/provider error. This hook can enqueue fallback tasks before the run exits.
+
+```lua
+function on_inference_error(event)
+    -- event.session_id: string
+    -- event.task_id: string
+    -- event.plan_id: string | nil
+    -- event.turn_count: number
+    -- event.error: string
+
+    return MODIFY, {
+        {
+            title = "Fallback with backup provider",
+            prompt = "Retry the failed task using provider 'openai-backup'."
+        }
+    }
 end
 ```
 

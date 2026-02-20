@@ -20,6 +20,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
             kind: "mock".to_string(),
             api_key_env: None,
             base_url: Some("Mock response content".to_string()),
+            ..ProviderConfig::default()
         },
     );
 

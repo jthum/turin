@@ -37,6 +37,8 @@ pub enum LifecycleEvent {
         plan_id: Option<String>,
         status: TaskTerminalStatus,
         task_turn_count: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
     /// Plan reaches completion
     PlanComplete {

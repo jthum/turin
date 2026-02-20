@@ -3,15 +3,15 @@
 //! This module contains turn-level execution for the agent loop: LLM inference,
 //! stream processing, hook evaluation, parallel tool execution, and side effects.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures::StreamExt;
 use futures::future::join_all;
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
-use crate::harness::context::ContextWrapper;
+use crate::harness::context::{ContextWrapper, RequestOptionsOverride};
 use crate::harness::verdict::Verdict;
 use crate::inference::provider::{self, InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::session::{PlanProgress, QueuedTask, SessionState};
@@ -44,6 +44,34 @@ struct FinalToolRecord {
     content: String,
     is_error: bool,
     emit_exec_start: bool,
+}
+
+fn merge_request_option_overrides(
+    mut options: provider::RequestOptions,
+    overrides: &RequestOptionsOverride,
+) -> Result<provider::RequestOptions> {
+    for (header_name, header_value) in &overrides.headers {
+        options = options
+            .with_header(header_name, header_value)
+            .with_context(|| format!("invalid request header '{}'", header_name))?;
+    }
+
+    if let Some(max_retries) = overrides.max_retries {
+        options = options.with_max_retries(max_retries);
+    }
+
+    if overrides.request_timeout_secs.is_some() || overrides.total_timeout_secs.is_some() {
+        let mut timeout_policy = options.timeout_policy.clone().unwrap_or_default();
+        if let Some(request_timeout_secs) = overrides.request_timeout_secs {
+            timeout_policy.request_timeout = Some(Duration::from_secs(request_timeout_secs));
+        }
+        if let Some(total_timeout_secs) = overrides.total_timeout_secs {
+            timeout_policy.total_timeout = Some(Duration::from_secs(total_timeout_secs));
+        }
+        options = options.with_timeout_policy(timeout_policy);
+    }
+
+    Ok(options)
 }
 
 impl Kernel {
@@ -124,6 +152,7 @@ impl Kernel {
             .as_ref()
             .and_then(|t| if t.enabled { t.budget_tokens } else { None })
             .unwrap_or(0);
+        let mut request_options_override = RequestOptionsOverride::default();
 
         {
             let harness = self.lock_harness();
@@ -141,6 +170,7 @@ impl Kernel {
                     0,
                     128_000,
                     thinking_budget,
+                    request_options_override.clone(),
                     self.clients.clone(),
                 );
 
@@ -165,6 +195,7 @@ impl Kernel {
                 model = state.model;
                 provider_name = state.provider;
                 thinking_budget = state.thinking_budget;
+                request_options_override = state.request_options;
             }
         }
 
@@ -190,6 +221,9 @@ impl Kernel {
             .get(&provider_name)
             .ok_or_else(|| anyhow::anyhow!("Provider '{}' not initialized", provider_name))?
             .clone();
+        let provider_config = self.config.providers.get(&provider_name).ok_or_else(|| {
+            anyhow::anyhow!("Provider '{}' not found in configuration", provider_name)
+        })?;
 
         let tools = self.tool_registry.tool_definitions();
 
@@ -198,17 +232,39 @@ impl Kernel {
             temperature: None,
             thinking_budget: Some(thinking_budget),
         };
+        let request_options = merge_request_option_overrides(
+            provider::build_request_options(provider_config)?,
+            &request_options_override,
+        )?;
 
         let mut stream = client
-            .stream(&model, &system_prompt, &session.history, &tools, &options)
-            .await?;
+            .stream(
+                &model,
+                &system_prompt,
+                &session.history,
+                &tools,
+                &options,
+                Some(request_options),
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to start inference stream (provider='{}', model='{}')",
+                    provider_name, model
+                )
+            })?;
 
         let mut response_text = String::with_capacity(4096);
         let mut pending_tool_calls: Vec<PendingToolCall> = Vec::new();
         let mut is_thinking = false;
 
         while let Some(event_result) = stream.next().await {
-            let event = event_result?;
+            let event = event_result.with_context(|| {
+                format!(
+                    "inference stream event failure (provider='{}', model='{}')",
+                    provider_name, model
+                )
+            })?;
             match &event {
                 KernelEvent::Stream(e) => match e {
                     StreamEvent::ThinkingDelta { .. } => {

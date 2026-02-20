@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use futures::stream::{Stream, StreamExt};
 use std::pin::Pin;
 use std::str::FromStr;
+use std::time::Duration;
 
 use crate::kernel::config::ProviderConfig;
 use crate::kernel::event::{KernelEvent, StreamEvent};
@@ -10,7 +11,8 @@ use crate::kernel::event::{KernelEvent, StreamEvent};
 use futures::future::BoxFuture;
 pub use inference_sdk_core::{
     InferenceContent, InferenceEvent, InferenceMessage, InferenceProvider, InferenceRequest,
-    InferenceResult, InferenceRole, InferenceStream, RequestOptions, SdkError, Tool, Usage,
+    InferenceResult, InferenceRole, InferenceStream, RequestOptions, SdkError, TimeoutPolicy, Tool,
+    Usage,
 };
 
 /// Which LLM provider to use.
@@ -47,6 +49,60 @@ pub struct InferenceOptions {
 pub struct ProviderClient {
     pub kind: ProviderKind,
     pub provider: std::sync::Arc<dyn InferenceProvider>,
+}
+
+#[derive(Debug, Default)]
+struct PendingToolCallEvent {
+    id: Option<String>,
+    name: Option<String>,
+    args_json: String,
+}
+
+impl PendingToolCallEvent {
+    fn on_start(&mut self, id: String, name: String) -> Result<Option<KernelEvent>> {
+        let flushed = self.flush()?;
+        self.id = Some(id);
+        self.name = Some(name);
+        self.args_json.clear();
+        Ok(flushed)
+    }
+
+    fn on_delta(&mut self, delta: String) -> Result<()> {
+        if self.id.is_none() || self.name.is_none() {
+            anyhow::bail!("received ToolCallDelta before ToolCallStart");
+        }
+        self.args_json.push_str(&delta);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<Option<KernelEvent>> {
+        if self.id.is_none() && self.name.is_none() && self.args_json.is_empty() {
+            return Ok(None);
+        }
+
+        let id = self
+            .id
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("missing tool call id"))?;
+        let name = self
+            .name
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("missing tool call name"))?;
+
+        let args = if self.args_json.trim().is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_str(&self.args_json)
+                .with_context(|| format!("failed to parse tool call args for '{}'", name))?
+        };
+
+        self.args_json.clear();
+        Ok(Some(KernelEvent::Stream(StreamEvent::ToolCall {
+            id,
+            name,
+            args,
+        })))
+    }
 }
 
 impl ProviderClient {
@@ -89,15 +145,20 @@ impl ProviderClient {
         messages: &[InferenceMessage],
         tools: &[serde_json::Value],
         options: &InferenceOptions,
+        request_options: Option<RequestOptions>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<KernelEvent>> + Send>>> {
         let req = self.build_request(model, system_prompt, messages, tools, options);
-        let sdk_stream = self.provider.stream(req, None).await?;
+        let sdk_stream = self.provider.stream(req, request_options).await?;
+        let mut pending_tool = PendingToolCallEvent::default();
 
-        // Map SDK InferenceEvents to Turin KernelEvents
-        let kernel_stream = sdk_stream.map(|res| match res {
-            Ok(event) => map_sdk_event(event),
-            Err(e) => Err(anyhow::anyhow!("Provider error: {}", e)),
-        });
+        // Map SDK InferenceEvents to Turin KernelEvents, expanding one SDK event
+        // into zero or more Turin events when tool arguments are streamed as deltas.
+        let kernel_stream = sdk_stream
+            .map(move |res| match res {
+                Ok(event) => map_sdk_event(event, &mut pending_tool),
+                Err(e) => vec![Err(anyhow::anyhow!("Provider error: {}", e))],
+            })
+            .flat_map(futures::stream::iter);
 
         Ok(Box::pin(kernel_stream))
     }
@@ -146,48 +207,93 @@ impl ProviderClient {
 
 // ─── Event Mapping ───────────────────────────────────────────────
 
-fn map_sdk_event(event: InferenceEvent) -> Result<KernelEvent> {
+fn map_sdk_event(
+    event: InferenceEvent,
+    pending_tool: &mut PendingToolCallEvent,
+) -> Vec<Result<KernelEvent>> {
+    let mut mapped = Vec::new();
+
     match event {
         InferenceEvent::MessageStart { role, model, .. } => {
-            Ok(KernelEvent::Stream(StreamEvent::MessageStart {
+            mapped.push(Ok(KernelEvent::Stream(StreamEvent::MessageStart {
                 role,
                 model,
-            }))
+            })));
         }
         InferenceEvent::MessageDelta { content } => {
-            Ok(KernelEvent::Stream(StreamEvent::MessageDelta {
+            mapped.push(Ok(KernelEvent::Stream(StreamEvent::MessageDelta {
                 content_delta: content,
-            }))
+            })));
         }
         InferenceEvent::ThinkingDelta { content } => {
-            Ok(KernelEvent::Stream(StreamEvent::ThinkingDelta {
+            mapped.push(Ok(KernelEvent::Stream(StreamEvent::ThinkingDelta {
                 thinking: content,
-            }))
+            })));
         }
-        InferenceEvent::ToolCall { id, name, args } => {
-            Ok(KernelEvent::Stream(StreamEvent::ToolCall {
-                id,
-                name,
-                args,
-            }))
+        InferenceEvent::ToolCallStart { id, name } => match pending_tool.on_start(id, name) {
+            Ok(Some(tool_call)) => mapped.push(Ok(tool_call)),
+            Ok(None) => {}
+            Err(e) => mapped.push(Err(e)),
+        },
+        InferenceEvent::ToolCallDelta { delta } => {
+            if let Err(e) = pending_tool.on_delta(delta) {
+                mapped.push(Err(e));
+            }
         }
         InferenceEvent::MessageEnd {
             input_tokens,
             output_tokens,
             ..
-        } => Ok(KernelEvent::Stream(StreamEvent::MessageEnd {
-            role: "assistant".to_string(),
-            input_tokens: input_tokens as u64,
-            output_tokens: output_tokens as u64,
-        })),
-        InferenceEvent::Error { message } => {
-            Err(anyhow::anyhow!("Provider stream error: {}", message))
+        } => {
+            match pending_tool.flush() {
+                Ok(Some(tool_call)) => mapped.push(Ok(tool_call)),
+                Ok(None) => {}
+                Err(e) => mapped.push(Err(e)),
+            }
+            mapped.push(Ok(KernelEvent::Stream(StreamEvent::MessageEnd {
+                role: "assistant".to_string(),
+                input_tokens: input_tokens as u64,
+                output_tokens: output_tokens as u64,
+            })));
         }
-        _ => Err(anyhow::anyhow!("Unknown inference event type")),
+        _ => {}
     }
+
+    mapped
 }
 
 // ─── Provider Creation ───────────────────────────────────────────
+
+pub fn build_request_options(provider_config: &ProviderConfig) -> Result<RequestOptions> {
+    let mut options = RequestOptions::default();
+
+    for (header_name, header_value) in &provider_config.headers {
+        options = options
+            .with_header(header_name, header_value)
+            .with_context(|| format!("invalid request header '{}'", header_name))?;
+    }
+
+    if let Some(max_retries) = provider_config.max_retries {
+        options = options.with_max_retries(max_retries);
+    }
+
+    if provider_config.request_timeout_secs.is_some()
+        || provider_config.total_timeout_secs.is_some()
+    {
+        let mut timeout_policy = TimeoutPolicy::default();
+        if let Some(request_timeout_secs) = provider_config.request_timeout_secs {
+            timeout_policy =
+                timeout_policy.with_request_timeout(Duration::from_secs(request_timeout_secs));
+        }
+        if let Some(total_timeout_secs) = provider_config.total_timeout_secs {
+            timeout_policy =
+                timeout_policy.with_total_timeout(Duration::from_secs(total_timeout_secs));
+        }
+        options = options.with_timeout_policy(timeout_policy);
+    }
+
+    Ok(options)
+}
 
 pub fn create_anthropic_client(
     provider_config: &ProviderConfig,

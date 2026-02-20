@@ -283,20 +283,27 @@ Providers are configured by name in `turin.toml`:
 
 ```toml
 [providers.anthropic]
+type = "anthropic"
 api_key_env = "ANTHROPIC_API_KEY"
+# request_timeout_secs = 60
+# total_timeout_secs = 120
 
 [providers.openai]
+type = "openai"
 api_key_env = "OPENAI_API_KEY"
 
 [providers.fast]
 type = "openai"
 api_key_env = "OPENAI_API_KEY"
 base_url = "https://custom-endpoint.example.com/v1"
+# max_retries = 4
+# [providers.fast.headers]
+# x-internal-route = "fast-lane"
 ```
 
 The default provider is set in `[agent].provider`. Harness scripts can switch providers mid-turn via `ctx.provider = "fast"` in `on_turn_prepare`.
 
-Provider-specific SDK events are mapped to `KernelEvent`s at the boundary, so the rest of the system is provider-agnostic.
+Provider-specific SDK events are mapped to `KernelEvent`s at the boundary, so the rest of the system is provider-agnostic. Provider headers are passed through from config/harness request options without Turin needing provider-specific fields.
 
 ---
 

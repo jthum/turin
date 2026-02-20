@@ -354,7 +354,7 @@ impl Kernel {
             match task_start_verdict {
                 Verdict::Reject(reason) => {
                     warn!(task_id = %task.task_id, reason = %reason, "Task rejected by on_task_start");
-                    self.complete_task(session, &task, TaskTerminalStatus::Rejected, 0)
+                    self.complete_task(session, &task, TaskTerminalStatus::Rejected, 0, None)
                         .await?;
                     continue;
                 }
@@ -370,7 +370,7 @@ impl Kernel {
                 }
                 Verdict::Escalate(reason) => {
                     warn!(task_id = %task.task_id, reason = %reason, "Task escalated at on_task_start; treating as rejected");
-                    self.complete_task(session, &task, TaskTerminalStatus::Rejected, 0)
+                    self.complete_task(session, &task, TaskTerminalStatus::Rejected, 0, None)
                         .await?;
                     continue;
                 }
@@ -383,8 +383,21 @@ impl Kernel {
                 Ok(result) => result,
                 Err(e) => {
                     error!(task_id = %task.task_id, error = %e, "Task failed with runtime error");
-                    self.complete_task(session, &task, TaskTerminalStatus::Error, 0)
+                    let error_message = e.to_string();
+                    let recovered = self
+                        .handle_inference_error(session, &task, &error_message)
                         .await?;
+                    self.complete_task(
+                        session,
+                        &task,
+                        TaskTerminalStatus::Error,
+                        0,
+                        Some(error_message),
+                    )
+                    .await?;
+                    if recovered {
+                        continue;
+                    }
                     return Err(e);
                 }
             };
@@ -394,6 +407,7 @@ impl Kernel {
                 &task,
                 task_result.status,
                 task_result.task_turn_count,
+                None,
             )
             .await?;
         }
@@ -483,7 +497,16 @@ impl Kernel {
                 plan_id: task.plan_id.clone(),
                 task_turn_index: task_turn_count,
             };
-            let completed_turn = self.execute_turn(session, &tool_ctx, &turn_ctx).await?;
+            let completed_turn = match self.execute_turn(session, &tool_ctx, &turn_ctx).await {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    let harness = self.lock_harness();
+                    if let Some(ref engine) = *harness {
+                        engine.set_active_session(None);
+                    }
+                    return Err(err);
+                }
+            };
 
             self.evaluate_token_usage(session.total_input_tokens, session.total_output_tokens);
             session.turn_index += 1;
@@ -564,6 +587,7 @@ impl Kernel {
         task: &QueuedTask,
         status: TaskTerminalStatus,
         task_turn_count: u32,
+        error_message: Option<String>,
     ) -> Result<()> {
         self.persist_event(
             session,
@@ -572,6 +596,7 @@ impl Kernel {
                 plan_id: task.plan_id.clone(),
                 status,
                 task_turn_count,
+                error: error_message.clone(),
             }),
         );
 
@@ -587,6 +612,7 @@ impl Kernel {
                         "status": status,
                         "task_turn_count": task_turn_count,
                         "turn_count": session.turn_index,
+                        "error": error_message,
                     }),
                 ))
             } else {
@@ -667,6 +693,69 @@ impl Kernel {
         Ok(())
     }
 
+    async fn handle_inference_error(
+        &mut self,
+        session: &mut SessionState,
+        task: &QueuedTask,
+        error: &str,
+    ) -> Result<bool> {
+        let verdict_result = {
+            let harness = self.lock_harness();
+            if let Some(ref engine) = *harness {
+                engine.set_active_session(Some(&session.id));
+                let result = engine.evaluate(
+                    "on_inference_error",
+                    serde_json::json!({
+                        "session_id": session.id.clone(),
+                        "task_id": task.task_id.clone(),
+                        "plan_id": task.plan_id.clone(),
+                        "turn_count": session.turn_index,
+                        "error": error,
+                    }),
+                );
+                engine.set_active_session(None);
+                Some(result)
+            } else {
+                None
+            }
+        };
+
+        if let Some(result) = verdict_result {
+            match result {
+                Ok(Verdict::Modify(new_tasks_val)) => {
+                    let new_tasks = Self::parse_task_list(
+                        &new_tasks_val,
+                        task.plan_id.as_deref(),
+                        task.title.as_deref(),
+                    );
+                    if !new_tasks.is_empty() {
+                        let mut q = session.queue.lock().await;
+                        for queued in new_tasks {
+                            q.push_back(queued);
+                        }
+                        info!(
+                            task_id = %task.task_id,
+                            "on_inference_error queued additional tasks via MODIFY"
+                        );
+                        return Ok(true);
+                    }
+                }
+                Ok(Verdict::Reject(reason)) => {
+                    warn!(task_id = %task.task_id, reason = %reason, "on_inference_error rejected");
+                }
+                Ok(Verdict::Escalate(reason)) => {
+                    warn!(task_id = %task.task_id, reason = %reason, "on_inference_error escalated");
+                }
+                Ok(Verdict::Allow) => {}
+                Err(e) => {
+                    warn!(error = %e, "Harness on_inference_error error");
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
     pub(crate) async fn cancel_queued_tasks(
         &mut self,
         session: &mut SessionState,
@@ -678,7 +767,7 @@ impl Kernel {
 
         let cancelled = drained_tasks.len();
         for queued in drained_tasks {
-            self.complete_task(session, &queued, TaskTerminalStatus::Cancelled, 0)
+            self.complete_task(session, &queued, TaskTerminalStatus::Cancelled, 0, None)
                 .await?;
         }
         Ok(cancelled)

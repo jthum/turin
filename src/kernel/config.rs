@@ -109,7 +109,7 @@ impl Default for HarnessConfig {
 
 pub type ProvidersConfig = std::collections::HashMap<String, ProviderConfig>;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct ProviderConfig {
     /// The type of provider ("anthropic", "openai", "mock")
     #[serde(rename = "type")]
@@ -118,6 +118,15 @@ pub struct ProviderConfig {
     pub api_key_env: Option<String>,
     /// Optional base URL override (for proxies)
     pub base_url: Option<String>,
+    /// Additional request headers sent on every provider request.
+    #[serde(default)]
+    pub headers: std::collections::HashMap<String, String>,
+    /// Optional max retry attempts for provider HTTP calls.
+    pub max_retries: Option<u32>,
+    /// Optional per-request timeout in seconds.
+    pub request_timeout_secs: Option<u64>,
+    /// Optional total timeout budget in seconds (across retries).
+    pub total_timeout_secs: Option<u64>,
 }
 
 // ─── Defaults ────────────────────────────────────────────────────
@@ -189,6 +198,43 @@ impl TurinConfig {
             self.kernel.heartbeat_interval_secs > 0,
             "kernel.heartbeat_interval_secs must be greater than 0"
         );
+
+        for (provider_name, provider) in &self.providers {
+            if let Some(timeout_secs) = provider.request_timeout_secs {
+                anyhow::ensure!(
+                    timeout_secs > 0,
+                    "providers.{}.request_timeout_secs must be greater than 0",
+                    provider_name
+                );
+            }
+
+            if let Some(timeout_secs) = provider.total_timeout_secs {
+                anyhow::ensure!(
+                    timeout_secs > 0,
+                    "providers.{}.total_timeout_secs must be greater than 0",
+                    provider_name
+                );
+            }
+
+            if let (Some(request_secs), Some(total_secs)) =
+                (provider.request_timeout_secs, provider.total_timeout_secs)
+            {
+                anyhow::ensure!(
+                    total_secs >= request_secs,
+                    "providers.{}.total_timeout_secs must be >= request_timeout_secs",
+                    provider_name
+                );
+            }
+
+            for header in provider.headers.keys() {
+                anyhow::ensure!(
+                    !header.trim().is_empty(),
+                    "providers.{}.headers contains an empty header name",
+                    provider_name
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -381,5 +427,72 @@ provider = "openai"
 max_turns = 0
 "#;
         assert!(TurinConfig::from_str(toml).is_err());
+    }
+
+    #[test]
+    fn test_parse_provider_transport_tuning() {
+        let toml = r#"
+[agent]
+model = "claude-sonnet-4-20250514"
+provider = "anthropic"
+
+[providers.anthropic]
+type = "anthropic"
+api_key_env = "ANTHROPIC_API_KEY"
+max_retries = 4
+request_timeout_secs = 20
+total_timeout_secs = 90
+
+[providers.anthropic.headers]
+anthropic-beta = "output-128k-2025-02-19"
+x-request-tag = "turin-test"
+"#;
+
+        let config = TurinConfig::from_str(toml).unwrap();
+        let provider = config.providers.get("anthropic").unwrap();
+        assert_eq!(provider.max_retries, Some(4));
+        assert_eq!(provider.request_timeout_secs, Some(20));
+        assert_eq!(provider.total_timeout_secs, Some(90));
+        assert_eq!(
+            provider.headers.get("anthropic-beta").map(|s| s.as_str()),
+            Some("output-128k-2025-02-19")
+        );
+        assert_eq!(
+            provider.headers.get("x-request-tag").map(|s| s.as_str()),
+            Some("turin-test")
+        );
+    }
+
+    #[test]
+    fn test_validate_timeout_budget_order() {
+        let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+request_timeout_secs = 30
+total_timeout_secs = 10
+"#;
+        let err = TurinConfig::from_str(toml).unwrap_err();
+        assert!(err.to_string().contains("total_timeout_secs"));
+    }
+
+    #[test]
+    fn test_validate_empty_header_name() {
+        let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[providers.openai.headers]
+" " = "bad"
+"#;
+        let err = TurinConfig::from_str(toml).unwrap_err();
+        assert!(err.to_string().contains("empty header name"));
     }
 }

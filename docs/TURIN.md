@@ -66,7 +66,7 @@ Every action in Turin produces a typed `KernelEvent`. These events flow through 
 | `session_start` | `{ session_id }` | `on_session_start` | Agent session begins |
 | `session_end` | `{ session_id, turn_count, total_input_tokens, total_output_tokens }` | `on_session_end` | Agent session completes |
 | `task_start` | `{ session_id, task_id, plan_id?, title?, prompt, queue_depth }` | `on_task_start` | Queued task begins |
-| `task_complete` | `{ session_id, task_id, plan_id?, status, task_turn_count, turn_count }` | `on_task_complete` | Per-task terminal callback |
+| `task_complete` | `{ session_id, task_id, plan_id?, status, task_turn_count, turn_count, error? }` | `on_task_complete` | Per-task terminal callback |
 | `plan_complete` | `{ session_id, plan_id, title, total_tasks, completed_tasks }` | `on_plan_complete` | Plan terminal callback |
 | `all_tasks_complete` | `{ session_id, turn_count }` | `on_all_tasks_complete` | Global queue exhausted |
 | `turn_start` | `{ session_id, task_id, plan_id?, turn_index, task_turn_index }` | `on_turn_start` | New LLM call begins |
@@ -80,6 +80,9 @@ Every action in Turin produces a typed `KernelEvent`. These events flow through 
 | `tool_result` | `{ id, output, is_error }` | `on_tool_result` | Tool execution completed |
 | `plan_submit` | `{ title, tasks, clear_existing }` | `on_plan_submit` | Agent proposes a multi-step plan |
 | `token_usage` | `{ input, output, cost }` | `on_token_usage` | Token/cost accounting update |
+
+Additional hook:
+- `on_inference_error(event)` receives `{ session_id, task_id, plan_id?, turn_count, error }` and can return `MODIFY` to enqueue fallback tasks.
 
 ### Harness Verdicts
 
@@ -104,6 +107,7 @@ The Kernel provides primitives (`context.summarize()`, `context.slice()`, `sessi
 - **Dynamic injection**: Add recent git diffs, test results, or any other context before each LLM call
 - **Adaptive Thinking**: Dynamically boost or cap the `thinking_budget` based on task difficulty
 - **Named Providers**: Switch between multiple configured provider instances (e.g., `ctx.provider = "gpt-4o-primary"`) mid-turn.
+- **Per-Turn Request Controls**: Override request headers/retries/timeouts via `ctx.request_options`.
 - **Anchorage Strategy**: Recursively spawn subagents to summarize sessions and store facts in the memory store.
 
 > **The Kernel provides the physics. Your harness defines the universe.**

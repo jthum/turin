@@ -1,8 +1,18 @@
 use mlua::{LuaSerdeExt, MetaMethod, UserData, UserDataMethods, Value};
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::inference::provider::{InferenceMessage, ProviderClient};
 use std::collections::HashMap;
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RequestOptionsOverride {
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    pub max_retries: Option<u32>,
+    pub request_timeout_secs: Option<u64>,
+    pub total_timeout_secs: Option<u64>,
+}
 
 /// Inner state shareable between Rust and Lua
 #[derive(Clone, Debug)]
@@ -20,6 +30,7 @@ pub struct ContextState {
     pub token_count: u32,
     pub token_limit: u32,
     pub thinking_budget: u32,
+    pub request_options: RequestOptionsOverride,
 }
 
 /// UserData wrapper for Context validation and mutation
@@ -44,6 +55,7 @@ impl ContextWrapper {
         token_count: u32,
         token_limit: u32,
         thinking_budget: u32,
+        request_options: RequestOptionsOverride,
         clients: HashMap<String, ProviderClient>,
     ) -> Self {
         let prompt = messages.iter().last().and_then(|m| {
@@ -80,6 +92,7 @@ impl ContextWrapper {
                 token_count,
                 token_limit,
                 thinking_budget,
+                request_options,
             })),
             clients,
         }
@@ -155,6 +168,19 @@ impl UserData for ContextWrapper {
             Ok(())
         });
 
+        methods.add_method("get_request_options", |lua, this, ()| {
+            let state = this.lock_state();
+            lua.to_value(&state.request_options)
+                .map_err(mlua::Error::external)
+        });
+
+        methods.add_method("set_request_options", |lua, this, val: Value| {
+            let request_options: RequestOptionsOverride =
+                lua.from_value(val).map_err(mlua::Error::external)?;
+            this.lock_state().request_options = request_options;
+            Ok(())
+        });
+
         // Messages Property (Copy)
         methods.add_method("get_messages", |lua, this: &ContextWrapper, ()| {
             let state = this.lock_state();
@@ -223,6 +249,11 @@ impl UserData for ContextWrapper {
                     let state = this.lock_state();
                     Ok(Value::Integer(state.thinking_budget as i64))
                 }
+                "request_options" => {
+                    let state = this.lock_state();
+                    lua.to_value(&state.request_options)
+                        .map_err(mlua::Error::external)
+                }
                 "prompt" => {
                     let state = this.lock_state();
                     Ok(state
@@ -256,6 +287,12 @@ impl UserData for ContextWrapper {
                     "thinking_budget" => {
                         let b: u32 = lua.from_value(val).map_err(mlua::Error::external)?;
                         this.lock_state().thinking_budget = b;
+                        Ok(())
+                    }
+                    "request_options" => {
+                        let opts: RequestOptionsOverride =
+                            lua.from_value(val).map_err(mlua::Error::external)?;
+                        this.lock_state().request_options = opts;
                         Ok(())
                     }
                     "prompt" => {
