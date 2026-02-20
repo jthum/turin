@@ -488,13 +488,20 @@ impl Kernel {
             }
         }
 
+        for (tc, _) in &validated_calls {
+            self.persist_event(
+                session,
+                &KernelEvent::Audit(AuditEvent::ToolExecStart {
+                    id: tc.id.clone(),
+                    name: tc.name.clone(),
+                }),
+            );
+        }
+
         // Parallel execution for approved calls.
         let kernel = &*self;
-        let event_tx = session.event_tx.clone();
         let futures = validated_calls.into_iter().map(|(tc, verdict)| {
-            let session_id = session_id.to_string();
             let tool_ctx = tool_ctx.clone();
-            let event_tx = event_tx.clone();
             async move {
                 let verdict_str = verdict.to_string();
                 let final_args = match verdict {
@@ -504,14 +511,6 @@ impl Kernel {
                     }
                     _ => tc.args.clone(),
                 };
-
-                let _ = event_tx.send((
-                    session_id.clone(),
-                    KernelEvent::Audit(AuditEvent::ToolExecStart {
-                        id: tc.id.clone(),
-                        name: tc.name.clone(),
-                    }),
-                ));
 
                 let start = Instant::now();
                 let effect_res = kernel

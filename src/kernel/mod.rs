@@ -128,7 +128,10 @@ impl Kernel {
                                         warn!(error = %e, "Background persistence error");
                                     }
                                 }
-                                Err(_) => break,
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                                    warn!(skipped, "Event persistence receiver lagged; continuing");
+                                }
+                                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                             }
                         }
                     }
@@ -492,13 +495,13 @@ impl Kernel {
         let mut task_turn_count = 0;
         let max_task_turns = self.config.kernel.max_turns;
 
-        let task_status = loop {
+        let task_status_result: Result<TaskTerminalStatus> = loop {
             if task_turn_count >= max_task_turns {
                 error!(
                     max_turns = max_task_turns,
                     "Max turns reached for this task"
                 );
-                break TaskTerminalStatus::MaxTurns;
+                break Ok(TaskTerminalStatus::MaxTurns);
             }
 
             let turn_ctx = turn::TurnContext {
@@ -508,13 +511,7 @@ impl Kernel {
             };
             let completed_turn = match self.execute_turn(session, &tool_ctx, &turn_ctx).await {
                 Ok(outcome) => outcome,
-                Err(err) => {
-                    let harness = self.lock_harness();
-                    if let Some(ref engine) = *harness {
-                        engine.set_active_session(None);
-                    }
-                    return Err(err);
-                }
+                Err(err) => break Err(err),
             };
 
             self.evaluate_token_usage(session.total_input_tokens, session.total_output_tokens);
@@ -524,10 +521,10 @@ impl Kernel {
             match completed_turn {
                 turn::TurnOutcome::Continue => {}
                 turn::TurnOutcome::Complete => {
-                    break TaskTerminalStatus::Success;
+                    break Ok(TaskTerminalStatus::Success);
                 }
                 turn::TurnOutcome::Rejected => {
-                    break TaskTerminalStatus::Rejected;
+                    break Ok(TaskTerminalStatus::Rejected);
                 }
             }
         };
@@ -539,6 +536,7 @@ impl Kernel {
                 engine.set_active_session(None);
             }
         }
+        let task_status = task_status_result?;
         Ok(TaskExecutionResult {
             status: task_status,
             task_turn_count,
