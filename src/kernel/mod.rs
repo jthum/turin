@@ -1,6 +1,7 @@
 pub mod builder;
 pub mod config;
 pub mod event;
+pub mod identity;
 mod init;
 pub mod session;
 mod turn;
@@ -160,14 +161,14 @@ impl Kernel {
             return Ok(());
         }
 
-        let session_id = session.id.clone();
+        let session_id = session.identity.session_id.clone();
         info!(session_id = %session_id, "Starting new session");
 
         // Emit SessionStart event
         self.persist_event(
             session,
             &KernelEvent::Lifecycle(LifecycleEvent::SessionStart {
-                session_id: session_id.clone(),
+                identity: session.identity.clone(),
             }),
         );
 
@@ -177,7 +178,10 @@ impl Kernel {
             if let Some(ref engine) = *harness
                 && let Err(e) = engine.evaluate(
                     "on_session_start",
-                    serde_json::json!({ "session_id": session_id }),
+                    serde_json::json!({
+                        "identity": session.identity.clone(),
+                        "session_id": session_id,
+                    }),
                 )
             {
                 warn!(error = %e, "Harness on_session_start failed");
@@ -197,6 +201,7 @@ impl Kernel {
         self.persist_event(
             session,
             &KernelEvent::Lifecycle(LifecycleEvent::SessionEnd {
+                identity: session.identity.clone(),
                 turn_count: session.turn_index,
                 total_input_tokens: session.total_input_tokens,
                 total_output_tokens: session.total_output_tokens,
@@ -209,7 +214,8 @@ impl Kernel {
                 && let Err(e) = engine.evaluate(
                     "on_session_end",
                     serde_json::json!({
-                        "session_id": session.id.clone(),
+                        "identity": session.identity.clone(),
+                        "session_id": session.identity.session_id.clone(),
                         "turn_count": session.turn_index,
                         "total_input_tokens": session.total_input_tokens,
                         "total_output_tokens": session.total_output_tokens,
@@ -234,7 +240,7 @@ impl Kernel {
     }
 
     /// Run the agent loop with the given prompt.
-    #[instrument(skip(self, session), fields(session_id = %session.id))]
+    #[instrument(skip(self, session), fields(session_id = %session.identity.session_id))]
     pub async fn run(&mut self, session: &mut SessionState, prompt: Option<String>) -> Result<()> {
         // Ensure session is started
         self.start_session(session).await?;
@@ -273,7 +279,7 @@ impl Kernel {
                     self.persist_event(
                         session,
                         &KernelEvent::Lifecycle(LifecycleEvent::AllTasksComplete {
-                            session_id: session.id.clone(),
+                            identity: session.identity.clone(),
                         }),
                     );
                     let verdict = {
@@ -282,7 +288,8 @@ impl Kernel {
                             match engine.evaluate(
                                 "on_all_tasks_complete",
                                 serde_json::json!({
-                                    "session_id": session.id.clone(),
+                                    "identity": session.identity.clone(),
+                                    "session_id": session.identity.session_id.clone(),
                                     "turn_count": session.turn_index,
                                 }),
                             ) {
@@ -318,6 +325,7 @@ impl Kernel {
             self.persist_event(
                 session,
                 &KernelEvent::Lifecycle(LifecycleEvent::TaskStart {
+                    identity: session.identity.clone(),
                     task_id: task.task_id.clone(),
                     plan_id: task.plan_id.clone(),
                     title: task.title.clone(),
@@ -332,7 +340,8 @@ impl Kernel {
                     match engine.evaluate(
                         "on_task_start",
                         serde_json::json!({
-                            "session_id": session.id.clone(),
+                            "identity": session.identity.clone(),
+                            "session_id": session.identity.session_id.clone(),
                             "task_id": task.task_id.clone(),
                             "plan_id": task.plan_id.clone(),
                             "title": task.title.clone(),
@@ -442,7 +451,7 @@ impl Kernel {
         session: &mut SessionState,
         task: &QueuedTask,
     ) -> Result<TaskExecutionResult> {
-        let session_id = session.id.clone();
+        let session_id = session.identity.session_id.clone();
         let prompt = task.prompt.as_str();
 
         // Append user message to history
@@ -592,6 +601,7 @@ impl Kernel {
         self.persist_event(
             session,
             &KernelEvent::Lifecycle(LifecycleEvent::TaskComplete {
+                identity: session.identity.clone(),
                 task_id: task.task_id.clone(),
                 plan_id: task.plan_id.clone(),
                 status,
@@ -606,7 +616,8 @@ impl Kernel {
                 Some(engine.evaluate(
                     "on_task_complete",
                     serde_json::json!({
-                        "session_id": session.id.clone(),
+                        "identity": session.identity.clone(),
+                        "session_id": session.identity.session_id.clone(),
                         "task_id": task.task_id.clone(),
                         "plan_id": task.plan_id.clone(),
                         "status": status,
@@ -661,6 +672,7 @@ impl Kernel {
                 self.persist_event(
                     session,
                     &KernelEvent::Lifecycle(LifecycleEvent::PlanComplete {
+                        identity: session.identity.clone(),
                         plan_id: plan.plan_id.clone(),
                         title: plan.title.clone(),
                         total_tasks: plan.total_tasks,
@@ -674,7 +686,8 @@ impl Kernel {
                         && let Err(e) = engine.evaluate(
                             "on_plan_complete",
                             serde_json::json!({
-                                "session_id": session.id.clone(),
+                                "identity": session.identity.clone(),
+                                "session_id": session.identity.session_id.clone(),
                                 "plan_id": plan.plan_id.clone(),
                                 "title": plan.title.clone(),
                                 "total_tasks": plan.total_tasks,
@@ -702,11 +715,12 @@ impl Kernel {
         let verdict_result = {
             let harness = self.lock_harness();
             if let Some(ref engine) = *harness {
-                engine.set_active_session(Some(&session.id));
+                engine.set_active_session(Some(&session.identity.session_id));
                 let result = engine.evaluate(
                     "on_inference_error",
                     serde_json::json!({
-                        "session_id": session.id.clone(),
+                        "identity": session.identity.clone(),
+                        "session_id": session.identity.session_id.clone(),
                         "task_id": task.task_id.clone(),
                         "plan_id": task.plan_id.clone(),
                         "turn_count": session.turn_index,
@@ -850,7 +864,7 @@ impl Kernel {
             }
             // Note: MODIFY is ignored for general events for now to avoid complexity
         }
-        self.persist_event_internal(&session.event_tx, &session.id, event);
+        self.persist_event_internal(&session.event_tx, &session.identity.session_id, event);
     }
 
     /// Internal helper for persistence (used by parallel runners)

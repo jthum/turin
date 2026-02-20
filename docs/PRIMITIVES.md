@@ -39,7 +39,7 @@ Persistent storage for harness state, backed by the agent's SQLite database.
 - `log(message)`: Prints a string to the kernel's stderr with a `[harness]` prefix.
 
 ### `session` (Agent Control)
-- `session.id`: (Coming Soon) The unique ID of the current session.
+- `session.identity.session_id`: (Coming Soon) The unique ID of the current session.
 - `session.list(limit, offset)`: Returns a table of recent session IDs.
 - `session.load(id)`: Loads the message history of a specific session.
 - `session.queue(command)`: appends a command (prompt) to the session queue.

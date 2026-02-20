@@ -67,6 +67,9 @@ If your new script has a syntax error, the old harness keeps running and an erro
 
 ## Hooks Reference
 
+For lifecycle hooks, payloads now include `event.identity` with:
+`session_id` and optional `agent_id`, `user_id`, `channel_id`, `tenant_id`, `run_id`.
+
 ### `on_session_start(event)`
 
 Fires once when a session begins.
@@ -412,7 +415,7 @@ log(message)  -- Write a message to the kernel event log (visible in verbose mod
 ### Session
 
 ```lua
-session.id                -- Current session ID (string).
+session.identity.session_id -- Current session ID (string).
 session.list()            -- List all previous session IDs.
 session.load(id)          -- Load message history from a session. Returns table.
 session.queue(prompt)     -- Add a task to the end of the queue.

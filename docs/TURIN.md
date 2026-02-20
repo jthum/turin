@@ -61,6 +61,9 @@ Every action in Turin produces a typed `KernelEvent`. These events flow through 
 
 ### Event Dictionary
 
+All lifecycle hook payloads include `identity`:
+`{ session_id, agent_id?, user_id?, channel_id?, tenant_id?, run_id? }`.
+
 | Event | Payload | Harness Hook | Description |
 |-------|---------|-------------|-------------|
 | `session_start` | `{ session_id }` | `on_session_start` | Agent session begins |
@@ -82,7 +85,7 @@ Every action in Turin produces a typed `KernelEvent`. These events flow through 
 | `token_usage` | `{ input, output, cost }` | `on_token_usage` | Token/cost accounting update |
 
 Additional hook:
-- `on_inference_error(event)` receives `{ session_id, task_id, plan_id?, turn_count, error }` and can return `MODIFY` to enqueue fallback tasks.
+- `on_inference_error(event)` receives `{ identity, session_id, task_id, plan_id?, turn_count, error }` and can return `MODIFY` to enqueue fallback tasks.
 
 ### Harness Verdicts
 

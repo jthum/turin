@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::kernel::identity::RuntimeIdentity;
+
 /// Terminal status for a task.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -16,15 +18,17 @@ pub enum TaskTerminalStatus {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LifecycleEvent {
     /// Session begins
-    SessionStart { session_id: String },
+    SessionStart { identity: RuntimeIdentity },
     /// Session completes
     SessionEnd {
+        identity: RuntimeIdentity,
         turn_count: u32,
         total_input_tokens: u64,
         total_output_tokens: u64,
     },
     /// Task begins
     TaskStart {
+        identity: RuntimeIdentity,
         task_id: String,
         plan_id: Option<String>,
         title: Option<String>,
@@ -33,6 +37,7 @@ pub enum LifecycleEvent {
     },
     /// Task reaches a terminal status
     TaskComplete {
+        identity: RuntimeIdentity,
         task_id: String,
         plan_id: Option<String>,
         status: TaskTerminalStatus,
@@ -42,27 +47,31 @@ pub enum LifecycleEvent {
     },
     /// Plan reaches completion
     PlanComplete {
+        identity: RuntimeIdentity,
         plan_id: String,
         title: String,
         total_tasks: usize,
         completed_tasks: usize,
     },
     /// No queued tasks remain
-    AllTasksComplete { session_id: String },
+    AllTasksComplete { identity: RuntimeIdentity },
     /// New LLM call begins
     TurnStart {
+        identity: RuntimeIdentity,
         turn_index: u32,
         task_id: String,
         task_turn_index: u32,
     },
     /// Context assembled and mutable just before provider call
     TurnPrepare {
+        identity: RuntimeIdentity,
         turn_index: u32,
         task_id: String,
         task_turn_index: u32,
     },
     /// LLM call completes
     TurnEnd {
+        identity: RuntimeIdentity,
         turn_index: u32,
         task_id: String,
         task_turn_index: u32,
@@ -177,7 +186,7 @@ mod tests {
     #[test]
     fn test_event_serialization() {
         let event = KernelEvent::Lifecycle(LifecycleEvent::SessionStart {
-            session_id: "test-123".to_string(),
+            identity: RuntimeIdentity::new("test-123"),
         });
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"session_start\""));
@@ -188,7 +197,7 @@ mod tests {
     fn test_event_type_names() {
         assert_eq!(
             KernelEvent::Lifecycle(LifecycleEvent::SessionStart {
-                session_id: "x".into()
+                identity: RuntimeIdentity::new("x")
             })
             .event_type(),
             "session_start"

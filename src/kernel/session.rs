@@ -6,6 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::inference::provider::InferenceMessage;
 use crate::kernel::event::KernelEvent;
+use crate::kernel::identity::RuntimeIdentity;
 
 /// One queued unit of work to be executed by the kernel.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -68,7 +69,7 @@ pub enum SessionStatus {
 
 /// Holds the state of an active agent session.
 pub struct SessionState {
-    pub id: String,
+    pub identity: RuntimeIdentity,
     pub history: Vec<InferenceMessage>,
     pub queue: Arc<Mutex<VecDeque<QueuedTask>>>,
     pub plans: HashMap<String, PlanProgress>,
@@ -91,9 +92,10 @@ impl Default for SessionState {
 
 impl SessionState {
     pub fn new() -> Self {
+        let session_id = uuid::Uuid::new_v4().to_string();
         let (tx, _rx) = broadcast::channel(1024);
         Self {
-            id: uuid::Uuid::new_v4().to_string(),
+            identity: RuntimeIdentity::new(session_id),
             history: Vec::new(),
             queue: Arc::new(Mutex::new(VecDeque::new())),
             plans: HashMap::new(),

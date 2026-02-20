@@ -82,7 +82,7 @@ impl Kernel {
         tool_ctx: &ToolContext,
         turn_ctx: &TurnContext,
     ) -> Result<TurnOutcome> {
-        let session_id = session.id.clone();
+        let session_id = session.identity.session_id.clone();
 
         // Turn-local configuration
         let mut model = self.config.agent.model.clone();
@@ -99,6 +99,7 @@ impl Kernel {
         self.persist_event(
             session,
             &KernelEvent::Lifecycle(LifecycleEvent::TurnStart {
+                identity: session.identity.clone(),
                 turn_index: session.turn_index,
                 task_id: turn_ctx.task_id.clone(),
                 task_turn_index: turn_ctx.task_turn_index,
@@ -112,7 +113,8 @@ impl Kernel {
                 match engine.evaluate(
                     "on_turn_start",
                     serde_json::json!({
-                        "session_id": session.id.clone(),
+                        "identity": session.identity.clone(),
+                        "session_id": session.identity.session_id.clone(),
                         "task_id": turn_ctx.task_id.clone(),
                         "plan_id": turn_ctx.plan_id.clone(),
                         "turn_index": session.turn_index,
@@ -138,6 +140,7 @@ impl Kernel {
         self.persist_event(
             session,
             &KernelEvent::Lifecycle(LifecycleEvent::TurnPrepare {
+                identity: session.identity.clone(),
                 turn_index: session.turn_index,
                 task_id: turn_ctx.task_id.clone(),
                 task_turn_index: turn_ctx.task_turn_index,
@@ -343,6 +346,7 @@ impl Kernel {
         self.persist_event(
             session,
             &KernelEvent::Lifecycle(LifecycleEvent::TurnEnd {
+                identity: session.identity.clone(),
                 turn_index: session.turn_index,
                 task_id: turn_ctx.task_id.clone(),
                 task_turn_index: turn_ctx.task_turn_index,
@@ -356,7 +360,8 @@ impl Kernel {
                 && let Err(e) = engine.evaluate(
                     "on_turn_end",
                     serde_json::json!({
-                        "session_id": session.id.clone(),
+                        "identity": session.identity.clone(),
+                        "session_id": session.identity.session_id.clone(),
                         "task_id": turn_ctx.task_id.clone(),
                         "plan_id": turn_ctx.plan_id.clone(),
                         "turn_index": session.turn_index,

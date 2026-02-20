@@ -76,7 +76,10 @@ async fn test_session_create_starts_inactive() -> Result<()> {
     assert_eq!(session.status, SessionStatus::Inactive);
     assert_eq!(session.turn_index, 0);
     assert!(session.history.is_empty());
-    assert!(!session.id.is_empty(), "Session ID should be generated");
+    assert!(
+        !session.identity.session_id.is_empty(),
+        "Session ID should be generated"
+    );
 
     Ok(())
 }
@@ -133,7 +136,7 @@ async fn test_sessions_have_unique_ids() -> Result<()> {
 
     let s1 = kernel.create_session();
     let s2 = kernel.create_session();
-    assert_ne!(s1.id, s2.id);
+    assert_ne!(s1.identity.session_id, s2.identity.session_id);
 
     Ok(())
 }
@@ -236,7 +239,7 @@ async fn test_events_persisted_to_state_store() -> Result<()> {
 
     // Query events from state store
     if let Some(store) = kernel.state() {
-        let events = store.get_events(&session.id).await?;
+        let events = store.get_events(&session.identity.session_id).await?;
         assert!(!events.is_empty(), "Events should be persisted");
     }
 
