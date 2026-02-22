@@ -22,7 +22,8 @@ use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::{
     InferenceContent, InferenceMessage, InferenceRole, ProviderClient,
 };
-use crate::persistence::state::StateStore;
+use crate::persistence::manager::StoreManager;
+
 use crate::tools::ToolContext;
 use crate::tools::mcp::McpToolProxy;
 use crate::tools::registry::ToolRegistry;
@@ -39,7 +40,7 @@ pub struct Kernel {
     pub(crate) config: Arc<TurinConfig>,
     pub(crate) json: bool,
     pub(crate) tool_registry: ToolRegistry,
-    pub(crate) state: Option<StateStore>,
+    pub(crate) store_manager: Arc<StoreManager>,
     /// Thread-safe harness engine for hot-reloading
     pub(crate) harness: Arc<std::sync::Mutex<Option<HarnessEngine>>>,
     /// Watcher handle to keep it alive
@@ -78,9 +79,9 @@ impl Kernel {
         RuntimeBuilder::new(config)
     }
 
-    /// Access the state store (if initialized).
-    pub fn state(&self) -> Option<&StateStore> {
-        self.state.as_ref()
+    /// Access the store manager.
+    pub fn store_manager(&self) -> &Arc<StoreManager> {
+        &self.store_manager
     }
 
     /// Access the configuration.
@@ -111,12 +112,15 @@ impl Kernel {
     pub async fn create_session(&self) -> SessionState {
         let mut session = SessionState::new();
         session.identity.agent_id = self.config.agent.id.clone();
-        
+
         // Spawn background persistence if state is available
-        if let Some(ref store) = self.state {
+        if let Ok(store) = self.store_manager.get_default().await {
             // Attempt to create the session in the DB immediately to get the internal_id
             if let Ok(public_id) = uuid::Uuid::parse_str(&session.identity.session_id) {
-                match store.create_session(public_id, &session.identity.agent_id, None).await {
+                match store
+                    .create_session(public_id, &session.identity.agent_id, None)
+                    .await
+                {
                     Ok(id) => session.internal_id = Some(id),
                     Err(e) => tracing::warn!(error = %e, "Failed to create session row in DB"),
                 }
@@ -271,7 +275,7 @@ impl Kernel {
         if let Some(p) = prompt {
             let plan_id = format!("p_{}", session.next_plan_id);
             session.next_plan_id += 1;
-            
+
             session.plans.insert(
                 plan_id.clone(),
                 PlanProgress {
@@ -281,7 +285,7 @@ impl Kernel {
                     completed_tasks: 0,
                 },
             );
-            
+
             let mut q = session.queue.lock().await;
             let mut task = QueuedTask::with_plan(p, plan_id, Some("user_request".to_string()));
             task.task_id = format!("t_{}", session.next_task_id);
@@ -488,7 +492,7 @@ impl Kernel {
         };
 
         // Persist user message
-        if let Some(ref store) = self.state {
+        if let Ok(store) = self.store_manager.get_default().await {
             if let Some(iid) = session.internal_id {
                 let _ = store
                     .insert_message(

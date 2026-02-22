@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::kernel::{Kernel, TurinConfig};
-use crate::persistence::state::StateStore;
+use crate::persistence::manager::StoreManager;
 use crate::tools::builtins::create_default_registry;
 use crate::tools::registry::ToolRegistry;
 
@@ -14,7 +14,7 @@ pub struct RuntimeBuilder {
     config: TurinConfig,
     json: bool,
     tool_registry: ToolRegistry,
-    state: Option<StateStore>,
+
     embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
 }
 
@@ -25,7 +25,7 @@ impl RuntimeBuilder {
             config,
             json: false,
             tool_registry: create_default_registry(),
-            state: None,
+
             embedding_provider: None,
         }
     }
@@ -33,12 +33,6 @@ impl RuntimeBuilder {
     /// Enable JSON output mode (NDJSON).
     pub fn json_mode(mut self, json: bool) -> Self {
         self.json = json;
-        self
-    }
-
-    /// Set a custom state store.
-    pub fn with_state_store(mut self, state: StateStore) -> Self {
-        self.state = Some(state);
         self
     }
 
@@ -50,11 +44,12 @@ impl RuntimeBuilder {
 
     /// Build the Kernel.
     pub fn build(self) -> Result<Kernel> {
+        let store_manager = Arc::new(StoreManager::new(&self.config.kernel.workspace_root));
         Ok(Kernel {
             config: Arc::new(self.config),
             json: self.json,
             tool_registry: self.tool_registry,
-            state: self.state,
+            store_manager,
             harness: Arc::new(std::sync::Mutex::new(None)),
             check_watcher: None,
             clients: HashMap::new(),

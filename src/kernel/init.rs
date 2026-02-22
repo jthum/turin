@@ -17,7 +17,6 @@ use crate::harness::engine::HarnessEngine;
 use crate::harness::globals::HarnessAppData;
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::{self, ProviderClient};
-use crate::persistence::state::StateStore;
 
 impl Kernel {
     /// Initialize all configured provider clients. Call before `init_harness()` and `run()`.
@@ -85,17 +84,14 @@ impl Kernel {
         Ok(())
     }
 
-    /// Initialize the state store. Call before `run()`.
+    /// Initialize the default state store alias. Call before `run()`.
     pub async fn init_state(&mut self) -> Result<()> {
         let db_path = &self.config.persistence.database_path;
-        let store = StateStore::open(db_path)
-            .await
-            .with_context(|| format!("Failed to initialize state store at '{}'", db_path))?;
+        self.store_manager.register_alias("state", db_path).await?;
+        let _ = self.store_manager.get_default().await.with_context(|| {
+            format!("Failed to initialize default state store at '{}'", db_path)
+        })?;
         info!(db_path = %db_path, "State store initialized");
-        self.state = Some(store.clone());
-
-        // Start background persistence task - MOVED to create_session
-        // init_state now only initializes the store.
 
         Ok(())
     }
@@ -116,7 +112,7 @@ impl Kernel {
         let app_data = HarnessAppData {
             fs_root,
             workspace_root: PathBuf::from(&self.config.kernel.workspace_root),
-            state_store: self.state.clone(),
+            store_manager: self.store_manager.clone(),
             clients: self.clients.clone(),
             embedding_provider: self.embedding_provider.clone(),
             queue: self.active_queue.clone(),
@@ -164,7 +160,7 @@ impl Kernel {
         harness: Arc<std::sync::Mutex<Option<HarnessEngine>>>,
         config: Arc<TurinConfig>,
         clients: HashMap<String, ProviderClient>,
-        state: Option<StateStore>,
+        store_manager: Arc<crate::persistence::manager::StoreManager>,
         embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
         active_queue: crate::harness::globals::ActiveSessionQueue,
     ) -> Result<()> {
@@ -180,7 +176,7 @@ impl Kernel {
                 let app_data = HarnessAppData {
                     fs_root,
                     workspace_root: PathBuf::from(&config.kernel.workspace_root),
-                    state_store: state.clone(),
+                    store_manager: store_manager.clone(),
                     clients,
                     embedding_provider,
                     queue: active_queue,
@@ -217,7 +213,7 @@ impl Kernel {
         let harness_clone = self.harness.clone();
         let config_clone = self.config.clone();
         let clients_clone = self.clients.clone();
-        let state_clone = self.state.clone();
+        let store_clone = self.store_manager.clone();
         let embedding_clone = self.embedding_provider.clone();
         let queue_clone = self.active_queue.clone();
         let harness_dir = PathBuf::from(&config_clone.harness.directory);
@@ -242,7 +238,7 @@ impl Kernel {
                 let h = harness_clone.clone();
                 let c = config_clone.clone();
                 let cl = clients_clone.clone();
-                let s = state_clone.clone();
+                let s = store_clone.clone();
                 let e = embedding_clone.clone();
                 let q = queue_clone.clone();
 

@@ -82,7 +82,6 @@ impl Kernel {
         tool_ctx: &ToolContext,
         turn_ctx: &TurnContext,
     ) -> Result<TurnOutcome> {
-
         // Turn-local configuration
         let mut model = self.config.agent.model.clone();
         let mut provider_name = self.config.agent.provider.clone();
@@ -373,7 +372,7 @@ impl Kernel {
             }
         }
 
-        if let Some(ref store) = self.state {
+        if let Ok(store) = self.store_manager.get_default().await {
             let content: Vec<serde_json::Value> = {
                 let mut parts = Vec::new();
                 if !response_text.is_empty() {
@@ -632,22 +631,22 @@ impl Kernel {
                 }),
             );
 
-            if let Some(ref store) = self.state {
-                if let Some(iid) = session.internal_id {
-                    let _ = store
-                        .insert_tool_execution(
-                            iid,
-                            session.turn_index,
-                            &record.id,
-                            &record.name,
-                            &record.args,
-                            Some(&record.content),
-                            record.is_error,
-                            Some(record.duration_ms),
-                            &record.verdict,
-                        )
-                        .await;
-                }
+            if let Ok(store) = self.store_manager.get_default().await
+                && let Some(iid) = session.internal_id
+            {
+                let _ = store
+                    .insert_tool_execution(
+                        iid,
+                        session.turn_index,
+                        &record.id,
+                        &record.name,
+                        &record.args,
+                        Some(&record.content),
+                        record.is_error,
+                        Some(record.duration_ms),
+                        &record.verdict,
+                    )
+                    .await;
             }
 
             if !self.json {
@@ -671,7 +670,7 @@ impl Kernel {
             tool_call_id: None,
         });
 
-        if let Some(ref store) = self.state {
+        if let Ok(store) = self.store_manager.get_default().await {
             let result_content: Vec<serde_json::Value> = tool_results
                 .iter()
                 .map(|r| match r {
@@ -885,7 +884,8 @@ impl Kernel {
         let scheduled_tasks = plan_tasks
             .into_iter()
             .map(|prompt| {
-                let mut qt = QueuedTask::with_plan(prompt, plan_id.clone(), Some(plan_title.clone()));
+                let mut qt =
+                    QueuedTask::with_plan(prompt, plan_id.clone(), Some(plan_title.clone()));
                 qt.task_id = format!("t_{}", session.next_task_id);
                 session.next_task_id += 1;
                 qt

@@ -401,14 +401,16 @@ fn parse_verdict(lua: &Lua, values: MultiValue) -> Result<Verdict> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::persistence::manager::StoreManager;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     fn test_app_data() -> HarnessAppData {
         HarnessAppData {
             fs_root: PathBuf::from("."),
             workspace_root: PathBuf::from("."),
-            state_store: None,
+            store_manager: Arc::new(StoreManager::new(PathBuf::from("."))),
             clients: std::collections::HashMap::new(),
             embedding_provider: None,
             queue: std::sync::Arc::new(tokio::sync::Mutex::new(Some(std::sync::Arc::new(

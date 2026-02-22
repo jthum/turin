@@ -156,7 +156,7 @@ impl StateStore {
     ) -> Result<i64> {
         let conn = self.connect().await?;
         let public_id_bytes = public_id.into_bytes().to_vec();
-        
+
         conn.execute(
             "INSERT INTO sessions (public_id, agent_id, metadata) VALUES (?1, ?2, ?3)",
             turso::params![public_id_bytes, agent_id, metadata],

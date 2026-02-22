@@ -12,7 +12,8 @@ use tracing::warn;
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
 use crate::kernel::session::QueuedTask;
-use crate::persistence::state::StateStore;
+use crate::persistence::manager::StoreManager;
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
@@ -29,7 +30,7 @@ pub type ActiveSessionQueue = Arc<Mutex<Option<SessionQueue>>>;
 pub struct HarnessAppData {
     pub fs_root: PathBuf,
     pub workspace_root: PathBuf,
-    pub state_store: Option<StateStore>,
+    pub store_manager: Arc<StoreManager>,
     pub active_session_id: Arc<std::sync::Mutex<Option<String>>>,
     pub clients: HashMap<String, ProviderClient>,
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
@@ -198,42 +199,46 @@ fn register_db_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
 
     // db.kv_get(key) -> string | nil
     {
-        let store = app_data.state_store.clone();
+        let manager = app_data.store_manager.clone();
         db_table.set(
             "kv_get",
-            lua.create_function(move |lua, key: String| match &store {
-                Some(store) => {
-                    let store = store.clone();
-                    let result = tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current()
-                            .block_on(async { store.kv_get(&key).await })
-                    });
-                    match result {
-                        Ok(Some(val)) => Ok(Value::String(lua.create_string(&val)?)),
-                        Ok(None) => Ok(Value::Nil),
-                        _ => Ok(Value::Nil),
-                    }
+            lua.create_function(move |lua, key: String| {
+                let manager = manager.clone();
+                let result = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        if let Ok(store) = manager.get_default().await {
+                            store.kv_get(&key).await
+                        } else {
+                            Ok(None)
+                        }
+                    })
+                });
+                match result {
+                    Ok(Some(val)) => Ok(Value::String(lua.create_string(&val)?)),
+                    Ok(None) => Ok(Value::Nil),
+                    _ => Ok(Value::Nil),
                 }
-                None => Ok(Value::Nil),
             })?,
         )?;
     }
 
     // db.kv_set(key, value) -> boolean
     {
-        let store = app_data.state_store.clone();
+        let manager = app_data.store_manager.clone();
         db_table.set(
             "kv_set",
-            lua.create_function(move |_lua, (key, value): (String, String)| match &store {
-                Some(store) => {
-                    let store = store.clone();
-                    let result = tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current()
-                            .block_on(async { store.kv_set(&key, &value).await })
-                    });
-                    Ok(result.is_ok())
-                }
-                None => Ok(false),
+            lua.create_function(move |_lua, (key, value): (String, String)| {
+                let manager = manager.clone();
+                let result: anyhow::Result<()> = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        if let Ok(store) = manager.get_default().await {
+                            store.kv_set(&key, &value).await
+                        } else {
+                            anyhow::bail!("default store not found")
+                        }
+                    })
+                });
+                Ok(result.is_ok())
             })?,
         )?;
     }
@@ -299,29 +304,29 @@ fn register_session_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()
 
     // session.list(limit?, offset?) -> { "id1", "id2", ... }
     {
-        let store = app_data.state_store.clone();
+        let manager = app_data.store_manager.clone();
         session_table.set(
             "list",
             lua.create_function(
                 move |_lua, (limit, offset): (Option<usize>, Option<usize>)| {
                     let limit = limit.unwrap_or(10);
                     let offset = offset.unwrap_or(0);
-                    match &store {
-                        Some(store) => {
-                            let store = store.clone();
-                            let result = tokio::task::block_in_place(|| {
-                                tokio::runtime::Handle::current()
-                                    .block_on(async { store.list_sessions(limit, offset).await })
-                            });
-                            match result {
-                                Ok(sessions) => Ok(sessions),
-                                Err(e) => Err(mlua::Error::runtime(format!(
-                                    "Failed to list sessions: {}",
-                                    e
-                                ))),
+                    let manager = manager.clone();
+                    let result = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(async {
+                            if let Ok(store) = manager.get_default().await {
+                                store.list_sessions(limit, offset).await
+                            } else {
+                                Ok(Vec::new())
                             }
-                        }
-                        None => Ok(Vec::new()),
+                        })
+                    });
+                    match result {
+                        Ok(sessions) => Ok(sessions),
+                        Err(e) => Err(mlua::Error::runtime(format!(
+                            "Failed to list sessions: {}",
+                            e
+                        ))),
                     }
                 },
             )?,
@@ -330,52 +335,46 @@ fn register_session_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()
 
     // session.load(id) -> { {role=..., content=...}, ... }
     {
-        let store = app_data.state_store.clone();
+        let manager = app_data.store_manager.clone();
         session_table.set(
             "load",
             lua.create_function(move |lua, id: String| {
-                match &store {
-                    Some(store) => {
-                        let store = store.clone();
-                        let result = tokio::task::block_in_place(|| {
-                            tokio::runtime::Handle::current().block_on(async {
-                                if let Ok(public_id) = uuid::Uuid::parse_str(&id) {
-                                    if let Ok(Some(internal_id)) =
-                                        store.get_session_by_public_id(public_id).await
-                                    {
-                                        return store.get_messages(internal_id).await;
-                                    }
-                                }
-                                Ok(Vec::new())
-                            })
-                        });
-
-                        match result {
-                            Ok(rows) => {
-                                let tbl = lua.create_table()?;
-                                for (i, row) in rows.into_iter().enumerate() {
-                                    let msg_tbl = lua.create_table()?;
-                                    msg_tbl.set("role", row.role)?;
-                                    // content is JSON string. Decode it.
-                                    let content_json: serde_json::Value =
-                                        serde_json::from_str(&row.content).map_err(|e| {
-                                            mlua::Error::runtime(format!(
-                                                "Failed to parse message content: {}",
-                                                e
-                                            ))
-                                        })?;
-                                    msg_tbl.set("content", lua.to_value(&content_json)?)?;
-                                    tbl.set(i + 1, msg_tbl)?;
-                                }
-                                Ok(Value::Table(tbl))
-                            }
-                            Err(e) => Err(mlua::Error::runtime(format!(
-                                "Failed to load session '{}': {}",
-                                id, e
-                            ))),
+                let manager = manager.clone();
+                let result = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        if let Ok(store) = manager.get_default().await
+                            && let Ok(public_id) = uuid::Uuid::parse_str(&id)
+                            && let Ok(Some(internal_id)) =
+                                store.get_session_by_public_id(public_id).await
+                        {
+                            return store.get_messages(internal_id).await;
                         }
+                        Ok(Vec::new())
+                    })
+                });
+
+                match result {
+                    Ok(rows) => {
+                        let tbl = lua.create_table()?;
+                        for (i, row) in rows.into_iter().enumerate() {
+                            let msg_tbl = lua.create_table()?;
+                            msg_tbl.set("role", row.role)?;
+                            let content_json: serde_json::Value =
+                                serde_json::from_str(&row.content).map_err(|e| {
+                                    mlua::Error::runtime(format!(
+                                        "Failed to parse message content: {}",
+                                        e
+                                    ))
+                                })?;
+                            msg_tbl.set("content", lua.to_value(&content_json)?)?;
+                            tbl.set(i + 1, msg_tbl)?;
+                        }
+                        Ok(Value::Table(tbl))
                     }
-                    None => Ok(Value::Nil),
+                    Err(e) => Err(mlua::Error::runtime(format!(
+                        "Failed to load session '{}': {}",
+                        id, e
+                    ))),
                 }
             })?,
         )?;
@@ -575,19 +574,19 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
     // turin.memory sub-module
     {
         let memory_table = lua.create_table()?;
-        let store = app_data.state_store.clone();
+        let manager = app_data.store_manager.clone();
         let embedding_provider = app_data.embedding_provider.clone();
 
         // turin.memory.store(content, metadata) -> boolean
         // This is a heavy operation (embedding + db insert), so we block carefully.
         {
-            let store = store.clone();
+            let manager = manager.clone();
             let embedding_provider = embedding_provider.clone();
             let active_session = app_data.active_session_id.clone();
             memory_table.set(
                 "store",
                 lua.create_function(move |lua, (content, metadata): (String, Option<Value>)| {
-                    let store = store.clone();
+                    let manager = manager.clone();
                     let embedding_provider = embedding_provider.clone();
                     let active_session = active_session.clone();
                     let metadata_json: serde_json::Value = if let Some(meta) = metadata {
@@ -605,16 +604,18 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
                                     .await
                                     .map_err(|e| format!("Embedding failed: {}", e))?;
 
-                                if let Some(store) = &store {
+                                if let Ok(store) = manager.get_default().await {
                                     let session_id_str =
                                         active_session.lock().unwrap().clone().ok_or_else(
                                             || "No active session context".to_string(),
                                         )?;
-                                    
+
                                     let public_id = uuid::Uuid::parse_str(&session_id_str)
                                         .map_err(|e| format!("Invalid session ID: {}", e))?;
-                                        
-                                    let internal_id = store.get_session_by_public_id(public_id).await
+
+                                    let internal_id = store
+                                        .get_session_by_public_id(public_id)
+                                        .await
                                         .map_err(|e| format!("DB lookup failed: {}", e))?
                                         .ok_or_else(|| "Session not found in DB".to_string())?;
 
@@ -647,11 +648,11 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
 
         // turin.memory.search(query, limit) -> { {content=..., score=...}, ... }
         {
-            let store = store.clone();
+            let manager = manager.clone();
             let embedding_provider = embedding_provider.clone();
             let active_session = app_data.active_session_id.clone();
             memory_table.set("search", lua.create_function(move |lua, (query, limit): (String, Option<usize>)| {
-                 let store = store.clone();
+                 let manager = manager.clone();
                  let embedding_provider = embedding_provider.clone();
                  let active_session = active_session.clone();
                  let limit = limit.unwrap_or(5);
@@ -676,15 +677,15 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
                             }
 
                             // 2. Search DB
-                            if let Some(store) = &store {
+                            if let Ok(store) = manager.get_default().await {
                                 // Pass vector (if successfully generated) and query (for FTS or fallback)
                                 // We always pass Some(query) now, to allow FTS/LIKE fallback
                                 let session_id_str = active_session.lock().unwrap().clone()
                                     .ok_or_else(|| "No active session context".to_string())?;
-                                    
+
                                 let public_id = uuid::Uuid::parse_str(&session_id_str)
                                     .map_err(|e| format!("Invalid session ID: {}", e))?;
-                                    
+
                                 let internal_id = store.get_session_by_public_id(public_id).await
                                     .map_err(|e| format!("DB lookup failed: {}", e))?
                                     .ok_or_else(|| "Session not found in DB".to_string())?;
@@ -736,88 +737,101 @@ fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
     {
         let config_arc = app_data.config.clone();
         let clients = app_data.clients.clone();
-        let state_store = app_data.state_store.clone();
+        let store_manager = app_data.store_manager.clone();
         let spawn_depth = app_data.spawn_depth;
 
-        agent_table.set("spawn", lua.create_function(move |_lua, (prompt, options): (String, Option<mlua::Table>)| {
-            // Guard: prevent unbounded recursive agent spawning
-            let current_depth = spawn_depth;
-            if current_depth >= MAX_SPAWN_DEPTH {
-                return Err(mlua::Error::runtime(format!(
-                    "agent.spawn depth limit exceeded (max {} levels)",
-                    MAX_SPAWN_DEPTH
-                )));
-            }
-
-            let mut config = (*config_arc).clone();
-
-            // Apply options
-            if let Some(opts) = options {
-                if let Ok(m) = opts.get("model") {
-                    config.agent.model = m;
-                }
-                if let Ok(sp) = opts.get("system_prompt") {
-                    config.agent.system_prompt = sp;
-                }
-                if let Ok(mt) = opts.get("max_turns") {
-                    config.kernel.max_turns = mt;
-                }
-                if let Ok(p) = opts.get("provider") {
-                    config.agent.provider = p;
-                }
-            }
-
-            // Increment depth for sub-kernel
-            config.kernel.initial_spawn_depth = current_depth + 1;
-
-            let clients = clients.clone();
-            let state_store = state_store.clone();
-
-            let result = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    // Create sub-kernel
-                    let mut kernel = crate::kernel::Kernel::builder(config).json_mode(false).build().map_err(|e| e.to_string())?;
-
-                    // Inject shared components
-                    kernel.clients = clients;
-                    if let Some(s) = state_store {
-                         kernel.state = Some(s);
+        agent_table.set(
+            "spawn",
+            lua.create_function(
+                move |_lua, (prompt, options): (String, Option<mlua::Table>)| {
+                    // Guard: prevent unbounded recursive agent spawning
+                    let current_depth = spawn_depth;
+                    if current_depth >= MAX_SPAWN_DEPTH {
+                        return Err(mlua::Error::runtime(format!(
+                            "agent.spawn depth limit exceeded (max {} levels)",
+                            MAX_SPAWN_DEPTH
+                        )));
                     }
 
-                    // Init harness for sub-kernel
-                    if let Err(e) = kernel.init_harness().await {
-                        return Err(format!("Sub-kernel harness init failed: {}", e));
+                    let mut config = (*config_arc).clone();
+
+                    // Apply options
+                    if let Some(opts) = options {
+                        if let Ok(m) = opts.get("model") {
+                            config.agent.model = m;
+                        }
+                        if let Ok(sp) = opts.get("system_prompt") {
+                            config.agent.system_prompt = sp;
+                        }
+                        if let Ok(mt) = opts.get("max_turns") {
+                            config.kernel.max_turns = mt;
+                        }
+                        if let Ok(p) = opts.get("provider") {
+                            config.agent.provider = p;
+                        }
                     }
 
-                    // Create session for sub-kernel
-                    let mut session = kernel.create_session().await;
+                    // Increment depth for sub-kernel
+                    config.kernel.initial_spawn_depth = current_depth + 1;
 
-                    // Run
-                    if let Err(e) = kernel.run(&mut session, Some(prompt)).await {
-                        return Err(format!("Sub-kernel run failed: {}", e));
+                    let clients = clients.clone();
+                    let store_manager = store_manager.clone();
+
+                    let result = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(async {
+                            // Create sub-kernel
+                            let mut kernel = crate::kernel::Kernel::builder(config)
+                                .json_mode(false)
+                                .build()
+                                .map_err(|e| e.to_string())?;
+
+                            // Inject shared components
+                            kernel.clients = clients;
+                            kernel.store_manager = store_manager;
+
+                            // Init harness for sub-kernel
+                            if let Err(e) = kernel.init_harness().await {
+                                return Err(format!("Sub-kernel harness init failed: {}", e));
+                            }
+
+                            // Create session for sub-kernel
+                            let mut session = kernel.create_session().await;
+
+                            // Run
+                            if let Err(e) = kernel.run(&mut session, Some(prompt)).await {
+                                return Err(format!("Sub-kernel run failed: {}", e));
+                            }
+
+                            // Extract result
+                            // Get last message from assistant
+                            if let Some(last) = session.history.last()
+                                && last.role == crate::inference::provider::InferenceRole::Assistant
+                            {
+                                // Join text content
+                                let text = last
+                                    .content
+                                    .iter()
+                                    .filter_map(|c| match c {
+                                        crate::inference::provider::InferenceContent::Text {
+                                            text,
+                                        } => Some(text.as_str()),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                return Ok(text);
+                            }
+                            Ok("".to_string())
+                        })
+                    });
+
+                    match result {
+                        Ok(s) => Ok(Some(s)),
+                        Err(e) => Err(mlua::Error::runtime(e)),
                     }
-
-                    // Extract result
-                    // Get last message from assistant
-                    if let Some(last) = session.history.last() {
-                         if last.role == crate::inference::provider::InferenceRole::Assistant {
-                             // Join text content
-                             let text = last.content.iter().filter_map(|c| match c {
-                                 crate::inference::provider::InferenceContent::Text { text } => Some(text.as_str()),
-                                 _ => None,
-                             }).collect::<Vec<_>>().join("\n");
-                             return Ok(text);
-                         }
-                    }
-                    Ok("".to_string())
-                })
-            });
-
-            match result {
-                Ok(s) => Ok(Some(s)),
-                Err(e) => Err(mlua::Error::runtime(e)),
-            }
-        })?)?;
+                },
+            )?,
+        )?;
     }
 
     turin_table.set("agent", agent_table)?;
@@ -845,7 +859,7 @@ mod tests {
         HarnessAppData {
             fs_root: dir.to_path_buf(),
             workspace_root: dir.to_path_buf(),
-            state_store: None,
+            store_manager: Arc::new(StoreManager::new(dir.to_path_buf())),
             active_session_id: Arc::new(std::sync::Mutex::new(Some("test-session".to_string()))),
             clients: HashMap::new(),
             embedding_provider: None,
@@ -960,7 +974,7 @@ mod tests {
         let app_data = HarnessAppData {
             fs_root: PathBuf::from("."),
             workspace_root: PathBuf::from("."),
-            state_store: None,
+            store_manager: Arc::new(StoreManager::new(PathBuf::from("."))),
             active_session_id: Arc::new(std::sync::Mutex::new(None)),
             clients: HashMap::new(),
             embedding_provider: None,
@@ -1008,7 +1022,7 @@ mod tests {
         let app_data = HarnessAppData {
             fs_root: PathBuf::from("."),
             workspace_root: PathBuf::from("."),
-            state_store: None,
+            store_manager: Arc::new(StoreManager::new(PathBuf::from("."))),
             active_session_id: Arc::new(std::sync::Mutex::new(None)),
             clients: HashMap::new(),
             embedding_provider: None,
@@ -1041,7 +1055,7 @@ mod tests {
         let app_data = HarnessAppData {
             fs_root: PathBuf::from("."),
             workspace_root: PathBuf::from("."),
-            state_store: None,
+            store_manager: Arc::new(StoreManager::new(PathBuf::from("."))),
             active_session_id: Arc::new(std::sync::Mutex::new(None)),
             clients: HashMap::new(),
             embedding_provider: None,
@@ -1074,8 +1088,14 @@ mod tests {
     async fn test_memory_isolation() {
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("test.db").to_str().unwrap().to_string();
-        // Initialize StateStore (this runs migrations)
-        let store = StateStore::open(&db_path).await.unwrap();
+
+        // Initialize StoreManager and get the store (runs migrations)
+        let store_manager = Arc::new(StoreManager::new(dir.path().to_path_buf()));
+        store_manager
+            .register_alias("state", &db_path)
+            .await
+            .unwrap();
+        let store = store_manager.get_default().await.unwrap();
 
         // Mock embedding provider that returns zero vector
         let embedding_provider = crate::inference::embeddings::create_embedding_provider(
@@ -1088,7 +1108,7 @@ mod tests {
         let app_data = HarnessAppData {
             fs_root: dir.path().to_path_buf(),
             workspace_root: dir.path().to_path_buf(),
-            state_store: Some(store.clone()),
+            store_manager: store_manager.clone(),
             active_session_id: active_session.clone(),
             clients: HashMap::new(),
             embedding_provider: Some(Arc::from(embedding_provider)),
