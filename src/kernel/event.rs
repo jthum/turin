@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn test_event_serialization() {
         let event = KernelEvent::Lifecycle(LifecycleEvent::SessionStart {
-            identity: RuntimeIdentity::new("test-123"),
+            identity: RuntimeIdentity::new("test-123", "default"),
         });
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"session_start\""));
@@ -197,7 +197,7 @@ mod tests {
     fn test_event_type_names() {
         assert_eq!(
             KernelEvent::Lifecycle(LifecycleEvent::SessionStart {
-                identity: RuntimeIdentity::new("x")
+                identity: RuntimeIdentity::new("x", "default")
             })
             .event_type(),
             "session_start"

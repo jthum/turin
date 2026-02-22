@@ -33,6 +33,7 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
 
     TurinConfig {
         agent: AgentConfig {
+            id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
             system_prompt: "Test assistant.".to_string(),
@@ -72,7 +73,7 @@ async fn test_session_create_starts_inactive() -> Result<()> {
     let tmp = tempdir()?;
     let kernel = make_kernel(tmp.path()).await?;
 
-    let session = kernel.create_session();
+    let session = kernel.create_session().await;
     assert_eq!(session.status, SessionStatus::Inactive);
     assert_eq!(session.turn_index, 0);
     assert!(session.history.is_empty());
@@ -89,7 +90,7 @@ async fn test_session_start_activates() -> Result<()> {
     let tmp = tempdir()?;
     let kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session();
+    let mut session = kernel.create_session().await;
     assert_eq!(session.status, SessionStatus::Inactive);
 
     kernel.start_session(&mut session).await?;
@@ -103,7 +104,7 @@ async fn test_session_end_deactivates() -> Result<()> {
     let tmp = tempdir()?;
     let kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session();
+    let mut session = kernel.create_session().await;
     kernel.start_session(&mut session).await?;
     assert_eq!(session.status, SessionStatus::Active);
 
@@ -118,7 +119,7 @@ async fn test_session_end_idempotent() -> Result<()> {
     let tmp = tempdir()?;
     let kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session();
+    let mut session = kernel.create_session().await;
     kernel.start_session(&mut session).await?;
 
     // End twice — should not panic or error
@@ -134,8 +135,8 @@ async fn test_sessions_have_unique_ids() -> Result<()> {
     let tmp = tempdir()?;
     let kernel = make_kernel(tmp.path()).await?;
 
-    let s1 = kernel.create_session();
-    let s2 = kernel.create_session();
+    let s1 = kernel.create_session().await;
+    let s2 = kernel.create_session().await;
     assert_ne!(s1.identity.session_id, s2.identity.session_id);
 
     Ok(())
@@ -148,7 +149,7 @@ async fn test_run_with_mock_increments_turns() -> Result<()> {
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session();
+    let mut session = kernel.create_session().await;
     kernel.run(&mut session, Some("Hello".to_string())).await?;
 
     assert!(
@@ -169,7 +170,7 @@ async fn test_run_populates_token_counts() -> Result<()> {
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session();
+    let mut session = kernel.create_session().await;
     kernel
         .run(&mut session, Some("Count my tokens".to_string()))
         .await?;
@@ -191,7 +192,7 @@ async fn test_harness_reload_picks_up_new_scripts() -> Result<()> {
     let mut kernel = make_kernel(tmp.path()).await?;
 
     // Initially no harness scripts — should work fine
-    let mut session = kernel.create_session();
+    let mut session = kernel.create_session().await;
     kernel
         .run(&mut session, Some("Before reload".to_string()))
         .await?;
@@ -212,7 +213,7 @@ async fn test_harness_reload_picks_up_new_scripts() -> Result<()> {
     kernel.reload_harness().await?;
 
     // Run again with new harness active
-    let mut session2 = kernel.create_session();
+    let mut session2 = kernel.create_session().await;
     kernel
         .run(&mut session2, Some("After reload".to_string()))
         .await?;
@@ -229,7 +230,7 @@ async fn test_events_persisted_to_state_store() -> Result<()> {
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session();
+    let mut session = kernel.create_session().await;
     kernel
         .run(&mut session, Some("Persist me".to_string()))
         .await?;
@@ -239,7 +240,7 @@ async fn test_events_persisted_to_state_store() -> Result<()> {
 
     // Query events from state store
     if let Some(store) = kernel.state() {
-        let events = store.get_events(&session.identity.session_id).await?;
+        let events = store.get_events(session.internal_id.unwrap()).await?;
         assert!(!events.is_empty(), "Events should be persisted");
     }
 
@@ -266,6 +267,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
 
     let config = TurinConfig {
         agent: AgentConfig {
+            id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
             system_prompt: "Test.".to_string(),
@@ -293,7 +295,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session();
+    let mut session = kernel.create_session().await;
     kernel
         .run(&mut session, Some("No persistence".to_string()))
         .await?;
@@ -308,7 +310,7 @@ async fn test_multitask_workflow_execution() -> Result<()> {
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session();
+    let mut session = kernel.create_session().await;
 
     // Manually push 2 tasks
     // (We use a scope to drop the lock)

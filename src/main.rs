@@ -173,7 +173,7 @@ async fn main() -> Result<()> {
             kernel.init_clients()?;
             kernel.init_harness().await?;
             kernel.start_watcher()?;
-            let mut session = kernel.create_session();
+            let mut session = kernel.create_session().await;
             kernel.start_session(&mut session).await?;
             kernel.run(&mut session, Some(prompt)).await?;
             kernel.end_session(&mut session).await?;
@@ -230,7 +230,7 @@ async fn main() -> Result<()> {
             }
 
             // Trigger SessionStart
-            let mut session = kernel.create_session();
+            let mut session = kernel.create_session().await;
             kernel.start_session(&mut session).await?;
 
             use turin::inference::provider::{InferenceContent, InferenceRole};
@@ -291,7 +291,7 @@ async fn main() -> Result<()> {
                                         for content in &msg.content {
                                             match content {
                                                 InferenceContent::Text { text } => {
-                                                    content_summary.push_str(text);
+                                                    content_summary.push_str(text.as_str());
                                                 }
                                                 InferenceContent::ToolUse { name, .. } => {
                                                     content_summary.push_str(&format!(

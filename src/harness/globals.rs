@@ -338,8 +338,16 @@ fn register_session_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()
                     Some(store) => {
                         let store = store.clone();
                         let result = tokio::task::block_in_place(|| {
-                            tokio::runtime::Handle::current()
-                                .block_on(async { store.get_messages(&id).await })
+                            tokio::runtime::Handle::current().block_on(async {
+                                if let Ok(public_id) = uuid::Uuid::parse_str(&id) {
+                                    if let Ok(Some(internal_id)) =
+                                        store.get_session_by_public_id(public_id).await
+                                    {
+                                        return store.get_messages(internal_id).await;
+                                    }
+                                }
+                                Ok(Vec::new())
+                            })
                         });
 
                         match result {
@@ -597,15 +605,22 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
                                     .await
                                     .map_err(|e| format!("Embedding failed: {}", e))?;
 
-                                // 2. Insert into DB
                                 if let Some(store) = &store {
-                                    let session_id =
+                                    let session_id_str =
                                         active_session.lock().unwrap().clone().ok_or_else(
                                             || "No active session context".to_string(),
                                         )?;
+                                    
+                                    let public_id = uuid::Uuid::parse_str(&session_id_str)
+                                        .map_err(|e| format!("Invalid session ID: {}", e))?;
+                                        
+                                    let internal_id = store.get_session_by_public_id(public_id).await
+                                        .map_err(|e| format!("DB lookup failed: {}", e))?
+                                        .ok_or_else(|| "Session not found in DB".to_string())?;
+
                                     store
                                         .insert_memory(
-                                            &session_id,
+                                            internal_id,
                                             &content,
                                             &embedding.vector,
                                             &metadata_json,
@@ -664,9 +679,17 @@ fn register_turin_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
                             if let Some(store) = &store {
                                 // Pass vector (if successfully generated) and query (for FTS or fallback)
                                 // We always pass Some(query) now, to allow FTS/LIKE fallback
-                                let session_id = active_session.lock().unwrap().clone()
+                                let session_id_str = active_session.lock().unwrap().clone()
                                     .ok_or_else(|| "No active session context".to_string())?;
-                                let results = store.search_memories(&session_id, vector.as_deref(), Some(&query), limit).await
+                                    
+                                let public_id = uuid::Uuid::parse_str(&session_id_str)
+                                    .map_err(|e| format!("Invalid session ID: {}", e))?;
+                                    
+                                let internal_id = store.get_session_by_public_id(public_id).await
+                                    .map_err(|e| format!("DB lookup failed: {}", e))?
+                                    .ok_or_else(|| "Session not found in DB".to_string())?;
+
+                                let results = store.search_memories(internal_id, vector.as_deref(), Some(&query), limit).await
                                     .map_err(|e| format!("DB search failed: {}", e))?;
                                 Ok(results)
                             } else {
@@ -767,7 +790,7 @@ fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
                     }
 
                     // Create session for sub-kernel
-                    let mut session = kernel.create_session();
+                    let mut session = kernel.create_session().await;
 
                     // Run
                     if let Err(e) = kernel.run(&mut session, Some(prompt)).await {
@@ -783,17 +806,12 @@ fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
                                  crate::inference::provider::InferenceContent::Text { text } => Some(text.as_str()),
                                  _ => None,
                              }).collect::<Vec<_>>().join("\n");
-                             Ok(text)
-                         } else {
-                             Ok("".to_string())
+                             return Ok(text);
                          }
-                    } else {
-                        Ok("".to_string())
                     }
+                    Ok("".to_string())
                 })
             });
-
-
 
             match result {
                 Ok(s) => Ok(Some(s)),
@@ -834,6 +852,7 @@ mod tests {
             queue: Arc::new(Mutex::new(Some(Arc::new(Mutex::new(VecDeque::new()))))),
             config: Arc::new(crate::kernel::config::TurinConfig {
                 agent: crate::kernel::config::AgentConfig {
+                    id: "default".to_string(),
                     system_prompt: "test".to_string(),
                     model: "test".to_string(),
                     provider: "openai".to_string(),
@@ -948,6 +967,7 @@ mod tests {
             queue: Arc::new(Mutex::new(Some(Arc::new(Mutex::new(VecDeque::new()))))),
             config: Arc::new(crate::kernel::config::TurinConfig {
                 agent: crate::kernel::config::AgentConfig {
+                    id: "default".to_string(),
                     system_prompt: "test".to_string(),
                     model: "test".to_string(),
                     provider: "openai".to_string(),
@@ -995,6 +1015,7 @@ mod tests {
             queue: Arc::new(Mutex::new(Some(Arc::new(Mutex::new(VecDeque::new()))))),
             config: Arc::new(crate::kernel::config::TurinConfig {
                 agent: crate::kernel::config::AgentConfig {
+                    id: "default".to_string(),
                     system_prompt: "test".to_string(),
                     model: "test".to_string(),
                     provider: "openai".to_string(),
@@ -1027,6 +1048,7 @@ mod tests {
             queue: Arc::new(Mutex::new(Some(Arc::new(Mutex::new(VecDeque::new()))))),
             config: Arc::new(crate::kernel::config::TurinConfig {
                 agent: crate::kernel::config::AgentConfig {
+                    id: "default".to_string(),
                     system_prompt: "test".to_string(),
                     model: "test".to_string(),
                     provider: "openai".to_string(),
@@ -1066,7 +1088,7 @@ mod tests {
         let app_data = HarnessAppData {
             fs_root: dir.path().to_path_buf(),
             workspace_root: dir.path().to_path_buf(),
-            state_store: Some(store),
+            state_store: Some(store.clone()),
             active_session_id: active_session.clone(),
             clients: HashMap::new(),
             embedding_provider: Some(Arc::from(embedding_provider)),
@@ -1076,10 +1098,15 @@ mod tests {
         };
         register_globals(&lua, app_data).unwrap();
 
+        let uuid_a = uuid::Uuid::now_v7();
+        let uuid_b = uuid::Uuid::now_v7();
+        store.create_session(uuid_a, "agent", None).await.unwrap();
+        store.create_session(uuid_b, "agent", None).await.unwrap();
+
         // 1. Session A stores memory
         {
             let mut lock = active_session.lock().unwrap();
-            *lock = Some("session_a".to_string());
+            *lock = Some(uuid_a.to_string());
         }
 
         lua.load(
@@ -1093,7 +1120,7 @@ mod tests {
         // 2. Session B tries to find it (should fail)
         {
             let mut lock = active_session.lock().unwrap();
-            *lock = Some("session_b".to_string());
+            *lock = Some(uuid_b.to_string());
         }
 
         let results: Table = lua
@@ -1109,7 +1136,7 @@ mod tests {
         // 3. Session A finds it
         {
             let mut lock = active_session.lock().unwrap();
-            *lock = Some("session_a".to_string());
+            *lock = Some(uuid_a.to_string());
         }
 
         let results_a: Table = lua

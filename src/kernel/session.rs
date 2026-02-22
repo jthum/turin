@@ -20,7 +20,7 @@ pub struct QueuedTask {
 impl QueuedTask {
     pub fn ad_hoc(prompt: impl Into<String>) -> Self {
         Self {
-            task_id: uuid::Uuid::new_v4().to_string(),
+            task_id: String::new(), // Assigned by SessionState
             plan_id: None,
             title: None,
             prompt: prompt.into(),
@@ -33,7 +33,7 @@ impl QueuedTask {
         title: Option<String>,
     ) -> Self {
         Self {
-            task_id: uuid::Uuid::new_v4().to_string(),
+            task_id: String::new(), // Assigned by SessionState
             plan_id: Some(plan_id.into()),
             title,
             prompt: prompt.into(),
@@ -70,6 +70,7 @@ pub enum SessionStatus {
 /// Holds the state of an active agent session.
 pub struct SessionState {
     pub identity: RuntimeIdentity,
+    pub internal_id: Option<i64>,
     pub history: Vec<InferenceMessage>,
     pub queue: Arc<Mutex<VecDeque<QueuedTask>>>,
     pub plans: HashMap<String, PlanProgress>,
@@ -77,10 +78,13 @@ pub struct SessionState {
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
     // Event channel for this session
-    pub event_tx: broadcast::Sender<(String, KernelEvent)>,
+    pub event_tx: broadcast::Sender<(Option<i64>, KernelEvent)>,
     pub event_task: Option<Arc<Mutex<Option<JoinHandle<()>>>>>,
     /// Token to cancel the background event persistence task.
     pub cancel_token: CancellationToken,
+    // Internal counters for task scheduling
+    pub next_task_id: u32,
+    pub next_plan_id: u32,
     pub status: SessionStatus,
 }
 
@@ -92,10 +96,11 @@ impl Default for SessionState {
 
 impl SessionState {
     pub fn new() -> Self {
-        let session_id = uuid::Uuid::new_v4().to_string();
+        let session_id = uuid::Uuid::now_v7().to_string();
         let (tx, _rx) = broadcast::channel(1024);
         Self {
-            identity: RuntimeIdentity::new(session_id),
+            identity: RuntimeIdentity::new(session_id, "default"),
+            internal_id: None,
             history: Vec::new(),
             queue: Arc::new(Mutex::new(VecDeque::new())),
             plans: HashMap::new(),
@@ -105,6 +110,8 @@ impl SessionState {
             event_tx: tx,
             event_task: Some(Arc::new(Mutex::new(None))),
             cancel_token: CancellationToken::new(),
+            next_task_id: 1,
+            next_plan_id: 1,
             status: SessionStatus::Inactive,
         }
     }

@@ -12,7 +12,7 @@ impl StateStore {
     /// Insert a memory with an embedding vector.
     pub async fn insert_memory(
         &self,
-        session_id: &str,
+        session_id: i64,
         content: &str,
         vector: &[f32],
         metadata: &serde_json::Value,
@@ -48,7 +48,7 @@ impl StateStore {
     /// - `content_query`: Optional keyword string for FTS search. if None, relies only on vector.
     pub async fn search_memories(
         &self,
-        session_id: &str,
+        session_id: i64,
         vector: Option<&[f32]>,
         content_query: Option<&str>,
         limit: usize,
@@ -174,7 +174,7 @@ impl StateStore {
             let terms: Vec<&str> = query.split_whitespace().collect();
             if !terms.is_empty() {
                 let mut sql = "SELECT id, session_id, content, metadata, created_at FROM memories WHERE session_id = ?1 AND (".to_string();
-                let mut params = vec![turso::Value::from(session_id.to_string())];
+                let mut params = vec![turso::Value::from(session_id)];
 
                 for (i, term) in terms.iter().enumerate() {
                     if i > 0 {

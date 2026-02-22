@@ -108,10 +108,20 @@ impl Kernel {
     }
 
     /// Create a new session.
-    pub fn create_session(&self) -> SessionState {
+    pub async fn create_session(&self) -> SessionState {
         let mut session = SessionState::new();
+        session.identity.agent_id = self.config.agent.id.clone();
+        
         // Spawn background persistence if state is available
         if let Some(ref store) = self.state {
+            // Attempt to create the session in the DB immediately to get the internal_id
+            if let Ok(public_id) = uuid::Uuid::parse_str(&session.identity.session_id) {
+                match store.create_session(public_id, &session.identity.agent_id, None).await {
+                    Ok(id) => session.internal_id = Some(id),
+                    Err(e) => tracing::warn!(error = %e, "Failed to create session row in DB"),
+                }
+            }
+
             let mut rx = session.event_tx.subscribe();
             let store_clone = store.clone();
             let cancel = session.cancel_token.clone();
@@ -124,8 +134,12 @@ impl Kernel {
                                 Ok((session_id, event)) => {
                                     let event_type = event.event_type().to_string();
                                     let payload = serde_json::to_value(&event).unwrap_or_default();
-                                    if let Err(e) = store_clone.insert_event(&session_id, &event_type, &payload).await {
-                                        warn!(error = %e, "Background persistence error");
+                                    if let Some(iid) = session_id {
+                                        if let Err(e) = store_clone.insert_event(iid, &event_type, &payload).await {
+                                            warn!(error = %e, "Background persistence error");
+                                        }
+                                    } else {
+                                        warn!("Dropping event: no internal_id for session");
                                     }
                                 }
                                 Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
@@ -255,7 +269,9 @@ impl Kernel {
         }
 
         if let Some(p) = prompt {
-            let plan_id = uuid::Uuid::new_v4().to_string();
+            let plan_id = format!("p_{}", session.next_plan_id);
+            session.next_plan_id += 1;
+            
             session.plans.insert(
                 plan_id.clone(),
                 PlanProgress {
@@ -265,12 +281,12 @@ impl Kernel {
                     completed_tasks: 0,
                 },
             );
+            
             let mut q = session.queue.lock().await;
-            q.push_back(QueuedTask::with_plan(
-                p,
-                plan_id,
-                Some("user_request".to_string()),
-            ));
+            let mut task = QueuedTask::with_plan(p, plan_id, Some("user_request".to_string()));
+            task.task_id = format!("t_{}", session.next_task_id);
+            session.next_task_id += 1;
+            q.push_back(task);
         }
 
         loop {
@@ -429,7 +445,8 @@ impl Kernel {
 
     /// Add a prompt to the end of the queue as an implicit single-task plan.
     pub async fn queue_prompt(&self, session: &mut SessionState, prompt: String) {
-        let plan_id = uuid::Uuid::new_v4().to_string();
+        let plan_id = format!("p_{}", session.next_plan_id);
+        session.next_plan_id += 1;
         session.plans.insert(
             plan_id.clone(),
             PlanProgress {
@@ -440,11 +457,10 @@ impl Kernel {
             },
         );
         let mut q = session.queue.lock().await;
-        q.push_back(QueuedTask::with_plan(
-            prompt,
-            plan_id,
-            Some("queued_prompt".to_string()),
-        ));
+        let mut task = QueuedTask::with_plan(prompt, plan_id, Some("queued_prompt".to_string()));
+        task.task_id = format!("t_{}", session.next_task_id);
+        session.next_task_id += 1;
+        q.push_back(task);
     }
 
     /// Execute a single task (one specific prompt) within the persistent session.
@@ -473,15 +489,19 @@ impl Kernel {
 
         // Persist user message
         if let Some(ref store) = self.state {
-            let _ = store
-                .insert_message(
-                    &session_id,
-                    session.turn_index,
-                    "user",
-                    &serde_json::json!([{"type": "text", "text": prompt}]),
-                    None,
-                )
-                .await;
+            if let Some(iid) = session.internal_id {
+                let _ = store
+                    .insert_message(
+                        iid,
+                        session.turn_index,
+                        "user",
+                        &serde_json::json!([{"type": "text", "text": prompt}]),
+                        None,
+                    )
+                    .await;
+            } else {
+                warn!("Session missing internal_id, skipping message persistence");
+            }
         }
 
         // Set active session for harness globals (memory etc)
@@ -848,7 +868,7 @@ impl Kernel {
 
     /// Persist an event to the state store in the background.
     #[instrument(skip(self, session, event), fields(event_type = %event.event_type()))]
-    pub fn persist_event(&self, session: &SessionState, event: &KernelEvent) {
+    pub(crate) fn persist_event(&self, session: &SessionState, event: &KernelEvent) {
         // Allow harness to observe/intercept any event
         if let Ok(harness_guard) = self.harness.lock()
             && let Some(engine) = &*harness_guard
@@ -862,21 +882,21 @@ impl Kernel {
             }
             // Note: MODIFY is ignored for general events for now to avoid complexity
         }
-        self.persist_event_internal(&session.event_tx, &session.identity.session_id, event);
+        self.persist_event_internal(&session.event_tx, session.internal_id, event);
     }
 
     /// Internal helper for persistence (used by parallel runners)
     fn persist_event_internal(
         &self,
-        tx: &broadcast::Sender<(String, KernelEvent)>,
-        session_id: &str,
+        tx: &broadcast::Sender<(Option<i64>, KernelEvent)>,
+        internal_id: Option<i64>,
         event: &KernelEvent,
     ) {
         if self.json {
             // In JSON mode, all events go to stdout as NDJSON
             println!("{}", serde_json::to_string(event).unwrap_or_default());
         }
-        if tx.send((session_id.to_string(), event.clone())).is_err() {
+        if tx.send((internal_id, event.clone())).is_err() {
             warn!("Event broadcast failed — no active receivers");
         }
     }

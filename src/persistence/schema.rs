@@ -3,14 +3,23 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 2;
+pub(crate) const SCHEMA_VERSION: u32 = 3;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
+-- Core routing and identity envelope
+CREATE TABLE IF NOT EXISTS sessions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_id  BLOB(16) UNIQUE NOT NULL,
+    agent_id   TEXT NOT NULL,
+    metadata   TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Core event log (append-only)
 CREATE TABLE IF NOT EXISTS events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id  TEXT NOT NULL,
+    session_id  INTEGER NOT NULL REFERENCES sessions(id),
     event_type  TEXT NOT NULL,
     payload     TEXT NOT NULL,
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
@@ -19,7 +28,7 @@ CREATE TABLE IF NOT EXISTS events (
 -- Message history (per session)
 CREATE TABLE IF NOT EXISTS messages (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id  TEXT NOT NULL,
+    session_id  INTEGER NOT NULL REFERENCES sessions(id),
     turn_index  INTEGER NOT NULL,
     role        TEXT NOT NULL,
     content     TEXT NOT NULL,
@@ -38,7 +47,7 @@ CREATE TABLE IF NOT EXISTS harness_kv (
 -- Tool execution log
 CREATE TABLE IF NOT EXISTS tool_executions (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id    TEXT NOT NULL,
+    session_id    INTEGER NOT NULL REFERENCES sessions(id),
     turn_index    INTEGER NOT NULL,
     tool_call_id  TEXT NOT NULL,
     tool_name     TEXT NOT NULL,
@@ -64,7 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_tool_executions_session ON tool_executions(sessio
 -- Cognitive Memory
 CREATE TABLE IF NOT EXISTS memories (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id  TEXT NOT NULL,
+    session_id  INTEGER NOT NULL REFERENCES sessions(id),
     content     TEXT NOT NULL,
     embedding   F32_BLOB(1536), 
     metadata    TEXT,
@@ -94,11 +103,21 @@ END;
 
 // ─── Row Types ───────────────────────────────────────────────
 
+/// A row from the `sessions` table.
+#[derive(Debug, Clone)]
+pub struct SessionRow {
+    pub id: i64,
+    pub public_id: Vec<u8>,
+    pub agent_id: String,
+    pub metadata: Option<String>,
+    pub created_at: String,
+}
+
 /// A row from the `events` table.
 #[derive(Debug, Clone)]
 pub struct EventRow {
     pub id: i64,
-    pub session_id: String,
+    pub session_id: i64,
     pub event_type: String,
     pub payload: String,
     pub created_at: String,
@@ -108,7 +127,7 @@ pub struct EventRow {
 #[derive(Debug, Clone)]
 pub struct MessageRow {
     pub id: i64,
-    pub session_id: String,
+    pub session_id: i64,
     pub turn_index: u32,
     pub role: String,
     pub content: String,
@@ -120,7 +139,7 @@ pub struct MessageRow {
 #[derive(Debug, Clone)]
 pub struct ToolExecutionRow {
     pub id: i64,
-    pub session_id: String,
+    pub session_id: i64,
     pub turn_index: u32,
     pub tool_call_id: String,
     pub tool_name: String,
@@ -136,7 +155,7 @@ pub struct ToolExecutionRow {
 #[derive(Debug, Clone)]
 pub struct MemoryRow {
     pub id: i64,
-    pub session_id: String,
+    pub session_id: i64,
     pub content: String,
     pub metadata: String,
     pub created_at: String,

@@ -145,12 +145,54 @@ impl StateStore {
         }
     }
 
+    // ─── Sessions ────────────────────────────────────────────────
+
+    /// Create a new session in the database, returning its internal ID.
+    pub async fn create_session(
+        &self,
+        public_id: uuid::Uuid,
+        agent_id: &str,
+        metadata: Option<&str>,
+    ) -> Result<i64> {
+        let conn = self.connect().await?;
+        let public_id_bytes = public_id.into_bytes().to_vec();
+        
+        conn.execute(
+            "INSERT INTO sessions (public_id, agent_id, metadata) VALUES (?1, ?2, ?3)",
+            turso::params![public_id_bytes, agent_id, metadata],
+        )
+        .await
+        .context("Failed to insert into sessions table")?;
+
+        let id = conn.last_insert_rowid();
+        Ok(id)
+    }
+
+    /// Retrieve a session's internal ID given its public Uuid.
+    pub async fn get_session_by_public_id(&self, public_id: uuid::Uuid) -> Result<Option<i64>> {
+        let conn = self.connect().await?;
+        let public_id_bytes = public_id.into_bytes().to_vec();
+
+        let mut rows = conn
+            .query(
+                "SELECT id FROM sessions WHERE public_id = ?1",
+                turso::params![public_id_bytes],
+            )
+            .await?;
+
+        if let Some(row) = rows.next().await? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
     // ─── Event Log ───────────────────────────────────────────────
 
     /// Persist a KernelEvent to the event log.
     pub async fn insert_event(
         &self,
-        session_id: &str,
+        session_id: i64,
         event_type: &str,
         payload: &serde_json::Value,
     ) -> Result<()> {
@@ -166,7 +208,7 @@ impl StateStore {
     }
 
     /// Get all events for a session, ordered by creation time.
-    pub async fn get_events(&self, session_id: &str) -> Result<Vec<EventRow>> {
+    pub async fn get_events(&self, session_id: i64) -> Result<Vec<EventRow>> {
         let conn = self.connect().await?;
         let mut rows = conn
             .query(
@@ -179,7 +221,7 @@ impl StateStore {
         while let Some(row) = rows.next().await? {
             events.push(EventRow {
                 id: row.get::<i64>(0)?,
-                session_id: row.get::<String>(1)?,
+                session_id: row.get::<i64>(1)?,
                 event_type: row.get::<String>(2)?,
                 payload: row.get::<String>(3)?,
                 created_at: row.get::<String>(4)?,
@@ -189,7 +231,7 @@ impl StateStore {
     }
 
     /// List recent sessions, ordered by last activity.
-    pub async fn list_sessions(&self, limit: usize, offset: usize) -> Result<Vec<String>> {
+    pub async fn list_sessions(&self, limit: usize, offset: usize) -> Result<Vec<i64>> {
         let conn = self.connect().await?;
         let mut rows = conn
             .query(
@@ -210,7 +252,7 @@ impl StateStore {
     /// Insert a message into the history.
     pub async fn insert_message(
         &self,
-        session_id: &str,
+        session_id: i64,
         turn_index: u32,
         role: &str,
         content: &serde_json::Value,
@@ -235,7 +277,7 @@ impl StateStore {
     }
 
     /// Get all messages for a session.
-    pub async fn get_messages(&self, session_id: &str) -> Result<Vec<MessageRow>> {
+    pub async fn get_messages(&self, session_id: i64) -> Result<Vec<MessageRow>> {
         let conn = self.connect().await?;
         let mut rows = conn
             .query(
@@ -248,7 +290,7 @@ impl StateStore {
         while let Some(row) = rows.next().await? {
             messages.push(MessageRow {
                 id: row.get::<i64>(0)?,
-                session_id: row.get::<String>(1)?,
+                session_id: row.get::<i64>(1)?,
                 turn_index: row.get::<i64>(2)? as u32,
                 role: row.get::<String>(3)?,
                 content: row.get::<String>(4)?,
@@ -265,7 +307,7 @@ impl StateStore {
     #[allow(clippy::too_many_arguments)]
     pub async fn insert_tool_execution(
         &self,
-        session_id: &str,
+        session_id: i64,
         turn_index: u32,
         tool_call_id: &str,
         tool_name: &str,
@@ -298,7 +340,7 @@ impl StateStore {
     }
 
     /// Get all tool executions for a session.
-    pub async fn get_tool_executions(&self, session_id: &str) -> Result<Vec<ToolExecutionRow>> {
+    pub async fn get_tool_executions(&self, session_id: i64) -> Result<Vec<ToolExecutionRow>> {
         let conn = self.connect().await?;
         let mut rows = conn
             .query(
@@ -311,7 +353,7 @@ impl StateStore {
         while let Some(row) = rows.next().await? {
             execs.push(ToolExecutionRow {
                 id: row.get::<i64>(0)?,
-                session_id: row.get::<String>(1)?,
+                session_id: row.get::<i64>(1)?,
                 turn_index: row.get::<i64>(2)? as u32,
                 tool_call_id: row.get::<String>(3)?,
                 tool_name: row.get::<String>(4)?,
@@ -413,7 +455,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_and_get_events() {
         let store = StateStore::open_memory().await.unwrap();
-        let session = "test-session-1";
+        let session = 1;
 
         store
             .insert_event(session, "session_start", &json!({"session_id": session}))
@@ -435,16 +477,16 @@ mod tests {
         let store = StateStore::open_memory().await.unwrap();
 
         store
-            .insert_event("session-a", "session_start", &json!({}))
+            .insert_event(1, "session_start", &json!({}))
             .await
             .unwrap();
         store
-            .insert_event("session-b", "session_start", &json!({}))
+            .insert_event(2, "session_start", &json!({}))
             .await
             .unwrap();
 
-        let events_a = store.get_events("session-a").await.unwrap();
-        let events_b = store.get_events("session-b").await.unwrap();
+        let events_a = store.get_events(1).await.unwrap();
+        let events_b = store.get_events(2).await.unwrap();
         assert_eq!(events_a.len(), 1);
         assert_eq!(events_b.len(), 1);
     }
@@ -452,7 +494,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_and_get_messages() {
         let store = StateStore::open_memory().await.unwrap();
-        let session = "test-session";
+        let session = 1;
 
         store
             .insert_message(
@@ -485,7 +527,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_and_get_tool_executions() {
         let store = StateStore::open_memory().await.unwrap();
-        let session = "test-session";
+        let session = 1;
 
         store
             .insert_tool_execution(
@@ -514,7 +556,7 @@ mod tests {
     #[tokio::test]
     async fn test_tool_execution_with_error() {
         let store = StateStore::open_memory().await.unwrap();
-        let session = "test-session";
+        let session = 1;
 
         store
             .insert_tool_execution(
@@ -576,7 +618,7 @@ mod tests {
         {
             let store = StateStore::open(db_path_str).await.unwrap();
             store
-                .insert_event("s1", "session_start", &json!({}))
+                .insert_event(1, "session_start", &json!({}))
                 .await
                 .unwrap();
             store.kv_set("key1", "value1").await.unwrap();
@@ -585,7 +627,7 @@ mod tests {
         // Reopen and verify persistence
         {
             let store = StateStore::open(db_path_str).await.unwrap();
-            let events = store.get_events("s1").await.unwrap();
+            let events = store.get_events(1).await.unwrap();
             assert_eq!(events.len(), 1);
 
             let val = store.kv_get("key1").await.unwrap();
@@ -617,7 +659,7 @@ mod tests {
             eprintln!("Skipping FTS portions of Hybrid Search test: FTS5 module not available.");
         }
 
-        let session = "hybrid-test";
+        let session = 1;
 
         // Insert memories
         store

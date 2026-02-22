@@ -4,22 +4,21 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeIdentity {
     pub session_id: String,
-    pub agent_id: Option<String>,
+    pub agent_id: String,
     pub user_id: Option<String>,
-    pub channel_id: Option<String>,
-    pub tenant_id: Option<String>,
     pub run_id: Option<String>,
+    #[serde(default)]
+    pub extra: std::collections::BTreeMap<String, String>,
 }
 
 impl RuntimeIdentity {
-    pub fn new(session_id: impl Into<String>) -> Self {
+    pub fn new(session_id: impl Into<String>, agent_id: impl Into<String>) -> Self {
         Self {
             session_id: session_id.into(),
-            agent_id: None,
+            agent_id: agent_id.into(),
             user_id: None,
-            channel_id: None,
-            tenant_id: None,
             run_id: None,
+            extra: std::collections::BTreeMap::new(),
         }
     }
 }

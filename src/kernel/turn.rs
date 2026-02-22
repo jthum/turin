@@ -82,7 +82,6 @@ impl Kernel {
         tool_ctx: &ToolContext,
         turn_ctx: &TurnContext,
     ) -> Result<TurnOutcome> {
-        let session_id = session.identity.session_id.clone();
 
         // Turn-local configuration
         let mut model = self.config.agent.model.clone();
@@ -387,15 +386,17 @@ impl Kernel {
                 }
                 parts
             };
-            let _ = store
-                .insert_message(
-                    &session_id,
-                    session.turn_index,
-                    "assistant",
-                    &serde_json::Value::Array(content),
-                    None,
-                )
-                .await;
+            if let Some(iid) = session.internal_id {
+                let _ = store
+                    .insert_message(
+                        iid,
+                        session.turn_index,
+                        "assistant",
+                        &serde_json::Value::Array(content),
+                        None,
+                    )
+                    .await;
+            }
         }
 
         let mut assistant_content: Vec<InferenceContent> = Vec::new();
@@ -422,7 +423,7 @@ impl Kernel {
         }
 
         // Execute tools.
-        self.execute_tool_calls(session, &session_id, tool_ctx, pending_tool_calls)
+        self.execute_tool_calls(session, tool_ctx, pending_tool_calls)
             .await
     }
 
@@ -430,7 +431,6 @@ impl Kernel {
     async fn execute_tool_calls(
         &mut self,
         session: &mut SessionState,
-        session_id: &str,
         tool_ctx: &ToolContext,
         pending_tool_calls: Vec<PendingToolCall>,
     ) -> Result<TurnOutcome> {
@@ -633,19 +633,21 @@ impl Kernel {
             );
 
             if let Some(ref store) = self.state {
-                let _ = store
-                    .insert_tool_execution(
-                        session_id,
-                        session.turn_index,
-                        &record.id,
-                        &record.name,
-                        &record.args,
-                        Some(&record.content),
-                        record.is_error,
-                        Some(record.duration_ms),
-                        &record.verdict,
-                    )
-                    .await;
+                if let Some(iid) = session.internal_id {
+                    let _ = store
+                        .insert_tool_execution(
+                            iid,
+                            session.turn_index,
+                            &record.id,
+                            &record.name,
+                            &record.args,
+                            Some(&record.content),
+                            record.is_error,
+                            Some(record.duration_ms),
+                            &record.verdict,
+                        )
+                        .await;
+                }
             }
 
             if !self.json {
@@ -688,15 +690,17 @@ impl Kernel {
                     _ => serde_json::json!({}),
                 })
                 .collect();
-            let _ = store
-                .insert_message(
-                    session_id,
-                    session.turn_index,
-                    "tool_result",
-                    &serde_json::Value::Array(result_content),
-                    None,
-                )
-                .await;
+            if let Some(iid) = session.internal_id {
+                let _ = store
+                    .insert_message(
+                        iid,
+                        session.turn_index,
+                        "tool_result",
+                        &serde_json::Value::Array(result_content),
+                        None,
+                    )
+                    .await;
+            }
         }
 
         Ok(TurnOutcome::Continue)
@@ -866,7 +870,8 @@ impl Kernel {
             0
         };
 
-        let plan_id = uuid::Uuid::new_v4().to_string();
+        let plan_id = format!("p_{}", session.next_plan_id);
+        session.next_plan_id += 1;
         session.plans.insert(
             plan_id.clone(),
             PlanProgress {
@@ -877,15 +882,20 @@ impl Kernel {
             },
         );
 
-        let queued_tasks: Vec<QueuedTask> = plan_tasks
+        let scheduled_tasks = plan_tasks
             .into_iter()
-            .map(|prompt| QueuedTask::with_plan(prompt, plan_id.clone(), Some(plan_title.clone())))
-            .collect();
+            .map(|prompt| {
+                let mut qt = QueuedTask::with_plan(prompt, plan_id.clone(), Some(plan_title.clone()));
+                qt.task_id = format!("t_{}", session.next_task_id);
+                session.next_task_id += 1;
+                qt
+            })
+            .collect::<Vec<_>>();
 
-        let queued_count = queued_tasks.len();
+        let queued_count = scheduled_tasks.len();
         {
             let mut q = session.queue.lock().await;
-            for task in queued_tasks {
+            for task in scheduled_tasks {
                 q.push_back(task);
             }
         }

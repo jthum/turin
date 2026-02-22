@@ -26,6 +26,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
 
     let config = TurinConfig {
         agent: AgentConfig {
+            id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
             system_prompt: "You are a test assistant.".to_string(),
@@ -53,7 +54,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session();
+    let mut session = kernel.create_session().await;
 
     // Run with a prompt
     kernel

@@ -118,6 +118,7 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
 
     let config = TurinConfig {
         agent: AgentConfig {
+            id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
             system_prompt: "Test".to_string(),
@@ -191,7 +192,7 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
         ProviderClient::new("mock", mock_provider),
     );
 
-    let mut session = kernel.create_session();
+    let mut session = kernel.create_session().await;
 
     // Capture events from the session broadcast
     let mut rx = session.event_tx.subscribe();
@@ -304,6 +305,7 @@ async fn test_harness_observation() -> Result<()> {
 
     let config = TurinConfig {
         agent: AgentConfig {
+            id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
             system_prompt: "Test".to_string(),
@@ -357,7 +359,7 @@ async fn test_harness_observation() -> Result<()> {
     );
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session();
+    let mut session = kernel.create_session().await;
     kernel.run(&mut session, Some("Hi".to_string())).await?;
 
     // Check KV store if it was updated by the harness
@@ -407,6 +409,7 @@ async fn test_nested_agent_spawning() -> Result<()> {
 
     let config = TurinConfig {
         agent: AgentConfig {
+            id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
             system_prompt: "Outer".to_string(),
@@ -474,7 +477,7 @@ async fn test_nested_agent_spawning() -> Result<()> {
     );
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session();
+    let mut session = kernel.create_session().await;
     kernel
         .run(&mut session, Some("trigger_nesting now".to_string()))
         .await?;
@@ -517,6 +520,7 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
 
     let config = TurinConfig {
         agent: AgentConfig {
+            id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
             system_prompt: "Recover on stream errors".to_string(),
@@ -548,7 +552,7 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
     });
     kernel.add_client("mock".to_string(), ProviderClient::new("mock", provider));
 
-    let mut session = kernel.create_session();
+    let mut session = kernel.create_session().await;
     kernel
         .run(&mut session, Some("trigger".to_string()))
         .await?;

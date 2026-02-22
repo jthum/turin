@@ -27,6 +27,9 @@ pub enum EmbeddingConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentConfig {
+    /// The identity string for the agent instance (e.g. "default", "coder", "reviewer")
+    #[serde(default = "default_agent_id")]
+    pub id: String,
     /// System prompt for the LLM
     #[serde(default = "default_system_prompt")]
     pub system_prompt: String,
@@ -133,6 +136,10 @@ pub struct ProviderConfig {
 
 fn default_system_prompt() -> String {
     "You are a helpful coding assistant.".to_string()
+}
+
+fn default_agent_id() -> String {
+    "default".to_string()
 }
 
 fn default_workspace_root() -> String {
@@ -252,6 +259,7 @@ impl TurinConfig {
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
+            id: "default".to_string(),
             system_prompt: default_system_prompt(),
             model: "test-model".to_string(),
             provider: "mock".to_string(),

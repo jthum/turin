@@ -126,6 +126,7 @@ async fn test_harness_rejection() -> Result<()> {
 
     let config = TurinConfig {
         agent: AgentConfig {
+            id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
             system_prompt: "You are a test assistant.".to_string(),
@@ -163,7 +164,7 @@ async fn test_harness_rejection() -> Result<()> {
 
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session();
+    let mut session = kernel.create_session().await;
 
     // Run the agent. The mock provider will trigger 'shell_exec'.
     // The harness should reject it.
@@ -247,6 +248,7 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
 
     let config = TurinConfig {
         agent: AgentConfig {
+            id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
             system_prompt: "Header test".to_string(),
@@ -277,7 +279,7 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
     let provider = Arc::new(HeaderCaptureProvider { seen: seen.clone() });
     kernel.add_client("mock".to_string(), ProviderClient::new("mock", provider));
 
-    let mut session = kernel.create_session();
+    let mut session = kernel.create_session().await;
     kernel
         .run(&mut session, Some("emit headers".to_string()))
         .await?;
