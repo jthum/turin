@@ -1,11 +1,13 @@
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
-use crate::harness::globals::{
-    HarnessAppData, block_on_current, kv_delete_backend, kv_get_backend, kv_set_backend,
-    memory_search_backend, memory_store_backend, normalize_selector, search_limit_from_opt,
-    table_to_selector,
-};
+use crate::harness::globals::{HarnessAppData, block_on_current};
 use crate::harness::stdlib::binding_common::memory_rows_to_lua_table;
+use crate::harness::stdlib::context_selectors::{
+    normalize_selector, search_limit_from_opt, table_to_selector,
+};
+use crate::harness::stdlib::scoped_data_backend::{
+    kv_delete_backend, kv_get_backend, kv_set_backend, memory_search_backend, memory_store_backend,
+};
 use crate::kernel::identity::ContextSelector;
 
 fn default_agent_selector(app_data: &HarnessAppData) -> LuaResult<ContextSelector> {

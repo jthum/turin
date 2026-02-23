@@ -1,17 +1,18 @@
 //! Turin-SL canonical globals injected into the Luau harness VM.
 
-use mlua::{Lua, LuaSerdeExt, MultiValue, Result as LuaResult, Table, Value};
+use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 use std::future::Future;
 use std::path::PathBuf;
 use tokio::sync::Mutex;
 
 use crate::harness::stdlib::{
-    agent_bindings, memory_kv_bindings, runtime_agent, runtime_data, runtime_db, runtime_policy,
-    session_user_aliases, system_globals,
+    agent_bindings, memory_kv_bindings, runtime_agent, runtime_context, runtime_data, runtime_db,
+    runtime_policy, session_user_aliases, system_globals,
 };
+use crate::harness::stdlib::context_selectors::table_to_selector;
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
-use crate::kernel::identity::{ContextSelector, RuntimeIdentity};
+use crate::kernel::identity::RuntimeIdentity;
 use crate::kernel::policy::PolicyScope;
 use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::{StoreManager, StoreSelector};
@@ -127,180 +128,6 @@ pub(crate) fn identity_to_lua_table(lua: &Lua, identity: &RuntimeIdentity) -> Lu
     }
     tbl.set("extra", extra)?;
     Ok(tbl)
-}
-
-pub(crate) fn normalize_selector(mut selector: ContextSelector) -> anyhow::Result<ContextSelector> {
-    if selector.namespace.trim().is_empty() {
-        selector.namespace = "default".to_string();
-    }
-    if selector.visibility.trim().is_empty() {
-        selector.visibility = "private".to_string();
-    }
-
-    let mut tags = Vec::new();
-    for tag in selector.tags {
-        let t = tag.trim();
-        if t.is_empty() {
-            continue;
-        }
-        if !t.contains(':') {
-            anyhow::bail!("invalid tag '{}': expected 'dimension:value'", t);
-        }
-        tags.push(t.to_string());
-    }
-    tags.sort();
-    tags.dedup();
-    selector.tags = tags;
-    Ok(selector)
-}
-
-pub(crate) fn table_to_selector(ctx_tbl: Table) -> LuaResult<ContextSelector> {
-    let mut tags = Vec::new();
-    if let Ok(Value::Table(tags_tbl)) = ctx_tbl.get::<Value>("tags") {
-        for pair in tags_tbl.sequence_values::<String>() {
-            tags.push(pair?);
-        }
-    }
-
-    let namespace = ctx_tbl
-        .get::<String>("namespace")
-        .unwrap_or_else(|_| "default".to_string());
-    let visibility = ctx_tbl
-        .get::<String>("visibility")
-        .unwrap_or_else(|_| "private".to_string());
-
-    let selector = ContextSelector {
-        tags,
-        namespace,
-        visibility,
-    };
-    normalize_selector(selector).map_err(mlua::Error::runtime)
-}
-
-fn selector_to_lua_table(lua: &Lua, selector: &ContextSelector) -> LuaResult<Table> {
-    let ctx = lua.create_table()?;
-    ctx.set("tags", lua.create_sequence_from(selector.tags.clone())?)?;
-    ctx.set("namespace", selector.namespace.clone())?;
-    ctx.set("visibility", selector.visibility.clone())?;
-    Ok(ctx)
-}
-
-fn context_opts_to_selector(
-    _lua: &Lua,
-    scope: &str,
-    id: Option<String>,
-    opts: Option<Table>,
-) -> LuaResult<ContextSelector> {
-    let tag = if scope == "global" {
-        format!("global:{}", id.unwrap_or_else(|| "*".to_string()))
-    } else {
-        let id = id.ok_or_else(|| {
-            mlua::Error::runtime(format!("runtime.context('{}', ...) requires an id", scope))
-        })?;
-        format!("{}:{}", scope, id)
-    };
-
-    let mut selector = ContextSelector {
-        tags: vec![tag],
-        namespace: "default".to_string(),
-        visibility: "private".to_string(),
-    };
-
-    if let Some(opts_tbl) = opts {
-        if let Ok(ns) = opts_tbl.get::<String>("namespace") {
-            selector.namespace = ns;
-        }
-        if let Ok(vis) = opts_tbl.get::<String>("visibility") {
-            selector.visibility = vis;
-        }
-    }
-
-    normalize_selector(selector).map_err(mlua::Error::runtime)
-}
-
-fn parse_context_args(lua: &Lua, args: MultiValue) -> LuaResult<ContextSelector> {
-    let mut it = args.into_iter();
-    let first = it.next().unwrap_or(Value::Nil);
-    match first {
-        Value::Table(tbl) => table_to_selector(tbl),
-        Value::String(scope) => {
-            let scope = scope.to_str()?.to_string();
-            let second = it.next().unwrap_or(Value::Nil);
-            let third = it.next().unwrap_or(Value::Nil);
-
-            let (id, opts) = match (second, third) {
-                (Value::Nil, Value::Nil) => (None, None),
-                (Value::Nil, Value::Table(opts)) => (None, Some(opts)),
-                (Value::String(id), Value::Nil) => (Some(id.to_str()?.to_string()), None),
-                (Value::String(id), Value::Table(opts)) => {
-                    (Some(id.to_str()?.to_string()), Some(opts))
-                }
-                (Value::Table(opts), Value::Nil) => (None, Some(opts)),
-                _ => {
-                    return Err(mlua::Error::runtime(
-                        "runtime.context invalid signature; expected (scope, id?, opts?) or ({tags=...})",
-                    ));
-                }
-            };
-            context_opts_to_selector(lua, &scope, id, opts)
-        }
-        _ => Err(mlua::Error::runtime(
-            "runtime.context invalid signature; expected (scope, id?, opts?) or ({tags=...})",
-        )),
-    }
-}
-
-fn selector_from_active_scope(
-    app_data: &HarnessAppData,
-    scope: &str,
-) -> anyhow::Result<ContextSelector> {
-    let identity = get_active_identity(app_data)?;
-    let selector = match scope {
-        "agent" => ContextSelector {
-            tags: vec![format!("agent:{}", identity.agent_id())],
-            namespace: "default".to_string(),
-            visibility: "private".to_string(),
-        },
-        "session" => ContextSelector {
-            tags: vec![format!("session:{}", identity.session_id())],
-            namespace: "default".to_string(),
-            visibility: "private".to_string(),
-        },
-        "user" => {
-            let user_id = identity
-                .user_id()
-                .ok_or_else(|| anyhow::anyhow!("user.* requires RuntimeIdentity.user_id"))?;
-            ContextSelector {
-                tags: vec![format!("user:{}", user_id)],
-                namespace: "default".to_string(),
-                visibility: "private".to_string(),
-            }
-        }
-        _ => anyhow::bail!("Unsupported implicit scope: {}", scope),
-    };
-    normalize_selector(selector)
-}
-
-pub(crate) fn selector_from_active_scope_lua(
-    app_data: &HarnessAppData,
-    scope: &'static str,
-) -> LuaResult<ContextSelector> {
-    selector_from_active_scope(app_data, scope).map_err(|e| mlua::Error::runtime(e.to_string()))
-}
-
-pub(crate) fn search_limit_from_opt(arg: Option<Value>) -> LuaResult<usize> {
-    match arg {
-        None | Some(Value::Nil) => Ok(5),
-        Some(Value::Integer(i)) => Ok(i.max(0) as usize),
-        Some(Value::Number(n)) => Ok(n.max(0.0) as usize),
-        Some(Value::Table(t)) => {
-            let limit = t.get::<usize>("limit").unwrap_or(5);
-            Ok(limit)
-        }
-        Some(_) => Err(mlua::Error::runtime(
-            "invalid opts; expected number limit or options table",
-        )),
-    }
 }
 
 pub(crate) fn runtime_policy_snapshot(
@@ -525,35 +352,6 @@ pub(crate) fn session_row_to_lua_table(
     Ok(t)
 }
 
-fn wildcard_match(pattern: &str, text: &str) -> bool {
-    if pattern == "*" {
-        return true;
-    }
-    let p = pattern.as_bytes();
-    let s = text.as_bytes();
-    let (mut pi, mut si, mut star_idx, mut match_idx) = (0usize, 0usize, None, 0usize);
-    while si < s.len() {
-        if pi < p.len() && (p[pi] == s[si]) {
-            pi += 1;
-            si += 1;
-        } else if pi < p.len() && p[pi] == b'*' {
-            star_idx = Some(pi);
-            match_idx = si;
-            pi += 1;
-        } else if let Some(star) = star_idx {
-            pi = star + 1;
-            match_idx += 1;
-            si = match_idx;
-        } else {
-            return false;
-        }
-    }
-    while pi < p.len() && p[pi] == b'*' {
-        pi += 1;
-    }
-    pi == p.len()
-}
-
 pub(crate) fn policy_scope_from_value(
     app_data: &HarnessAppData,
     scope: Option<Value>,
@@ -611,159 +409,9 @@ pub(crate) fn policy_scope_from_value(
     Ok(out)
 }
 
-fn visibility_allowed(selector: &ContextSelector) -> anyhow::Result<()> {
-    match selector.visibility.as_str() {
-        "private" => Ok(()),
-        "children" | "agent_group" | "all_agents" => {
-            anyhow::bail!(
-                "Policy denial: visibility '{}' not enabled",
-                selector.visibility
-            )
-        }
-        other => anyhow::bail!("Invalid visibility: {}", other),
-    }
-}
-
-async fn open_selector_store(
-    manager: &StoreManager,
-    selector: &ContextSelector,
-) -> anyhow::Result<Arc<crate::persistence::state::StateStore>> {
-    visibility_allowed(selector)?;
-    manager
-        .open(&StoreSelector::Alias(selector.to_alias()))
-        .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))
-}
-
-async fn ensure_context_memory_session(
-    store: &crate::persistence::state::StateStore,
-    selector: &ContextSelector,
-) -> anyhow::Result<i64> {
-    const KEY: &str = "__turin_context_session_public_id";
-
-    let public_id = if let Some(existing) = store.kv_get(KEY).await? {
-        uuid::Uuid::parse_str(&existing)
-            .map_err(|e| anyhow::anyhow!("Invalid stored context session UUID: {}", e))?
-    } else {
-        let new_id = uuid::Uuid::now_v7();
-        store.kv_set(KEY, &new_id.simple().to_string()).await?;
-        new_id
-    };
-
-    if let Some(id) = store.get_session_by_public_id(public_id).await? {
-        return Ok(id);
-    }
-
-    let agent_id = selector
-        .tags
-        .iter()
-        .find_map(|t| t.strip_prefix("agent:").map(ToOwned::to_owned))
-        .unwrap_or_else(|| "context".to_string());
-    let metadata = serde_json::to_string(selector).ok();
-    store
-        .create_session(public_id, &agent_id, metadata.as_deref())
-        .await
-}
-
-pub(crate) async fn kv_get_backend(
-    manager: &StoreManager,
-    selector: &ContextSelector,
-    key: &str,
-) -> anyhow::Result<Option<String>> {
-    let store = open_selector_store(manager, selector).await?;
-    store.kv_get(key).await
-}
-
-pub(crate) async fn kv_set_backend(
-    manager: &StoreManager,
-    selector: &ContextSelector,
-    key: &str,
-    value: &str,
-) -> anyhow::Result<()> {
-    let store = open_selector_store(manager, selector).await?;
-    store.kv_set(key, value).await
-}
-
-pub(crate) async fn kv_delete_backend(
-    manager: &StoreManager,
-    selector: &ContextSelector,
-    key: &str,
-) -> anyhow::Result<()> {
-    let store = open_selector_store(manager, selector).await?;
-    store.kv_delete(key).await
-}
-
-pub(crate) async fn memory_store_backend(
-    manager: &StoreManager,
-    embedding_provider: Option<&Arc<dyn EmbeddingProvider>>,
-    selector: &ContextSelector,
-    content: &str,
-    metadata: &serde_json::Value,
-) -> anyhow::Result<()> {
-    let store = open_selector_store(manager, selector).await?;
-    let session_id = ensure_context_memory_session(&store, selector).await?;
-
-    let provider =
-        embedding_provider.ok_or_else(|| anyhow::anyhow!("No embedding provider configured"))?;
-    let emb = provider.embed(content).await?;
-    store
-        .insert_memory(session_id, content, &emb.vector, metadata)
-        .await
-}
-
-pub(crate) async fn memory_search_backend(
-    manager: &StoreManager,
-    embedding_provider: Option<&Arc<dyn EmbeddingProvider>>,
-    selector: &ContextSelector,
-    query: &str,
-    limit: usize,
-) -> anyhow::Result<Vec<crate::persistence::schema::MemoryRow>> {
-    let store = open_selector_store(manager, selector).await?;
-    let session_id = ensure_context_memory_session(&store, selector).await?;
-
-    let vector = if let Some(provider) = embedding_provider {
-        provider.embed(query).await.ok().map(|emb| emb.vector)
-    } else {
-        None
-    };
-
-    store
-        .search_memories(session_id, vector.as_deref(), Some(query), limit)
-        .await
-}
-
 fn register_runtime_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
     let runtime_table = lua.create_table()?;
-    let context_ns = lua.create_table()?;
-    {
-        let manager = app_data.store_manager.clone();
-        context_ns.set(
-            "glob",
-            lua.create_function(move |lua, pattern: String| {
-                let manager = manager.clone();
-                let aliases = block_on_current(async move { manager.list_aliases().await });
-                let out = lua.create_table()?;
-                let mut idx = 1;
-                for alias in aliases {
-                    if wildcard_match(&pattern, &alias) {
-                        out.set(idx, alias)?;
-                        idx += 1;
-                    }
-                }
-                Ok((Value::Table(out), Value::Nil))
-            })?,
-        )?;
-    }
-    let context_meta = lua.create_table()?;
-    context_meta.set(
-        "__call",
-        lua.create_function(|lua, (_self, args): (Value, MultiValue)| {
-            let selector = parse_context_args(lua, args)?;
-            Ok(Value::Table(selector_to_lua_table(lua, &selector)?))
-        })?,
-    )?;
-    let _ = context_ns.set_metatable(Some(context_meta));
-    runtime_table.set("context", context_ns)?;
+    runtime_context::register_runtime_context_namespace(lua, &runtime_table, app_data)?;
 
     runtime_data::register_runtime_data_namespaces(lua, &runtime_table, app_data)?;
 

@@ -1,11 +1,12 @@
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
-use crate::harness::globals::{
-    HarnessAppData, block_on_current, kv_delete_backend, kv_get_backend, kv_set_backend,
-    memory_search_backend, memory_store_backend, search_limit_from_opt, table_to_selector,
-};
+use crate::harness::globals::{HarnessAppData, block_on_current};
 use crate::harness::stdlib::binding_common::{
     bool_err, memory_rows_to_lua_table, nil_err, ok_bool, ok_value, string_ok,
+};
+use crate::harness::stdlib::context_selectors::{search_limit_from_opt, table_to_selector};
+use crate::harness::stdlib::scoped_data_backend::{
+    kv_delete_backend, kv_get_backend, kv_set_backend, memory_search_backend, memory_store_backend,
 };
 
 pub fn register_runtime_data_namespaces(
