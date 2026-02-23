@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
 /// Routing identity envelope used across session/task/event boundaries.
@@ -20,5 +21,33 @@ impl RuntimeIdentity {
             run_id: None,
             extra: std::collections::BTreeMap::new(),
         }
+    }
+
+    pub fn verify_access(&self, selector: &ContextSelector) -> Result<()> {
+        // v1 simplistic policy
+        if selector.visibility == "private" {
+            let agent_tag = format!("agent:{}", self.agent_id);
+            if !selector.tags.contains(&agent_tag) {
+                return Err(anyhow!("Policy denial: Agent {} lacks private access to contexts outside its own tags.", self.agent_id));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContextSelector {
+    pub tags: Vec<String>,
+    pub namespace: String,
+    pub visibility: String,
+}
+
+impl ContextSelector {
+    /// Maps the context selector to a logical database alias string.
+    pub fn to_alias(&self) -> String {
+        // Extremely simple v1 translation: just join sorted tags + namespace
+        let mut sorted_tags = self.tags.clone();
+        sorted_tags.sort();
+        format!("{}__{}", sorted_tags.join("_"), self.namespace)
     }
 }
