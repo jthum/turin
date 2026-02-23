@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use tokio::sync::Mutex;
 
 use crate::harness::stdlib::{
-    memory_kv_bindings, runtime_data, session_user_aliases, system_globals,
+    memory_kv_bindings, runtime_agent, runtime_data, runtime_policy, session_user_aliases,
+    system_globals,
 };
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
@@ -302,7 +303,7 @@ pub(crate) fn search_limit_from_opt(arg: Option<Value>) -> LuaResult<usize> {
     }
 }
 
-fn runtime_policy_snapshot(
+pub(crate) fn runtime_policy_snapshot(
     app_data: &HarnessAppData,
 ) -> anyhow::Result<HashMap<String, serde_json::Value>> {
     let mut scope = PolicyScope::default();
@@ -318,7 +319,11 @@ fn runtime_policy_snapshot(
     }))
 }
 
-fn policy_bool(snapshot: &HashMap<String, serde_json::Value>, key: &str, default: bool) -> bool {
+pub(crate) fn policy_bool(
+    snapshot: &HashMap<String, serde_json::Value>,
+    key: &str,
+    default: bool,
+) -> bool {
     snapshot
         .get(key)
         .and_then(|v| v.as_bool())
@@ -545,7 +550,7 @@ fn wildcard_match(pattern: &str, text: &str) -> bool {
     pi == p.len()
 }
 
-fn policy_scope_from_value(
+pub(crate) fn policy_scope_from_value(
     app_data: &HarnessAppData,
     scope: Option<Value>,
 ) -> LuaResult<PolicyScope> {
@@ -1011,186 +1016,8 @@ fn register_runtime_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()
     }
     runtime_table.set("db", runtime_db)?;
 
-    // runtime.agent.* peer agent orchestration
-    let runtime_agent = lua.create_table()?;
-    {
-        let manager = app_data.agent_manager.clone();
-        runtime_agent.set(
-            "list",
-            lua.create_function(move |lua, ()| {
-                let manager = manager.clone();
-                let statuses = block_on_current(async move { manager.list_statuses().await });
-                let lua_v = lua
-                    .to_value(&statuses)
-                    .map_err(|e| mlua::Error::runtime(e.to_string()))?;
-                Ok((lua_v, Value::Nil))
-            })?,
-        )?;
-    }
-    {
-        let manager = app_data.agent_manager.clone();
-        runtime_agent.set(
-            "get_status",
-            lua.create_function(move |lua, agent_id: String| {
-                let manager = manager.clone();
-                let status = block_on_current(async move { manager.get_status(&agent_id).await });
-                match status {
-                    Some(s) => {
-                        let lua_v = lua
-                            .to_value(&s)
-                            .map_err(|e| mlua::Error::runtime(e.to_string()))?;
-                        Ok((lua_v, Value::Nil))
-                    }
-                    None => Ok((
-                        Value::Nil,
-                        Value::String(lua.create_string("unknown agent")?),
-                    )),
-                }
-            })?,
-        )?;
-    }
-    {
-        let manager = app_data.agent_manager.clone();
-        let app_data_snapshot = app_data.clone();
-        runtime_agent.set(
-            "submit",
-            lua.create_function(
-                move |lua, (agent_id, task_val, _opts): (String, Value, Option<Table>)| {
-                    let snapshot = runtime_policy_snapshot(&app_data_snapshot)
-                        .map_err(mlua::Error::runtime)?;
-                    if !policy_bool(&snapshot, "spawn.enabled", true) {
-                        return Ok((
-                            Value::Nil,
-                            Value::String(lua.create_string("Policy denial: spawn.enabled=false")?),
-                        ));
-                    }
-
-                    let task = match task_val {
-                        Value::String(s) => QueuedTask::ad_hoc(s.to_str()?.to_string()),
-                        Value::Table(t) => {
-                            let prompt = t.get::<String>("prompt").map_err(|_| {
-                                mlua::Error::runtime(
-                                    "runtime.agent.submit task table requires prompt",
-                                )
-                            })?;
-                            let mut task = QueuedTask::ad_hoc(prompt);
-                            if let Ok(title) = t.get::<String>("title") {
-                                task.title = Some(title);
-                            }
-                            task
-                        }
-                        _ => {
-                            return Ok((
-                                Value::Nil,
-                                Value::String(lua.create_string(
-                                    "invalid task; expected string or {prompt=...}",
-                                )?),
-                            ));
-                        }
-                    };
-
-                    let manager = manager.clone();
-                    let result = block_on_current(async move {
-                        manager
-                            .submit(&agent_id, task)
-                            .await
-                            .map_err(|e| e.to_string())
-                    });
-                    match result {
-                        Ok(task_id) => {
-                            Ok((Value::String(lua.create_string(&task_id)?), Value::Nil))
-                        }
-                        Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
-                    }
-                },
-            )?,
-        )?;
-    }
-    {
-        let manager = app_data.agent_manager.clone();
-        runtime_agent.set(
-            "await",
-            lua.create_function(move |lua, (task_id, opts): (String, Option<Table>)| {
-                let timeout_ms = opts.as_ref().and_then(|t| t.get::<u64>("timeout_ms").ok());
-                let manager = manager.clone();
-                let result = block_on_current(async move {
-                    manager
-                        .await_result(&task_id, timeout_ms)
-                        .await
-                        .map_err(|e| e.to_string())
-                });
-                match result {
-                    Ok(res) => {
-                        let lua_v = lua
-                            .to_value(&res)
-                            .map_err(|e| mlua::Error::runtime(e.to_string()))?;
-                        Ok((lua_v, Value::Nil))
-                    }
-                    Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
-                }
-            })?,
-        )?;
-    }
-    runtime_table.set("agent", runtime_agent)?;
-    let policy_table = lua.create_table()?;
-    {
-        let policy_manager = app_data.policy_manager.clone();
-        let app_data_snapshot = app_data.clone();
-        policy_table.set(
-            "get",
-            lua.create_function(move |lua, (key, scope): (String, Option<Value>)| {
-                let scope = policy_scope_from_value(&app_data_snapshot, scope)?;
-                let policy_manager = policy_manager.clone();
-                let result = block_on_current(async move {
-                    policy_manager
-                        .get(&key, &scope)
-                        .await
-                        .map_err(|e| e.to_string())
-                });
-
-                match result {
-                    Ok(Some(v)) => {
-                        let lua_v = lua
-                            .to_value(&v)
-                            .map_err(|e| mlua::Error::runtime(e.to_string()))?;
-                        Ok((lua_v, Value::Nil))
-                    }
-                    Ok(None) => Ok((Value::Nil, Value::Nil)),
-                    Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
-                }
-            })?,
-        )?;
-    }
-    {
-        let policy_manager = app_data.policy_manager.clone();
-        let app_data_snapshot = app_data.clone();
-        policy_table.set(
-            "set",
-            lua.create_function(
-                move |lua, (key, value, scope): (String, Value, Option<Value>)| {
-                    let scope = policy_scope_from_value(&app_data_snapshot, scope)?;
-                    let json_value = lua.from_value::<serde_json::Value>(value).map_err(|e| {
-                        mlua::Error::runtime(format!("invalid policy value: {}", e))
-                    })?;
-                    let policy_manager = policy_manager.clone();
-                    let result = block_on_current(async move {
-                        policy_manager
-                            .set(&key, json_value, &scope)
-                            .await
-                            .map_err(|e| e.to_string())
-                    });
-                    match result {
-                        Ok(()) => Ok((Value::Boolean(true), Value::Nil)),
-                        Err(err) => Ok((
-                            Value::Boolean(false),
-                            Value::String(lua.create_string(&err)?),
-                        )),
-                    }
-                },
-            )?,
-        )?;
-    }
-    runtime_table.set("policy", policy_table)?;
+    runtime_agent::register_runtime_agent_namespace(lua, &runtime_table, app_data)?;
+    runtime_policy::register_runtime_policy_namespace(lua, &runtime_table, app_data)?;
 
     lua.globals().set("runtime", runtime_table)?;
     Ok(())
