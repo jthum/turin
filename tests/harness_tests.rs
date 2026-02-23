@@ -132,6 +132,7 @@ async fn test_harness_rejection() -> Result<()> {
             system_prompt: "You are a test assistant.".to_string(),
             thinking: None,
         },
+        agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 5,
@@ -254,6 +255,7 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
             system_prompt: "Header test".to_string(),
             thinking: None,
         },
+        agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 2,

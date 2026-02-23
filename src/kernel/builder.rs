@@ -4,7 +4,7 @@ use std::sync::Arc;
 // Mutex removed
 
 use crate::inference::embeddings::EmbeddingProvider;
-use crate::kernel::{Kernel, TurinConfig};
+use crate::kernel::{agent_manager::AgentManager, Kernel, TurinConfig};
 use crate::persistence::manager::StoreManager;
 use crate::tools::builtins::create_default_registry;
 use crate::tools::registry::ToolRegistry;
@@ -45,11 +45,14 @@ impl RuntimeBuilder {
     /// Build the Kernel.
     pub fn build(self) -> Result<Kernel> {
         let store_manager = Arc::new(StoreManager::new(&self.config.kernel.workspace_root));
+        let config_arc = Arc::new(self.config);
+        let agent_manager = Arc::new(AgentManager::new(config_arc.clone(), store_manager.clone()));
         Ok(Kernel {
-            config: Arc::new(self.config),
+            config: config_arc,
             json: self.json,
             tool_registry: self.tool_registry,
             store_manager,
+            agent_manager,
             harness: Arc::new(std::sync::Mutex::new(None)),
             check_watcher: None,
             clients: HashMap::new(),

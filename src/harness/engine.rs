@@ -411,6 +411,7 @@ mod tests {
             fs_root: PathBuf::from("."),
             workspace_root: PathBuf::from("."),
             store_manager: Arc::new(StoreManager::new(PathBuf::from("."))),
+            agent_manager: Arc::new(crate::kernel::agent_manager::AgentManager::new(std::sync::Arc::new(crate::kernel::config::TurinConfig::default()), Arc::new(StoreManager::new(PathBuf::from("."))))),
             clients: std::collections::HashMap::new(),
             embedding_provider: None,
             queue: std::sync::Arc::new(tokio::sync::Mutex::new(Some(std::sync::Arc::new(

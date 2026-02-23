@@ -1,3 +1,4 @@
+pub mod agent_manager;
 pub mod builder;
 pub mod config;
 pub mod event;
@@ -7,6 +8,7 @@ pub mod session;
 mod turn;
 
 use anyhow::{Context, Result};
+use agent_manager::AgentManager;
 use builder::RuntimeBuilder;
 use config::TurinConfig;
 use event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
@@ -41,6 +43,7 @@ pub struct Kernel {
     pub(crate) json: bool,
     pub(crate) tool_registry: ToolRegistry,
     pub(crate) store_manager: Arc<StoreManager>,
+    pub(crate) agent_manager: Arc<AgentManager>,
     /// Thread-safe harness engine for hot-reloading
     pub(crate) harness: Arc<std::sync::Mutex<Option<HarnessEngine>>>,
     /// Watcher handle to keep it alive

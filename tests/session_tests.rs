@@ -39,6 +39,7 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
             system_prompt: "Test assistant.".to_string(),
             thinking: None,
         },
+        agents: std::collections::HashMap::new(),
         kernel: KernelConfig {
             workspace_root: tmp.to_str().unwrap().to_string(),
             max_turns: 5,
@@ -273,6 +274,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
             system_prompt: "Test.".to_string(),
             thinking: None,
         },
+        agents: std::collections::HashMap::new(),
         kernel: KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 3,

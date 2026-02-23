@@ -31,6 +31,7 @@ pub struct HarnessAppData {
     pub fs_root: PathBuf,
     pub workspace_root: PathBuf,
     pub store_manager: Arc<StoreManager>,
+    pub agent_manager: Arc<crate::kernel::agent_manager::AgentManager>,
     pub active_session_id: Arc<std::sync::Mutex<Option<String>>>,
     pub clients: HashMap<String, ProviderClient>,
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
@@ -834,6 +835,31 @@ fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
         )?;
     }
 
+    // turin.agent.send(agent_id, prompt) -> nil
+    {
+        let agent_manager = app_data.agent_manager.clone();
+        agent_table.set(
+            "send",
+            lua.create_function(move |_lua, (agent_id, prompt): (String, String)| -> LuaResult<()> {
+                let agent_manager = agent_manager.clone();
+                let result = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        // Create a fire-and-forget task
+                        let task = QueuedTask::ad_hoc(prompt);
+                        
+                        agent_manager.send(&agent_id, task).await
+                    })
+                });
+
+                if let Err(e) = result {
+                    return Err(mlua::Error::runtime(format!("peer agent send failed: {}", e)));
+                }
+
+                Ok(())
+            })?
+        )?;
+    }
+
     turin_table.set("agent", agent_table)?;
     Ok(())
 }
@@ -860,6 +886,7 @@ mod tests {
             fs_root: dir.to_path_buf(),
             workspace_root: dir.to_path_buf(),
             store_manager: Arc::new(StoreManager::new(dir.to_path_buf())),
+            agent_manager: Arc::new(crate::kernel::agent_manager::AgentManager::new(Arc::new(crate::kernel::config::TurinConfig::default()), Arc::new(StoreManager::new(dir.to_path_buf())))),
             active_session_id: Arc::new(std::sync::Mutex::new(Some("test-session".to_string()))),
             clients: HashMap::new(),
             embedding_provider: None,
@@ -872,6 +899,7 @@ mod tests {
                     provider: "openai".to_string(),
                     thinking: None,
                 },
+                agents: std::collections::HashMap::new(),
                 kernel: crate::kernel::config::KernelConfig::default(),
                 persistence: crate::kernel::config::PersistenceConfig::default(),
                 harness: crate::kernel::config::HarnessConfig::default(),
@@ -975,6 +1003,7 @@ mod tests {
             fs_root: PathBuf::from("."),
             workspace_root: PathBuf::from("."),
             store_manager: Arc::new(StoreManager::new(PathBuf::from("."))),
+            agent_manager: Arc::new(crate::kernel::agent_manager::AgentManager::new(Arc::new(crate::kernel::config::TurinConfig::default()), Arc::new(StoreManager::new(PathBuf::from("."))))),
             active_session_id: Arc::new(std::sync::Mutex::new(None)),
             clients: HashMap::new(),
             embedding_provider: None,
@@ -987,6 +1016,7 @@ mod tests {
                     provider: "openai".to_string(),
                     thinking: None,
                 },
+                agents: std::collections::HashMap::new(),
                 kernel: crate::kernel::config::KernelConfig::default(),
                 persistence: crate::kernel::config::PersistenceConfig::default(),
                 harness: crate::kernel::config::HarnessConfig::default(),
@@ -1023,6 +1053,7 @@ mod tests {
             fs_root: PathBuf::from("."),
             workspace_root: PathBuf::from("."),
             store_manager: Arc::new(StoreManager::new(PathBuf::from("."))),
+            agent_manager: Arc::new(crate::kernel::agent_manager::AgentManager::new(Arc::new(crate::kernel::config::TurinConfig::default()), Arc::new(StoreManager::new(PathBuf::from("."))))),
             active_session_id: Arc::new(std::sync::Mutex::new(None)),
             clients: HashMap::new(),
             embedding_provider: None,
@@ -1035,6 +1066,7 @@ mod tests {
                     provider: "openai".to_string(),
                     thinking: None,
                 },
+                agents: std::collections::HashMap::new(),
                 kernel: crate::kernel::config::KernelConfig::default(),
                 persistence: crate::kernel::config::PersistenceConfig::default(),
                 harness: crate::kernel::config::HarnessConfig::default(),
@@ -1056,6 +1088,7 @@ mod tests {
             fs_root: PathBuf::from("."),
             workspace_root: PathBuf::from("."),
             store_manager: Arc::new(StoreManager::new(PathBuf::from("."))),
+            agent_manager: Arc::new(crate::kernel::agent_manager::AgentManager::new(Arc::new(crate::kernel::config::TurinConfig::default()), Arc::new(StoreManager::new(PathBuf::from("."))))),
             active_session_id: Arc::new(std::sync::Mutex::new(None)),
             clients: HashMap::new(),
             embedding_provider: None,
@@ -1068,6 +1101,7 @@ mod tests {
                     provider: "openai".to_string(),
                     thinking: None,
                 },
+                agents: std::collections::HashMap::new(),
                 kernel: crate::kernel::config::KernelConfig::default(),
                 persistence: crate::kernel::config::PersistenceConfig::default(),
                 harness: crate::kernel::config::HarnessConfig::default(),
@@ -1109,6 +1143,7 @@ mod tests {
             fs_root: dir.path().to_path_buf(),
             workspace_root: dir.path().to_path_buf(),
             store_manager: store_manager.clone(),
+            agent_manager: Arc::new(crate::kernel::agent_manager::AgentManager::new(Arc::new(crate::kernel::config::TurinConfig::default()), store_manager.clone())),
             active_session_id: active_session.clone(),
             clients: HashMap::new(),
             embedding_provider: Some(Arc::from(embedding_provider)),

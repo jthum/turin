@@ -32,6 +32,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
             system_prompt: "You are a test assistant.".to_string(),
             thinking: None,
         },
+        agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 5,

@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct TurinConfig {
     pub agent: AgentConfig,
+    /// Optional map of additional peer agents that can be orchestrated by the `AgentManager`
+    #[serde(default)]
+    pub agents: std::collections::HashMap<String, AgentConfig>,
     #[serde(default)]
     pub kernel: KernelConfig,
     #[serde(default)]

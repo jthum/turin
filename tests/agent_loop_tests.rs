@@ -124,6 +124,7 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
             system_prompt: "Test".to_string(),
             thinking: None,
         },
+        agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 5,
@@ -311,6 +312,7 @@ async fn test_harness_observation() -> Result<()> {
             system_prompt: "Test".to_string(),
             thinking: None,
         },
+        agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
@@ -415,6 +417,7 @@ async fn test_nested_agent_spawning() -> Result<()> {
             system_prompt: "Outer".to_string(),
             thinking: None,
         },
+        agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
@@ -526,6 +529,7 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
             system_prompt: "Recover on stream errors".to_string(),
             thinking: None,
         },
+        agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 3,
