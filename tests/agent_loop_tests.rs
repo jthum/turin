@@ -286,8 +286,10 @@ async fn test_harness_observation() -> Result<()> {
     let harness_code = r#"
         function on_kernel_event(event)
             if event.type == "message_delta" then
-                local current = db.kv_get("observed_tokens") or ""
-                db.kv_set("observed_tokens", current .. event.content_delta)
+                local k = kv.as({namespace="state"})
+                local _, current = k.get("observed_tokens")
+                current = current or ""
+                k.set("observed_tokens", current .. event.content_delta)
             end
             return ALLOW
         end
@@ -367,7 +369,7 @@ async fn test_harness_observation() -> Result<()> {
     kernel.run(&mut session, Some("Hi".to_string())).await?;
 
     // Check KV store if it was updated by the harness
-    if let Ok(store) = kernel.store_manager().get_default().await {
+    if let Ok(store) = kernel.store_manager().open(&turin::persistence::manager::StoreSelector::Alias("__state".to_string())).await {
         let val: Option<String> = store.kv_get("observed_tokens").await?;
         assert_eq!(val, Some("Hello World".to_string()));
     }
@@ -387,13 +389,13 @@ async fn test_nested_agent_spawning() -> Result<()> {
     let harness_code = r#"
         function on_turn_prepare(ctx)
             if ctx.prompt and ctx.prompt:find("trigger_nesting") then
-                -- Sub-agent will write to DB
                 local result = turin.agent.spawn("nest_inner_work")
                 ctx.prompt = "Sub-agent result: " .. result
                 return ALLOW
             end
             if ctx.prompt and ctx.prompt:find("nest_inner_work") then
-                db.kv_set("nested_executed", "true")
+                local k = kv.as({namespace="state"})
+                k.set("nested_executed", "true")
             end
             return ALLOW
         end
@@ -489,7 +491,8 @@ async fn test_nested_agent_spawning() -> Result<()> {
         .await?;
 
     // Verify sub-agent work happened (observed via shared DB)
-    if let Ok(store) = kernel.store_manager().get_default().await {
+    // Verify sub-agent work happened (observed via shared DB)
+    if let Ok(store) = kernel.store_manager().open(&turin::persistence::manager::StoreSelector::Alias("__state".to_string())).await {
         let val: Option<String> = store.kv_get("nested_executed").await?;
         assert_eq!(val, Some("true".to_string()));
     }
@@ -507,7 +510,8 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
 
     let harness_code = r#"
         function on_inference_error(event)
-            db.kv_set("last_inference_error", tostring(event.error))
+            local k = kv.as({namespace="state"})
+            k.set("last_inference_error", tostring(event.error))
             return MODIFY, { "retry with fallback task" }
         end
     "#;
