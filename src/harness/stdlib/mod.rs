@@ -1,3 +1,4 @@
+pub mod agent_bindings;
 pub mod binding_common;
 pub mod memory_kv_bindings;
 pub mod runtime_agent;
