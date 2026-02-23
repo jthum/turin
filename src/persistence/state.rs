@@ -187,6 +187,56 @@ impl StateStore {
         }
     }
 
+    /// Retrieve a full session row by internal ID.
+    pub async fn get_session_row(&self, session_id: i64) -> Result<Option<SessionRow>> {
+        let conn = self.connect().await?;
+        let mut rows = conn
+            .query(
+                "SELECT id, public_id, agent_id, metadata, created_at FROM sessions WHERE id = ?1",
+                [session_id],
+            )
+            .await?;
+
+        if let Some(row) = rows.next().await? {
+            Ok(Some(SessionRow {
+                id: row.get::<i64>(0)?,
+                public_id: row.get::<Vec<u8>>(1)?,
+                agent_id: row.get::<String>(2)?,
+                metadata: row.get::<Option<String>>(3)?,
+                created_at: row.get::<String>(4)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Retrieve a full session row by public UUID.
+    pub async fn get_session_row_by_public_id(
+        &self,
+        public_id: uuid::Uuid,
+    ) -> Result<Option<SessionRow>> {
+        let conn = self.connect().await?;
+        let public_id_bytes = public_id.into_bytes().to_vec();
+        let mut rows = conn
+            .query(
+                "SELECT id, public_id, agent_id, metadata, created_at FROM sessions WHERE public_id = ?1",
+                turso::params![public_id_bytes],
+            )
+            .await?;
+
+        if let Some(row) = rows.next().await? {
+            Ok(Some(SessionRow {
+                id: row.get::<i64>(0)?,
+                public_id: row.get::<Vec<u8>>(1)?,
+                agent_id: row.get::<String>(2)?,
+                metadata: row.get::<Option<String>>(3)?,
+                created_at: row.get::<String>(4)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
     // ─── Event Log ───────────────────────────────────────────────
 
     /// Persist a KernelEvent to the event log.
@@ -243,6 +293,36 @@ impl StateStore {
         let mut sessions = Vec::new();
         while let Some(row) = rows.next().await? {
             sessions.push(row.get(0)?);
+        }
+        Ok(sessions)
+    }
+
+    /// List recent session rows ordered by last activity.
+    pub async fn list_session_rows(&self, limit: usize, offset: usize) -> Result<Vec<SessionRow>> {
+        let conn = self.connect().await?;
+        let mut rows = conn
+            .query(
+                r#"
+                SELECT s.id, s.public_id, s.agent_id, s.metadata, s.created_at
+                FROM sessions s
+                LEFT JOIN events e ON e.session_id = s.id
+                GROUP BY s.id
+                ORDER BY COALESCE(MAX(e.id), s.id) DESC
+                LIMIT ?1 OFFSET ?2
+                "#,
+                turso::params![limit as i64, offset as i64],
+            )
+            .await?;
+
+        let mut sessions = Vec::new();
+        while let Some(row) = rows.next().await? {
+            sessions.push(SessionRow {
+                id: row.get::<i64>(0)?,
+                public_id: row.get::<Vec<u8>>(1)?,
+                agent_id: row.get::<String>(2)?,
+                metadata: row.get::<Option<String>>(3)?,
+                created_at: row.get::<String>(4)?,
+            });
         }
         Ok(sessions)
     }

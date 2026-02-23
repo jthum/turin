@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -79,6 +79,8 @@ pub struct SessionState {
     pub total_output_tokens: u64,
     // Event channel for this session
     pub event_tx: broadcast::Sender<(Option<i64>, KernelEvent)>,
+    /// Reliable durability lane (separate from observer fanout).
+    pub durability_tx: Option<mpsc::UnboundedSender<(Option<i64>, KernelEvent)>>,
     pub event_task: Option<Arc<Mutex<Option<JoinHandle<()>>>>>,
     /// Token to cancel the background event persistence task.
     pub cancel_token: CancellationToken,
@@ -97,7 +99,7 @@ impl Default for SessionState {
 
 impl SessionState {
     pub fn new() -> Self {
-        let session_id = uuid::Uuid::now_v7().to_string();
+        let session_id = uuid::Uuid::now_v7().simple().to_string();
         let (tx, _rx) = broadcast::channel(1024);
         Self {
             identity: RuntimeIdentity::new(session_id, "default"),
@@ -109,6 +111,7 @@ impl SessionState {
             total_input_tokens: 0,
             total_output_tokens: 0,
             event_tx: tx,
+            durability_tx: None,
             event_task: Some(Arc::new(Mutex::new(None))),
             cancel_token: CancellationToken::new(),
             next_task_id: 1,

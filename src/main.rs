@@ -254,7 +254,7 @@ async fn main() -> Result<()> {
                                     println!("\n\x1b[36m\x1b[1m── Session Status ──\x1b[0m");
                                     println!(
                                         "  \x1b[1mSession ID:\x1b[0m {}",
-                                        session.identity.session_id
+                                        session.identity.session_id()
                                     );
                                     println!(
                                         "  \x1b[1mProvider:\x1b[0m   {}",

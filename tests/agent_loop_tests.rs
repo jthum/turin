@@ -14,6 +14,16 @@ use turin::kernel::config::{
     AgentConfig, EmbeddingConfig, HarnessConfig, PersistenceConfig, ProviderConfig, TurinConfig,
 };
 use turin::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent, StreamEvent};
+use turin::kernel::identity::ContextSelector;
+
+fn project_state_selector() -> ContextSelector {
+    ContextSelector {
+        tags: vec!["project:state".to_string()],
+        namespace: "default".to_string(),
+        visibility: "private".to_string(),
+    }
+}
+
 
 /// A mock provider that returns a text response followed by a tool call in the next turn.
 struct SequenceMockProvider {
@@ -124,6 +134,8 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
             system_prompt: "Test".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
+        harness_dir: None,
+        idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -286,8 +298,8 @@ async fn test_harness_observation() -> Result<()> {
     let harness_code = r#"
         function on_kernel_event(event)
             if event.type == "message_delta" then
-                local k = kv.as({namespace="state"})
-                local _, current = k.get("observed_tokens")
+                local k = kv.as(runtime.context("project", "state"))
+                local current, _ = k.get("observed_tokens")
                 current = current or ""
                 k.set("observed_tokens", current .. event.content_delta)
             end
@@ -315,6 +327,8 @@ async fn test_harness_observation() -> Result<()> {
             system_prompt: "Test".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
+        harness_dir: None,
+        idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -368,11 +382,15 @@ async fn test_harness_observation() -> Result<()> {
     let mut session = kernel.create_session().await;
     kernel.run(&mut session, Some("Hi".to_string())).await?;
 
-    // Check KV store if it was updated by the harness
-    if let Ok(store) = kernel.store_manager().open(&turin::persistence::manager::StoreSelector::Alias("__state".to_string())).await {
-        let val: Option<String> = store.kv_get("observed_tokens").await?;
-        assert_eq!(val, Some("Hello World".to_string()));
-    }
+    // Check KV store if it was updated by the harness (project:state context)
+    let store = kernel
+        .store_manager()
+        .open(&turin::persistence::manager::StoreSelector::Alias(
+            project_state_selector().to_alias(),
+        ))
+        .await?;
+    let val: Option<String> = store.kv_get("observed_tokens").await?;
+    assert_eq!(val, Some("Hello World".to_string()));
 
     kernel.end_session(&mut session).await?;
     Ok(())
@@ -389,12 +407,12 @@ async fn test_nested_agent_spawning() -> Result<()> {
     let harness_code = r#"
         function on_turn_prepare(ctx)
             if ctx.prompt and ctx.prompt:find("trigger_nesting") then
-                local result = turin.agent.spawn("nest_inner_work")
+                local result = agent.spawn("nest_inner_work")
                 ctx.prompt = "Sub-agent result: " .. result
                 return ALLOW
             end
             if ctx.prompt and ctx.prompt:find("nest_inner_work") then
-                local k = kv.as({namespace="state"})
+                local k = kv.as(runtime.context("project", "state"))
                 k.set("nested_executed", "true")
             end
             return ALLOW
@@ -421,6 +439,8 @@ async fn test_nested_agent_spawning() -> Result<()> {
             system_prompt: "Outer".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
+        harness_dir: None,
+        idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -491,11 +511,14 @@ async fn test_nested_agent_spawning() -> Result<()> {
         .await?;
 
     // Verify sub-agent work happened (observed via shared DB)
-    // Verify sub-agent work happened (observed via shared DB)
-    if let Ok(store) = kernel.store_manager().open(&turin::persistence::manager::StoreSelector::Alias("__state".to_string())).await {
-        let val: Option<String> = store.kv_get("nested_executed").await?;
-        assert_eq!(val, Some("true".to_string()));
-    }
+    let store = kernel
+        .store_manager()
+        .open(&turin::persistence::manager::StoreSelector::Alias(
+            project_state_selector().to_alias(),
+        ))
+        .await?;
+    let val: Option<String> = store.kv_get("nested_executed").await?;
+    assert_eq!(val, Some("true".to_string()));
 
     kernel.end_session(&mut session).await?;
     Ok(())
@@ -510,7 +533,7 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
 
     let harness_code = r#"
         function on_inference_error(event)
-            local k = kv.as({namespace="state"})
+            local k = kv.as(runtime.context("project", "state"))
             k.set("last_inference_error", tostring(event.error))
             return MODIFY, { "retry with fallback task" }
         end
@@ -536,6 +559,8 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
             system_prompt: "Recover on stream errors".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
+        harness_dir: None,
+        idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -619,6 +644,8 @@ async fn test_dynamic_mode_switching_stateless() -> Result<()> {
             system_prompt: "Stateless classifier".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
+        harness_dir: None,
+        idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {

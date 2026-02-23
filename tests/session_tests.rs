@@ -39,6 +39,8 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
             system_prompt: "Test assistant.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
+        harness_dir: None,
+        idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: KernelConfig {
@@ -80,7 +82,7 @@ async fn test_session_create_starts_inactive() -> Result<()> {
     assert_eq!(session.turn_index, 0);
     assert!(session.history.is_empty());
     assert!(
-        !session.identity.session_id.is_empty(),
+        !session.identity.session_id().is_empty(),
         "Session ID should be generated"
     );
 
@@ -139,7 +141,7 @@ async fn test_sessions_have_unique_ids() -> Result<()> {
 
     let s1 = kernel.create_session().await;
     let s2 = kernel.create_session().await;
-    assert_ne!(s1.identity.session_id, s2.identity.session_id);
+    assert_ne!(s1.identity.session_id(), s2.identity.session_id());
 
     Ok(())
 }
@@ -275,6 +277,8 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
             system_prompt: "Test.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
+        harness_dir: None,
+        idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: KernelConfig {

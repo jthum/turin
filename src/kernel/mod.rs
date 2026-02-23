@@ -3,6 +3,7 @@ pub mod builder;
 pub mod config;
 pub mod event;
 pub mod identity;
+pub mod policy;
 mod init;
 pub mod session;
 mod turn;
@@ -25,6 +26,7 @@ use crate::inference::provider::{
     InferenceContent, InferenceMessage, InferenceRole, ProviderClient,
 };
 use crate::persistence::manager::StoreManager;
+use crate::kernel::policy::RuntimePolicyManager;
 
 use crate::tools::ToolContext;
 use crate::tools::mcp::McpToolProxy;
@@ -44,6 +46,7 @@ pub struct Kernel {
     pub(crate) tool_registry: ToolRegistry,
     pub(crate) store_manager: Arc<StoreManager>,
     pub(crate) agent_manager: Arc<AgentManager>,
+    pub(crate) policy_manager: Arc<RuntimePolicyManager>,
     /// Thread-safe harness engine for hot-reloading
     pub(crate) harness: Arc<std::sync::Mutex<Option<HarnessEngine>>>,
     /// Watcher handle to keep it alive
@@ -87,6 +90,11 @@ impl Kernel {
         &self.store_manager
     }
 
+    /// Access the runtime policy manager.
+    pub fn policy_manager(&self) -> &Arc<RuntimePolicyManager> {
+        &self.policy_manager
+    }
+
     /// Access the configuration.
     pub fn config(&self) -> &TurinConfig {
         &self.config
@@ -114,14 +122,14 @@ impl Kernel {
     /// Create a new session.
     pub async fn create_session(&self) -> SessionState {
         let mut session = SessionState::new();
-        session.identity.agent_id = self.config.agent.id.clone();
+        session.identity.set_agent_id(self.config.agent.id.clone());
 
         // Spawn background persistence if state is available
         if let Ok(store) = self.store_manager.get_default().await {
             // Attempt to create the session in the DB immediately to get the internal_id
-            if let Ok(public_id) = uuid::Uuid::parse_str(&session.identity.session_id) {
+            if let Ok(public_id) = uuid::Uuid::parse_str(session.identity.session_id()) {
                 match store
-                    .create_session(public_id, &session.identity.agent_id, None)
+                    .create_session(public_id, session.identity.agent_id(), None)
                     .await
                 {
                     Ok(id) => session.internal_id = Some(id),
@@ -129,32 +137,20 @@ impl Kernel {
                 }
             }
 
-            let mut rx = session.event_tx.subscribe();
+            let (durability_tx, mut durability_rx) =
+                tokio::sync::mpsc::unbounded_channel::<(Option<i64>, KernelEvent)>();
+            session.durability_tx = Some(durability_tx);
             let store_clone = store.clone();
-            let cancel = session.cancel_token.clone();
             let handle = tokio::spawn(async move {
-                loop {
-                    tokio::select! {
-                        _ = cancel.cancelled() => break,
-                        result = rx.recv() => {
-                            match result {
-                                Ok((session_id, event)) => {
-                                    let event_type = event.event_type().to_string();
-                                    let payload = serde_json::to_value(&event).unwrap_or_default();
-                                    if let Some(iid) = session_id {
-                                        if let Err(e) = store_clone.insert_event(iid, &event_type, &payload).await {
-                                            warn!(error = %e, "Background persistence error");
-                                        }
-                                    } else {
-                                        warn!("Dropping event: no internal_id for session");
-                                    }
-                                }
-                                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                                    warn!(skipped, "Event persistence receiver lagged; continuing");
-                                }
-                                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                            }
+                while let Some((session_id, event)) = durability_rx.recv().await {
+                    let event_type = event.event_type().to_string();
+                    let payload = serde_json::to_value(&event).unwrap_or_default();
+                    if let Some(iid) = session_id {
+                        if let Err(e) = store_clone.insert_event(iid, &event_type, &payload).await {
+                            warn!(error = %e, "Background persistence error");
                         }
+                    } else {
+                        warn!("Dropping event: no internal_id for session");
                     }
                 }
             });
@@ -185,7 +181,7 @@ impl Kernel {
             return Ok(());
         }
 
-        let session_id = session.identity.session_id.clone();
+        let session_id = session.identity.session_id().to_string();
         info!(session_id = %session_id, "Starting new session");
 
         // Emit SessionStart event
@@ -239,7 +235,7 @@ impl Kernel {
                     "on_session_end",
                     serde_json::json!({
                         "identity": session.identity.clone(),
-                        "session_id": session.identity.session_id.clone(),
+                        "session_id": session.identity.session_id(),
                         "turn_count": session.turn_index,
                         "total_input_tokens": session.total_input_tokens,
                         "total_output_tokens": session.total_output_tokens,
@@ -250,7 +246,14 @@ impl Kernel {
             }
         }
 
-        // Cancel background event persistence task
+        // Close durability lane and await background persistence flush.
+        session.durability_tx.take();
+        if let Some(task_slot) = &session.event_task
+            && let Some(handle) = task_slot.lock().await.take()
+            && let Err(e) = handle.await
+        {
+            warn!(error = %e, "Background persistence task join error");
+        }
         session.cancel_token.cancel();
 
         // Clear active queue
@@ -264,7 +267,7 @@ impl Kernel {
     }
 
     /// Run the agent loop with the given prompt.
-    #[instrument(skip(self, session), fields(session_id = %session.identity.session_id))]
+    #[instrument(skip(self, session), fields(session_id = %session.identity.session_id()))]
     pub async fn run(&mut self, session: &mut SessionState, prompt: Option<String>) -> Result<()> {
         // Ensure session is started
         self.start_session(session).await?;
@@ -315,7 +318,7 @@ impl Kernel {
                                 "on_all_tasks_complete",
                                 serde_json::json!({
                                     "identity": session.identity.clone(),
-                                    "session_id": session.identity.session_id.clone(),
+                                    "session_id": session.identity.session_id(),
                                     "turn_count": session.turn_index,
                                 }),
                             ) {
@@ -367,7 +370,7 @@ impl Kernel {
                         "on_task_start",
                         serde_json::json!({
                             "identity": session.identity.clone(),
-                            "session_id": session.identity.session_id.clone(),
+                            "session_id": session.identity.session_id(),
                             "task_id": task.task_id.clone(),
                             "plan_id": task.plan_id.clone(),
                             "title": task.title.clone(),
@@ -477,7 +480,7 @@ impl Kernel {
         session: &mut SessionState,
         task: &QueuedTask,
     ) -> Result<TaskExecutionResult> {
-        let session_id = session.identity.session_id.clone();
+        let session_id = session.identity.session_id().to_string();
         let prompt = task.prompt.as_str();
 
         // Append user message to history
@@ -547,10 +550,10 @@ impl Kernel {
 
             {
                 let harness = self.lock_harness();
-                if let Some(ref engine) = *harness {
-                    if let Some(m) = engine.get_active_session_mode() {
-                        session.mode = m;
-                    }
+                if let Some(ref engine) = *harness
+                    && let Some(m) = engine.get_active_session_mode()
+                {
+                    session.mode = m;
                 }
             }
 
@@ -662,7 +665,7 @@ impl Kernel {
                     "on_task_complete",
                     serde_json::json!({
                         "identity": session.identity.clone(),
-                        "session_id": session.identity.session_id.clone(),
+                        "session_id": session.identity.session_id(),
                         "task_id": task.task_id.clone(),
                         "plan_id": task.plan_id.clone(),
                         "status": status,
@@ -732,7 +735,7 @@ impl Kernel {
                             "on_plan_complete",
                             serde_json::json!({
                                 "identity": session.identity.clone(),
-                                "session_id": session.identity.session_id.clone(),
+                                "session_id": session.identity.session_id(),
                                 "plan_id": plan.plan_id.clone(),
                                 "title": plan.title.clone(),
                                 "total_tasks": plan.total_tasks,
@@ -760,12 +763,15 @@ impl Kernel {
         let verdict_result = {
             let harness = self.lock_harness();
             if let Some(ref engine) = *harness {
-                engine.set_active_session(Some(&session.identity.session_id), Some(session.mode.clone()));
+                engine.set_active_session(
+                    Some(session.identity.session_id()),
+                    Some(session.mode.clone()),
+                );
                 let result = engine.evaluate(
                     "on_inference_error",
                     serde_json::json!({
                         "identity": session.identity.clone(),
-                        "session_id": session.identity.session_id.clone(),
+                        "session_id": session.identity.session_id(),
                         "task_id": task.task_id.clone(),
                         "plan_id": task.plan_id.clone(),
                         "turn_count": session.turn_index,
@@ -909,13 +915,19 @@ impl Kernel {
             }
             // Note: MODIFY is ignored for general events for now to avoid complexity
         }
-        self.persist_event_internal(&session.event_tx, session.internal_id, event);
+        self.persist_event_internal(
+            &session.event_tx,
+            session.durability_tx.as_ref(),
+            session.internal_id,
+            event,
+        );
     }
 
     /// Internal helper for persistence (used by parallel runners)
     fn persist_event_internal(
         &self,
         tx: &broadcast::Sender<(Option<i64>, KernelEvent)>,
+        durability_tx: Option<&tokio::sync::mpsc::UnboundedSender<(Option<i64>, KernelEvent)>>,
         internal_id: Option<i64>,
         event: &KernelEvent,
     ) {
@@ -925,6 +937,11 @@ impl Kernel {
         }
         if tx.send((internal_id, event.clone())).is_err() {
             warn!("Event broadcast failed — no active receivers");
+        }
+        if let Some(durability_tx) = durability_tx
+            && durability_tx.send((internal_id, event.clone())).is_err()
+        {
+            warn!("Event durability send failed — persistence task unavailable");
         }
     }
 

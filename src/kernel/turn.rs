@@ -112,7 +112,7 @@ impl Kernel {
                     "on_turn_start",
                     serde_json::json!({
                         "identity": session.identity.clone(),
-                        "session_id": session.identity.session_id.clone(),
+                        "session_id": session.identity.session_id(),
                         "task_id": turn_ctx.task_id.clone(),
                         "plan_id": turn_ctx.plan_id.clone(),
                         "turn_index": session.turn_index,
@@ -359,7 +359,7 @@ impl Kernel {
                     "on_turn_end",
                     serde_json::json!({
                         "identity": session.identity.clone(),
-                        "session_id": session.identity.session_id.clone(),
+                        "session_id": session.identity.session_id(),
                         "task_id": turn_ctx.task_id.clone(),
                         "plan_id": turn_ctx.plan_id.clone(),
                         "turn_index": session.turn_index,

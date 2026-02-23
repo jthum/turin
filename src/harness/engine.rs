@@ -246,10 +246,10 @@ impl HarnessEngine {
     }
 
     pub fn get_active_session_mode(&self) -> Option<crate::kernel::config::AgentMode> {
-        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>() {
-            if let Ok(lock) = app_data.active_session_mode.lock() {
-                return lock.clone();
-            }
+        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
+            && let Ok(lock) = app_data.active_session_mode.lock()
+        {
+            return lock.clone();
         }
         None
     }
@@ -424,6 +424,7 @@ mod tests {
             workspace_root: PathBuf::from("."),
             store_manager: Arc::new(StoreManager::new(PathBuf::from("."))),
             agent_manager: Arc::new(crate::kernel::agent_manager::AgentManager::new(std::sync::Arc::new(crate::kernel::config::TurinConfig::default()), Arc::new(StoreManager::new(PathBuf::from("."))))),
+            policy_manager: Arc::new(crate::kernel::policy::RuntimePolicyManager::new()),
             clients: std::collections::HashMap::new(),
             embedding_provider: None,
             queue: std::sync::Arc::new(tokio::sync::Mutex::new(Some(std::sync::Arc::new(

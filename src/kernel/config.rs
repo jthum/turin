@@ -55,6 +55,12 @@ pub struct AgentConfig {
     /// Agent execution mode ("auto", "stateful", "stateless")
     #[serde(default)]
     pub mode: AgentMode,
+    /// Optional per-agent harness directory override (peer agent topology).
+    #[serde(default)]
+    pub harness_dir: Option<String>,
+    /// Optional idle shutdown grace period for peer runtimes.
+    #[serde(default)]
+    pub idle_grace_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -280,6 +286,8 @@ impl Default for AgentConfig {
             provider: "mock".to_string(),
             thinking: None,
             mode: AgentMode::Auto,
+            harness_dir: None,
+            idle_grace_secs: None,
         }
     }
 }

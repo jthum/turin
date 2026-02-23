@@ -18,6 +18,17 @@ use crate::harness::globals::HarnessAppData;
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::{self, ProviderClient};
 
+struct HarnessReloadCtx {
+    harness: Arc<std::sync::Mutex<Option<HarnessEngine>>>,
+    config: Arc<TurinConfig>,
+    clients: HashMap<String, ProviderClient>,
+    store_manager: Arc<crate::persistence::manager::StoreManager>,
+    agent_manager: Arc<crate::kernel::agent_manager::AgentManager>,
+    policy_manager: Arc<crate::kernel::policy::RuntimePolicyManager>,
+    embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    active_queue: crate::harness::globals::ActiveSessionQueue,
+}
+
 impl Kernel {
     /// Initialize all configured provider clients. Call before `init_harness()` and `run()`.
     pub fn init_clients(&mut self) -> Result<()> {
@@ -114,6 +125,7 @@ impl Kernel {
             workspace_root: PathBuf::from(&self.config.kernel.workspace_root),
             store_manager: self.store_manager.clone(),
             agent_manager: self.agent_manager.clone(),
+            policy_manager: self.policy_manager.clone(),
             clients: self.clients.clone(),
             embedding_provider: self.embedding_provider.clone(),
             queue: self.active_queue.clone(),
@@ -158,15 +170,17 @@ impl Kernel {
     }
 
     #[instrument(skip_all)]
-    pub fn reload_harness_static(
-        harness: Arc<std::sync::Mutex<Option<HarnessEngine>>>,
-        config: Arc<TurinConfig>,
-        clients: HashMap<String, ProviderClient>,
-        store_manager: Arc<crate::persistence::manager::StoreManager>,
-        agent_manager: Arc<crate::kernel::agent_manager::AgentManager>,
-        embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
-        active_queue: crate::harness::globals::ActiveSessionQueue,
-    ) -> Result<()> {
+    fn reload_harness_static(ctx: HarnessReloadCtx) -> Result<()> {
+        let HarnessReloadCtx {
+            harness,
+            config,
+            clients,
+            store_manager,
+            agent_manager,
+            policy_manager,
+            embedding_provider,
+            active_queue,
+        } = ctx;
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
                 let harness_dir = PathBuf::from(&config.harness.directory);
@@ -181,6 +195,7 @@ impl Kernel {
                     workspace_root: PathBuf::from(&config.kernel.workspace_root),
                     store_manager: store_manager.clone(),
                     agent_manager: agent_manager.clone(),
+                    policy_manager: policy_manager.clone(),
                     clients,
                     embedding_provider,
                     queue: active_queue,
@@ -222,6 +237,7 @@ impl Kernel {
         let embedding_clone = self.embedding_provider.clone();
         let queue_clone = self.active_queue.clone();
         let agent_m_clone = self.agent_manager.clone();
+        let policy_m_clone = self.policy_manager.clone();
         let harness_dir = PathBuf::from(&config_clone.harness.directory);
 
         if !harness_dir.exists() {
@@ -246,11 +262,21 @@ impl Kernel {
                 let cl = clients_clone.clone();
                 let s = store_clone.clone();
                 let am = agent_m_clone.clone();
+                let pm = policy_m_clone.clone();
                 let e = embedding_clone.clone();
                 let q = queue_clone.clone();
 
                 tokio::spawn(async move {
-                    if let Err(err) = Self::reload_harness_static(h, c, cl, s, am, e, q) {
+                    if let Err(err) = Self::reload_harness_static(HarnessReloadCtx {
+                        harness: h,
+                        config: c,
+                        clients: cl,
+                        store_manager: s,
+                        agent_manager: am,
+                        policy_manager: pm,
+                        embedding_provider: e,
+                        active_queue: q,
+                    }) {
                         error!(error = %err, "Harness hot-reload failed");
                     }
                 });
