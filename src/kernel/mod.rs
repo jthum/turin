@@ -515,7 +515,7 @@ impl Kernel {
         {
             let harness = self.lock_harness();
             if let Some(ref engine) = *harness {
-                engine.set_active_session(Some(&session_id));
+                engine.set_active_session(Some(&session_id), Some(session.mode.clone()));
             }
         }
 
@@ -545,6 +545,26 @@ impl Kernel {
             session.turn_index += 1;
             task_turn_count += 1;
 
+            {
+                let harness = self.lock_harness();
+                if let Some(ref engine) = *harness {
+                    if let Some(m) = engine.get_active_session_mode() {
+                        session.mode = m;
+                    }
+                }
+            }
+
+            if session.mode == crate::kernel::config::AgentMode::Stateless {
+                match completed_turn {
+                    turn::TurnOutcome::Continue | turn::TurnOutcome::Complete => {
+                        break Ok(TaskTerminalStatus::Success);
+                    }
+                    turn::TurnOutcome::Rejected => {
+                        break Ok(TaskTerminalStatus::Rejected);
+                    }
+                }
+            }
+
             match completed_turn {
                 turn::TurnOutcome::Continue => {}
                 turn::TurnOutcome::Complete => {
@@ -560,7 +580,7 @@ impl Kernel {
         {
             let harness = self.lock_harness();
             if let Some(ref engine) = *harness {
-                engine.set_active_session(None);
+                engine.set_active_session(None, None);
             }
         }
         let task_status = task_status_result?;
@@ -740,7 +760,7 @@ impl Kernel {
         let verdict_result = {
             let harness = self.lock_harness();
             if let Some(ref engine) = *harness {
-                engine.set_active_session(Some(&session.identity.session_id));
+                engine.set_active_session(Some(&session.identity.session_id), Some(session.mode.clone()));
                 let result = engine.evaluate(
                     "on_inference_error",
                     serde_json::json!({
@@ -752,7 +772,7 @@ impl Kernel {
                         "error": error,
                     }),
                 );
-                engine.set_active_session(None);
+                engine.set_active_session(None, None);
                 Some(result)
             } else {
                 None

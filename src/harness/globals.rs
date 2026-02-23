@@ -26,6 +26,7 @@ pub struct HarnessAppData {
     pub store_manager: Arc<StoreManager>,
     pub agent_manager: Arc<crate::kernel::agent_manager::AgentManager>,
     pub active_session_id: Arc<std::sync::Mutex<Option<String>>>,
+    pub active_session_mode: Arc<std::sync::Mutex<Option<crate::kernel::config::AgentMode>>>,
     pub clients: HashMap<String, ProviderClient>,
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     pub queue: ActiveSessionQueue,
@@ -490,8 +491,29 @@ fn register_agent_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> 
         Ok((Value::Boolean(true), Value::Nil))
     })?)?;
 
-    mode_ns.set("get", lua.create_function(|lua, ()| Ok(Value::String(lua.create_string("stateful")?)))?)?;
-    mode_ns.set("set", lua.create_function(|_lua, _m: String| Ok((Value::Boolean(true), Value::Nil)))?)?;
+    let sm1 = app_data.active_session_mode.clone();
+    mode_ns.set("get", lua.create_function(move |lua, ()| {
+        let mode = sm1.lock().unwrap().clone().unwrap_or(crate::kernel::config::AgentMode::Auto);
+        let mode_str = match mode {
+            crate::kernel::config::AgentMode::Auto => "auto",
+            crate::kernel::config::AgentMode::Stateful => "stateful",
+            crate::kernel::config::AgentMode::Stateless => "stateless",
+        };
+        Ok(Value::String(lua.create_string(mode_str)?))
+    })?)?;
+
+    let sm2 = app_data.active_session_mode.clone();
+    mode_ns.set("set", lua.create_function(move |_lua, m: String| {
+        let mode = match m.as_str() {
+            "stateful" => crate::kernel::config::AgentMode::Stateful,
+            "stateless" => crate::kernel::config::AgentMode::Stateless,
+            _ => crate::kernel::config::AgentMode::Auto,
+        };
+        if let Ok(mut lock) = sm2.lock() {
+            *lock = Some(mode);
+        }
+        Ok((Value::Boolean(true), Value::Nil))
+    })?)?;
 
     agent_table.set("session", session_ns)?;
     agent_table.set("mode", mode_ns)?;

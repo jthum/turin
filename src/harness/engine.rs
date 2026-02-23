@@ -234,12 +234,24 @@ impl HarnessEngine {
 
     /// Set the active session ID for the current execution context.
     /// This is used by global functions (e.g. turin.memory) to isolate data.
-    pub fn set_active_session(&self, session_id: Option<&str>) {
-        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
-            && let Ok(mut lock) = app_data.active_session_id.lock()
-        {
-            *lock = session_id.map(|s| s.to_string());
+    pub fn set_active_session(&self, session_id: Option<&str>, mode: Option<crate::kernel::config::AgentMode>) {
+        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>() {
+            if let Ok(mut lock) = app_data.active_session_id.lock() {
+                *lock = session_id.map(|s| s.to_string());
+            }
+            if let Ok(mut lock) = app_data.active_session_mode.lock() {
+                *lock = mode;
+            }
         }
+    }
+
+    pub fn get_active_session_mode(&self) -> Option<crate::kernel::config::AgentMode> {
+        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>() {
+            if let Ok(lock) = app_data.active_session_mode.lock() {
+                return lock.clone();
+            }
+        }
+        None
     }
 
     /// Call a hook across all loaded scripts, returning individual verdicts.
@@ -420,6 +432,7 @@ mod tests {
             active_session_id: std::sync::Arc::new(std::sync::Mutex::new(Some(
                 "test-session".to_string(),
             ))),
+            active_session_mode: std::sync::Arc::new(std::sync::Mutex::new(None)),
             config: std::sync::Arc::new(crate::kernel::config::TurinConfig::default()),
             spawn_depth: 0,
         }

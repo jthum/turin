@@ -38,6 +38,7 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
             provider: "mock".to_string(),
             system_prompt: "Test assistant.".to_string(),
             thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
         },
         agents: std::collections::HashMap::new(),
         kernel: KernelConfig {
@@ -273,6 +274,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
             provider: "mock".to_string(),
             system_prompt: "Test.".to_string(),
             thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
         },
         agents: std::collections::HashMap::new(),
         kernel: KernelConfig {

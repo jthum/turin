@@ -31,6 +31,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
             provider: "mock".to_string(),
             system_prompt: "You are a test assistant.".to_string(),
             thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {

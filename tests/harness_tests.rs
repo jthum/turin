@@ -131,6 +131,7 @@ async fn test_harness_rejection() -> Result<()> {
             provider: "mock".to_string(),
             system_prompt: "You are a test assistant.".to_string(),
             thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -254,6 +255,7 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
             provider: "mock".to_string(),
             system_prompt: "Header test".to_string(),
             thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {

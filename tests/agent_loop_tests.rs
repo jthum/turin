@@ -123,6 +123,7 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
             provider: "mock".to_string(),
             system_prompt: "Test".to_string(),
             thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -311,6 +312,7 @@ async fn test_harness_observation() -> Result<()> {
             provider: "mock".to_string(),
             system_prompt: "Test".to_string(),
             thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -416,6 +418,7 @@ async fn test_nested_agent_spawning() -> Result<()> {
             provider: "mock".to_string(),
             system_prompt: "Outer".to_string(),
             thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -528,6 +531,7 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
             provider: "mock".to_string(),
             system_prompt: "Recover on stream errors".to_string(),
             thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -573,6 +577,95 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
         saw_recovered,
         "expected fallback task to complete successfully"
     );
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_dynamic_mode_switching_stateless() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_stateless.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    let harness_code = r#"
+        function on_turn_start(event)
+            agent.mode.set("stateless")
+        end
+    "#;
+    std::fs::write(harness_dir.join("stateless.lua"), harness_code)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Stateless classifier".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 5,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+
+    let provider = Arc::new(SequenceMockProvider {
+        responses: Arc::new(std::sync::Mutex::new(vec![vec![
+            InferenceEvent::MessageStart {
+                role: "assistant".to_string(),
+                model: "mock-model".to_string(),
+                provider_id: "mock".to_string(),
+            },
+            InferenceEvent::MessageDelta {
+                content: "One shot only.".to_string(),
+            },
+            InferenceEvent::MessageEnd {
+                input_tokens: 1,
+                output_tokens: 1,
+                stop_reason: None,
+            },
+        ]])),
+    });
+    kernel.add_client("mock".to_string(), ProviderClient::new("mock", provider));
+
+    let mut session = kernel.create_session().await;
+    // The run normally would loop 2 times due to the tool call, but stateless drops it instantly after the first yield
+    kernel
+        .run(&mut session, Some("process".to_string()))
+        .await?;
+
+    // Verify it terminated strictly after exactly 1 turn
+    assert_eq!(session.turn_index, 1, "Agent should only complete exactly 1 turn due to stateless mode");
+    assert_eq!(session.mode, turin::kernel::config::AgentMode::Stateless);
 
     kernel.end_session(&mut session).await?;
     Ok(())

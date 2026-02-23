@@ -28,6 +28,15 @@ pub enum EmbeddingConfig {
     NoOp,
 }
 
+#[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentMode {
+    #[default]
+    Auto,
+    Stateful,
+    Stateless,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentConfig {
     /// The identity string for the agent instance (e.g. "default", "coder", "reviewer")
@@ -43,6 +52,9 @@ pub struct AgentConfig {
     /// Extended thinking configuration
     #[serde(default)]
     pub thinking: Option<ThinkingConfig>,
+    /// Agent execution mode ("auto", "stateful", "stateless")
+    #[serde(default)]
+    pub mode: AgentMode,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -267,6 +279,7 @@ impl Default for AgentConfig {
             model: "test-model".to_string(),
             provider: "mock".to_string(),
             thinking: None,
+            mode: AgentMode::Auto,
         }
     }
 }
