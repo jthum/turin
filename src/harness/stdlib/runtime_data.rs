@@ -4,20 +4,9 @@ use crate::harness::globals::{
     HarnessAppData, block_on_current, kv_delete_backend, kv_get_backend, kv_set_backend,
     memory_search_backend, memory_store_backend, search_limit_from_opt, table_to_selector,
 };
-
-fn memory_rows_to_lua_table(
-    lua: &Lua,
-    rows: Vec<crate::persistence::schema::MemoryRow>,
-) -> LuaResult<Table> {
-    let tbl = lua.create_table()?;
-    for (i, row) in rows.into_iter().enumerate() {
-        let rt = lua.create_table()?;
-        rt.set("content", row.content)?;
-        rt.set("score", row.score)?;
-        tbl.set(i + 1, rt)?;
-    }
-    Ok(tbl)
-}
+use crate::harness::stdlib::binding_common::{
+    bool_err, memory_rows_to_lua_table, nil_err, ok_bool, ok_value, string_ok,
+};
 
 pub fn register_runtime_data_namespaces(
     lua: &Lua,
@@ -49,11 +38,10 @@ pub fn register_runtime_data_namespaces(
                         .map_err(|e| e.to_string())
                     });
                     match result {
-                        Ok(rows) => Ok((
-                            Value::Table(memory_rows_to_lua_table(lua, rows)?),
-                            Value::Nil,
-                        )),
-                        Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
+                        Ok(rows) => {
+                            Ok(ok_value(Value::Table(memory_rows_to_lua_table(lua, rows)?)))
+                        }
+                        Err(err) => nil_err(lua, &err),
                     }
                 },
             )?,
@@ -95,11 +83,8 @@ pub fn register_runtime_data_namespaces(
                         .map_err(|e| e.to_string())
                     });
                     match result {
-                        Ok(_) => Ok((Value::Boolean(true), Value::Nil)),
-                        Err(err) => Ok((
-                            Value::Boolean(false),
-                            Value::String(lua.create_string(&err)?),
-                        )),
+                        Ok(_) => Ok(ok_bool()),
+                        Err(err) => bool_err(lua, &err),
                     }
                 },
             )?,
@@ -122,9 +107,9 @@ pub fn register_runtime_data_namespaces(
                         .map_err(|e| e.to_string())
                 });
                 match result {
-                    Ok(Some(val)) => Ok((Value::String(lua.create_string(&val)?), Value::Nil)),
+                    Ok(Some(val)) => string_ok(lua, &val),
                     Ok(None) => Ok((Value::Nil, Value::Nil)),
-                    Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
+                    Err(err) => nil_err(lua, &err),
                 }
             })?,
         )?;
@@ -142,11 +127,8 @@ pub fn register_runtime_data_namespaces(
                         .map_err(|e| e.to_string())
                 });
                 match result {
-                    Ok(_) => Ok((Value::Boolean(true), Value::Nil)),
-                    Err(err) => Ok((
-                        Value::Boolean(false),
-                        Value::String(lua.create_string(&err)?),
-                    )),
+                    Ok(_) => Ok(ok_bool()),
+                    Err(err) => bool_err(lua, &err),
                 }
             })?,
         )?;
@@ -164,11 +146,8 @@ pub fn register_runtime_data_namespaces(
                         .map_err(|e| e.to_string())
                 });
                 match result {
-                    Ok(_) => Ok((Value::Boolean(true), Value::Nil)),
-                    Err(err) => Ok((
-                        Value::Boolean(false),
-                        Value::String(lua.create_string(&err)?),
-                    )),
+                    Ok(_) => Ok(ok_bool()),
+                    Err(err) => bool_err(lua, &err),
                 }
             })?,
         )?;

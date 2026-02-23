@@ -1,10 +1,11 @@
-use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
+use mlua::{Lua, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{
     HarnessAppData, SqlParams, block_on_current, lua_table_to_sql_params, policy_bool,
     policy_string, policy_u64, runtime_policy_snapshot, selector_from_db_opts,
     selector_from_db_value, sql_value_to_json,
 };
+use crate::harness::stdlib::binding_common::{bool_err, bool_value_ok, json_ok, nil_err, ok_value};
 use crate::persistence::manager::{StorePathScope, StoreSelector};
 
 pub fn register_runtime_db_namespace(
@@ -25,12 +26,7 @@ pub fn register_runtime_db_namespace(
                 if matches!(selector, StoreSelector::Path(_))
                     && !policy_bool(&snapshot, "db.allow_dynamic_open", true)
                 {
-                    return Ok((
-                        Value::Nil,
-                        Value::String(
-                            lua.create_string("Policy denial: db.allow_dynamic_open=false")?,
-                        ),
-                    ));
+                    return nil_err(lua, "Policy denial: db.allow_dynamic_open=false");
                 }
 
                 let path_scope = StorePathScope::from_policy(policy_string(
@@ -62,9 +58,9 @@ pub fn register_runtime_db_namespace(
                         }
                         t.set("open_count", info.open_count)?;
                         t.set("idle_ms", info.idle_ms)?;
-                        Ok((Value::Table(t), Value::Nil))
+                        Ok(ok_value(Value::Table(t)))
                     }
-                    Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
+                    Err(err) => nil_err(lua, &err),
                 }
             })?,
         )?;
@@ -78,12 +74,7 @@ pub fn register_runtime_db_namespace(
                     Value::String(s) => s.to_str()?.to_string(),
                     Value::Table(t) => t.get::<String>("handle")?,
                     _ => {
-                        return Ok((
-                            Value::Boolean(false),
-                            Value::String(lua.create_string(
-                                "invalid handle; expected string or {handle=...}",
-                            )?),
-                        ));
+                        return bool_err(lua, "invalid handle; expected string or {handle=...}");
                     }
                 };
                 let manager = manager.clone();
@@ -94,11 +85,8 @@ pub fn register_runtime_db_namespace(
                         .map_err(|e| e.to_string())
                 });
                 match result {
-                    Ok(closed) => Ok((Value::Boolean(closed), Value::Nil)),
-                    Err(err) => Ok((
-                        Value::Boolean(false),
-                        Value::String(lua.create_string(&err)?),
-                    )),
+                    Ok(closed) => Ok(bool_value_ok(closed)),
+                    Err(err) => bool_err(lua, &err),
                 }
             })?,
         )?;
@@ -124,7 +112,7 @@ pub fn register_runtime_db_namespace(
                     t.set("idle_ms", h.idle_ms)?;
                     out.set(i + 1, t)?;
                 }
-                Ok((Value::Table(out), Value::Nil))
+                Ok(ok_value(Value::Table(out)))
             })?,
         )?;
     }
@@ -142,12 +130,7 @@ pub fn register_runtime_db_namespace(
                     if matches!(selector, StoreSelector::Path(_))
                         && !policy_bool(&snapshot, "db.allow_dynamic_open", true)
                     {
-                        return Ok((
-                            Value::Nil,
-                            Value::String(
-                                lua.create_string("Policy denial: db.allow_dynamic_open=false")?,
-                            ),
-                        ));
+                        return nil_err(lua, "Policy denial: db.allow_dynamic_open=false");
                     }
                     let path_scope = StorePathScope::from_policy(policy_string(
                         &snapshot,
@@ -192,13 +175,8 @@ pub fn register_runtime_db_namespace(
                         Ok::<_, String>(out_rows)
                     });
                     match result {
-                        Ok(rows) => {
-                            let lua_v = lua
-                                .to_value(&rows)
-                                .map_err(|e| mlua::Error::runtime(e.to_string()))?;
-                            Ok((lua_v, Value::Nil))
-                        }
-                        Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
+                        Ok(rows) => json_ok(lua, &rows),
+                        Err(err) => nil_err(lua, &err),
                     }
                 },
             )?,
@@ -218,12 +196,7 @@ pub fn register_runtime_db_namespace(
                     if matches!(selector, StoreSelector::Path(_))
                         && !policy_bool(&snapshot, "db.allow_dynamic_open", true)
                     {
-                        return Ok((
-                            Value::Nil,
-                            Value::String(
-                                lua.create_string("Policy denial: db.allow_dynamic_open=false")?,
-                            ),
-                        ));
+                        return nil_err(lua, "Policy denial: db.allow_dynamic_open=false");
                     }
                     let path_scope = StorePathScope::from_policy(policy_string(
                         &snapshot,
@@ -255,8 +228,8 @@ pub fn register_runtime_db_namespace(
                         Ok::<_, String>(changed)
                     });
                     match result {
-                        Ok(changed) => Ok((Value::Integer(changed as i64), Value::Nil)),
-                        Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
+                        Ok(changed) => Ok(ok_value(Value::Integer(changed as i64))),
+                        Err(err) => nil_err(lua, &err),
                     }
                 },
             )?,

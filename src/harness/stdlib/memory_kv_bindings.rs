@@ -5,6 +5,7 @@ use crate::harness::globals::{
     memory_search_backend, memory_store_backend, normalize_selector, search_limit_from_opt,
     table_to_selector,
 };
+use crate::harness::stdlib::binding_common::memory_rows_to_lua_table;
 use crate::kernel::identity::ContextSelector;
 
 fn default_agent_selector(app_data: &HarnessAppData) -> LuaResult<ContextSelector> {
@@ -14,20 +15,6 @@ fn default_agent_selector(app_data: &HarnessAppData) -> LuaResult<ContextSelecto
         visibility: "private".to_string(),
     })
     .map_err(mlua::Error::runtime)
-}
-
-fn memory_rows_to_lua_table(
-    lua: &Lua,
-    rows: Vec<crate::persistence::schema::MemoryRow>,
-) -> LuaResult<Table> {
-    let tbl = lua.create_table()?;
-    for (i, row) in rows.into_iter().enumerate() {
-        let rt = lua.create_table()?;
-        rt.set("content", row.content)?;
-        rt.set("score", row.score)?;
-        tbl.set(i + 1, rt)?;
-    }
-    Ok(tbl)
 }
 
 pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {

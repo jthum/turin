@@ -1,6 +1,7 @@
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{HarnessAppData, block_on_current, policy_scope_from_value};
+use crate::harness::stdlib::binding_common::{bool_err, json_ok, nil_err, nil_ok, ok_bool};
 
 pub fn register_runtime_policy_namespace(
     lua: &Lua,
@@ -24,14 +25,9 @@ pub fn register_runtime_policy_namespace(
                 });
 
                 match result {
-                    Ok(Some(v)) => {
-                        let lua_v = lua
-                            .to_value(&v)
-                            .map_err(|e| mlua::Error::runtime(e.to_string()))?;
-                        Ok((lua_v, Value::Nil))
-                    }
-                    Ok(None) => Ok((Value::Nil, Value::Nil)),
-                    Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
+                    Ok(Some(v)) => json_ok(lua, &v),
+                    Ok(None) => Ok(nil_ok()),
+                    Err(err) => nil_err(lua, &err),
                 }
             })?,
         )?;
@@ -55,11 +51,8 @@ pub fn register_runtime_policy_namespace(
                             .map_err(|e| e.to_string())
                     });
                     match result {
-                        Ok(()) => Ok((Value::Boolean(true), Value::Nil)),
-                        Err(err) => Ok((
-                            Value::Boolean(false),
-                            Value::String(lua.create_string(&err)?),
-                        )),
+                        Ok(()) => Ok(ok_bool()),
+                        Err(err) => bool_err(lua, &err),
                     }
                 },
             )?,

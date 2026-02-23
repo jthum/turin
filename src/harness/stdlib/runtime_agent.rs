@@ -1,8 +1,9 @@
-use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
+use mlua::{Lua, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{
     HarnessAppData, block_on_current, policy_bool, runtime_policy_snapshot,
 };
+use crate::harness::stdlib::binding_common::{json_ok, nil_err, string_ok};
 use crate::kernel::session::QueuedTask;
 
 pub fn register_runtime_agent_namespace(
@@ -18,10 +19,7 @@ pub fn register_runtime_agent_namespace(
             lua.create_function(move |lua, ()| {
                 let manager = manager.clone();
                 let statuses = block_on_current(async move { manager.list_statuses().await });
-                let lua_v = lua
-                    .to_value(&statuses)
-                    .map_err(|e| mlua::Error::runtime(e.to_string()))?;
-                Ok((lua_v, Value::Nil))
+                json_ok(lua, &statuses)
             })?,
         )?;
     }
@@ -33,16 +31,8 @@ pub fn register_runtime_agent_namespace(
                 let manager = manager.clone();
                 let status = block_on_current(async move { manager.get_status(&agent_id).await });
                 match status {
-                    Some(s) => {
-                        let lua_v = lua
-                            .to_value(&s)
-                            .map_err(|e| mlua::Error::runtime(e.to_string()))?;
-                        Ok((lua_v, Value::Nil))
-                    }
-                    None => Ok((
-                        Value::Nil,
-                        Value::String(lua.create_string("unknown agent")?),
-                    )),
+                    Some(s) => json_ok(lua, &s),
+                    None => nil_err(lua, "unknown agent"),
                 }
             })?,
         )?;
@@ -57,10 +47,7 @@ pub fn register_runtime_agent_namespace(
                     let snapshot = runtime_policy_snapshot(&app_data_snapshot)
                         .map_err(mlua::Error::runtime)?;
                     if !policy_bool(&snapshot, "spawn.enabled", true) {
-                        return Ok((
-                            Value::Nil,
-                            Value::String(lua.create_string("Policy denial: spawn.enabled=false")?),
-                        ));
+                        return nil_err(lua, "Policy denial: spawn.enabled=false");
                     }
 
                     let task = match task_val {
@@ -78,12 +65,7 @@ pub fn register_runtime_agent_namespace(
                             task
                         }
                         _ => {
-                            return Ok((
-                                Value::Nil,
-                                Value::String(lua.create_string(
-                                    "invalid task; expected string or {prompt=...}",
-                                )?),
-                            ));
+                            return nil_err(lua, "invalid task; expected string or {prompt=...}");
                         }
                     };
 
@@ -95,10 +77,8 @@ pub fn register_runtime_agent_namespace(
                             .map_err(|e| e.to_string())
                     });
                     match result {
-                        Ok(task_id) => {
-                            Ok((Value::String(lua.create_string(&task_id)?), Value::Nil))
-                        }
-                        Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
+                        Ok(task_id) => string_ok(lua, &task_id),
+                        Err(err) => nil_err(lua, &err),
                     }
                 },
             )?,
@@ -118,13 +98,8 @@ pub fn register_runtime_agent_namespace(
                         .map_err(|e| e.to_string())
                 });
                 match result {
-                    Ok(res) => {
-                        let lua_v = lua
-                            .to_value(&res)
-                            .map_err(|e| mlua::Error::runtime(e.to_string()))?;
-                        Ok((lua_v, Value::Nil))
-                    }
-                    Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
+                    Ok(res) => json_ok(lua, &res),
+                    Err(err) => nil_err(lua, &err),
                 }
             })?,
         )?;
