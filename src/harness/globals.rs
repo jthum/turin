@@ -9,13 +9,11 @@ use crate::harness::stdlib::{
     agent_bindings, memory_kv_bindings, runtime_agent, runtime_context, runtime_data, runtime_db,
     runtime_policy, session_user_aliases, system_globals,
 };
-use crate::harness::stdlib::context_selectors::table_to_selector;
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
 use crate::kernel::identity::RuntimeIdentity;
-use crate::kernel::policy::PolicyScope;
 use crate::kernel::session::QueuedTask;
-use crate::persistence::manager::{StoreManager, StoreSelector};
+use crate::persistence::manager::StoreManager;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -40,12 +38,6 @@ pub struct HarnessAppData {
     pub queue: ActiveSessionQueue,
     pub config: Arc<crate::kernel::config::TurinConfig>,
     pub spawn_depth: u32,
-}
-
-pub(crate) enum SqlParams {
-    None,
-    Positional(Vec<turso::Value>),
-    Named(Vec<(String, turso::Value)>),
 }
 
 pub(crate) fn block_on_current<F>(fut: F) -> F::Output
@@ -130,174 +122,6 @@ pub(crate) fn identity_to_lua_table(lua: &Lua, identity: &RuntimeIdentity) -> Lu
     Ok(tbl)
 }
 
-pub(crate) fn runtime_policy_snapshot(
-    app_data: &HarnessAppData,
-) -> anyhow::Result<HashMap<String, serde_json::Value>> {
-    let mut scope = PolicyScope::default();
-    if let Ok(identity) = get_active_identity(app_data) {
-        scope.agent_id = Some(identity.agent_id().to_string());
-        scope.session_id = Some(identity.session_id().to_string());
-        scope.run_id = identity.run_id().map(ToString::to_string);
-    }
-
-    let policy_manager = app_data.policy_manager.clone();
-    Ok(block_on_current(async move {
-        policy_manager.snapshot(&scope).await
-    }))
-}
-
-pub(crate) fn policy_bool(
-    snapshot: &HashMap<String, serde_json::Value>,
-    key: &str,
-    default: bool,
-) -> bool {
-    snapshot
-        .get(key)
-        .and_then(|v| v.as_bool())
-        .unwrap_or(default)
-}
-
-pub(crate) fn policy_u64(
-    snapshot: &HashMap<String, serde_json::Value>,
-    key: &str,
-    default: u64,
-) -> u64 {
-    snapshot
-        .get(key)
-        .and_then(|v| v.as_u64())
-        .unwrap_or(default)
-}
-
-pub(crate) fn policy_string<'a>(
-    snapshot: &'a HashMap<String, serde_json::Value>,
-    key: &str,
-    default: &'a str,
-) -> &'a str {
-    snapshot
-        .get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or(default)
-}
-
-fn parse_store_selector_string(s: &str) -> StoreSelector {
-    if s.contains('/')
-        || s.contains('\\')
-        || s.starts_with('.')
-        || s.ends_with(".db")
-        || s.starts_with('~')
-    {
-        StoreSelector::Path(s.to_string())
-    } else {
-        StoreSelector::Alias(s.to_string())
-    }
-}
-
-pub(crate) fn selector_from_db_value(value: Value) -> LuaResult<StoreSelector> {
-    match value {
-        Value::String(s) => Ok(parse_store_selector_string(&s.to_str()?)),
-        Value::Table(t) => {
-            if let Ok(handle) = t.get::<String>("handle") {
-                return Ok(StoreSelector::Handle(handle));
-            }
-            if let Ok(path) = t.get::<String>("path") {
-                return Ok(StoreSelector::Path(path));
-            }
-            if let Ok(store) = t.get::<String>("store") {
-                return Ok(StoreSelector::Alias(store));
-            }
-            if let Ok(alias) = t.get::<String>("alias") {
-                return Ok(StoreSelector::Alias(alias));
-            }
-            if let Ok(Value::Table(selector_tbl)) = t.get::<Value>("selector") {
-                let selector = table_to_selector(selector_tbl)?;
-                return Ok(StoreSelector::Alias(selector.to_alias()));
-            }
-            // Allow raw context selector table directly.
-            let selector = table_to_selector(t)?;
-            Ok(StoreSelector::Alias(selector.to_alias()))
-        }
-        _ => Err(mlua::Error::runtime(
-            "invalid db selector; expected string or table",
-        )),
-    }
-}
-
-pub(crate) fn selector_from_db_opts(opts: Option<Table>) -> LuaResult<StoreSelector> {
-    match opts {
-        Some(t) => selector_from_db_value(Value::Table(t)),
-        None => Ok(StoreSelector::Alias("state".to_string())),
-    }
-}
-
-fn lua_value_to_sql_param(value: Value) -> LuaResult<turso::Value> {
-    match value {
-        Value::Nil => Ok(turso::Value::Null),
-        Value::Boolean(b) => Ok(turso::Value::Integer(if b { 1 } else { 0 })),
-        Value::Integer(i) => Ok(turso::Value::Integer(i)),
-        Value::Number(n) => Ok(turso::Value::Real(n)),
-        Value::String(s) => Ok(turso::Value::Text(s.to_str()?.to_string())),
-        _ => Err(mlua::Error::runtime(
-            "invalid SQL param type; expected nil/boolean/number/string",
-        )),
-    }
-}
-
-pub(crate) fn lua_table_to_sql_params(tbl: Option<Table>) -> LuaResult<SqlParams> {
-    let Some(tbl) = tbl else {
-        return Ok(SqlParams::None);
-    };
-
-    let mut positional = Vec::<(usize, turso::Value)>::new();
-    let mut named = Vec::<(String, turso::Value)>::new();
-    let mut saw_integer_key = false;
-    let mut saw_string_key = false;
-
-    for pair in tbl.pairs::<Value, Value>() {
-        let (k, v) = pair?;
-        match k {
-            Value::Integer(i) if i >= 1 => {
-                saw_integer_key = true;
-                positional.push((i as usize, lua_value_to_sql_param(v)?));
-            }
-            Value::String(s) => {
-                saw_string_key = true;
-                let mut name = s.to_str()?.to_string();
-                if !name.starts_with(':') && !name.starts_with('@') && !name.starts_with('$') {
-                    name = format!(":{}", name);
-                }
-                named.push((name, lua_value_to_sql_param(v)?));
-            }
-            _ => {
-                return Err(mlua::Error::runtime(
-                    "invalid SQL params key; expected array indices or string keys",
-                ));
-            }
-        }
-    }
-
-    if saw_integer_key && saw_string_key {
-        return Err(mlua::Error::runtime(
-            "mixed positional and named SQL params are not supported",
-        ));
-    }
-
-    if saw_integer_key {
-        positional.sort_by_key(|(i, _)| *i);
-        let mut out = Vec::with_capacity(positional.len());
-        for (idx, val) in positional {
-            if idx != out.len() + 1 {
-                return Err(mlua::Error::runtime(
-                    "positional SQL params must be a dense 1-based array",
-                ));
-            }
-            out.push(val);
-        }
-        Ok(SqlParams::Positional(out))
-    } else {
-        Ok(SqlParams::Named(named))
-    }
-}
-
 fn bytes_to_hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {
@@ -305,19 +129,6 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
         let _ = write!(&mut out, "{:02x}", b);
     }
     out
-}
-
-pub(crate) fn sql_value_to_json(value: turso::Value) -> serde_json::Value {
-    match value {
-        turso::Value::Null => serde_json::Value::Null,
-        turso::Value::Integer(i) => serde_json::json!(i),
-        turso::Value::Real(n) => serde_json::json!(n),
-        turso::Value::Text(s) => serde_json::json!(s),
-        turso::Value::Blob(b) => serde_json::json!({
-            "__type": "blob",
-            "hex": bytes_to_hex(&b),
-        }),
-    }
 }
 
 fn format_uuid_bytes_simple(bytes: &[u8]) -> Option<String> {
@@ -350,63 +161,6 @@ pub(crate) fn session_row_to_lua_table(
     }
     t.set("created_at", row.created_at.clone())?;
     Ok(t)
-}
-
-pub(crate) fn policy_scope_from_value(
-    app_data: &HarnessAppData,
-    scope: Option<Value>,
-) -> LuaResult<PolicyScope> {
-    let mut out = PolicyScope::default();
-
-    match scope {
-        None | Some(Value::Nil) => {
-            out.scope = Some("global".to_string());
-            return Ok(out);
-        }
-        Some(Value::String(s)) => {
-            out.scope = Some(s.to_str()?.to_string());
-        }
-        Some(Value::Table(t)) => {
-            if let Ok(s) = t.get::<String>("scope") {
-                out.scope = Some(s);
-            }
-            if let Ok(agent_id) = t.get::<String>("agent_id") {
-                out.agent_id = Some(agent_id);
-            }
-            if let Ok(session_id) = t.get::<String>("session_id") {
-                out.session_id = Some(session_id);
-            }
-            if let Ok(run_id) = t.get::<String>("run_id") {
-                out.run_id = Some(run_id);
-            }
-        }
-        _ => {
-            return Err(mlua::Error::runtime(
-                "invalid policy scope; expected nil, string, or table",
-            ));
-        }
-    }
-
-    if out.scope.is_none() {
-        out.scope = Some("global".to_string());
-    }
-
-    // Fill common defaults from active runtime identity when available.
-    if (out.agent_id.is_none() || out.session_id.is_none() || out.run_id.is_none())
-        && let Ok(identity) = get_active_identity(app_data)
-    {
-        if out.agent_id.is_none() {
-            out.agent_id = Some(identity.agent_id().to_string());
-        }
-        if out.session_id.is_none() {
-            out.session_id = Some(identity.session_id().to_string());
-        }
-        if out.run_id.is_none() {
-            out.run_id = identity.run_id().map(ToString::to_string);
-        }
-    }
-
-    Ok(out)
 }
 
 fn register_runtime_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {

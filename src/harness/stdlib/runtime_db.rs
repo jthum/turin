@@ -1,11 +1,14 @@
 use mlua::{Lua, Result as LuaResult, Table, Value};
 
-use crate::harness::globals::{
-    HarnessAppData, SqlParams, block_on_current, lua_table_to_sql_params, policy_bool,
-    policy_string, policy_u64, runtime_policy_snapshot, selector_from_db_opts,
-    selector_from_db_value, sql_value_to_json,
-};
+use crate::harness::globals::{HarnessAppData, block_on_current};
 use crate::harness::stdlib::binding_common::{bool_err, bool_value_ok, json_ok, nil_err, ok_value};
+use crate::harness::stdlib::db_support::{
+    SqlParams, lua_table_to_sql_params, selector_from_db_opts, selector_from_db_value,
+    sql_value_to_json,
+};
+use crate::harness::stdlib::policy_support::{
+    policy_bool, policy_string, policy_u64, runtime_policy_snapshot,
+};
 use crate::persistence::manager::{StorePathScope, StoreSelector};
 
 pub fn register_runtime_db_namespace(

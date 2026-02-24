@@ -1,9 +1,8 @@
 use mlua::{Lua, Result as LuaResult, Table, Value};
 
-use crate::harness::globals::{
-    HarnessAppData, block_on_current, policy_bool, runtime_policy_snapshot,
-};
+use crate::harness::globals::{HarnessAppData, block_on_current};
 use crate::harness::stdlib::binding_common::{json_ok, nil_err, string_ok};
+use crate::harness::stdlib::policy_support::{policy_bool, runtime_policy_snapshot};
 use crate::kernel::session::QueuedTask;
 
 pub fn register_runtime_agent_namespace(

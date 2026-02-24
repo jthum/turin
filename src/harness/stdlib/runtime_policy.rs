@@ -1,7 +1,8 @@
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
-use crate::harness::globals::{HarnessAppData, block_on_current, policy_scope_from_value};
+use crate::harness::globals::{HarnessAppData, block_on_current};
 use crate::harness::stdlib::binding_common::{bool_err, json_ok, nil_err, nil_ok, ok_bool};
+use crate::harness::stdlib::policy_support::policy_scope_from_value;
 
 pub fn register_runtime_policy_namespace(
     lua: &Lua,
