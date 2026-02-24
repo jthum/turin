@@ -5,6 +5,8 @@ use mlua::{Function, Lua, LuaSerdeExt, MultiValue, Result as LuaResult, Table, V
 use crate::harness::stdlib::binding_common::{
     bool_err, nil_err, ok_bool, ok_value, string_ok, string_value,
 };
+use crate::harness::stdlib::governance_support::current_subject;
+use crate::kernel::config::{GovernanceImportMode, GovernanceProfile};
 
 pub fn register_system_globals(lua: &Lua, fs_root: &Path, max_file_size: usize) -> LuaResult<()> {
     register_fs_module(lua, fs_root, max_file_size)?;
@@ -18,18 +20,23 @@ pub fn register_import_global(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
     globals.set(
         "import",
-        lua.create_function(|lua, name: String| import_module(lua, &name, None))?,
+        lua.create_function(|lua, name: String| import_module(lua, &name, None, false))?,
     )?;
     globals.set(
         "import_scoped",
         lua.create_function(|lua, (name, opts): (String, Option<Table>)| {
-            import_module(lua, &name, opts)
+            import_module(lua, &name, opts, true)
         })?,
     )?;
     Ok(())
 }
 
-fn import_module(lua: &Lua, name: &str, opts: Option<Table>) -> LuaResult<Value> {
+fn import_module(
+    lua: &Lua,
+    name: &str,
+    opts: Option<Table>,
+    is_scoped_call: bool,
+) -> LuaResult<Value> {
     let globals = lua.globals();
     let modules: Table = globals.get("__harness_modules")?;
     let module_value: Value = modules.get(name)?;
@@ -45,6 +52,8 @@ fn import_module(lua: &Lua, name: &str, opts: Option<Table>) -> LuaResult<Value>
         .ok()
         .and_then(|t| t.get::<Value>(name).ok())
         .unwrap_or(Value::Nil);
+
+    enforce_import_policy(lua, name, &meta_value, opts.as_ref(), is_scoped_call)?;
 
     if let Some(opts) = opts
         && let Ok(expected_root) = opts.get::<String>("root")
@@ -64,6 +73,89 @@ fn import_module(lua: &Lua, name: &str, opts: Option<Table>) -> LuaResult<Value>
     }
 
     wrap_imported_module(lua, name, module_value, meta_value)
+}
+
+fn enforce_import_policy(
+    lua: &Lua,
+    module_name: &str,
+    meta_value: &Value,
+    opts: Option<&Table>,
+    is_scoped_call: bool,
+) -> LuaResult<()> {
+    let Some(app_data) = lua.app_data_ref::<crate::harness::globals::HarnessAppData>() else {
+        return Ok(());
+    };
+
+    let gov_cfg = app_data.governance_manager.config().clone();
+    let subject = current_subject(&app_data);
+
+    if gov_cfg.enforcement_enabled {
+        let cap = if is_scoped_call {
+            "harness.import.scoped"
+        } else {
+            "harness.import.unscoped"
+        };
+        app_data
+            .governance_manager
+            .require_capability_for_subject(&subject, cap)
+            .map_err(mlua::Error::runtime)?;
+    }
+
+    if !gov_cfg.enforcement_enabled {
+        return Ok(());
+    }
+
+    let allow_unscoped_open_override =
+        matches!(gov_cfg.profile, GovernanceProfile::Open) && gov_cfg.import.allow_unscoped_in_open;
+
+    match gov_cfg.import.mode {
+        GovernanceImportMode::Legacy => {
+            if is_scoped_call {
+                return Err(mlua::Error::runtime(
+                    "import_scoped is disabled when governance.import.mode=legacy".to_string(),
+                ));
+            }
+        }
+        GovernanceImportMode::Mixed => {}
+        GovernanceImportMode::Scoped => {
+            if !is_scoped_call && !allow_unscoped_open_override {
+                return Err(mlua::Error::runtime(
+                    "unscoped import() is disabled when governance.import.mode=scoped; use import_scoped(...)"
+                        .to_string(),
+                ));
+            }
+            if is_scoped_call && opts.is_none() {
+                return Err(mlua::Error::runtime(
+                    "import_scoped(...) requires options in scoped mode".to_string(),
+                ));
+            }
+            if is_scoped_call && opts.and_then(|t| t.get::<String>("root").ok()).is_none() {
+                return Err(mlua::Error::runtime(
+                    "import_scoped(...) requires opts.root when governance.import.mode=scoped"
+                        .to_string(),
+                ));
+            }
+        }
+    }
+
+    if is_scoped_call {
+        // In scoped mode / governed usage, importing a module without root attribution is suspicious.
+        // Keep this as a runtime error only when a root is explicitly requested.
+        if let Some(expected_root) = opts.and_then(|t| t.get::<String>("root").ok()) {
+            let actual_root = match meta_value {
+                Value::Table(t) => t.get::<String>("root").ok(),
+                _ => None,
+            };
+            if actual_root.is_none() {
+                return Err(mlua::Error::runtime(format!(
+                    "import_scoped root '{}' requested for '{}', but module has no attributed governance root",
+                    expected_root, module_name
+                )));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn wrap_imported_module(

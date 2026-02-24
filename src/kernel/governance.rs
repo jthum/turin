@@ -250,6 +250,7 @@ fn preset_capabilities_for_profile(
             caps.insert("runtime.db.*".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.*".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.policy.set".into(), serde_json::Value::Bool(true));
+            caps.insert("harness.import.*".into(), serde_json::Value::Bool(true));
             caps.insert("fs.write".into(), serde_json::Value::Bool(true));
             caps.insert("shell.exec".into(), serde_json::Value::Bool(true));
         }
@@ -261,6 +262,14 @@ fn preset_capabilities_for_profile(
             caps.insert("runtime.agent.status".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.spawn".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.policy.set".into(), serde_json::Value::Bool(true));
+            caps.insert(
+                "harness.import.unscoped".into(),
+                serde_json::Value::Bool(true),
+            );
+            caps.insert(
+                "harness.import.scoped".into(),
+                serde_json::Value::Bool(true),
+            );
             caps.insert("fs.write".into(), serde_json::Value::Bool(true));
             caps.insert("shell.exec".into(), serde_json::Value::Bool(false));
         }
@@ -272,6 +281,14 @@ fn preset_capabilities_for_profile(
             caps.insert("runtime.agent.status".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.spawn".into(), serde_json::Value::Bool(false));
             caps.insert("runtime.policy.set".into(), serde_json::Value::Bool(false));
+            caps.insert(
+                "harness.import.unscoped".into(),
+                serde_json::Value::Bool(false),
+            );
+            caps.insert(
+                "harness.import.scoped".into(),
+                serde_json::Value::Bool(true),
+            );
             caps.insert("fs.write".into(), serde_json::Value::Bool(false));
             caps.insert("shell.exec".into(), serde_json::Value::Bool(false));
         }
