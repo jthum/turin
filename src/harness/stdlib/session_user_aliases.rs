@@ -1,6 +1,9 @@
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{HarnessAppData, block_on_current};
+use crate::harness::stdlib::binding_common::{
+    bool_err, memory_rows_to_lua_table, nil_err, nil_ok, ok_bool, string_ok,
+};
 use crate::harness::stdlib::context_selectors::{
     search_limit_from_opt, selector_from_active_scope_lua,
 };
@@ -9,6 +12,15 @@ use crate::harness::stdlib::scoped_data_backend::{
 };
 
 pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
+    fn metadata_json_or_empty(lua: &Lua, metadata: Option<Table>) -> LuaResult<serde_json::Value> {
+        if let Some(tbl) = metadata {
+            lua.from_value::<serde_json::Value>(Value::Table(tbl))
+                .map_err(|e| mlua::Error::runtime(format!("invalid metadata table: {}", e)))
+        } else {
+            Ok(serde_json::json!({}))
+        }
+    }
+
     fn attach_alias_memory(
         lua: &Lua,
         t: &Table,
@@ -39,17 +51,11 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                         .map_err(|e| e.to_string())
                     });
                     match result {
-                        Ok(rows) => {
-                            let tbl = lua.create_table()?;
-                            for (i, row) in rows.into_iter().enumerate() {
-                                let rt = lua.create_table()?;
-                                rt.set("content", row.content)?;
-                                rt.set("score", row.score)?;
-                                tbl.set(i + 1, rt)?;
-                            }
-                            Ok((Value::Table(tbl), Value::Nil))
-                        }
-                        Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
+                        Ok(rows) => Ok((
+                            Value::Table(memory_rows_to_lua_table(lua, rows)?),
+                            Value::Nil,
+                        )),
+                        Err(err) => nil_err(lua, &err),
                     }
                 })?,
             )?;
@@ -63,13 +69,7 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                 lua.create_function(
                     move |lua, (content, metadata, _opts): (String, Option<Table>, Option<Table>)| {
                         let selector = selector_from_active_scope_lua(&selector_app, scope)?;
-                        let metadata_json = if let Some(tbl) = metadata {
-                            lua.from_value::<serde_json::Value>(Value::Table(tbl)).map_err(|e| {
-                                mlua::Error::runtime(format!("invalid metadata table: {}", e))
-                            })?
-                        } else {
-                            serde_json::json!({})
-                        };
+                        let metadata_json = metadata_json_or_empty(lua, metadata)?;
                         let manager = manager.clone();
                         let embedding = embedding.clone();
                         let result = block_on_current(async move {
@@ -84,11 +84,8 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                             .map_err(|e| e.to_string())
                         });
                         match result {
-                            Ok(_) => Ok((Value::Boolean(true), Value::Nil)),
-                            Err(err) => Ok((
-                                Value::Boolean(false),
-                                Value::String(lua.create_string(&err)?),
-                            )),
+                            Ok(_) => Ok(ok_bool()),
+                            Err(err) => bool_err(lua, &err),
                         }
                     },
                 )?,
@@ -119,9 +116,9 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                             .map_err(|e| e.to_string())
                     });
                     match result {
-                        Ok(Some(val)) => Ok((Value::String(lua.create_string(&val)?), Value::Nil)),
-                        Ok(None) => Ok((Value::Nil, Value::Nil)),
-                        Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
+                        Ok(Some(val)) => string_ok(lua, &val),
+                        Ok(None) => Ok(nil_ok()),
+                        Err(err) => nil_err(lua, &err),
                     }
                 })?,
             )?;
@@ -140,11 +137,8 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                             .map_err(|e| e.to_string())
                     });
                     match result {
-                        Ok(_) => Ok((Value::Boolean(true), Value::Nil)),
-                        Err(err) => Ok((
-                            Value::Boolean(false),
-                            Value::String(lua.create_string(&err)?),
-                        )),
+                        Ok(_) => Ok(ok_bool()),
+                        Err(err) => bool_err(lua, &err),
                     }
                 })?,
             )?;
@@ -163,11 +157,8 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                             .map_err(|e| e.to_string())
                     });
                     match result {
-                        Ok(_) => Ok((Value::Boolean(true), Value::Nil)),
-                        Err(err) => Ok((
-                            Value::Boolean(false),
-                            Value::String(lua.create_string(&err)?),
-                        )),
+                        Ok(_) => Ok(ok_bool()),
+                        Err(err) => bool_err(lua, &err),
                     }
                 })?,
             )?;
