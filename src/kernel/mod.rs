@@ -11,6 +11,7 @@ pub mod policy;
 pub mod session;
 mod session_lifecycle;
 mod run_loop;
+mod task_execution;
 mod task_lifecycle;
 mod task_planning;
 mod turn;
@@ -20,20 +21,17 @@ use anyhow::Result;
 use builder::RuntimeBuilder;
 use config::TurinConfig;
 use event::TaskTerminalStatus;
-use session::{QueuedTask, SessionState};
+use session::SessionState;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{error, info, instrument, warn};
+use tracing::{error, info, instrument};
 
 use crate::harness::engine::HarnessEngine;
 use crate::inference::embeddings::EmbeddingProvider;
-use crate::inference::provider::{
-    InferenceContent, InferenceMessage, InferenceRole, ProviderClient,
-};
+use crate::inference::provider::ProviderClient;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::persistence::manager::StoreManager;
 
-use crate::tools::ToolContext;
 use crate::tools::registry::ToolRegistry;
 use mcp_runtime::McpClientEntry;
 use notify::RecommendedWatcher;
@@ -193,125 +191,4 @@ impl Kernel {
 
         Ok(())
     }
-
-    /// Execute a single task (one specific prompt) within the persistent session.
-    #[instrument(skip(self, session, task), fields(task_id = %task.task_id))]
-    async fn run_task(
-        &mut self,
-        session: &mut SessionState,
-        task: &QueuedTask,
-    ) -> Result<TaskExecutionResult> {
-        let session_id = session.identity.session_id().to_string();
-        let prompt = task.prompt.as_str();
-
-        // Append user message to history
-        session.history.push(InferenceMessage {
-            role: InferenceRole::User,
-            content: vec![InferenceContent::Text {
-                text: prompt.to_string(),
-            }],
-            tool_call_id: None,
-        });
-
-        let tool_ctx = ToolContext {
-            workspace_root: std::path::PathBuf::from(&self.config.kernel.workspace_root),
-            session_id: session_id.clone(),
-        };
-
-        // Persist user message
-        if let Ok(store) = self.store_manager.get_default().await {
-            if let Some(iid) = session.internal_id {
-                let _ = store
-                    .insert_message(
-                        iid,
-                        session.turn_index,
-                        "user",
-                        &serde_json::json!([{"type": "text", "text": prompt}]),
-                        None,
-                    )
-                    .await;
-            } else {
-                warn!("Session missing internal_id, skipping message persistence");
-            }
-        }
-
-        // Set active session for harness globals (memory etc)
-        {
-            let harness = self.lock_harness();
-            if let Some(ref engine) = *harness {
-                engine.set_active_session(Some(&session_id), Some(session.mode.clone()));
-            }
-        }
-
-        let mut task_turn_count = 0;
-        let max_task_turns = self.config.kernel.max_turns;
-
-        let task_status_result: Result<TaskTerminalStatus> = loop {
-            if task_turn_count >= max_task_turns {
-                error!(
-                    max_turns = max_task_turns,
-                    "Max turns reached for this task"
-                );
-                break Ok(TaskTerminalStatus::MaxTurns);
-            }
-
-            let turn_ctx = turn::TurnContext {
-                task_id: task.task_id.clone(),
-                plan_id: task.plan_id.clone(),
-                task_turn_index: task_turn_count,
-            };
-            let completed_turn = match self.execute_turn(session, &tool_ctx, &turn_ctx).await {
-                Ok(outcome) => outcome,
-                Err(err) => break Err(err),
-            };
-
-            self.evaluate_token_usage(session.total_input_tokens, session.total_output_tokens);
-            session.turn_index += 1;
-            task_turn_count += 1;
-
-            {
-                let harness = self.lock_harness();
-                if let Some(ref engine) = *harness
-                    && let Some(m) = engine.get_active_session_mode()
-                {
-                    session.mode = m;
-                }
-            }
-
-            if session.mode == crate::kernel::config::AgentMode::Stateless {
-                match completed_turn {
-                    turn::TurnOutcome::Continue | turn::TurnOutcome::Complete => {
-                        break Ok(TaskTerminalStatus::Success);
-                    }
-                    turn::TurnOutcome::Rejected => {
-                        break Ok(TaskTerminalStatus::Rejected);
-                    }
-                }
-            }
-
-            match completed_turn {
-                turn::TurnOutcome::Continue => {}
-                turn::TurnOutcome::Complete => {
-                    break Ok(TaskTerminalStatus::Success);
-                }
-                turn::TurnOutcome::Rejected => {
-                    break Ok(TaskTerminalStatus::Rejected);
-                }
-            }
-        };
-
-        // Clear active session
-        {
-            let harness = self.lock_harness();
-            if let Some(ref engine) = *harness {
-                engine.set_active_session(None, None);
-            }
-        }
-        let task_status = task_status_result?;
-        Ok(TaskExecutionResult {
-            status: task_status,
-            task_turn_count,
-        })
-    }
-
 }

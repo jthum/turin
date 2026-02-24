@@ -1,0 +1,153 @@
+use anyhow::Result;
+use tracing::{error, instrument, warn};
+
+use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
+use crate::kernel::config::AgentMode;
+use crate::kernel::event::TaskTerminalStatus;
+use crate::kernel::session::{QueuedTask, SessionState};
+use crate::kernel::turn;
+use crate::kernel::{Kernel, TaskExecutionResult};
+use crate::tools::ToolContext;
+
+impl Kernel {
+    /// Execute a single task (one specific prompt) within the persistent session.
+    #[instrument(skip(self, session, task), fields(task_id = %task.task_id))]
+    pub(super) async fn run_task(
+        &mut self,
+        session: &mut SessionState,
+        task: &QueuedTask,
+    ) -> Result<TaskExecutionResult> {
+        let session_id = session.identity.session_id().to_string();
+        let prompt = task.prompt.as_str();
+
+        self.append_task_user_message(session, prompt);
+
+        let tool_ctx = ToolContext {
+            workspace_root: std::path::PathBuf::from(&self.config.kernel.workspace_root),
+            session_id: session_id.clone(),
+        };
+
+        self.persist_task_user_message(session, prompt).await;
+        self.set_task_active_session(&session_id, session.mode.clone());
+
+        let task_status_result = self.run_task_turn_loop(session, task, &tool_ctx).await;
+
+        self.clear_task_active_session();
+
+        let (status, task_turn_count) = task_status_result?;
+        Ok(TaskExecutionResult {
+            status,
+            task_turn_count,
+        })
+    }
+
+    fn append_task_user_message(&self, session: &mut SessionState, prompt: &str) {
+        session.history.push(InferenceMessage {
+            role: InferenceRole::User,
+            content: vec![InferenceContent::Text {
+                text: prompt.to_string(),
+            }],
+            tool_call_id: None,
+        });
+    }
+
+    async fn persist_task_user_message(&self, session: &SessionState, prompt: &str) {
+        if let Ok(store) = self.store_manager.get_default().await {
+            if let Some(iid) = session.internal_id {
+                let _ = store
+                    .insert_message(
+                        iid,
+                        session.turn_index,
+                        "user",
+                        &serde_json::json!([{"type": "text", "text": prompt}]),
+                        None,
+                    )
+                    .await;
+            } else {
+                warn!("Session missing internal_id, skipping message persistence");
+            }
+        }
+    }
+
+    fn set_task_active_session(&self, session_id: &str, mode: AgentMode) {
+        let harness = self.lock_harness();
+        if let Some(ref engine) = *harness {
+            engine.set_active_session(Some(session_id), Some(mode));
+        }
+    }
+
+    fn clear_task_active_session(&self) {
+        let harness = self.lock_harness();
+        if let Some(ref engine) = *harness {
+            engine.set_active_session(None, None);
+        }
+    }
+
+    async fn run_task_turn_loop(
+        &mut self,
+        session: &mut SessionState,
+        task: &QueuedTask,
+        tool_ctx: &ToolContext,
+    ) -> Result<(TaskTerminalStatus, u32)> {
+        let mut task_turn_count = 0;
+        let max_task_turns = self.config.kernel.max_turns;
+
+        let task_status_result: Result<TaskTerminalStatus> = loop {
+            if task_turn_count >= max_task_turns {
+                error!(
+                    max_turns = max_task_turns,
+                    "Max turns reached for this task"
+                );
+                break Ok(TaskTerminalStatus::MaxTurns);
+            }
+
+            let turn_ctx = turn::TurnContext {
+                task_id: task.task_id.clone(),
+                plan_id: task.plan_id.clone(),
+                task_turn_index: task_turn_count,
+            };
+            let completed_turn = match self.execute_turn(session, tool_ctx, &turn_ctx).await {
+                Ok(outcome) => outcome,
+                Err(err) => break Err(err),
+            };
+
+            self.evaluate_token_usage(session.total_input_tokens, session.total_output_tokens);
+            session.turn_index += 1;
+            task_turn_count += 1;
+            self.refresh_task_session_mode(session);
+
+            if session.mode == AgentMode::Stateless {
+                match completed_turn {
+                    turn::TurnOutcome::Continue | turn::TurnOutcome::Complete => {
+                        break Ok(TaskTerminalStatus::Success);
+                    }
+                    turn::TurnOutcome::Rejected => {
+                        break Ok(TaskTerminalStatus::Rejected);
+                    }
+                }
+            }
+
+            match completed_turn {
+                turn::TurnOutcome::Continue => {}
+                turn::TurnOutcome::Complete => {
+                    break Ok(TaskTerminalStatus::Success);
+                }
+                turn::TurnOutcome::Rejected => {
+                    break Ok(TaskTerminalStatus::Rejected);
+                }
+            }
+        };
+
+        let task_status = task_status_result?;
+        Ok((task_status, task_turn_count))
+    }
+
+    fn refresh_task_session_mode(&self, session: &mut SessionState) {
+        let harness = self.lock_harness();
+        if let Some(ref engine) = *harness
+            && let Some(m) = engine.get_active_session_mode()
+        {
+            session.mode = m;
+        }
+    }
+}
