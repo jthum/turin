@@ -969,7 +969,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_import() -> Result<()>
                     error("unscoped import() should be blocked in governed scoped mode")
                 end
 
-                local util = import_scoped("util", { root = "core" })
+                local util = import_scoped("util")
                 if util == nil then error("import_scoped should succeed in scoped mode") end
                 if util.ping() ~= "pong" then error("import_scoped util.ping mismatch") end
                 return ALLOW
@@ -1049,6 +1049,230 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_import() -> Result<()>
         .run(
             &mut session,
             Some("exercise governed scoped import mode".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_root_max_capabilities_applies_to_top_level_hooks() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_root_max_caps.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    std::fs::write(
+        harness_dir.join("main.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local dec, derr = runtime.governance.check("runtime.policy.set")
+                if dec == nil then error("runtime.governance.check failed: " .. tostring(derr)) end
+                if dec.subject_root_name ~= "core" then
+                    error("subject_root_name should be core, got " .. tostring(dec.subject_root_name))
+                end
+                if dec.allowed then
+                    error("runtime.policy.set should be denied by root max_capabilities")
+                end
+                if dec.reason == nil or string.find(dec.reason, "root max_capabilities 'core'", 1, true) == nil then
+                    error("denial reason should reference root max_capabilities")
+                end
+
+                local ok, err = runtime.policy.set("root_cap.test", true)
+                if ok then
+                    error("runtime.policy.set should fail under root max_capabilities")
+                end
+                if err == nil or string.find(err, "root max_capabilities 'core'", 1, true) == nil then
+                    error("runtime.policy.set denial should mention root max_capabilities")
+                end
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut roots = std::collections::HashMap::new();
+    let mut root_caps = std::collections::HashMap::new();
+    root_caps.insert(
+        "runtime.policy.set".to_string(),
+        serde_json::Value::Bool(false),
+    );
+    roots.insert(
+        "core".to_string(),
+        turin::kernel::config::GovernanceRootConfig {
+            path: harness_dir.to_str().unwrap().to_string(),
+            writable_hint: false,
+            default_profile: Some("core_locked".to_string()),
+            max_capabilities: root_caps,
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "root max capabilities test".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig {
+            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            enforcement_enabled: true,
+            roots,
+            ..turin::kernel::config::GovernanceConfig::default()
+        },
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise root max_capabilities on top-level hooks".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_agent_max_caps.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    std::fs::write(
+        harness_dir.join("main.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local dec, derr = runtime.governance.check("runtime.policy.set")
+                if dec == nil then error("runtime.governance.check failed: " .. tostring(derr)) end
+                if dec.allowed then
+                    error("runtime.policy.set should be denied by agent max_capabilities")
+                end
+                if dec.reason == nil or string.find(dec.reason, "agent max_capabilities 'default'", 1, true) == nil then
+                    error("denial reason should reference agent max_capabilities")
+                end
+
+                local ok, err = runtime.policy.set("agent_cap.test", true)
+                if ok then
+                    error("runtime.policy.set should fail under agent max_capabilities")
+                end
+                if err == nil or string.find(err, "agent max_capabilities 'default'", 1, true) == nil then
+                    error("runtime.policy.set denial should mention agent max_capabilities")
+                end
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut governance_agents = std::collections::HashMap::new();
+    let mut agent_caps = std::collections::HashMap::new();
+    agent_caps.insert(
+        "runtime.policy.set".to_string(),
+        serde_json::Value::Bool(false),
+    );
+    governance_agents.insert(
+        "default".to_string(),
+        turin::kernel::config::GovernanceAgentCapabilitiesConfig {
+            capability_profile: None,
+            max_capabilities: agent_caps,
+            allowed_child_agents: vec![],
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "agent max capabilities test".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig {
+            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            enforcement_enabled: true,
+            agents: governance_agents,
+            ..turin::kernel::config::GovernanceConfig::default()
+        },
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise agent max_capabilities".to_string()),
         )
         .await?;
     kernel.end_session(&mut session).await?;

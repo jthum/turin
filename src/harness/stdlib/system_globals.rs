@@ -54,11 +54,16 @@ fn import_module(
         .and_then(|t| t.get::<Value>(name).ok())
         .unwrap_or(Value::Nil);
 
-    enforce_import_policy(lua, name, &meta_value, opts.as_ref(), is_scoped_call)?;
+    let requested_root = effective_import_root(lua, opts.as_ref(), is_scoped_call);
+    enforce_import_policy(
+        lua,
+        name,
+        &meta_value,
+        requested_root.as_deref(),
+        is_scoped_call,
+    )?;
 
-    if let Some(ref opts) = opts
-        && let Ok(expected_root) = opts.get::<String>("root")
-    {
+    if let Some(expected_root) = requested_root {
         let actual_root = match &meta_value {
             Value::Table(t) => t.get::<String>("root").ok(),
             _ => None,
@@ -81,7 +86,7 @@ fn enforce_import_policy(
     lua: &Lua,
     module_name: &str,
     meta_value: &Value,
-    opts: Option<&Table>,
+    requested_root: Option<&str>,
     is_scoped_call: bool,
 ) -> LuaResult<()> {
     let Some(app_data) = lua.app_data_ref::<crate::harness::globals::HarnessAppData>() else {
@@ -126,14 +131,9 @@ fn enforce_import_policy(
                         .to_string(),
                 ));
             }
-            if is_scoped_call && opts.is_none() {
+            if is_scoped_call && requested_root.is_none() {
                 return Err(mlua::Error::runtime(
-                    "import_scoped(...) requires options in scoped mode".to_string(),
-                ));
-            }
-            if is_scoped_call && opts.and_then(|t| t.get::<String>("root").ok()).is_none() {
-                return Err(mlua::Error::runtime(
-                    "import_scoped(...) requires opts.root when governance.import.mode=scoped"
+                    "import_scoped(...) requires opts.root or governance.import.default_root when governance.import.mode=scoped"
                         .to_string(),
                 ));
             }
@@ -143,7 +143,7 @@ fn enforce_import_policy(
     if is_scoped_call {
         // In scoped mode / governed usage, importing a module without root attribution is suspicious.
         // Keep this as a runtime error only when a root is explicitly requested.
-        if let Some(expected_root) = opts.and_then(|t| t.get::<String>("root").ok()) {
+        if let Some(expected_root) = requested_root {
             let actual_root = match meta_value {
                 Value::Table(t) => t.get::<String>("root").ok(),
                 _ => None,
@@ -158,6 +158,24 @@ fn enforce_import_policy(
     }
 
     Ok(())
+}
+
+fn effective_import_root(lua: &Lua, opts: Option<&Table>, is_scoped_call: bool) -> Option<String> {
+    if let Some(root) = opts.and_then(|t| t.get::<String>("root").ok()) {
+        return Some(root);
+    }
+    if !is_scoped_call {
+        return None;
+    }
+    lua.app_data_ref::<crate::harness::globals::HarnessAppData>()
+        .and_then(|app_data| {
+            app_data
+                .governance_manager
+                .config()
+                .import
+                .default_root
+                .clone()
+        })
 }
 
 fn wrap_imported_module(

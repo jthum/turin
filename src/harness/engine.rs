@@ -270,11 +270,22 @@ impl HarnessEngine {
     }
 
     fn set_active_harness_module(&self, module_name: Option<&str>) {
-        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
-            && let Ok(mut lock) = app_data.active_harness_module.lock()
-        {
-            *lock = module_name.map(|s| s.to_string());
+        let root_name = module_name.and_then(|name| self.lookup_module_root_name(name));
+        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>() {
+            if let Ok(mut lock) = app_data.active_harness_module.lock() {
+                *lock = module_name.map(|s| s.to_string());
+            }
+            if let Ok(mut lock) = app_data.active_harness_root.lock() {
+                *lock = root_name;
+            }
         }
+    }
+
+    fn lookup_module_root_name(&self, module_name: &str) -> Option<String> {
+        let globals = self.lua.globals();
+        let module_meta: Table = globals.get("__harness_module_meta").ok()?;
+        let meta: Table = module_meta.get(module_name).ok()?;
+        meta.get::<String>("root").ok()
     }
 
     fn resolve_governance_root_name(&self, script_path: &Path) -> Option<String> {
