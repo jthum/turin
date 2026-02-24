@@ -4,7 +4,10 @@ use crate::harness::globals::{ActiveSessionQueue, HarnessAppData, block_on_curre
 use crate::harness::stdlib::binding_common::{
     bool_err, nil_err, nil_ok, ok_bool, ok_value, string_ok, string_value,
 };
-use crate::harness::stdlib::governance_support::require_capability as require_governance_capability;
+use crate::harness::stdlib::governance_support::{
+    require_capability as require_governance_capability,
+    require_child_agent as require_child_agent_governance,
+};
 use crate::harness::stdlib::identity_support::{
     get_active_identity, identity_to_lua_table, session_row_to_lua_table,
 };
@@ -138,6 +141,11 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     .as_ref()
                     .and_then(|t| t.get::<String>("agent_id").ok())
                     .unwrap_or_else(|| default_agent.clone());
+                if let Err(err) =
+                    require_child_agent_governance(&complete_policy_snapshot, &target_agent)
+                {
+                    return nil_err(lua, &err);
+                }
                 let timeout_ms = opts.as_ref().and_then(|t| t.get::<u64>("timeout_ms").ok());
 
                 let manager_submit = manager.clone();
@@ -360,6 +368,9 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             if let Err(err) =
                 require_governance_capability(&send_policy_snapshot, "runtime.agent.submit")
             {
+                return Err(mlua::Error::runtime(err));
+            }
+            if let Err(err) = require_child_agent_governance(&send_policy_snapshot, &id) {
                 return Err(mlua::Error::runtime(err));
             }
             let m = agent_manager.clone();

@@ -292,6 +292,41 @@ impl GovernanceManager {
                 .unwrap_or_else(|| "Governance denial".to_string()))
         }
     }
+
+    pub fn require_child_agent_for_subject(
+        &self,
+        subject: &GovernanceSubject,
+        child_agent_id: &str,
+    ) -> Result<(), String> {
+        if !self.config.enforcement_enabled {
+            return Ok(());
+        }
+
+        let Some(parent_agent_id) = subject.agent_id.as_deref() else {
+            return Ok(());
+        };
+
+        let Some(agent_cfg) = self.config.agents.get(parent_agent_id) else {
+            return Ok(());
+        };
+
+        if agent_cfg.allowed_child_agents.is_empty() {
+            return Ok(());
+        }
+
+        if agent_cfg
+            .allowed_child_agents
+            .iter()
+            .any(|id| id == child_agent_id)
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "Governance denial: child agent '{}' is not allowed for agent '{}' (allowed_child_agents)",
+                child_agent_id, parent_agent_id
+            ))
+        }
+    }
 }
 
 fn preset_capabilities_for_profile(
@@ -626,5 +661,36 @@ mod tests {
         let decision = mgr.capability_decision_for_subject(&subject, "runtime.db.query");
         assert_eq!(decision.subject_agent_id.as_deref(), Some("default"));
         assert_eq!(decision.subject_module_name.as_deref(), Some("planner"));
+    }
+
+    #[test]
+    fn allowed_child_agents_is_opt_in_and_enforced_when_configured() {
+        let mut cfg = GovernanceConfig {
+            profile: GovernanceProfile::Balanced,
+            enforcement_enabled: true,
+            ..GovernanceConfig::default()
+        };
+        cfg.agents.insert(
+            "orchestrator".into(),
+            crate::kernel::config::GovernanceAgentCapabilitiesConfig {
+                capability_profile: None,
+                max_capabilities: Default::default(),
+                allowed_child_agents: vec!["worker_allowed".into()],
+            },
+        );
+        let mgr = GovernanceManager::new(cfg);
+        let subject = GovernanceSubject {
+            agent_id: Some("orchestrator".into()),
+            ..GovernanceSubject::default()
+        };
+
+        assert!(
+            mgr.require_child_agent_for_subject(&subject, "worker_allowed")
+                .is_ok()
+        );
+        let err = mgr
+            .require_child_agent_for_subject(&subject, "worker_blocked")
+            .unwrap_err();
+        assert!(err.contains("allowed_child_agents"));
     }
 }

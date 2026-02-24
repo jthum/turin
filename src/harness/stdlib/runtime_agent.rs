@@ -6,6 +6,7 @@ use crate::harness::globals::{HarnessAppData, block_on_current};
 use crate::harness::stdlib::binding_common::{json_ok, nil_err, string_ok};
 use crate::harness::stdlib::governance_support::{
     current_subject, require_capability as require_governance_capability,
+    require_child_agent as require_child_agent_governance,
 };
 use crate::harness::stdlib::policy_support::{policy_bool, runtime_policy_snapshot};
 use crate::kernel::session::QueuedTask;
@@ -128,6 +129,10 @@ pub fn register_runtime_agent_namespace(
                 move |lua, (agent_id, task_val, opts): (String, Value, Option<Table>)| {
                     if let Err(err) =
                         require_governance_capability(&app_data_snapshot, "runtime.agent.submit")
+                    {
+                        return nil_err(lua, &err);
+                    }
+                    if let Err(err) = require_child_agent_governance(&app_data_snapshot, &agent_id)
                     {
                         return nil_err(lua, &err);
                     }

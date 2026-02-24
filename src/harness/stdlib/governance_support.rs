@@ -26,6 +26,16 @@ pub(crate) fn require_capability(
         .require_capability_for_subject(&subject, capability)
 }
 
+pub(crate) fn require_child_agent(
+    app_data: &HarnessAppData,
+    child_agent_id: &str,
+) -> Result<(), String> {
+    let subject = current_subject(app_data);
+    app_data
+        .governance_manager
+        .require_child_agent_for_subject(&subject, child_agent_id)
+}
+
 pub(crate) fn current_subject(app_data: &HarnessAppData) -> GovernanceSubject {
     let module_name = app_data
         .active_harness_module
