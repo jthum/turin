@@ -91,6 +91,8 @@ pub enum StreamEvent {
     MessageDelta { content_delta: String },
     /// Streaming thinking chunk received
     ThinkingDelta { thinking: String },
+    /// Streaming thinking signature chunk received (provider-agnostic pass-through)
+    ThinkingSignatureDelta { signature: String },
     /// Complete message assembled
     MessageEnd {
         role: String,
@@ -175,6 +177,7 @@ impl KernelEvent {
                 StreamEvent::MessageStart { .. } => "message_start",
                 StreamEvent::MessageDelta { .. } => "message_delta",
                 StreamEvent::ThinkingDelta { .. } => "thinking_delta",
+                StreamEvent::ThinkingSignatureDelta { .. } => "thinking_signature_delta",
                 StreamEvent::MessageEnd { .. } => "message_end",
                 StreamEvent::ToolCall { .. } => "tool_call",
             },

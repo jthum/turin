@@ -212,6 +212,11 @@ fn map_sdk_event(
                 thinking: content,
             })));
         }
+        InferenceEvent::ThinkingSignatureDelta { signature } => {
+            mapped.push(Ok(KernelEvent::Stream(
+                StreamEvent::ThinkingSignatureDelta { signature },
+            )));
+        }
         InferenceEvent::ToolCallStart { id, name } => match pending_tool.on_start(id, name) {
             Ok(Some(tool_call)) => mapped.push(Ok(tool_call)),
             Ok(None) => {}
@@ -344,5 +349,29 @@ impl InferenceProvider for MockProvider {
             ];
             Ok(Box::pin(futures::stream::iter(events)) as InferenceStream)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_thinking_signature_delta_to_kernel_stream_event() {
+        let mut pending_tool = PendingToolCallEvent::default();
+        let events = map_sdk_event(
+            InferenceEvent::ThinkingSignatureDelta {
+                signature: "sig_part".to_string(),
+            },
+            &mut pending_tool,
+        );
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Ok(KernelEvent::Stream(StreamEvent::ThinkingSignatureDelta { signature })) => {
+                assert_eq!(signature, "sig_part");
+            }
+            other => panic!("unexpected mapped event: {other:?}"),
+        }
     }
 }

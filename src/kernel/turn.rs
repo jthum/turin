@@ -81,6 +81,7 @@ impl Kernel {
             .collect_turn_stream_output(session, &provider_name, &model, stream)
             .await?;
         let response_thinking = stream_output.response_thinking;
+        let response_thinking_signature = stream_output.response_thinking_signature;
         let response_text = stream_output.response_text;
         let pending_tool_calls = stream_output.pending_tool_calls;
 
@@ -89,6 +90,7 @@ impl Kernel {
                 session,
                 turn_ctx,
                 &response_thinking,
+                response_thinking_signature.as_deref(),
                 &response_text,
                 &pending_tool_calls,
             )

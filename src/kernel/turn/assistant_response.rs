@@ -13,6 +13,7 @@ impl Kernel {
         session: &mut SessionState,
         turn_ctx: &TurnContext,
         response_thinking: &str,
+        response_thinking_signature: Option<&str>,
         response_text: &str,
         pending_tool_calls: &[PendingToolCall],
     ) -> bool {
@@ -81,6 +82,7 @@ impl Kernel {
             // tool/result matching) without persisting it to the transcript store.
             assistant_content.push(InferenceContent::Thinking {
                 content: response_thinking.to_string(),
+                signature: response_thinking_signature.map(str::to_owned),
             });
         }
         if !response_text.is_empty() {
