@@ -336,13 +336,14 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
         )?;
     }
 
-    let sm1 = app_data.active_session_mode.clone();
+    let execution_ctx_get = app_data.execution_ctx.clone();
     mode_ns.set(
         "get",
         lua.create_function(move |lua, ()| {
-            let mode = sm1
+            let mode = execution_ctx_get
                 .lock()
                 .unwrap()
+                .session_mode
                 .clone()
                 .unwrap_or(crate::kernel::config::AgentMode::Auto);
             let mode_str = match mode {
@@ -354,7 +355,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
         })?,
     )?;
 
-    let sm2 = app_data.active_session_mode.clone();
+    let execution_ctx_set = app_data.execution_ctx.clone();
     mode_ns.set(
         "set",
         lua.create_function(move |lua, m: String| {
@@ -366,8 +367,8 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     return bool_err(lua, "invalid mode; expected auto|stateful|stateless");
                 }
             };
-            if let Ok(mut lock) = sm2.lock() {
-                *lock = Some(mode);
+            if let Ok(mut lock) = execution_ctx_set.lock() {
+                lock.session_mode = Some(mode);
             }
             Ok(ok_bool())
         })?,

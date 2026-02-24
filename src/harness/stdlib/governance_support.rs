@@ -122,26 +122,19 @@ pub(crate) fn apply_active_grant_ceiling_to_peer_delegation(
 }
 
 pub(crate) fn current_subject(app_data: &HarnessAppData) -> GovernanceSubject {
-    let module_name = app_data
-        .active_harness_module
+    let (module_name, root_name, import_capabilities, grant_id) = app_data
+        .execution_ctx
         .lock()
         .ok()
-        .and_then(|lock| lock.clone());
-    let root_name = app_data
-        .active_harness_root
-        .lock()
-        .ok()
-        .and_then(|lock| lock.clone());
-    let import_capabilities: Option<BTreeMap<String, bool>> = app_data
-        .active_import_capabilities
-        .lock()
-        .ok()
-        .and_then(|lock| lock.clone());
-    let grant_id = app_data
-        .active_governance_grant
-        .lock()
-        .ok()
-        .and_then(|lock| lock.clone());
+        .map(|lock| {
+            (
+                lock.harness_module.clone(),
+                lock.harness_root.clone(),
+                lock.import_capabilities.clone(),
+                lock.governance_grant.clone(),
+            )
+        })
+        .unwrap_or((None, None, None, None));
     GovernanceSubject {
         agent_id: Some(current_agent_id(app_data).to_string()),
         module_name,
@@ -174,10 +167,10 @@ fn capability_allowed_by_ceiling(caps: &BTreeMap<String, bool>, capability: &str
 
 pub(crate) fn emit_governance_audit_event(app_data: &HarnessAppData, audit_event: AuditEvent) {
     let Some(ctx) = app_data
-        .active_event_context
+        .execution_ctx
         .lock()
         .ok()
-        .and_then(|lock| lock.clone())
+        .and_then(|lock| lock.event_context.clone())
     else {
         return;
     };

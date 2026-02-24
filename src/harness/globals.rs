@@ -30,7 +30,18 @@ pub struct HarnessEventContext {
     pub durability_tx: Option<tokio::sync::mpsc::UnboundedSender<(Option<i64>, KernelEvent)>>,
 }
 
-pub type ActiveHarnessEventContext = Arc<std::sync::Mutex<Option<HarnessEventContext>>>;
+#[derive(Clone, Default)]
+pub struct HarnessExecutionContext {
+    pub session_id: Option<String>,
+    pub session_mode: Option<crate::kernel::config::AgentMode>,
+    pub harness_module: Option<String>,
+    pub harness_root: Option<String>,
+    pub import_capabilities: Option<BTreeMap<String, bool>>,
+    pub governance_grant: Option<String>,
+    pub event_context: Option<HarnessEventContext>,
+}
+
+pub type ActiveHarnessExecutionContext = Arc<std::sync::Mutex<HarnessExecutionContext>>;
 
 /// Shared state passed to async Lua callbacks via app data.
 #[derive(Clone)]
@@ -41,13 +52,7 @@ pub struct HarnessAppData {
     pub agent_manager: Arc<crate::kernel::agent_manager::AgentManager>,
     pub policy_manager: Arc<crate::kernel::policy::RuntimePolicyManager>,
     pub governance_manager: Arc<crate::kernel::governance::GovernanceManager>,
-    pub active_session_id: Arc<std::sync::Mutex<Option<String>>>,
-    pub active_session_mode: Arc<std::sync::Mutex<Option<crate::kernel::config::AgentMode>>>,
-    pub active_harness_module: Arc<std::sync::Mutex<Option<String>>>,
-    pub active_harness_root: Arc<std::sync::Mutex<Option<String>>>,
-    pub active_import_capabilities: Arc<std::sync::Mutex<Option<BTreeMap<String, bool>>>>,
-    pub active_governance_grant: Arc<std::sync::Mutex<Option<String>>>,
-    pub active_event_context: ActiveHarnessEventContext,
+    pub execution_ctx: ActiveHarnessExecutionContext,
     pub clients: HashMap<String, ProviderClient>,
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     pub queue: ActiveSessionQueue,

@@ -200,23 +200,21 @@ pub fn register_runtime_governance_namespace(
                 );
 
                 let previous_grant = {
-                    let mut lock = app_data_snapshot
-                        .active_governance_grant
-                        .lock()
-                        .map_err(|_| mlua::Error::runtime("active governance grant mutex poisoned"))?;
-                    let previous = lock.clone();
-                    *lock = Some(grant_id.clone());
+                    let mut lock = app_data_snapshot.execution_ctx.lock().map_err(|_| {
+                        mlua::Error::runtime("active governance grant mutex poisoned")
+                    })?;
+                    let previous = lock.governance_grant.clone();
+                    lock.governance_grant = Some(grant_id.clone());
                     previous
                 };
 
                 let call_result = func.call::<MultiValue>(());
 
                 {
-                    let mut lock = app_data_snapshot
-                        .active_governance_grant
-                        .lock()
-                        .map_err(|_| mlua::Error::runtime("active governance grant mutex poisoned"))?;
-                    *lock = previous_grant;
+                    let mut lock = app_data_snapshot.execution_ctx.lock().map_err(|_| {
+                        mlua::Error::runtime("active governance grant mutex poisoned")
+                    })?;
+                    lock.governance_grant = previous_grant;
                 }
 
                 call_result

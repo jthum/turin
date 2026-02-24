@@ -5,9 +5,10 @@ use crate::kernel::identity::RuntimeIdentity;
 
 pub(crate) fn get_active_identity(app_data: &HarnessAppData) -> anyhow::Result<RuntimeIdentity> {
     let session_id = app_data
-        .active_session_id
+        .execution_ctx
         .lock()
         .unwrap()
+        .session_id
         .clone()
         .ok_or_else(|| anyhow::anyhow!("No active session context"))?;
 

@@ -251,30 +251,28 @@ impl HarnessEngine {
         session_id: Option<&str>,
         mode: Option<crate::kernel::config::AgentMode>,
     ) {
-        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>() {
-            if let Ok(mut lock) = app_data.active_session_id.lock() {
-                *lock = session_id.map(|s| s.to_string());
-            }
-            if let Ok(mut lock) = app_data.active_session_mode.lock() {
-                *lock = mode;
-            }
+        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
+            && let Ok(mut lock) = app_data.execution_ctx.lock()
+        {
+            lock.session_id = session_id.map(|s| s.to_string());
+            lock.session_mode = mode;
         }
     }
 
     pub fn get_active_session_mode(&self) -> Option<crate::kernel::config::AgentMode> {
         if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
-            && let Ok(lock) = app_data.active_session_mode.lock()
+            && let Ok(lock) = app_data.execution_ctx.lock()
         {
-            return lock.clone();
+            return lock.session_mode.clone();
         }
         None
     }
 
     pub fn set_active_capability_delegation(&self, caps: Option<BTreeMap<String, bool>>) {
         if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
-            && let Ok(mut lock) = app_data.active_import_capabilities.lock()
+            && let Ok(mut lock) = app_data.execution_ctx.lock()
         {
-            *lock = caps;
+            lock.import_capabilities = caps;
         }
     }
 
@@ -283,21 +281,19 @@ impl HarnessEngine {
         ctx: Option<crate::harness::globals::HarnessEventContext>,
     ) {
         if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
-            && let Ok(mut lock) = app_data.active_event_context.lock()
+            && let Ok(mut lock) = app_data.execution_ctx.lock()
         {
-            *lock = ctx;
+            lock.event_context = ctx;
         }
     }
 
     fn set_active_harness_module(&self, module_name: Option<&str>) {
         let root_name = module_name.and_then(|name| self.lookup_module_root_name(name));
-        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>() {
-            if let Ok(mut lock) = app_data.active_harness_module.lock() {
-                *lock = module_name.map(|s| s.to_string());
-            }
-            if let Ok(mut lock) = app_data.active_harness_root.lock() {
-                *lock = root_name;
-            }
+        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
+            && let Ok(mut lock) = app_data.execution_ctx.lock()
+        {
+            lock.harness_module = module_name.map(|s| s.to_string());
+            lock.harness_root = root_name;
         }
     }
 
@@ -522,15 +518,12 @@ mod tests {
             queue: std::sync::Arc::new(tokio::sync::Mutex::new(Some(std::sync::Arc::new(
                 tokio::sync::Mutex::new(std::collections::VecDeque::new()),
             )))),
-            active_session_id: std::sync::Arc::new(std::sync::Mutex::new(Some(
-                "test-session".to_string(),
-            ))),
-            active_session_mode: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            active_harness_module: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            active_harness_root: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            active_import_capabilities: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            active_governance_grant: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            active_event_context: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            execution_ctx: std::sync::Arc::new(std::sync::Mutex::new(
+                crate::harness::globals::HarnessExecutionContext {
+                    session_id: Some("test-session".to_string()),
+                    ..Default::default()
+                },
+            )),
             config: std::sync::Arc::new(crate::kernel::config::TurinConfig::default()),
             spawn_depth: 0,
         }

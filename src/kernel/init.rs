@@ -14,7 +14,7 @@ use tracing::{debug, error, info, instrument, warn};
 use super::Kernel;
 use super::config::TurinConfig;
 use crate::harness::engine::HarnessEngine;
-use crate::harness::globals::HarnessAppData;
+use crate::harness::globals::{HarnessAppData, HarnessExecutionContext};
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::{self, ProviderClient};
 
@@ -131,13 +131,7 @@ impl Kernel {
             clients: self.clients.clone(),
             embedding_provider: self.embedding_provider.clone(),
             queue: self.active_queue.clone(),
-            active_session_id: Arc::new(std::sync::Mutex::new(None)),
-            active_session_mode: Arc::new(std::sync::Mutex::new(None)),
-            active_harness_module: Arc::new(std::sync::Mutex::new(None)),
-            active_harness_root: Arc::new(std::sync::Mutex::new(None)),
-            active_import_capabilities: Arc::new(std::sync::Mutex::new(None)),
-            active_governance_grant: Arc::new(std::sync::Mutex::new(None)),
-            active_event_context: Arc::new(std::sync::Mutex::new(None)),
+            execution_ctx: Arc::new(std::sync::Mutex::new(HarnessExecutionContext::default())),
             config: self.config.clone(),
             spawn_depth: self.config.kernel.initial_spawn_depth,
         };
@@ -208,13 +202,9 @@ impl Kernel {
                     clients,
                     embedding_provider,
                     queue: active_queue,
-                    active_session_id: Arc::new(std::sync::Mutex::new(None)),
-                    active_session_mode: Arc::new(std::sync::Mutex::new(None)),
-                    active_harness_module: Arc::new(std::sync::Mutex::new(None)),
-                    active_harness_root: Arc::new(std::sync::Mutex::new(None)),
-                    active_import_capabilities: Arc::new(std::sync::Mutex::new(None)),
-                    active_governance_grant: Arc::new(std::sync::Mutex::new(None)),
-                    active_event_context: Arc::new(std::sync::Mutex::new(None)),
+                    execution_ctx: Arc::new(std::sync::Mutex::new(
+                        HarnessExecutionContext::default(),
+                    )),
                     config: config.clone(),
                     spawn_depth: config.kernel.initial_spawn_depth,
                 };

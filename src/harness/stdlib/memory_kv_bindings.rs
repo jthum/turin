@@ -1,6 +1,6 @@
 use mlua::{Lua, Result as LuaResult, Table, Value};
 
-use crate::harness::globals::{HarnessAppData, block_on_current};
+use crate::harness::globals::{ActiveHarnessExecutionContext, HarnessAppData, block_on_current};
 use crate::harness::stdlib::binding_common::{
     bool_err, memory_rows_to_lua_table, metadata_json_or_empty, nil_err, nil_ok, ok_bool, ok_value,
     string_ok,
@@ -25,8 +25,8 @@ fn default_agent_selector(app_data: &HarnessAppData) -> LuaResult<ContextSelecto
     .map_err(mlua::Error::runtime)
 }
 
-fn has_active_session(active_session: &Arc<std::sync::Mutex<Option<String>>>) -> bool {
-    active_session.lock().unwrap().is_some()
+fn has_active_session(execution_ctx: &ActiveHarnessExecutionContext) -> bool {
+    execution_ctx.lock().unwrap().session_id.is_some()
 }
 
 fn memory_search_result(
@@ -134,13 +134,13 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
         let manager = app_data.store_manager.clone();
         let embedding = app_data.embedding_provider.clone();
         let app_data_snapshot = app_data.clone();
-        let active_session = app_data.active_session_id.clone();
+        let execution_ctx = app_data.execution_ctx.clone();
         memory_table.set(
             "search",
             lua.create_function(move |lua, (query, opts): (String, Option<Value>)| {
                 let limit = search_limit_from_opt(opts)?;
                 let selector = default_agent_selector(&app_data_snapshot)?;
-                if !has_active_session(&active_session) {
+                if !has_active_session(&execution_ctx) {
                     return nil_err(lua, "No active session context");
                 }
                 memory_search_result(
@@ -160,13 +160,13 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
         let manager = app_data.store_manager.clone();
         let embedding = app_data.embedding_provider.clone();
         let app_data_snapshot = app_data.clone();
-        let active_session = app_data.active_session_id.clone();
+        let execution_ctx = app_data.execution_ctx.clone();
         memory_table.set(
             "store",
             lua.create_function(
                 move |lua, (content, metadata, _opts): (String, Option<Table>, Option<Table>)| {
                     let selector = default_agent_selector(&app_data_snapshot)?;
-                    if !has_active_session(&active_session) {
+                    if !has_active_session(&execution_ctx) {
                         return bool_err(lua, "No active session context");
                     }
                     let metadata_json = metadata_json_or_empty(lua, metadata)?;
@@ -252,11 +252,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
     {
         let manager = app_data.store_manager.clone();
         let app_data_snapshot = app_data.clone();
-        let active_session = app_data.active_session_id.clone();
+        let execution_ctx = app_data.execution_ctx.clone();
         kv_table.set(
             "get",
             lua.create_function(move |lua, key: String| {
-                if !has_active_session(&active_session) {
+                if !has_active_session(&execution_ctx) {
                     return nil_err(lua, "No active session context");
                 }
                 let selector = default_agent_selector(&app_data_snapshot)?;
@@ -269,11 +269,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
     {
         let manager = app_data.store_manager.clone();
         let app_data_snapshot = app_data.clone();
-        let active_session = app_data.active_session_id.clone();
+        let execution_ctx = app_data.execution_ctx.clone();
         kv_table.set(
             "set",
             lua.create_function(move |lua, (key, value): (String, String)| {
-                if !has_active_session(&active_session) {
+                if !has_active_session(&execution_ctx) {
                     return bool_err(lua, "No active session context");
                 }
                 let selector = default_agent_selector(&app_data_snapshot)?;
@@ -286,11 +286,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
     {
         let manager = app_data.store_manager.clone();
         let app_data_snapshot = app_data.clone();
-        let active_session = app_data.active_session_id.clone();
+        let execution_ctx = app_data.execution_ctx.clone();
         kv_table.set(
             "delete",
             lua.create_function(move |lua, key: String| {
-                if !has_active_session(&active_session) {
+                if !has_active_session(&execution_ctx) {
                     return bool_err(lua, "No active session context");
                 }
                 let selector = default_agent_selector(&app_data_snapshot)?;

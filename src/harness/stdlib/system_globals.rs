@@ -305,9 +305,9 @@ fn wrap_module_function(
 
 fn set_active_harness_module(lua: &Lua, module_name: Option<&str>) {
     if let Some(app_data) = lua.app_data_ref::<crate::harness::globals::HarnessAppData>()
-        && let Ok(mut lock) = app_data.active_harness_module.lock()
+        && let Ok(mut lock) = app_data.execution_ctx.lock()
     {
-        *lock = module_name.map(|s| s.to_string());
+        lock.harness_module = module_name.map(|s| s.to_string());
     }
 }
 
@@ -315,18 +315,18 @@ fn get_active_harness_module(lua: &Lua) -> Option<String> {
     lua.app_data_ref::<crate::harness::globals::HarnessAppData>()
         .and_then(|app_data| {
             app_data
-                .active_harness_module
+                .execution_ctx
                 .lock()
                 .ok()
-                .and_then(|l| l.clone())
+                .and_then(|l| l.harness_module.clone())
         })
 }
 
 fn set_active_harness_root(lua: &Lua, root_name: Option<&str>) {
     if let Some(app_data) = lua.app_data_ref::<crate::harness::globals::HarnessAppData>()
-        && let Ok(mut lock) = app_data.active_harness_root.lock()
+        && let Ok(mut lock) = app_data.execution_ctx.lock()
     {
-        *lock = root_name.map(|s| s.to_string());
+        lock.harness_root = root_name.map(|s| s.to_string());
     }
 }
 
@@ -334,18 +334,18 @@ fn get_active_harness_root(lua: &Lua) -> Option<String> {
     lua.app_data_ref::<crate::harness::globals::HarnessAppData>()
         .and_then(|app_data| {
             app_data
-                .active_harness_root
+                .execution_ctx
                 .lock()
                 .ok()
-                .and_then(|l| l.clone())
+                .and_then(|l| l.harness_root.clone())
         })
 }
 
 fn set_active_import_capabilities(lua: &Lua, caps: Option<BTreeMap<String, bool>>) {
     if let Some(app_data) = lua.app_data_ref::<crate::harness::globals::HarnessAppData>()
-        && let Ok(mut lock) = app_data.active_import_capabilities.lock()
+        && let Ok(mut lock) = app_data.execution_ctx.lock()
     {
-        *lock = caps;
+        lock.import_capabilities = caps;
     }
 }
 
@@ -353,10 +353,10 @@ fn get_active_import_capabilities(lua: &Lua) -> Option<BTreeMap<String, bool>> {
     lua.app_data_ref::<crate::harness::globals::HarnessAppData>()
         .and_then(|app_data| {
             app_data
-                .active_import_capabilities
+                .execution_ctx
                 .lock()
                 .ok()
-                .and_then(|l| l.clone())
+                .and_then(|l| l.import_capabilities.clone())
         })
 }
 
