@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 use mlua::{Function, Lua, LuaOptions, LuaSerdeExt, MultiValue, StdLib, Table, Value};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing::error;
 
 use crate::harness::globals::{self, HarnessAppData};
@@ -139,7 +139,11 @@ impl HarnessEngine {
         if !globals.contains_key("__harness_modules")? {
             globals.set("__harness_modules", self.lua.create_table()?)?;
         }
+        if !globals.contains_key("__harness_module_meta")? {
+            globals.set("__harness_module_meta", self.lua.create_table()?)?;
+        }
         let modules: Table = globals.get("__harness_modules")?;
+        let module_meta: Table = globals.get("__harness_module_meta")?;
 
         // Create a sandboxed environment for this script.
         // Writes go to 'env', reads fall back to 'globals' (via __index).
@@ -199,6 +203,13 @@ impl HarnessEngine {
 
         // Register the module
         modules.set(name, module_exports)?;
+        let meta = self.lua.create_table()?;
+        meta.set("name", name)?;
+        meta.set("path", path.to_string_lossy().to_string())?;
+        if let Some(root_name) = self.resolve_governance_root_name(path) {
+            meta.set("root", root_name)?;
+        }
+        module_meta.set(name, meta)?;
         self.scripts.push(name.to_string());
         Ok(())
     }
@@ -264,6 +275,32 @@ impl HarnessEngine {
         {
             *lock = module_name.map(|s| s.to_string());
         }
+    }
+
+    fn resolve_governance_root_name(&self, script_path: &Path) -> Option<String> {
+        let app_data = self.lua.app_data_ref::<HarnessAppData>()?;
+        let script_canon =
+            std::fs::canonicalize(script_path).unwrap_or_else(|_| PathBuf::from(script_path));
+
+        let mut best: Option<(usize, String)> = None;
+        for (root_name, root_cfg) in &app_data.config.governance.roots {
+            let configured = PathBuf::from(&root_cfg.path);
+            let root_path = if configured.is_absolute() {
+                configured
+            } else {
+                app_data.workspace_root.join(configured)
+            };
+            let root_canon = std::fs::canonicalize(&root_path).unwrap_or(root_path);
+            if script_canon.starts_with(&root_canon) {
+                let score = root_canon.components().count();
+                match &best {
+                    Some((best_score, _)) if *best_score >= score => {}
+                    _ => best = Some((score, root_name.clone())),
+                }
+            }
+        }
+
+        best.map(|(_, name)| name)
     }
 
     /// Call a hook across all loaded scripts, returning individual verdicts.

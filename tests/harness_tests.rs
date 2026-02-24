@@ -825,6 +825,124 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_import_scoped_tracks_imported_module_subject_and_root() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_import_scoped.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    let util_code = r#"
+        return {
+            check_subject = function()
+                local dec, err = runtime.governance.check("runtime.db.query")
+                if dec == nil then error("runtime.governance.check failed: " .. tostring(err)) end
+                return dec
+            end
+        }
+    "#;
+    std::fs::write(harness_dir.join("util.lua"), util_code)?;
+
+    let main_code = r#"
+        function on_turn_prepare(ctx)
+            local util = import_scoped("util", { root = "core" })
+            if util == nil then error("import_scoped returned nil") end
+            if util.__meta == nil then error("import_scoped missing __meta") end
+            if util.__meta.root ~= "core" then error("import_scoped root metadata mismatch") end
+
+            local dec = util.check_subject()
+            if dec.subject_agent_id ~= "default" then error("subject_agent_id mismatch") end
+            if dec.subject_module_name ~= "util" then
+                error("subject_module_name should be util, got " .. tostring(dec.subject_module_name))
+            end
+
+            local ok, _ = pcall(function()
+                return import_scoped("util", { root = "wrong_root" })
+            end)
+            if ok then error("import_scoped wrong root should fail") end
+
+            local self_dec, se = runtime.governance.check("runtime.db.query")
+            if self_dec == nil then error("self runtime.governance.check failed: " .. tostring(se)) end
+            if self_dec.subject_module_name ~= "main" then
+                error("caller module context should be restored after import call")
+            end
+
+            return ALLOW
+        end
+    "#;
+    std::fs::write(harness_dir.join("main.lua"), main_code)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut roots = std::collections::HashMap::new();
+    roots.insert(
+        "core".to_string(),
+        turin::kernel::config::GovernanceRootConfig {
+            path: harness_dir.to_str().unwrap().to_string(),
+            writable_hint: false,
+            default_profile: Some("core_full".to_string()),
+            max_capabilities: std::collections::HashMap::new(),
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "import_scoped test".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig {
+            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            enforcement_enabled: false,
+            roots,
+            ..turin::kernel::config::GovernanceConfig::default()
+        },
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("exercise import_scoped".to_string()))
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_governed_enforcement.db");

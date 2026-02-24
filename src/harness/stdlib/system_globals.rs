@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
+use mlua::{Function, Lua, LuaSerdeExt, MultiValue, Result as LuaResult, Table, Value};
 
 use crate::harness::stdlib::binding_common::{
     bool_err, nil_err, ok_bool, ok_value, string_ok, string_value,
@@ -18,13 +18,113 @@ pub fn register_import_global(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
     globals.set(
         "import",
-        lua.create_function(|lua, name: String| {
-            let globals = lua.globals();
-            let modules: Table = globals.get("__harness_modules")?;
-            modules.get::<Value>(name)
+        lua.create_function(|lua, name: String| import_module(lua, &name, None))?,
+    )?;
+    globals.set(
+        "import_scoped",
+        lua.create_function(|lua, (name, opts): (String, Option<Table>)| {
+            import_module(lua, &name, opts)
         })?,
     )?;
     Ok(())
+}
+
+fn import_module(lua: &Lua, name: &str, opts: Option<Table>) -> LuaResult<Value> {
+    let globals = lua.globals();
+    let modules: Table = globals.get("__harness_modules")?;
+    let module_value: Value = modules.get(name)?;
+    if matches!(module_value, Value::Nil) {
+        return Err(mlua::Error::runtime(format!(
+            "import failed: module '{}' not found",
+            name
+        )));
+    }
+
+    let meta_value = globals
+        .get::<Table>("__harness_module_meta")
+        .ok()
+        .and_then(|t| t.get::<Value>(name).ok())
+        .unwrap_or(Value::Nil);
+
+    if let Some(opts) = opts
+        && let Ok(expected_root) = opts.get::<String>("root")
+    {
+        let actual_root = match &meta_value {
+            Value::Table(t) => t.get::<String>("root").ok(),
+            _ => None,
+        };
+        if actual_root.as_deref() != Some(expected_root.as_str()) {
+            return Err(mlua::Error::runtime(format!(
+                "import_scoped root mismatch for '{}': expected '{}', got '{}'",
+                name,
+                expected_root,
+                actual_root.unwrap_or_else(|| "<none>".to_string())
+            )));
+        }
+    }
+
+    wrap_imported_module(lua, name, module_value, meta_value)
+}
+
+fn wrap_imported_module(
+    lua: &Lua,
+    module_name: &str,
+    module_value: Value,
+    meta_value: Value,
+) -> LuaResult<Value> {
+    let Value::Table(module_table) = module_value else {
+        return Ok(module_value);
+    };
+
+    let proxy = lua.create_table()?;
+    if !matches!(meta_value, Value::Nil) {
+        proxy.set("__meta", meta_value)?;
+    }
+
+    for pair in module_table.clone().pairs::<Value, Value>() {
+        let (key, value) = pair?;
+        match value {
+            Value::Function(func) => {
+                let wrapped = wrap_module_function(lua, module_name, func)?;
+                proxy.set(key, wrapped)?;
+            }
+            other => {
+                proxy.set(key, other)?;
+            }
+        }
+    }
+
+    Ok(Value::Table(proxy))
+}
+
+fn wrap_module_function(lua: &Lua, module_name: &str, func: Function) -> LuaResult<Function> {
+    let module_name = module_name.to_string();
+    lua.create_function(move |lua, args: MultiValue| {
+        let prev_module = get_active_harness_module(lua);
+        set_active_harness_module(lua, Some(module_name.as_str()));
+        let result = func.call::<MultiValue>(args);
+        set_active_harness_module(lua, prev_module.as_deref());
+        result
+    })
+}
+
+fn set_active_harness_module(lua: &Lua, module_name: Option<&str>) {
+    if let Some(app_data) = lua.app_data_ref::<crate::harness::globals::HarnessAppData>()
+        && let Ok(mut lock) = app_data.active_harness_module.lock()
+    {
+        *lock = module_name.map(|s| s.to_string());
+    }
+}
+
+fn get_active_harness_module(lua: &Lua) -> Option<String> {
+    lua.app_data_ref::<crate::harness::globals::HarnessAppData>()
+        .and_then(|app_data| {
+            app_data
+                .active_harness_module
+                .lock()
+                .ok()
+                .and_then(|l| l.clone())
+        })
 }
 
 fn resolve_safe_path(root: &Path, path_str: &str) -> Option<PathBuf> {
