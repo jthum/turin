@@ -25,6 +25,7 @@ struct HarnessReloadCtx {
     store_manager: Arc<crate::persistence::manager::StoreManager>,
     agent_manager: Arc<crate::kernel::agent_manager::AgentManager>,
     policy_manager: Arc<crate::kernel::policy::RuntimePolicyManager>,
+    governance_manager: Arc<crate::kernel::governance::GovernanceManager>,
     embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     active_queue: crate::harness::globals::ActiveSessionQueue,
 }
@@ -126,6 +127,7 @@ impl Kernel {
             store_manager: self.store_manager.clone(),
             agent_manager: self.agent_manager.clone(),
             policy_manager: self.policy_manager.clone(),
+            governance_manager: self.governance_manager.clone(),
             clients: self.clients.clone(),
             embedding_provider: self.embedding_provider.clone(),
             queue: self.active_queue.clone(),
@@ -178,6 +180,7 @@ impl Kernel {
             store_manager,
             agent_manager,
             policy_manager,
+            governance_manager,
             embedding_provider,
             active_queue,
         } = ctx;
@@ -196,6 +199,7 @@ impl Kernel {
                     store_manager: store_manager.clone(),
                     agent_manager: agent_manager.clone(),
                     policy_manager: policy_manager.clone(),
+                    governance_manager: governance_manager.clone(),
                     clients,
                     embedding_provider,
                     queue: active_queue,
@@ -238,6 +242,7 @@ impl Kernel {
         let queue_clone = self.active_queue.clone();
         let agent_m_clone = self.agent_manager.clone();
         let policy_m_clone = self.policy_manager.clone();
+        let governance_m_clone = self.governance_manager.clone();
         let harness_dir = PathBuf::from(&config_clone.harness.directory);
 
         if !harness_dir.exists() {
@@ -263,6 +268,7 @@ impl Kernel {
                 let s = store_clone.clone();
                 let am = agent_m_clone.clone();
                 let pm = policy_m_clone.clone();
+                let gm = governance_m_clone.clone();
                 let e = embedding_clone.clone();
                 let q = queue_clone.clone();
 
@@ -274,6 +280,7 @@ impl Kernel {
                         store_manager: s,
                         agent_manager: am,
                         policy_manager: pm,
+                        governance_manager: gm,
                         embedding_provider: e,
                         active_queue: q,
                     }) {

@@ -4,6 +4,7 @@ use std::sync::Arc;
 // Mutex removed
 
 use crate::inference::embeddings::EmbeddingProvider;
+use crate::kernel::governance::GovernanceManager;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::kernel::{Kernel, TurinConfig, agent_manager::AgentManager};
 use crate::persistence::manager::StoreManager;
@@ -49,6 +50,7 @@ impl RuntimeBuilder {
         let config_arc = Arc::new(self.config);
         let agent_manager = Arc::new(AgentManager::new(config_arc.clone(), store_manager.clone()));
         let policy_manager = Arc::new(RuntimePolicyManager::new());
+        let governance_manager = Arc::new(GovernanceManager::new(config_arc.governance.clone()));
         Ok(Kernel {
             config: config_arc,
             json: self.json,
@@ -56,6 +58,7 @@ impl RuntimeBuilder {
             store_manager,
             agent_manager,
             policy_manager,
+            governance_manager,
             harness: Arc::new(std::sync::Mutex::new(None)),
             check_watcher: None,
             clients: HashMap::new(),

@@ -58,6 +58,7 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
         },
         providers,
         embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig::default(),
     }
 }
 
@@ -296,6 +297,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
         },
         providers,
         embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig::default(),
     };
 
     let mut kernel = Kernel::builder(config).build()?;

@@ -29,6 +29,7 @@ pub struct HarnessAppData {
     pub store_manager: Arc<StoreManager>,
     pub agent_manager: Arc<crate::kernel::agent_manager::AgentManager>,
     pub policy_manager: Arc<crate::kernel::policy::RuntimePolicyManager>,
+    pub governance_manager: Arc<crate::kernel::governance::GovernanceManager>,
     pub active_session_id: Arc<std::sync::Mutex<Option<String>>>,
     pub active_session_mode: Arc<std::sync::Mutex<Option<crate::kernel::config::AgentMode>>>,
     pub clients: HashMap<String, ProviderClient>,

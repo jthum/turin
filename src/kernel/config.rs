@@ -19,6 +19,8 @@ pub struct TurinConfig {
     pub providers: ProvidersConfig,
     #[serde(default)]
     pub embeddings: Option<EmbeddingConfig>,
+    #[serde(default)]
+    pub governance: GovernanceConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -153,6 +155,113 @@ pub struct ProviderConfig {
     pub total_timeout_secs: Option<u64>,
 }
 
+#[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GovernanceProfile {
+    #[default]
+    Open,
+    Balanced,
+    Governed,
+    Custom,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GovernanceAuditMode {
+    #[default]
+    Off,
+    Observational,
+    Immutable,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GovernanceImportMode {
+    #[default]
+    Legacy,
+    Scoped,
+    Mixed,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize, Default)]
+pub struct GovernanceAuditConfig {
+    #[serde(default)]
+    pub mode: GovernanceAuditMode,
+    #[serde(default)]
+    pub include_capability_context: bool,
+    #[serde(default)]
+    pub persist_before_hooks: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct GovernanceImportConfig {
+    #[serde(default)]
+    pub mode: GovernanceImportMode,
+    #[serde(default)]
+    pub default_root: Option<String>,
+    #[serde(default)]
+    pub allow_unscoped_in_open: bool,
+}
+
+impl Default for GovernanceImportConfig {
+    fn default() -> Self {
+        Self {
+            mode: GovernanceImportMode::Legacy,
+            default_root: None,
+            allow_unscoped_in_open: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize, Default)]
+pub struct GovernanceRootConfig {
+    pub path: String,
+    #[serde(default)]
+    pub writable_hint: bool,
+    #[serde(default)]
+    pub default_profile: Option<String>,
+    #[serde(default)]
+    pub max_capabilities: std::collections::HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize, Default)]
+pub struct GovernanceAgentCapabilitiesConfig {
+    #[serde(default)]
+    pub capability_profile: Option<String>,
+    #[serde(default)]
+    pub max_capabilities: std::collections::HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub allowed_child_agents: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize, Default)]
+pub struct GovernanceGrantsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub max_ttl_ms: Option<u64>,
+    #[serde(default)]
+    pub require_audit_reason: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize, Default)]
+pub struct GovernanceConfig {
+    #[serde(default)]
+    pub profile: GovernanceProfile,
+    #[serde(default)]
+    pub enforcement_enabled: bool,
+    #[serde(default)]
+    pub audit: GovernanceAuditConfig,
+    #[serde(default)]
+    pub import: GovernanceImportConfig,
+    #[serde(default)]
+    pub roots: std::collections::HashMap<String, GovernanceRootConfig>,
+    #[serde(default)]
+    pub agents: std::collections::HashMap<String, GovernanceAgentCapabilitiesConfig>,
+    #[serde(default)]
+    pub grants: GovernanceGrantsConfig,
+}
+
 // ─── Defaults ────────────────────────────────────────────────────
 
 fn default_system_prompt() -> String {
@@ -261,6 +370,25 @@ impl TurinConfig {
                     provider_name
                 );
             }
+        }
+
+        if let Some(ttl_ms) = self.governance.grants.max_ttl_ms {
+            anyhow::ensure!(
+                ttl_ms > 0,
+                "governance.grants.max_ttl_ms must be greater than 0"
+            );
+        }
+
+        for (root_name, root) in &self.governance.roots {
+            anyhow::ensure!(
+                !root_name.trim().is_empty(),
+                "governance.roots contains an empty root name"
+            );
+            anyhow::ensure!(
+                !root.path.trim().is_empty(),
+                "governance.roots.{}.path must not be empty",
+                root_name
+            );
         }
 
         Ok(())
@@ -526,5 +654,73 @@ type = "openai"
 "#;
         let err = TurinConfig::from_str(toml).unwrap_err();
         assert!(err.to_string().contains("empty header name"));
+    }
+
+    #[test]
+    fn test_parse_governance_config() {
+        let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[governance]
+profile = "balanced"
+enforcement_enabled = false
+
+[governance.audit]
+mode = "observational"
+include_capability_context = true
+
+[governance.import]
+mode = "mixed"
+default_root = "core"
+
+[governance.roots.core]
+path = "harness/core"
+writable_hint = false
+default_profile = "core_full"
+
+[governance.roots.core.max_capabilities]
+"runtime.db.query" = true
+"runtime.db.exec" = false
+
+[governance.agents.reviewer]
+capability_profile = "reviewer_ro"
+allowed_child_agents = ["worker"]
+
+[governance.agents.reviewer.max_capabilities]
+"fs.write" = false
+"runtime.db.query" = true
+
+[governance.grants]
+enabled = true
+max_ttl_ms = 60000
+require_audit_reason = true
+"#;
+
+        let config = TurinConfig::from_str(toml).unwrap();
+        assert_eq!(config.governance.profile, GovernanceProfile::Balanced);
+        assert_eq!(
+            config.governance.audit.mode,
+            GovernanceAuditMode::Observational
+        );
+        assert_eq!(config.governance.import.mode, GovernanceImportMode::Mixed);
+        assert_eq!(
+            config.governance.roots.get("core").map(|r| r.path.as_str()),
+            Some("harness/core")
+        );
+        assert_eq!(
+            config
+                .governance
+                .agents
+                .get("reviewer")
+                .and_then(|a| a.allowed_child_agents.first())
+                .map(|s| s.as_str()),
+            Some("worker")
+        );
+        assert!(config.governance.grants.enabled);
     }
 }

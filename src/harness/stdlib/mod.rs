@@ -10,6 +10,7 @@ pub mod runtime_bindings;
 pub mod runtime_context;
 pub mod runtime_data;
 pub mod runtime_db;
+pub mod runtime_governance;
 pub mod runtime_policy;
 pub mod scoped_data_backend;
 pub mod session_user_aliases;

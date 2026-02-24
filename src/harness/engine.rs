@@ -432,6 +432,9 @@ mod tests {
                 Arc::new(StoreManager::new(PathBuf::from("."))),
             )),
             policy_manager: Arc::new(crate::kernel::policy::RuntimePolicyManager::new()),
+            governance_manager: Arc::new(crate::kernel::governance::GovernanceManager::new(
+                crate::kernel::config::GovernanceConfig::default(),
+            )),
             clients: std::collections::HashMap::new(),
             embedding_provider: None,
             queue: std::sync::Arc::new(tokio::sync::Mutex::new(Some(std::sync::Arc::new(

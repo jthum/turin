@@ -3,14 +3,15 @@ pub mod builder;
 pub mod config;
 pub mod event;
 mod event_persistence;
+pub mod governance;
 mod harness_hooks;
-mod mcp_runtime;
 pub mod identity;
 mod init;
+mod mcp_runtime;
 pub mod policy;
+mod run_loop;
 pub mod session;
 mod session_lifecycle;
-mod run_loop;
 mod task_execution;
 mod task_lifecycle;
 mod task_planning;
@@ -27,6 +28,7 @@ use std::sync::Arc;
 use crate::harness::engine::HarnessEngine;
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
+use crate::kernel::governance::GovernanceManager;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::persistence::manager::StoreManager;
 
@@ -46,6 +48,7 @@ pub struct Kernel {
     pub(crate) store_manager: Arc<StoreManager>,
     pub(crate) agent_manager: Arc<AgentManager>,
     pub(crate) policy_manager: Arc<RuntimePolicyManager>,
+    pub(crate) governance_manager: Arc<GovernanceManager>,
     /// Thread-safe harness engine for hot-reloading
     pub(crate) harness: Arc<std::sync::Mutex<Option<HarnessEngine>>>,
     /// Watcher handle to keep it alive
@@ -86,6 +89,11 @@ impl Kernel {
     /// Access the runtime policy manager.
     pub fn policy_manager(&self) -> &Arc<RuntimePolicyManager> {
         &self.policy_manager
+    }
+
+    /// Access the governance manager (profile/capability observability, G1).
+    pub fn governance_manager(&self) -> &Arc<GovernanceManager> {
+        &self.governance_manager
     }
 
     /// Access the configuration.

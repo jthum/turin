@@ -152,6 +152,7 @@ async fn test_harness_rejection() -> Result<()> {
         },
         providers,
         embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig::default(),
     };
 
     let mut kernel = Kernel::builder(config).build()?;
@@ -278,6 +279,7 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
         },
         providers,
         embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig::default(),
     };
 
     let mut kernel = Kernel::builder(config).build()?;
@@ -392,6 +394,7 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
         },
         providers,
         embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig::default(),
     };
 
     let mut kernel = Kernel::builder(config).build()?;
@@ -536,6 +539,7 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
         },
         providers,
         embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig::default(),
     };
 
     let mut kernel = Kernel::builder(config).build()?;
@@ -569,6 +573,144 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
         )
         .await?;
     assert_eq!(agent_value, Some(serde_json::json!(9)));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_runtime_governance_observability_api() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_runtime_governance.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    let harness_code = r#"
+        function on_turn_prepare(ctx)
+            local profile = runtime.governance.profile()
+            if profile ~= "balanced" then
+                error("runtime.governance.profile mismatch: " .. tostring(profile))
+            end
+
+            local snap, se = runtime.governance.snapshot()
+            if snap == nil then error("runtime.governance.snapshot failed: " .. tostring(se)) end
+            if snap.profile ~= "balanced" then error("snapshot.profile mismatch") end
+            if snap.enforcement_enabled ~= false then error("snapshot.enforcement_enabled mismatch") end
+            if snap.capabilities_observability_only ~= true then error("snapshot should be observability-only in G1") end
+            if snap.audit_mode ~= "observational" then error("snapshot.audit_mode mismatch") end
+            if snap.import_mode ~= "mixed" then error("snapshot.import_mode mismatch") end
+            if snap.grants_enabled ~= true then error("snapshot.grants_enabled mismatch") end
+
+            local saw_db_query = false
+            for k, v in pairs(snap.preset_capabilities or {}) do
+                if k == "runtime.db.query" and v == true then
+                    saw_db_query = true
+                end
+            end
+            if not saw_db_query then error("expected preset runtime.db.query capability") end
+
+            local reviewer, re = runtime.governance.agent("reviewer")
+            if reviewer == nil then error("runtime.governance.agent failed: " .. tostring(re)) end
+            if reviewer.subject_agent_id ~= "reviewer" then error("reviewer subject_agent_id mismatch") end
+
+            return ALLOW
+        end
+    "#;
+    std::fs::write(harness_dir.join("governance.lua"), harness_code)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut roots = std::collections::HashMap::new();
+    roots.insert(
+        "core".to_string(),
+        turin::kernel::config::GovernanceRootConfig {
+            path: "harness/core".to_string(),
+            writable_hint: false,
+            default_profile: Some("core_full".to_string()),
+            max_capabilities: std::collections::HashMap::new(),
+        },
+    );
+    let mut agents = std::collections::HashMap::new();
+    agents.insert(
+        "reviewer".to_string(),
+        turin::kernel::config::GovernanceAgentCapabilitiesConfig {
+            capability_profile: Some("reviewer_ro".to_string()),
+            max_capabilities: std::collections::HashMap::new(),
+            allowed_child_agents: vec!["worker".to_string()],
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Runtime governance test".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig {
+            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            enforcement_enabled: false,
+            audit: turin::kernel::config::GovernanceAuditConfig {
+                mode: turin::kernel::config::GovernanceAuditMode::Observational,
+                include_capability_context: true,
+                persist_before_hooks: None,
+            },
+            import: turin::kernel::config::GovernanceImportConfig {
+                mode: turin::kernel::config::GovernanceImportMode::Mixed,
+                default_root: Some("core".to_string()),
+                allow_unscoped_in_open: false,
+            },
+            roots,
+            agents,
+            grants: turin::kernel::config::GovernanceGrantsConfig {
+                enabled: true,
+                max_ttl_ms: Some(60_000),
+                require_audit_reason: true,
+            },
+        },
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise runtime governance api".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
 
     Ok(())
 }
@@ -682,6 +824,7 @@ async fn test_runtime_db_api_and_context_glob() -> Result<()> {
         },
         providers,
         embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig::default(),
     };
 
     let mut kernel = Kernel::builder(config).build()?;
@@ -812,6 +955,7 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
         },
         providers,
         embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig::default(),
     };
 
     let mut kernel = Kernel::builder(config).build()?;
