@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -81,7 +82,10 @@ impl StoreManager {
         let idle_cutoff = std::time::Duration::from_secs(idle_close_secs);
         let protected_paths = {
             let handles = self.handles.read().await;
-            handles.values().map(|h| h.path.clone()).collect::<Vec<_>>()
+            handles
+                .values()
+                .map(|h| h.path.clone())
+                .collect::<HashSet<_>>()
         };
 
         let mut stores = self.stores.write().await;
@@ -91,7 +95,7 @@ impl StoreManager {
         let idle_candidates = stores
             .iter()
             .filter_map(|(path, entry)| {
-                if protected_paths.iter().any(|p| p == path) {
+                if protected_paths.contains(path) {
                     return None;
                 }
                 if entry.last_access.elapsed() >= idle_cutoff
@@ -116,7 +120,7 @@ impl StoreManager {
         let mut lru = stores
             .iter()
             .filter_map(|(path, entry)| {
-                if protected_paths.iter().any(|p| p == path) {
+                if protected_paths.contains(path) {
                     return None;
                 }
                 if Arc::strong_count(&entry.store) > 1 {
