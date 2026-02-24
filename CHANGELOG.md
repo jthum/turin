@@ -5,6 +5,103 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-02-24
+
+### Added
+- **Canonical Harness Standard Library (`runtime.*`)**
+  - Added stable canonical runtime namespaces:
+    - `runtime.context`
+    - `runtime.memory`
+    - `runtime.kv`
+    - `runtime.db`
+    - `runtime.agent`
+    - `runtime.policy`
+    - `runtime.governance`
+  - Added top-level ergonomic aliases and data helpers:
+    - `memory.*`, `kv.*`
+    - `session.memory/kv.*`, `user.memory/kv.*`
+    - `agent.*`, `agent.session.*`, `agent.mode.*`
+    - `import(...)`, `import_scoped(...)`
+- **Dynamic Multi-DB Runtime**
+  - Added store handle manager and dynamic database open/query/exec/list/close APIs via `runtime.db.*`.
+  - Added path-scope policy control and cache trimming/idle handle management.
+  - Added alias/path selector support for multiple databases.
+- **Dynamic Multi-Agent Runtime**
+  - Added peer-agent runtime registry with async task submission/awaiting and result tracking.
+  - Added idle shutdown/restart behavior for peer runtimes.
+  - Added runtime status inspection via `runtime.agent.list/get_status`.
+- **Governance (Opt-In, Flexibility-First)**
+  - Added governance config schema (`[governance]`) with profiles (`open`, `balanced`, `governed`, `custom`).
+  - Added governance observability APIs (`runtime.governance.profile/snapshot/check/agent`).
+  - Added capability enforcement (opt-in) for high-risk runtime APIs and built-in tool execution.
+  - Added import governance modes (`legacy`, `mixed`, `scoped`) with `import_scoped(...)` root assertions.
+  - Added import-scoped delegated capability ceilings (downward-only).
+  - Added agent capability profiles, per-agent ceilings, and `allowed_child_agents` allowlists.
+  - Added temporary governance grants (TTL / max uses) with `grant_issue`, `grant_get`, `with_grant`, `grant_revoke`.
+  - Added durable governance audit events:
+    - `governance_snapshot`
+    - `governance_grant_issue`
+    - `governance_grant_use`
+    - `governance_grant_revoke`
+  - Added immutable audit mode support (`persist-before-hooks` semantics for audit events).
+- **Import Principal Context Propagation**
+  - Imported module function execution now preserves module/root subject attribution for governance checks.
+  - Added recursive export proxy wrapping so nested exported functions preserve imported-module context.
+- **Live Provider Validation Tooling**
+  - Added opt-in live MiniMax smoke test script (`scripts/live_minimax_smoke.sh`) with tool-roundtrip cases.
+
+### Changed
+- **Major Architecture Cleanup / Decomposition (No Legacy Shims)**
+  - Decomposed `src/harness/globals.rs` from a large monolithic stdlib registration file into focused `src/harness/stdlib/*` modules.
+  - Introduced shared binding helpers and support modules for DRY Lua bindings (`binding_common`, `db_support`, `policy_support`, `identity_support`, etc.).
+  - Decomposed `kernel::turn` into focused submodules:
+    - preflight
+    - streaming
+    - assistant response finalization
+    - tool execution (with helper submodules)
+  - Decomposed `kernel::mod` responsibilities into focused modules:
+    - session lifecycle
+    - event persistence
+    - harness hooks
+    - run loop
+    - task execution/lifecycle
+    - MCP runtime
+  - Decomposed `agent_manager` and `persistence::manager` into focused support modules.
+- **Runtime Identity Refactor**
+  - Refined `RuntimeIdentity` internals and access patterns (including richer `extra` identity context support).
+  - Improved identity/selector handling used across hooks, persistence, and stdlib bindings.
+- **Provider-Agnostic Turn History Correctness**
+  - Assistant thinking content is preserved in in-memory history between turns (not just transient UI output).
+  - Tool results are recorded in normalized inference history as tool-role messages for correct provider roundtrips.
+  - Turin now propagates provider-agnostic thinking signature deltas through the turn pipeline into assistant history.
+- **Harness Import System**
+  - `import(...)` and `import_scoped(...)` now return wrapped module proxies that preserve caller/imported module governance context.
+  - Added support for delegated capability wildcard rules (`prefix.*`) with downward-only checks.
+- **Observability Logging**
+  - Downgraded benign “event broadcast with no receivers” message from warning to debug.
+
+### Fixed
+- **Anthropic-Compatible Provider Interop (via upstream normalized SDK integration)**
+  - Fixed MiniMax Anthropic-compatible thinking-block parsing (`signature` optional on decode).
+  - Fixed Anthropic-compatible tool roundtrip request normalization issues (tool result serialization / thinking preservation).
+  - Improved compatibility for Anthropic-style thinking + tool-use continuations by preserving thinking signatures end-to-end.
+- **Governance Bypass Gaps**
+  - Closed top-level alias bypasses by applying governance checks to `fs.*` and `agent.*` high-risk paths.
+  - Added kernel-side tool capability checks so direct model-emitted built-in tool calls are governed even without stdlib mediation.
+- **Nested Delegation Safety**
+  - Prevented nested `import_scoped(...)` capability delegation widening beyond importer ceilings.
+  - Applied active grant ceilings to peer-agent dispatch delegation to prevent escalation through sub-agent paths.
+- **Live Endpoint Validation**
+  - Verified Turin + normalized SDK end-to-end against MiniMax Anthropic-compatible endpoint for:
+    - basic inference
+    - tool read roundtrip
+    - tool error/recovery flow
+    - write+read multi-tool roundtrip
+
+### Documentation
+- Rewrote and expanded core documentation for the canonical stdlib API, stable hooks, governance model, architecture, testing, and live provider validation.
+- Updated examples and configuration guidance for Anthropic-compatible providers (including MiniMax `/v1` base URL note).
+
 ## [0.14.0] - 2026-02-19
 
 ### Added
