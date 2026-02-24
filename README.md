@@ -112,6 +112,20 @@ turin run --verbose --prompt "Fix the bug in utils.rs"
 turin run --provider openai --model gpt-4o --prompt "Explain this codebase"
 ```
 
+### Live Smoke Tests (Manual / Opt-In)
+
+Turin does not run live-provider tests during normal `cargo build` / `cargo test`.
+Use the manual smoke script when you want to validate a real endpoint:
+
+```bash
+# Uses your local env file with ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL / ANTHROPIC_MODEL
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env
+```
+
+This currently includes:
+- `basic` (exact `PONG` response)
+- `tool_read` (forces a `read_file` tool roundtrip on a random nonce file)
+
 ---
 
 ## Harness Scripts
