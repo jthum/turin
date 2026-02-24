@@ -271,6 +271,15 @@ fn profile_name(profile: &GovernanceProfile) -> &'static str {
     }
 }
 
+pub(crate) fn tool_capability_name(tool_name: &str) -> Option<&'static str> {
+    match tool_name {
+        "read_file" => Some("fs.read"),
+        "write_file" | "edit_file" => Some("fs.write"),
+        "shell_exec" => Some("shell.exec"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,5 +375,14 @@ mod tests {
         let observed = mgr_obs.capability_decision(Some("default"), "runtime.db.exec");
         assert!(!observed.baseline_allowed);
         assert!(observed.allowed, "observability mode should not deny");
+    }
+
+    #[test]
+    fn tool_capability_mapping_covers_high_risk_builtins() {
+        assert_eq!(tool_capability_name("read_file"), Some("fs.read"));
+        assert_eq!(tool_capability_name("write_file"), Some("fs.write"));
+        assert_eq!(tool_capability_name("edit_file"), Some("fs.write"));
+        assert_eq!(tool_capability_name("shell_exec"), Some("shell.exec"));
+        assert_eq!(tool_capability_name("submit_plan"), None);
     }
 }

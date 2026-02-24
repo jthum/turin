@@ -10,11 +10,12 @@ use tracing::{info, warn};
 use crate::harness::verdict::Verdict;
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::session::SessionState;
-use crate::tools::{ToolContext, ToolEffect, ToolOutput};
+use crate::tools::{ToolContext, ToolEffect, ToolError, ToolOutput};
 
 use super::super::event::{AuditEvent, KernelEvent};
 use super::super::{Kernel, PendingToolCall};
 use super::TurnOutcome;
+use crate::kernel::governance::tool_capability_name;
 
 #[derive(Debug, Clone)]
 struct FinalToolRecord {
@@ -139,10 +140,25 @@ impl Kernel {
                 };
 
                 let start = Instant::now();
-                let effect_res = kernel
-                    .tool_registry
-                    .execute(&tc.name, final_args.clone(), &tool_ctx)
-                    .await;
+                let effect_res = if let Some(capability) = tool_capability_name(&tc.name) {
+                    match kernel
+                        .governance_manager
+                        .require_capability(Some(kernel.config.agent.id.as_str()), capability)
+                    {
+                        Ok(()) => {
+                            kernel
+                                .tool_registry
+                                .execute(&tc.name, final_args.clone(), &tool_ctx)
+                                .await
+                        }
+                        Err(err) => Err(ToolError::PermissionDenied(err)),
+                    }
+                } else {
+                    kernel
+                        .tool_registry
+                        .execute(&tc.name, final_args.clone(), &tool_ctx)
+                        .await
+                };
                 let duration_ms = start.elapsed().as_millis() as u64;
 
                 let is_error = effect_res.is_err();

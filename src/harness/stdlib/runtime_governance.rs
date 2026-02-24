@@ -48,12 +48,12 @@ pub fn register_runtime_governance_namespace(
             "check",
             lua.create_function(
                 move |lua, (capability, agent_id): (String, Option<String>)| {
-                if capability.trim().is_empty() {
-                    return nil_err(lua, "capability must not be empty");
-                }
-                let decision = if let Some(agent_id) = agent_id.as_deref() {
-                    app_data_snapshot
-                        .governance_manager
+                    if capability.trim().is_empty() {
+                        return nil_err(lua, "capability must not be empty");
+                    }
+                    let decision = if let Some(agent_id) = agent_id.as_deref() {
+                        app_data_snapshot
+                            .governance_manager
                             .capability_decision(Some(agent_id), &capability)
                     } else {
                         governance_capability_decision(&app_data_snapshot, &capability)

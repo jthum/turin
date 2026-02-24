@@ -218,6 +218,108 @@ async fn test_harness_rejection() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_governed_tool_fallback.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    // No rejection hook here; governance should deny at kernel tool execution layer.
+    std::fs::write(
+        harness_dir.join("allow.lua"),
+        r#"
+            function on_tool_call(call)
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Governed tool fallback test".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 3,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig {
+            profile: turin::kernel::config::GovernanceProfile::Governed,
+            enforcement_enabled: true,
+            ..turin::kernel::config::GovernanceConfig::default()
+        },
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+
+    let mock_provider = Arc::new(ToolMockProvider {
+        tool_name: "shell_exec".to_string(),
+        tool_args: serde_json::json!({"command": "echo governed-check"}),
+    });
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new("mock", mock_provider),
+    );
+
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Try shell exec".to_string()))
+        .await?;
+
+    let mut found_governance_denial = false;
+    for msg in &session.history {
+        for content in &msg.content {
+            if let InferenceContent::ToolResult { content, .. } = content
+                && content.contains("Governance denial")
+                && content.contains("shell.exec")
+            {
+                found_governance_denial = true;
+            }
+        }
+    }
+
+    assert!(
+        found_governance_denial,
+        "Expected governed-mode shell_exec denial from kernel tool fallback"
+    );
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_harness_request_options_passthrough() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_headers.db");
