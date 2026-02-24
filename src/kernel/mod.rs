@@ -21,10 +21,8 @@ use anyhow::Result;
 use builder::RuntimeBuilder;
 use config::TurinConfig;
 use event::TaskTerminalStatus;
-use session::SessionState;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{error, info, instrument};
 
 use crate::harness::engine::HarnessEngine;
 use crate::inference::embeddings::EmbeddingProvider;
@@ -127,68 +125,6 @@ impl Kernel {
         } else {
             anyhow::bail!("Harness not initialized");
         }
-        Ok(())
-    }
-
-    /// Run the agent loop with the given prompt.
-    #[instrument(skip(self, session), fields(session_id = %session.identity.session_id()))]
-    pub async fn run(&mut self, session: &mut SessionState, prompt: Option<String>) -> Result<()> {
-        // Ensure session is started
-        self.start_session(session).await?;
-
-        // Set active queue for harness
-        {
-            let mut aq = self.active_queue.lock().await;
-            *aq = Some(session.queue.clone());
-        }
-
-        if let Some(p) = prompt {
-            self.enqueue_initial_run_prompt(session, p).await;
-        }
-
-        while let Some((mut task, queue_depth_after_pop)) = self.dequeue_next_task(session).await {
-            if !self
-                .prepare_task_start(session, &mut task, queue_depth_after_pop)
-                .await?
-            {
-                continue;
-            }
-
-            info!(task_id = %task.task_id, prompt = %task.prompt, "Running task");
-
-            let task_result = match self.run_task(session, &task).await {
-                Ok(result) => result,
-                Err(e) => {
-                    error!(task_id = %task.task_id, error = %e, "Task failed with runtime error");
-                    let error_message = e.to_string();
-                    let recovered = self
-                        .handle_inference_error(session, &task, &error_message)
-                        .await?;
-                    self.complete_task(
-                        session,
-                        &task,
-                        TaskTerminalStatus::Error,
-                        0,
-                        Some(error_message),
-                    )
-                    .await?;
-                    if recovered {
-                        continue;
-                    }
-                    return Err(e);
-                }
-            };
-
-            self.complete_task(
-                session,
-                &task,
-                task_result.status,
-                task_result.task_turn_count,
-                None,
-            )
-            .await?;
-        }
-
         Ok(())
     }
 }

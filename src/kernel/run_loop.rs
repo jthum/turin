@@ -1,5 +1,5 @@
 use anyhow::Result;
-use tracing::{debug, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::harness::verdict::Verdict;
 use crate::kernel::event::{KernelEvent, LifecycleEvent};
@@ -8,6 +8,68 @@ use crate::kernel::session::{PlanProgress, QueuedTask, SessionState};
 use crate::kernel::Kernel;
 
 impl Kernel {
+    /// Run the agent loop with the given prompt.
+    #[instrument(skip(self, session), fields(session_id = %session.identity.session_id()))]
+    pub async fn run(&mut self, session: &mut SessionState, prompt: Option<String>) -> Result<()> {
+        // Ensure session is started
+        self.start_session(session).await?;
+
+        // Set active queue for harness
+        {
+            let mut aq = self.active_queue.lock().await;
+            *aq = Some(session.queue.clone());
+        }
+
+        if let Some(p) = prompt {
+            self.enqueue_initial_run_prompt(session, p).await;
+        }
+
+        while let Some((mut task, queue_depth_after_pop)) = self.dequeue_next_task(session).await {
+            if !self
+                .prepare_task_start(session, &mut task, queue_depth_after_pop)
+                .await?
+            {
+                continue;
+            }
+
+            info!(task_id = %task.task_id, prompt = %task.prompt, "Running task");
+
+            let task_result = match self.run_task(session, &task).await {
+                Ok(result) => result,
+                Err(e) => {
+                    error!(task_id = %task.task_id, error = %e, "Task failed with runtime error");
+                    let error_message = e.to_string();
+                    let recovered = self
+                        .handle_inference_error(session, &task, &error_message)
+                        .await?;
+                    self.complete_task(
+                        session,
+                        &task,
+                        TaskTerminalStatus::Error,
+                        0,
+                        Some(error_message),
+                    )
+                    .await?;
+                    if recovered {
+                        continue;
+                    }
+                    return Err(e);
+                }
+            };
+
+            self.complete_task(
+                session,
+                &task,
+                task_result.status,
+                task_result.task_turn_count,
+                None,
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
     pub(super) async fn enqueue_initial_run_prompt(
         &self,
         session: &mut SessionState,
