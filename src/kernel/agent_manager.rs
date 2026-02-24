@@ -1,3 +1,5 @@
+mod peer_task;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -7,13 +9,12 @@ use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
-use crate::harness::verdict::Verdict;
-use crate::inference::provider::InferenceContent;
 use crate::kernel::Kernel;
 use crate::kernel::config::TurinConfig;
-use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
-use crate::kernel::session::{QueuedTask, SessionState};
+use crate::kernel::event::TaskTerminalStatus;
+use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreManager;
+use peer_task::run_peer_task;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PeerAgentTaskResult {
@@ -397,153 +398,4 @@ impl AgentManager {
             queued_tasks,
         })
     }
-}
-
-struct PeerRunOutcome {
-    runtime_task_id: String,
-    status: TaskTerminalStatus,
-    task_turn_count: u32,
-    output: Option<String>,
-}
-
-async fn run_peer_task(
-    kernel: &mut Kernel,
-    session: &mut SessionState,
-    mut task: QueuedTask,
-) -> Result<PeerRunOutcome> {
-    if task.task_id.is_empty() {
-        task.task_id = format!("t_{}", session.next_task_id);
-        session.next_task_id += 1;
-    }
-
-    kernel.persist_event(
-        session,
-        &KernelEvent::Lifecycle(LifecycleEvent::TaskStart {
-            identity: session.identity.clone(),
-            task_id: task.task_id.clone(),
-            plan_id: task.plan_id.clone(),
-            title: task.title.clone(),
-            prompt: task.prompt.clone(),
-            queue_depth: 0,
-        }),
-    );
-
-    let task_start_verdict = {
-        let harness = kernel.lock_harness();
-        if let Some(ref engine) = *harness {
-            match engine.evaluate(
-                "on_task_start",
-                serde_json::json!({
-                    "identity": session.identity.clone(),
-                    "session_id": session.identity.session_id(),
-                    "task_id": task.task_id.clone(),
-                    "plan_id": task.plan_id.clone(),
-                    "title": task.title.clone(),
-                    "prompt": task.prompt.clone(),
-                    "queue_depth": 0,
-                }),
-            ) {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!(error = %e, "Harness on_task_start error");
-                    Verdict::Allow
-                }
-            }
-        } else {
-            Verdict::Allow
-        }
-    };
-
-    match task_start_verdict {
-        Verdict::Reject(reason) => {
-            warn!(task_id = %task.task_id, reason = %reason, "Peer task rejected by on_task_start");
-            kernel
-                .complete_task(session, &task, TaskTerminalStatus::Rejected, 0, None)
-                .await?;
-            return Ok(PeerRunOutcome {
-                runtime_task_id: task.task_id,
-                status: TaskTerminalStatus::Rejected,
-                task_turn_count: 0,
-                output: None,
-            });
-        }
-        Verdict::Modify(val) => {
-            if let Some(obj) = val.as_object() {
-                if let Some(prompt) = obj.get("prompt").and_then(|v| v.as_str()) {
-                    task.prompt = prompt.to_string();
-                }
-                if let Some(title) = obj.get("title").and_then(|v| v.as_str()) {
-                    task.title = Some(title.to_string());
-                }
-            }
-        }
-        Verdict::Escalate(reason) => {
-            warn!(task_id = %task.task_id, reason = %reason, "Peer task escalated at on_task_start; treating as rejected");
-            kernel
-                .complete_task(session, &task, TaskTerminalStatus::Rejected, 0, None)
-                .await?;
-            return Ok(PeerRunOutcome {
-                runtime_task_id: task.task_id,
-                status: TaskTerminalStatus::Rejected,
-                task_turn_count: 0,
-                output: None,
-            });
-        }
-        Verdict::Allow => {}
-    }
-
-    info!(task_id = %task.task_id, prompt = %task.prompt, "Running peer task");
-
-    let run_result: crate::kernel::TaskExecutionResult = match kernel.run_task(session, &task).await
-    {
-        Ok(result) => {
-            kernel
-                .complete_task(session, &task, result.status, result.task_turn_count, None)
-                .await?;
-            result
-        }
-        Err(e) => {
-            error!(task_id = %task.task_id, error = %e, "Peer task failed with runtime error");
-            let error_message = e.to_string();
-            let recovered = kernel
-                .handle_inference_error(session, &task, &error_message)
-                .await?;
-            kernel
-                .complete_task(
-                    session,
-                    &task,
-                    TaskTerminalStatus::Error,
-                    0,
-                    Some(error_message),
-                )
-                .await?;
-            if recovered {
-                return Ok(PeerRunOutcome {
-                    runtime_task_id: task.task_id,
-                    status: TaskTerminalStatus::Error,
-                    task_turn_count: 0,
-                    output: None,
-                });
-            }
-            return Err(e);
-        }
-    };
-
-    let output = last_assistant_text(session);
-
-    Ok(PeerRunOutcome {
-        runtime_task_id: task.task_id,
-        status: run_result.status,
-        task_turn_count: run_result.task_turn_count,
-        output,
-    })
-}
-
-fn last_assistant_text(session: &SessionState) -> Option<String> {
-    session.history.iter().rev().find_map(|msg| {
-        msg.content.iter().find_map(|c| match c {
-            InferenceContent::Text { text } => Some(text.clone()),
-            _ => None,
-        })
-    })
 }
