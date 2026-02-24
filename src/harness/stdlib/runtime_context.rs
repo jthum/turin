@@ -1,6 +1,7 @@
 use mlua::{Lua, MultiValue, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{HarnessAppData, block_on_current};
+use crate::harness::stdlib::binding_common::ok_value;
 use crate::harness::stdlib::context_selectors::{parse_context_args, selector_to_lua_table};
 
 fn wildcard_match(pattern: &str, text: &str) -> bool {
@@ -53,7 +54,7 @@ pub fn register_runtime_context_namespace(
                         idx += 1;
                     }
                 }
-                Ok((Value::Table(out), Value::Nil))
+                Ok(ok_value(Value::Table(out)))
             })?,
         )?;
     }

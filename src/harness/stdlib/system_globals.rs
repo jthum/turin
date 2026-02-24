@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
+use crate::harness::stdlib::binding_common::{bool_err, nil_err, ok_bool, ok_value, string_ok};
+
 pub fn register_system_globals(lua: &Lua, fs_root: &Path, max_file_size: usize) -> LuaResult<()> {
     register_fs_module(lua, fs_root, max_file_size)?;
     register_json_module(lua)?;
@@ -37,13 +39,10 @@ fn register_fs_module(lua: &Lua, fs_root: &Path, max_file_size: usize) -> LuaRes
         lua.create_function(
             move |lua, path: String| match resolve_safe_path(&r1, &path) {
                 Some(p) => match std::fs::read_to_string(&p) {
-                    Ok(c) => Ok((Value::String(lua.create_string(&c)?), Value::Nil)),
-                    Err(e) => Ok((Value::Nil, Value::String(lua.create_string(e.to_string())?))),
+                    Ok(c) => string_ok(lua, &c),
+                    Err(e) => nil_err(lua, &e.to_string()),
                 },
-                None => Ok((
-                    Value::Nil,
-                    Value::String(lua.create_string("Unsafe path traversal")?),
-                )),
+                None => nil_err(lua, "Unsafe path traversal"),
             },
         )?,
     )?;
@@ -53,10 +52,7 @@ fn register_fs_module(lua: &Lua, fs_root: &Path, max_file_size: usize) -> LuaRes
         "write",
         lua.create_function(move |lua, (path, content): (String, String)| {
             if content.len() > max_file_size {
-                return Ok((
-                    Value::Boolean(false),
-                    Value::String(lua.create_string("File exceeds max size")?),
-                ));
+                return bool_err(lua, "File exceeds max size");
             }
             match resolve_safe_path(&r2, &path) {
                 Some(p) => {
@@ -64,17 +60,11 @@ fn register_fs_module(lua: &Lua, fs_root: &Path, max_file_size: usize) -> LuaRes
                         let _ = std::fs::create_dir_all(parent);
                     }
                     match std::fs::write(&p, content) {
-                        Ok(_) => Ok((Value::Boolean(true), Value::Nil)),
-                        Err(e) => Ok((
-                            Value::Boolean(false),
-                            Value::String(lua.create_string(e.to_string())?),
-                        )),
+                        Ok(_) => Ok(ok_bool()),
+                        Err(e) => bool_err(lua, &e.to_string()),
                     }
                 }
-                None => Ok((
-                    Value::Boolean(false),
-                    Value::String(lua.create_string("Unsafe path traversal")?),
-                )),
+                None => bool_err(lua, "Unsafe path traversal"),
             }
         })?,
     )?;
@@ -105,16 +95,16 @@ fn register_json_module(lua: &Lua) -> LuaResult<()> {
     json_table.set(
         "encode",
         lua.create_function(|lua, val: Value| match serde_json::to_string(&val) {
-            Ok(s) => Ok((Value::String(lua.create_string(&s)?), Value::Nil)),
-            Err(e) => Ok((Value::Nil, Value::String(lua.create_string(e.to_string())?))),
+            Ok(s) => string_ok(lua, &s),
+            Err(e) => nil_err(lua, &e.to_string()),
         })?,
     )?;
     json_table.set(
         "decode",
         lua.create_function(|lua, s: String| {
             match serde_json::from_str::<serde_json::Value>(&s) {
-                Ok(j) => Ok((lua.to_value(&j)?, Value::Nil)),
-                Err(e) => Ok((Value::Nil, Value::String(lua.create_string(e.to_string())?))),
+                Ok(j) => Ok(ok_value(lua.to_value(&j)?)),
+                Err(e) => nil_err(lua, &e.to_string()),
             }
         })?,
     )?;
@@ -142,7 +132,7 @@ fn register_time_module(lua: &Lua) -> LuaResult<()> {
                 .unwrap()
                 .as_secs()
                 .to_string();
-            Ok(Value::String(lua.create_string(&ts)?))
+            Ok(string_ok(lua, &ts)?.0)
         })?,
     )?;
     lua.globals().set("time", time_table)?;
