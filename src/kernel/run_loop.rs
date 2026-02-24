@@ -1,7 +1,9 @@
+use anyhow::Result;
 use tracing::{debug, warn};
 
 use crate::harness::verdict::Verdict;
 use crate::kernel::event::{KernelEvent, LifecycleEvent};
+use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::session::{PlanProgress, QueuedTask, SessionState};
 use crate::kernel::Kernel;
 
@@ -102,5 +104,90 @@ impl Kernel {
         }
 
         false
+    }
+
+    pub(super) async fn prepare_task_start(
+        &mut self,
+        session: &mut SessionState,
+        task: &mut QueuedTask,
+        queue_depth_after_pop: usize,
+    ) -> Result<bool> {
+        self.persist_event(
+            session,
+            &KernelEvent::Lifecycle(LifecycleEvent::TaskStart {
+                identity: session.identity.clone(),
+                task_id: task.task_id.clone(),
+                plan_id: task.plan_id.clone(),
+                title: task.title.clone(),
+                prompt: task.prompt.clone(),
+                queue_depth: queue_depth_after_pop,
+            }),
+        );
+
+        match self.evaluate_task_start_verdict(session, task, queue_depth_after_pop) {
+            Verdict::Reject(reason) => {
+                warn!(
+                    task_id = %task.task_id,
+                    reason = %reason,
+                    "Task rejected by on_task_start"
+                );
+                self.complete_task(session, task, TaskTerminalStatus::Rejected, 0, None)
+                    .await?;
+                Ok(false)
+            }
+            Verdict::Modify(val) => {
+                if let Some(obj) = val.as_object() {
+                    if let Some(prompt) = obj.get("prompt").and_then(|v| v.as_str()) {
+                        task.prompt = prompt.to_string();
+                    }
+                    if let Some(title) = obj.get("title").and_then(|v| v.as_str()) {
+                        task.title = Some(title.to_string());
+                    }
+                }
+                Ok(true)
+            }
+            Verdict::Escalate(reason) => {
+                warn!(
+                    task_id = %task.task_id,
+                    reason = %reason,
+                    "Task escalated at on_task_start; treating as rejected"
+                );
+                self.complete_task(session, task, TaskTerminalStatus::Rejected, 0, None)
+                    .await?;
+                Ok(false)
+            }
+            Verdict::Allow => Ok(true),
+        }
+    }
+
+    fn evaluate_task_start_verdict(
+        &self,
+        session: &SessionState,
+        task: &QueuedTask,
+        queue_depth_after_pop: usize,
+    ) -> Verdict {
+        let harness = self.lock_harness();
+        if let Some(ref engine) = *harness {
+            match engine.evaluate(
+                "on_task_start",
+                serde_json::json!({
+                    "identity": session.identity.clone(),
+                    "session_id": session.identity.session_id(),
+                    "task_id": task.task_id.clone(),
+                    "plan_id": task.plan_id.clone(),
+                    "title": task.title.clone(),
+                    "prompt": task.prompt.clone(),
+                    "queue_depth": queue_depth_after_pop,
+                }),
+            ) {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!(error = %e, "Harness on_task_start error");
+                    Verdict::Allow
+                }
+            }
+        } else {
+            Verdict::Allow
+        }
     }
 }

@@ -149,69 +149,11 @@ impl Kernel {
         }
 
         while let Some((mut task, queue_depth_after_pop)) = self.dequeue_next_task(session).await {
-
-            self.persist_event(
-                session,
-                &KernelEvent::Lifecycle(LifecycleEvent::TaskStart {
-                    identity: session.identity.clone(),
-                    task_id: task.task_id.clone(),
-                    plan_id: task.plan_id.clone(),
-                    title: task.title.clone(),
-                    prompt: task.prompt.clone(),
-                    queue_depth: queue_depth_after_pop,
-                }),
-            );
-
-            let task_start_verdict = {
-                let harness = self.lock_harness();
-                if let Some(ref engine) = *harness {
-                    match engine.evaluate(
-                        "on_task_start",
-                        serde_json::json!({
-                            "identity": session.identity.clone(),
-                            "session_id": session.identity.session_id(),
-                            "task_id": task.task_id.clone(),
-                            "plan_id": task.plan_id.clone(),
-                            "title": task.title.clone(),
-                            "prompt": task.prompt.clone(),
-                            "queue_depth": queue_depth_after_pop,
-                        }),
-                    ) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            warn!(error = %e, "Harness on_task_start error");
-                            Verdict::Allow
-                        }
-                    }
-                } else {
-                    Verdict::Allow
-                }
-            };
-
-            match task_start_verdict {
-                Verdict::Reject(reason) => {
-                    warn!(task_id = %task.task_id, reason = %reason, "Task rejected by on_task_start");
-                    self.complete_task(session, &task, TaskTerminalStatus::Rejected, 0, None)
-                        .await?;
-                    continue;
-                }
-                Verdict::Modify(val) => {
-                    if let Some(obj) = val.as_object() {
-                        if let Some(prompt) = obj.get("prompt").and_then(|v| v.as_str()) {
-                            task.prompt = prompt.to_string();
-                        }
-                        if let Some(title) = obj.get("title").and_then(|v| v.as_str()) {
-                            task.title = Some(title.to_string());
-                        }
-                    }
-                }
-                Verdict::Escalate(reason) => {
-                    warn!(task_id = %task.task_id, reason = %reason, "Task escalated at on_task_start; treating as rejected");
-                    self.complete_task(session, &task, TaskTerminalStatus::Rejected, 0, None)
-                        .await?;
-                    continue;
-                }
-                Verdict::Allow => {}
+            if !self
+                .prepare_task_start(session, &mut task, queue_depth_after_pop)
+                .await?
+            {
+                continue;
             }
 
             info!(task_id = %task.task_id, prompt = %task.prompt, "Running task");
