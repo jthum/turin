@@ -125,6 +125,14 @@ scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env
 This currently includes:
 - `basic` (exact `PONG` response)
 - `tool_read` (forces a `read_file` tool roundtrip on a random nonce file)
+- `tool_error` (forces a failing `read_file` call and checks recovery path)
+- `tool_write_read` (forces `write_file` + `read_file` multi-tool roundtrip)
+
+Optional case selection:
+
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --cases basic,tool_read,tool_error,tool_write_read
+```
 
 ---
 

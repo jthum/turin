@@ -11,8 +11,8 @@ such as MiniMax. This script does NOT run during normal cargo builds/tests.
 Options:
   --env-file PATH        Source env vars from a file (e.g. ~/Documents/minimax.env)
   --binary PATH          Turin binary path (default: target/release/turin)
-  --cases LIST           Comma-separated cases (default: basic,tool_read)
-                         Available: basic,tool_read
+  --cases LIST           Comma-separated cases (default: basic,tool_read,tool_error)
+                         Available: basic,tool_read,tool_error,tool_write_read
   --debug-requests       Enable Anthropic SDK request dumps (ANTHROPIC_SDK_DEBUG_REQUESTS=1)
   --keep-tmp             Keep temp directories after success/failure (for debugging)
   -h, --help             Show this help
@@ -26,7 +26,7 @@ USAGE
 
 ENV_FILE=""
 BINARY="target/release/turin"
-CASES="basic,tool_read"
+CASES="basic,tool_read,tool_error"
 DEBUG_REQUESTS=0
 KEEP_TMP=0
 
@@ -183,6 +183,51 @@ run_tool_read() {
     printf '[PASS] tool_read (tmp=%s)\n' "$dir"
   else
     printf '[FAIL] tool_read (tmp=%s)\n' "$dir" >&2
+    return 1
+  fi
+}
+
+run_tool_error() {
+  local dir out prompt
+  dir="$(make_temp_env turin-live-toolerror)"
+  write_config "$dir" "You are a coding assistant. Use tools when explicitly instructed." 8
+  out="$dir/out.txt"
+  prompt='First, call the read_file tool on missing_file_that_does_not_exist_12345.txt. Then reply with exactly: TOOL_ERROR_OK'
+
+  printf '\n[CASE] tool_error\n'
+  "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level warn | tee "$out"
+
+  if rg -q '^TOOL_ERROR_OK$' "$out"; then
+    printf '[PASS] tool_error (tmp=%s)\n' "$dir"
+  else
+    printf '[FAIL] tool_error (tmp=%s)\n' "$dir" >&2
+    return 1
+  fi
+}
+
+run_tool_write_read() {
+  local dir out nonce prompt
+  dir="$(make_temp_env turin-live-toolwriteread)"
+  write_config "$dir" "You are a coding assistant. Use tools when needed and follow exact output instructions." 10
+  nonce="MINIMAX_WRITE_READ_NONCE_$(date +%s)_$RANDOM"
+  out="$dir/out.txt"
+  prompt="Use write_file to create nonce2.txt with exactly this content: ${nonce}. Then use read_file to read nonce2.txt and reply with exactly the file contents, no extra text."
+
+  printf '\n[CASE] tool_write_read\n'
+  "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level warn | tee "$out"
+
+  if [[ ! -f "$dir/work/nonce2.txt" ]]; then
+    printf '[FAIL] tool_write_read (tmp=%s) nonce2.txt missing\n' "$dir" >&2
+    return 1
+  fi
+  if ! rg -q "^${nonce}$" "$dir/work/nonce2.txt"; then
+    printf '[FAIL] tool_write_read (tmp=%s) file contents mismatch\n' "$dir" >&2
+    return 1
+  fi
+  if rg -q "^${nonce}$" "$out"; then
+    printf '[PASS] tool_write_read (tmp=%s)\n' "$dir"
+  else
+    printf '[FAIL] tool_write_read (tmp=%s)\n' "$dir" >&2
     return 1
   fi
 }
