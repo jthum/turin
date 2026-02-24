@@ -105,7 +105,8 @@ impl StoreManager {
     /// This path does not enforce harness runtime policies. Harness-facing code should use
     /// [`StoreManager::open_with_path_scope`] or [`StoreManager::open_handle`].
     pub async fn open(&self, selector: &StoreSelector) -> Result<Arc<StateStore>> {
-        self.open_with_path_scope(selector, StorePathScope::AllowAny).await
+        self.open_with_path_scope(selector, StorePathScope::AllowAny)
+            .await
     }
 
     /// Open or retrieve a cached database connection with path-scope enforcement.
@@ -128,7 +129,9 @@ impl StoreManager {
     ) -> Result<StoreHandleInfo> {
         self.trim_cache(max_open_handles, idle_close_secs).await;
 
-        let (target_path, alias) = self.resolve_selector_with_alias(selector, path_scope).await?;
+        let (target_path, alias) = self
+            .resolve_selector_with_alias(selector, path_scope)
+            .await?;
 
         {
             let handles = self.handles.read().await;
@@ -270,7 +273,10 @@ impl StoreManager {
 
     fn default_alias_path(&self, alias: &str) -> PathBuf {
         let file_name = format!("{}.db", sanitize_alias(alias));
-        self.workspace_root.join(".turin").join("stores").join(file_name)
+        self.workspace_root
+            .join(".turin")
+            .join("stores")
+            .join(file_name)
     }
 
     async fn resolve_selector_with_alias(
@@ -304,7 +310,9 @@ impl StoreManager {
         selector: &StoreSelector,
         path_scope: StorePathScope,
     ) -> Result<PathBuf> {
-        let (path, _) = self.resolve_selector_with_alias(selector, path_scope).await?;
+        let (path, _) = self
+            .resolve_selector_with_alias(selector, path_scope)
+            .await?;
         Ok(path)
     }
 
@@ -340,8 +348,10 @@ impl StoreManager {
     fn resolve_path_scoped(&self, requested: &Path, path_scope: StorePathScope) -> Result<PathBuf> {
         match path_scope {
             StorePathScope::AllowAny => self.resolve_path_unchecked(requested),
-            StorePathScope::WorkspaceOnly => crate::tools::is_safe_path(&self.workspace_root, requested)
-                .map_err(|e| anyhow::anyhow!(e.to_string())),
+            StorePathScope::WorkspaceOnly => {
+                crate::tools::is_safe_path(&self.workspace_root, requested)
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))
+            }
         }
     }
 
@@ -415,6 +425,9 @@ mod tests {
             Ok(_) => panic!("expected workspace path scope to reject traversal"),
             Err(err) => err,
         };
-        assert!(err.to_string().contains("Path traversal") || err.to_string().contains("outside workspace"));
+        assert!(
+            err.to_string().contains("Path traversal")
+                || err.to_string().contains("outside workspace")
+        );
     }
 }

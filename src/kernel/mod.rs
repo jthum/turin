@@ -3,13 +3,13 @@ pub mod builder;
 pub mod config;
 pub mod event;
 pub mod identity;
-pub mod policy;
 mod init;
+pub mod policy;
 pub mod session;
 mod turn;
 
-use anyhow::{Context, Result};
 use agent_manager::AgentManager;
+use anyhow::{Context, Result};
 use builder::RuntimeBuilder;
 use config::TurinConfig;
 use event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
@@ -25,8 +25,8 @@ use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::{
     InferenceContent, InferenceMessage, InferenceRole, ProviderClient,
 };
-use crate::persistence::manager::StoreManager;
 use crate::kernel::policy::RuntimePolicyManager;
+use crate::persistence::manager::StoreManager;
 
 use crate::tools::ToolContext;
 use crate::tools::mcp::McpToolProxy;

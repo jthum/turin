@@ -7,13 +7,13 @@ use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
+use crate::harness::verdict::Verdict;
 use crate::inference::provider::InferenceContent;
+use crate::kernel::Kernel;
 use crate::kernel::config::TurinConfig;
 use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
 use crate::kernel::session::{QueuedTask, SessionState};
-use crate::kernel::Kernel;
 use crate::persistence::manager::StoreManager;
-use crate::harness::verdict::Verdict;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PeerAgentTaskResult {
@@ -80,12 +80,14 @@ impl AgentManager {
     pub async fn send(&self, agent_id: &str, task: QueuedTask) -> Result<()> {
         let handle = self.ensure_runtime(agent_id).await?;
         handle.queued_tasks.fetch_add(1, Ordering::Relaxed);
-        if let Err(e) = handle.tx.send(PeerAgentTaskEnvelope {
-            task,
-            request_id: None,
-            result_tx: None,
-        })
-        .await
+        if let Err(e) = handle
+            .tx
+            .send(PeerAgentTaskEnvelope {
+                task,
+                request_id: None,
+                result_tx: None,
+            })
+            .await
         {
             handle.queued_tasks.fetch_sub(1, Ordering::Relaxed);
             anyhow::bail!("Failed to route task to agent queue: {}", e);
@@ -116,7 +118,8 @@ impl AgentManager {
         };
 
         handle.queued_tasks.fetch_add(1, Ordering::Relaxed);
-        if let Err(e) = handle.tx
+        if let Err(e) = handle
+            .tx
             .send(PeerAgentTaskEnvelope {
                 task,
                 request_id: Some(request_id.clone()),
@@ -141,29 +144,38 @@ impl AgentManager {
     ) -> Result<PeerAgentTaskResult> {
         let mut rx = {
             let mut pending = self.pending_results.write().await;
-            pending
-                .remove(request_id)
-                .ok_or_else(|| anyhow::anyhow!("Unknown or already-awaited peer task '{}'", request_id))?
+            pending.remove(request_id).ok_or_else(|| {
+                anyhow::anyhow!("Unknown or already-awaited peer task '{}'", request_id)
+            })?
         };
 
         let mut timed_out = false;
         let result = if let Some(ms) = timeout_ms {
             match tokio::time::timeout(std::time::Duration::from_millis(ms), &mut rx).await {
                 Ok(Ok(res)) => Ok(res),
-                Ok(Err(_)) => Err(anyhow::anyhow!("Peer task '{}' result channel closed", request_id)),
+                Ok(Err(_)) => Err(anyhow::anyhow!(
+                    "Peer task '{}' result channel closed",
+                    request_id
+                )),
                 Err(_) => {
                     timed_out = true;
                     self.pending_results
                         .write()
                         .await
                         .insert(request_id.to_string(), rx);
-                    Err(anyhow::anyhow!("Timed out waiting for peer task '{}'", request_id))
+                    Err(anyhow::anyhow!(
+                        "Timed out waiting for peer task '{}'",
+                        request_id
+                    ))
                 }
             }
         } else {
             match rx.await {
                 Ok(res) => Ok(res),
-                Err(_) => Err(anyhow::anyhow!("Peer task '{}' result channel closed", request_id)),
+                Err(_) => Err(anyhow::anyhow!(
+                    "Peer task '{}' result channel closed",
+                    request_id
+                )),
             }
         };
 
@@ -280,9 +292,10 @@ impl AgentManager {
         let agent_profile = if agent_id == self.config.agent.id {
             &self.config.agent
         } else {
-            self.config.agents.get(agent_id).ok_or_else(|| {
-                anyhow::anyhow!("Unknown agent profile: {}", agent_id)
-            })?
+            self.config
+                .agents
+                .get(agent_id)
+                .ok_or_else(|| anyhow::anyhow!("Unknown agent profile: {}", agent_id))?
         };
 
         let mut peer_config = (*self.config).clone();
@@ -481,7 +494,8 @@ async fn run_peer_task(
 
     info!(task_id = %task.task_id, prompt = %task.prompt, "Running peer task");
 
-    let run_result: crate::kernel::TaskExecutionResult = match kernel.run_task(session, &task).await {
+    let run_result: crate::kernel::TaskExecutionResult = match kernel.run_task(session, &task).await
+    {
         Ok(result) => {
             kernel
                 .complete_task(session, &task, result.status, result.task_turn_count, None)

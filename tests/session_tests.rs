@@ -39,8 +39,8 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
             system_prompt: "Test assistant.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-        harness_dir: None,
-        idle_grace_secs: None,
+            harness_dir: None,
+            idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: KernelConfig {
@@ -277,8 +277,8 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
             system_prompt: "Test.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-        harness_dir: None,
-        idle_grace_secs: None,
+            harness_dir: None,
+            idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: KernelConfig {

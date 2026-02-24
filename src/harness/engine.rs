@@ -234,7 +234,11 @@ impl HarnessEngine {
 
     /// Set the active session ID for the current execution context.
     /// This is used by global functions (e.g. turin.memory) to isolate data.
-    pub fn set_active_session(&self, session_id: Option<&str>, mode: Option<crate::kernel::config::AgentMode>) {
+    pub fn set_active_session(
+        &self,
+        session_id: Option<&str>,
+        mode: Option<crate::kernel::config::AgentMode>,
+    ) {
         if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>() {
             if let Ok(mut lock) = app_data.active_session_id.lock() {
                 *lock = session_id.map(|s| s.to_string());
@@ -423,7 +427,10 @@ mod tests {
             fs_root: PathBuf::from("."),
             workspace_root: PathBuf::from("."),
             store_manager: Arc::new(StoreManager::new(PathBuf::from("."))),
-            agent_manager: Arc::new(crate::kernel::agent_manager::AgentManager::new(std::sync::Arc::new(crate::kernel::config::TurinConfig::default()), Arc::new(StoreManager::new(PathBuf::from("."))))),
+            agent_manager: Arc::new(crate::kernel::agent_manager::AgentManager::new(
+                std::sync::Arc::new(crate::kernel::config::TurinConfig::default()),
+                Arc::new(StoreManager::new(PathBuf::from("."))),
+            )),
             policy_manager: Arc::new(crate::kernel::policy::RuntimePolicyManager::new()),
             clients: std::collections::HashMap::new(),
             embedding_provider: None,

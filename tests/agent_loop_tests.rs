@@ -24,7 +24,6 @@ fn project_state_selector() -> ContextSelector {
     }
 }
 
-
 /// A mock provider that returns a text response followed by a tool call in the next turn.
 struct SequenceMockProvider {
     responses: Arc<std::sync::Mutex<Vec<Vec<InferenceEvent>>>>,
@@ -134,8 +133,8 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
             system_prompt: "Test".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-        harness_dir: None,
-        idle_grace_secs: None,
+            harness_dir: None,
+            idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -327,8 +326,8 @@ async fn test_harness_observation() -> Result<()> {
             system_prompt: "Test".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-        harness_dir: None,
-        idle_grace_secs: None,
+            harness_dir: None,
+            idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -439,8 +438,8 @@ async fn test_nested_agent_spawning() -> Result<()> {
             system_prompt: "Outer".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-        harness_dir: None,
-        idle_grace_secs: None,
+            harness_dir: None,
+            idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -559,8 +558,8 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
             system_prompt: "Recover on stream errors".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-        harness_dir: None,
-        idle_grace_secs: None,
+            harness_dir: None,
+            idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -644,8 +643,8 @@ async fn test_dynamic_mode_switching_stateless() -> Result<()> {
             system_prompt: "Stateless classifier".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-        harness_dir: None,
-        idle_grace_secs: None,
+            harness_dir: None,
+            idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -695,7 +694,10 @@ async fn test_dynamic_mode_switching_stateless() -> Result<()> {
         .await?;
 
     // Verify it terminated strictly after exactly 1 turn
-    assert_eq!(session.turn_index, 1, "Agent should only complete exactly 1 turn due to stateless mode");
+    assert_eq!(
+        session.turn_index, 1,
+        "Agent should only complete exactly 1 turn due to stateless mode"
+    );
     assert_eq!(session.mode, turin::kernel::config::AgentMode::Stateless);
 
     kernel.end_session(&mut session).await?;

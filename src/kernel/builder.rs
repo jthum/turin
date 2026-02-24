@@ -4,8 +4,8 @@ use std::sync::Arc;
 // Mutex removed
 
 use crate::inference::embeddings::EmbeddingProvider;
-use crate::kernel::{agent_manager::AgentManager, Kernel, TurinConfig};
 use crate::kernel::policy::RuntimePolicyManager;
+use crate::kernel::{Kernel, TurinConfig, agent_manager::AgentManager};
 use crate::persistence::manager::StoreManager;
 use crate::tools::builtins::create_default_registry;
 use crate::tools::registry::ToolRegistry;

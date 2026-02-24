@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde_json::Value;
 use tokio::sync::RwLock;
 
@@ -294,10 +294,7 @@ mod tests {
                 ..PolicyScope::default()
             })
             .await;
-        assert_eq!(
-            snapshot.get("spawn.max_depth"),
-            Some(&Value::from(1u64))
-        );
+        assert_eq!(snapshot.get("spawn.max_depth"), Some(&Value::from(1u64)));
     }
 
     #[tokio::test]

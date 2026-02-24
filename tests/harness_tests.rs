@@ -9,10 +9,10 @@ use turin::inference::provider::{
     ProviderClient, RequestOptions, SdkError,
 };
 use turin::kernel::Kernel;
-use turin::kernel::identity::ContextSelector;
 use turin::kernel::config::{
     AgentConfig, EmbeddingConfig, HarnessConfig, PersistenceConfig, ProviderConfig, TurinConfig,
 };
+use turin::kernel::identity::ContextSelector;
 
 struct ToolMockProvider {
     tool_name: String,
@@ -133,8 +133,8 @@ async fn test_harness_rejection() -> Result<()> {
             system_prompt: "You are a test assistant.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-        harness_dir: None,
-        idle_grace_secs: None,
+            harness_dir: None,
+            idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -259,8 +259,8 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
             system_prompt: "Header test".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-        harness_dir: None,
-        idle_grace_secs: None,
+            harness_dir: None,
+            idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -301,7 +301,6 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
 
     Ok(())
 }
-
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
@@ -374,8 +373,8 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
             system_prompt: "Stdlib API test".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-        harness_dir: None,
-        idle_grace_secs: None,
+            harness_dir: None,
+            idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -402,7 +401,9 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
 
     let mut session = kernel.create_session().await;
     let session_public_id = session.identity.session_id().to_string();
-    kernel.run(&mut session, Some("exercise stdlib".to_string())).await?;
+    kernel
+        .run(&mut session, Some("exercise stdlib".to_string()))
+        .await?;
     kernel.end_session(&mut session).await?;
 
     let project_selector = ContextSelector {
@@ -412,10 +413,18 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
     };
     let project_store = kernel
         .store_manager()
-        .open(&turin::persistence::manager::StoreSelector::Alias(project_selector.to_alias()))
+        .open(&turin::persistence::manager::StoreSelector::Alias(
+            project_selector.to_alias(),
+        ))
         .await?;
-    assert_eq!(project_store.kv_get("raw_key").await?, Some("raw_val".to_string()));
-    assert_eq!(project_store.kv_get("scoped_key").await?, Some("scoped_val".to_string()));
+    assert_eq!(
+        project_store.kv_get("raw_key").await?,
+        Some("raw_val".to_string())
+    );
+    assert_eq!(
+        project_store.kv_get("scoped_key").await?,
+        Some("scoped_val".to_string())
+    );
 
     let ctx_session_uuid: uuid::Uuid = project_store
         .kv_get("__turin_context_session_public_id")
@@ -438,9 +447,14 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
     };
     let session_store = kernel
         .store_manager()
-        .open(&turin::persistence::manager::StoreSelector::Alias(session_selector.to_alias()))
+        .open(&turin::persistence::manager::StoreSelector::Alias(
+            session_selector.to_alias(),
+        ))
         .await?;
-    assert_eq!(session_store.kv_get("session_seen").await?, Some("1".to_string()));
+    assert_eq!(
+        session_store.kv_get("session_seen").await?,
+        Some("1".to_string())
+    );
 
     Ok(())
 }
@@ -503,8 +517,8 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
             system_prompt: "Runtime policy test".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-        harness_dir: None,
-        idle_grace_secs: None,
+            harness_dir: None,
+            idle_grace_secs: None,
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -537,7 +551,10 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
 
     let global_value = kernel
         .policy_manager()
-        .get("spawn.max_depth", &turin::kernel::policy::PolicyScope::default())
+        .get(
+            "spawn.max_depth",
+            &turin::kernel::policy::PolicyScope::default(),
+        )
         .await?;
     assert_eq!(global_value, Some(serde_json::json!(2)));
 
@@ -678,8 +695,15 @@ async fn test_runtime_db_api_and_context_glob() -> Result<()> {
         .await?;
     kernel.end_session(&mut session).await?;
 
-    let dyn_db = tmp.path().join(".turin").join("runtime").join("test_dynamic.db");
-    assert!(dyn_db.exists(), "expected runtime.db.open path to create database");
+    let dyn_db = tmp
+        .path()
+        .join(".turin")
+        .join("runtime")
+        .join("test_dynamic.db");
+    assert!(
+        dyn_db.exists(),
+        "expected runtime.db.open path to create database"
+    );
 
     Ok(())
 }
@@ -797,7 +821,10 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
 
     let mut session = kernel.create_session().await;
     kernel
-        .run(&mut session, Some("exercise runtime agent peer".to_string()))
+        .run(
+            &mut session,
+            Some("exercise runtime agent peer".to_string()),
+        )
         .await?;
     kernel.end_session(&mut session).await?;
 
