@@ -247,6 +247,10 @@ async fn test_events_persisted_to_state_store() -> Result<()> {
     if let Ok(store) = kernel.store_manager().get_default().await {
         let events = store.get_events(session.internal_id.unwrap()).await?;
         assert!(!events.is_empty(), "Events should be persisted");
+        assert!(
+            events.iter().any(|e| e.event_type == "governance_snapshot"),
+            "Expected governance_snapshot audit event to be persisted"
+        );
     }
 
     kernel.end_session(&mut session).await?;

@@ -5,7 +5,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use tracing::{info, warn};
 
 use crate::kernel::Kernel;
-use crate::kernel::event::{KernelEvent, LifecycleEvent};
+use crate::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent};
 use crate::kernel::session::{SessionState, SessionStatus};
 
 impl Kernel {
@@ -65,6 +65,15 @@ impl Kernel {
                 identity: session.identity.clone(),
             }),
         );
+        let governance_snapshot = self
+            .governance_manager
+            .snapshot_for_agent(Some(session.identity.agent_id()));
+        self.persist_event(
+            session,
+            &KernelEvent::Audit(AuditEvent::GovernanceSnapshot {
+                snapshot: governance_snapshot.clone(),
+            }),
+        );
 
         {
             let harness = self.lock_harness();
@@ -74,6 +83,7 @@ impl Kernel {
                     serde_json::json!({
                         "identity": session.identity.clone(),
                         "session_id": session_id,
+                        "governance": governance_snapshot,
                     }),
                 )
             {

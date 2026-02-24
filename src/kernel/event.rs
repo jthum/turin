@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::kernel::governance::GovernanceSnapshot;
 use crate::kernel::identity::RuntimeIdentity;
 
 /// Terminal status for a task.
@@ -130,6 +131,8 @@ pub enum AuditEvent {
         /// Human-readable reason from the harness script
         reason: String,
     },
+    /// Governance/capability snapshot emitted for observability (G1)
+    GovernanceSnapshot { snapshot: GovernanceSnapshot },
 }
 
 /// Every action in Turin produces a typed `KernelEvent`.
@@ -174,6 +177,7 @@ impl KernelEvent {
                 AuditEvent::ToolExecEnd { .. } => "tool_exec_end",
                 AuditEvent::TokenUsage { .. } => "token_usage",
                 AuditEvent::HarnessRejection { .. } => "harness_rejection",
+                AuditEvent::GovernanceSnapshot { .. } => "governance_snapshot",
             },
         }
     }
@@ -209,6 +213,28 @@ mod tests {
             })
             .event_type(),
             "harness_rejection"
+        );
+        assert_eq!(
+            KernelEvent::Audit(AuditEvent::GovernanceSnapshot {
+                snapshot: GovernanceSnapshot {
+                    profile: crate::kernel::config::GovernanceProfile::Open,
+                    enforcement_enabled: false,
+                    audit_mode: crate::kernel::config::GovernanceAuditMode::Off,
+                    audit_persist_before_hooks: false,
+                    audit_include_capability_context: false,
+                    import_mode: crate::kernel::config::GovernanceImportMode::Legacy,
+                    import_allow_unscoped_in_open: true,
+                    capabilities_observability_only: true,
+                    subject_agent_id: None,
+                    roots: vec![],
+                    agents: vec![],
+                    preset_capabilities: Default::default(),
+                    grants_enabled: false,
+                    grants_max_ttl_ms: None,
+                }
+            })
+            .event_type(),
+            "governance_snapshot"
         );
     }
 
