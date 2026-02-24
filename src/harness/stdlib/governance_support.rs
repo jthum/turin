@@ -82,6 +82,45 @@ pub(crate) fn parse_delegated_capabilities(
     }
 }
 
+pub(crate) fn apply_active_grant_ceiling_to_peer_delegation(
+    app_data: &HarnessAppData,
+    delegated_capabilities: Option<BTreeMap<String, bool>>,
+    caller_label: &str,
+) -> LuaResult<Option<BTreeMap<String, bool>>> {
+    let subject = current_subject(app_data);
+    let Some(grant_id) = subject.grant_id.as_deref() else {
+        return Ok(delegated_capabilities);
+    };
+
+    let grant = app_data
+        .governance_manager
+        .grant_snapshot_for_subject(&subject, grant_id)
+        .map_err(mlua::Error::runtime)?
+        .ok_or_else(|| {
+            mlua::Error::runtime(format!(
+                "{} cannot use active governance grant '{}' for peer delegation: grant not found",
+                caller_label, grant_id
+            ))
+        })?;
+
+    if let Some(requested) = delegated_capabilities.as_ref() {
+        for (capability, allowed) in requested {
+            if !*allowed {
+                continue;
+            }
+            if !capability_allowed_by_ceiling(&grant.capabilities, capability) {
+                return Err(mlua::Error::runtime(format!(
+                    "{} cannot grant '{}' beyond active governance grant '{}'",
+                    caller_label, capability, grant.grant_id
+                )));
+            }
+        }
+        Ok(delegated_capabilities)
+    } else {
+        Ok(Some(grant.capabilities))
+    }
+}
+
 pub(crate) fn current_subject(app_data: &HarnessAppData) -> GovernanceSubject {
     let module_name = app_data
         .active_harness_module
@@ -110,6 +149,27 @@ pub(crate) fn current_subject(app_data: &HarnessAppData) -> GovernanceSubject {
         grant_id,
         import_capabilities,
     }
+}
+
+fn capability_allowed_by_ceiling(caps: &BTreeMap<String, bool>, capability: &str) -> bool {
+    if let Some(allowed) = caps.get(capability) {
+        return *allowed;
+    }
+
+    let mut best: Option<(&str, bool)> = None;
+    for (rule, allowed) in caps {
+        let Some(prefix) = rule.strip_suffix(".*") else {
+            continue;
+        };
+        if capability == prefix || capability.starts_with(&format!("{prefix}.")) {
+            match best {
+                Some((best_rule, _)) if best_rule.len() >= rule.len() => {}
+                _ => best = Some((rule.as_str(), *allowed)),
+            }
+        }
+    }
+
+    best.map(|(_, allowed)| allowed).unwrap_or(false)
 }
 
 pub(crate) fn emit_governance_audit_event(app_data: &HarnessAppData, audit_event: AuditEvent) {

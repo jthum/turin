@@ -5,7 +5,8 @@ use crate::harness::stdlib::binding_common::{
     bool_err, nil_err, nil_ok, ok_bool, ok_value, string_ok, string_value,
 };
 use crate::harness::stdlib::governance_support::{
-    parse_delegated_capabilities, require_capability as require_governance_capability,
+    apply_active_grant_ceiling_to_peer_delegation, parse_delegated_capabilities,
+    require_capability as require_governance_capability,
     require_child_agent as require_child_agent_governance,
 };
 use crate::harness::stdlib::identity_support::{
@@ -150,6 +151,11 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     &complete_policy_snapshot,
                     opts.as_ref(),
                     "capabilities",
+                    "agent.complete",
+                )?;
+                let delegated_capabilities = apply_active_grant_ceiling_to_peer_delegation(
+                    &complete_policy_snapshot,
+                    delegated_capabilities,
                     "agent.complete",
                 )?;
                 let timeout_ms = opts.as_ref().and_then(|t| t.get::<u64>("timeout_ms").ok());
@@ -383,9 +389,16 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             if let Err(err) = require_child_agent_governance(&send_policy_snapshot, &id) {
                 return Err(mlua::Error::runtime(err));
             }
+            let delegated_capabilities = apply_active_grant_ceiling_to_peer_delegation(
+                &send_policy_snapshot,
+                None,
+                "agent.send",
+            )?;
             let m = agent_manager.clone();
             block_on_current(async {
-                let _ = m.send(&id, QueuedTask::ad_hoc(prompt)).await;
+                let _ = m
+                    .send(&id, QueuedTask::ad_hoc(prompt), delegated_capabilities)
+                    .await;
             });
             Ok(ok_bool())
         })?,

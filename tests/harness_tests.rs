@@ -2069,6 +2069,162 @@ async fn test_runtime_governance_temporary_grants_issue_use_revoke() -> Result<(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_temporary_grant_ceiling_propagates_to_peer_submit() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_grant_peer_submit.db");
+    let orchestrator_harness_dir = tmp.path().join("harnesses_orchestrator");
+    let worker_harness_dir = tmp.path().join("harnesses_worker");
+    std::fs::create_dir(&orchestrator_harness_dir)?;
+    std::fs::create_dir(&worker_harness_dir)?;
+
+    std::fs::write(
+        orchestrator_harness_dir.join("orchestrator.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local before_dec, be = runtime.governance.check("runtime.policy.set")
+                if before_dec == nil then error("pre-grant check failed: " .. tostring(be)) end
+                if not before_dec.allowed then error("pre-grant runtime.policy.set should be allowed") end
+
+                local grant, ge = runtime.governance.grant_issue({
+                    capabilities = {
+                        ["runtime.db.query"] = true
+                    },
+                    reason = "propagate to peer submit"
+                })
+                if grant == nil then error("grant_issue failed: " .. tostring(ge)) end
+
+                local cb_out = runtime.governance.with_grant(grant.grant_id, function()
+                    local task_id, se = runtime.agent.submit("worker", { prompt = "grant-constrained peer" })
+                    if task_id == nil then error("runtime.agent.submit failed: " .. tostring(se)) end
+
+                    local res, ae = runtime.agent.await(task_id, { timeout_ms = 5000 })
+                    if res == nil then error("runtime.agent.await failed: " .. tostring(ae)) end
+                    if res.status ~= "success" then
+                        error("worker task should succeed, got status " .. tostring(res.status))
+                    end
+                    if res.output ~= "worker-grant-ok" then
+                        error("worker output mismatch: " .. tostring(res.output))
+                    end
+                    return "ok"
+                end)
+                if cb_out ~= "ok" then error("with_grant return mismatch") end
+
+                local after_dec, ae = runtime.governance.check("runtime.policy.set")
+                if after_dec == nil then error("post-grant check failed: " .. tostring(ae)) end
+                if not after_dec.allowed then error("post-grant runtime.policy.set should be restored") end
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    std::fs::write(
+        worker_harness_dir.join("worker.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local dec, de = runtime.governance.check("runtime.policy.set")
+                if dec == nil then error("worker governance.check failed: " .. tostring(de)) end
+                if dec.allowed then
+                    error("worker runtime.policy.set should be denied by propagated grant ceiling")
+                end
+                if dec.reason == nil or string.find(dec.reason, "delegated capabilities", 1, true) == nil then
+                    error("worker denial should mention delegated capabilities")
+                end
+
+                local ok, err = runtime.policy.set("grant.peer.test", true)
+                if ok ~= false or err == nil then
+                    error("worker runtime.policy.set should fail under propagated grant ceiling")
+                end
+                if string.find(tostring(err), "delegated capabilities", 1, true) == nil then
+                    error("runtime.policy.set denial should mention delegated capabilities")
+                end
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("worker-grant-ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut agents = std::collections::HashMap::new();
+    agents.insert(
+        "worker".to_string(),
+        AgentConfig {
+            id: "worker".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Worker".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Stateless,
+            harness_dir: Some(worker_harness_dir.to_str().unwrap().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "orchestrator".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Orchestrator".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: None,
+            idle_grace_secs: None,
+        },
+        agents,
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig {
+            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            enforcement_enabled: true,
+            grants: turin::kernel::config::GovernanceGrantsConfig {
+                enabled: true,
+                max_ttl_ms: Some(10_000),
+                require_audit_reason: true,
+            },
+            ..turin::kernel::config::GovernanceConfig::default()
+        },
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise grant ceiling peer propagation".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_import_scoped_caps.db");

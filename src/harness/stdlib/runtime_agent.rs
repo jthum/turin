@@ -3,7 +3,8 @@ use mlua::{Lua, Result as LuaResult, Table, Value};
 use crate::harness::globals::{HarnessAppData, block_on_current};
 use crate::harness::stdlib::binding_common::{json_ok, nil_err, string_ok};
 use crate::harness::stdlib::governance_support::{
-    parse_delegated_capabilities, require_capability as require_governance_capability,
+    apply_active_grant_ceiling_to_peer_delegation, parse_delegated_capabilities,
+    require_capability as require_governance_capability,
     require_child_agent as require_child_agent_governance,
 };
 use crate::harness::stdlib::policy_support::{policy_bool, runtime_policy_snapshot};
@@ -103,6 +104,11 @@ pub fn register_runtime_agent_namespace(
                         &app_data_snapshot,
                         opts.as_ref(),
                         "capabilities",
+                        "runtime.agent.submit",
+                    )?;
+                    let delegated_capabilities = apply_active_grant_ceiling_to_peer_delegation(
+                        &app_data_snapshot,
+                        delegated_capabilities,
                         "runtime.agent.submit",
                     )?;
 
