@@ -11,6 +11,7 @@ pub mod policy;
 pub mod session;
 mod session_lifecycle;
 mod run_loop;
+mod task_lifecycle;
 mod task_planning;
 mod turn;
 
@@ -18,14 +19,13 @@ use agent_manager::AgentManager;
 use anyhow::Result;
 use builder::RuntimeBuilder;
 use config::TurinConfig;
-use event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
+use event::TaskTerminalStatus;
 use session::{QueuedTask, SessionState};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{error, info, instrument, warn};
 
 use crate::harness::engine::HarnessEngine;
-use crate::harness::verdict::Verdict;
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::{
     InferenceContent, InferenceMessage, InferenceRole, ProviderClient,
@@ -314,186 +314,4 @@ impl Kernel {
         })
     }
 
-    pub(crate) async fn complete_task(
-        &mut self,
-        session: &mut SessionState,
-        task: &QueuedTask,
-        status: TaskTerminalStatus,
-        task_turn_count: u32,
-        error_message: Option<String>,
-    ) -> Result<()> {
-        self.persist_event(
-            session,
-            &KernelEvent::Lifecycle(LifecycleEvent::TaskComplete {
-                identity: session.identity.clone(),
-                task_id: task.task_id.clone(),
-                plan_id: task.plan_id.clone(),
-                status,
-                task_turn_count,
-                error: error_message.clone(),
-            }),
-        );
-
-        let verdict_result = {
-            let harness = self.lock_harness();
-            if let Some(ref engine) = *harness {
-                Some(engine.evaluate(
-                    "on_task_complete",
-                    serde_json::json!({
-                        "identity": session.identity.clone(),
-                        "session_id": session.identity.session_id(),
-                        "task_id": task.task_id.clone(),
-                        "plan_id": task.plan_id.clone(),
-                        "status": status,
-                        "task_turn_count": task_turn_count,
-                        "turn_count": session.turn_index,
-                        "error": error_message,
-                    }),
-                ))
-            } else {
-                None
-            }
-        };
-
-        if let Some(result) = verdict_result {
-            match result {
-                Ok(Verdict::Modify(new_tasks_val)) => {
-                    let new_tasks = Self::parse_task_list(&new_tasks_val, None, None);
-                    if !new_tasks.is_empty() {
-                        let mut q = session.queue.lock().await;
-                        for queued in new_tasks {
-                            q.push_back(queued);
-                        }
-                        info!("on_task_complete queued additional tasks via MODIFY");
-                    }
-                }
-                Ok(Verdict::Reject(reason)) => {
-                    warn!(task_id = %task.task_id, reason = %reason, "on_task_complete rejected");
-                }
-                Ok(Verdict::Escalate(reason)) => {
-                    warn!(task_id = %task.task_id, reason = %reason, "on_task_complete escalated");
-                }
-                Ok(Verdict::Allow) => {}
-                Err(e) => {
-                    warn!(error = %e, "Harness on_task_complete error");
-                }
-            }
-        }
-
-        if let Some(plan_id) = &task.plan_id {
-            let completed_plan = if let Some(progress) = session.plans.get_mut(plan_id) {
-                progress.completed_tasks += 1;
-                if progress.is_complete() {
-                    Some(progress.clone())
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            if let Some(plan) = completed_plan {
-                self.persist_event(
-                    session,
-                    &KernelEvent::Lifecycle(LifecycleEvent::PlanComplete {
-                        identity: session.identity.clone(),
-                        plan_id: plan.plan_id.clone(),
-                        title: plan.title.clone(),
-                        total_tasks: plan.total_tasks,
-                        completed_tasks: plan.completed_tasks,
-                    }),
-                );
-
-                {
-                    let harness = self.lock_harness();
-                    if let Some(ref engine) = *harness
-                        && let Err(e) = engine.evaluate(
-                            "on_plan_complete",
-                            serde_json::json!({
-                                "identity": session.identity.clone(),
-                                "session_id": session.identity.session_id(),
-                                "plan_id": plan.plan_id.clone(),
-                                "title": plan.title.clone(),
-                                "total_tasks": plan.total_tasks,
-                                "completed_tasks": plan.completed_tasks,
-                            }),
-                        )
-                    {
-                        warn!(error = %e, "Harness on_plan_complete failed");
-                    }
-                }
-
-                session.plans.remove(plan_id);
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn handle_inference_error(
-        &mut self,
-        session: &mut SessionState,
-        task: &QueuedTask,
-        error: &str,
-    ) -> Result<bool> {
-        let verdict_result = {
-            let harness = self.lock_harness();
-            if let Some(ref engine) = *harness {
-                engine.set_active_session(
-                    Some(session.identity.session_id()),
-                    Some(session.mode.clone()),
-                );
-                let result = engine.evaluate(
-                    "on_inference_error",
-                    serde_json::json!({
-                        "identity": session.identity.clone(),
-                        "session_id": session.identity.session_id(),
-                        "task_id": task.task_id.clone(),
-                        "plan_id": task.plan_id.clone(),
-                        "turn_count": session.turn_index,
-                        "error": error,
-                    }),
-                );
-                engine.set_active_session(None, None);
-                Some(result)
-            } else {
-                None
-            }
-        };
-
-        if let Some(result) = verdict_result {
-            match result {
-                Ok(Verdict::Modify(new_tasks_val)) => {
-                    let new_tasks = Self::parse_task_list(
-                        &new_tasks_val,
-                        task.plan_id.as_deref(),
-                        task.title.as_deref(),
-                    );
-                    if !new_tasks.is_empty() {
-                        let mut q = session.queue.lock().await;
-                        for queued in new_tasks {
-                            q.push_back(queued);
-                        }
-                        info!(
-                            task_id = %task.task_id,
-                            "on_inference_error queued additional tasks via MODIFY"
-                        );
-                        return Ok(true);
-                    }
-                }
-                Ok(Verdict::Reject(reason)) => {
-                    warn!(task_id = %task.task_id, reason = %reason, "on_inference_error rejected");
-                }
-                Ok(Verdict::Escalate(reason)) => {
-                    warn!(task_id = %task.task_id, reason = %reason, "on_inference_error escalated");
-                }
-                Ok(Verdict::Allow) => {}
-                Err(e) => {
-                    warn!(error = %e, "Harness on_inference_error error");
-                }
-            }
-        }
-
-        Ok(false)
-    }
 }
