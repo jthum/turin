@@ -39,7 +39,22 @@ impl Kernel {
         session: &mut SessionState,
         turn_ctx: &TurnContext,
     ) -> Result<TurnPreflight> {
-        let mut req = TurnRequestState {
+        let mut req = self.default_turn_request_state();
+
+        if self.emit_turn_start_and_gate(session, turn_ctx) {
+            return Ok(TurnPreflight::Rejected);
+        }
+
+        if self.emit_turn_prepare_and_apply_hook(session, turn_ctx, &mut req) {
+            return Ok(TurnPreflight::Rejected);
+        }
+
+        let prepared = self.build_prepared_turn_stream(session, req).await?;
+        Ok(TurnPreflight::Ready(prepared))
+    }
+
+    fn default_turn_request_state(&self) -> TurnRequestState {
+        TurnRequestState {
             model: self.config.agent.model.clone(),
             provider_name: self.config.agent.provider.clone(),
             system_prompt: self.config.agent.system_prompt.clone(),
@@ -51,8 +66,10 @@ impl Kernel {
                 .and_then(|t| if t.enabled { t.budget_tokens } else { None })
                 .unwrap_or(0),
             request_options_override: RequestOptionsOverride::default(),
-        };
+        }
+    }
 
+    fn emit_turn_start_and_gate(&self, session: &mut SessionState, turn_ctx: &TurnContext) -> bool {
         if !self.json {
             println!(
                 "\n\x1b[36m\x1b[1m── Turn {} ──\x1b[0m",
@@ -70,37 +87,43 @@ impl Kernel {
             }),
         );
 
-        // Optional gate at turn start.
-        {
-            let harness = self.lock_harness();
-            if let Some(ref engine) = *harness {
-                match engine.evaluate(
-                    "on_turn_start",
-                    serde_json::json!({
-                        "identity": session.identity.clone(),
-                        "session_id": session.identity.session_id(),
-                        "task_id": turn_ctx.task_id.clone(),
-                        "plan_id": turn_ctx.plan_id.clone(),
-                        "turn_index": session.turn_index,
-                        "task_turn_index": turn_ctx.task_turn_index,
-                    }),
-                ) {
-                    Ok(Verdict::Reject(reason)) => {
-                        warn!(reason = %reason, "Turn rejected by on_turn_start");
-                        return Ok(TurnPreflight::Rejected);
-                    }
-                    Ok(Verdict::Escalate(reason)) => {
-                        warn!(reason = %reason, "Turn escalated by on_turn_start; treating as rejected");
-                        return Ok(TurnPreflight::Rejected);
-                    }
-                    Ok(_) => {}
-                    Err(e) => {
-                        warn!(error = %e, "Harness on_turn_start error");
-                    }
+        let harness = self.lock_harness();
+        if let Some(ref engine) = *harness {
+            match engine.evaluate(
+                "on_turn_start",
+                serde_json::json!({
+                    "identity": session.identity.clone(),
+                    "session_id": session.identity.session_id(),
+                    "task_id": turn_ctx.task_id.clone(),
+                    "plan_id": turn_ctx.plan_id.clone(),
+                    "turn_index": session.turn_index,
+                    "task_turn_index": turn_ctx.task_turn_index,
+                }),
+            ) {
+                Ok(Verdict::Reject(reason)) => {
+                    warn!(reason = %reason, "Turn rejected by on_turn_start");
+                    return true;
+                }
+                Ok(Verdict::Escalate(reason)) => {
+                    warn!(reason = %reason, "Turn escalated by on_turn_start; treating as rejected");
+                    return true;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    warn!(error = %e, "Harness on_turn_start error");
                 }
             }
         }
 
+        false
+    }
+
+    fn emit_turn_prepare_and_apply_hook(
+        &mut self,
+        session: &mut SessionState,
+        turn_ctx: &TurnContext,
+        req: &mut TurnRequestState,
+    ) -> bool {
         self.persist_event(
             session,
             &KernelEvent::Lifecycle(LifecycleEvent::TurnPrepare {
@@ -111,75 +134,58 @@ impl Kernel {
             }),
         );
 
-        // Harness hook: on_turn_prepare
-        {
-            let harness = self.lock_harness();
-            if let Some(ref engine) = *harness {
-                let ctx = ContextWrapper::new(
-                    req.model.clone(),
-                    req.provider_name.clone(),
-                    req.system_prompt.clone(),
-                    session.history.clone(),
-                    session.turn_index,
-                    turn_ctx.task_turn_index,
-                    turn_ctx.task_turn_index == 0,
-                    turn_ctx.task_id.clone(),
-                    turn_ctx.plan_id.clone(),
-                    0,
-                    128_000,
-                    req.thinking_budget,
-                    req.request_options_override.clone(),
-                    self.clients.clone(),
-                );
+        let harness = self.lock_harness();
+        if let Some(ref engine) = *harness {
+            let ctx = ContextWrapper::new(
+                req.model.clone(),
+                req.provider_name.clone(),
+                req.system_prompt.clone(),
+                session.history.clone(),
+                session.turn_index,
+                turn_ctx.task_turn_index,
+                turn_ctx.task_turn_index == 0,
+                turn_ctx.task_id.clone(),
+                turn_ctx.plan_id.clone(),
+                0,
+                128_000,
+                req.thinking_budget,
+                req.request_options_override.clone(),
+                self.clients.clone(),
+            );
 
-                match engine.evaluate_userdata("on_turn_prepare", ctx.clone()) {
-                    Ok(Verdict::Reject(reason)) => {
-                        warn!(reason = %reason, "Turn rejected by on_turn_prepare");
-                        return Ok(TurnPreflight::Rejected);
-                    }
-                    Ok(Verdict::Escalate(reason)) => {
-                        warn!(reason = %reason, "Turn escalated by on_turn_prepare; treating as rejected");
-                        return Ok(TurnPreflight::Rejected);
-                    }
-                    Ok(_) => {}
-                    Err(e) => {
-                        warn!(error = %e, "Harness on_turn_prepare error");
-                    }
+            match engine.evaluate_userdata("on_turn_prepare", ctx.clone()) {
+                Ok(Verdict::Reject(reason)) => {
+                    warn!(reason = %reason, "Turn rejected by on_turn_prepare");
+                    return true;
                 }
-
-                let state = ctx.get_state();
-                session.history = state.messages;
-                req.system_prompt = state.system_prompt;
-                req.model = state.model;
-                req.provider_name = state.provider;
-                req.thinking_budget = state.thinking_budget;
-                req.request_options_override = state.request_options;
+                Ok(Verdict::Escalate(reason)) => {
+                    warn!(reason = %reason, "Turn escalated by on_turn_prepare; treating as rejected");
+                    return true;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    warn!(error = %e, "Harness on_turn_prepare error");
+                }
             }
+
+            let state = ctx.get_state();
+            session.history = state.messages;
+            req.system_prompt = state.system_prompt;
+            req.model = state.model;
+            req.provider_name = state.provider;
+            req.thinking_budget = state.thinking_budget;
+            req.request_options_override = state.request_options;
         }
 
-        if !self.clients.contains_key(&req.provider_name) {
-            if let Some(config) = self.config.providers.get(&req.provider_name) {
-                debug!(provider = %req.provider_name, "Lazily initializing provider");
-                match self.create_client(&req.provider_name, config) {
-                    Ok(client) => {
-                        self.clients.insert(req.provider_name.clone(), client);
-                    }
-                    Err(e) => {
-                        error!(provider = %req.provider_name, error = %e, "Failed to initialize provider");
-                        anyhow::bail!(
-                            "Failed to initialize provider '{}': {}",
-                            req.provider_name,
-                            e
-                        );
-                    }
-                }
-            } else {
-                anyhow::bail!(
-                    "Provider '{}' not found in configuration",
-                    req.provider_name
-                );
-            }
-        }
+        false
+    }
+
+    async fn build_prepared_turn_stream(
+        &mut self,
+        session: &SessionState,
+        req: TurnRequestState,
+    ) -> Result<PreparedTurnStream> {
+        self.ensure_turn_provider_client(&req.provider_name)?;
 
         let client = self
             .clients
@@ -225,10 +231,33 @@ impl Kernel {
                 )
             })?;
 
-        Ok(TurnPreflight::Ready(PreparedTurnStream {
+        Ok(PreparedTurnStream {
             provider_name: req.provider_name,
             model: req.model,
             stream,
-        }))
+        })
+    }
+
+    fn ensure_turn_provider_client(&mut self, provider_name: &str) -> Result<()> {
+        if self.clients.contains_key(provider_name) {
+            return Ok(());
+        }
+
+        if let Some(config) = self.config.providers.get(provider_name) {
+            debug!(provider = %provider_name, "Lazily initializing provider");
+            match self.create_client(provider_name, config) {
+                Ok(client) => {
+                    self.clients.insert(provider_name.to_string(), client);
+                }
+                Err(e) => {
+                    error!(provider = %provider_name, error = %e, "Failed to initialize provider");
+                    anyhow::bail!("Failed to initialize provider '{}': {}", provider_name, e);
+                }
+            }
+        } else {
+            anyhow::bail!("Provider '{}' not found in configuration", provider_name);
+        }
+
+        Ok(())
     }
 }
