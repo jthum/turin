@@ -255,13 +255,14 @@ Current live smoke cases include:
 - `tool_write_read`
 - `governed_denial`
 - `peer_agent`
+- `queue_steer`
 
 Run a custom case set:
 
 ```bash
 scripts/live_minimax_smoke.sh \
   --env-file ~/Documents/minimax.env \
-  --cases basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent
+  --cases basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,queue_steer
 ```
 
 See `docs/LIVE_PROVIDER_TESTING.md` for setup and troubleshooting.

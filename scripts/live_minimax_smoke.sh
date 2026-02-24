@@ -12,7 +12,7 @@ Options:
   --env-file PATH        Source env vars from a file (e.g. ~/Documents/minimax.env)
   --binary PATH          Turin binary path (default: target/release/turin)
   --cases LIST           Comma-separated cases (default: basic,tool_read,tool_error,governed_denial)
-                         Available: basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent
+                         Available: basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,queue_steer
   --debug-requests       Enable Anthropic SDK request dumps (ANTHROPIC_SDK_DEBUG_REQUESTS=1)
   --keep-tmp             Keep temp directories after success/failure (for debugging)
   -h, --help             Show this help
@@ -325,6 +325,46 @@ end
     printf '[PASS] peer_agent (tmp=%s)\n' "$dir"
   else
     printf '[FAIL] peer_agent (tmp=%s) main response mismatch\n' "$dir" >&2
+    return 1
+  fi
+}
+
+run_queue_steer() {
+  local dir out prompt
+  dir="$(make_temp_env turin-live-queuesteer)"
+  write_config "$dir" "You are a concise assistant. Reply exactly as instructed." 8
+  write_harness_main "$dir" '
+local queued_once = false
+
+function on_all_tasks_complete(event)
+  if queued_once then
+    return ALLOW
+  end
+  queued_once = true
+  log("QUEUE_STEER_HOOK_OK")
+  return MODIFY, {
+    "Reply with exactly: QUEUE_STEER_FOLLOWUP_OK"
+  }
+end
+'
+  out="$dir/out.txt"
+  prompt='Reply with exactly: QUEUE_STEER_MAIN_OK'
+
+  printf '\n[CASE] queue_steer\n'
+  "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level warn 2>&1 | tee "$out"
+
+  if ! rg -q '^\[harness\] QUEUE_STEER_HOOK_OK$' "$out"; then
+    printf '[FAIL] queue_steer (tmp=%s) missing queue steering sentinel\n' "$dir" >&2
+    return 1
+  fi
+  if ! rg -q '^QUEUE_STEER_MAIN_OK$' "$out"; then
+    printf '[FAIL] queue_steer (tmp=%s) missing main response\n' "$dir" >&2
+    return 1
+  fi
+  if rg -q '^QUEUE_STEER_FOLLOWUP_OK$' "$out"; then
+    printf '[PASS] queue_steer (tmp=%s)\n' "$dir"
+  else
+    printf '[FAIL] queue_steer (tmp=%s) missing followup response\n' "$dir" >&2
     return 1
   fi
 }

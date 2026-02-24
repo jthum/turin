@@ -38,13 +38,14 @@ It is **not** run automatically by:
 - `tool_write_read` — multi-tool (`write_file` + `read_file`) roundtrip
 - `governed_denial` — harness-driven governance denial sentinel + successful inference turn
 - `peer_agent` — harness-driven peer-agent `agent.complete(...)` roundtrip + successful main-agent turn
+- `queue_steer` — harness-driven queue steering via `on_all_tasks_complete` follow-up prompt injection
 
 Run specific cases:
 
 ```bash
 scripts/live_minimax_smoke.sh \
   --env-file ~/Documents/minimax.env \
-  --cases basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent
+  --cases basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,queue_steer
 ```
 
 ## Required Environment Variables
