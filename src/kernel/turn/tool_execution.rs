@@ -315,7 +315,7 @@ impl Kernel {
         }
 
         session.history.push(InferenceMessage {
-            role: InferenceRole::User,
+            role: InferenceRole::Tool,
             content: tool_results.clone(),
             tool_call_id: None,
         });

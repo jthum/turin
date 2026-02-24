@@ -12,6 +12,7 @@ impl Kernel {
         &mut self,
         session: &mut SessionState,
         turn_ctx: &TurnContext,
+        response_thinking: &str,
         response_text: &str,
         pending_tool_calls: &[PendingToolCall],
     ) -> bool {
@@ -75,6 +76,13 @@ impl Kernel {
         }
 
         let mut assistant_content: Vec<InferenceContent> = Vec::new();
+        if !response_thinking.is_empty() {
+            // Preserve in-memory thinking content for provider roundtrips (e.g. Anthropic-compatible
+            // tool/result matching) without persisting it to the transcript store.
+            assistant_content.push(InferenceContent::Thinking {
+                content: response_thinking.to_string(),
+            });
+        }
         if !response_text.is_empty() {
             assistant_content.push(InferenceContent::Text {
                 text: response_text.to_string(),

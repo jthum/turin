@@ -1,5 +1,5 @@
 use tokio::sync::broadcast;
-use tracing::{instrument, warn};
+use tracing::{debug, instrument, warn};
 
 use crate::kernel::Kernel;
 use crate::kernel::event::KernelEvent;
@@ -73,7 +73,7 @@ impl Kernel {
             println!("{}", serde_json::to_string(event).unwrap_or_default());
         }
         if tx.send((internal_id, event.clone())).is_err() {
-            warn!("Event broadcast failed — no active receivers");
+            debug!("Event broadcast skipped — no active receivers");
         }
         if let Some(durability_tx) = durability_tx
             && durability_tx.send((internal_id, event.clone())).is_err()

@@ -11,6 +11,7 @@ use super::super::{Kernel, PendingToolCall};
 
 #[derive(Debug, Default)]
 pub(super) struct TurnStreamOutput {
+    pub response_thinking: String,
     pub response_text: String,
     pub pending_tool_calls: Vec<PendingToolCall>,
 }
@@ -24,6 +25,7 @@ impl Kernel {
         mut stream: Pin<Box<dyn Stream<Item = Result<KernelEvent>> + Send>>,
     ) -> Result<TurnStreamOutput> {
         let mut output = TurnStreamOutput {
+            response_thinking: String::with_capacity(2048),
             response_text: String::with_capacity(4096),
             pending_tool_calls: Vec::new(),
         };
@@ -45,6 +47,9 @@ impl Kernel {
                             is_thinking = true;
                         }
                         self.persist_event(session, &event);
+                        if let StreamEvent::ThinkingDelta { thinking } = e {
+                            output.response_thinking.push_str(thinking);
+                        }
                     }
                     StreamEvent::MessageDelta { content_delta } => {
                         if is_thinking {

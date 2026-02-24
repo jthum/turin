@@ -80,11 +80,18 @@ impl Kernel {
         let stream_output = self
             .collect_turn_stream_output(session, &provider_name, &model, stream)
             .await?;
+        let response_thinking = stream_output.response_thinking;
         let response_text = stream_output.response_text;
         let pending_tool_calls = stream_output.pending_tool_calls;
 
         let has_tool_calls = self
-            .finalize_assistant_turn_output(session, turn_ctx, &response_text, &pending_tool_calls)
+            .finalize_assistant_turn_output(
+                session,
+                turn_ctx,
+                &response_thinking,
+                &response_text,
+                &pending_tool_calls,
+            )
             .await;
 
         if !has_tool_calls {
