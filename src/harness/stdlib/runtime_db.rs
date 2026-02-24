@@ -9,7 +9,73 @@ use crate::harness::stdlib::db_support::{
 use crate::harness::stdlib::policy_support::{
     policy_bool, policy_string, policy_u64, runtime_policy_snapshot,
 };
-use crate::persistence::manager::{StorePathScope, StoreSelector};
+use crate::persistence::manager::{StoreHandleInfo, StoreManager, StorePathScope, StoreSelector};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+#[derive(Clone, Copy)]
+struct DbRuntimeSettings {
+    path_scope: StorePathScope,
+    max_open_handles: usize,
+    idle_close_secs: u64,
+}
+
+fn db_runtime_settings(snapshot: &HashMap<String, serde_json::Value>) -> DbRuntimeSettings {
+    DbRuntimeSettings {
+        path_scope: StorePathScope::from_policy(policy_string(
+            snapshot,
+            "db.path_scope",
+            "workspace_only",
+        )),
+        max_open_handles: policy_u64(snapshot, "db.max_open_handles", 128).clamp(1, u64::MAX)
+            as usize,
+        idle_close_secs: policy_u64(snapshot, "db.idle_close_secs", 300),
+    }
+}
+
+fn selector_denied_by_dynamic_open(
+    snapshot: &HashMap<String, serde_json::Value>,
+    selector: &StoreSelector,
+) -> bool {
+    matches!(selector, StoreSelector::Path(_))
+        && !policy_bool(snapshot, "db.allow_dynamic_open", true)
+}
+
+fn store_handle_info_to_lua_table(lua: &Lua, h: StoreHandleInfo) -> LuaResult<Table> {
+    let t = lua.create_table()?;
+    t.set("handle", h.handle)?;
+    t.set("path", h.path.to_string_lossy().to_string())?;
+    if let Some(alias) = h.alias {
+        t.set("alias", alias)?;
+    } else {
+        t.set("alias", Value::Nil)?;
+    }
+    t.set("open_count", h.open_count)?;
+    t.set("idle_ms", h.idle_ms)?;
+    Ok(t)
+}
+
+fn store_handle_infos_to_lua_table(lua: &Lua, handles: Vec<StoreHandleInfo>) -> LuaResult<Table> {
+    let out = lua.create_table()?;
+    for (i, h) in handles.into_iter().enumerate() {
+        out.set(i + 1, store_handle_info_to_lua_table(lua, h)?)?;
+    }
+    Ok(out)
+}
+
+async fn open_store_for_query_exec(
+    manager: Arc<StoreManager>,
+    selector: StoreSelector,
+    settings: DbRuntimeSettings,
+) -> Result<Arc<crate::persistence::state::StateStore>, String> {
+    let _ = manager
+        .trim_cache(settings.max_open_handles, settings.idle_close_secs)
+        .await;
+    manager
+        .open_with_path_scope(&selector, settings.path_scope)
+        .await
+        .map_err(|e| e.to_string())
+}
 
 pub fn register_runtime_db_namespace(
     lua: &Lua,
@@ -26,43 +92,28 @@ pub fn register_runtime_db_namespace(
                 let selector = selector_from_db_value(arg)?;
                 let snapshot =
                     runtime_policy_snapshot(&app_data_snapshot).map_err(mlua::Error::runtime)?;
-                if matches!(selector, StoreSelector::Path(_))
-                    && !policy_bool(&snapshot, "db.allow_dynamic_open", true)
-                {
+                if selector_denied_by_dynamic_open(&snapshot, &selector) {
                     return nil_err(lua, "Policy denial: db.allow_dynamic_open=false");
                 }
-
-                let path_scope = StorePathScope::from_policy(policy_string(
-                    &snapshot,
-                    "db.path_scope",
-                    "workspace_only",
-                ));
-                let max_open_handles =
-                    policy_u64(&snapshot, "db.max_open_handles", 128).clamp(1, u64::MAX) as usize;
-                let idle_close_secs = policy_u64(&snapshot, "db.idle_close_secs", 300);
+                let settings = db_runtime_settings(&snapshot);
 
                 let manager = manager.clone();
                 let result = block_on_current(async move {
                     manager
-                        .open_handle(&selector, path_scope, max_open_handles, idle_close_secs)
+                        .open_handle(
+                            &selector,
+                            settings.path_scope,
+                            settings.max_open_handles,
+                            settings.idle_close_secs,
+                        )
                         .await
                         .map_err(|e| e.to_string())
                 });
 
                 match result {
-                    Ok(info) => {
-                        let t = lua.create_table()?;
-                        t.set("handle", info.handle)?;
-                        t.set("path", info.path.to_string_lossy().to_string())?;
-                        if let Some(alias) = info.alias {
-                            t.set("alias", alias)?;
-                        } else {
-                            t.set("alias", Value::Nil)?;
-                        }
-                        t.set("open_count", info.open_count)?;
-                        t.set("idle_ms", info.idle_ms)?;
-                        Ok(ok_value(Value::Table(t)))
-                    }
+                    Ok(info) => Ok(ok_value(Value::Table(store_handle_info_to_lua_table(
+                        lua, info,
+                    )?))),
                     Err(err) => nil_err(lua, &err),
                 }
             })?,
@@ -101,21 +152,9 @@ pub fn register_runtime_db_namespace(
             lua.create_function(move |lua, ()| {
                 let manager = manager.clone();
                 let handles = block_on_current(async move { manager.list_handles().await });
-                let out = lua.create_table()?;
-                for (i, h) in handles.into_iter().enumerate() {
-                    let t = lua.create_table()?;
-                    t.set("handle", h.handle)?;
-                    t.set("path", h.path.to_string_lossy().to_string())?;
-                    if let Some(alias) = h.alias {
-                        t.set("alias", alias)?;
-                    } else {
-                        t.set("alias", Value::Nil)?;
-                    }
-                    t.set("open_count", h.open_count)?;
-                    t.set("idle_ms", h.idle_ms)?;
-                    out.set(i + 1, t)?;
-                }
-                Ok(ok_value(Value::Table(out)))
+                Ok(ok_value(Value::Table(store_handle_infos_to_lua_table(
+                    lua, handles,
+                )?)))
             })?,
         )?;
     }
@@ -130,26 +169,13 @@ pub fn register_runtime_db_namespace(
                     let sql_params = lua_table_to_sql_params(params)?;
                     let snapshot = runtime_policy_snapshot(&app_data_snapshot)
                         .map_err(mlua::Error::runtime)?;
-                    if matches!(selector, StoreSelector::Path(_))
-                        && !policy_bool(&snapshot, "db.allow_dynamic_open", true)
-                    {
+                    if selector_denied_by_dynamic_open(&snapshot, &selector) {
                         return nil_err(lua, "Policy denial: db.allow_dynamic_open=false");
                     }
-                    let path_scope = StorePathScope::from_policy(policy_string(
-                        &snapshot,
-                        "db.path_scope",
-                        "workspace_only",
-                    ));
-                    let max_open_handles = policy_u64(&snapshot, "db.max_open_handles", 128)
-                        .clamp(1, u64::MAX) as usize;
-                    let idle_close_secs = policy_u64(&snapshot, "db.idle_close_secs", 300);
+                    let settings = db_runtime_settings(&snapshot);
                     let manager = manager.clone();
                     let result = block_on_current(async move {
-                        let _ = manager.trim_cache(max_open_handles, idle_close_secs).await;
-                        let store = manager
-                            .open_with_path_scope(&selector, path_scope)
-                            .await
-                            .map_err(|e| e.to_string())?;
+                        let store = open_store_for_query_exec(manager, selector, settings).await?;
                         let conn = store.get_connection().await.map_err(|e| e.to_string())?;
                         let mut stmt = conn.prepare(&sql).await.map_err(|e| e.to_string())?;
                         let cols = stmt
@@ -196,26 +222,13 @@ pub fn register_runtime_db_namespace(
                     let sql_params = lua_table_to_sql_params(params)?;
                     let snapshot = runtime_policy_snapshot(&app_data_snapshot)
                         .map_err(mlua::Error::runtime)?;
-                    if matches!(selector, StoreSelector::Path(_))
-                        && !policy_bool(&snapshot, "db.allow_dynamic_open", true)
-                    {
+                    if selector_denied_by_dynamic_open(&snapshot, &selector) {
                         return nil_err(lua, "Policy denial: db.allow_dynamic_open=false");
                     }
-                    let path_scope = StorePathScope::from_policy(policy_string(
-                        &snapshot,
-                        "db.path_scope",
-                        "workspace_only",
-                    ));
-                    let max_open_handles = policy_u64(&snapshot, "db.max_open_handles", 128)
-                        .clamp(1, u64::MAX) as usize;
-                    let idle_close_secs = policy_u64(&snapshot, "db.idle_close_secs", 300);
+                    let settings = db_runtime_settings(&snapshot);
                     let manager = manager.clone();
                     let result = block_on_current(async move {
-                        let _ = manager.trim_cache(max_open_handles, idle_close_secs).await;
-                        let store = manager
-                            .open_with_path_scope(&selector, path_scope)
-                            .await
-                            .map_err(|e| e.to_string())?;
+                        let store = open_store_for_query_exec(manager, selector, settings).await?;
                         let conn = store.get_connection().await.map_err(|e| e.to_string())?;
                         let changed = match sql_params {
                             SqlParams::None => {

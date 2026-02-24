@@ -5,6 +5,25 @@ use crate::harness::stdlib::binding_common::{json_ok, nil_err, string_ok};
 use crate::harness::stdlib::policy_support::{policy_bool, runtime_policy_snapshot};
 use crate::kernel::session::QueuedTask;
 
+fn parse_submit_task(task_val: Value) -> LuaResult<QueuedTask> {
+    match task_val {
+        Value::String(s) => Ok(QueuedTask::ad_hoc(s.to_str()?.to_string())),
+        Value::Table(t) => {
+            let prompt = t.get::<String>("prompt").map_err(|_| {
+                mlua::Error::runtime("runtime.agent.submit task table requires prompt")
+            })?;
+            let mut task = QueuedTask::ad_hoc(prompt);
+            if let Ok(title) = t.get::<String>("title") {
+                task.title = Some(title);
+            }
+            Ok(task)
+        }
+        _ => Err(mlua::Error::runtime(
+            "invalid task; expected string or {prompt=...}",
+        )),
+    }
+}
+
 pub fn register_runtime_agent_namespace(
     lua: &Lua,
     runtime_table: &Table,
@@ -50,19 +69,7 @@ pub fn register_runtime_agent_namespace(
                     }
 
                     let task = match task_val {
-                        Value::String(s) => QueuedTask::ad_hoc(s.to_str()?.to_string()),
-                        Value::Table(t) => {
-                            let prompt = t.get::<String>("prompt").map_err(|_| {
-                                mlua::Error::runtime(
-                                    "runtime.agent.submit task table requires prompt",
-                                )
-                            })?;
-                            let mut task = QueuedTask::ad_hoc(prompt);
-                            if let Ok(title) = t.get::<String>("title") {
-                                task.title = Some(title);
-                            }
-                            task
-                        }
+                        v @ Value::String(_) | v @ Value::Table(_) => parse_submit_task(v)?,
                         _ => {
                             return nil_err(lua, "invalid task; expected string or {prompt=...}");
                         }
