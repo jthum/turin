@@ -5,7 +5,7 @@ use crate::harness::stdlib::binding_common::{
     bool_err, nil_err, nil_ok, ok_bool, ok_value, string_ok, string_value,
 };
 use crate::harness::stdlib::governance_support::{
-    require_capability as require_governance_capability,
+    parse_delegated_capabilities, require_capability as require_governance_capability,
     require_child_agent as require_child_agent_governance,
 };
 use crate::harness::stdlib::identity_support::{
@@ -146,12 +146,22 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 {
                     return nil_err(lua, &err);
                 }
+                let delegated_capabilities = parse_delegated_capabilities(
+                    &complete_policy_snapshot,
+                    opts.as_ref(),
+                    "capabilities",
+                    "agent.complete",
+                )?;
                 let timeout_ms = opts.as_ref().and_then(|t| t.get::<u64>("timeout_ms").ok());
 
                 let manager_submit = manager.clone();
                 let request_id = block_on_current(async move {
                     manager_submit
-                        .submit(&target_agent, QueuedTask::ad_hoc(prompt), None)
+                        .submit(
+                            &target_agent,
+                            QueuedTask::ad_hoc(prompt),
+                            delegated_capabilities,
+                        )
                         .await
                         .map_err(|e| e.to_string())
                 });

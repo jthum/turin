@@ -1,11 +1,9 @@
-use std::collections::BTreeMap;
-
 use mlua::{Lua, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{HarnessAppData, block_on_current};
 use crate::harness::stdlib::binding_common::{json_ok, nil_err, string_ok};
 use crate::harness::stdlib::governance_support::{
-    current_subject, require_capability as require_governance_capability,
+    parse_delegated_capabilities, require_capability as require_governance_capability,
     require_child_agent as require_child_agent_governance,
 };
 use crate::harness::stdlib::policy_support::{policy_bool, runtime_policy_snapshot};
@@ -26,53 +24,6 @@ fn parse_submit_task(task_val: Value) -> LuaResult<QueuedTask> {
         }
         _ => Err(mlua::Error::runtime(
             "invalid task; expected string or {prompt=...}",
-        )),
-    }
-}
-
-fn parse_submit_delegated_capabilities(
-    app_data: &HarnessAppData,
-    opts: Option<&Table>,
-) -> LuaResult<Option<BTreeMap<String, bool>>> {
-    let Some(opts) = opts else {
-        return Ok(None);
-    };
-
-    let caps_value = opts.get::<Value>("capabilities").unwrap_or(Value::Nil);
-    match caps_value {
-        Value::Nil => Ok(None),
-        Value::Table(t) => {
-            let mut caps = BTreeMap::new();
-            let subject = current_subject(app_data);
-            for pair in t.pairs::<String, Value>() {
-                let (key, value) = pair?;
-                if key.ends_with(".*") {
-                    return Err(mlua::Error::runtime(format!(
-                        "runtime.agent.submit opts.capabilities wildcard rules are not yet supported (key '{}')",
-                        key
-                    )));
-                }
-                let allowed = match value {
-                    Value::Boolean(b) => b,
-                    _ => {
-                        return Err(mlua::Error::runtime(format!(
-                            "runtime.agent.submit opts.capabilities values must be booleans (key '{}')",
-                            key
-                        )));
-                    }
-                };
-                if allowed {
-                    app_data
-                        .governance_manager
-                        .require_capability_for_subject(&subject, &key)
-                        .map_err(mlua::Error::runtime)?;
-                }
-                caps.insert(key, allowed);
-            }
-            Ok(Some(caps))
-        }
-        _ => Err(mlua::Error::runtime(
-            "runtime.agent.submit opts.capabilities must be a table".to_string(),
         )),
     }
 }
@@ -148,8 +99,12 @@ pub fn register_runtime_agent_namespace(
                             return nil_err(lua, "invalid task; expected string or {prompt=...}");
                         }
                     };
-                    let delegated_capabilities =
-                        parse_submit_delegated_capabilities(&app_data_snapshot, opts.as_ref())?;
+                    let delegated_capabilities = parse_delegated_capabilities(
+                        &app_data_snapshot,
+                        opts.as_ref(),
+                        "capabilities",
+                        "runtime.agent.submit",
+                    )?;
 
                     let manager = manager.clone();
                     let result = block_on_current(async move {
