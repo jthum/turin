@@ -258,6 +258,51 @@ async fn test_events_persisted_to_state_store() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_immutable_audit_persists_rejected_audit_events() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut config = make_config(tmp.path());
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::write(
+        harness_dir.join("reject_audit.lua"),
+        r#"
+            function on_kernel_event(event)
+                if event.type == "governance_snapshot" then
+                    return REJECT, "drop governance snapshot"
+                end
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    config.governance.profile = turin::kernel::config::GovernanceProfile::Governed;
+    config.governance.audit.mode = turin::kernel::config::GovernanceAuditMode::Immutable;
+    config.governance.enforcement_enabled = false;
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Persist immutable audit".to_string()))
+        .await?;
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    if let Ok(store) = kernel.store_manager().get_default().await {
+        let events = store.get_events(session.internal_id.unwrap()).await?;
+        assert!(
+            events.iter().any(|e| e.event_type == "governance_snapshot"),
+            "immutable audit mode should persist governance_snapshot even if on_kernel_event rejects it"
+        );
+    }
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_kernel_without_state_store_works() -> Result<()> {
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harnesses");

@@ -9,6 +9,26 @@ impl Kernel {
     /// Persist an event to the state store in the background.
     #[instrument(skip(self, session, event), fields(event_type = %event.event_type()))]
     pub(crate) fn persist_event(&self, session: &SessionState, event: &KernelEvent) {
+        let audit_persist_before_hooks = self
+            .governance_manager
+            .config()
+            .audit
+            .persist_before_hooks
+            .unwrap_or(matches!(
+                self.governance_manager.config().audit.mode,
+                crate::kernel::config::GovernanceAuditMode::Immutable
+            ));
+        let protected_audit_event = audit_persist_before_hooks && matches!(event, KernelEvent::Audit(_));
+
+        if protected_audit_event {
+            self.persist_event_internal(
+                &session.event_tx,
+                session.durability_tx.as_ref(),
+                session.internal_id,
+                event,
+            );
+        }
+
         // Allow harness to observe/intercept any event.
         if let Ok(harness_guard) = self.harness.lock()
             && let Some(engine) = &*harness_guard
@@ -17,18 +37,27 @@ impl Kernel {
             if let Ok(verdict) = engine.evaluate("on_kernel_event", payload)
                 && verdict.is_rejected()
             {
-                warn!(event_type = %event.event_type(), "Event REJECTED by harness on_kernel_event");
-                return;
+                if protected_audit_event {
+                    warn!(
+                        event_type = %event.event_type(),
+                        "Event REJECTED by harness on_kernel_event but already persisted (immutable audit)"
+                    );
+                } else {
+                    warn!(event_type = %event.event_type(), "Event REJECTED by harness on_kernel_event");
+                    return;
+                }
             }
             // NOTE: MODIFY is intentionally ignored for general events for now.
         }
 
-        self.persist_event_internal(
-            &session.event_tx,
-            session.durability_tx.as_ref(),
-            session.internal_id,
-            event,
-        );
+        if !protected_audit_event {
+            self.persist_event_internal(
+                &session.event_tx,
+                session.durability_tx.as_ref(),
+                session.internal_id,
+                event,
+            );
+        }
     }
 
     /// Internal helper for persistence (used by parallel runners).
