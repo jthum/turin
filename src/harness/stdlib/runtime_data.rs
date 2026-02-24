@@ -1,8 +1,9 @@
-use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
+use mlua::{Lua, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{HarnessAppData, block_on_current};
 use crate::harness::stdlib::binding_common::{
-    bool_err, memory_rows_to_lua_table, nil_err, nil_ok, ok_bool, ok_value, string_ok,
+    bool_err, memory_rows_to_lua_table, metadata_json_or_empty, nil_err, nil_ok, ok_bool, ok_value,
+    string_ok,
 };
 use crate::harness::stdlib::context_selectors::{search_limit_from_opt, table_to_selector};
 use crate::harness::stdlib::scoped_data_backend::{
@@ -12,15 +13,6 @@ use crate::inference::embeddings::EmbeddingProvider;
 use crate::kernel::identity::ContextSelector;
 use crate::persistence::manager::StoreManager;
 use std::sync::Arc;
-
-fn metadata_json_or_empty(lua: &Lua, metadata: Option<Table>) -> LuaResult<serde_json::Value> {
-    if let Some(tbl) = metadata {
-        lua.from_value::<serde_json::Value>(Value::Table(tbl))
-            .map_err(|e| mlua::Error::runtime(format!("invalid metadata table: {}", e)))
-    } else {
-        Ok(serde_json::json!({}))
-    }
-}
 
 fn memory_search_result(
     lua: &Lua,

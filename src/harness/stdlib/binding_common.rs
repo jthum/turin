@@ -42,6 +42,15 @@ where
     Ok((lua_v, Value::Nil))
 }
 
+pub fn metadata_json_or_empty(lua: &Lua, metadata: Option<Table>) -> LuaResult<serde_json::Value> {
+    if let Some(tbl) = metadata {
+        lua.from_value::<serde_json::Value>(Value::Table(tbl))
+            .map_err(|e| mlua::Error::runtime(format!("invalid metadata table: {}", e)))
+    } else {
+        Ok(serde_json::json!({}))
+    }
+}
+
 pub fn memory_rows_to_lua_table(
     lua: &Lua,
     rows: Vec<crate::persistence::schema::MemoryRow>,

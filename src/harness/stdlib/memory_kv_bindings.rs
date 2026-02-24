@@ -1,8 +1,8 @@
-use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
+use mlua::{Lua, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{HarnessAppData, block_on_current};
 use crate::harness::stdlib::binding_common::{
-    bool_err, memory_rows_to_lua_table, nil_err, nil_ok, ok_bool, string_ok,
+    bool_err, memory_rows_to_lua_table, metadata_json_or_empty, nil_err, nil_ok, ok_bool, string_ok,
 };
 use crate::harness::stdlib::context_selectors::{
     normalize_selector, search_limit_from_opt, table_to_selector,
@@ -22,15 +22,6 @@ fn default_agent_selector(app_data: &HarnessAppData) -> LuaResult<ContextSelecto
         visibility: "private".to_string(),
     })
     .map_err(mlua::Error::runtime)
-}
-
-fn metadata_json_or_empty(lua: &Lua, metadata: Option<Table>) -> LuaResult<serde_json::Value> {
-    if let Some(tbl) = metadata {
-        lua.from_value::<serde_json::Value>(Value::Table(tbl))
-            .map_err(|e| mlua::Error::runtime(format!("invalid metadata table: {}", e)))
-    } else {
-        Ok(serde_json::json!({}))
-    }
 }
 
 fn has_active_session(active_session: &Arc<std::sync::Mutex<Option<String>>>) -> bool {
