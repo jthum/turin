@@ -278,6 +278,17 @@ impl HarnessEngine {
         }
     }
 
+    pub fn set_active_event_context(
+        &self,
+        ctx: Option<crate::harness::globals::HarnessEventContext>,
+    ) {
+        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
+            && let Ok(mut lock) = app_data.active_event_context.lock()
+        {
+            *lock = ctx;
+        }
+    }
+
     fn set_active_harness_module(&self, module_name: Option<&str>) {
         let root_name = module_name.and_then(|name| self.lookup_module_root_name(name));
         if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>() {
@@ -519,6 +530,7 @@ mod tests {
             active_harness_root: std::sync::Arc::new(std::sync::Mutex::new(None)),
             active_import_capabilities: std::sync::Arc::new(std::sync::Mutex::new(None)),
             active_governance_grant: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            active_event_context: std::sync::Arc::new(std::sync::Mutex::new(None)),
             config: std::sync::Arc::new(crate::kernel::config::TurinConfig::default()),
             spawn_depth: 0,
         }

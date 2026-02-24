@@ -10,6 +10,7 @@ use crate::harness::stdlib::{
 };
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
+use crate::kernel::event::KernelEvent;
 use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreManager;
 
@@ -20,6 +21,16 @@ const MAX_HARNESS_FILE_SIZE: usize = 10 * 1024 * 1024;
 
 pub type SessionQueue = Arc<Mutex<VecDeque<QueuedTask>>>;
 pub type ActiveSessionQueue = Arc<Mutex<Option<SessionQueue>>>;
+
+#[derive(Clone)]
+pub struct HarnessEventContext {
+    pub json: bool,
+    pub internal_id: Option<i64>,
+    pub event_tx: tokio::sync::broadcast::Sender<(Option<i64>, KernelEvent)>,
+    pub durability_tx: Option<tokio::sync::mpsc::UnboundedSender<(Option<i64>, KernelEvent)>>,
+}
+
+pub type ActiveHarnessEventContext = Arc<std::sync::Mutex<Option<HarnessEventContext>>>;
 
 /// Shared state passed to async Lua callbacks via app data.
 #[derive(Clone)]
@@ -36,6 +47,7 @@ pub struct HarnessAppData {
     pub active_harness_root: Arc<std::sync::Mutex<Option<String>>>,
     pub active_import_capabilities: Arc<std::sync::Mutex<Option<BTreeMap<String, bool>>>>,
     pub active_governance_grant: Arc<std::sync::Mutex<Option<String>>>,
+    pub active_event_context: ActiveHarnessEventContext,
     pub clients: HashMap<String, ProviderClient>,
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     pub queue: ActiveSessionQueue,

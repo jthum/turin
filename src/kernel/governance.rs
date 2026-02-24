@@ -478,17 +478,17 @@ impl GovernanceManager {
         &self,
         subject: &GovernanceSubject,
         grant_id: &str,
-    ) -> Result<bool, String> {
+    ) -> Result<Option<GovernanceGrantSnapshot>, String> {
         if !self.config.grants.enabled {
             return Err("Governance grants are disabled".to_string());
         }
         let mut grants = self.grants.lock().map_err(|_| "governance grants mutex poisoned")?;
         let Some(entry) = grants.get(grant_id) else {
-            return Ok(false);
+            return Ok(None);
         };
         ensure_grant_subject_access(subject, &entry.snapshot)?;
-        grants.remove(grant_id);
-        Ok(true)
+        let removed = grants.remove(grant_id).map(|e| e.snapshot);
+        Ok(removed)
     }
 
     pub fn enter_grant_for_subject(

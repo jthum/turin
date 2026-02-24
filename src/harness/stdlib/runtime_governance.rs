@@ -4,8 +4,10 @@ use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{bool_value_ok, json_ok, nil_err, string_value};
 use crate::harness::stdlib::governance_support::{
     capability_decision as governance_capability_decision, current_subject,
-    parse_delegated_capabilities, require_capability as require_governance_capability,
+    emit_governance_audit_event, parse_delegated_capabilities,
+    require_capability as require_governance_capability,
 };
+use crate::kernel::event::AuditEvent;
 
 pub fn register_runtime_governance_namespace(
     lua: &Lua,
@@ -107,6 +109,12 @@ pub fn register_runtime_governance_namespace(
                     .governance_manager
                     .issue_grant_for_subject(&subject, caps, ttl_ms, max_uses, reason)
                     .map_err(mlua::Error::runtime)?;
+                emit_governance_audit_event(
+                    &app_data_snapshot,
+                    AuditEvent::GovernanceGrantIssue {
+                        grant: grant.clone(),
+                    },
+                );
                 json_ok(lua, &grant)
             })?,
         )?;
@@ -153,7 +161,11 @@ pub fn register_runtime_governance_namespace(
                     .governance_manager
                     .revoke_grant_for_subject(&subject, &grant_id)
                     .map_err(mlua::Error::runtime)?;
-                if revoked {
+                if let Some(grant) = revoked {
+                    emit_governance_audit_event(
+                        &app_data_snapshot,
+                        AuditEvent::GovernanceGrantRevoke { grant },
+                    );
                     Ok(bool_value_ok(true))
                 } else {
                     Ok((
@@ -176,10 +188,16 @@ pub fn register_runtime_governance_namespace(
                 require_governance_capability(&app_data_snapshot, "runtime.governance.grant.use")
                     .map_err(mlua::Error::runtime)?;
                 let subject = current_subject(&app_data_snapshot);
-                app_data_snapshot
+                let grant = app_data_snapshot
                     .governance_manager
                     .enter_grant_for_subject(&subject, &grant_id)
                     .map_err(mlua::Error::runtime)?;
+                emit_governance_audit_event(
+                    &app_data_snapshot,
+                    AuditEvent::GovernanceGrantUse {
+                        grant: grant.clone(),
+                    },
+                );
 
                 let previous_grant = {
                     let mut lock = app_data_snapshot

@@ -1,4 +1,5 @@
 use crate::harness::globals::HarnessAppData;
+use crate::kernel::event::{AuditEvent, KernelEvent};
 use crate::kernel::governance::{CapabilityDecision, GovernanceSubject};
 use mlua::{Result as LuaResult, Table, Value};
 use std::collections::BTreeMap;
@@ -108,5 +109,25 @@ pub(crate) fn current_subject(app_data: &HarnessAppData) -> GovernanceSubject {
         root_name,
         grant_id,
         import_capabilities,
+    }
+}
+
+pub(crate) fn emit_governance_audit_event(app_data: &HarnessAppData, audit_event: AuditEvent) {
+    let Some(ctx) = app_data
+        .active_event_context
+        .lock()
+        .ok()
+        .and_then(|lock| lock.clone())
+    else {
+        return;
+    };
+
+    let event = KernelEvent::Audit(audit_event);
+    if ctx.json {
+        println!("{}", serde_json::to_string(&event).unwrap_or_default());
+    }
+    let _ = ctx.event_tx.send((ctx.internal_id, event.clone()));
+    if let Some(durability_tx) = ctx.durability_tx {
+        let _ = durability_tx.send((ctx.internal_id, event));
     }
 }

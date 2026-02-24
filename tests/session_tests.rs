@@ -303,6 +303,81 @@ async fn test_immutable_audit_persists_rejected_audit_events() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_governance_grant_audit_events_persisted() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut config = make_config(tmp.path());
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::write(
+        harness_dir.join("grant_audit.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local grant, ge = runtime.governance.grant_issue({
+                    capabilities = { ["runtime.db.query"] = true },
+                    ttl_ms = 5000,
+                    max_uses = 1,
+                    reason = "session test"
+                })
+                if grant == nil then error("grant_issue failed: " .. tostring(ge)) end
+
+                local out = runtime.governance.with_grant(grant.grant_id, function()
+                    local dec, de = runtime.governance.check("runtime.db.query")
+                    if dec == nil then error("grant check failed: " .. tostring(de)) end
+                    return "ok"
+                end)
+                if out ~= "ok" then error("with_grant return mismatch") end
+
+                local grant2, g2e = runtime.governance.grant_issue({
+                    capabilities = { ["runtime.db.query"] = true },
+                    reason = "revoke test"
+                })
+                if grant2 == nil then error("second grant_issue failed: " .. tostring(g2e)) end
+
+                local revoked, re = runtime.governance.grant_revoke(grant2.grant_id)
+                if revoked ~= true then error("grant_revoke failed: " .. tostring(re)) end
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    config.governance.profile = turin::kernel::config::GovernanceProfile::Balanced;
+    config.governance.enforcement_enabled = true;
+    config.governance.grants.enabled = true;
+    config.governance.grants.max_ttl_ms = Some(10_000);
+    config.governance.grants.require_audit_reason = true;
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Emit grant audit events".to_string()))
+        .await?;
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    if let Ok(store) = kernel.store_manager().get_default().await {
+        let events = store.get_events(session.internal_id.unwrap()).await?;
+        assert!(
+            events.iter().any(|e| e.event_type == "governance_grant_issue"),
+            "expected governance_grant_issue to be persisted"
+        );
+        assert!(
+            events.iter().any(|e| e.event_type == "governance_grant_use"),
+            "expected governance_grant_use to be persisted"
+        );
+        assert!(
+            events.iter().any(|e| e.event_type == "governance_grant_revoke"),
+            "expected governance_grant_revoke to be persisted"
+        );
+    }
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_kernel_without_state_store_works() -> Result<()> {
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harnesses");

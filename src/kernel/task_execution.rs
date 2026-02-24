@@ -28,7 +28,7 @@ impl Kernel {
         };
 
         self.persist_task_user_message(session, prompt).await;
-        self.set_task_active_session(&session_id, session.mode.clone());
+        self.set_task_active_session(session);
 
         let task_status_result = self.run_task_turn_loop(session, task, &tool_ctx).await;
 
@@ -69,10 +69,19 @@ impl Kernel {
         }
     }
 
-    fn set_task_active_session(&self, session_id: &str, mode: AgentMode) {
+    fn set_task_active_session(&self, session: &SessionState) {
         let harness = self.lock_harness();
         if let Some(ref engine) = *harness {
-            engine.set_active_session(Some(session_id), Some(mode));
+            engine.set_active_session(
+                Some(session.identity.session_id()),
+                Some(session.mode.clone()),
+            );
+            engine.set_active_event_context(Some(crate::harness::globals::HarnessEventContext {
+                json: self.json,
+                internal_id: session.internal_id,
+                event_tx: session.event_tx.clone(),
+                durability_tx: session.durability_tx.clone(),
+            }));
         }
     }
 
@@ -80,6 +89,7 @@ impl Kernel {
         let harness = self.lock_harness();
         if let Some(ref engine) = *harness {
             engine.set_active_session(None, None);
+            engine.set_active_event_context(None);
         }
     }
 

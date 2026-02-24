@@ -136,6 +136,12 @@ impl Kernel {
                     Some(session.identity.session_id()),
                     Some(session.mode.clone()),
                 );
+                engine.set_active_event_context(Some(crate::harness::globals::HarnessEventContext {
+                    json: self.json,
+                    internal_id: session.internal_id,
+                    event_tx: session.event_tx.clone(),
+                    durability_tx: session.durability_tx.clone(),
+                }));
                 let result = engine.evaluate(
                     "on_inference_error",
                     serde_json::json!({
@@ -148,6 +154,7 @@ impl Kernel {
                     }),
                 );
                 engine.set_active_session(None, None);
+                engine.set_active_event_context(None);
                 Some(result)
             } else {
                 None

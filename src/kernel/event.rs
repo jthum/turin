@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::kernel::governance::GovernanceGrantSnapshot;
 use crate::kernel::governance::GovernanceSnapshot;
 use crate::kernel::identity::RuntimeIdentity;
 
@@ -133,6 +134,12 @@ pub enum AuditEvent {
     },
     /// Governance/capability snapshot emitted for observability (G1)
     GovernanceSnapshot { snapshot: GovernanceSnapshot },
+    /// Temporary governance grant issued
+    GovernanceGrantIssue { grant: GovernanceGrantSnapshot },
+    /// Temporary governance grant used (entered)
+    GovernanceGrantUse { grant: GovernanceGrantSnapshot },
+    /// Temporary governance grant revoked
+    GovernanceGrantRevoke { grant: GovernanceGrantSnapshot },
 }
 
 /// Every action in Turin produces a typed `KernelEvent`.
@@ -178,6 +185,9 @@ impl KernelEvent {
                 AuditEvent::TokenUsage { .. } => "token_usage",
                 AuditEvent::HarnessRejection { .. } => "harness_rejection",
                 AuditEvent::GovernanceSnapshot { .. } => "governance_snapshot",
+                AuditEvent::GovernanceGrantIssue { .. } => "governance_grant_issue",
+                AuditEvent::GovernanceGrantUse { .. } => "governance_grant_use",
+                AuditEvent::GovernanceGrantRevoke { .. } => "governance_grant_revoke",
             },
         }
     }
