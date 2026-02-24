@@ -36,13 +36,15 @@ It is **not** run automatically by:
 - `tool_read` — `read_file` tool roundtrip
 - `tool_error` — failing tool call + recovery path
 - `tool_write_read` — multi-tool (`write_file` + `read_file`) roundtrip
+- `governed_denial` — harness-driven governance denial sentinel + successful inference turn
+- `peer_agent` — harness-driven peer-agent `agent.complete(...)` roundtrip + successful main-agent turn
 
 Run specific cases:
 
 ```bash
 scripts/live_minimax_smoke.sh \
   --env-file ~/Documents/minimax.env \
-  --cases basic,tool_read,tool_error,tool_write_read
+  --cases basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent
 ```
 
 ## Required Environment Variables

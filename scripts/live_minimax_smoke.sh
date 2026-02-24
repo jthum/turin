@@ -11,8 +11,8 @@ such as MiniMax. This script does NOT run during normal cargo builds/tests.
 Options:
   --env-file PATH        Source env vars from a file (e.g. ~/Documents/minimax.env)
   --binary PATH          Turin binary path (default: target/release/turin)
-  --cases LIST           Comma-separated cases (default: basic,tool_read,tool_error)
-                         Available: basic,tool_read,tool_error,tool_write_read
+  --cases LIST           Comma-separated cases (default: basic,tool_read,tool_error,governed_denial)
+                         Available: basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent
   --debug-requests       Enable Anthropic SDK request dumps (ANTHROPIC_SDK_DEBUG_REQUESTS=1)
   --keep-tmp             Keep temp directories after success/failure (for debugging)
   -h, --help             Show this help
@@ -26,7 +26,7 @@ USAGE
 
 ENV_FILE=""
 BINARY="target/release/turin"
-CASES="basic,tool_read,tool_error"
+CASES="basic,tool_read,tool_error,governed_denial"
 DEBUG_REQUESTS=0
 KEEP_TMP=0
 
@@ -121,6 +121,12 @@ make_temp_env() {
   mkdir -p "$dir/harnesses" "$dir/work"
   printf '%s\n' '-- no-op harness' > "$dir/harnesses/main.lua"
   printf '%s\n' "$dir"
+}
+
+write_harness_main() {
+  local dir="$1"
+  local content="$2"
+  printf '%s\n' "$content" > "$dir/harnesses/main.lua"
 }
 
 write_config() {
@@ -228,6 +234,97 @@ run_tool_write_read() {
     printf '[PASS] tool_write_read (tmp=%s)\n' "$dir"
   else
     printf '[FAIL] tool_write_read (tmp=%s)\n' "$dir" >&2
+    return 1
+  fi
+}
+
+run_governed_denial() {
+  local dir out prompt
+  dir="$(make_temp_env turin-live-governed)"
+  write_config "$dir" "You are a concise assistant. Reply exactly as instructed." 4
+  cat >> "$dir/turin.toml" <<'EOF_GOV'
+
+[governance]
+profile = "governed"
+enforcement_enabled = true
+EOF_GOV
+  write_harness_main "$dir" '
+function on_session_start(event)
+  local ok, err = runtime.policy.set("queue.max_depth", 1)
+  if ok then
+    log("GOVERNED_DENIAL_UNEXPECTED_ALLOW")
+  elseif err and tostring(err):find("Governance denial", 1, true) then
+    log("GOVERNED_DENIAL_OK")
+  else
+    log("GOVERNED_DENIAL_UNEXPECTED_ERR:" .. tostring(err))
+  end
+  return ALLOW
+end
+'
+  out="$dir/out.txt"
+  prompt='Reply with exactly: GOVERNED_MAIN_OK'
+
+  printf '\n[CASE] governed_denial\n'
+  "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level warn 2>&1 | tee "$out"
+
+  if ! rg -q '^\[harness\] GOVERNED_DENIAL_OK$' "$out"; then
+    printf '[FAIL] governed_denial (tmp=%s) missing denial sentinel\n' "$dir" >&2
+    return 1
+  fi
+  if rg -q '^GOVERNED_MAIN_OK$' "$out"; then
+    printf '[PASS] governed_denial (tmp=%s)\n' "$dir"
+  else
+    printf '[FAIL] governed_denial (tmp=%s) main response mismatch\n' "$dir" >&2
+    return 1
+  fi
+}
+
+run_peer_agent() {
+  local dir out prompt
+  dir="$(make_temp_env turin-live-peeragent)"
+  write_config "$dir" "You are a concise assistant. Reply exactly as instructed." 6
+  cat >> "$dir/turin.toml" <<EOF_PEER
+
+[agents.worker]
+id = "worker"
+system_prompt = "You are a worker agent. Follow exact output instructions."
+model = "$ANTHROPIC_MODEL"
+provider = "anthropic"
+mode = "stateful"
+EOF_PEER
+  write_harness_main "$dir" '
+function on_session_start(event)
+  if not event or not event.identity or event.identity.agent_id ~= "default" then
+    return ALLOW
+  end
+
+  local out, err = agent.complete(
+    "Reply with exactly: PEER_AGENT_WORKER_OK",
+    { agent_id = "worker", timeout_ms = 45000 }
+  )
+
+  if out == "PEER_AGENT_WORKER_OK" then
+    log("PEER_AGENT_SMOKE_OK")
+  else
+    log("PEER_AGENT_SMOKE_FAIL:" .. tostring(err or out))
+  end
+  return ALLOW
+end
+'
+  out="$dir/out.txt"
+  prompt='Reply with exactly: PEER_AGENT_MAIN_OK'
+
+  printf '\n[CASE] peer_agent\n'
+  "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level warn 2>&1 | tee "$out"
+
+  if ! rg -q '^\[harness\] PEER_AGENT_SMOKE_OK$' "$out"; then
+    printf '[FAIL] peer_agent (tmp=%s) missing peer success sentinel\n' "$dir" >&2
+    return 1
+  fi
+  if rg -q '^PEER_AGENT_MAIN_OK$' "$out"; then
+    printf '[PASS] peer_agent (tmp=%s)\n' "$dir"
+  else
+    printf '[FAIL] peer_agent (tmp=%s) main response mismatch\n' "$dir" >&2
     return 1
   fi
 }
