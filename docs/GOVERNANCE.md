@@ -80,6 +80,78 @@ Wildcard rules are supported in many places using `prefix.*`, e.g.:
 - `runtime.db.*`
 - `runtime.agent.*`
 
+## Current Capability Registry (Comprehensive, v0.15.0)
+
+This section lists the **currently enforced/checked capability names** in Turin v0.15.0.
+If a capability is not listed here, Turin may still expose related functionality, but it is not
+currently checked by the governance enforcement path as a named capability.
+
+### Runtime DB
+
+- `runtime.db.open`
+- `runtime.db.close`
+- `runtime.db.list_handles`
+- `runtime.db.query`
+- `runtime.db.exec`
+
+### Runtime Agent
+
+- `runtime.agent.status`
+  - used by `runtime.agent.list(...)`
+  - used by `runtime.agent.get_status(...)`
+- `runtime.agent.submit`
+- `runtime.agent.await`
+- `runtime.agent.spawn`
+  - used by top-level alias `agent.spawn(...)`
+
+### Runtime Policy
+
+- `runtime.policy.set`
+
+Notes:
+- `runtime.policy.get` is intentionally readable without a governance capability gate in the current design.
+
+### Runtime Governance (Temporary Grants)
+
+- `runtime.governance.grant.issue`
+- `runtime.governance.grant.get`
+- `runtime.governance.grant.revoke`
+- `runtime.governance.grant.use`
+
+Notes:
+- `runtime.governance.profile/snapshot/check/agent` are observability APIs and are not capability-gated in the current design.
+
+### Harness Import
+
+- `harness.import.unscoped`
+- `harness.import.scoped`
+
+These apply at the import boundary (`import(...)`, `import_scoped(...)`) when governance enforcement is enabled.
+
+### Filesystem and Built-in Tools
+
+- `fs.read`
+- `fs.write`
+- `shell.exec`
+
+Usage:
+- `fs.read` and `fs.write` gate top-level harness `fs.*` calls.
+- Kernel built-in tool fallback maps:
+  - `read_file` -> `fs.read`
+  - `write_file` / `edit_file` -> `fs.write`
+  - `shell_exec` -> `shell.exec`
+
+### Useful Wildcard Prefixes
+
+Wildcard rules are supported for many capability tables and profiles:
+
+- `runtime.db.*`
+- `runtime.agent.*`
+- `runtime.governance.grant.*`
+- `harness.import.*`
+
+Wildcard behavior follows longest-prefix matching (`prefix.*`) and composes with profile/root/agent/import/grant ceilings.
+
 ## Effective Capability Evaluation (Conceptual)
 
 Turin evaluates capabilities against a **subject** and multiple ceilings.

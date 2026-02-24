@@ -1,6 +1,8 @@
 # Harness Primitives / Standard Library (v0.15.0)
 
 This document describes the current harness globals available in Turin’s Luau runtime.
+For v0.15.0, this is the **canonical API surface reference** for harness authors (including both
+the preferred `runtime.*` namespaces and the ergonomic top-level aliases).
 
 ## Result Convention (Important)
 
