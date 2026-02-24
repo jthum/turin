@@ -36,10 +36,25 @@ impl Kernel {
         tool_ctx: &ToolContext,
         pending_tool_calls: Vec<PendingToolCall>,
     ) -> Result<TurnOutcome> {
+        let (immediate_records, validated_calls) =
+            self.evaluate_pending_tool_calls(&pending_tool_calls);
+        let final_by_id = self
+            .execute_validated_tool_calls(session, tool_ctx, validated_calls, immediate_records)
+            .await;
+        self.finalize_tool_results(session, &pending_tool_calls, final_by_id)
+            .await;
+
+        Ok(TurnOutcome::Continue)
+    }
+
+    fn evaluate_pending_tool_calls(
+        &self,
+        pending_tool_calls: &[PendingToolCall],
+    ) -> (Vec<FinalToolRecord>, Vec<(PendingToolCall, Verdict)>) {
         let mut immediate_records: Vec<FinalToolRecord> = Vec::new();
         let mut validated_calls: Vec<(PendingToolCall, Verdict)> = Vec::new();
 
-        for tc in &pending_tool_calls {
+        for tc in pending_tool_calls {
             let verdict = self.evaluate_tool_call(&tc.name, &tc.id, &tc.args);
             match &verdict {
                 Verdict::Reject(reason) => {
@@ -90,6 +105,16 @@ impl Kernel {
             }
         }
 
+        (immediate_records, validated_calls)
+    }
+
+    async fn execute_validated_tool_calls(
+        &mut self,
+        session: &mut SessionState,
+        tool_ctx: &ToolContext,
+        validated_calls: Vec<(PendingToolCall, Verdict)>,
+        immediate_records: Vec<FinalToolRecord>,
+    ) -> HashMap<String, FinalToolRecord> {
         for (tc, _) in &validated_calls {
             self.persist_event(
                 session,
@@ -100,7 +125,6 @@ impl Kernel {
             );
         }
 
-        // Parallel execution for approved calls.
         let kernel = &*self;
         let futures = validated_calls.into_iter().map(|(tc, verdict)| {
             let tool_ctx = tool_ctx.clone();
@@ -136,14 +160,12 @@ impl Kernel {
         let execution_results = join_all(futures).await;
 
         let mut final_by_id: HashMap<String, FinalToolRecord> = HashMap::new();
-
         for record in immediate_records {
             final_by_id.insert(record.id.clone(), record);
         }
 
         for (tc, final_args, verdict_str, duration_ms, effect, mut is_error) in execution_results {
             let content;
-
             match effect {
                 ToolEffect::Output(o) => {
                     content = o.content;
@@ -190,9 +212,18 @@ impl Kernel {
             );
         }
 
+        final_by_id
+    }
+
+    async fn finalize_tool_results(
+        &mut self,
+        session: &mut SessionState,
+        pending_tool_calls: &[PendingToolCall],
+        mut final_by_id: HashMap<String, FinalToolRecord>,
+    ) {
         let mut tool_results: Vec<InferenceContent> = Vec::new();
 
-        for tc in &pending_tool_calls {
+        for tc in pending_tool_calls {
             let Some(mut record) = final_by_id.remove(&tc.id) else {
                 continue;
             };
@@ -214,7 +245,6 @@ impl Kernel {
                 record.content,
                 record.is_error,
             );
-
             record.content = content;
             record.is_error = is_error;
 
@@ -304,7 +334,5 @@ impl Kernel {
                     .await;
             }
         }
-
-        Ok(TurnOutcome::Continue)
     }
 }
