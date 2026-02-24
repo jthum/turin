@@ -4,6 +4,7 @@ use crate::harness::globals::{ActiveSessionQueue, HarnessAppData, block_on_curre
 use crate::harness::stdlib::binding_common::{
     bool_err, nil_err, nil_ok, ok_bool, ok_value, string_ok, string_value,
 };
+use crate::harness::stdlib::governance_support::require_capability as require_governance_capability;
 use crate::harness::stdlib::identity_support::{
     get_active_identity, identity_to_lua_table, session_row_to_lua_table,
 };
@@ -75,6 +76,11 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
     agent_table.set(
         "spawn",
         lua.create_function(move |lua, (prompt, _opts): (String, Option<Table>)| {
+            if let Err(err) =
+                require_governance_capability(&spawn_policy_snapshot, "runtime.agent.spawn")
+            {
+                return nil_err(lua, &err);
+            }
             let snapshot =
                 runtime_policy_snapshot(&spawn_policy_snapshot).map_err(mlua::Error::runtime)?;
             if !policy_bool(&snapshot, "spawn.enabled", true) {
@@ -113,6 +119,16 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
         agent_table.set(
             "complete",
             lua.create_function(move |lua, (prompt, opts): (String, Option<Table>)| {
+                if let Err(err) =
+                    require_governance_capability(&complete_policy_snapshot, "runtime.agent.submit")
+                {
+                    return nil_err(lua, &err);
+                }
+                if let Err(err) =
+                    require_governance_capability(&complete_policy_snapshot, "runtime.agent.await")
+                {
+                    return nil_err(lua, &err);
+                }
                 let snapshot = runtime_policy_snapshot(&complete_policy_snapshot)
                     .map_err(mlua::Error::runtime)?;
                 if !policy_bool(&snapshot, "spawn.enabled", true) {
@@ -337,9 +353,15 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
     agent_table.set("mode", mode_ns)?;
 
     // Deprecated send
+    let send_policy_snapshot = app_data.clone();
     agent_table.set(
         "send",
         lua.create_function(move |_lua, (id, prompt): (String, String)| {
+            if let Err(err) =
+                require_governance_capability(&send_policy_snapshot, "runtime.agent.submit")
+            {
+                return Err(mlua::Error::runtime(err));
+            }
             let m = agent_manager.clone();
             block_on_current(async {
                 let _ = m.send(&id, QueuedTask::ad_hoc(prompt)).await;

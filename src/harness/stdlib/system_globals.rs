@@ -6,7 +6,9 @@ use mlua::{Function, Lua, LuaSerdeExt, MultiValue, Result as LuaResult, Table, V
 use crate::harness::stdlib::binding_common::{
     bool_err, nil_err, ok_bool, ok_value, string_ok, string_value,
 };
-use crate::harness::stdlib::governance_support::current_subject;
+use crate::harness::stdlib::governance_support::{
+    current_subject, require_capability as require_governance_capability,
+};
 use crate::kernel::config::{GovernanceImportMode, GovernanceProfile};
 
 pub fn register_system_globals(lua: &Lua, fs_root: &Path, max_file_size: usize) -> LuaResult<()> {
@@ -396,6 +398,13 @@ fn resolve_safe_path(root: &Path, path_str: &str) -> Option<PathBuf> {
     crate::tools::is_safe_path(root, Path::new(path_str)).ok()
 }
 
+fn require_capability_for_lua(lua: &Lua, capability: &str) -> LuaResult<()> {
+    if let Some(app_data) = lua.app_data_ref::<crate::harness::globals::HarnessAppData>() {
+        require_governance_capability(&app_data, capability).map_err(mlua::Error::runtime)?;
+    }
+    Ok(())
+}
+
 fn register_fs_module(lua: &Lua, fs_root: &Path, max_file_size: usize) -> LuaResult<()> {
     let fs_table = lua.create_table()?;
     let root = fs_root.to_path_buf();
@@ -403,21 +412,27 @@ fn register_fs_module(lua: &Lua, fs_root: &Path, max_file_size: usize) -> LuaRes
     let r1 = root.clone();
     fs_table.set(
         "read",
-        lua.create_function(
-            move |lua, path: String| match resolve_safe_path(&r1, &path) {
+        lua.create_function(move |lua, path: String| {
+            if let Err(err) = require_capability_for_lua(lua, "fs.read") {
+                return nil_err(lua, &err.to_string());
+            }
+            match resolve_safe_path(&r1, &path) {
                 Some(p) => match std::fs::read_to_string(&p) {
                     Ok(c) => string_ok(lua, &c),
                     Err(e) => nil_err(lua, &e.to_string()),
                 },
                 None => nil_err(lua, "Unsafe path traversal"),
-            },
-        )?,
+            }
+        })?,
     )?;
 
     let r2 = root.clone();
     fs_table.set(
         "write",
         lua.create_function(move |lua, (path, content): (String, String)| {
+            if let Err(err) = require_capability_for_lua(lua, "fs.write") {
+                return bool_err(lua, &err.to_string());
+            }
             if content.len() > max_file_size {
                 return bool_err(lua, "File exceeds max size");
             }

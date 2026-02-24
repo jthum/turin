@@ -1592,6 +1592,16 @@ async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> 
                 error("runtime.policy.set should be denied in governed mode")
             end
 
+            local token, as_err = agent.spawn("queued subtask")
+            if token ~= nil or as_err == nil then
+                error("top-level agent.spawn should be denied in governed mode")
+            end
+
+            local wrote, fw_err = fs.write("governed-denied.txt", "x")
+            if wrote ~= false or fw_err == nil then
+                error("top-level fs.write should be denied in governed mode")
+            end
+
             local status_list, sle = runtime.agent.list()
             if status_list == nil then error("runtime.agent.list should still be allowed: " .. tostring(sle)) end
 
