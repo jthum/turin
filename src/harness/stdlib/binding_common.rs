@@ -21,6 +21,10 @@ pub fn string_ok(lua: &Lua, value: &str) -> LuaResult<(Value, Value)> {
     Ok((Value::String(lua.create_string(value)?), Value::Nil))
 }
 
+pub fn string_value(lua: &Lua, value: &str) -> LuaResult<Value> {
+    Ok(Value::String(lua.create_string(value)?))
+}
+
 pub fn nil_err(lua: &Lua, err: &str) -> LuaResult<(Value, Value)> {
     Ok((Value::Nil, Value::String(lua.create_string(err)?)))
 }

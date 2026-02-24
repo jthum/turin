@@ -2,7 +2,8 @@ use mlua::{Lua, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{HarnessAppData, block_on_current};
 use crate::harness::stdlib::binding_common::{
-    bool_err, memory_rows_to_lua_table, metadata_json_or_empty, nil_err, nil_ok, ok_bool, string_ok,
+    bool_err, memory_rows_to_lua_table, metadata_json_or_empty, nil_err, nil_ok, ok_bool, ok_value,
+    string_ok,
 };
 use crate::harness::stdlib::context_selectors::{
     search_limit_from_opt, selector_from_active_scope_lua,
@@ -42,10 +43,9 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                         .map_err(|e| e.to_string())
                     });
                     match result {
-                        Ok(rows) => Ok((
-                            Value::Table(memory_rows_to_lua_table(lua, rows)?),
-                            Value::Nil,
-                        )),
+                        Ok(rows) => {
+                            Ok(ok_value(Value::Table(memory_rows_to_lua_table(lua, rows)?)))
+                        }
                         Err(err) => nil_err(lua, &err),
                     }
                 })?,

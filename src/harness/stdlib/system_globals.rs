@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
-use crate::harness::stdlib::binding_common::{bool_err, nil_err, ok_bool, ok_value, string_ok};
+use crate::harness::stdlib::binding_common::{
+    bool_err, nil_err, ok_bool, ok_value, string_ok, string_value,
+};
 
 pub fn register_system_globals(lua: &Lua, fs_root: &Path, max_file_size: usize) -> LuaResult<()> {
     register_fs_module(lua, fs_root, max_file_size)?;
@@ -132,7 +134,7 @@ fn register_time_module(lua: &Lua) -> LuaResult<()> {
                 .unwrap()
                 .as_secs()
                 .to_string();
-            Ok(string_ok(lua, &ts)?.0)
+            string_value(lua, &ts)
         })?,
     )?;
     lua.globals().set("time", time_table)?;

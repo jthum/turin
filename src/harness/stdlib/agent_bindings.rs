@@ -1,7 +1,9 @@
 use mlua::{Lua, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{ActiveSessionQueue, HarnessAppData, block_on_current};
-use crate::harness::stdlib::binding_common::{bool_err, nil_err, ok_bool, string_ok};
+use crate::harness::stdlib::binding_common::{
+    bool_err, nil_err, nil_ok, ok_bool, ok_value, string_ok, string_value,
+};
 use crate::harness::stdlib::identity_support::{
     get_active_identity, identity_to_lua_table, session_row_to_lua_table,
 };
@@ -76,10 +78,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             let snapshot =
                 runtime_policy_snapshot(&spawn_policy_snapshot).map_err(mlua::Error::runtime)?;
             if !policy_bool(&snapshot, "spawn.enabled", true) {
-                return Ok((
-                    Value::Nil,
-                    Value::String(lua.create_string("Policy denial: spawn.enabled=false")?),
-                ));
+                return nil_err(lua, "Policy denial: spawn.enabled=false");
             }
             let max_depth = policy_u64(&snapshot, "spawn.max_depth", 3) as u32;
             if spawn_depth >= max_depth {
@@ -117,10 +116,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 let snapshot = runtime_policy_snapshot(&complete_policy_snapshot)
                     .map_err(mlua::Error::runtime)?;
                 if !policy_bool(&snapshot, "spawn.enabled", true) {
-                    return Ok((
-                        Value::Nil,
-                        Value::String(lua.create_string("Policy denial: spawn.enabled=false")?),
-                    ));
+                    return nil_err(lua, "Policy denial: spawn.enabled=false");
                 }
                 let target_agent = opts
                     .as_ref()
@@ -258,11 +254,10 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     Ok::<_, String>(row)
                 });
                 match result {
-                    Ok(Some(row)) => Ok((
-                        Value::Table(session_row_to_lua_table(lua, &row)?),
-                        Value::Nil,
-                    )),
-                    Ok(None) => Ok((Value::Nil, Value::Nil)),
+                    Ok(Some(row)) => {
+                        Ok(ok_value(Value::Table(session_row_to_lua_table(lua, &row)?)))
+                    }
+                    Ok(None) => Ok(nil_ok()),
                     Err(err) => nil_err(lua, &err),
                 }
             })?,
@@ -292,7 +287,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                             for (i, row) in rows.iter().enumerate() {
                                 out.set(i + 1, session_row_to_lua_table(lua, row)?)?;
                             }
-                            Ok((Value::Table(out), Value::Nil))
+                            Ok(ok_value(Value::Table(out)))
                         }
                         Err(err) => nil_err(lua, &err),
                     }
@@ -315,7 +310,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 crate::kernel::config::AgentMode::Stateful => "stateful",
                 crate::kernel::config::AgentMode::Stateless => "stateless",
             };
-            Ok(Value::String(lua.create_string(mode_str)?))
+            string_value(lua, mode_str)
         })?,
     )?;
 
