@@ -10,6 +10,7 @@ mod init;
 pub mod policy;
 pub mod session;
 mod session_lifecycle;
+mod run_loop;
 mod task_planning;
 mod turn;
 
@@ -18,10 +19,10 @@ use anyhow::Result;
 use builder::RuntimeBuilder;
 use config::TurinConfig;
 use event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
-use session::{PlanProgress, QueuedTask, SessionState};
+use session::{QueuedTask, SessionState};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{error, info, instrument, warn};
 
 use crate::harness::engine::HarnessEngine;
 use crate::harness::verdict::Verdict;
@@ -144,77 +145,10 @@ impl Kernel {
         }
 
         if let Some(p) = prompt {
-            let plan_id = format!("p_{}", session.next_plan_id);
-            session.next_plan_id += 1;
-
-            session.plans.insert(
-                plan_id.clone(),
-                PlanProgress {
-                    plan_id: plan_id.clone(),
-                    title: "user_request".to_string(),
-                    total_tasks: 1,
-                    completed_tasks: 0,
-                },
-            );
-
-            let mut q = session.queue.lock().await;
-            let mut task = QueuedTask::with_plan(p, plan_id, Some("user_request".to_string()));
-            task.task_id = format!("t_{}", session.next_task_id);
-            session.next_task_id += 1;
-            q.push_back(task);
+            self.enqueue_initial_run_prompt(session, p).await;
         }
 
-        loop {
-            let (mut task, queue_depth_after_pop) = {
-                let mut q = session.queue.lock().await;
-                if q.is_empty() {
-                    debug!("Queue empty, firing on_all_tasks_complete");
-                    drop(q);
-                    self.persist_event(
-                        session,
-                        &KernelEvent::Lifecycle(LifecycleEvent::AllTasksComplete {
-                            identity: session.identity.clone(),
-                        }),
-                    );
-                    let verdict = {
-                        let harness = self.lock_harness();
-                        if let Some(ref engine) = *harness {
-                            match engine.evaluate(
-                                "on_all_tasks_complete",
-                                serde_json::json!({
-                                    "identity": session.identity.clone(),
-                                    "session_id": session.identity.session_id(),
-                                    "turn_count": session.turn_index,
-                                }),
-                            ) {
-                                Ok(v) => Some(v),
-                                Err(e) => {
-                                    warn!(error = %e, "Harness on_all_tasks_complete failed");
-                                    None
-                                }
-                            }
-                        } else {
-                            None
-                        }
-                    };
-
-                    if let Some(Verdict::Modify(new_tasks_val)) = verdict {
-                        let new_tasks = Self::parse_task_list(&new_tasks_val, None, None);
-                        if !new_tasks.is_empty() {
-                            let mut q = session.queue.lock().await;
-                            for task in new_tasks {
-                                q.push_back(task);
-                            }
-                            continue;
-                        }
-                    }
-
-                    break;
-                }
-                let task = q.pop_front().expect("queue checked non-empty");
-                let depth = q.len();
-                (task, depth)
-            };
+        while let Some((mut task, queue_depth_after_pop)) = self.dequeue_next_task(session).await {
 
             self.persist_event(
                 session,
