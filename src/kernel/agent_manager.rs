@@ -1,17 +1,18 @@
 mod peer_task;
 mod runtime_registry;
 
+use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use anyhow::Result;
-use tokio::sync::{RwLock, mpsc, oneshot};
-use tokio::task::JoinHandle;
 use crate::kernel::config::TurinConfig;
 use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreManager;
+use anyhow::Result;
+use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::task::JoinHandle;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PeerAgentTaskResult {
@@ -36,6 +37,7 @@ struct PeerAgentTaskEnvelope {
     task: QueuedTask,
     request_id: Option<String>,
     result_tx: Option<oneshot::Sender<PeerAgentTaskResult>>,
+    delegated_capabilities: Option<BTreeMap<String, bool>>,
 }
 
 /// A handle to a running peer agent.
@@ -92,6 +94,7 @@ impl AgentManager {
                 task,
                 request_id: None,
                 result_tx: None,
+                delegated_capabilities: None,
             },
         )
         .await?;
@@ -99,7 +102,12 @@ impl AgentManager {
     }
 
     /// Submit a task to a peer agent and return a request ID for later `await_result`.
-    pub async fn submit(&self, agent_id: &str, task: QueuedTask) -> Result<String> {
+    pub async fn submit(
+        &self,
+        agent_id: &str,
+        task: QueuedTask,
+        delegated_capabilities: Option<BTreeMap<String, bool>>,
+    ) -> Result<String> {
         let request_id = uuid::Uuid::now_v7().simple().to_string();
         let (tx_result, rx_result) = oneshot::channel();
         {
@@ -126,6 +134,7 @@ impl AgentManager {
                     task,
                     request_id: Some(request_id.clone()),
                     result_tx: Some(tx_result),
+                    delegated_capabilities,
                 },
             )
             .await

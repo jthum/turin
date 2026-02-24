@@ -214,7 +214,7 @@ impl GovernanceManager {
                 && let Some(reason) = capability_ceiling_denial_reason_bool_map(
                     import_caps,
                     capability,
-                    "import delegated capabilities",
+                    "delegated capabilities",
                     subject.module_name.as_deref().unwrap_or("<unknown>"),
                     true,
                 )

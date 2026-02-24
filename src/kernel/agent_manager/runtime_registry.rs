@@ -93,7 +93,13 @@ impl AgentManager {
                     break;
                 };
                 queued_tasks_bg.fetch_sub(1, Ordering::Relaxed);
-                let result = run_peer_task(&mut kernel, &mut session, envelope.task).await;
+                let result = run_peer_task(
+                    &mut kernel,
+                    &mut session,
+                    envelope.task,
+                    envelope.delegated_capabilities,
+                )
+                .await;
 
                 if let Some(tx_result) = envelope.result_tx {
                     let request_id = envelope

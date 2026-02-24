@@ -6,6 +6,7 @@
 
 use anyhow::{Context, Result};
 use mlua::{Function, Lua, LuaOptions, LuaSerdeExt, MultiValue, StdLib, Table, Value};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use tracing::error;
 
@@ -267,6 +268,14 @@ impl HarnessEngine {
             return lock.clone();
         }
         None
+    }
+
+    pub fn set_active_capability_delegation(&self, caps: Option<BTreeMap<String, bool>>) {
+        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
+            && let Ok(mut lock) = app_data.active_import_capabilities.lock()
+        {
+            *lock = caps;
+        }
     }
 
     fn set_active_harness_module(&self, module_name: Option<&str>) {

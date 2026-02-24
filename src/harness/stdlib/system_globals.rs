@@ -237,9 +237,10 @@ fn wrap_module_function(
         let prev_module = get_active_harness_module(lua);
         let prev_root = get_active_harness_root(lua);
         let prev_caps = get_active_import_capabilities(lua);
+        let applied_caps = delegated_capabilities.clone().or_else(|| prev_caps.clone());
         set_active_harness_module(lua, Some(module_name.as_str()));
         set_active_harness_root(lua, module_root.as_deref());
-        set_active_import_capabilities(lua, delegated_capabilities.clone());
+        set_active_import_capabilities(lua, applied_caps);
         let result = func.call::<MultiValue>(args);
         set_active_harness_module(lua, prev_module.as_deref());
         set_active_harness_root(lua, prev_root.as_deref());

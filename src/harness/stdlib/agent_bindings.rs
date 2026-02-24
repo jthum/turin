@@ -143,7 +143,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 let manager_submit = manager.clone();
                 let request_id = block_on_current(async move {
                     manager_submit
-                        .submit(&target_agent, QueuedTask::ad_hoc(prompt))
+                        .submit(&target_agent, QueuedTask::ad_hoc(prompt), None)
                         .await
                         .map_err(|e| e.to_string())
                 });

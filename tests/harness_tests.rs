@@ -319,6 +319,147 @@ async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Resul
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_runtime_agent_peer_delegation.db");
+    let orchestrator_harness_dir = tmp.path().join("harnesses_orchestrator");
+    let worker_harness_dir = tmp.path().join("harnesses_worker");
+    std::fs::create_dir(&orchestrator_harness_dir)?;
+    std::fs::create_dir(&worker_harness_dir)?;
+
+    let orchestrator_harness = r#"
+        function on_turn_prepare(ctx)
+            local self_dec, sde = runtime.governance.check("runtime.policy.set")
+            if self_dec == nil then error("orchestrator governance.check failed: " .. tostring(sde)) end
+            if not self_dec.allowed then
+                error("balanced profile should allow runtime.policy.set before delegation")
+            end
+
+            local task_id, se = runtime.agent.submit("worker", { prompt = "delegated worker run" }, {
+                capabilities = {
+                    ["runtime.db.query"] = true
+                }
+            })
+            if task_id == nil then error("runtime.agent.submit failed: " .. tostring(se)) end
+
+            local res, ae = runtime.agent.await(task_id, { timeout_ms = 5000 })
+            if res == nil then error("runtime.agent.await failed: " .. tostring(ae)) end
+            if res.agent_id ~= "worker" then error("runtime.agent.await wrong agent") end
+            if res.status ~= "success" then
+                error("delegated worker task should succeed, got status " .. tostring(res.status))
+            end
+            if res.output ~= "worker-ok" then
+                error("delegated worker output mismatch: " .. tostring(res.output))
+            end
+
+            return ALLOW
+        end
+    "#;
+    std::fs::write(
+        orchestrator_harness_dir.join("orchestrator.lua"),
+        orchestrator_harness,
+    )?;
+
+    let worker_harness = r#"
+        function on_turn_prepare(ctx)
+            local dec, de = runtime.governance.check("runtime.policy.set")
+            if dec == nil then error("worker governance.check failed: " .. tostring(de)) end
+            if dec.subject_agent_id ~= "worker" then error("worker subject_agent_id mismatch") end
+            if dec.allowed then
+                error("delegated worker should have runtime.policy.set denied")
+            end
+
+            local ok, err = runtime.policy.set("peer.delegation.test", true)
+            if ok ~= false or err == nil then
+                error("worker runtime.policy.set should be denied by delegated ceiling")
+            end
+            if string.find(tostring(err), "delegated capabilities", 1, true) == nil then
+                error("worker denial should mention delegated capabilities")
+            end
+
+            return ALLOW
+        end
+    "#;
+    std::fs::write(worker_harness_dir.join("worker.lua"), worker_harness)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("worker-ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut agents = std::collections::HashMap::new();
+    agents.insert(
+        "worker".to_string(),
+        AgentConfig {
+            id: "worker".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Worker".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Stateless,
+            harness_dir: Some(worker_harness_dir.to_str().unwrap().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "orchestrator".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Orchestrator".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: None,
+            idle_grace_secs: None,
+        },
+        agents,
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig {
+            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            enforcement_enabled: true,
+            ..turin::kernel::config::GovernanceConfig::default()
+        },
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise runtime agent delegation".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_harness_request_options_passthrough() -> Result<()> {
     let tmp = tempdir()?;
@@ -1328,8 +1469,8 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
                 if ok then
                     error("runtime.policy.set should be denied inside delegated import")
                 end
-                if err == nil or string.find(err, "import delegated capabilities", 1, true) == nil then
-                    error("denial should mention import delegated capabilities")
+                if err == nil or string.find(err, "delegated capabilities", 1, true) == nil then
+                    error("denial should mention delegated capabilities")
                 end
 
                 local self_dec, se = runtime.governance.check("runtime.policy.set")
