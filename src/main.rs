@@ -1,11 +1,8 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use rustyline::DefaultEditor;
-use rustyline::error::ReadlineError;
 use std::path::Path;
 use std::path::PathBuf;
 
-use turin::display;
 use turin::kernel::Kernel;
 use turin::kernel::config::TurinConfig;
 
@@ -151,23 +148,6 @@ fn load_config_with_overrides(
     Ok(config)
 }
 
-fn print_session_summary(session: &turin::kernel::session::SessionState) {
-    let ansi = display::stdout_ansi();
-    println!("\n{}", display::header("Session Summary", ansi));
-    println!(
-        "  {}  {} ({} in, {} out)",
-        display::bold("Total Tokens:", ansi),
-        session.total_input_tokens + session.total_output_tokens,
-        session.total_input_tokens,
-        session.total_output_tokens
-    );
-    println!(
-        "  {}         {}",
-        display::bold("Turns:", ansi),
-        session.turn_index
-    );
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -204,7 +184,7 @@ async fn main() -> Result<()> {
             kernel.run(&mut session, Some(prompt)).await?;
             kernel.end_session(&mut session).await?;
             if !json {
-                print_session_summary(&session);
+                commands::common::print_session_summary(&session);
             }
             Ok(())
         }
@@ -215,197 +195,7 @@ async fn main() -> Result<()> {
             verbose,
         } => {
             let config = load_config_with_overrides(&config, model, provider)?;
-
-            tracing::info!(
-                model = %config.agent.model,
-                provider = %config.agent.provider,
-                "Config loaded (REPL mode)"
-            );
-
-            // Build kernel
-            let mut kernel = Kernel::builder(config).build()?; // JSON not supported in REPL yet
-            kernel.init_state().await?;
-            kernel.init_clients()?;
-            kernel.init_harness().await?;
-            kernel.start_watcher()?;
-
-            // Start REPL loop
-            let mut rl = DefaultEditor::new()?;
-            tracing::info!("REPL started. Type 'exit' or Ctrl+D to quit.");
-            if !verbose {
-                println!("Turin REPL v{}", env!("CARGO_PKG_VERSION"));
-                println!("Type 'exit' or Ctrl+D to quit. Type '/reload' to reload harness.");
-            }
-
-            // Trigger SessionStart
-            let mut session = kernel.create_session().await;
-            kernel.start_session(&mut session).await?;
-
-            use turin::inference::provider::{InferenceContent, InferenceRole};
-            let repl_ansi = display::stdout_ansi();
-
-            loop {
-                let readline = rl.readline(&display::repl_prompt(repl_ansi));
-                match readline {
-                    Ok(line) => {
-                        let line = line.trim();
-                        if line.is_empty() {
-                            continue;
-                        }
-
-                        // Slash command handler
-                        if line.starts_with('/') {
-                            let parts: Vec<&str> = line.split_whitespace().collect();
-                            let cmd = parts[0].to_lowercase();
-
-                            match cmd.as_str() {
-                                "/status" => {
-                                    println!("\n\x1b[36m\x1b[1m── Session Status ──\x1b[0m");
-                                    println!(
-                                        "  \x1b[1mSession ID:\x1b[0m {}",
-                                        session.identity.session_id()
-                                    );
-                                    println!(
-                                        "  \x1b[1mProvider:\x1b[0m   {}",
-                                        kernel.config().agent.provider
-                                    );
-                                    println!(
-                                        "  \x1b[1mModel:\x1b[0m      {}",
-                                        kernel.config().agent.model
-                                    );
-                                    println!("  \x1b[1mTurns:\x1b[0m      {}", session.turn_index);
-                                    println!(
-                                        "  \x1b[1mTokens:\x1b[0m     {} total ({} in, {} out)",
-                                        session.total_input_tokens + session.total_output_tokens,
-                                        session.total_input_tokens,
-                                        session.total_output_tokens
-                                    );
-                                    println!();
-                                    continue;
-                                }
-                                "/history" => {
-                                    println!("\n\x1b[36m\x1b[1m── Message History ──\x1b[0m");
-                                    if session.history.is_empty() {
-                                        println!("  (No messages yet)");
-                                    }
-                                    for (i, msg) in session.history.iter().enumerate() {
-                                        let role_color = match msg.role {
-                                            InferenceRole::User => "\x1b[32m",      // Green
-                                            InferenceRole::Assistant => "\x1b[34m", // Blue
-                                            InferenceRole::Tool => "\x1b[33m",      // Yellow
-                                        };
-                                        let role_name = format!("{:?}", msg.role);
-
-                                        let mut content_summary = String::new();
-                                        for content in &msg.content {
-                                            match content {
-                                                InferenceContent::Text { text } => {
-                                                    content_summary.push_str(text.as_str());
-                                                }
-                                                InferenceContent::ToolUse { name, .. } => {
-                                                    content_summary.push_str(&format!(
-                                                        "[Tool Call: {}] ",
-                                                        name
-                                                    ));
-                                                }
-                                                InferenceContent::ToolResult { .. } => {
-                                                    content_summary.push_str("[Tool Result] ");
-                                                }
-                                                InferenceContent::Thinking { .. } => {
-                                                    content_summary.push_str("[Thinking] ");
-                                                }
-                                            }
-                                        }
-
-                                        if content_summary.len() > 80 {
-                                            content_summary =
-                                                format!("{}...", &content_summary[..77]);
-                                        }
-                                        // Replace newlines with spaces for summary
-                                        let cleaned_summary = content_summary.replace('\n', " ");
-
-                                        println!(
-                                            "  [{}] {}{:10}\x1b[0m: {}",
-                                            i, role_color, role_name, cleaned_summary
-                                        );
-                                    }
-                                    println!();
-                                    continue;
-                                }
-                                "/reload" => {
-                                    tracing::info!("Reloading harness...");
-                                    match kernel.reload_harness().await {
-                                        Ok(_) => tracing::info!("Harness reloaded successfully."),
-                                        Err(e) => {
-                                            tracing::error!(error = %e, "Failed to reload harness")
-                                        }
-                                    }
-                                    continue;
-                                }
-                                "/clear" => {
-                                    session.history.clear();
-                                    session.turn_index = 0;
-                                    session.total_input_tokens = 0;
-                                    session.total_output_tokens = 0;
-                                    println!(
-                                        "\x1b[32m\x1b[1m✓\x1b[0m Session history and stats cleared."
-                                    );
-                                    continue;
-                                }
-                                "/help" => {
-                                    println!("\n\x1b[36m\x1b[1m── Available Commands ──\x1b[0m");
-                                    println!("  \x1b[1m/status\x1b[0m   - Show session statistics");
-                                    println!(
-                                        "  \x1b[1m/history\x1b[0m  - Show condensed message history"
-                                    );
-                                    println!("  \x1b[1m/reload\x1b[0m   - Reload harness scripts");
-                                    println!(
-                                        "  \x1b[1m/clear\x1b[0m    - Clear session history and reset stats"
-                                    );
-                                    println!("  \x1b[1m/help\x1b[0m     - Show this help message");
-                                    println!("  \x1b[1m/quit\x1b[0m     - Exit the REPL");
-                                    println!();
-                                    continue;
-                                }
-                                "/quit" | "/exit" => {
-                                    break;
-                                }
-                                _ => {
-                                    println!(
-                                        "\x1b[31mUnknown command: {}\x1b[0m. Type /help for assistance.",
-                                        cmd
-                                    );
-                                    continue;
-                                }
-                            }
-                        }
-
-                        if line.eq_ignore_ascii_case("exit") {
-                            break;
-                        }
-
-                        let _ = rl.add_history_entry(line);
-
-                        // Push prompt to kernel queue and run until empty
-                        kernel.run(&mut session, Some(line.to_string())).await?;
-                    }
-                    Err(ReadlineError::Interrupted) => {
-                        println!("^C");
-                        break;
-                    }
-                    Err(ReadlineError::Eof) => {
-                        println!("^D");
-                        break;
-                    }
-                    Err(err) => {
-                        println!("Error: {:?}", err);
-                        break;
-                    }
-                }
-            }
-            kernel.end_session(&mut session).await?;
-            print_session_summary(&session);
-            Ok(())
+            commands::repl::run_repl(config, verbose).await
         }
         Commands::Script {
             path,
