@@ -77,19 +77,15 @@ impl AgentManager {
     /// Dispatch a task to an agent by ID. If the agent isn't running, it will be started automatically.
     pub async fn send(&self, agent_id: &str, task: QueuedTask) -> Result<()> {
         let handle = self.ensure_runtime(agent_id).await?;
-        handle.queued_tasks.fetch_add(1, Ordering::Relaxed);
-        if let Err(e) = handle
-            .tx
-            .send(PeerAgentTaskEnvelope {
+        self.enqueue_runtime_task(
+            &handle,
+            PeerAgentTaskEnvelope {
                 task,
                 request_id: None,
                 result_tx: None,
-            })
-            .await
-        {
-            handle.queued_tasks.fetch_sub(1, Ordering::Relaxed);
-            anyhow::bail!("Failed to route task to agent queue: {}", e);
-        }
+            },
+        )
+        .await?;
         Ok(())
     }
 
@@ -109,26 +105,24 @@ impl AgentManager {
         let handle = match self.ensure_runtime(agent_id).await {
             Ok(handle) => handle,
             Err(e) => {
-                self.pending_results.write().await.remove(&request_id);
-                self.pending_result_agents.write().await.remove(&request_id);
+                self.remove_pending_request(&request_id).await;
                 return Err(e);
             }
         };
 
-        handle.queued_tasks.fetch_add(1, Ordering::Relaxed);
-        if let Err(e) = handle
-            .tx
-            .send(PeerAgentTaskEnvelope {
-                task,
-                request_id: Some(request_id.clone()),
-                result_tx: Some(tx_result),
-            })
+        if let Err(e) = self
+            .enqueue_runtime_task(
+                &handle,
+                PeerAgentTaskEnvelope {
+                    task,
+                    request_id: Some(request_id.clone()),
+                    result_tx: Some(tx_result),
+                },
+            )
             .await
         {
-            handle.queued_tasks.fetch_sub(1, Ordering::Relaxed);
-            self.pending_results.write().await.remove(&request_id);
-            self.pending_result_agents.write().await.remove(&request_id);
-            anyhow::bail!("Failed to route task to agent queue: {}", e);
+            self.remove_pending_request(&request_id).await;
+            return Err(e);
         }
 
         Ok(request_id)
@@ -221,5 +215,23 @@ impl AgentManager {
             .await
             .into_iter()
             .find(|s| s.agent_id == agent_id)
+    }
+
+    async fn enqueue_runtime_task(
+        &self,
+        handle: &Arc<AgentRuntimeHandle>,
+        envelope: PeerAgentTaskEnvelope,
+    ) -> Result<()> {
+        handle.queued_tasks.fetch_add(1, Ordering::Relaxed);
+        if let Err(e) = handle.tx.send(envelope).await {
+            handle.queued_tasks.fetch_sub(1, Ordering::Relaxed);
+            anyhow::bail!("Failed to route task to agent queue: {}", e);
+        }
+        Ok(())
+    }
+
+    async fn remove_pending_request(&self, request_id: &str) {
+        self.pending_results.write().await.remove(request_id);
+        self.pending_result_agents.write().await.remove(request_id);
     }
 }
