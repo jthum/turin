@@ -1,11 +1,63 @@
 use mlua::{Lua, Result as LuaResult, Table, Value};
 
-use crate::harness::globals::{HarnessAppData, block_on_current};
+use crate::harness::globals::{ActiveSessionQueue, HarnessAppData, block_on_current};
+use crate::harness::stdlib::binding_common::{bool_err, nil_err, ok_bool, string_ok};
 use crate::harness::stdlib::identity_support::{
     get_active_identity, identity_to_lua_table, session_row_to_lua_table,
 };
 use crate::harness::stdlib::policy_support::{policy_bool, policy_u64, runtime_policy_snapshot};
 use crate::kernel::session::QueuedTask;
+
+fn queue_max(snapshot: &std::collections::HashMap<String, serde_json::Value>) -> usize {
+    policy_u64(snapshot, "queue.max_depth", 1024) as usize
+}
+
+async fn queue_push_one(
+    aq: &ActiveSessionQueue,
+    task: QueuedTask,
+    queue_max: usize,
+    push_front: bool,
+) -> Result<(), String> {
+    if let Some(q) = &*aq.lock().await {
+        let mut q = q.lock().await;
+        if q.len() >= queue_max {
+            return Err(format!(
+                "Policy denial: queue.max_depth={} reached",
+                queue_max
+            ));
+        }
+        if push_front {
+            q.push_front(task);
+        } else {
+            q.push_back(task);
+        }
+        Ok(())
+    } else {
+        Err("No active session queue".to_string())
+    }
+}
+
+async fn queue_push_many(
+    aq: &ActiveSessionQueue,
+    tasks: Vec<QueuedTask>,
+    queue_max: usize,
+) -> Result<(), String> {
+    if let Some(q) = &*aq.lock().await {
+        let mut q = q.lock().await;
+        if q.len().saturating_add(tasks.len()) > queue_max {
+            return Err(format!(
+                "Policy denial: queue.max_depth={} would be exceeded",
+                queue_max
+            ));
+        }
+        for task in tasks {
+            q.push_back(task);
+        }
+        Ok(())
+    } else {
+        Err("No active session queue".to_string())
+    }
+}
 
 pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
     let agent_table = lua.create_table()?;
@@ -31,34 +83,25 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             }
             let max_depth = policy_u64(&snapshot, "spawn.max_depth", 3) as u32;
             if spawn_depth >= max_depth {
-                return Ok((
-                    Value::Nil,
-                    Value::String(lua.create_string("Policy denial: spawn.max_depth exceeded")?),
-                ));
+                return nil_err(lua, "Policy denial: spawn.max_depth exceeded");
             }
             let spawn_q = spawn_q.clone();
-            let enqueue_res = block_on_current(async {
-                if let Some(q) = &*spawn_q.lock().await {
-                    let queue_max = policy_u64(&snapshot, "queue.max_depth", 1024) as usize;
-                    let mut q = q.lock().await;
-                    if q.len() >= queue_max {
-                        return Err(format!(
-                            "Policy denial: queue.max_depth={} reached",
-                            queue_max
-                        ));
-                    }
-                    q.push_back(QueuedTask::ad_hoc(prompt.clone()));
-                    Ok(())
-                } else {
-                    Err("No active session queue".to_string())
-                }
+            let queue_max = queue_max(&snapshot);
+            let enqueue_res = block_on_current(async move {
+                queue_push_one(
+                    &spawn_q,
+                    QueuedTask::ad_hoc(prompt.clone()),
+                    queue_max,
+                    false,
+                )
+                .await
             });
             match enqueue_res {
                 Ok(()) => {
                     let token = format!("q_{}", uuid::Uuid::now_v7().simple());
-                    Ok((Value::String(lua.create_string(&token)?), Value::Nil))
+                    string_ok(lua, &token)
                 }
-                Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
+                Err(err) => nil_err(lua, &err),
             }
         })?,
     )?;
@@ -94,7 +137,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 });
                 let request_id = match request_id {
                     Ok(id) => id,
-                    Err(err) => return Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
+                    Err(err) => return nil_err(lua, &err),
                 };
 
                 let manager_await = manager.clone();
@@ -107,14 +150,14 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 match result {
                     Ok(res) => {
                         if let Some(err) = res.error {
-                            Ok((Value::Nil, Value::String(lua.create_string(&err)?)))
+                            nil_err(lua, &err)
                         } else if let Some(output) = res.output {
-                            Ok((Value::String(lua.create_string(&output)?), Value::Nil))
+                            string_ok(lua, &output)
                         } else {
-                            Ok((Value::String(lua.create_string("")?), Value::Nil))
+                            string_ok(lua, "")
                         }
                     }
-                    Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
+                    Err(err) => nil_err(lua, &err),
                 }
             })?,
         )?;
@@ -141,28 +184,13 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             let aq = aq.clone();
             let snapshot =
                 runtime_policy_snapshot(&queue_policy_snapshot).map_err(mlua::Error::runtime)?;
-            let queue_max = policy_u64(&snapshot, "queue.max_depth", 1024) as usize;
-            let res = block_on_current(async {
-                if let Some(q) = &*aq.lock().await {
-                    let mut q = q.lock().await;
-                    if q.len() >= queue_max {
-                        return Err(format!(
-                            "Policy denial: queue.max_depth={} reached",
-                            queue_max
-                        ));
-                    }
-                    q.push_back(QueuedTask::ad_hoc(cmd));
-                    Ok(())
-                } else {
-                    Err("No active session queue".to_string())
-                }
+            let queue_max = queue_max(&snapshot);
+            let res = block_on_current(async move {
+                queue_push_one(&aq, QueuedTask::ad_hoc(cmd), queue_max, false).await
             });
             match res {
-                Ok(()) => Ok((Value::Boolean(true), Value::Nil)),
-                Err(err) => Ok((
-                    Value::Boolean(false),
-                    Value::String(lua.create_string(&err)?),
-                )),
+                Ok(()) => Ok(ok_bool()),
+                Err(err) => bool_err(lua, &err),
             }
         })?,
     )?;
@@ -176,28 +204,13 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             let aq = aq2.clone();
             let snapshot = runtime_policy_snapshot(&queue_next_policy_snapshot)
                 .map_err(mlua::Error::runtime)?;
-            let queue_max = policy_u64(&snapshot, "queue.max_depth", 1024) as usize;
-            let res = block_on_current(async {
-                if let Some(q) = &*aq.lock().await {
-                    let mut q = q.lock().await;
-                    if q.len() >= queue_max {
-                        return Err(format!(
-                            "Policy denial: queue.max_depth={} reached",
-                            queue_max
-                        ));
-                    }
-                    q.push_front(QueuedTask::ad_hoc(cmd));
-                    Ok(())
-                } else {
-                    Err("No active session queue".to_string())
-                }
+            let queue_max = queue_max(&snapshot);
+            let res = block_on_current(async move {
+                queue_push_one(&aq, QueuedTask::ad_hoc(cmd), queue_max, true).await
             });
             match res {
-                Ok(()) => Ok((Value::Boolean(true), Value::Nil)),
-                Err(err) => Ok((
-                    Value::Boolean(false),
-                    Value::String(lua.create_string(&err)?),
-                )),
+                Ok(()) => Ok(ok_bool()),
+                Err(err) => bool_err(lua, &err),
             }
         })?,
     )?;
@@ -214,31 +227,16 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             }
             let snapshot = runtime_policy_snapshot(&queue_all_policy_snapshot)
                 .map_err(mlua::Error::runtime)?;
-            let queue_max = policy_u64(&snapshot, "queue.max_depth", 1024) as usize;
+            let queue_max = queue_max(&snapshot);
             let aq = aq3.clone();
-            let res = block_on_current(async {
-                if let Some(q) = &*aq.lock().await {
-                    let mut q = q.lock().await;
-                    if q.len().saturating_add(items.len()) > queue_max {
-                        return Err(format!(
-                            "Policy denial: queue.max_depth={} would be exceeded",
-                            queue_max
-                        ));
-                    }
-                    for cmd in &items {
-                        q.push_back(QueuedTask::ad_hoc(cmd.clone()));
-                    }
-                    Ok(())
-                } else {
-                    Err("No active session queue".to_string())
-                }
-            });
+            let tasks = items
+                .into_iter()
+                .map(QueuedTask::ad_hoc)
+                .collect::<Vec<_>>();
+            let res = block_on_current(async move { queue_push_many(&aq, tasks, queue_max).await });
             match res {
-                Ok(()) => Ok((Value::Boolean(true), Value::Nil)),
-                Err(err) => Ok((
-                    Value::Boolean(false),
-                    Value::String(lua.create_string(&err)?),
-                )),
+                Ok(()) => Ok(ok_bool()),
+                Err(err) => bool_err(lua, &err),
             }
         })?,
     )?;
@@ -265,7 +263,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                         Value::Nil,
                     )),
                     Ok(None) => Ok((Value::Nil, Value::Nil)),
-                    Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
+                    Err(err) => nil_err(lua, &err),
                 }
             })?,
         )?;
@@ -296,7 +294,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                             }
                             Ok((Value::Table(out), Value::Nil))
                         }
-                        Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
+                        Err(err) => nil_err(lua, &err),
                     }
                 },
             )?,
@@ -330,18 +328,13 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 "stateless" => crate::kernel::config::AgentMode::Stateless,
                 "auto" => crate::kernel::config::AgentMode::Auto,
                 _ => {
-                    return Ok((
-                        Value::Boolean(false),
-                        Value::String(
-                            lua.create_string("invalid mode; expected auto|stateful|stateless")?,
-                        ),
-                    ));
+                    return bool_err(lua, "invalid mode; expected auto|stateful|stateless");
                 }
             };
             if let Ok(mut lock) = sm2.lock() {
                 *lock = Some(mode);
             }
-            Ok((Value::Boolean(true), Value::Nil))
+            Ok(ok_bool())
         })?,
     )?;
 
@@ -356,7 +349,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             block_on_current(async {
                 let _ = m.send(&id, QueuedTask::ad_hoc(prompt)).await;
             });
-            Ok((Value::Boolean(true), Value::Nil))
+            Ok(ok_bool())
         })?,
     )?;
 
