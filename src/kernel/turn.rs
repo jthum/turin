@@ -3,6 +3,7 @@
 //! This module contains turn-level execution for the agent loop: LLM inference,
 //! stream processing, hook evaluation, parallel tool execution, and side effects.
 
+mod assistant_response;
 mod streaming;
 mod tool_execution;
 
@@ -12,12 +13,12 @@ use tracing::{debug, error, warn};
 
 use crate::harness::context::{ContextWrapper, RequestOptionsOverride};
 use crate::harness::verdict::Verdict;
-use crate::inference::provider::{self, InferenceContent, InferenceMessage, InferenceRole};
+use crate::inference::provider::{self};
 use crate::kernel::session::SessionState;
 use crate::tools::ToolContext;
 
-use super::event::{KernelEvent, LifecycleEvent};
 use super::Kernel;
+use super::event::{KernelEvent, LifecycleEvent};
 
 #[derive(Debug, Clone)]
 pub(crate) struct TurnContext {
@@ -248,83 +249,9 @@ impl Kernel {
         let response_text = stream_output.response_text;
         let pending_tool_calls = stream_output.pending_tool_calls;
 
-        let has_tool_calls = !pending_tool_calls.is_empty();
-
-        self.persist_event(
-            session,
-            &KernelEvent::Lifecycle(LifecycleEvent::TurnEnd {
-                identity: session.identity.clone(),
-                turn_index: session.turn_index,
-                task_id: turn_ctx.task_id.clone(),
-                task_turn_index: turn_ctx.task_turn_index,
-                has_tool_calls,
-            }),
-        );
-
-        {
-            let harness = self.lock_harness();
-            if let Some(ref engine) = *harness
-                && let Err(e) = engine.evaluate(
-                    "on_turn_end",
-                    serde_json::json!({
-                        "identity": session.identity.clone(),
-                        "session_id": session.identity.session_id(),
-                        "task_id": turn_ctx.task_id.clone(),
-                        "plan_id": turn_ctx.plan_id.clone(),
-                        "turn_index": session.turn_index,
-                        "task_turn_index": turn_ctx.task_turn_index,
-                        "has_tool_calls": has_tool_calls,
-                    }),
-                )
-            {
-                warn!(error = %e, "Harness on_turn_end error");
-            }
-        }
-
-        if let Ok(store) = self.store_manager.get_default().await {
-            let content: Vec<serde_json::Value> = {
-                let mut parts = Vec::new();
-                if !response_text.is_empty() {
-                    parts.push(serde_json::json!({"type": "text", "text": response_text}));
-                }
-                for tc in &pending_tool_calls {
-                    parts.push(serde_json::json!({
-                        "type": "tool_use", "id": tc.id, "name": tc.name, "input": tc.args,
-                    }));
-                }
-                parts
-            };
-            if let Some(iid) = session.internal_id {
-                let _ = store
-                    .insert_message(
-                        iid,
-                        session.turn_index,
-                        "assistant",
-                        &serde_json::Value::Array(content),
-                        None,
-                    )
-                    .await;
-            }
-        }
-
-        let mut assistant_content: Vec<InferenceContent> = Vec::new();
-        if !response_text.is_empty() {
-            assistant_content.push(InferenceContent::Text {
-                text: response_text.clone(),
-            });
-        }
-        for tc in &pending_tool_calls {
-            assistant_content.push(InferenceContent::ToolUse {
-                id: tc.id.clone(),
-                name: tc.name.clone(),
-                input: tc.args.clone(),
-            });
-        }
-        session.history.push(InferenceMessage {
-            role: InferenceRole::Assistant,
-            content: assistant_content,
-            tool_call_id: None,
-        });
+        let has_tool_calls = self
+            .finalize_assistant_turn_output(session, turn_ctx, &response_text, &pending_tool_calls)
+            .await;
 
         if !has_tool_calls {
             return Ok(TurnOutcome::Complete);
