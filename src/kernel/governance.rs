@@ -184,6 +184,22 @@ impl GovernanceManager {
         if baseline_allowed {
             if let Some(agent_id) = subject.agent_id.as_deref()
                 && let Some(agent_cfg) = self.config.agents.get(agent_id)
+                && let Some(profile_name) = agent_cfg.capability_profile.as_deref()
+                && let Some(profile_caps) = self.config.capability_profiles.get(profile_name)
+                && let Some(reason) = capability_ceiling_denial_reason_json_map(
+                    profile_caps,
+                    capability,
+                    "agent capability_profile",
+                    profile_name,
+                    false,
+                )
+            {
+                ceiling_denial_reason = Some(reason);
+            }
+
+            if ceiling_denial_reason.is_none()
+                && let Some(agent_id) = subject.agent_id.as_deref()
+                && let Some(agent_cfg) = self.config.agents.get(agent_id)
                 && let Some(reason) = capability_ceiling_denial_reason_json_map(
                     &agent_cfg.max_capabilities,
                     capability,
@@ -562,6 +578,7 @@ mod tests {
                 allow_unscoped_in_open: false,
             },
             roots: Default::default(),
+            capability_profiles: Default::default(),
             agents: Default::default(),
             grants: GovernanceGrantsConfig {
                 enabled: true,
@@ -692,5 +709,55 @@ mod tests {
             .require_child_agent_for_subject(&subject, "worker_blocked")
             .unwrap_err();
         assert!(err.contains("allowed_child_agents"));
+    }
+
+    #[test]
+    fn agent_capability_profile_applies_named_capability_ceiling() {
+        let mut cfg = GovernanceConfig {
+            profile: GovernanceProfile::Balanced,
+            enforcement_enabled: true,
+            ..GovernanceConfig::default()
+        };
+        cfg.capability_profiles.insert(
+            "reviewer_ro".into(),
+            HashMap::from([
+                ("runtime.db.query".to_string(), serde_json::Value::Bool(true)),
+                ("runtime.policy.set".to_string(), serde_json::Value::Bool(false)),
+            ]),
+        );
+        cfg.agents.insert(
+            "reviewer".into(),
+            crate::kernel::config::GovernanceAgentCapabilitiesConfig {
+                capability_profile: Some("reviewer_ro".into()),
+                max_capabilities: Default::default(),
+                allowed_child_agents: vec![],
+            },
+        );
+
+        let mgr = GovernanceManager::new(cfg);
+        let reviewer = GovernanceSubject {
+            agent_id: Some("reviewer".into()),
+            ..GovernanceSubject::default()
+        };
+        let default_agent = GovernanceSubject {
+            agent_id: Some("default".into()),
+            ..GovernanceSubject::default()
+        };
+
+        let reviewer_policy = mgr.capability_decision_for_subject(&reviewer, "runtime.policy.set");
+        assert!(!reviewer_policy.allowed);
+        assert!(
+            reviewer_policy
+                .reason
+                .as_deref()
+                .unwrap()
+                .contains("agent capability_profile")
+        );
+
+        let reviewer_query = mgr.capability_decision_for_subject(&reviewer, "runtime.db.query");
+        assert!(reviewer_query.allowed);
+
+        let default_policy = mgr.capability_decision_for_subject(&default_agent, "runtime.policy.set");
+        assert!(default_policy.allowed);
     }
 }

@@ -257,6 +257,9 @@ pub struct GovernanceConfig {
     #[serde(default)]
     pub roots: std::collections::HashMap<String, GovernanceRootConfig>,
     #[serde(default)]
+    pub capability_profiles:
+        std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>,
+    #[serde(default)]
     pub agents: std::collections::HashMap<String, GovernanceAgentCapabilitiesConfig>,
     #[serde(default)]
     pub grants: GovernanceGrantsConfig,
@@ -389,6 +392,24 @@ impl TurinConfig {
                 "governance.roots.{}.path must not be empty",
                 root_name
             );
+        }
+
+        for profile_name in self.governance.capability_profiles.keys() {
+            anyhow::ensure!(
+                !profile_name.trim().is_empty(),
+                "governance.capability_profiles contains an empty profile name"
+            );
+        }
+
+        for (agent_id, agent_cfg) in &self.governance.agents {
+            if let Some(profile_name) = &agent_cfg.capability_profile {
+                anyhow::ensure!(
+                    self.governance.capability_profiles.contains_key(profile_name),
+                    "governance.agents.{}.capability_profile '{}' not found in governance.capability_profiles",
+                    agent_id,
+                    profile_name
+                );
+            }
         }
 
         Ok(())
@@ -687,6 +708,10 @@ default_profile = "core_full"
 "runtime.db.query" = true
 "runtime.db.exec" = false
 
+[governance.capability_profiles.reviewer_ro]
+"runtime.db.query" = true
+"runtime.policy.set" = false
+
 [governance.agents.reviewer]
 capability_profile = "reviewer_ro"
 allowed_child_agents = ["worker"]
@@ -711,6 +736,15 @@ require_audit_reason = true
         assert_eq!(
             config.governance.roots.get("core").map(|r| r.path.as_str()),
             Some("harness/core")
+        );
+        assert_eq!(
+            config
+                .governance
+                .capability_profiles
+                .get("reviewer_ro")
+                .and_then(|p| p.get("runtime.policy.set"))
+                .and_then(|v| v.as_bool()),
+            Some(false)
         );
         assert_eq!(
             config

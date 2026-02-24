@@ -1169,6 +1169,14 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
             allowed_child_agents: vec!["worker".to_string()],
         },
     );
+    let mut capability_profiles = std::collections::HashMap::new();
+    capability_profiles.insert(
+        "reviewer_ro".to_string(),
+        std::collections::HashMap::from([(
+            "runtime.db.query".to_string(),
+            serde_json::Value::Bool(true),
+        )]),
+    );
 
     let config = TurinConfig {
         agent: AgentConfig {
@@ -1211,6 +1219,7 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
                 allow_unscoped_in_open: false,
             },
             roots,
+            capability_profiles,
             agents,
             grants: turin::kernel::config::GovernanceGrantsConfig {
                 enabled: true,
@@ -1686,6 +1695,175 @@ async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
         .run(
             &mut session,
             Some("exercise agent max_capabilities".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_agent_capability_profile_peer.db");
+    let orchestrator_harness_dir = tmp.path().join("harnesses_orchestrator");
+    let reviewer_harness_dir = tmp.path().join("harnesses_reviewer");
+    std::fs::create_dir(&orchestrator_harness_dir)?;
+    std::fs::create_dir(&reviewer_harness_dir)?;
+
+    std::fs::write(
+        orchestrator_harness_dir.join("orchestrator.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local self_dec, se = runtime.governance.check("runtime.policy.set")
+                if self_dec == nil then error("orchestrator governance.check failed: " .. tostring(se)) end
+                if not self_dec.allowed then
+                    error("orchestrator should keep runtime.policy.set in balanced mode")
+                end
+
+                local task_id, te = runtime.agent.submit("reviewer", { prompt = "capability profile check" })
+                if task_id == nil then error("runtime.agent.submit failed: " .. tostring(te)) end
+
+                local res, ae = runtime.agent.await(task_id, { timeout_ms = 5000 })
+                if res == nil then error("runtime.agent.await failed: " .. tostring(ae)) end
+                if res.agent_id ~= "reviewer" then error("reviewer agent_id mismatch") end
+                if res.status ~= "success" then
+                    error("reviewer task should succeed, got status " .. tostring(res.status))
+                end
+                if res.output ~= "reviewer-ok" then
+                    error("reviewer output mismatch: " .. tostring(res.output))
+                end
+
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    std::fs::write(
+        reviewer_harness_dir.join("reviewer.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local dec_policy, pe = runtime.governance.check("runtime.policy.set")
+                if dec_policy == nil then error("policy decision failed: " .. tostring(pe)) end
+                if dec_policy.subject_agent_id ~= "reviewer" then
+                    error("reviewer subject_agent_id mismatch")
+                end
+                if dec_policy.allowed then
+                    error("runtime.policy.set should be denied by agent capability_profile")
+                end
+                if dec_policy.reason == nil or string.find(dec_policy.reason, "agent capability_profile 'reviewer_ro'", 1, true) == nil then
+                    error("policy denial reason should mention reviewer_ro capability_profile")
+                end
+
+                local dec_query, qe = runtime.governance.check("runtime.db.query")
+                if dec_query == nil then error("query decision failed: " .. tostring(qe)) end
+                if not dec_query.allowed then
+                    error("runtime.db.query should be allowed by reviewer_ro capability_profile")
+                end
+
+                local ok, err = runtime.policy.set("reviewer.cap.profile.test", true)
+                if ok ~= false or err == nil then
+                    error("runtime.policy.set should fail under agent capability_profile")
+                end
+                if string.find(tostring(err), "agent capability_profile 'reviewer_ro'", 1, true) == nil then
+                    error("runtime.policy.set denial should mention reviewer_ro capability_profile")
+                end
+
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("reviewer-ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut agents = std::collections::HashMap::new();
+    agents.insert(
+        "reviewer".to_string(),
+        AgentConfig {
+            id: "reviewer".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Reviewer".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Stateless,
+            harness_dir: Some(reviewer_harness_dir.to_str().unwrap().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+
+    let mut capability_profiles = std::collections::HashMap::new();
+    capability_profiles.insert(
+        "reviewer_ro".to_string(),
+        std::collections::HashMap::from([
+            ("runtime.db.query".to_string(), serde_json::Value::Bool(true)),
+            ("runtime.policy.set".to_string(), serde_json::Value::Bool(false)),
+        ]),
+    );
+    let mut governance_agents = std::collections::HashMap::new();
+    governance_agents.insert(
+        "reviewer".to_string(),
+        turin::kernel::config::GovernanceAgentCapabilitiesConfig {
+            capability_profile: Some("reviewer_ro".to_string()),
+            max_capabilities: std::collections::HashMap::new(),
+            allowed_child_agents: vec![],
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "orchestrator".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Orchestrator".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: None,
+            idle_grace_secs: None,
+        },
+        agents,
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig {
+            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            enforcement_enabled: true,
+            capability_profiles,
+            agents: governance_agents,
+            ..turin::kernel::config::GovernanceConfig::default()
+        },
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise agent capability_profile enforcement".to_string()),
         )
         .await?;
     kernel.end_session(&mut session).await?;
