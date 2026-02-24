@@ -134,6 +134,8 @@ impl Kernel {
             active_session_id: Arc::new(std::sync::Mutex::new(None)),
             active_session_mode: Arc::new(std::sync::Mutex::new(None)),
             active_harness_module: Arc::new(std::sync::Mutex::new(None)),
+            active_harness_root: Arc::new(std::sync::Mutex::new(None)),
+            active_import_capabilities: Arc::new(std::sync::Mutex::new(None)),
             config: self.config.clone(),
             spawn_depth: self.config.kernel.initial_spawn_depth,
         };
@@ -207,6 +209,8 @@ impl Kernel {
                     active_session_id: Arc::new(std::sync::Mutex::new(None)),
                     active_session_mode: Arc::new(std::sync::Mutex::new(None)),
                     active_harness_module: Arc::new(std::sync::Mutex::new(None)),
+                    active_harness_root: Arc::new(std::sync::Mutex::new(None)),
+                    active_import_capabilities: Arc::new(std::sync::Mutex::new(None)),
                     config: config.clone(),
                     spawn_depth: config.kernel.initial_spawn_depth,
                 };

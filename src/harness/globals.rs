@@ -13,7 +13,7 @@ use crate::inference::provider::ProviderClient;
 use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreManager;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 
 const MAX_HARNESS_FILE_SIZE: usize = 10 * 1024 * 1024;
@@ -33,6 +33,8 @@ pub struct HarnessAppData {
     pub active_session_id: Arc<std::sync::Mutex<Option<String>>>,
     pub active_session_mode: Arc<std::sync::Mutex<Option<crate::kernel::config::AgentMode>>>,
     pub active_harness_module: Arc<std::sync::Mutex<Option<String>>>,
+    pub active_harness_root: Arc<std::sync::Mutex<Option<String>>>,
+    pub active_import_capabilities: Arc<std::sync::Mutex<Option<BTreeMap<String, bool>>>>,
     pub clients: HashMap<String, ProviderClient>,
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     pub queue: ActiveSessionQueue,

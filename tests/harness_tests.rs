@@ -1057,6 +1057,148 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_import() -> Result<()>
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_import_scoped_caps.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    std::fs::write(
+        harness_dir.join("util.lua"),
+        r#"
+            return {
+                try_policy_set = function()
+                    local dec_query, qe = runtime.governance.check("runtime.db.query")
+                    if dec_query == nil then error("query decision failed: " .. tostring(qe)) end
+                    local dec_policy, pe = runtime.governance.check("runtime.policy.set")
+                    if dec_policy == nil then error("policy decision failed: " .. tostring(pe)) end
+
+                    local ok, err = runtime.policy.set("delegation.flag", true)
+                    return dec_query, dec_policy, ok, err
+                end
+            }
+        "#,
+    )?;
+
+    std::fs::write(
+        harness_dir.join("main.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local util = import_scoped("util", {
+                    root = "core",
+                    capabilities = {
+                        ["runtime.db.query"] = true
+                    }
+                })
+
+                local dec_query, dec_policy, ok, err = util.try_policy_set()
+                if not dec_query.allowed then
+                    error("delegated runtime.db.query should stay allowed")
+                end
+                if dec_query.subject_root_name ~= "core" then
+                    error("delegated subject_root_name should be core")
+                end
+                if dec_policy.allowed then
+                    error("delegated runtime.policy.set should be denied by import capability allowlist")
+                end
+                if ok then
+                    error("runtime.policy.set should be denied inside delegated import")
+                end
+                if err == nil or string.find(err, "import delegated capabilities", 1, true) == nil then
+                    error("denial should mention import delegated capabilities")
+                end
+
+                local self_dec, se = runtime.governance.check("runtime.policy.set")
+                if self_dec == nil then error("caller runtime.governance.check failed: " .. tostring(se)) end
+                if not self_dec.allowed then
+                    error("caller capability context should be restored after imported call")
+                end
+
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut roots = std::collections::HashMap::new();
+    roots.insert(
+        "core".to_string(),
+        turin::kernel::config::GovernanceRootConfig {
+            path: harness_dir.to_str().unwrap().to_string(),
+            writable_hint: false,
+            default_profile: Some("core_full".to_string()),
+            max_capabilities: std::collections::HashMap::new(),
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "import scoped capability delegation test".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig {
+            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            enforcement_enabled: true,
+            import: turin::kernel::config::GovernanceImportConfig {
+                mode: turin::kernel::config::GovernanceImportMode::Mixed,
+                default_root: Some("core".to_string()),
+                allow_unscoped_in_open: false,
+            },
+            roots,
+            ..turin::kernel::config::GovernanceConfig::default()
+        },
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise import_scoped capability delegation".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_governed_enforcement.db");

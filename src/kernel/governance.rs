@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +54,8 @@ pub struct CapabilityDecision {
     pub subject_agent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject_module_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject_root_name: Option<String>,
     pub profile: GovernanceProfile,
     pub enforcement_enabled: bool,
     pub matched_rule: Option<String>,
@@ -73,6 +75,8 @@ pub struct GovernanceSubject {
     pub root_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grant_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub import_capabilities: Option<BTreeMap<String, bool>>,
 }
 
 impl GovernanceSubject {
@@ -175,14 +179,62 @@ impl GovernanceManager {
             None => matches!(self.config.profile, GovernanceProfile::Open),
         };
 
+        let mut ceiling_denial_reason = None;
+
+        if baseline_allowed {
+            if let Some(agent_id) = subject.agent_id.as_deref()
+                && let Some(agent_cfg) = self.config.agents.get(agent_id)
+                && let Some(reason) = capability_ceiling_denial_reason_json_map(
+                    &agent_cfg.max_capabilities,
+                    capability,
+                    "agent max_capabilities",
+                    agent_id,
+                    false,
+                )
+            {
+                ceiling_denial_reason = Some(reason);
+            }
+
+            if ceiling_denial_reason.is_none()
+                && let Some(root_name) = subject.root_name.as_deref()
+                && let Some(root_cfg) = self.config.roots.get(root_name)
+                && let Some(reason) = capability_ceiling_denial_reason_json_map(
+                    &root_cfg.max_capabilities,
+                    capability,
+                    "root max_capabilities",
+                    root_name,
+                    false,
+                )
+            {
+                ceiling_denial_reason = Some(reason);
+            }
+
+            if ceiling_denial_reason.is_none()
+                && let Some(import_caps) = subject.import_capabilities.as_ref()
+                && let Some(reason) = capability_ceiling_denial_reason_bool_map(
+                    import_caps,
+                    capability,
+                    "import delegated capabilities",
+                    subject.module_name.as_deref().unwrap_or("<unknown>"),
+                    true,
+                )
+            {
+                ceiling_denial_reason = Some(reason);
+            }
+        }
+
+        let effective_allowed = baseline_allowed && ceiling_denial_reason.is_none();
+
         let allowed = if self.config.enforcement_enabled {
-            baseline_allowed
+            effective_allowed
         } else {
             true
         };
 
         let reason = if allowed {
             None
+        } else if baseline_allowed {
+            ceiling_denial_reason
         } else {
             Some(match &matched_rule {
                 Some(rule) => format!(
@@ -203,6 +255,7 @@ impl GovernanceManager {
             capability: capability.to_string(),
             subject_agent_id: subject.agent_id.clone(),
             subject_module_name: subject.module_name.clone(),
+            subject_root_name: subject.root_name.clone(),
             profile: self.config.profile.clone(),
             enforcement_enabled: self.config.enforcement_enabled,
             matched_rule,
@@ -301,22 +354,55 @@ fn match_capability_rule(
     caps: &BTreeMap<String, serde_json::Value>,
     capability: &str,
 ) -> (Option<String>, bool, Option<bool>) {
-    if let Some(v) = caps.get(capability).and_then(serde_json::Value::as_bool) {
-        return (Some(capability.to_string()), false, Some(v));
+    match_capability_rule_bool_iter(
+        caps.iter()
+            .filter_map(|(rule, value)| value.as_bool().map(|b| (rule.as_str(), b))),
+        capability,
+    )
+}
+
+fn match_capability_rule_json_map(
+    caps: &HashMap<String, serde_json::Value>,
+    capability: &str,
+) -> (Option<String>, bool, Option<bool>) {
+    match_capability_rule_bool_iter(
+        caps.iter()
+            .filter_map(|(rule, value)| value.as_bool().map(|b| (rule.as_str(), b))),
+        capability,
+    )
+}
+
+fn match_capability_rule_bool_map(
+    caps: &BTreeMap<String, bool>,
+    capability: &str,
+) -> (Option<String>, bool, Option<bool>) {
+    match_capability_rule_bool_iter(
+        caps.iter().map(|(rule, value)| (rule.as_str(), *value)),
+        capability,
+    )
+}
+
+fn match_capability_rule_bool_iter<'a, I>(
+    iter: I,
+    capability: &str,
+) -> (Option<String>, bool, Option<bool>)
+where
+    I: IntoIterator<Item = (&'a str, bool)>,
+{
+    let entries: Vec<(&'a str, bool)> = iter.into_iter().collect();
+    if let Some((_, v)) = entries.iter().find(|(rule, _)| *rule == capability) {
+        return (Some(capability.to_string()), false, Some(*v));
     }
 
     let mut best: Option<(&str, bool)> = None;
-    for (rule, value) in caps {
-        let Some(b) = value.as_bool() else {
-            continue;
-        };
+    for (rule, b) in entries {
         let Some(prefix) = rule.strip_suffix(".*") else {
             continue;
         };
         if capability == prefix || capability.starts_with(&format!("{prefix}.")) {
             match best {
                 Some((best_rule, _)) if best_rule.len() >= rule.len() => {}
-                _ => best = Some((rule.as_str(), b)),
+                _ => best = Some((rule, b)),
             }
         }
     }
@@ -324,6 +410,75 @@ fn match_capability_rule(
     match best {
         Some((rule, b)) => (Some(rule.to_string()), true, Some(b)),
         None => (None, false, None),
+    }
+}
+
+fn capability_ceiling_denial_reason_json_map(
+    caps: &HashMap<String, serde_json::Value>,
+    capability: &str,
+    source_kind: &str,
+    source_name: &str,
+    default_deny_on_no_match: bool,
+) -> Option<String> {
+    if caps.is_empty() {
+        return None;
+    }
+    let (matched_rule, _, matched_value) = match_capability_rule_json_map(caps, capability);
+    let allowed = match matched_value {
+        Some(v) => v,
+        None => !default_deny_on_no_match,
+    };
+    if allowed {
+        None
+    } else {
+        Some(match matched_rule {
+            Some(rule) => format!(
+                "Governance denial: capability '{}' denied by {} '{}' (rule '{}')",
+                capability, source_kind, source_name, rule
+            ),
+            None => format!(
+                "Governance denial: capability '{}' denied by {} '{}' (no matching allow rule)",
+                capability, source_kind, source_name
+            ),
+        })
+    }
+}
+
+fn capability_ceiling_denial_reason_bool_map(
+    caps: &BTreeMap<String, bool>,
+    capability: &str,
+    source_kind: &str,
+    source_name: &str,
+    default_deny_on_no_match: bool,
+) -> Option<String> {
+    if caps.is_empty() {
+        return if default_deny_on_no_match {
+            Some(format!(
+                "Governance denial: capability '{}' denied by {} '{}' (empty allowlist)",
+                capability, source_kind, source_name
+            ))
+        } else {
+            None
+        };
+    }
+    let (matched_rule, _, matched_value) = match_capability_rule_bool_map(caps, capability);
+    let allowed = match matched_value {
+        Some(v) => v,
+        None => !default_deny_on_no_match,
+    };
+    if allowed {
+        None
+    } else {
+        Some(match matched_rule {
+            Some(rule) => format!(
+                "Governance denial: capability '{}' denied by {} '{}' (rule '{}')",
+                capability, source_kind, source_name, rule
+            ),
+            None => format!(
+                "Governance denial: capability '{}' denied by {} '{}' (no matching allow rule)",
+                capability, source_kind, source_name
+            ),
+        })
     }
 }
 
@@ -463,6 +618,7 @@ mod tests {
             module_name: Some("planner".into()),
             root_name: None,
             grant_id: None,
+            import_capabilities: None,
         };
         let decision = mgr.capability_decision_for_subject(&subject, "runtime.db.query");
         assert_eq!(decision.subject_agent_id.as_deref(), Some("default"));

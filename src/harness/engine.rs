@@ -496,6 +496,8 @@ mod tests {
             ))),
             active_session_mode: std::sync::Arc::new(std::sync::Mutex::new(None)),
             active_harness_module: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            active_harness_root: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            active_import_capabilities: std::sync::Arc::new(std::sync::Mutex::new(None)),
             config: std::sync::Arc::new(crate::kernel::config::TurinConfig::default()),
             spawn_depth: 0,
         }

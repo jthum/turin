@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use mlua::{Function, Lua, LuaSerdeExt, MultiValue, Result as LuaResult, Table, Value};
@@ -55,7 +56,7 @@ fn import_module(
 
     enforce_import_policy(lua, name, &meta_value, opts.as_ref(), is_scoped_call)?;
 
-    if let Some(opts) = opts
+    if let Some(ref opts) = opts
         && let Ok(expected_root) = opts.get::<String>("root")
     {
         let actual_root = match &meta_value {
@@ -72,7 +73,8 @@ fn import_module(
         }
     }
 
-    wrap_imported_module(lua, name, module_value, meta_value)
+    let delegated_capabilities = delegated_import_capabilities(opts.as_ref())?;
+    wrap_imported_module(lua, name, module_value, meta_value, delegated_capabilities)
 }
 
 fn enforce_import_policy(
@@ -163,12 +165,17 @@ fn wrap_imported_module(
     module_name: &str,
     module_value: Value,
     meta_value: Value,
+    delegated_capabilities: Option<BTreeMap<String, bool>>,
 ) -> LuaResult<Value> {
     let Value::Table(module_table) = module_value else {
         return Ok(module_value);
     };
 
     let proxy = lua.create_table()?;
+    let module_root = match &meta_value {
+        Value::Table(t) => t.get::<String>("root").ok(),
+        _ => None,
+    };
     if !matches!(meta_value, Value::Nil) {
         proxy.set("__meta", meta_value)?;
     }
@@ -177,7 +184,13 @@ fn wrap_imported_module(
         let (key, value) = pair?;
         match value {
             Value::Function(func) => {
-                let wrapped = wrap_module_function(lua, module_name, func)?;
+                let wrapped = wrap_module_function(
+                    lua,
+                    module_name,
+                    module_root.clone(),
+                    delegated_capabilities.clone(),
+                    func,
+                )?;
                 proxy.set(key, wrapped)?;
             }
             other => {
@@ -189,13 +202,27 @@ fn wrap_imported_module(
     Ok(Value::Table(proxy))
 }
 
-fn wrap_module_function(lua: &Lua, module_name: &str, func: Function) -> LuaResult<Function> {
+fn wrap_module_function(
+    lua: &Lua,
+    module_name: &str,
+    module_root: Option<String>,
+    delegated_capabilities: Option<BTreeMap<String, bool>>,
+    func: Function,
+) -> LuaResult<Function> {
     let module_name = module_name.to_string();
+    let module_root = module_root.clone();
+    let delegated_capabilities = delegated_capabilities.clone();
     lua.create_function(move |lua, args: MultiValue| {
         let prev_module = get_active_harness_module(lua);
+        let prev_root = get_active_harness_root(lua);
+        let prev_caps = get_active_import_capabilities(lua);
         set_active_harness_module(lua, Some(module_name.as_str()));
+        set_active_harness_root(lua, module_root.as_deref());
+        set_active_import_capabilities(lua, delegated_capabilities.clone());
         let result = func.call::<MultiValue>(args);
         set_active_harness_module(lua, prev_module.as_deref());
+        set_active_harness_root(lua, prev_root.as_deref());
+        set_active_import_capabilities(lua, prev_caps);
         result
     })
 }
@@ -217,6 +244,77 @@ fn get_active_harness_module(lua: &Lua) -> Option<String> {
                 .ok()
                 .and_then(|l| l.clone())
         })
+}
+
+fn set_active_harness_root(lua: &Lua, root_name: Option<&str>) {
+    if let Some(app_data) = lua.app_data_ref::<crate::harness::globals::HarnessAppData>()
+        && let Ok(mut lock) = app_data.active_harness_root.lock()
+    {
+        *lock = root_name.map(|s| s.to_string());
+    }
+}
+
+fn get_active_harness_root(lua: &Lua) -> Option<String> {
+    lua.app_data_ref::<crate::harness::globals::HarnessAppData>()
+        .and_then(|app_data| {
+            app_data
+                .active_harness_root
+                .lock()
+                .ok()
+                .and_then(|l| l.clone())
+        })
+}
+
+fn set_active_import_capabilities(lua: &Lua, caps: Option<BTreeMap<String, bool>>) {
+    if let Some(app_data) = lua.app_data_ref::<crate::harness::globals::HarnessAppData>()
+        && let Ok(mut lock) = app_data.active_import_capabilities.lock()
+    {
+        *lock = caps;
+    }
+}
+
+fn get_active_import_capabilities(lua: &Lua) -> Option<BTreeMap<String, bool>> {
+    lua.app_data_ref::<crate::harness::globals::HarnessAppData>()
+        .and_then(|app_data| {
+            app_data
+                .active_import_capabilities
+                .lock()
+                .ok()
+                .and_then(|l| l.clone())
+        })
+}
+
+fn delegated_import_capabilities(
+    opts: Option<&Table>,
+) -> LuaResult<Option<BTreeMap<String, bool>>> {
+    let Some(opts) = opts else {
+        return Ok(None);
+    };
+    let caps_value = opts.get::<Value>("capabilities").unwrap_or(Value::Nil);
+    match caps_value {
+        Value::Nil => Ok(None),
+        Value::Table(t) => {
+            let mut caps = BTreeMap::new();
+            for pair in t.pairs::<String, Value>() {
+                let (key, value) = pair?;
+                match value {
+                    Value::Boolean(b) => {
+                        caps.insert(key, b);
+                    }
+                    _ => {
+                        return Err(mlua::Error::runtime(format!(
+                            "import_scoped opts.capabilities values must be booleans (key '{}')",
+                            key
+                        )));
+                    }
+                }
+            }
+            Ok(Some(caps))
+        }
+        _ => Err(mlua::Error::runtime(
+            "import_scoped opts.capabilities must be a table".to_string(),
+        )),
+    }
 }
 
 fn resolve_safe_path(root: &Path, path_str: &str) -> Option<PathBuf> {
