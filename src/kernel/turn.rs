@@ -3,11 +3,10 @@
 //! This module contains turn-level execution for the agent loop: LLM inference,
 //! stream processing, hook evaluation, parallel tool execution, and side effects.
 
+mod streaming;
 mod tool_execution;
 
 use anyhow::{Context, Result};
-use futures::StreamExt;
-use std::io::{self, Write};
 use std::time::Duration;
 use tracing::{debug, error, warn};
 
@@ -17,8 +16,8 @@ use crate::inference::provider::{self, InferenceContent, InferenceMessage, Infer
 use crate::kernel::session::SessionState;
 use crate::tools::ToolContext;
 
-use super::event::{KernelEvent, LifecycleEvent, StreamEvent};
-use super::{Kernel, PendingToolCall};
+use super::event::{KernelEvent, LifecycleEvent};
+use super::Kernel;
 
 #[derive(Debug, Clone)]
 pub(crate) struct TurnContext {
@@ -226,7 +225,7 @@ impl Kernel {
             &request_options_override,
         )?;
 
-        let mut stream = client
+        let stream = client
             .stream(
                 &model,
                 &system_prompt,
@@ -243,89 +242,11 @@ impl Kernel {
                 )
             })?;
 
-        let mut response_text = String::with_capacity(4096);
-        let mut pending_tool_calls: Vec<PendingToolCall> = Vec::new();
-        let mut is_thinking = false;
-
-        while let Some(event_result) = stream.next().await {
-            let event = event_result.with_context(|| {
-                format!(
-                    "inference stream event failure (provider='{}', model='{}')",
-                    provider_name, model
-                )
-            })?;
-            match &event {
-                KernelEvent::Stream(e) => match e {
-                    StreamEvent::ThinkingDelta { .. } => {
-                        if !self.json && !is_thinking {
-                            print!("\x1b[35m💭 Thinking...\x1b[0m");
-                            io::stdout().flush().ok();
-                            is_thinking = true;
-                        }
-                        self.persist_event(session, &event);
-                    }
-                    StreamEvent::MessageDelta { content_delta } => {
-                        if is_thinking {
-                            if !self.json {
-                                println!();
-                            }
-                            is_thinking = false;
-                        }
-                        if !self.json {
-                            print!("{}", content_delta);
-                            io::stdout().flush().ok();
-                        }
-                        self.persist_event(session, &event);
-                        response_text.push_str(content_delta);
-                    }
-                    StreamEvent::MessageEnd {
-                        input_tokens,
-                        output_tokens,
-                        ..
-                    } => {
-                        if is_thinking {
-                            if !self.json {
-                                println!();
-                            }
-                            is_thinking = false;
-                        }
-                        session.total_input_tokens += *input_tokens;
-                        session.total_output_tokens += *output_tokens;
-                        self.persist_event(session, &event);
-                    }
-                    StreamEvent::ToolCall { id, name, args } => {
-                        if is_thinking {
-                            if !self.json {
-                                println!();
-                            }
-                            is_thinking = false;
-                        }
-                        if !self.json {
-                            println!(
-                                "\n\x1b[33m⚒️  Tool Call:\x1b[0m \x1b[1m{}\x1b[0m({})",
-                                name, args
-                            );
-                        }
-                        self.persist_event(session, &event);
-                        pending_tool_calls.push(PendingToolCall {
-                            id: id.clone(),
-                            name: name.clone(),
-                            args: args.clone(),
-                        });
-                    }
-                    _ => {
-                        self.persist_event(session, &event);
-                    }
-                },
-                _ => {
-                    self.persist_event(session, &event);
-                }
-            }
-        }
-
-        if !self.json && !response_text.is_empty() && !response_text.ends_with('\n') {
-            println!();
-        }
+        let stream_output = self
+            .collect_turn_stream_output(session, &provider_name, &model, stream)
+            .await?;
+        let response_text = stream_output.response_text;
+        let pending_tool_calls = stream_output.pending_tool_calls;
 
         let has_tool_calls = !pending_tool_calls.is_empty();
 
