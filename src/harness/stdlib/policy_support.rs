@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use mlua::{Result as LuaResult, Value};
 
-use crate::harness::globals::{HarnessAppData, block_on_current, get_active_identity};
+use crate::harness::globals::{HarnessAppData, block_on_current};
+use crate::harness::stdlib::identity_support::get_active_identity;
 use crate::kernel::policy::PolicyScope;
 
 pub(crate) fn runtime_policy_snapshot(

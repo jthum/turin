@@ -1,6 +1,7 @@
 use mlua::{Lua, MultiValue, Result as LuaResult, Table, Value};
 
-use crate::harness::globals::{HarnessAppData, get_active_identity};
+use crate::harness::globals::HarnessAppData;
+use crate::harness::stdlib::identity_support::get_active_identity;
 use crate::kernel::identity::ContextSelector;
 
 pub(crate) fn normalize_selector(mut selector: ContextSelector) -> anyhow::Result<ContextSelector> {

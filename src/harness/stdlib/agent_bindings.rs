@@ -1,8 +1,8 @@
 use mlua::{Lua, Result as LuaResult, Table, Value};
 
-use crate::harness::globals::{
-    HarnessAppData, block_on_current, get_active_identity, identity_to_lua_table,
-    session_row_to_lua_table,
+use crate::harness::globals::{HarnessAppData, block_on_current};
+use crate::harness::stdlib::identity_support::{
+    get_active_identity, identity_to_lua_table, session_row_to_lua_table,
 };
 use crate::harness::stdlib::policy_support::{policy_bool, policy_u64, runtime_policy_snapshot};
 use crate::kernel::session::QueuedTask;
