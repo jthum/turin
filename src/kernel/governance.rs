@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -56,6 +58,8 @@ pub struct CapabilityDecision {
     pub subject_module_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject_root_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject_grant_id: Option<String>,
     pub profile: GovernanceProfile,
     pub enforcement_enabled: bool,
     pub matched_rule: Option<String>,
@@ -88,14 +92,45 @@ impl GovernanceSubject {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GovernanceGrantSnapshot {
+    pub grant_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issuer_agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issuer_module_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issuer_root_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub capabilities: BTreeMap<String, bool>,
+    pub issued_at_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_uses: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uses_remaining: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct ActiveGovernanceGrant {
+    snapshot: GovernanceGrantSnapshot,
+}
+
 #[derive(Debug, Clone)]
 pub struct GovernanceManager {
     config: GovernanceConfig,
+    grants: Arc<Mutex<HashMap<String, ActiveGovernanceGrant>>>,
 }
 
 impl GovernanceManager {
     pub fn new(config: GovernanceConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            grants: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     pub fn config(&self) -> &GovernanceConfig {
@@ -237,6 +272,13 @@ impl GovernanceManager {
             {
                 ceiling_denial_reason = Some(reason);
             }
+
+            if ceiling_denial_reason.is_none()
+                && let Some(grant_id) = subject.grant_id.as_deref()
+                && let Some(reason) = self.grant_ceiling_denial_reason(subject, grant_id, capability)
+            {
+                ceiling_denial_reason = Some(reason);
+            }
         }
 
         let effective_allowed = baseline_allowed && ceiling_denial_reason.is_none();
@@ -272,6 +314,7 @@ impl GovernanceManager {
             subject_agent_id: subject.agent_id.clone(),
             subject_module_name: subject.module_name.clone(),
             subject_root_name: subject.root_name.clone(),
+            subject_grant_id: subject.grant_id.clone(),
             profile: self.config.profile.clone(),
             enforcement_enabled: self.config.enforcement_enabled,
             matched_rule,
@@ -343,6 +386,217 @@ impl GovernanceManager {
             ))
         }
     }
+
+    pub fn issue_grant_for_subject(
+        &self,
+        subject: &GovernanceSubject,
+        capabilities: BTreeMap<String, bool>,
+        ttl_ms: Option<u64>,
+        max_uses: Option<u64>,
+        reason: Option<String>,
+    ) -> Result<GovernanceGrantSnapshot, String> {
+        if !self.config.grants.enabled {
+            return Err("Governance grants are disabled".to_string());
+        }
+        if capabilities.is_empty() {
+            return Err("grant capabilities must not be empty".to_string());
+        }
+        if !capabilities.values().any(|v| *v) {
+            return Err("grant capabilities must include at least one allowed capability".to_string());
+        }
+        if let Some(ttl_ms) = ttl_ms {
+            if ttl_ms == 0 {
+                return Err("grant ttl_ms must be greater than 0".to_string());
+            }
+            if let Some(max_ttl_ms) = self.config.grants.max_ttl_ms
+                && ttl_ms > max_ttl_ms
+            {
+                return Err(format!(
+                    "grant ttl_ms {} exceeds governance.grants.max_ttl_ms {}",
+                    ttl_ms, max_ttl_ms
+                ));
+            }
+        }
+        if let Some(max_uses) = max_uses
+            && max_uses == 0
+        {
+            return Err("grant max_uses must be greater than 0".to_string());
+        }
+        if self.config.grants.require_audit_reason
+            && reason.as_deref().is_none_or(|r| r.trim().is_empty())
+        {
+            return Err("grant reason is required by governance.grants.require_audit_reason".to_string());
+        }
+
+        let issued_at_ms = now_unix_ms()?;
+        let expires_at_ms = ttl_ms.map(|ttl| issued_at_ms.saturating_add(ttl));
+        let grant_id = format!("g_{}", uuid::Uuid::now_v7().simple());
+        let snapshot = GovernanceGrantSnapshot {
+            grant_id: grant_id.clone(),
+            issuer_agent_id: subject.agent_id.clone(),
+            issuer_module_name: subject.module_name.clone(),
+            issuer_root_name: subject.root_name.clone(),
+            reason: reason.filter(|r| !r.trim().is_empty()),
+            capabilities,
+            issued_at_ms,
+            expires_at_ms,
+            max_uses,
+            uses_remaining: max_uses,
+        };
+
+        let mut grants = self.grants.lock().map_err(|_| "governance grants mutex poisoned")?;
+        grants.insert(
+            grant_id,
+            ActiveGovernanceGrant {
+                snapshot: snapshot.clone(),
+            },
+        );
+        Ok(snapshot)
+    }
+
+    pub fn grant_snapshot_for_subject(
+        &self,
+        subject: &GovernanceSubject,
+        grant_id: &str,
+    ) -> Result<Option<GovernanceGrantSnapshot>, String> {
+        let mut grants = self.grants.lock().map_err(|_| "governance grants mutex poisoned")?;
+        let now_ms = now_unix_ms()?;
+        if let Some(entry) = grants.get(grant_id)
+            && grant_expired(&entry.snapshot, now_ms)
+        {
+            grants.remove(grant_id);
+            return Ok(None);
+        }
+        let Some(entry) = grants.get(grant_id) else {
+            return Ok(None);
+        };
+        ensure_grant_subject_access(subject, &entry.snapshot)?;
+        Ok(Some(entry.snapshot.clone()))
+    }
+
+    pub fn revoke_grant_for_subject(
+        &self,
+        subject: &GovernanceSubject,
+        grant_id: &str,
+    ) -> Result<bool, String> {
+        if !self.config.grants.enabled {
+            return Err("Governance grants are disabled".to_string());
+        }
+        let mut grants = self.grants.lock().map_err(|_| "governance grants mutex poisoned")?;
+        let Some(entry) = grants.get(grant_id) else {
+            return Ok(false);
+        };
+        ensure_grant_subject_access(subject, &entry.snapshot)?;
+        grants.remove(grant_id);
+        Ok(true)
+    }
+
+    pub fn enter_grant_for_subject(
+        &self,
+        subject: &GovernanceSubject,
+        grant_id: &str,
+    ) -> Result<GovernanceGrantSnapshot, String> {
+        if !self.config.grants.enabled {
+            return Err("Governance grants are disabled".to_string());
+        }
+        let mut grants = self.grants.lock().map_err(|_| "governance grants mutex poisoned")?;
+        let now_ms = now_unix_ms()?;
+        if let Some(entry) = grants.get(grant_id)
+            && grant_expired(&entry.snapshot, now_ms)
+        {
+            grants.remove(grant_id);
+            return Err(format!(
+                "Governance grant '{}' has expired",
+                grant_id
+            ));
+        }
+
+        let entry = grants
+            .get_mut(grant_id)
+            .ok_or_else(|| format!("Governance grant '{}' not found", grant_id))?;
+        ensure_grant_subject_access(subject, &entry.snapshot)?;
+
+        if let Some(uses_remaining) = entry.snapshot.uses_remaining.as_mut() {
+            if *uses_remaining == 0 {
+                return Err(format!(
+                    "Governance grant '{}' has no uses remaining",
+                    grant_id
+                ));
+            }
+            *uses_remaining -= 1;
+        }
+
+        let snapshot = entry.snapshot.clone();
+        if snapshot.uses_remaining == Some(0) {
+            grants.remove(grant_id);
+        }
+        Ok(snapshot)
+    }
+
+    fn grant_ceiling_denial_reason(
+        &self,
+        subject: &GovernanceSubject,
+        grant_id: &str,
+        capability: &str,
+    ) -> Option<String> {
+        let now_ms = now_unix_ms().ok()?;
+        let mut grants = self.grants.lock().ok()?;
+        let Some(entry) = grants.get(grant_id) else {
+            return Some(format!(
+                "Governance denial: grant '{}' is not active",
+                grant_id
+            ));
+        };
+
+        if grant_expired(&entry.snapshot, now_ms) {
+            grants.remove(grant_id);
+            return Some(format!(
+                "Governance denial: grant '{}' has expired",
+                grant_id
+            ));
+        }
+
+        if let Err(err) = ensure_grant_subject_access(subject, &entry.snapshot) {
+            return Some(format!("Governance denial: {}", err));
+        }
+
+        capability_ceiling_denial_reason_bool_map(
+            &entry.snapshot.capabilities,
+            capability,
+            "temporary grant",
+            grant_id,
+            true,
+        )
+    }
+}
+
+fn now_unix_ms() -> Result<u64, String> {
+    let dur = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| format!("system clock error: {}", e))?;
+    Ok(dur.as_millis().try_into().unwrap_or(u64::MAX))
+}
+
+fn grant_expired(grant: &GovernanceGrantSnapshot, now_ms: u64) -> bool {
+    grant
+        .expires_at_ms
+        .is_some_and(|expires_at_ms| now_ms >= expires_at_ms)
+}
+
+fn ensure_grant_subject_access(
+    subject: &GovernanceSubject,
+    grant: &GovernanceGrantSnapshot,
+) -> Result<(), String> {
+    if let Some(grant_agent_id) = grant.issuer_agent_id.as_deref() {
+        let subject_agent_id = subject.agent_id.as_deref().unwrap_or("<unknown>");
+        if subject_agent_id != grant_agent_id {
+            return Err(format!(
+                "grant '{}' was issued for agent '{}' and cannot be used by agent '{}'",
+                grant.grant_id, grant_agent_id, subject_agent_id
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn preset_capabilities_for_profile(
@@ -354,6 +608,10 @@ fn preset_capabilities_for_profile(
             caps.insert("runtime.db.*".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.*".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.policy.set".into(), serde_json::Value::Bool(true));
+            caps.insert(
+                "runtime.governance.grant.*".into(),
+                serde_json::Value::Bool(true),
+            );
             caps.insert("harness.import.*".into(), serde_json::Value::Bool(true));
             caps.insert("fs.read".into(), serde_json::Value::Bool(true));
             caps.insert("fs.write".into(), serde_json::Value::Bool(true));
@@ -367,6 +625,10 @@ fn preset_capabilities_for_profile(
             caps.insert("runtime.agent.status".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.spawn".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.policy.set".into(), serde_json::Value::Bool(true));
+            caps.insert(
+                "runtime.governance.grant.*".into(),
+                serde_json::Value::Bool(true),
+            );
             caps.insert(
                 "harness.import.unscoped".into(),
                 serde_json::Value::Bool(true),
@@ -387,6 +649,10 @@ fn preset_capabilities_for_profile(
             caps.insert("runtime.agent.status".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.spawn".into(), serde_json::Value::Bool(false));
             caps.insert("runtime.policy.set".into(), serde_json::Value::Bool(false));
+            caps.insert(
+                "runtime.governance.grant.*".into(),
+                serde_json::Value::Bool(true),
+            );
             caps.insert(
                 "harness.import.unscoped".into(),
                 serde_json::Value::Bool(false),
@@ -759,5 +1025,60 @@ mod tests {
 
         let default_policy = mgr.capability_decision_for_subject(&default_agent, "runtime.policy.set");
         assert!(default_policy.allowed);
+    }
+
+    #[test]
+    fn temporary_grants_apply_ceiling_and_consume_max_uses() {
+        let cfg = GovernanceConfig {
+            profile: GovernanceProfile::Balanced,
+            enforcement_enabled: true,
+            grants: GovernanceGrantsConfig {
+                enabled: true,
+                max_ttl_ms: Some(5_000),
+                require_audit_reason: true,
+            },
+            ..GovernanceConfig::default()
+        };
+        let mgr = GovernanceManager::new(cfg);
+        let subject = GovernanceSubject {
+            agent_id: Some("default".into()),
+            ..GovernanceSubject::default()
+        };
+
+        let grant = mgr
+            .issue_grant_for_subject(
+                &subject,
+                BTreeMap::from([("runtime.db.query".into(), true)]),
+                Some(1_000),
+                Some(2),
+                Some("one-shot test".into()),
+            )
+            .unwrap();
+
+        let entered = mgr.enter_grant_for_subject(&subject, &grant.grant_id).unwrap();
+        assert_eq!(entered.max_uses, Some(2));
+        assert_eq!(entered.uses_remaining, Some(1));
+
+        let granted_subject = GovernanceSubject {
+            grant_id: Some(grant.grant_id.clone()),
+            ..subject.clone()
+        };
+        let deny_policy = mgr.capability_decision_for_subject(&granted_subject, "runtime.policy.set");
+        assert!(!deny_policy.allowed);
+        assert!(
+            deny_policy
+                .reason
+                .as_deref()
+                .unwrap()
+                .contains("temporary grant")
+        );
+        let allow_query = mgr.capability_decision_for_subject(&granted_subject, "runtime.db.query");
+        assert!(allow_query.allowed);
+        assert_eq!(allow_query.subject_grant_id.as_deref(), Some(grant.grant_id.as_str()));
+
+        let second_enter = mgr.enter_grant_for_subject(&subject, &grant.grant_id);
+        assert!(second_enter.is_ok());
+        let third_enter = mgr.enter_grant_for_subject(&subject, &grant.grant_id);
+        assert!(third_enter.is_err());
     }
 }

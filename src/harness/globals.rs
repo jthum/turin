@@ -35,6 +35,7 @@ pub struct HarnessAppData {
     pub active_harness_module: Arc<std::sync::Mutex<Option<String>>>,
     pub active_harness_root: Arc<std::sync::Mutex<Option<String>>>,
     pub active_import_capabilities: Arc<std::sync::Mutex<Option<BTreeMap<String, bool>>>>,
+    pub active_governance_grant: Arc<std::sync::Mutex<Option<String>>>,
     pub clients: HashMap<String, ProviderClient>,
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     pub queue: ActiveSessionQueue,

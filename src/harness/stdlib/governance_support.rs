@@ -103,11 +103,16 @@ pub(crate) fn current_subject(app_data: &HarnessAppData) -> GovernanceSubject {
         .lock()
         .ok()
         .and_then(|lock| lock.clone());
+    let grant_id = app_data
+        .active_governance_grant
+        .lock()
+        .ok()
+        .and_then(|lock| lock.clone());
     GovernanceSubject {
         agent_id: Some(current_agent_id(app_data).to_string()),
         module_name,
         root_name,
-        grant_id: None,
+        grant_id,
         import_capabilities,
     }
 }

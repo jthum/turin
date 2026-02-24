@@ -1872,6 +1872,191 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_runtime_governance_temporary_grants_issue_use_revoke() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_governance_grants.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    std::fs::write(
+        harness_dir.join("main.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local before_dec, bde = runtime.governance.check("runtime.policy.set")
+                if before_dec == nil then error("pre-grant governance.check failed: " .. tostring(bde)) end
+                if not before_dec.allowed then
+                    error("runtime.policy.set should be allowed before temporary grant")
+                end
+
+                local grant, ge = runtime.governance.grant_issue({
+                    capabilities = {
+                        ["runtime.db.query"] = true
+                    },
+                    ttl_ms = 5000,
+                    max_uses = 1,
+                    reason = "narrow to db.query for one callback"
+                })
+                if grant == nil then error("grant_issue failed: " .. tostring(ge)) end
+                if grant.grant_id == nil then error("grant_issue missing grant_id") end
+                if grant.max_uses ~= 1 then error("grant_issue max_uses mismatch") end
+                if grant.uses_remaining ~= 1 then error("grant_issue uses_remaining mismatch") end
+
+                local snap, se = runtime.governance.grant_get(grant.grant_id)
+                if snap == nil then error("grant_get failed: " .. tostring(se)) end
+                if snap.grant_id ~= grant.grant_id then error("grant_get grant_id mismatch") end
+
+                local cb_ret = runtime.governance.with_grant(grant.grant_id, function()
+                    local granted_policy, gpe = runtime.governance.check("runtime.policy.set")
+                    if granted_policy == nil then error("granted policy check failed: " .. tostring(gpe)) end
+                    if granted_policy.allowed then
+                        error("temporary grant should deny runtime.policy.set")
+                    end
+                    if granted_policy.subject_grant_id ~= grant.grant_id then
+                        error("subject_grant_id mismatch inside with_grant")
+                    end
+                    if granted_policy.reason == nil or string.find(granted_policy.reason, "temporary grant", 1, true) == nil then
+                        error("temporary grant denial reason missing")
+                    end
+
+                    local granted_query, gqe = runtime.governance.check("runtime.db.query")
+                    if granted_query == nil then error("granted query check failed: " .. tostring(gqe)) end
+                    if not granted_query.allowed then
+                        error("temporary grant should allow runtime.db.query")
+                    end
+
+                    local ok, err = runtime.policy.set("grant.test", true)
+                    if ok ~= false or err == nil then
+                        error("runtime.policy.set should fail inside temporary grant")
+                    end
+                    if string.find(tostring(err), "temporary grant", 1, true) == nil then
+                        error("runtime.policy.set denial should mention temporary grant")
+                    end
+                    return "grant-callback-ok"
+                end)
+                if cb_ret ~= "grant-callback-ok" then
+                    error("with_grant callback return mismatch: " .. tostring(cb_ret))
+                end
+
+                local after_dec, ade = runtime.governance.check("runtime.policy.set")
+                if after_dec == nil then error("post-grant governance.check failed: " .. tostring(ade)) end
+                if not after_dec.allowed then
+                    error("runtime.policy.set should be restored after with_grant")
+                end
+                if after_dec.subject_grant_id ~= nil then
+                    error("subject_grant_id should be cleared after with_grant")
+                end
+
+                local ok_again, err_again = pcall(function()
+                    return runtime.governance.with_grant(grant.grant_id, function()
+                        return "unexpected"
+                    end)
+                end)
+                if ok_again then
+                    error("with_grant should fail after one-shot grant is consumed")
+                end
+                if err_again == nil or string.find(tostring(err_again), "not found", 1, true) == nil then
+                    error("consumed grant error should mention not found")
+                end
+
+                local snap2, se2 = runtime.governance.grant_get(grant.grant_id)
+                if snap2 ~= nil then error("consumed grant should not be returned by grant_get") end
+                if se2 == nil or string.find(tostring(se2), "not found", 1, true) == nil then
+                    error("consumed grant_get should report not found")
+                end
+
+                local grant2, g2e = runtime.governance.grant_issue({
+                    capabilities = { ["runtime.db.query"] = true },
+                    reason = "revoke test"
+                })
+                if grant2 == nil then error("second grant_issue failed: " .. tostring(g2e)) end
+                local revoked, re = runtime.governance.grant_revoke(grant2.grant_id)
+                if revoked ~= true then error("grant_revoke failed: " .. tostring(re)) end
+
+                local ok_revoked, err_revoked = pcall(function()
+                    return runtime.governance.with_grant(grant2.grant_id, function()
+                        return "unexpected"
+                    end)
+                end)
+                if ok_revoked then
+                    error("with_grant should fail for revoked grant")
+                end
+                if err_revoked == nil or string.find(tostring(err_revoked), "not found", 1, true) == nil then
+                    error("revoked grant error should mention not found")
+                end
+
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Governance grant test".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig {
+            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            enforcement_enabled: true,
+            grants: turin::kernel::config::GovernanceGrantsConfig {
+                enabled: true,
+                max_ttl_ms: Some(10_000),
+                require_audit_reason: true,
+            },
+            ..turin::kernel::config::GovernanceConfig::default()
+        },
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise temporary governance grants".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_import_scoped_caps.db");
