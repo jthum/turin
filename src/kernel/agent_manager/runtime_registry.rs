@@ -13,63 +13,16 @@ use super::{AgentManager, AgentRuntimeHandle, PeerAgentTaskEnvelope, PeerAgentTa
 
 impl AgentManager {
     pub(super) async fn ensure_runtime(&self, agent_id: &str) -> Result<Arc<AgentRuntimeHandle>> {
-        let handle = {
+        {
             let runtimes = self.runtimes.read().await;
-            if let Some(handle) = runtimes.get(agent_id) {
-                let running = handle
-                    .task
-                    .as_ref()
-                    .map(|t| !t.is_finished())
-                    .unwrap_or(false);
-                if running {
-                    Arc::clone(handle)
-                } else {
-                    drop(runtimes);
-                    let mut runtimes_write = self.runtimes.write().await;
-                    if let Some(existing) = runtimes_write.get(agent_id) {
-                        let running = existing
-                            .task
-                            .as_ref()
-                            .map(|t| !t.is_finished())
-                            .unwrap_or(false);
-                        if running {
-                            Arc::clone(existing)
-                        } else {
-                            let handle = Arc::new(self.start_agent(agent_id).await?);
-                            runtimes_write.insert(agent_id.to_string(), Arc::clone(&handle));
-                            handle
-                        }
-                    } else {
-                        let handle = Arc::new(self.start_agent(agent_id).await?);
-                        runtimes_write.insert(agent_id.to_string(), Arc::clone(&handle));
-                        handle
-                    }
-                }
-            } else {
-                drop(runtimes);
-                let mut runtimes_write = self.runtimes.write().await;
-                if let Some(handle) = runtimes_write.get(agent_id) {
-                    let running = handle
-                        .task
-                        .as_ref()
-                        .map(|t| !t.is_finished())
-                        .unwrap_or(false);
-                    if running {
-                        Arc::clone(handle)
-                    } else {
-                        let handle = Arc::new(self.start_agent(agent_id).await?);
-                        runtimes_write.insert(agent_id.to_string(), Arc::clone(&handle));
-                        handle
-                    }
-                } else {
-                    let handle = self.start_agent(agent_id).await?;
-                    let handle = Arc::new(handle);
-                    runtimes_write.insert(agent_id.to_string(), Arc::clone(&handle));
-                    handle
-                }
+            if let Some(handle) = runtimes.get(agent_id)
+                && Self::runtime_is_running(handle)
+            {
+                return Ok(Arc::clone(handle));
             }
-        };
-        Ok(handle)
+        }
+
+        self.ensure_runtime_with_write_lock(agent_id).await
     }
 
     /// Internal method to boot a new Kernel and background loop for a specific agent profile.
@@ -183,5 +136,29 @@ impl AgentManager {
             task: Some(join_handle),
             queued_tasks,
         })
+    }
+
+    async fn ensure_runtime_with_write_lock(
+        &self,
+        agent_id: &str,
+    ) -> Result<Arc<AgentRuntimeHandle>> {
+        let mut runtimes = self.runtimes.write().await;
+        if let Some(handle) = runtimes.get(agent_id)
+            && Self::runtime_is_running(handle)
+        {
+            return Ok(Arc::clone(handle));
+        }
+
+        let handle = Arc::new(self.start_agent(agent_id).await?);
+        runtimes.insert(agent_id.to_string(), Arc::clone(&handle));
+        Ok(handle)
+    }
+
+    fn runtime_is_running(handle: &AgentRuntimeHandle) -> bool {
+        handle
+            .task
+            .as_ref()
+            .map(|t| !t.is_finished())
+            .unwrap_or(false)
     }
 }
