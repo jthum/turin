@@ -1,3 +1,4 @@
+pub mod display;
 pub mod harness;
 pub mod inference;
 pub mod kernel;

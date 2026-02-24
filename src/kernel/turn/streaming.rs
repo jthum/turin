@@ -4,6 +4,7 @@ use std::pin::Pin;
 use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
 
+use crate::display;
 use crate::kernel::session::SessionState;
 
 use super::super::event::{KernelEvent, StreamEvent};
@@ -32,6 +33,7 @@ impl Kernel {
             pending_tool_calls: Vec::new(),
         };
         let mut is_thinking = false;
+        let ansi_stdout = display::stdout_ansi();
 
         while let Some(event_result) = stream.next().await {
             let event = event_result.with_context(|| {
@@ -44,7 +46,7 @@ impl Kernel {
                 KernelEvent::Stream(e) => match e {
                     StreamEvent::ThinkingDelta { .. } => {
                         if !self.json && !is_thinking {
-                            print!("\x1b[35m💭 Thinking...\x1b[0m");
+                            print!("{}", display::thinking_label(ansi_stdout));
                             io::stdout().flush().ok();
                             is_thinking = true;
                         }
@@ -97,10 +99,7 @@ impl Kernel {
                             is_thinking = false;
                         }
                         if !self.json {
-                            println!(
-                                "\n\x1b[33m⚒️  Tool Call:\x1b[0m \x1b[1m{}\x1b[0m({})",
-                                name, args
-                            );
+                            println!("{}", display::tool_call_line(name, args, ansi_stdout));
                         }
                         self.persist_event(session, &event);
                         output.pending_tool_calls.push(PendingToolCall {

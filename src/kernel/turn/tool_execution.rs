@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 use tracing::{info, warn};
 
+use crate::display;
 use crate::harness::verdict::Verdict;
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::session::SessionState;
@@ -54,13 +55,17 @@ impl Kernel {
     ) -> (Vec<FinalToolRecord>, Vec<(PendingToolCall, Verdict)>) {
         let mut immediate_records: Vec<FinalToolRecord> = Vec::new();
         let mut validated_calls: Vec<(PendingToolCall, Verdict)> = Vec::new();
+        let ansi_stdout = display::stdout_ansi();
 
         for tc in pending_tool_calls {
             let verdict = self.evaluate_tool_call(&tc.name, &tc.id, &tc.args);
             match &verdict {
                 Verdict::Reject(reason) => {
                     if !self.json {
-                        println!("\x1b[31m✗ Rejected by harness:\x1b[0m {}", reason);
+                        println!(
+                            "{}",
+                            display::rejection_line("✗ Rejected by harness:", reason, ansi_stdout)
+                        );
                     }
                     warn!(tool = %tc.name, reason = %reason, "Tool rejected by on_tool_call");
                     let msg = format!("[HARNESS REJECTED] Tool '{}' blocked: {}", tc.name, reason);
@@ -79,7 +84,7 @@ impl Kernel {
                     warn!(tool = %tc.name, reason = %reason, "Tool requires escalation");
                     if !self.prompt_for_approval(reason) {
                         if !self.json {
-                            println!("\x1b[31m✗ Denied by user\x1b[0m");
+                            println!("{}", display::approval_line(false, ansi_stdout));
                         }
                         let msg =
                             format!("[ESCALATION DENIED] Tool '{}' denied: {}", tc.name, reason);
@@ -95,7 +100,7 @@ impl Kernel {
                         });
                     } else {
                         if !self.json {
-                            println!("\x1b[32m✓ Approved by user\x1b[0m");
+                            println!("{}", display::approval_line(true, ansi_stdout));
                         }
                         validated_calls.push((tc.clone(), Verdict::Allow));
                     }
@@ -239,6 +244,7 @@ impl Kernel {
         mut final_by_id: HashMap<String, FinalToolRecord>,
     ) {
         let mut tool_results: Vec<InferenceContent> = Vec::new();
+        let ansi_stdout = display::stdout_ansi();
 
         for tc in pending_tool_calls {
             let Some(mut record) = final_by_id.remove(&tc.id) else {
@@ -300,11 +306,10 @@ impl Kernel {
             }
 
             if !self.json {
-                if record.is_error {
-                    println!("\x1b[31m✗ Tool '{}' failed\x1b[0m", record.name);
-                } else {
-                    println!("\x1b[32m✓ Tool '{}' complete\x1b[0m", record.name);
-                }
+                println!(
+                    "{}",
+                    display::tool_status_line(&record.name, !record.is_error, ansi_stdout)
+                );
             }
 
             tool_results.push(InferenceContent::ToolResult {

@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use futures::Stream;
 use tracing::{debug, error, warn};
 
+use crate::display;
 use crate::harness::context::{ContextWrapper, RequestOptionsOverride};
 use crate::harness::verdict::Verdict;
 use crate::inference::provider;
@@ -72,8 +73,8 @@ impl Kernel {
     fn emit_turn_start_and_gate(&self, session: &mut SessionState, turn_ctx: &TurnContext) -> bool {
         if !self.json {
             println!(
-                "\n\x1b[36m\x1b[1m── Turn {} ──\x1b[0m",
-                session.turn_index + 1
+                "\n{}",
+                display::turn_header(session.turn_index + 1, display::stdout_ansi())
             );
         }
 

@@ -2,8 +2,10 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
+use std::path::Path;
 use std::path::PathBuf;
 
+use turin::display;
 use turin::kernel::Kernel;
 use turin::kernel::config::TurinConfig;
 
@@ -130,6 +132,42 @@ fn init_tracing(log_level: &str, log_file: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+fn load_config_with_overrides(
+    config_path: &Path,
+    model: Option<String>,
+    provider: Option<String>,
+) -> Result<TurinConfig> {
+    let mut config =
+        TurinConfig::from_file(config_path).with_context(|| "Failed to load config")?;
+
+    if let Some(m) = model {
+        config.agent.model = m;
+    }
+    if let Some(p) = provider {
+        config.agent.provider = p;
+        config.validate()?;
+    }
+
+    Ok(config)
+}
+
+fn print_session_summary(session: &turin::kernel::session::SessionState) {
+    let ansi = display::stdout_ansi();
+    println!("\n{}", display::header("Session Summary", ansi));
+    println!(
+        "  {}  {} ({} in, {} out)",
+        display::bold("Total Tokens:", ansi),
+        session.total_input_tokens + session.total_output_tokens,
+        session.total_input_tokens,
+        session.total_output_tokens
+    );
+    println!(
+        "  {}         {}",
+        display::bold("Turns:", ansi),
+        session.turn_index
+    );
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -144,19 +182,7 @@ async fn main() -> Result<()> {
             verbose: _,
             json,
         } => {
-            // Load config
-            let mut config =
-                TurinConfig::from_file(&config).with_context(|| "Failed to load config")?;
-
-            // Apply CLI overrides
-            if let Some(m) = model {
-                config.agent.model = m;
-            }
-            if let Some(p) = provider {
-                config.agent.provider = p;
-                // Re-validate after override
-                config.validate()?;
-            }
+            let config = load_config_with_overrides(&config, model, provider)?;
 
             tracing::info!(
                 model = %config.agent.model,
@@ -178,14 +204,7 @@ async fn main() -> Result<()> {
             kernel.run(&mut session, Some(prompt)).await?;
             kernel.end_session(&mut session).await?;
             if !json {
-                println!("\n\x1b[36m\x1b[1m── Session Summary ──\x1b[0m");
-                println!(
-                    "  \x1b[1mTotal Tokens:\x1b[0m  {} ({} in, {} out)",
-                    session.total_input_tokens + session.total_output_tokens,
-                    session.total_input_tokens,
-                    session.total_output_tokens
-                );
-                println!("  \x1b[1mTurns:\x1b[0m         {}", session.turn_index);
+                print_session_summary(&session);
             }
             Ok(())
         }
@@ -195,18 +214,7 @@ async fn main() -> Result<()> {
             provider,
             verbose,
         } => {
-            // Load config
-            let mut config =
-                TurinConfig::from_file(&config).with_context(|| "Failed to load config")?;
-
-            // Apply CLI overrides
-            if let Some(m) = model {
-                config.agent.model = m;
-            }
-            if let Some(p) = provider {
-                config.agent.provider = p;
-                config.validate()?;
-            }
+            let config = load_config_with_overrides(&config, model, provider)?;
 
             tracing::info!(
                 model = %config.agent.model,
@@ -234,9 +242,10 @@ async fn main() -> Result<()> {
             kernel.start_session(&mut session).await?;
 
             use turin::inference::provider::{InferenceContent, InferenceRole};
+            let repl_ansi = display::stdout_ansi();
 
             loop {
-                let readline = rl.readline("\x1b[36m\x1b[1mturin\x1b[0m\x1b[34m>\x1b[0m ");
+                let readline = rl.readline(&display::repl_prompt(repl_ansi));
                 match readline {
                     Ok(line) => {
                         let line = line.trim();
@@ -395,14 +404,7 @@ async fn main() -> Result<()> {
                 }
             }
             kernel.end_session(&mut session).await?;
-            println!("\n\x1b[36m\x1b[1m── Session Summary ──\x1b[0m");
-            println!(
-                "  \x1b[1mTotal Tokens:\x1b[0m  {} ({} in, {} out)",
-                session.total_input_tokens + session.total_output_tokens,
-                session.total_input_tokens,
-                session.total_output_tokens
-            );
-            println!("  \x1b[1mTurns:\x1b[0m         {}", session.turn_index);
+            print_session_summary(&session);
             Ok(())
         }
         Commands::Script {
@@ -411,18 +413,7 @@ async fn main() -> Result<()> {
             model,
             provider,
         } => {
-            // Load config
-            let mut config =
-                TurinConfig::from_file(&config).with_context(|| "Failed to load config")?;
-
-            // Apply CLI overrides
-            if let Some(m) = model {
-                config.agent.model = m;
-            }
-            if let Some(p) = provider {
-                config.agent.provider = p;
-                config.validate()?;
-            }
+            let config = load_config_with_overrides(&config, model, provider)?;
 
             // Build kernel
             let mut kernel = Kernel::builder(config).json_mode(false).build()?;

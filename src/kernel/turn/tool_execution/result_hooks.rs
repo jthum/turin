@@ -2,20 +2,26 @@ use std::io::{self, BufRead, Write};
 
 use tracing::warn;
 
+use crate::display;
 use crate::harness::verdict::Verdict;
 use crate::kernel::Kernel;
 
 impl Kernel {
     pub(super) fn prompt_for_approval(&self, reason: &str) -> bool {
         warn!(reason = %reason, "Escalation requires user approval");
+        let ansi_stderr = display::stderr_ansi();
         eprint!(
-            "\x1b[33m\x1b[1m! Approval Required:\x1b[0m {} Allow? (y/n): ",
+            "{} {} Allow? (y/n): ",
+            display::approval_prompt_prefix(ansi_stderr),
             reason
         );
         io::stderr().flush().ok();
 
-        let mut input = String::new();
-        io::stdin().lock().read_line(&mut input).is_ok() && input.trim().eq_ignore_ascii_case("y")
+        tokio::task::block_in_place(|| {
+            let mut input = String::new();
+            io::stdin().lock().read_line(&mut input).is_ok()
+                && input.trim().eq_ignore_ascii_case("y")
+        })
     }
 
     pub(super) fn apply_tool_result_hook(

@@ -41,8 +41,10 @@ impl Kernel {
     /// Evaluate harness `on_token_usage` hook.
     ///
     /// This fires after each turn. If a harness rejects, it logs a warning.
-    /// Budget enforcement via token hooks is informational in v0.1; a REJECT here
-    /// logs but doesn't halt the loop.
+    ///
+    /// The current default behavior is informational (REJECT logs but does not halt the loop).
+    /// This is intentional for flexibility-first operation; future enforcement modes should be
+    /// exposed as explicit runtime/governance knobs rather than hard-coded kernel policy.
     pub fn evaluate_token_usage(&self, input_tokens: u64, output_tokens: u64) {
         let harness = self.lock_harness();
         if let Some(ref engine) = *harness {

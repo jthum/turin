@@ -49,7 +49,10 @@ pub struct Kernel {
     pub(crate) agent_manager: Arc<AgentManager>,
     pub(crate) policy_manager: Arc<RuntimePolicyManager>,
     pub(crate) governance_manager: Arc<GovernanceManager>,
-    /// Thread-safe harness engine for hot-reloading
+    /// Thread-safe harness engine for hot-reloading.
+    ///
+    /// Uses `std::sync::Mutex` intentionally: harness/Luau execution is synchronous and
+    /// the engine is accessed from sync hook/tool paths. Do not hold this lock across `.await`.
     pub(crate) harness: Arc<std::sync::Mutex<Option<HarnessEngine>>>,
     /// Watcher handle to keep it alive
     pub(crate) check_watcher: Option<RecommendedWatcher>,
@@ -106,6 +109,8 @@ impl Kernel {
     /// Panics if the mutex is poisoned (previous holder panicked).
     /// A poisoned harness is an unrecoverable state — continuing would
     /// risk executing tool calls with a partially-updated engine.
+    ///
+    /// Callers must keep the guard's lifetime fully synchronous (no `.await` while held).
     pub fn lock_harness(&self) -> std::sync::MutexGuard<'_, Option<HarnessEngine>> {
         self.harness.lock().expect("harness mutex poisoned")
     }
