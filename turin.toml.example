@@ -1,34 +1,52 @@
-# Turin Example Configuration
-# Copy this to turin.toml and customize.
+# Turin Example Configuration (v0.15.0)
+# Copy this file to turin.toml and customize for your runtime.
 
 [agent]
+id = "default"
 system_prompt = "You are a helpful coding assistant."
-model = "claude-sonnet-4-20250514"  # or "gpt-4o"
-provider = "anthropic"  # or "openai"
+model = "claude-sonnet-4-20250514"   # or any configured provider model
+provider = "anthropic"               # key under [providers.*]
+mode = "auto"                        # auto | stateful | stateless
+# harness_dir = ".turin/harnesses-reviewer"  # optional peer-agent override
+# idle_grace_secs = 60                       # optional peer runtime idle shutdown grace
 
+# Optional extended thinking (provider/model dependent)
 # [agent.thinking]
-# enabled = false
-# budget_tokens = 1024  # For extended thinking models
+# enabled = true
+# budget_tokens = 2048
+
+# Optional peer agents (multi-agent runtime)
+# [agents.reviewer]
+# id = "reviewer"
+# system_prompt = "You are a strict code reviewer. Focus on regressions."
+# model = "claude-sonnet-4-20250514"
+# provider = "anthropic"
+# mode = "stateful"
+# harness_dir = ".turin/harnesses-reviewer"
+# idle_grace_secs = 120
 
 [kernel]
 workspace_root = "."
 max_turns = 50
 heartbeat_interval_secs = 30
+initial_spawn_depth = 0
 
 [persistence]
 database_path = ".turin/state.db"
 
 [harness]
 directory = ".turin/harnesses"
-# hot_reload = false  # Future feature
+# fs_root defaults to workspace_root; set to "/" for unrestricted access (not recommended by default)
+# fs_root = "."
 
+# Provider definitions are keyed by name and referenced by [agent].provider / [agents.*].provider
 [providers.anthropic]
 type = "anthropic"
 api_key_env = "ANTHROPIC_API_KEY"
-# base_url = "https://api.anthropic.com/v1"  # Override for Anthropic-compatible endpoints
-# Note: Anthropic-compatible base_url should include the version path segment (usually /v1)
+# base_url = "https://api.anthropic.com/v1"
+# Anthropic-compatible proxies should usually include /v1
 # MiniMax example: "https://api.minimax.io/anthropic/v1"
-# max_retries = 2                # Optional transport tuning
+# max_retries = 2
 # request_timeout_secs = 60
 # total_timeout_secs = 120
 # [providers.anthropic.headers]
@@ -48,7 +66,56 @@ api_key_env = "OPENAI_API_KEY"
 type = "mock"
 # base_url = "Optional custom mock response"
 
-# You can also define multiple instances of the same provider type
-# [providers.anthropic-backup]
-# type = "anthropic"
-# api_key_env = "ANTHROPIC_BACKUP_KEY"
+# Optional embeddings (for semantic memory)
+# [embeddings]
+# type = "openai"    # or "no_op"
+
+# -----------------------------------------------------------------------------
+# Governance (opt-in, flexibility-first)
+# -----------------------------------------------------------------------------
+# Leave disabled for open experimentation; enable and tune when you want stronger controls.
+
+[governance]
+profile = "open"              # open | balanced | governed | custom
+enforcement_enabled = false
+
+[governance.audit]
+mode = "off"                  # off | observational | immutable
+include_capability_context = false
+# persist_before_hooks = true  # optional override
+
+[governance.import]
+mode = "legacy"               # legacy | mixed | scoped
+# default_root = "core"
+allow_unscoped_in_open = true
+
+# Example roots for import_scoped(...) governance attribution
+# [governance.roots.core]
+# path = ".turin/harnesses/core"
+# writable_hint = false
+# default_profile = "balanced"
+# max_capabilities = { "runtime.db.query" = true, "runtime.db.exec" = false }
+
+# [governance.roots.plugins]
+# path = ".turin/harnesses/plugins"
+# writable_hint = true
+# max_capabilities = { "runtime.db.query" = true, "runtime.db.exec" = false, "fs.write" = true }
+
+# Named capability profiles (used by governance.agents.*.capability_profile)
+# [governance.capability_profiles.reviewer]
+# "runtime.db.query" = true
+# "runtime.db.exec" = false
+# "fs.read" = true
+# "fs.write" = false
+# "shell.exec" = false
+
+# Per-agent ceilings / allowlists (apply when governance enforcement is enabled)
+# [governance.agents.reviewer]
+# capability_profile = "reviewer"
+# allowed_child_agents = []
+# max_capabilities = { "runtime.policy.set" = false }
+
+[governance.grants]
+enabled = false
+# max_ttl_ms = 60000
+# require_audit_reason = true

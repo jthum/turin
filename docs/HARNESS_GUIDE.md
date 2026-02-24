@@ -1,676 +1,358 @@
-# Writing Harness Scripts
+# Writing Harness Scripts (v0.15.0)
 
-This guide covers everything you need to write Turin harness scripts — from basic governance to advanced workflow orchestration.
+This guide covers how to build production-quality Turin harnesses using the canonical `runtime.*` API, stable hook lifecycle, and opt-in governance features.
 
----
+## What a Harness Does
 
-## What Is a Harness?
+A Turin harness is a set of Luau scripts that define agent behavior.
 
-A harness is a Lua script that hooks into the kernel's event lifecycle. When the kernel is about to do something — call an LLM, execute a tool, start a session — it fires an event through the harness engine. Your script intercepts that event and returns a verdict: allow it, reject it, escalate it to a human, or modify it.
+Harness scripts can:
 
-But harnesses go beyond governance. The `on_turn_prepare` hook gives you full control over what the LLM sees. Combined with the kernel's primitives (filesystem, database, memory, session management, subagents), harness scripts define the agent's entire behavior: workflow, personality, context strategy, memory policy.
+- govern tool execution (`on_tool_call`, `on_tool_result`)
+- shape context before every inference (`on_turn_prepare`)
+- route providers/models and transport options per turn
+- orchestrate plans and tasks (`on_plan_submit`, queue steering hooks)
+- use memory/KV/DB primitives for stateful behavior
+- orchestrate peer agents
+- observe all kernel events (`on_kernel_event`)
 
-The kernel provides the physics. Your harness defines the universe.
+The kernel provides execution primitives. The harness provides policy and workflow.
 
----
+## Harness Layout and Loading
 
-## Getting Started
-
-### Setup
-
-1. Create a harness directory (default: `.turin/harnesses/`)
-2. Add `.lua` files to the directory
-3. Ensure your `turin.toml` points to it:
+Default directory:
 
 ```toml
 [harness]
 directory = ".turin/harnesses"
 ```
 
-Scripts load in **alphabetical order**. Name them with numeric prefixes to control evaluation order:
+Recommended structure:
 
-```
+```text
 .turin/harnesses/
-├── 01_safety.lua       # Hard constraints (evaluated first)
-├── 02_budget.lua       # Cost controls
-└── 03_workflow.lua     # Context engineering and workflows
+├── 01_safety.lua
+├── 02_routing.lua
+├── 03_memory.lua
+├── 10_workflow.lua
+└── lib/
+    ├── selectors.lua
+    └── sanitizers.lua
 ```
 
-### Your First Harness
+Scripts are loaded as modules and can export functions/tables. Hooks can exist in globals or returned module tables (engine discovers them).
 
-```lua
--- .turin/harnesses/01_safety.lua
-
-function on_tool_call(call)
-    if call.name == "shell_exec" then
-        local cmd = call.args.command
-        if cmd:find("rm %-rf") then
-            return REJECT, "Destructive command blocked by safety harness"
-        end
-    end
-    return ALLOW
-end
-```
-
-That's it. Save the file, and the kernel will physically prevent `rm -rf` from executing. The rejection reason is fed back to the LLM so it can try a different approach.
-
-### Hot Reload
-
-You can modify harness scripts while the agent is running:
-
-- **Automatic**: If file watching is active, changes are picked up automatically
-- **Manual**: Type `/reload` in the REPL
-
-If your new script has a syntax error, the old harness keeps running and an error is logged. You won't crash the agent.
-
----
-
-## Hooks Reference
-
-For lifecycle hooks, payloads now include `event.identity` with:
-`session_id` and optional `agent_id`, `user_id`, `channel_id`, `tenant_id`, `run_id`.
-
-### `on_session_start(event)`
-
-Fires once when a session begins.
-
-```lua
-function on_session_start(event)
-    -- event.session_id: string
-    log("Session started: " .. event.session_id)
-
-    -- Queue follow-up tasks
-    session.queue("Review the test results")
-
-    return ALLOW
-end
-```
-
-### `on_turn_prepare(ctx)`
-
-Fires before every LLM call. This is the most powerful hook — it gives you access to the full context and lets you modify it.
-
-```lua
-function on_turn_prepare(ctx)
-    -- Readable properties:
-    -- ctx.model: string (current model)
-    -- ctx.system_prompt: string (current system prompt)
-    -- ctx.messages: table (message history)
-    -- ctx.token_count: number (current context size)
-    -- ctx.provider: string (current provider name)
-    -- ctx.thinking_budget: number (thinking token budget)
-    -- ctx.request_options: table (request overrides for this turn)
-    --   request_options.headers: table<string, string>
-    --   request_options.max_retries: number | nil
-    --   request_options.request_timeout_secs: number | nil
-    --   request_options.total_timeout_secs: number | nil
-
-    -- Writable properties:
-    -- ctx.system_prompt = "new prompt"
-    -- ctx.provider = "different-provider"
-    -- ctx.thinking_budget = 8192
-    -- ctx.request_options = {
-    --   headers = { ["anthropic-beta"] = "output-128k-2025-02-19" },
-    --   max_retries = 1,
-    --   request_timeout_secs = 45,
-    -- }
-
-    -- Methods:
-    -- ctx:add_message({ role = "user", content = {{type="text", text="..."}} })
-    -- ctx:summarize() → string (calls LLM to summarize current messages)
-
-    return ALLOW
-end
-```
-
-Inject request headers dynamically:
-```lua
-function on_turn_prepare(ctx)
-    if ctx.provider == "anthropic" and ctx.thinking_budget > 0 then
-        local opts = ctx.request_options or {}
-        opts.headers = opts.headers or {}
-        opts.headers["anthropic-beta"] = "output-128k-2025-02-19"
-        ctx.request_options = opts
-    end
-    return ALLOW
-end
-```
-
-**Common patterns:**
-
-Inject project instructions:
-```lua
-function on_turn_prepare(ctx)
-    if fs.exists("TURIN.md") then
-        ctx.system_prompt = ctx.system_prompt .. "\n\n" .. fs.read("TURIN.md")
-    end
-    return ALLOW
-end
-```
-
-Switch provider based on task:
-```lua
-function on_turn_prepare(ctx)
-    local msgs = ctx.messages
-    if msgs and #msgs > 0 then
-        local last = msgs[#msgs]
-        -- Use a cheaper model for simple questions
-        if type(last.content) == "string" and #last.content < 100 then
-            ctx.provider = "fast"
-        end
-    end
-    return ALLOW
-end
-```
-
-### `on_tool_call(call)`
-
-Fires when the LLM requests a tool execution. This is where governance lives.
+## Your First Harness
 
 ```lua
 function on_tool_call(call)
-    -- call.id: string (tool call ID)
-    -- call.name: string (tool name)
-    -- call.args: table (tool arguments)
-
-    -- Block specific tools
-    if call.name == "shell_exec" then
-        return REJECT, "Shell access is disabled"
+  if call.name == "shell_exec" then
+    local cmd = call.args.command or ""
+    if cmd:find("rm %-rf") then
+      return REJECT, "destructive command blocked"
     end
-
-    -- Modify arguments
-    if call.name == "write_file" then
-        -- Force all writes to a sandbox directory
-        call.args.path = "sandbox/" .. call.args.path
-        return MODIFY, call.args
-    end
-
-    -- Escalate to human
-    if call.name == "write_file" and call.args.path:find("/src/") then
-        return ESCALATE, "Human approval required for source file edits"
-    end
-
-    return ALLOW
+  end
+  return ALLOW
 end
 ```
 
-### `on_tool_result(result)`
+## Module Imports (`import` / `import_scoped`)
 
-Fires after a tool executes. Useful for logging and post-processing.
+### `import(name)`
+
+Basic module import by harness module name.
+
+```lua
+local helpers = import("helpers")
+```
+
+### `import_scoped(name, opts)`
+
+Import with governance root and optional delegated capability ceiling.
+
+```lua
+local plugin = import_scoped("plugins/reformatter", {
+  root = "plugins_writable",
+  capabilities = {
+    ["runtime.db.query"] = true,
+    ["runtime.db.exec"] = false,
+    ["fs.read"] = true,
+    ["fs.write"] = true,
+  }
+})
+```
+
+Use this when you want self-evolving or semi-trusted harness modules with constrained authority.
+
+## Hook Patterns
+
+## 1. Tool Governance (`on_tool_call`)
+
+```lua
+function on_tool_call(call)
+  if call.name == "shell_exec" then
+    local cmd = call.args.command or ""
+    if cmd:find("sudo") then
+      return REJECT, "sudo not allowed"
+    end
+    if cmd:find("git push") then
+      return ESCALATE, "git push requires approval"
+    end
+  end
+  return ALLOW
+end
+```
+
+## 2. Tool Result Sanitization (`on_tool_result`)
 
 ```lua
 function on_tool_result(result)
-    -- result.id: string
-    -- result.output: string
-    -- result.is_error: boolean
-
-    if result.is_error then
-        log("Tool error: " .. result.output)
-    end
-    return ALLOW
+  if result.name == "read_file" and not result.is_error then
+    local out = result.output or ""
+    out = out:gsub("API_KEY=%S+", "API_KEY=[REDACTED]")
+    return MODIFY, { output = out, is_error = false }
+  end
+  return ALLOW
 end
 ```
 
-### `on_plan_submit(payload)`
-
-Fires when the agent calls `submit_plan` to propose a plan.
+## 3. Context Engineering (`on_turn_prepare`)
 
 ```lua
-function on_plan_submit(payload)
-    -- payload.title: string
-    -- payload.tasks: table (list of task strings)
+function on_turn_prepare(ctx)
+  if ctx.is_first_turn_in_task then
+    ctx.system_prompt = ctx.system_prompt .. "\n\nAlways explain your plan before editing files."
+  end
 
-    -- Review the plan
-    log("Agent proposed: " .. payload.title)
-    for i, task in ipairs(payload.tasks) do
-        log("  " .. i .. ". " .. task)
-    end
+  -- Dynamic provider routing (example)
+  if ctx.prompt and ctx.prompt:find("fast") then
+    ctx.provider = "openai_fast"
+  end
 
-    -- Modify the plan
-    if payload.title == "Refactor" then
-        return MODIFY, { "Write tests first", "Then refactor", "Run tests again" }
-    end
+  -- Request transport tuning for this turn
+  ctx.request_options = {
+    headers = { ["x-run-purpose"] = "interactive" },
+    request_timeout_secs = 45,
+    total_timeout_secs = 90,
+  }
 
-    -- Reject the plan
-    if #payload.tasks > 10 then
-        return REJECT, "Plan is too complex. Break it into smaller chunks."
-    end
-
-    return ALLOW
+  return ALLOW
 end
 ```
 
-### `on_task_complete(event)`
+Note: `ctx.provider` and other mutable fields are part of the `ContextWrapper` contract. `ctx.model` is currently readable but not writable. See `docs/HOOKS.md` for exact semantics.
 
-Fires once per task when it reaches a terminal status (`success`, `rejected`, `max_turns`, `error`, `cancelled`).
+## 4. Plan Review (`on_plan_submit`)
 
 ```lua
-function on_task_complete(event)
-    -- event.session_id: string
-    -- event.task_id: string
-    -- event.plan_id: string | nil
-    -- event.status: string
+function on_plan_submit(plan)
+  if #plan.tasks > 20 then
+    return REJECT, "plan too large"
+  end
 
-    -- Retry policy example
-    if event.status == "error" then
-        return MODIFY, {
-            "Investigate failure for task " .. event.task_id,
-            "Re-attempt task " .. event.task_id .. " with a narrower scope"
-        }
-    end
-
-    return ALLOW
+  -- Ensure plan does not wipe current queue by default
+  return MODIFY, {
+    title = plan.title,
+    tasks = plan.tasks,
+    clear_existing = false,
+  }
 end
 ```
 
-### `on_inference_error(event)`
-
-Fires when a task fails with a runtime inference/provider error. This hook can enqueue fallback tasks before the run exits.
+## 5. Recovery (`on_inference_error`)
 
 ```lua
 function on_inference_error(event)
-    -- event.session_id: string
-    -- event.task_id: string
-    -- event.plan_id: string | nil
-    -- event.turn_count: number
-    -- event.error: string
+  log("inference error on task " .. event.task_id .. ": " .. event.error)
 
-    return MODIFY, {
-        {
-            title = "Fallback with backup provider",
-            prompt = "Retry the failed task using provider 'openai-backup'."
-        }
-    }
+  -- Queue a fallback task
+  return MODIFY, {
+    { prompt = "Retry the task with a shorter plan and no shell commands." }
+  }
 end
 ```
 
-### `on_all_tasks_complete(event)`
+## Using the Canonical Runtime API (`runtime.*`)
 
-Fires when the global queue is empty.
+Prefer `runtime.*` in new harnesses, even though aliases remain available.
+
+### Context selectors
 
 ```lua
-function on_all_tasks_complete(event)
-    -- event.session_id: string
-    -- event.turn_count: number
+local ctx = runtime.context("agent", "coder", {
+  namespace = "project_memory",
+  visibility = "private",
+})
+```
 
-    -- Optional end-of-run anchoring
-    if turin.memory and turin.agent then
-        local history = turin.session.load(event.session_id)
-        if history and #history > 2 then
-            local summary = turin.agent.spawn(
-                "Summarize this session in one sentence: " .. json.encode(history),
-                { system_prompt = "You are a concise summarizer.", max_turns = 1 }
-            )
-            if summary then
-                turin.memory.store(summary, { session_id = event.session_id })
-            end
-        end
-    end
+### Memory and KV
 
-    return ALLOW
+```lua
+local hits, err = runtime.memory.search("compiler error parsing", ctx, { limit = 5 })
+if hits then
+  for _, row in ipairs(hits) do
+    log((row.score or 0) .. " " .. (row.content or ""))
+  end
+end
+
+local ok, kerr = runtime.kv.set("last_error", "E0425", ctx)
+```
+
+### Multi-DB access
+
+```lua
+local handle, err = runtime.db.open({ path = "scratch/analysis.db" })
+if not handle then
+  return REJECT, err
+end
+
+local changed, e = runtime.db.exec(
+  "create table if not exists notes (id integer primary key, text text)",
+  nil,
+  { handle = handle.handle }
+)
+
+local rows, qerr = runtime.db.query(
+  "select * from notes where id > :min_id",
+  { min_id = 0 },
+  { handle = handle.handle }
+)
+```
+
+### Peer-agent orchestration
+
+```lua
+local task_id, err = runtime.agent.submit("reviewer", {
+  prompt = "Review the proposed patch and list regressions",
+  title = "regression review",
+}, {
+  capabilities = {
+    ["runtime.db.query"] = true,
+    ["runtime.db.exec"] = false,
+    ["fs.read"] = true,
+    ["fs.write"] = false,
+  }
+})
+
+if task_id then
+  local result, aerr = runtime.agent.await(task_id, { timeout_ms = 30000 })
+  if result then
+    log(json.encode(result))
+  end
 end
 ```
 
-### `on_token_usage(usage)`
+## Using Top-Level Aliases (Ergonomic)
 
-Fires after each LLM call with token accounting.
+Turin keeps ergonomic aliases for common workflows.
+
+### Agent-scoped defaults
 
 ```lua
-function on_token_usage(usage)
-    -- usage.input_tokens: number
-    -- usage.output_tokens: number
-    -- usage.total_tokens: number
-    -- usage.cost_usd: number (estimated)
-    return ALLOW
+local ok, err = kv.set("task_state", "working")
+local rows, merr = memory.search("build failure")
+```
+
+### Session/User scoped aliases
+
+```lua
+local ok, err = session.kv.set("step", "planning")
+local profile, perr = user.kv.get("profile")
+```
+
+These aliases rely on the active runtime identity; `user.*` requires `identity.user_id`.
+
+## Governance-Aware Harness Design
+
+Turin is flexibility-first, but you can design harnesses to cooperate with governance cleanly.
+
+### 1. Prefer capability checks for feature toggles
+
+```lua
+local decision = runtime.governance.check("runtime.db.exec")
+if decision and decision.allowed == false then
+  return REJECT, "db writes not allowed in this profile"
 end
 ```
 
-### `on_turn_start(event)` / `on_turn_end(event)`
-
-Fire at the beginning and end of each LLM turn.
+### 2. Use temporary grants for explicit elevation
 
 ```lua
-function on_turn_start(event)
-    -- event.turn_index: number
-    return ALLOW
-end
+local grant, err = runtime.governance.grant_issue({
+  capabilities = { ["runtime.db.exec"] = true },
+  ttl_ms = 15000,
+  max_uses = 1,
+  reason = "one-shot migration",
+})
 
-function on_turn_end(event)
-    -- event.turn_index: number
-    -- event.has_tool_calls: boolean
-    return ALLOW
-end
-```
-
-### `on_session_end(event)`
-
-Fires when the session completes.
-
-```lua
-function on_session_end(event)
-    -- event.message_count: number
-    -- event.total_input_tokens: number
-    -- event.total_output_tokens: number
-    return ALLOW
+if grant then
+  runtime.governance.with_grant(grant.grant_id, function()
+    local changed, e = runtime.db.exec("delete from temp_rows where stale = 1")
+    if not changed then error(e) end
+  end)
 end
 ```
 
----
+### 3. Partition harnesses by roots
 
-## Kernel Primitives
+A strong pattern is to keep:
 
-These globals are injected by the kernel and available to all harness scripts.
+- `core` harness scripts in a read-only root
+- `plugins` in a writable root
+- `import_scoped(..., { root = "plugins", capabilities = ... })` for self-evolving modules
 
-### Verdicts
+This preserves user control while allowing controlled autonomy.
 
-```lua
-ALLOW     -- Proceed with the action
-REJECT    -- Block the action (return with reason: return REJECT, "why")
-ESCALATE  -- Pause for human input (return with reason: return ESCALATE, "why")
-MODIFY    -- Proceed with modified data (return with data: return MODIFY, new_data)
-```
+## Patterns for Maintainable Harnesses
 
-### Filesystem (`fs`)
+## Split by concern
 
-All paths are sandboxed to the configured `fs_root`.
+- `01_safety.lua` — hard constraints
+- `02_governance.lua` — capability-aware behavior
+- `10_context.lua` — `on_turn_prepare` context shaping
+- `20_workflow.lua` — queue steering, plan shaping
+- `30_memory.lua` — retrieval/anchoring
 
-```lua
-fs.read(path)           -- Read file contents. Returns string or nil.
-fs.write(path, content) -- Write content to a file.
-fs.exists(path)         -- Returns boolean.
-fs.list(path)           -- List directory contents. Returns table of filenames.
-fs.is_safe_path(path)   -- Returns boolean. Checks path is within sandbox.
-```
-
-### Database (`db`)
-
-Persistent key-value store backed by Turso. Survives restarts.
+## Use modules for shared logic
 
 ```lua
-db.kv_get(key)              -- Returns string or nil.
-db.kv_set(key, value)       -- Set a value.
-db.kv_set(key, value, ttl)  -- Set with TTL (seconds).
-db.kv_set(key, nil)         -- Delete a key.
-```
-
-### JSON
-
-```lua
-json.encode(table)  -- Serialize a Lua table to a JSON string.
-json.decode(str)    -- Deserialize a JSON string to a Lua table.
-```
-
-### Time
-
-```lua
-time.now_utc()  -- Returns current UTC timestamp as ISO 8601 string.
-```
-
-### Logging
-
-```lua
-log(message)  -- Write a message to the kernel event log (visible in verbose mode).
-```
-
-### Session
-
-```lua
-session.identity.session_id -- Current session ID (string).
-session.list()            -- List all previous session IDs.
-session.load(id)          -- Load message history from a session. Returns table.
-session.queue(prompt)     -- Add a task to the end of the queue.
-session.queue_next(prompt) -- Add a priority task to the front of the queue.
-```
-
-### Memory (`turin.memory`)
-
-Semantic memory with hybrid search.
-
-```lua
-turin.memory.store(text, metadata)   -- Store a memory. metadata is an optional table.
-turin.memory.search(query, limit)    -- Search memories. Returns table of {content, score}.
-```
-
-### Subagents (`turin.agent`)
-
-Spawn isolated nested kernel instances.
-
-```lua
-turin.agent.spawn(prompt, options)
--- options (optional table):
---   system_prompt: string
---   max_turns: number
---   provider: string (named provider from config)
--- Returns: string (agent response) or nil, error
-```
-
-### File Search (`turin.context`)
-
-```lua
-turin.context.glob(pattern)  -- Search for files matching a glob pattern.
-                                -- Returns table of file paths.
-```
-
-### Module System (`turin.import`)
-
-```lua
-local module = turin.import("module_name")  -- Import a harness module by filename (without .lua)
-```
-
----
-
-## Composition
-
-Multiple harness scripts compose automatically. For each event, every loaded script's hook is called in alphabetical order.
-
-**Verdict composition rules:**
-1. If any script returns `REJECT` — the action is blocked (first reject wins)
-2. If any script returns `ESCALATE` — the action is paused for human approval
-3. If all scripts return `ALLOW` — the action proceeds
-4. `MODIFY` is treated as `ALLOW` but carries modified data
-
-This lets you separate concerns into focused scripts:
-
-```
-01_safety.lua     -- Hard constraints. Never allow rm -rf, sudo, etc.
-02_budget.lua     -- Token budget enforcement.
-03_workflow.lua   -- Context engineering, instruction injection.
-04_memory.lua     -- Memory recall and anchoring.
-```
-
-Each script only handles its own concern. A rejection from `01_safety.lua` short-circuits — `02_budget.lua` and beyond don't need to evaluate.
-
----
-
-## Modules
-
-Harness scripts can return a table to act as an importable module:
-
-```lua
--- harnesses/patterns.lua
+-- helpers.lua
 local M = {}
-
-function M.is_destructive_command(cmd)
-    local patterns = { "rm %-rf", "sudo", "mkfs", "dd if=", "> /dev/" }
-    for _, p in ipairs(patterns) do
-        if cmd:find(p) then return true end
-    end
-    return false
+function M.redact_secrets(s)
+  return (s or ""):gsub("API_KEY=%S+", "API_KEY=[REDACTED]")
 end
-
-function M.is_source_file(path)
-    return path:find("%.rs$") or path:find("%.py$") or path:find("%.ts$")
-end
-
 return M
 ```
 
 ```lua
--- harnesses/safety.lua
-local patterns = turin.import("patterns")
-
-function on_tool_call(call)
-    if call.name == "shell_exec" and patterns.is_destructive_command(call.args.command) then
-        return REJECT, "Destructive command blocked"
-    end
-    if call.name == "write_file" and patterns.is_source_file(call.args.path) then
-        return ESCALATE, "Human approval required for source file edits"
-    end
-    return ALLOW
+-- 01_safety.lua
+local helpers = import("helpers")
+function on_tool_result(r)
+  if r.name == "read_file" and not r.is_error then
+    return MODIFY, { output = helpers.redact_secrets(r.output), is_error = r.is_error }
+  end
+  return ALLOW
 end
 ```
 
----
+## Be explicit about tuple returns
 
-## Recipes
+Many primitives return `(value, err)` / `(ok, err)`.
+Always branch on the first return value.
 
-### Coding Assistant with Project Awareness
+## Prefer canonical APIs in new code
 
-```lua
--- 03_coding.lua
+Aliases are great for ergonomics, but `runtime.*` is clearer and more future-proof for shared harness libraries.
 
-function on_turn_prepare(ctx)
-    -- Inject project instructions
-    if fs.exists("TURIN.md") then
-        ctx.system_prompt = ctx.system_prompt ..
-            "\n\n=== Project Instructions ===\n" .. fs.read("TURIN.md")
-    end
+## Debugging Harnesses
 
-    -- Recall relevant memories
-    if turin.memory and turin.memory.search then
-        local msgs = ctx.messages
-        for i = #msgs, 1, -1 do
-            if msgs[i].role == "user" then
-                local query = msgs[i].content
-                if type(query) == "table" and query[1] then query = query[1].text or "" end
-                if type(query) == "string" and #query > 10 then
-                    local memories = turin.memory.search(query, 3)
-                    if memories and #memories > 0 then
-                        local block = "\n\n=== Relevant Memories ===\n"
-                        for _, m in ipairs(memories) do
-                            block = block .. "- " .. m.content .. "\n"
-                        end
-                        ctx.system_prompt = ctx.system_prompt .. block
-                    end
-                end
-                break
-            end
-        end
-    end
+- Use `log("...")` for harness-level diagnostics
+- Use `turin repl` and `/reload` to iterate quickly
+- Use `on_kernel_event` for temporary deep observability
+- Run `turin check` to validate config + harness syntax
+- Use `scripts/live_minimax_smoke.sh` (manual/opt-in) for real endpoint testing
 
-    return ALLOW
-end
-```
+## Compatibility Note
 
-### Session Continuity
-
-```lua
--- 04_resume.lua
-
-function on_session_start(event)
-    local sessions = session.list()
-    if #sessions > 0 then
-        local prev = session.load(sessions[#sessions])
-        if prev and #prev > 0 then
-            local summary = turin.agent.spawn(
-                "Summarize this conversation in 2-3 sentences:\n" .. json.encode(prev),
-                { system_prompt = "Be concise.", max_turns = 1 }
-            )
-            if summary then
-                db.kv_set("prev_session_summary", summary)
-            end
-        end
-    end
-    return ALLOW
-end
-
-function on_turn_prepare(ctx)
-    local summary = db.kv_get("prev_session_summary")
-    if summary and #ctx.messages <= 1 then
-        ctx.system_prompt = ctx.system_prompt ..
-            "\n\n=== Previous Session ===\n" .. summary
-        db.kv_set("prev_session_summary", nil)
-    end
-    return ALLOW
-end
-```
-
-### Loop Detection
-
-```lua
--- 02_loops.lua
-
-local rejection_counts = {}
-
-function on_tool_call(call)
-    local key = call.name .. ":" .. json.encode(call.args)
-    rejection_counts[key] = (rejection_counts[key] or 0)
-
-    if rejection_counts[key] >= 3 then
-        return REJECT, "This action has been attempted too many times. Try a different approach."
-    end
-    return ALLOW
-end
-```
-
-### Conversation-Only Agent (No Tools)
-
-```lua
--- 01_no_tools.lua
-
-function on_turn_prepare(ctx)
-    ctx.system_prompt = [[
-You are a thoughtful advisor. You provide guidance through conversation only.
-You do not write code, modify files, or run commands.
-]]
-    return ALLOW
-end
-
-function on_tool_call(call)
-    return REJECT, "This agent operates through conversation only"
-end
-```
-
-### Planning-First Workflow
-
-```lua
--- 03_planning.lua
-
-function on_turn_prepare(ctx)
-    local msgs = ctx.messages
-    if msgs and #msgs > 0 then
-        local last = msgs[#msgs]
-        if last.role == "user" then
-            local text = last.content
-            if type(text) == "table" and text[1] then text = text[1].text or "" end
-            if type(text) == "string" then
-                text = text:lower()
-                if text:find("build") or text:find("implement") or text:find("create") then
-                    ctx.system_prompt = ctx.system_prompt ..
-                        "\n\nIMPORTANT: Before taking any action, use 'submit_plan' to propose your plan."
-                end
-            end
-        end
-    end
-    return ALLOW
-end
-
-function on_plan_submit(payload)
-    if #payload.tasks > 8 then
-        return REJECT, "Too many tasks. Break this into phases of 5 or fewer steps."
-    end
-    log("Plan approved: " .. payload.title .. " (" .. #payload.tasks .. " steps)")
-    return ALLOW
-end
-```
-
----
-
-## Tips
-
-- **Start simple.** A 10-line safety harness is more useful than an ambitious 200-line workflow that's hard to debug.
-- **Use `log()` liberally.** Run with `--verbose` to see harness output. It's the easiest way to understand what your hooks are doing.
-- **Use `pcall` for fallible operations.** If `turin.memory.search` or `turin.agent.spawn` might fail, wrap them in `pcall` to avoid crashing the harness.
-- **Separate concerns.** One script per concern (safety, budget, workflow, memory) is easier to reason about than one monolithic script.
-- **Test with mock provider.** Configure a `mock` provider in `turin.toml` to test harness logic without spending API tokens.
-- **Use the KV store for state.** `db.kv_set/kv_get` persists across restarts. Use it for budgets, counters, session summaries — anything the harness needs to remember.
+Older Turin docs/examples used `turin.*` and `db.*` namespaces.
+The canonical API is now `runtime.*` plus the aliases documented in `docs/PRIMITIVES.md`.

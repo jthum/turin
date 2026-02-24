@@ -1,121 +1,434 @@
-# Turin Hook Model (Draft)
+# Turin Hooks (v0.15.0)
 
-Status: Implemented in code (breaking changes) and reflected in `docs/HOOKS.md`.
+This document defines Turin’s current harness hook lifecycle and hook contracts.
 
-## Goals
-- Clear lifecycle semantics with no overloaded hook names.
-- Control points at every meaningful runtime stage.
-- Breaking changes are explicitly allowed for API coherence.
-- Keep internals pragmatic while improving harness DX.
+## Hook Model
 
-## Core Terms
-- Session: One runtime conversation lifecycle.
-- Plan: A grouped set of tasks (agent-proposed via `submit_plan` or implicit).
-- Task: One atomic queued work item.
-- Turn: One model inference cycle inside a task.
+Turin evaluates harness hooks in Luau and expects a verdict result.
 
-## Naming Decisions (Breaking Changes)
-- `on_before_inference` -> `on_turn_prepare`
-- Tool `submit_task` -> `submit_plan`
-- Hook `on_task_submit` -> `on_plan_submit`
-- Keep `on_task_complete` as per-task completion
-- Add `on_plan_complete` (one specific plan done)
-- Keep/add `on_all_tasks_complete` (global queue empty)
-- Prefer session terminology over agent terminology:
-- `on_agent_start` -> `on_session_start`
-- `on_agent_end` -> `on_session_end`
+### Verdict constants
 
-## Implemented Hook Lifecycle
+Hooks return one of the global constants:
+
+- `ALLOW`
+- `REJECT`
+- `ESCALATE`
+- `MODIFY`
+
+Common forms:
+
+```lua
+return ALLOW
+return REJECT, "reason"
+return ESCALATE, "reason"
+return MODIFY, { ... }
+```
+
+## Hook Ordering (Lifecycle)
+
+Typical session/task flow:
+
 1. `on_session_start(event)`
 2. `on_task_start(event)`
 3. `on_turn_start(event)`
-4. `on_turn_prepare(ctx)` (mutable pre-inference checkpoint)
-5. Streaming/audit events through `on_kernel_event(event)`
-6. `on_tool_call(call)` (ALLOW/REJECT/ESCALATE/MODIFY)
-7. `on_tool_result(result)` (observe and optionally MODIFY before reinjection)
+4. `on_turn_prepare(ctx)`
+5. stream/audit observations via `on_kernel_event(event)`
+6. `on_tool_call(call)` (per tool request)
+7. `on_tool_result(result)` (per tool result, before reinjection)
 8. `on_turn_end(event)`
-9. `on_inference_error(event)` (fires when a task fails with an inference/runtime error)
-10. `on_task_complete(event)` (always once per task with terminal status)
-11. `on_plan_complete(event)` (when all tasks in a specific plan are terminal)
-12. `on_all_tasks_complete(event)` (fires when queue is empty; `MODIFY` can enqueue more work)
+9. `on_token_usage(event)`
+10. `on_task_complete(event)`
+11. `on_plan_complete(event)` (when a plan finishes)
+12. `on_all_tasks_complete(event)` (queue drained)
 13. `on_session_end(event)`
 
-## `on_turn_prepare(ctx)` Contract
-Purpose: Last mutable checkpoint before every provider inference call.
+Error path:
 
-Current context fields:
-- `ctx.turn_index`: global/session turn index
-- `ctx.task_turn_index`: turn index within current task (0-based)
-- `ctx.is_first_turn_in_task`: boolean
-- `ctx.task_id`: current task identifier
-- `ctx.plan_id`: current plan identifier (or nil)
-- `ctx.system_prompt`: mutable
-- `ctx.messages`: mutable
-- `ctx.provider`: mutable
-- `ctx.model`: mutable
-- `ctx.thinking_budget`: mutable
-- `ctx.request_options`: mutable (`headers`, `max_retries`, `request_timeout_secs`, `total_timeout_secs`)
+- `on_inference_error(event)` can fire when a task fails due to inference/runtime error and may enqueue recovery tasks via `MODIFY`.
 
-Use cases:
-- First-turn task context injection
-- Between-turn steering
-- Provider/model switching
-- Context compaction
-- Dynamic guidance between tool loops
+## Hook Reference
 
-## Plan and Task Association Model
-Implemented model:
-- Task queue stores structured task items in memory (not just raw strings).
-- Each task has:
-`task_id`
-`plan_id` (nullable for ad-hoc queued tasks)
-`title` (optional display label)
-`prompt`
-- Plans are tracked in memory with lightweight counters:
-`total_tasks`
-`completed_tasks`
-`pending_tasks` (derived)
+## `on_session_start(event)`
 
-Pragmatic persistence:
-- Keep `plan_id`/`task_id` as optional payload fields in events/messages/tool rows first.
-- Do not introduce heavyweight plan/task relational tables unless query requirements demand it.
+Fires once per session after `session_start` is persisted.
 
-## Hook Purposes
-### `on_turn_start`
-- Can reject/escalate to stop the current task before inference.
+Payload:
 
-### `on_plan_submit`
-- Workflow-specific checkpoint for proposed plan/task-set validation and rewriting before enqueue.
-- `MODIFY` can return an array of tasks or an object with `title`, `tasks`, `clear_existing`.
+- `event.identity`
+- `event.session_id`
+- `event.governance` (governance snapshot for observability)
 
-### `on_tool_result`
-- Supports `MODIFY` to rewrite `output` and/or `is_error` before reinjection to the model.
+Example:
 
-### `on_task_complete`
-- Task-level finalization hook.
-- Payload includes terminal status:
-- `success`
-- `rejected`
-- `max_turns`
-- `error`
-- `cancelled`
-- Includes optional `error` text when `status == "error"`.
+```lua
+function on_session_start(event)
+  log("session start: " .. event.session_id)
+  return ALLOW
+end
+```
 
-### `on_inference_error`
-- Error-handling control point for runtime inference failures.
-- `MODIFY` can enqueue fallback tasks immediately (e.g. reroute to backup provider).
+## `on_session_end(event)`
 
-### `on_plan_complete`
-- Plan-level completion hook once all tasks in that plan are terminal.
+Fires once when a session ends.
 
-### `on_all_tasks_complete`
-- Session-level completion hook when the global pending queue is empty.
-- `MODIFY` can enqueue new tasks to continue the run loop.
+Payload:
 
-## Error Semantics
-- Runtime failures emit `on_inference_error` before task completion.
-- `on_task_complete` still fires with `status = "error"` for durable lifecycle accounting.
+- `event.identity`
+- `event.session_id`
+- `event.turn_count`
+- `event.total_input_tokens`
+- `event.total_output_tokens`
 
-## Remaining Open Decisions
-- Whether to expose a dedicated stream hook (`on_stream_event`) in addition to `on_kernel_event`.
-- Whether to persist `task_id`/`plan_id` as first-class DB columns versus event payload only.
+## `on_task_start(event)`
+
+Fires before a queued task runs.
+
+Payload:
+
+- `event.identity`
+- `event.session_id`
+- `event.task_id`
+- `event.plan_id` (optional)
+- `event.title` (optional)
+- `event.prompt`
+- `event.queue_depth`
+
+Verdicts:
+
+- `REJECT`: task is marked rejected and not run
+- `ESCALATE`: currently treated as rejected
+- `MODIFY`: may rewrite task fields
+  - supported keys: `prompt`, `title`
+
+Example:
+
+```lua
+function on_task_start(event)
+  if event.queue_depth > 100 then
+    return REJECT, "queue too deep"
+  end
+  return ALLOW
+end
+```
+
+## `on_turn_start(event)`
+
+Fires at the start of each inference turn.
+
+Payload:
+
+- `event.identity`
+- `event.session_id`
+- `event.task_id`
+- `event.plan_id` (optional)
+- `event.turn_index`
+- `event.task_turn_index`
+
+Verdicts:
+
+- `REJECT` / `ESCALATE`: turn is skipped (task may continue next turn depending on surrounding logic)
+- `MODIFY`: currently ignored for this hook
+
+## `on_turn_prepare(ctx)`
+
+Last mutable checkpoint before Turin calls the provider.
+
+`ctx` is a userdata object with property access and mutation support.
+
+### Readable fields
+
+- `ctx.model`
+- `ctx.provider`
+- `ctx.system_prompt`
+- `ctx.messages`
+- `ctx.prompt` (derived from latest user message when available)
+- `ctx.turn_index`
+- `ctx.task_turn_index`
+- `ctx.is_first_turn_in_task`
+- `ctx.task_id`
+- `ctx.plan_id`
+- `ctx.token_count`
+- `ctx.token_limit`
+- `ctx.thinking_budget`
+- `ctx.request_options`
+
+### Mutable fields
+
+- `ctx.provider`
+- `ctx.system_prompt`
+- `ctx.messages`
+- `ctx.prompt` (updates latest user message text when possible)
+- `ctx.thinking_budget`
+- `ctx.request_options`
+
+`ctx.request_options` shape:
+
+```lua
+{
+  headers = { ["x-foo"] = "bar" },
+  max_retries = 2,
+  request_timeout_secs = 30,
+  total_timeout_secs = 60,
+}
+```
+
+Example:
+
+```lua
+function on_turn_prepare(ctx)
+  if ctx.is_first_turn_in_task then
+    ctx.system_prompt = ctx.system_prompt .. "\n\nBe concise and explicit about file edits."
+  end
+
+  if ctx.task_turn_index > 2 then
+    ctx.thinking_budget = 0
+  end
+
+  return ALLOW
+end
+```
+
+## `on_tool_call(call)`
+
+Fires before a tool executes.
+
+Payload:
+
+- `call.name`
+- `call.id`
+- `call.args`
+
+Verdicts:
+
+- `ALLOW`
+- `REJECT, reason`
+- `ESCALATE, reason`
+- `MODIFY, table` (tool args rewrite)
+
+Example:
+
+```lua
+function on_tool_call(call)
+  if call.name == "shell_exec" then
+    local cmd = call.args.command or ""
+    if cmd:find("sudo") then
+      return REJECT, "sudo is not allowed"
+    end
+  end
+  return ALLOW
+end
+```
+
+## `on_tool_result(result)`
+
+Fires after tool execution and before the tool result is fed back into the model.
+
+Payload:
+
+- `result.id`
+- `result.name`
+- `result.args`
+- `result.output`
+- `result.is_error`
+
+Verdicts:
+
+- `ALLOW`
+- `REJECT, reason` (tool result is replaced with an error string)
+- `ESCALATE, reason` (interactive approval path)
+- `MODIFY, payload`
+
+### `MODIFY` payload forms
+
+String shorthand (rewrites output only):
+
+```lua
+return MODIFY, "sanitized output"
+```
+
+Object form:
+
+```lua
+return MODIFY, {
+  output = "sanitized output",
+  is_error = false,
+}
+```
+
+`content` is accepted as an alias for `output`.
+
+## `on_kernel_event(event)`
+
+Observes every `KernelEvent` (lifecycle, stream, audit).
+
+Payload is a serialized event object with a `type` field.
+
+Examples of event types:
+
+- lifecycle: `session_start`, `task_start`, `turn_prepare`, ...
+- stream: `message_delta`, `thinking_delta`, `thinking_signature_delta`, `tool_call`, ...
+- audit: `tool_result`, `token_usage`, `governance_snapshot`, `governance_grant_*`, ...
+
+Notes:
+
+- `REJECT` can suppress normal events from persistence/broadcast.
+- In immutable audit mode (or `persist_before_hooks=true`), protected audit events are persisted before this hook runs; `REJECT` becomes observational-only for those events.
+- `MODIFY` is currently ignored for generic kernel events.
+
+## `on_token_usage(event)`
+
+Fires after token usage updates are emitted.
+
+Payload:
+
+- `input_tokens`
+- `output_tokens`
+- `total_tokens`
+
+Notes:
+
+- Informational/governance signal only.
+- `REJECT` currently logs a warning and does not halt execution by itself.
+
+## `on_plan_submit(event)`
+
+Fires when the `submit_plan` tool requests queueing multiple tasks.
+
+Payload:
+
+- `title`
+- `tasks` (array of strings)
+- `clear_existing` (boolean)
+
+Verdicts:
+
+- `REJECT`
+- `ESCALATE`
+- `MODIFY`
+
+`MODIFY` forms:
+
+1. Array form (replace tasks only):
+
+```lua
+return MODIFY, { "task 1", "task 2" }
+```
+
+2. Object form:
+
+```lua
+return MODIFY, {
+  title = "reviewed plan",
+  clear_existing = false,
+  tasks = { "task 1", "task 2" },
+}
+```
+
+## `on_task_complete(event)`
+
+Fires once per task terminal state.
+
+Payload:
+
+- `event.identity`
+- `event.session_id`
+- `event.task_id`
+- `event.plan_id` (optional)
+- `event.status` (`success`, `rejected`, `max_turns`, `error`, `cancelled`)
+- `event.task_turn_count`
+- `event.turn_count`
+- `event.error` (optional)
+
+Verdicts:
+
+- `MODIFY` may enqueue additional tasks (same queue) by returning task list(s)
+- `REJECT` / `ESCALATE` are logged but do not undo task completion
+
+## `on_plan_complete(event)`
+
+Fires when all tasks in a plan reach terminal status.
+
+Payload:
+
+- `event.identity`
+- `event.session_id`
+- `event.plan_id`
+- `event.title`
+- `event.total_tasks`
+- `event.completed_tasks`
+
+## `on_all_tasks_complete(event)`
+
+Fires when the queue is empty.
+
+Payload:
+
+- `event.identity`
+- `event.session_id`
+- `event.turn_count`
+
+Verdicts:
+
+- `MODIFY` may enqueue additional tasks to keep the session alive
+
+Example:
+
+```lua
+function on_all_tasks_complete(event)
+  -- periodic self-check or summarization loop
+  return ALLOW
+end
+```
+
+## `on_inference_error(event)`
+
+Fires when a task fails due to provider/runtime error.
+
+Payload:
+
+- `event.identity`
+- `event.session_id`
+- `event.task_id`
+- `event.plan_id` (optional)
+- `event.turn_count`
+- `event.error`
+
+Verdicts:
+
+- `MODIFY` may enqueue recovery tasks (inherits task plan/title context when possible)
+- `ALLOW` continues normal error handling
+- `REJECT` / `ESCALATE` are logged
+
+## Payload Identity Shape
+
+Lifecycle hooks include `identity` with:
+
+```lua
+{
+  session_id = "...",
+  agent_id = "...",
+  user_id = nil | "...",
+  channel_id = nil | "...",
+  tenant_id = nil | "...",
+  run_id = nil | "...",
+  extra = { ... }
+}
+```
+
+## Error Handling Semantics
+
+Hook evaluation errors are generally non-fatal:
+
+- Turin logs the hook error
+- defaults to `ALLOW` (or continues with existing runtime behavior)
+
+This prevents harness bugs from crashing the kernel, while still surfacing the issue.
+
+## Best Practices
+
+- Use `on_turn_prepare` for context engineering and provider routing.
+- Use `on_tool_call` for hard governance.
+- Use `on_tool_result` for sanitization/redaction.
+- Use `on_kernel_event` for observability and auditing logic.
+- Use `on_task_complete` / `on_inference_error` for recovery loops and queue steering.
+- Prefer `runtime.*` APIs in new harnesses; aliases remain for ergonomics.

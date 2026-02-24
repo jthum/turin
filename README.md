@@ -1,69 +1,74 @@
 # Turin
 
-**A programmable runtime for AI agents, delivered as a single binary.**
+**A programmable, single-binary runtime for AI agents.**
 
-LLMs are probabilistic by nature. Turin lets you shape the environment in which inference becomes action.
+Turin is a Rust runtime that separates inference from execution policy.
+The model proposes actions. The harness (Luau scripts) decides what is allowed. The kernel executes and persists everything.
 
-Through hot-swappable harness scripts, Turin can:
+Turin is intentionally unopinionated about workflow and personality. It provides execution physics, persistence, tools, events, and a programmable harness surface so you can build radically different agents with the same binary.
 
-- Intercept and modify model inputs and outputs
-- Inject and enrich context before every inference call
-- Enforce hard execution boundaries on tool usage
-- Control tool access and arguments deterministically
-- Shape memory, task flow, and multi-step plans
-- Route between providers mid-session
+## What Turin Is (v0.15.0)
 
-The model remains probabilistic. The execution layer becomes programmable and enforceable.
+Turin now ships a coherent, canonical runtime with:
 
-Turin sits between inference and action — shaping how AI outputs become structured, reliable execution. It does not replace prompts. It engineers the conditions under which prompts operate.
+- **Canonical Harness API** (`runtime.*`) plus ergonomic aliases (`memory.*`, `kv.*`, `agent.*`, `session.*`, `user.*`)
+- **Multi-DB runtime** with dynamic DB handles (`runtime.db.open/query/exec/list/close`)
+- **Multi-agent runtime** with peer agent submit/await/status orchestration (`runtime.agent.*`)
+- **Stable hook model** with explicit lifecycle hooks and typed event payloads
+- **Opt-in governance model** with profiles, capabilities, import scoping, agent ceilings, and temporary grants
+- **Provider-agnostic core** (provider quirks belong in `inference-sdk-rust`, not Turin)
+- **Hot-reloadable harness scripts** with `import(...)` and `import_scoped(...)`
+- **Durable event persistence** and optional immutable audit behavior
 
----
+## Philosophy
 
-## Why Turin
+Turin follows a strict separation:
 
-Most agent frameworks bake behavior into their core: how the agent plans, what it's allowed to do, how it manages context. If you want something different, you fork or fight the framework.
+- **Inference proposes**
+- **Harness decides**
+- **Kernel enforces**
 
-Turin takes the opposite approach. The Kernel handles inference, streaming, tool execution, and persistence. Everything else lives in harness scripts — governance, workflows, context engineering, memory strategies, even personality. Same binary, different harness, completely different agent.
+This gives you a runtime that can be:
 
-- A **coding assistant** that injects project instructions, compacts context at 80% capacity, and blocks destructive shell commands
-- A **research agent** that routes queries to different LLM providers based on task type
-- A **planning-first agent** that must submit a task plan before taking any action
-- A **conversation-only coach** with no tool access at all
+- minimalist and wide open (`open` governance profile)
+- tightly governed and auditable (`governed` profile)
+- anything in between, with explicit capability knobs
 
-All the same binary. Different `.lua` files in the harness directory.
+Simple things should be simple. Powerful things should be possible.
 
----
+## Core Features
 
-## Features
-
-- **Harness Scripts** — Define agent behavior in hot-reloadable Lua (Luau). Governance, workflows, context engineering — all in scripts you can read, modify, and share.
-- **Deterministic Governance** — When a harness returns `REJECT`, the kernel physically cannot execute the action. This is code, not a suggestion.
-- **Single Binary** — Rust. ~13MB. No runtime dependencies. `cargo build --release` and deploy.
-- **Scaffolding & Validation** — Built-in `turin init` to bootstrap projects and `turin check` for static config/harness verification.
-- **Multi-Provider** — Anthropic, OpenAI, or any OpenAI-compatible API. Multiple named providers in the same session. Switch mid-turn from a harness script.
-- **Persistent State** — Every event, message, and tool execution logged to a portable SQLite database (Turso). Modular architecture with per-connection busy timeouts ensures reliability under contention.
-- **Cognitive Memory** — Semantic memory with hybrid search (vector + FTS5 + Reciprocal Rank Fusion). Agents remember across sessions.
-- **Automated Quality Controls** — GitHub Actions CI for automated testing and builds, with `cargo-deny` for security and license auditing.
-- **Context Engineering** — The `on_turn_prepare` hook gives harness scripts full control over what the LLM sees: inject instructions, compact history, swap providers, adjust thinking budgets.
-- **Task Decomposition** — Built-in `submit_plan` tool with harness hooks for plan review, modification, and steering.
-- **Subagents** — Spawn isolated nested kernel instances for recursive task delegation, with independent provider and harness configurations.
-- **MCP Bridge** — Dynamic tool discovery via Model Context Protocol. Connect to any MCP server at runtime.
-- **Hot Reload** — Edit harness scripts while the agent is running. Changes take effect immediately with atomic swap (bad scripts don't crash the running harness).
-- **Extended Thinking** — Streaming thinking blocks with configurable budget, controllable from harness scripts.
-
----
+- **Single binary** (`turin`) with no service dependencies beyond your configured provider and local SQLite/libSQL database
+- **Harness scripting in Luau** for governance, workflows, context engineering, memory policies, and orchestration
+- **Canonical stdlib API**:
+  - `runtime.context`, `runtime.memory`, `runtime.kv`, `runtime.db`, `runtime.agent`, `runtime.policy`, `runtime.governance`
+- **Top-level ergonomic aliases**:
+  - `fs`, `json`, `time`, `log`, `import`, `import_scoped`
+  - `memory`, `kv`, `session`, `user`, `agent`
+- **Multi-provider support** through normalized `InferenceProvider` clients (`anthropic`, `openai`, `mock`, compatible proxies)
+- **Persistent state** for sessions, messages, events, tool executions, KV, and memory records
+- **Hybrid memory search** with vector + FTS5 fallback/degradation paths
+- **Peer-agent orchestration** with status inspection and async submit/await result handling
+- **Opt-in governance** with profiles/capabilities/import scoping/agent ceilings/grants
+- **Live provider smoke tooling** (manual/opt-in) for real endpoint validation
 
 ## Quickstart
 
-### Build
+### 1. Build
 
 ```bash
 cargo build --release
 ```
 
-### Configure
+### 2. Create `turin.toml`
 
-Create a `turin.toml`:
+Start from the example:
+
+```bash
+cp turin.toml.example turin.toml
+```
+
+Minimal example:
 
 ```toml
 [agent]
@@ -82,344 +87,194 @@ database_path = ".turin/state.db"
 directory = ".turin/harnesses"
 
 [providers.anthropic]
+type = "anthropic"
 api_key_env = "ANTHROPIC_API_KEY"
-# Optional for Anthropic-compatible providers (must include API version path, usually /v1)
+# For Anthropic-compatible proxies, include the version segment (usually /v1)
 # base_url = "https://api.minimax.io/anthropic/v1"
-
-[providers.openai]
-api_key_env = "OPENAI_API_KEY"
 ```
 
-Set your API key:
+### 3. Add a harness script
 
 ```bash
-export ANTHROPIC_API_KEY="sk-..."
+mkdir -p .turin/harnesses
+cat > .turin/harnesses/01_safety.lua <<'LUA'
+function on_tool_call(call)
+  if call.name == "shell_exec" then
+    local cmd = call.args.command or ""
+    if cmd:find("rm %-rf") then
+      return REJECT, "Destructive command blocked"
+    end
+  end
+  return ALLOW
+end
+LUA
 ```
 
-### Run
+### 4. Run Turin
 
 ```bash
-# One-shot execution
-turin run --prompt "Read main.rs and explain what it does"
-
-# Interactive REPL
-turin repl
-
-# With verbose event output
-turin run --verbose --prompt "Fix the bug in utils.rs"
-
-# Override provider from CLI
-turin run --provider openai --model gpt-4o --prompt "Explain this codebase"
+target/release/turin run --prompt "List the files in this project and summarize the layout."
 ```
 
-### Live Smoke Tests (Manual / Opt-In)
+## CLI Commands
 
-Turin does not run live-provider tests during normal `cargo build` / `cargo test`.
-Use the manual smoke script when you want to validate a real endpoint:
+- `turin run --prompt ...` — one-shot execution
+- `turin repl` — interactive session
+- `turin script PATH` — run a harness script directly for testing
+- `turin init` — scaffold a Turin project
+- `turin check` — validate config + harness scripts
+
+Global options:
+- `--log-level error|warn|info|debug|trace`
+- `--log-file PATH`
+
+## Canonical Harness API (Overview)
+
+Turin’s harness surface is split between **canonical runtime APIs** and **ergonomic aliases**.
+
+### Canonical (`runtime.*`) — preferred for new harnesses
+
+- `runtime.context`
+  - callable selector builder (`runtime.context(...)`)
+  - alias discovery (`runtime.context.glob(pattern)`)
+- `runtime.memory`
+  - `search(query, ctx, opts?)`
+  - `store(content, ctx, metadata?, opts?)`
+- `runtime.kv`
+  - `get(key, ctx)` / `set(key, value, ctx)` / `delete(key, ctx)`
+- `runtime.db`
+  - `open`, `close`, `list`, `query`, `exec`
+- `runtime.agent`
+  - `list`, `get_status`, `submit`, `await`
+- `runtime.policy`
+  - `get`, `set`
+- `runtime.governance`
+  - profile/snapshot/check
+  - temporary grants (`grant_issue`, `grant_get`, `with_grant`, `grant_revoke`)
+
+### Ergonomic aliases (still supported and documented)
+
+- `memory.*` / `kv.*` for default agent-scoped data
+- `memory.as(ctx)` / `kv.as(ctx)` for scoped proxies
+- `session.memory/kv.*`, `user.memory/kv.*`
+- `agent.spawn`, `agent.complete`, `agent.send`, `agent.session.*`, `agent.mode.*`
+- `fs`, `json`, `time`, `log`, `import`, `import_scoped`
+
+See `docs/PRIMITIVES.md` for the full surface.
+
+## Hooks (Stable Lifecycle)
+
+Turin’s hook lifecycle is explicit and stable in v0.15.0.
+Core hooks include:
+
+- `on_session_start`
+- `on_task_start`
+- `on_turn_start`
+- `on_turn_prepare` (mutable context checkpoint)
+- `on_tool_call`
+- `on_tool_result` (supports `MODIFY`)
+- `on_kernel_event`
+- `on_token_usage`
+- `on_inference_error`
+- `on_task_complete`
+- `on_plan_submit`
+- `on_plan_complete`
+- `on_all_tasks_complete`
+- `on_session_end`
+
+See `docs/HOOKS.md` for payloads, verdict semantics, and examples.
+
+## Multi-DB and Multi-Agent (What’s New)
+
+### Multi-DB
+
+Harnesses can open and operate on multiple state stores dynamically:
+
+```lua
+local handle, err = runtime.db.open({ path = "scratch/analysis.db" })
+if not handle then error(err) end
+
+local rows, qerr = runtime.db.query(
+  "select name from sqlite_master where type = 'table' order by name",
+  nil,
+  { handle = handle.handle }
+)
+```
+
+### Multi-Agent
+
+Harnesses can submit work to peer runtimes and await results:
+
+```lua
+local task_id, err = runtime.agent.submit("reviewer", {
+  prompt = "Review the last patch for regressions",
+  title = "peer review"
+})
+if not task_id then error(err) end
+
+local result, aerr = runtime.agent.await(task_id, { timeout_ms = 30_000 })
+```
+
+Peer-agent dispatch can be governed by capabilities, per-agent ceilings, allowlists, and temporary grants.
+
+## Governance (Opt-In, Flexibility-First)
+
+Governance is **not** hardcoded restriction. It is an opt-in capability system layered over Turin’s programmable runtime.
+
+### Profiles
+
+- `open` — maximum flexibility, minimal restrictions
+- `balanced` — safer defaults, still overrideable
+- `governed` — stricter capability enforcement and optional immutable audit semantics
+- `custom` — build your own policy shape
+
+### Core governance features
+
+- Capability enforcement for `runtime.*` APIs and built-in tools
+- Import scoping (`import_scoped`) with governance roots
+- Per-agent ceilings and child-agent allowlists
+- Temporary grants (TTL / max-uses)
+- Optional immutable audit persistence semantics
+
+See `docs/GOVERNANCE.md` for configuration and runtime behavior.
+
+## Live Provider Testing (Manual / Opt-In)
+
+Turin does **not** call live providers during normal `cargo test` / `cargo build`.
+
+Use the smoke script when you want to validate a real endpoint (e.g. MiniMax Anthropic-compatible):
 
 ```bash
-# Uses your local env file with ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL / ANTHROPIC_MODEL
 scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env
 ```
 
-This currently includes:
-- `basic` (exact `PONG` response)
-- `tool_read` (forces a `read_file` tool roundtrip on a random nonce file)
-- `tool_error` (forces a failing `read_file` call and checks recovery path)
-- `tool_write_read` (forces `write_file` + `read_file` multi-tool roundtrip)
+Current live smoke cases include:
+- `basic`
+- `tool_read`
+- `tool_error`
+- `tool_write_read`
 
-Optional case selection:
+Run a custom case set:
 
 ```bash
-scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --cases basic,tool_read,tool_error,tool_write_read
+scripts/live_minimax_smoke.sh \
+  --env-file ~/Documents/minimax.env \
+  --cases basic,tool_read,tool_error,tool_write_read
 ```
 
----
+See `docs/LIVE_PROVIDER_TESTING.md` for setup and troubleshooting.
 
-## Harness Scripts
+## Documentation Map
 
-Harness scripts are `.lua` files in your harness directory. They hook into the kernel's event lifecycle to control agent behavior. No recompilation needed.
+- `docs/TURIN.md` — philosophy and product framing
+- `docs/ARCHITECTURE.md` — current runtime architecture and module layout
+- `docs/HOOKS.md` — stable hook lifecycle, payloads, verdict semantics
+- `docs/PRIMITIVES.md` — canonical stdlib API + aliases
+- `docs/HARNESS_GUIDE.md` — writing production harness scripts
+- `docs/GOVERNANCE.md` — capability model, profiles, import scoping, grants
+- `docs/TESTING.md` — local validation, test suite, and smoke workflows
+- `docs/LIVE_PROVIDER_TESTING.md` — live endpoint testing procedures
 
-### Governance: Block Dangerous Commands
+## Versioning Note
 
-```lua
--- .turin/harnesses/safety.lua
-
-function on_tool_call(call)
-    if call.name == "shell_exec" then
-        local cmd = call.args.command
-        if cmd:find("rm %-rf") or cmd:find("sudo") then
-            return REJECT, "Destructive/privileged commands are not allowed"
-        end
-    end
-    return ALLOW
-end
-```
-
-### Workflow: Budget Enforcement
-
-```lua
--- .turin/harnesses/budget.lua
-
-local BUDGET_LIMIT = 50000
-
-function on_token_usage(usage)
-    local used = usage.total_tokens
-    if used > (BUDGET_LIMIT * 0.8) then
-        log(string.format("Warning: %d%% of budget used", (used / BUDGET_LIMIT) * 100))
-    end
-    db.kv_set("session_tokens", tostring(used))
-    return ALLOW
-end
-
-function on_tool_call(call)
-    local used = tonumber(db.kv_get("session_tokens")) or 0
-    if used >= BUDGET_LIMIT then
-        return REJECT, "Token budget exceeded"
-    end
-    return ALLOW
-end
-```
-
-### Context Engineering: Project Instructions + Memory
-
-```lua
--- .turin/harnesses/coding_agent.lua
-
-function on_turn_prepare(ctx)
-    -- Inject project instructions
-    if fs.exists("TURIN.md") then
-        local instructions = fs.read("TURIN.md")
-        ctx.system_prompt = ctx.system_prompt .. "\n\n=== Project Instructions ===\n" .. instructions
-    end
-
-    -- Recall relevant memories
-    if turin.memory and turin.memory.search then
-        local messages = ctx.messages
-        if messages and #messages > 0 then
-            for i = #messages, 1, -1 do
-                if messages[i].role == "user" then
-                    local results = turin.memory.search(messages[i].content, 3)
-                    if results and #results > 0 then
-                        local block = "\n\n=== Relevant Memories ===\n"
-                        for _, mem in ipairs(results) do
-                            block = block .. "- " .. mem.content .. "\n"
-                        end
-                        ctx.system_prompt = ctx.system_prompt .. block
-                    end
-                    break
-                end
-            end
-        end
-    end
-
-    return ALLOW
-end
-```
-
-### Workflow: Force Planning Before Action
-
-```lua
--- .turin/harnesses/planning.lua
-
-function on_turn_prepare(ctx)
-    local msgs = ctx.messages
-    if msgs and #msgs > 0 then
-        local latest = msgs[#msgs]
-        if latest.role == "user" then
-            local text = latest.content
-            if type(text) == "table" and text[1] then text = text[1].text or "" end
-            if text:lower():find("plan") or text:lower():find("complex") then
-                ctx.system_prompt = ctx.system_prompt ..
-                    "\n\nYour first step MUST be to use 'submit_plan' to break this down."
-            end
-        end
-    end
-    return ALLOW
-end
-
-function on_plan_submit(payload)
-    log("Plan submitted: " .. payload.title)
-    -- You could MODIFY the plan here, or REJECT it
-    return ALLOW
-end
-```
-
-### Composition
-
-Multiple harness scripts compose automatically. Place them in the harness directory and they load in alphabetical order. For each event:
-
-- If **any** harness returns `REJECT` — the action is blocked
-- If **any** harness returns `ESCALATE` — the action pauses for human approval
-- If **all** harnesses return `ALLOW` — the action proceeds
-
-This lets you layer concerns: `01_safety.lua` for hard constraints, `02_budget.lua` for cost control, `03_workflow.lua` for context engineering.
-
----
-
-## Architecture
-
-Turin has three layers:
-
-```
-┌─────────────────────────────────────────────────┐
-│           Layer 3: Inference (LLM)              │
-│           The agent proposes actions             │
-├─────────────────────────────────────────────────┤
-│           Layer 2: Harness (Lua)                │
-│           Your scripts decide what's allowed     │
-│                                                  │
-│  on_tool_call  on_turn_prepare  on_turn_end  │
-│       │               │                │         │
-│       ▼               ▼                ▼         │
-│  ALLOW / REJECT / ESCALATE / MODIFY              │
-├─────────────────────────────────────────────────┤
-│           Layer 1: Kernel (Rust)                │
-│           Executes, persists, streams            │
-│                                                  │
-│  Event Loop → Streaming → Tool Exec → Persist   │
-│                                                  │
-│  ┌──────────┐  ┌────────┐  ┌────────────────┐   │
-│  │  Tools   │  │ Events │  │  Turso (State)  │   │
-│  │ Registry │  │  Bus   │  │                 │   │
-│  └──────────┘  └────────┘  └────────────────┘   │
-└─────────────────────────────────────────────────┘
-```
-
-The LLM proposes. The harness decides. The kernel enforces.
-
-For a deeper technical walkthrough, see [Architecture](docs/ARCHITECTURE.md).
-
----
-
-## Harness Hook Reference
-
-| Hook | Trigger | Can Modify | Use Cases |
-|------|---------|-----------|-----------|
-| `on_session_start` | Session begins | Queue tasks | Session setup, queue initial tasks |
-| `on_turn_prepare` | Before each LLM call | System prompt, messages, provider, thinking budget | Context engineering, instruction injection, compaction |
-| `on_tool_call` | LLM requests a tool | Tool args (via MODIFY) | Governance, safety, allowlisting |
-| `on_tool_result` | Tool execution completes | Tool output / error flag | Post-processing, result redaction, normalization |
-| `on_plan_submit` | Agent proposes a plan | Task list (via MODIFY) | Plan review, steering, modification |
-| `on_task_complete` | A task reaches terminal status | Additional tasks (via MODIFY) | Per-task validation, retry/branch flows |
-| `on_all_tasks_complete` | Global queue is empty | Additional tasks (via MODIFY) | End-of-run validation and continuation |
-| `on_token_usage` | Token accounting update | — | Budget enforcement, cost tracking |
-| `on_turn_start` | New LLM turn begins | — | Logging, turn-level logic |
-| `on_turn_end` | LLM turn completes | — | Post-turn analysis |
-| `on_session_end` | Session completes | — | Cleanup, final reporting |
-
-For the full harness scripting guide, see [Writing Harnesses](docs/HARNESS_GUIDE.md), [Harness Hooks](docs/HOOKS.md), and [Harness Primitives](docs/PRIMITIVES.md).
-
----
-
-## Kernel Primitives
-
-These are available to harness scripts via the Turin Standard Library:
-
-| Module | Functions | Description |
-|--------|-----------|-------------|
-| **Verdicts** | `ALLOW`, `REJECT`, `ESCALATE`, `MODIFY` | Return values from hooks |
-| **fs** | `read`, `write`, `exists`, `list`, `is_safe_path` | Sandboxed filesystem access |
-| **db** | `kv_get`, `kv_set` | Persistent key-value store (backed by Turso) |
-| **json** | `encode`, `decode` | JSON serialization |
-| **time** | `now_utc` | Timestamps |
-| **log** | `log(message)` | Write to kernel event log |
-| **session** | `id`, `list`, `load`, `queue`, `queue_next` | Session management and task queuing |
-| **turin.memory** | `store`, `search` | Semantic memory (vector + FTS5) |
-| **turin.agent** | `spawn` | Nested subagent execution |
-| **turin.context** | `glob` | Safe workspace file search |
-| **turin.import** | `import(name)` | Import harness modules |
-
----
-
-## Built-in Tools
-
-| Tool | Description |
-|------|-------------|
-| `read_file` | Read file contents with line numbers |
-| `write_file` | Create or overwrite a file |
-| `edit_file` | Apply targeted string replacements |
-| `shell_exec` | Execute shell commands |
-| `submit_plan` | Propose a multi-step plan |
-| `bridge_mcp` | Connect to an MCP server for dynamic tool discovery |
-
-All tool calls pass through the harness before execution. The kernel provides the capability; your harness decides whether to allow it.
-
----
-
-## Configuration Reference
-
-```toml
-[agent]
-system_prompt = "You are a helpful assistant."  # Base system prompt
-model = "claude-sonnet-4-20250514"              # Model identifier
-provider = "anthropic"                           # Default provider name
-
-[agent.thinking]
-enabled = true          # Enable extended thinking
-budget_tokens = 4096    # Thinking token budget
-
-[kernel]
-workspace_root = "."             # Root for relative paths
-max_turns = 50                   # Max agent loop iterations
-heartbeat_interval_secs = 30     # Liveness check interval
-
-[persistence]
-database_path = ".turin/state.db"  # SQLite database location
-
-[harness]
-directory = ".turin/harnesses"     # Harness script directory
-
-[providers.anthropic]
-type = "anthropic"
-api_key_env = "ANTHROPIC_API_KEY"    # Env var containing API key
-# base_url = "https://api.anthropic.com/v1"  # Optional override for Anthropic-compatible endpoints
-# Note: Anthropic-compatible base_url should include the version path segment (usually /v1)
-# MiniMax example: "https://api.minimax.io/anthropic/v1"
-# max_retries = 2
-# request_timeout_secs = 60
-# total_timeout_secs = 120
-# [providers.anthropic.headers]
-# anthropic-beta = "output-128k-2025-02-19"
-
-[providers.openai]
-type = "openai"
-api_key_env = "OPENAI_API_KEY"
-# base_url = "https://api.openai.com/v1"
-# max_retries = 2
-# request_timeout_secs = 60
-# total_timeout_secs = 120
-# [providers.openai.headers]
-# x-foo = "bar"
-
-# Named providers for multi-provider setups
-[providers.fast]
-type = "openai"
-api_key_env = "OPENAI_API_KEY"
-
-[embeddings]
-type = "openai"  # or "no_op" for environments without embedding support
-```
-
----
-
-## Project Status
-
-Turin is at **v0.14.0**. The core runtime is functional, production-hardened, and verified. What's implemented:
-
-- Multi-provider inference (Anthropic, OpenAI) with streaming
-- Full tool execution loop (read, write, edit, shell, submit_plan, bridge_mcp)
-- Harness engine with all hooks, verdict composition, hot-reload, and module system
-- Persistent state (events, messages, tool log, KV store) via Turso
-- Cognitive memory with hybrid search (vector + FTS5 + RRF)
-- Subagent spawning with isolated kernel instances
-- Extended thinking with harness-controlled budgets
-- REPL mode with live harness reloading
-
-See [Architecture](docs/ARCHITECTURE.md) for technical details and the [Harness Reference](docs/HOOKS.md) for hooks and [primitives](docs/PRIMITIVES.md).
-
----
-
-## License
-
-MIT. See LICENSE for details.
+Turin remains pre-1.0, but v0.15.0 formalizes the current canonical harness API (`runtime.*`) and governance model as the forward-looking baseline. Internal refactors may continue aggressively; public harness surfaces should now change more deliberately.

@@ -1,370 +1,300 @@
-# Turin Architecture
+# Turin Architecture (v0.15.0)
 
-This document describes the technical architecture of Turin (v0.10.0) for contributors, evaluators, and anyone who wants to understand how the system works under the hood.
-
----
+This document describes Turin’s current architecture after the canonical stdlib, multi-db/multi-agent runtime, and governance refactors.
 
 ## Design Principles
 
-1. **Kernel is physics, not opinion.** The kernel executes; it does not decide.
-2. **Behavior is deterministic code.** Lua harness scripts — not prompts — control what the agent can and cannot do.
-3. **Inference proposes, Harness decides, Kernel enforces.**
-4. **Composability over convenience.** No baked-in workflows. Primitives over features.
-5. **Boring is a feature.** Stability over novelty.
+1. **Kernel is execution physics, not policy.**
+2. **Harness scripts define behavior.**
+3. **Provider logic stays out of Turin core.**
+4. **Capabilities and governance are opt-in overlays.**
+5. **Internal architecture can refactor aggressively; public harness surfaces should evolve more deliberately.**
 
----
+## High-Level Layers
 
-## The Three Layers
+### 1. Kernel (Rust)
 
-### Layer 1: Kernel (Rust)
+The kernel owns:
 
-The kernel is the execution substrate. It knows *how* to do things but has no opinions about *whether* to do them. It manages:
+- session lifecycle
+- task/plan loop orchestration
+- turn execution and stream processing
+- tool execution and auditing
+- persistence and event durability
+- harness hook invocation
+- peer-agent runtime orchestration
+- runtime policy storage and governance evaluation
 
-| Responsibility | Description |
-|----------------|-------------|
-| **Event Loop** | Turn-by-turn agent execution with streaming |
-| **Session Lifecycle** | Managed `SessionStart` and `SessionEnd` boundaries for clean state transitions |
-| **Inference Transport** | HTTP connections to LLM providers via the `InferenceProvider` trait |
-| **Stream Parsing** | MSE/SSE events into structured `KernelEvent`s |
-| **Tool Execution** | Runs tools via the `ToolRegistry`, handles side-effects through `ToolEffect` |
-| **State Persistence** | Atomic writes to Turso (SQLite) with WAL mode enabled for concurrent performance |
-| **Event Bus** | Every kernel action produces a categorized event (Lifecycle, Stream, Audit) |
-| **Cognitive Memory** | Semantic storage with hybrid vector + FTS5 search |
-| **Subagent Primitive** | Isolated nested kernel instances for recursive task delegation |
-| **MCP Bridge** | Dynamic tool discovery via Model Context Protocol |
+It does **not** embed workflow policy or prompt logic.
 
-### Layer 2: Harness Engine (Embedded Luau)
+### 2. Harness Engine (Luau via `mlua`)
 
-All kernel events pass through the harness engine before the kernel acts on them. The harness engine:
+The harness engine:
 
-- Runs in a **sandboxed Luau VM** via `mlua`.
-- Has **no direct OS access** — only capabilities explicitly injected by the kernel (fs, db, etc.).
-- Evaluates **verdicts** sequentially using a blocking `std::sync::Mutex` to guarantee event observation.
-- Returns **verdicts**: `ALLOW`, `REJECT`, `ESCALATE`, or `MODIFY`.
-- Maintains persistent state via `db.kv_get/kv_set` (backed by Turso).
-- Supports **hot-reload** with atomic swap (invalid scripts don't crash the running harness).
-- Provides a **module system** (`turin.import`) for reusable harness libraries.
+- loads and composes Lua scripts/modules
+- evaluates lifecycle hooks and returns verdicts
+- exposes the stdlib/global runtime API
+- hot-reloads harnesses atomically
+- maintains execution context for governance subject attribution (module/root/import delegation/grants)
 
-The harness is not just a governance layer. It's the entire behavioral layer. Context engineering, workflow orchestration, memory strategies, task steering, provider routing — all implemented as harness scripts using kernel primitives.
+### 3. Provider SDK Layer (`inference-sdk-rust`)
 
-### Layer 3: Inference (LLM)
+Turin depends on normalized provider SDKs for:
 
-The LLM proposes actions. It has no ability to enforce them. It is a brain in a room with a microphone — the kernel only uses its "hands" (tools) if the harness says the request is allowed.
+- provider-specific request/response encoding
+- streaming event normalization (`InferenceEvent`)
+- compatibility quirks (Anthropic-compatible providers, etc.)
 
-Turin supports multiple LLM providers through a standardized `InferenceProvider` trait. Providers are configured by name and can be switched at runtime from harness scripts via the `on_turn_prepare` hook.
+Turin maps normalized `InferenceEvent` values into `KernelEvent` stream events and remains provider-agnostic.
 
----
+## Core Runtime Flows
 
-## The Agent Lifecycle
+### Session / Task / Turn Lifecycle
 
-```
-turin run --prompt "Fix the bug in main.rs"
-│
-├─ LOAD config (turin.toml)
-├─ LOAD harness scripts (*.lua)
-├─ INIT Turso state store (WAL mode + busy timeout)
-│
-├─ start_session()
-│   └─ EMIT Lifecycle::SessionStart → on_session_start hook
-│
-├─ run() loop (turns)
-│   ├─ EMIT Lifecycle::TurnStart → on_turn_start hook
-│   ├─ ASSEMBLE context (system prompt + messages + tool results)
-│   ├─ CALL on_turn_prepare(ctx) → harness
-│   │   └─ Harness may: modify system prompt, inject/remove messages,
-│   │      swap provider, adjust thinking budget
-│   ├─ CALL LLM (stream)
-│   │   ├─ EMIT Stream::MessageStart
-│   │   ├─ EMIT Stream::MessageDelta (per chunk)
-│   │   ├─ EMIT Stream::ThinkingDelta (if enabled)
-│   │   └─ EMIT Stream::MessageEnd
-│   │
-│   ├─ IF tool_calls in response:
-│   │   ├─ FOR each tool_call:
-│   │   │   ├─ EMIT audit::ToolCall → on_tool_call hook
-│   │   │   │   ├─ REJECT/ESCALATE? → inject rejection, continue
-│   │   │   │   ├─ MODIFY? → use modified arguments
-│   │   │   │   └─ ALLOW? ▼
-│   │   │   ├─ EXECUTE tool
-│   │   │   ├─ CAPTURE ToolEffect (e.g., submit_plan side-effects)
-│   │   │   ├─ EMIT audit::ToolResult → on_tool_result hook
-│   │   │   └─ PERSIST event
-│   │   └─ CONTINUE to next turn
-│   │
-│   ├─ ELSE (no tool calls):
-│   │   └─ BREAK (agent is done)
-│   │
-│   ├─ EMIT audit::TokenUsage → on_token_usage hook
-│   └─ EMIT Lifecycle::TurnEnd → on_turn_end hook
-│
-├─ EMIT Lifecycle::TaskComplete → on_task_complete hook (per task, terminal status)
-│
-├─ IF queue empty:
-│   └─ EMIT Lifecycle::AllTasksComplete → on_all_tasks_complete hook (can MODIFY queue to continue)
-│
-├─ end_session()
-│   ├─ EMIT Lifecycle::SessionEnd → on_session_end hook
-│   └─ CLEAR session_active_queue
-└─ EXIT
-```
+1. `Kernel::create_session()`
+2. `Kernel::start_session()`
+   - emits `session_start`
+   - emits `governance_snapshot` audit event
+   - calls `on_session_start`
+3. `Kernel::run()`
+   - dequeues tasks
+   - emits `task_start`
+   - calls `on_task_start`
+   - runs task turn loop
+4. Per turn:
+   - emits `turn_start`
+   - calls `on_turn_start`
+   - builds mutable context and calls `on_turn_prepare`
+   - streams provider events
+   - executes tools if requested
+   - emits `turn_end`
+   - calls `on_turn_end`
+5. Task terminal:
+   - emits `task_complete`
+   - calls `on_task_complete`
+   - may emit `plan_complete`
+   - may call `on_plan_complete`
+6. Queue drained:
+   - emits `all_tasks_complete`
+   - calls `on_all_tasks_complete`
+7. `Kernel::end_session()`
+   - emits `session_end`
+   - calls `on_session_end`
+   - flushes durability lane
 
-### The Queue
+### Event Pipeline
 
-The kernel maintains a task queue. When `run()` is called with a prompt, the prompt is the first task. Harness scripts and the `submit_plan` tool can add tasks to the queue. The kernel processes tasks sequentially until the queue is empty.
+Every significant action becomes a `KernelEvent`:
 
-In REPL mode, each user input becomes a new task. Harness scripts can use `session.queue()` and `session.queue_next()` to inject follow-up work.
+- `LifecycleEvent`
+- `StreamEvent`
+- `AuditEvent`
 
----
+`persist_event()` performs:
 
-## Event System
+1. optional protected audit pre-persist (immutable audit mode / `persist_before_hooks`)
+2. `on_kernel_event` hook observation/interception
+3. standard broadcast + durability persistence
 
-Every action in Turin produces a categorized `KernelEvent`. This categorization improves performance and clarity for downstream consumers (like the harness or external observers).
+### Tool Execution Pipeline
 
-```rust
-pub enum KernelEvent {
-    Lifecycle(LifecycleEvent), // SessionStart/End, TaskStart/Complete, TurnStart/Prepare/End
-    Stream(StreamEvent),       // MessageStart/Delta/End, ThinkingDelta
-    Audit(AuditEvent),         // ToolCall, ToolResult, TokenUsage, HarnessRejection
-}
-```
+The tool execution path is split into dedicated `kernel::turn` submodules and includes:
 
-Events serve three purposes:
-1. **Streaming** — `Stream::MessageDelta` drives the real-time CLI/UI output.
-2. **Governance** — All events flow through the `on_kernel_event` hook for observation/rejection.
-3. **Persistence** — Every event is written to the SQLite indexed event log.
+- harness `on_tool_call` verdict evaluation
+- optional user approval (`ESCALATE`)
+- built-in tool execution
+- audit events (`tool_exec_start`, `tool_exec_end`, `tool_result`)
+- `on_tool_result` hook with `MODIFY` support before reinjection
+- plan submission handling (`submit_plan`) with `on_plan_submit`
+- governance enforcement fallback at kernel tool execution for high-risk built-in tools
 
-Events are serialized with tagged JSON (`#[serde(tag = "type")]`), which means the event log is both human-readable and machine-parseable.
+## Module Layout (Current)
 
----
+### Harness
 
-## Verdict System
+- `src/harness/engine.rs`
+  - script loading, module metadata, hook evaluation, hot reload
+- `src/harness/globals.rs`
+  - thin registration entrypoint + shared app state (`HarnessAppData`)
+- `src/harness/context.rs`
+  - `on_turn_prepare(ctx)` userdata wrapper and request overrides
+- `src/harness/stdlib/*`
+  - canonical stdlib modules and shared binding helpers
 
-Harness hooks return verdicts that the kernel must obey:
+#### `src/harness/stdlib/*` highlights
 
-| Verdict | Effect |
-|---------|--------|
-| `ALLOW` | Proceed with the action |
-| `REJECT, "reason"` | Block the action. The reason is injected into the LLM's context so it can adapt. |
-| `ESCALATE, "reason"` | Pause execution and wait for human input |
-| `MODIFY, data` | Proceed with modified data (e.g., modified tool arguments or task list) |
+- `runtime_bindings.rs` — assembles `runtime.*`
+- `runtime_context.rs` — `runtime.context` selector builder + glob
+- `runtime_data.rs` — `runtime.memory`, `runtime.kv`
+- `runtime_db.rs` — dynamic DB handles and SQL APIs
+- `runtime_agent.rs` — peer-agent submit/await/status
+- `runtime_policy.rs` — runtime policy read/write
+- `runtime_governance.rs` — governance observability + grants
+- `agent_bindings.rs` — top-level `agent.*` aliases (queue + peer convenience)
+- `memory_kv_bindings.rs` — top-level `memory.*`, `kv.*`
+- `session_user_aliases.rs` — scoped aliases for `session.*` / `user.*`
+- `system_globals.rs` — `fs`, `json`, `time`, `log`, `import`, `import_scoped`
 
-When multiple harness scripts are loaded, verdicts compose with **first-REJECT-wins** semantics:
+### Kernel
 
-1. Scripts are evaluated in alphabetical order
-2. If any script returns `REJECT`, the action is blocked immediately
-3. If any script returns `ESCALATE`, the action is paused
-4. Only if all scripts return `ALLOW` (or `MODIFY`) does the action proceed
+- `src/kernel/mod.rs`
+  - thin kernel struct + core composition/root wiring
+- `src/kernel/init.rs`
+  - client/harness/state initialization
+- `src/kernel/session_lifecycle.rs`
+  - create/start/end session logic
+- `src/kernel/event_persistence.rs`
+  - event broadcast + durability lane + `on_kernel_event`
+- `src/kernel/harness_hooks.rs`
+  - `on_tool_call` / `on_token_usage` helpers
+- `src/kernel/run_loop.rs`
+  - task queue orchestration and `run()` entrypoint
+- `src/kernel/task_execution.rs`
+  - task execution orchestration
+- `src/kernel/task_lifecycle.rs`
+  - task completion, inference error handling, plan completion callbacks
+- `src/kernel/turn/*`
+  - turn preflight, streaming, assistant finalization, tool execution pipeline
+- `src/kernel/agent_manager/*`
+  - peer runtime registry, peer task execution, result tracking
+- `src/kernel/governance.rs`
+  - profiles, capability evaluation, subjects, grants, snapshots
+- `src/kernel/policy.rs`
+  - runtime policy manager/storage
+- `src/kernel/mcp_runtime.rs`
+  - MCP runtime integration helpers
 
-This makes governance additive: you can layer safety constraints, budget limits, and workflow rules in separate files without them conflicting.
+### Persistence
 
----
+- `src/persistence/state.rs`
+  - session/message/event/tool/KV/memory persistence
+- `src/persistence/manager.rs`
+  - public store manager surface
+- `src/persistence/manager/path_support.rs`
+  - selector/path resolution and path safety helpers
+- `src/persistence/manager/cache_support.rs`
+  - store handle cache/open/trim/eviction logic
 
-## Tool System
+## Data Model and Identity
 
-Tools are the only mechanism for an agent to interact with its environment. Each tool implements the `Tool` trait, which returns a `ToolOutput` containing both the `content` (visible to the LLM) and structured `metadata` (processed by the kernel).
+### Runtime Identity
 
-```rust
-pub trait Tool: Send + Sync {
-    fn name(&self) -> &str;
-    fn description(&self) -> &str;
-    fn parameters_schema(&self) -> Value;
-    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError>;
-}
-```
+`RuntimeIdentity` carries subject identity across hooks/events/runtime APIs:
 
-Tools receive a `ToolContext` with workspace root and session ID. They have **no direct access** to the harness engine or LLM — they are pure I/O operations. The kernel mediates between tools and everything else.
+- `session_id` (always)
+- `agent_id` (always for Turin-managed sessions)
+- optional: `user_id`, `channel_id`, `tenant_id`, `run_id`
+- `extra` map for future/extended identity dimensions
 
-`ToolOutput` has two fields:
-- `content` — returned to the LLM
-- `metadata` — structured data for logging.
+Identity is included in lifecycle hook payloads and durable lifecycle events.
 
-### Tool Side-Effects (`ToolEffect`)
+### Context Selectors (Memory/KV/Data)
 
-Rather than letting tools modify kernel state directly, the kernel processes explicit side effects.
-- **Plan Submission**: `submit_plan` returns `ToolEffect::EnqueuePlan`, which is governed via `on_plan_submit`, then enqueued as structured tasks with `task_id` and `plan_id`.
-- **MCP Bridge**: `bridge_mcp` returns `ToolEffect::SpawnMcp`, which connects a server and registers discovered tools.
-
-### Built-in Tools
-
-| Tool | Description |
-|------|-------------|
-| `read_file` | Read file contents with line numbers and metadata |
-| `write_file` | Create or overwrite a file |
-| `edit_file` | Apply targeted string replacements |
-| `shell_exec` | Execute shell commands with stdout/stderr/exit code capture |
-| `submit_plan` | Propose a multi-step plan (triggers `on_plan_submit` hook) |
-| `bridge_mcp` | Connect to an MCP server and register its tools |
-
-### MCP Integration
-
-The `bridge_mcp` tool spawns an MCP server subprocess and registers its tools into the kernel's tool registry at runtime. This allows agents to dynamically discover and use tools from external MCP-compatible servers without recompilation.
-
----
-
-## Persistence
-
-Turin uses **Turso** (SQLite) for all persistence. The database (default: `.turin/state.db`) is configured with **Write-Ahead Logging (WAL)** and a 5-second busy timeout to handle the high-frequency event streaming produced by modern LLMs.
-
-### Cognitive Memory
-
-Turin implements hybrid semantic search using three strategies, combined via **Reciprocal Rank Fusion (RRF)**:
-1. **Vector search** — Cosine similarity (weighted at 0.6).
-2. **FTS5 search** — Keyword ranking (weighted at 0.4).
-3. **LIKE fallback** — Robust tokenized pattern matching for zero-configuration search.
-
-Harness scripts access memory through `turin.memory.store(text, metadata)` and `turin.memory.search(query, limit)`.
-
----
-
-## Harness Engine Internals
-
-### Sandboxing
-
-The harness engine uses Luau's built-in sandbox mode. The initialization sequence is:
-
-1. Create a fresh Lua VM
-2. Register all Turin globals (`fs`, `db`, `json`, `time`, `session`, `turin`, `log`, verdict constants)
-3. Enable sandbox mode — all globals become read-only, dangerous standard library functions are removed
-
-This means harness scripts can read the injected globals but cannot modify them or access the underlying OS. The only way a harness script touches the filesystem, database, or network is through the explicit capability handles the kernel provides.
-
-### Hot Reload
-
-When a harness file changes (detected by filesystem watcher or `/reload` command):
-
-1. A new Lua VM is created
-2. New harness scripts are loaded and syntax-checked
-3. If valid, the old VM is swapped atomically (behind an `Arc<Mutex<>>`)
-4. If invalid, the old harness continues running and an error is logged
-
-This means you can iterate on harness scripts while the agent is running without risking a crash.
-
-### Module System
-
-Harness scripts can return tables to act as reusable modules:
+Canonical scoped data APIs use a selector shape:
 
 ```lua
--- harnesses/utils.lua
-local M = {}
-function M.is_dangerous(cmd)
-    return cmd:find("rm %-rf") or cmd:find("sudo")
-end
-return M
-```
-
-Other scripts import modules via `turin.import`:
-
-```lua
--- harnesses/safety.lua
-local utils = turin.import("utils")
-
-function on_tool_call(call)
-    if call.name == "shell_exec" and utils.is_dangerous(call.args.command) then
-        return REJECT, "Dangerous command blocked"
-    end
-    return ALLOW
-end
-```
-
----
-
-## Provider Architecture
-
-Turin supports multiple LLM providers through a normalized abstraction:
-
-```rust
-pub trait InferenceProvider: Send + Sync {
-    fn complete(&self, request: InferenceRequest) -> BoxFuture<Result<InferenceResult, SdkError>>;
-    fn stream(&self, request: InferenceRequest) -> BoxFuture<Result<InferenceStream, SdkError>>;
+{
+  tags = { "agent:coder", "tenant:acme" },
+  namespace = "default",
+  visibility = "private"
 }
 ```
 
-Providers are configured by name in `turin.toml`:
+Selectors are normalized and converted to store aliases for persistence lookup.
 
-```toml
-[providers.anthropic]
-type = "anthropic"
-api_key_env = "ANTHROPIC_API_KEY"
-# request_timeout_secs = 60
-# total_timeout_secs = 120
-# base_url = "https://api.anthropic.com/v1"  # Anthropic-compatible override (include /v1)
-# MiniMax example: "https://api.minimax.io/anthropic/v1"
+## Multi-DB Architecture
 
-[providers.openai]
-type = "openai"
-api_key_env = "OPENAI_API_KEY"
+Turin now supports multiple logical state stores via `StoreManager`.
 
-[providers.fast]
-type = "openai"
-api_key_env = "OPENAI_API_KEY"
-base_url = "https://custom-endpoint.example.com/v1"
-# max_retries = 4
-# [providers.fast.headers]
-# x-internal-route = "fast-lane"
-```
+### Store Selection
 
-The default provider is set in `[agent].provider`. Harness scripts can switch providers mid-turn via `ctx.provider = "fast"` in `on_turn_prepare`.
+A store can be selected by:
 
-Provider-specific SDK events are mapped to `KernelEvent`s at the boundary, so the rest of the system is provider-agnostic. Provider headers are passed through from config/harness request options without Turin needing provider-specific fields.
+- alias (`"state"`, custom alias names)
+- path (`"scratch/test.db"`)
+- handle (`{ handle = "..." }`)
+- selector-derived alias (`{ selector = {...} }`)
 
----
+### Store Handle Model
 
-## Configuration
+`runtime.db.open(...)` returns a handle record including:
 
-Configuration is loaded from `turin.toml` and parsed into a typed `TurinConfig` struct. The config has five sections:
+- `handle`
+- `path`
+- `alias` (if any)
+- `open_count`
+- `idle_ms`
 
-| Section | Purpose |
-|---------|---------|
-| `[agent]` | System prompt, model, provider, thinking config |
-| `[kernel]` | Workspace root, max turns, heartbeat interval |
-| `[persistence]` | Database path |
-| `[harness]` | Harness script directory |
-| `[providers.*]` | Named provider configurations |
-| `[embeddings]` | Embedding provider for cognitive memory |
+The store manager tracks handles and trims idle/open caches according to runtime policy.
 
-CLI flags (`--model`, `--provider`, `--verbose`, `--json`) override config values.
+## Multi-Agent Architecture
 
----
+Peer agents are managed by `AgentManager`.
 
-## Project Structure (Core)
+### Runtime Registry
 
-| Component | Path | Responsibility |
-|-----------|------|----------------|
-| **Kernel** | `src/kernel/` | The core agent loop, session manager, and event dispatcher. |
-| **Harness**| `src/harness/`| The Luau evaluator, global API injections, and verdict logic. |
-| **Tools**  | `src/tools/`  | The registry and built-in implementations (fs, mcp, shell). |
-| **Inference**| `src/inference/`| Provider clients and the normalized event streaming adapter. |
-| **Persistence**| `src/persistence/`| The Turso event log, memory storage, and schema management. |
+Each peer agent runtime is started lazily and tracked in a runtime registry.
 
----
+Features:
 
-## Dependencies
+- async task submission (`submit`)
+- optional fire-and-forget send (`send`)
+- result awaiting (`await_result`)
+- status listing/inspection
+- idle shutdown and restart
 
-| Dependency | Purpose | Rationale |
-|-----------|---------|-----------|
-| `inference-sdk-core` | Provider trait | Shared abstraction for LLM providers |
-| `anthropic-sdk` | Anthropic client | Claude API support |
-| `openai-sdk` | OpenAI client | GPT/compatible API support |
-| `mcp-sdk` | MCP client | Model Context Protocol integration |
-| `mlua` (Luau) | Lua runtime | Harness engine with built-in sandboxing |
-| `turso` | Database | Pure-Rust SQLite for persistence and memory |
-| `tokio` | Async runtime | Required by inference SDKs |
-| `clap` | CLI parsing | Argument parsing and subcommands |
-| `serde` / `serde_json` | Serialization | Config parsing and event serialization |
-| `notify` | File watching | Harness hot-reload trigger |
+### Delegation and Governance Integration
 
-### Why Turso Over rusqlite
+Peer dispatch can carry delegated capability ceilings. Effective authority is constrained by:
 
-Pure Rust (no C linking), native async, and a path to Turso Cloud replication if needed. Slightly larger than rusqlite (~665KB vs ~500KB overhead) but eliminates cross-compilation issues and provides a paved road to cloud persistence.
+- governance profile / enforcement state
+- caller subject capabilities
+- caller grants (if active)
+- agent max capabilities / profiles
+- child-agent allowlists
 
-### Why Luau Over Lua 5.4 / LuaJIT / Rhai
+## Governance Architecture (Opt-In)
 
-Built-in sandboxing is the deciding factor. Luau's sandbox mode removes dangerous functions and makes globals read-only without manual intervention. It also has a gradual type system (helpful for harness authors), is actively developed by Roblox, and is syntactically close enough to standard Lua that LLMs generate valid code for it.
+Governance is implemented as an overlay, not a rewrite of kernel behavior.
 
-### Build Profile
+### Key Concepts
 
-Release builds are optimized for distribution (~11MB binary):
-- **LTO**: Enabled for full-binary optimization.
-- **Panic**: Set to `abort` to reduce size and improve performance.
-- **Strip**: Symbols are removed to minimize binary footprint.
-- **SQLite**: Statically linked via the Turso crate with no external C dependencies.
+- **Profile** (`open`, `balanced`, `governed`, `custom`)
+- **Capability checks** (`runtime.db.exec`, `shell.exec`, etc.)
+- **Subject context** (agent/module/root/import delegation/grant)
+- **Import policy** (`legacy`, `mixed`, `scoped`)
+- **Agent ceilings** (`capability_profile`, `max_capabilities`, `allowed_child_agents`)
+- **Temporary grants** (TTL/max uses, auditable)
+
+### Enforcement Layers
+
+1. **Stdlib binding layer** (primary, ergonomic errors)
+2. **Kernel tool execution fallback** (defense-in-depth)
+3. **Import proxy scoping** (module/root/delegation attribution)
+
+### Audit Modes
+
+- `off`
+- `observational`
+- `immutable`
+
+In immutable mode (or with `persist_before_hooks=true`), audit events persist before `on_kernel_event` can reject them.
+
+## Provider-Agnostic Compatibility Strategy
+
+Turin must remain provider-agnostic.
+
+- Turin consumes normalized SDK events (`InferenceEvent`) and emits `KernelEvent` stream events.
+- Provider-specific quirks (Anthropic-compatible variations, request normalization issues, etc.) are fixed in `inference-sdk-rust`.
+- Turin preserves richer normalized data (thinking blocks and signatures) so the SDK can roundtrip provider-specific requirements without Turin branching by provider.
+
+## Testing and Validation Layers
+
+Turin uses multiple validation layers:
+
+- unit tests and integration tests (`cargo test`)
+- static linting (`cargo clippy --all-targets -- -D warnings`)
+- release builds (`cargo build --release`)
+- manual live provider smoke tests (`scripts/live_minimax_smoke.sh`)
+
+See `docs/TESTING.md` and `docs/LIVE_PROVIDER_TESTING.md`.

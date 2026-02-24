@@ -1,185 +1,174 @@
-# Testing Turin
+# Testing Turin (v0.15.0)
 
-This guide provides step-by-step instructions for testing Turin's features using the compiled binary.
+This document covers Turin’s testing strategy and the commands used to validate changes locally.
 
-## 1. Prerequisites
+## Test Layers
 
-### Build the Binary
-Ensure you have the latest version of the binary:
+Turin validation is layered on purpose.
+
+### 1. Static + local deterministic checks (default)
+
+- `cargo check`
+- `cargo test`
+- `cargo clippy --all-targets -- -D warnings`
+- `cargo build --release`
+
+These should be your default validation loop.
+
+### 2. Live endpoint validation (manual / opt-in)
+
+- `scripts/live_minimax_smoke.sh`
+- project-specific real-harness runs using your provider credentials
+
+Live tests are never run automatically by Turin’s standard cargo commands.
+
+## Core Local Validation Commands
+
+## Fast iteration
+
+```bash
+cargo check
+cargo test
+```
+
+## Strict linting
+
+```bash
+cargo clippy --all-targets -- -D warnings
+```
+
+## Release build (size/perf sanity)
+
 ```bash
 cargo build --release
-# The binary will be at target/release/turin
+stat -c '%s' target/release/turin
+file target/release/turin
 ```
 
-### Environment Variables
-Turin requires API keys for real LLM providers. Set them in your shell:
-```bash
-export ANTHROPIC_API_KEY="your-key-here"
-export OPENAI_API_KEY="your-key-here"
-```
+## Running Turin Manually
 
----
-
-## 2. Configuration (`turin.toml`)
-
-Create a `turin.toml` in your project root to configure the basics:
-
-```toml
-[agent]
-model = "claude-3-5-sonnet-20240620"
-provider = "anthropic"
-system_prompt = "You are a helpful coding assistant."
-
-[agent.thinking]
-enabled = true
-budget_tokens = 4096
-
-[kernel]
-workspace_root = "."
-max_turns = 10
-
-[persistence]
-database_path = ".turin/state.db"
-
-[harness]
-directory = ".turin/harnesses"
-```
-
----
-
-## 3. Basic Execution (One-Shot)
-
-Test a single prompt to verify the inference and tool loop:
+## One-shot run
 
 ```bash
-# Basic run
-./target/release/turin run --prompt "Hello, list the files in the current directory."
-
-# With debug logging (shows KernelEvents and tracing)
-./target/release/turin run --log-level debug --prompt "Explain the project structure."
-
-# Override model via CLI
-./target/release/turin run --model gpt-4o --prompt "What is Turin?"
+target/release/turin run --config turin.toml --prompt "Summarize this repository"
 ```
 
----
+Options worth using while debugging:
 
-## 4. Interactive Mode (REPL)
+- `--log-level debug`
+- `--json` (NDJSON event stream to stdout)
+- `--model ...`
+- `--provider ...`
 
-Start a persistent session where the agent maintains context across multiple user inputs:
+## REPL mode
 
 ```bash
-./target/release/turin repl
+target/release/turin repl --config turin.toml
 ```
-- Type your prompt and press Enter.
-- The agent will work and return control to the REPL.
-- You can follow up with more questions in the same session.
 
----
+Useful REPL slash commands include `/reload` (reload harness scripts).
 
-## 5. Testing Governance (Harness Scripts)
+## Config and Harness Validation
 
-Turin uses Lua scripts to govern behavior.
+## `turin check`
 
-1. **Create the harness directory**: `mkdir -p .turin/harnesses`
-2. **Add a safety script** (`.turin/harnesses/safety.lua`):
-   ```lua
-   function on_tool_call(call)
-       if call.name == "shell_exec" and call.args.command:find("rm ") then
-           return REJECT, "Deletion is forbidden!"
-       end
-       return ALLOW
-   end
-   ```
-3. **Run a prompt that triggers the rejection**:
-   ```bash
-   ./target/release/turin run --prompt "Try to delete a file using shell_exec."
-   ```
-   *Expected result: The Kernel blocks the action and reports the harness rejection.*
+Static validation of config + harness scripts:
 
----
+```bash
+target/release/turin check --config turin.toml
+```
 
-## 6. Testing Cognitive Memory (Anchorage)
+Use this before live runs when editing harness scripts heavily.
 
-Turin stores semantic memories via `sqlite-vec`.
+## Hook and Harness Regression Testing
 
-### Verification via Script
-Run the built-in `coding_agent.lua` (if configured in `turin.toml` or present in the harness dir) to see Anchorage in action:
+Turin’s test suite includes dedicated coverage for:
 
-1. Perform a few tasks in `turin repl`.
-2. Exit the REPL. Turin will trigger `on_task_complete`.
-3. Check the logs/verbose output for `[ANCHOR] ... Memory stored successfully`.
-4. Re-run REPL and ask about past interactions to verify recall.
+- hook lifecycle behavior
+- harness verdict composition
+- canonical stdlib APIs (`runtime.*`)
+- governance profiles/capabilities/import scoping
+- temporary grants and immutable audit semantics
+- peer-agent orchestration
+- path traversal/security checks
 
----
+Most behavior should be validated there before spending provider quota.
 
-## 7. Testing Subagents
+## Live Provider Validation (Manual / Opt-In)
 
-Subagents allow the harness to delegate tasks recursively.
+## MiniMax Anthropic-compatible smoke suite
 
-### Using the Mock Provider (No API Key Required)
-You can verify the subagent logic without spending tokens:
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env
+```
 
-1. Create a `turin.mock.toml`:
-   ```toml
-   [agent]
-   model = "mock"
-   provider = "mock"
-   [embeddings]
-   type = "no_op"
-   ```
-2. Use the `turin.agent.spawn` primitive in a harness script (see `subagent_test.lua` in the repository for reference).
-3. Run the script:
-   ```bash
-   ./target/release/turin script path/to/script.lua --config turin.mock.toml
-   ```
+Custom case selection:
 
----
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env \
+  --cases basic,tool_read,tool_error,tool_write_read
+```
 
-## 8. Testing MCP (Model Context Protocol)
+Request debug dumps (SDK layer):
 
-Connect to external tool servers:
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --debug-requests
+```
 
-1. Ensure `npx` is installed.
-2. In the REPL or a prompt, instruct the agent:
-   > "Connect to the filesystem MCP server using `npx -y @modelcontextprotocol/server-filesystem /tmp` and tell me what's inside /tmp"
-3. Observe the `bridge_mcp` tool call and the subsequent registration of new tools.
+See `docs/LIVE_PROVIDER_TESTING.md` for environment setup and troubleshooting.
 
----
+## Suggested Validation Workflow for Major Changes
 
-## 9. Troubleshooting
+### Runtime / kernel / stdlib changes
 
-- **Database**: Inspect `.turin/state.db` using any SQLite client to see the event log and message history.
-- **Verbose Mode**: Always use `--verbose` when debugging complex harness logic.
-- **Provider Errors**: If you get a 401, double-check your environment variables and the `api_key_env` setting in `turin.toml`.
+1. `cargo test`
+2. `cargo clippy --all-targets -- -D warnings`
+3. `cargo build --release`
+4. optional live smoke (`basic`, `tool_read`)
 
----
+### Governance changes
 
-## 10. Testing Named Providers
+1. unit tests (`kernel::governance`)
+2. harness integration tests (`tests/harness_tests.rs`)
+3. `cargo clippy --all-targets -- -D warnings`
+4. optional governed-mode live smoke (project-specific harness/config)
 
-Turin supports multiple named provider instances.
+### Provider compatibility debugging
 
-1.  **Configure multiple providers**:
-    ```toml
-    [agent]
-    provider = "primary"
+1. reproduce in `inference-sdk-rust` first (faster loop)
+2. patch and validate SDK tests
+3. rerun Turin smoke script
 
-    [providers.primary]
-    type = "anthropic"
-    api_key_env = "PRIMARY_KEY"
+This keeps provider-specific logic out of Turin and speeds debugging.
 
-    [providers.backup]
-    type = "openai"
-    api_key_env = "BACKUP_KEY"
-    ```
-2.  **Toggle via Harness**:
-    In `on_turn_prepare`, you can switch instances:
-    ```lua
-    function on_turn_prepare(ctx)
-        if some_condition then
-            ctx.provider = "backup"
-        end
-        return ALLOW
-    end
-    ```
-3.  **Verify**: Run with `--verbose` and observe which provider client is initialized and called in the event stream.
+## Common Warnings and How to Interpret Them
+
+### `FTS5 extension not available. Hybrid search will be degraded.`
+
+- Meaning: FTS5 search acceleration is unavailable in the current SQLite/libSQL build
+- Impact: memory search degrades gracefully
+- Relevance to provider testing: none (not a provider/network issue)
+
+### `Event broadcast skipped — no active receivers` (debug)
+
+- Meaning: no in-memory subscribers were attached to the broadcast channel
+- Impact: no problem for normal one-shot runs (durability lane still handles persistence if enabled)
+
+## Keeping Tests Fast While Iterating
+
+- Prefer focused test files while developing:
+  - `cargo test --test harness_tests`
+  - `cargo test --test agent_loop_tests`
+- Run full `cargo test` before committing
+- Reserve live tests for behavior that depends on real provider responses
+
+## Release Validation Checklist (Recommended)
+
+Before cutting a release tag:
+
+1. `cargo test`
+2. `cargo clippy --all-targets -- -D warnings`
+3. `cargo build --release`
+4. record binary size
+5. run opt-in live smoke suite against at least one real provider/proxy
+6. verify docs/changelog/version consistency
