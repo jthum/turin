@@ -1,14 +1,19 @@
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{HarnessAppData, block_on_current};
-use crate::harness::stdlib::binding_common::memory_rows_to_lua_table;
+use crate::harness::stdlib::binding_common::{
+    bool_err, memory_rows_to_lua_table, nil_err, nil_ok, ok_bool, string_ok,
+};
 use crate::harness::stdlib::context_selectors::{
     normalize_selector, search_limit_from_opt, table_to_selector,
 };
 use crate::harness::stdlib::scoped_data_backend::{
     kv_delete_backend, kv_get_backend, kv_set_backend, memory_search_backend, memory_store_backend,
 };
+use crate::inference::embeddings::EmbeddingProvider;
 use crate::kernel::identity::ContextSelector;
+use crate::persistence::manager::StoreManager;
+use std::sync::Arc;
 
 fn default_agent_selector(app_data: &HarnessAppData) -> LuaResult<ContextSelector> {
     normalize_selector(ContextSelector {
@@ -17,6 +22,119 @@ fn default_agent_selector(app_data: &HarnessAppData) -> LuaResult<ContextSelecto
         visibility: "private".to_string(),
     })
     .map_err(mlua::Error::runtime)
+}
+
+fn metadata_json_or_empty(lua: &Lua, metadata: Option<Table>) -> LuaResult<serde_json::Value> {
+    if let Some(tbl) = metadata {
+        lua.from_value::<serde_json::Value>(Value::Table(tbl))
+            .map_err(|e| mlua::Error::runtime(format!("invalid metadata table: {}", e)))
+    } else {
+        Ok(serde_json::json!({}))
+    }
+}
+
+fn has_active_session(active_session: &Arc<std::sync::Mutex<Option<String>>>) -> bool {
+    active_session.lock().unwrap().is_some()
+}
+
+fn memory_search_result(
+    lua: &Lua,
+    manager: Arc<StoreManager>,
+    embedding: Option<Arc<dyn EmbeddingProvider>>,
+    selector: ContextSelector,
+    query: String,
+    limit: usize,
+) -> LuaResult<(Value, Value)> {
+    let result = block_on_current(async move {
+        memory_search_backend(&manager, embedding.as_ref(), &selector, &query, limit)
+            .await
+            .map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(rows) => Ok((
+            Value::Table(memory_rows_to_lua_table(lua, rows)?),
+            Value::Nil,
+        )),
+        Err(err) => nil_err(lua, &err),
+    }
+}
+
+fn memory_store_result(
+    lua: &Lua,
+    manager: Arc<StoreManager>,
+    embedding: Option<Arc<dyn EmbeddingProvider>>,
+    selector: ContextSelector,
+    content: String,
+    metadata_json: serde_json::Value,
+) -> LuaResult<(Value, Value)> {
+    let result = block_on_current(async move {
+        memory_store_backend(
+            &manager,
+            embedding.as_ref(),
+            &selector,
+            &content,
+            &metadata_json,
+        )
+        .await
+        .map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(_) => Ok(ok_bool()),
+        Err(err) => bool_err(lua, &err),
+    }
+}
+
+fn kv_get_result(
+    lua: &Lua,
+    manager: Arc<StoreManager>,
+    selector: ContextSelector,
+    key: String,
+) -> LuaResult<(Value, Value)> {
+    let result = block_on_current(async move {
+        kv_get_backend(&manager, &selector, &key)
+            .await
+            .map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(Some(val)) => string_ok(lua, &val),
+        Ok(None) => Ok(nil_ok()),
+        Err(err) => nil_err(lua, &err),
+    }
+}
+
+fn kv_set_result(
+    lua: &Lua,
+    manager: Arc<StoreManager>,
+    selector: ContextSelector,
+    key: String,
+    value: String,
+) -> LuaResult<(Value, Value)> {
+    let result = block_on_current(async move {
+        kv_set_backend(&manager, &selector, &key, &value)
+            .await
+            .map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(_) => Ok(ok_bool()),
+        Err(err) => bool_err(lua, &err),
+    }
+}
+
+fn kv_delete_result(
+    lua: &Lua,
+    manager: Arc<StoreManager>,
+    selector: ContextSelector,
+    key: String,
+) -> LuaResult<(Value, Value)> {
+    let result = block_on_current(async move {
+        kv_delete_backend(&manager, &selector, &key)
+            .await
+            .map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(_) => Ok(ok_bool()),
+        Err(err) => bool_err(lua, &err),
+    }
 }
 
 pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
@@ -33,26 +151,17 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
             lua.create_function(move |lua, (query, opts): (String, Option<Value>)| {
                 let limit = search_limit_from_opt(opts)?;
                 let selector = default_agent_selector(&app_data_snapshot)?;
-                if active_session.lock().unwrap().is_none() {
-                    return Ok((
-                        Value::Nil,
-                        Value::String(lua.create_string("No active session context")?),
-                    ));
+                if !has_active_session(&active_session) {
+                    return nil_err(lua, "No active session context");
                 }
-                let manager = manager.clone();
-                let embedding = embedding.clone();
-                let result = block_on_current(async move {
-                    memory_search_backend(&manager, embedding.as_ref(), &selector, &query, limit)
-                        .await
-                        .map_err(|e| e.to_string())
-                });
-                match result {
-                    Ok(rows) => Ok((
-                        Value::Table(memory_rows_to_lua_table(lua, rows)?),
-                        Value::Nil,
-                    )),
-                    Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
-                }
+                memory_search_result(
+                    lua,
+                    manager.clone(),
+                    embedding.clone(),
+                    selector,
+                    query,
+                    limit,
+                )
             })?,
         )?;
     }
@@ -68,40 +177,18 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
             lua.create_function(
                 move |lua, (content, metadata, _opts): (String, Option<Table>, Option<Table>)| {
                     let selector = default_agent_selector(&app_data_snapshot)?;
-                    if active_session.lock().unwrap().is_none() {
-                        return Ok((
-                            Value::Boolean(false),
-                            Value::String(lua.create_string("No active session context")?),
-                        ));
+                    if !has_active_session(&active_session) {
+                        return bool_err(lua, "No active session context");
                     }
-                    let metadata_json = if let Some(tbl) = metadata {
-                        lua.from_value::<serde_json::Value>(Value::Table(tbl))
-                            .map_err(|e| {
-                                mlua::Error::runtime(format!("invalid metadata table: {}", e))
-                            })?
-                    } else {
-                        serde_json::json!({})
-                    };
-                    let manager = manager.clone();
-                    let embedding = embedding.clone();
-                    let result = block_on_current(async move {
-                        memory_store_backend(
-                            &manager,
-                            embedding.as_ref(),
-                            &selector,
-                            &content,
-                            &metadata_json,
-                        )
-                        .await
-                        .map_err(|e| e.to_string())
-                    });
-                    match result {
-                        Ok(_) => Ok((Value::Boolean(true), Value::Nil)),
-                        Err(err) => Ok((
-                            Value::Boolean(false),
-                            Value::String(lua.create_string(&err)?),
-                        )),
-                    }
+                    let metadata_json = metadata_json_or_empty(lua, metadata)?;
+                    memory_store_result(
+                        lua,
+                        manager.clone(),
+                        embedding.clone(),
+                        selector,
+                        content,
+                        metadata_json,
+                    )
                 },
             )?,
         )?;
@@ -124,27 +211,14 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
                     "search",
                     lua.create_function(move |lua, (query, opts): (String, Option<Value>)| {
                         let limit = search_limit_from_opt(opts)?;
-                        let selector = sel_search.clone();
-                        let manager = m_search.clone();
-                        let embedding = e_search.clone();
-                        let result = block_on_current(async move {
-                            memory_search_backend(
-                                &manager,
-                                embedding.as_ref(),
-                                &selector,
-                                &query,
-                                limit,
-                            )
-                            .await
-                            .map_err(|e| e.to_string())
-                        });
-                        match result {
-                            Ok(rows) => Ok((
-                                Value::Table(memory_rows_to_lua_table(lua, rows)?),
-                                Value::Nil,
-                            )),
-                            Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
-                        }
+                        memory_search_result(
+                            lua,
+                            m_search.clone(),
+                            e_search.clone(),
+                            sel_search.clone(),
+                            query,
+                            limit,
+                        )
                     })?,
                 )?;
 
@@ -160,38 +234,15 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
                             Option<Table>,
                             Option<Table>,
                         )| {
-                            let metadata_json = if let Some(tbl) = metadata {
-                                lua.from_value::<serde_json::Value>(Value::Table(tbl))
-                                    .map_err(|e| {
-                                        mlua::Error::runtime(format!(
-                                            "invalid metadata table: {}",
-                                            e
-                                        ))
-                                    })?
-                            } else {
-                                serde_json::json!({})
-                            };
-                            let selector = sel_store.clone();
-                            let manager = m_store.clone();
-                            let embedding = e_store.clone();
-                            let result = block_on_current(async move {
-                                memory_store_backend(
-                                    &manager,
-                                    embedding.as_ref(),
-                                    &selector,
-                                    &content,
-                                    &metadata_json,
-                                )
-                                .await
-                                .map_err(|e| e.to_string())
-                            });
-                            match result {
-                                Ok(_) => Ok((Value::Boolean(true), Value::Nil)),
-                                Err(err) => Ok((
-                                    Value::Boolean(false),
-                                    Value::String(lua.create_string(&err)?),
-                                )),
-                            }
+                            let metadata_json = metadata_json_or_empty(lua, metadata)?;
+                            memory_store_result(
+                                lua,
+                                m_store.clone(),
+                                e_store.clone(),
+                                sel_store.clone(),
+                                content,
+                                metadata_json,
+                            )
                         },
                     )?,
                 )?;
@@ -216,24 +267,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
         kv_table.set(
             "get",
             lua.create_function(move |lua, key: String| {
-                if active_session.lock().unwrap().is_none() {
-                    return Ok((
-                        Value::Nil,
-                        Value::String(lua.create_string("No active session context")?),
-                    ));
+                if !has_active_session(&active_session) {
+                    return nil_err(lua, "No active session context");
                 }
                 let selector = default_agent_selector(&app_data_snapshot)?;
-                let manager = manager.clone();
-                let result = block_on_current(async move {
-                    kv_get_backend(&manager, &selector, &key)
-                        .await
-                        .map_err(|e| e.to_string())
-                });
-                match result {
-                    Ok(Some(val)) => Ok((Value::String(lua.create_string(&val)?), Value::Nil)),
-                    Ok(None) => Ok((Value::Nil, Value::Nil)),
-                    Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
-                }
+                kv_get_result(lua, manager.clone(), selector, key)
             })?,
         )?;
     }
@@ -246,26 +284,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
         kv_table.set(
             "set",
             lua.create_function(move |lua, (key, value): (String, String)| {
-                if active_session.lock().unwrap().is_none() {
-                    return Ok((
-                        Value::Boolean(false),
-                        Value::String(lua.create_string("No active session context")?),
-                    ));
+                if !has_active_session(&active_session) {
+                    return bool_err(lua, "No active session context");
                 }
                 let selector = default_agent_selector(&app_data_snapshot)?;
-                let manager = manager.clone();
-                let result = block_on_current(async move {
-                    kv_set_backend(&manager, &selector, &key, &value)
-                        .await
-                        .map_err(|e| e.to_string())
-                });
-                match result {
-                    Ok(_) => Ok((Value::Boolean(true), Value::Nil)),
-                    Err(err) => Ok((
-                        Value::Boolean(false),
-                        Value::String(lua.create_string(&err)?),
-                    )),
-                }
+                kv_set_result(lua, manager.clone(), selector, key, value)
             })?,
         )?;
     }
@@ -278,26 +301,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
         kv_table.set(
             "delete",
             lua.create_function(move |lua, key: String| {
-                if active_session.lock().unwrap().is_none() {
-                    return Ok((
-                        Value::Boolean(false),
-                        Value::String(lua.create_string("No active session context")?),
-                    ));
+                if !has_active_session(&active_session) {
+                    return bool_err(lua, "No active session context");
                 }
                 let selector = default_agent_selector(&app_data_snapshot)?;
-                let manager = manager.clone();
-                let result = block_on_current(async move {
-                    kv_delete_backend(&manager, &selector, &key)
-                        .await
-                        .map_err(|e| e.to_string())
-                });
-                match result {
-                    Ok(_) => Ok((Value::Boolean(true), Value::Nil)),
-                    Err(err) => Ok((
-                        Value::Boolean(false),
-                        Value::String(lua.create_string(&err)?),
-                    )),
-                }
+                kv_delete_result(lua, manager.clone(), selector, key)
             })?,
         )?;
     }
@@ -316,20 +324,7 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
                 proxy.set(
                     "get",
                     lua.create_function(move |lua, key: String| {
-                        let selector = sel_get.clone();
-                        let manager = m_get.clone();
-                        let result = block_on_current(async move {
-                            kv_get_backend(&manager, &selector, &key)
-                                .await
-                                .map_err(|e| e.to_string())
-                        });
-                        match result {
-                            Ok(Some(val)) => {
-                                Ok((Value::String(lua.create_string(&val)?), Value::Nil))
-                            }
-                            Ok(None) => Ok((Value::Nil, Value::Nil)),
-                            Err(err) => Ok((Value::Nil, Value::String(lua.create_string(&err)?))),
-                        }
+                        kv_get_result(lua, m_get.clone(), sel_get.clone(), key)
                     })?,
                 )?;
 
@@ -338,20 +333,7 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
                 proxy.set(
                     "set",
                     lua.create_function(move |lua, (key, value): (String, String)| {
-                        let selector = sel_set.clone();
-                        let manager = m_set.clone();
-                        let result = block_on_current(async move {
-                            kv_set_backend(&manager, &selector, &key, &value)
-                                .await
-                                .map_err(|e| e.to_string())
-                        });
-                        match result {
-                            Ok(_) => Ok((Value::Boolean(true), Value::Nil)),
-                            Err(err) => Ok((
-                                Value::Boolean(false),
-                                Value::String(lua.create_string(&err)?),
-                            )),
-                        }
+                        kv_set_result(lua, m_set.clone(), sel_set.clone(), key, value)
                     })?,
                 )?;
 
@@ -360,20 +342,7 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
                 proxy.set(
                     "delete",
                     lua.create_function(move |lua, key: String| {
-                        let selector = sel_del.clone();
-                        let manager = m_del.clone();
-                        let result = block_on_current(async move {
-                            kv_delete_backend(&manager, &selector, &key)
-                                .await
-                                .map_err(|e| e.to_string())
-                        });
-                        match result {
-                            Ok(_) => Ok((Value::Boolean(true), Value::Nil)),
-                            Err(err) => Ok((
-                                Value::Boolean(false),
-                                Value::String(lua.create_string(&err)?),
-                            )),
-                        }
+                        kv_delete_result(lua, m_del.clone(), sel_del.clone(), key)
                     })?,
                 )?;
 
