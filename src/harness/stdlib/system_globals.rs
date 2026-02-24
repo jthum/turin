@@ -79,6 +79,7 @@ fn import_module(
     }
 
     let delegated_capabilities = delegated_import_capabilities(opts.as_ref())?;
+    enforce_delegated_capability_subset(lua, delegated_capabilities.as_ref())?;
     wrap_imported_module(lua, name, module_value, meta_value, delegated_capabilities)
 }
 
@@ -315,6 +316,12 @@ fn delegated_import_capabilities(
             let mut caps = BTreeMap::new();
             for pair in t.pairs::<String, Value>() {
                 let (key, value) = pair?;
+                if key.ends_with(".*") {
+                    return Err(mlua::Error::runtime(format!(
+                        "import_scoped opts.capabilities wildcard rules are not yet supported (key '{}')",
+                        key
+                    )));
+                }
                 match value {
                     Value::Boolean(b) => {
                         caps.insert(key, b);
@@ -333,6 +340,56 @@ fn delegated_import_capabilities(
             "import_scoped opts.capabilities must be a table".to_string(),
         )),
     }
+}
+
+fn enforce_delegated_capability_subset(
+    lua: &Lua,
+    requested_caps: Option<&BTreeMap<String, bool>>,
+) -> LuaResult<()> {
+    let Some(requested_caps) = requested_caps else {
+        return Ok(());
+    };
+    let Some(parent_caps) = get_active_import_capabilities(lua) else {
+        return Ok(());
+    };
+
+    for (capability, allowed) in requested_caps {
+        if !*allowed {
+            continue;
+        }
+        if !delegated_capability_allowed_by_parent(&parent_caps, capability) {
+            return Err(mlua::Error::runtime(format!(
+                "import_scoped capability delegation cannot grant '{}' beyond importer delegation",
+                capability
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn delegated_capability_allowed_by_parent(
+    parent_caps: &BTreeMap<String, bool>,
+    capability: &str,
+) -> bool {
+    if let Some(allowed) = parent_caps.get(capability) {
+        return *allowed;
+    }
+
+    let mut best: Option<(&str, bool)> = None;
+    for (rule, allowed) in parent_caps {
+        let Some(prefix) = rule.strip_suffix(".*") else {
+            continue;
+        };
+        if capability == prefix || capability.starts_with(&format!("{prefix}.")) {
+            match best {
+                Some((best_rule, _)) if best_rule.len() >= rule.len() => {}
+                _ => best = Some((rule.as_str(), *allowed)),
+            }
+        }
+    }
+
+    best.map(|(_, allowed)| allowed).unwrap_or(false)
 }
 
 fn resolve_safe_path(root: &Path, path_str: &str) -> Option<PathBuf> {

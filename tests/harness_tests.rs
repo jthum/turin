@@ -1423,6 +1423,148 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_nested_import_cannot_widen_import_delegation() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_nested_import_delegation.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    std::fs::write(
+        harness_dir.join("child.lua"),
+        r#"
+            return {
+                ping = function() return "pong" end
+            }
+        "#,
+    )?;
+
+    std::fs::write(
+        harness_dir.join("util.lua"),
+        r#"
+            return {
+                try_nested_widen = function()
+                    local ok, err = pcall(function()
+                        local child = import_scoped("child", {
+                            root = "core",
+                            capabilities = {
+                                ["harness.import.scoped"] = true,
+                                ["runtime.policy.set"] = true
+                            }
+                        })
+                        if child == nil then error("child import unexpectedly returned nil") end
+                        return child.ping()
+                    end)
+                    return ok, err
+                end
+            }
+        "#,
+    )?;
+
+    std::fs::write(
+        harness_dir.join("main.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local util = import_scoped("util", {
+                    root = "core",
+                    capabilities = {
+                        ["harness.import.scoped"] = true,
+                        ["runtime.db.query"] = true
+                    }
+                })
+                if util == nil then error("util import failed") end
+
+                local ok, err = util.try_nested_widen()
+                if ok then
+                    error("nested import should not be allowed to widen delegated capabilities")
+                end
+                if err == nil or string.find(err, "cannot grant 'runtime.policy.set' beyond importer delegation", 1, true) == nil then
+                    error("nested import denial should mention delegation widening")
+                end
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut roots = std::collections::HashMap::new();
+    roots.insert(
+        "core".to_string(),
+        turin::kernel::config::GovernanceRootConfig {
+            path: harness_dir.to_str().unwrap().to_string(),
+            writable_hint: false,
+            default_profile: Some("core_full".to_string()),
+            max_capabilities: std::collections::HashMap::new(),
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "nested import delegation widening test".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig {
+            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            enforcement_enabled: true,
+            import: turin::kernel::config::GovernanceImportConfig {
+                mode: turin::kernel::config::GovernanceImportMode::Mixed,
+                default_root: None,
+                allow_unscoped_in_open: false,
+            },
+            roots,
+            ..turin::kernel::config::GovernanceConfig::default()
+        },
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise nested import delegation widening guard".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_governed_enforcement.db");
