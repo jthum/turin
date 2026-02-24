@@ -4,6 +4,7 @@ pub mod config;
 pub mod event;
 mod event_persistence;
 mod harness_hooks;
+mod mcp_runtime;
 pub mod identity;
 mod init;
 pub mod policy;
@@ -13,7 +14,7 @@ mod task_planning;
 mod turn;
 
 use agent_manager::AgentManager;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use builder::RuntimeBuilder;
 use config::TurinConfig;
 use event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
@@ -32,10 +33,8 @@ use crate::kernel::policy::RuntimePolicyManager;
 use crate::persistence::manager::StoreManager;
 
 use crate::tools::ToolContext;
-use crate::tools::mcp::McpToolProxy;
 use crate::tools::registry::ToolRegistry;
-use mcp_sdk::client::McpClient;
-use mcp_sdk::transport::StdioTransport;
+use mcp_runtime::McpClientEntry;
 use notify::RecommendedWatcher;
 
 /// The Turin Kernel — manages the agent loop, event system, and tool execution.
@@ -60,12 +59,6 @@ pub struct Kernel {
     pub(crate) active_queue: crate::harness::globals::ActiveSessionQueue,
 
     pub(crate) mcp_clients: Vec<McpClientEntry>,
-}
-
-pub(crate) struct McpClientEntry {
-    pub command: String,
-    pub args: Vec<String>,
-    pub client: Arc<McpClient<mcp_sdk::transport::StdioTransport>>,
 }
 
 /// A pending tool call collected during streaming.
@@ -626,81 +619,5 @@ impl Kernel {
         }
 
         Ok(false)
-    }
-
-    /// Connect to an MCP server, initialize it, and register its tools.
-    #[instrument(skip(self, args), fields(command = %command, args = ?args))]
-    async fn spawn_mcp_server(&mut self, command: &str, args: &[String]) -> Result<usize> {
-        let args_str: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-
-        // Check for existing client
-        if let Some(entry) = self
-            .mcp_clients
-            .iter()
-            .find(|e| e.command == command && e.args == args)
-        {
-            info!(command = %command, "Reusing existing MCP client");
-            // We can return the tool count from the existing client,
-            // but we don't store tool count. We could just re-list or trust existing registry.
-            // If the registry already has the tools, we might be fine.
-            // But if specific tools were removed?
-            // Simplest is to assume consistency.
-            // But evaluate_tool_call needs tool execution logic, which relies on ToolRegistry.
-            // If registry is wiped but client reused?
-            // ToolRegistry persists in Kernel.
-
-            // Let's re-list to be safe and ensure tools are registered?
-            // Listing is cheap.
-            let list_result = entry
-                .client
-                .list_tools()
-                .await
-                .with_context(|| "Failed to list MCP tools on reused client")?;
-            let count = list_result.tools.len();
-
-            // Update tool registry just in case
-            for tool_def in list_result.tools {
-                // McpToolProxy needs an Arc<McpClient>. The entry has it.
-                let proxy = McpToolProxy::new(entry.client.clone(), tool_def);
-                let _ = self.tool_registry.register(Box::new(proxy));
-                // Ignore error if duplicate (register returns Result<()>)
-            }
-            return Ok(count);
-        }
-
-        info!("Connecting to MCP server");
-
-        let transport = StdioTransport::new(command, &args_str)
-            .with_context(|| format!("Failed to spawn MCP process: {}", command))?;
-
-        let client = McpClient::new(transport);
-        client
-            .initialize()
-            .await
-            .with_context(|| "Failed to initialize MCP client")?;
-
-        let list_result = client
-            .list_tools()
-            .await
-            .with_context(|| "Failed to list MCP tools")?;
-        let count = list_result.tools.len();
-
-        let client_arc = Arc::new(client);
-        self.mcp_clients.push(McpClientEntry {
-            command: command.to_string(),
-            args: args.to_vec(),
-            client: client_arc.clone(),
-        });
-
-        for tool_def in list_result.tools {
-            let proxy = McpToolProxy::new(client_arc.clone(), tool_def);
-            self.tool_registry
-                .register(Box::new(proxy))
-                .with_context(|| "Failed to register MCP tool")?;
-        }
-
-        info!(count = count, "MCP tools registered");
-
-        Ok(count)
     }
 }
