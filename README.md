@@ -266,6 +266,7 @@ See `docs/LIVE_PROVIDER_TESTING.md` for setup and troubleshooting.
 
 ## Documentation Map
 
+- `docs/INDEX.md` — docs landing page and recommended reading paths
 - `docs/TURIN.md` — philosophy and product framing
 - `docs/ARCHITECTURE.md` — current runtime architecture and module layout
 - `docs/HOOKS.md` — stable hook lifecycle, payloads, verdict semantics
