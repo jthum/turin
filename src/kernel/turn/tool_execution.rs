@@ -15,7 +15,7 @@ use crate::tools::{ToolContext, ToolEffect, ToolError, ToolOutput};
 use super::super::event::{AuditEvent, KernelEvent};
 use super::super::{Kernel, PendingToolCall};
 use super::TurnOutcome;
-use crate::kernel::governance::tool_capability_name;
+use crate::kernel::governance::{GovernanceSubject, tool_capability_name};
 
 #[derive(Debug, Clone)]
 struct FinalToolRecord {
@@ -141,9 +141,10 @@ impl Kernel {
 
                 let start = Instant::now();
                 let effect_res = if let Some(capability) = tool_capability_name(&tc.name) {
+                    let subject = GovernanceSubject::for_agent(kernel.config.agent.id.as_str());
                     match kernel
                         .governance_manager
-                        .require_capability(Some(kernel.config.agent.id.as_str()), capability)
+                        .require_capability_for_subject(&subject, capability)
                     {
                         Ok(()) => {
                             kernel

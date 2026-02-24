@@ -258,6 +258,14 @@ impl HarnessEngine {
         None
     }
 
+    fn set_active_harness_module(&self, module_name: Option<&str>) {
+        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
+            && let Ok(mut lock) = app_data.active_harness_module.lock()
+        {
+            *lock = module_name.map(|s| s.to_string());
+        }
+    }
+
     /// Call a hook across all loaded scripts, returning individual verdicts.
     fn call_hook(&self, hook_name: &str, payload: serde_json::Value) -> Result<Vec<Verdict>> {
         let mut verdicts = Vec::new();
@@ -293,7 +301,9 @@ impl HarnessEngine {
 
             match hook_fn {
                 Value::Function(func) => {
+                    self.set_active_harness_module(Some(script_name));
                     let result = func.call::<MultiValue>(lua_payload.clone()).map_err(|e| {
+                        self.set_active_harness_module(None);
                         anyhow::anyhow!(
                             "Harness '{}' hook '{}' failed:\n{}",
                             script_name,
@@ -301,6 +311,7 @@ impl HarnessEngine {
                             format_lua_error(&e)
                         )
                     })?;
+                    self.set_active_harness_module(None);
 
                     let verdict = parse_verdict(&self.lua, result)?;
                     verdicts.push(verdict);
@@ -342,13 +353,16 @@ impl HarnessEngine {
                     anyhow::anyhow!("Failed to create userdata for hook '{}': {}", hook_name, e)
                 })?;
 
+                self.set_active_harness_module(Some(name));
                 match func.call::<MultiValue>(ud) {
                     Ok(result) => {
+                        self.set_active_harness_module(None);
                         if let Ok(v) = parse_verdict(&self.lua, result) {
                             verdicts.push(v);
                         }
                     }
                     Err(e) => {
+                        self.set_active_harness_module(None);
                         error!(hook = %hook_name, script = %name, "Error in harness hook:\n{}", format_lua_error(&e));
                     }
                 }
@@ -444,6 +458,7 @@ mod tests {
                 "test-session".to_string(),
             ))),
             active_session_mode: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            active_harness_module: std::sync::Arc::new(std::sync::Mutex::new(None)),
             config: std::sync::Arc::new(crate::kernel::config::TurinConfig::default()),
             spawn_depth: 0,
         }

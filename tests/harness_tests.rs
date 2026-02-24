@@ -714,6 +714,13 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
             if reviewer == nil then error("runtime.governance.agent failed: " .. tostring(re)) end
             if reviewer.subject_agent_id ~= "reviewer" then error("reviewer subject_agent_id mismatch") end
 
+            local dec, de = runtime.governance.check("runtime.db.query")
+            if dec == nil then error("runtime.governance.check failed: " .. tostring(de)) end
+            if dec.subject_agent_id ~= "default" then error("decision subject_agent_id mismatch") end
+            if dec.subject_module_name ~= "governance" then
+                error("decision subject_module_name mismatch: " .. tostring(dec.subject_module_name))
+            end
+
             return ALLOW
         end
     "#;

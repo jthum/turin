@@ -52,6 +52,8 @@ pub struct CapabilityDecision {
     pub capability: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject_agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject_module_name: Option<String>,
     pub profile: GovernanceProfile,
     pub enforcement_enabled: bool,
     pub matched_rule: Option<String>,
@@ -59,6 +61,27 @@ pub struct CapabilityDecision {
     pub baseline_allowed: bool,
     pub allowed: bool,
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GovernanceSubject {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grant_id: Option<String>,
+}
+
+impl GovernanceSubject {
+    pub fn for_agent(agent_id: impl Into<String>) -> Self {
+        Self {
+            agent_id: Some(agent_id.into()),
+            ..Self::default()
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -131,6 +154,18 @@ impl GovernanceManager {
         agent_id: Option<&str>,
         capability: &str,
     ) -> CapabilityDecision {
+        let subject = GovernanceSubject {
+            agent_id: agent_id.map(str::to_string),
+            ..GovernanceSubject::default()
+        };
+        self.capability_decision_for_subject(&subject, capability)
+    }
+
+    pub fn capability_decision_for_subject(
+        &self,
+        subject: &GovernanceSubject,
+        capability: &str,
+    ) -> CapabilityDecision {
         let caps = preset_capabilities_for_profile(&self.config.profile);
         let (matched_rule, matched_via_wildcard, matched_value) =
             match_capability_rule(&caps, capability);
@@ -166,7 +201,8 @@ impl GovernanceManager {
 
         CapabilityDecision {
             capability: capability.to_string(),
-            subject_agent_id: agent_id.map(str::to_string),
+            subject_agent_id: subject.agent_id.clone(),
+            subject_module_name: subject.module_name.clone(),
             profile: self.config.profile.clone(),
             enforcement_enabled: self.config.enforcement_enabled,
             matched_rule,
@@ -182,7 +218,19 @@ impl GovernanceManager {
         agent_id: Option<&str>,
         capability: &str,
     ) -> Result<(), String> {
-        let decision = self.capability_decision(agent_id, capability);
+        let subject = GovernanceSubject {
+            agent_id: agent_id.map(str::to_string),
+            ..GovernanceSubject::default()
+        };
+        self.require_capability_for_subject(&subject, capability)
+    }
+
+    pub fn require_capability_for_subject(
+        &self,
+        subject: &GovernanceSubject,
+        capability: &str,
+    ) -> Result<(), String> {
+        let decision = self.capability_decision_for_subject(subject, capability);
         if decision.allowed {
             Ok(())
         } else {
@@ -384,5 +432,23 @@ mod tests {
         assert_eq!(tool_capability_name("edit_file"), Some("fs.write"));
         assert_eq!(tool_capability_name("shell_exec"), Some("shell.exec"));
         assert_eq!(tool_capability_name("submit_plan"), None);
+    }
+
+    #[test]
+    fn capability_decision_preserves_module_subject_context() {
+        let mgr = GovernanceManager::new(GovernanceConfig {
+            profile: GovernanceProfile::Balanced,
+            enforcement_enabled: false,
+            ..GovernanceConfig::default()
+        });
+        let subject = GovernanceSubject {
+            agent_id: Some("default".into()),
+            module_name: Some("planner".into()),
+            root_name: None,
+            grant_id: None,
+        };
+        let decision = mgr.capability_decision_for_subject(&subject, "runtime.db.query");
+        assert_eq!(decision.subject_agent_id.as_deref(), Some("default"));
+        assert_eq!(decision.subject_module_name.as_deref(), Some("planner"));
     }
 }
