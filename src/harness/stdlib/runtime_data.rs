@@ -2,12 +2,122 @@ use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{HarnessAppData, block_on_current};
 use crate::harness::stdlib::binding_common::{
-    bool_err, memory_rows_to_lua_table, nil_err, ok_bool, ok_value, string_ok,
+    bool_err, memory_rows_to_lua_table, nil_err, nil_ok, ok_bool, ok_value, string_ok,
 };
 use crate::harness::stdlib::context_selectors::{search_limit_from_opt, table_to_selector};
 use crate::harness::stdlib::scoped_data_backend::{
     kv_delete_backend, kv_get_backend, kv_set_backend, memory_search_backend, memory_store_backend,
 };
+use crate::inference::embeddings::EmbeddingProvider;
+use crate::kernel::identity::ContextSelector;
+use crate::persistence::manager::StoreManager;
+use std::sync::Arc;
+
+fn metadata_json_or_empty(lua: &Lua, metadata: Option<Table>) -> LuaResult<serde_json::Value> {
+    if let Some(tbl) = metadata {
+        lua.from_value::<serde_json::Value>(Value::Table(tbl))
+            .map_err(|e| mlua::Error::runtime(format!("invalid metadata table: {}", e)))
+    } else {
+        Ok(serde_json::json!({}))
+    }
+}
+
+fn memory_search_result(
+    lua: &Lua,
+    manager: Arc<StoreManager>,
+    embedding: Option<Arc<dyn EmbeddingProvider>>,
+    selector: ContextSelector,
+    query: String,
+    limit: usize,
+) -> LuaResult<(Value, Value)> {
+    let result = block_on_current(async move {
+        memory_search_backend(&manager, embedding.as_ref(), &selector, &query, limit)
+            .await
+            .map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(rows) => Ok(ok_value(Value::Table(memory_rows_to_lua_table(lua, rows)?))),
+        Err(err) => nil_err(lua, &err),
+    }
+}
+
+fn memory_store_result(
+    lua: &Lua,
+    manager: Arc<StoreManager>,
+    embedding: Option<Arc<dyn EmbeddingProvider>>,
+    selector: ContextSelector,
+    content: String,
+    metadata_json: serde_json::Value,
+) -> LuaResult<(Value, Value)> {
+    let result = block_on_current(async move {
+        memory_store_backend(
+            &manager,
+            embedding.as_ref(),
+            &selector,
+            &content,
+            &metadata_json,
+        )
+        .await
+        .map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(_) => Ok(ok_bool()),
+        Err(err) => bool_err(lua, &err),
+    }
+}
+
+fn kv_get_result(
+    lua: &Lua,
+    manager: Arc<StoreManager>,
+    selector: ContextSelector,
+    key: String,
+) -> LuaResult<(Value, Value)> {
+    let result = block_on_current(async move {
+        kv_get_backend(&manager, &selector, &key)
+            .await
+            .map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(Some(val)) => string_ok(lua, &val),
+        Ok(None) => Ok(nil_ok()),
+        Err(err) => nil_err(lua, &err),
+    }
+}
+
+fn kv_set_result(
+    lua: &Lua,
+    manager: Arc<StoreManager>,
+    selector: ContextSelector,
+    key: String,
+    value: String,
+) -> LuaResult<(Value, Value)> {
+    let result = block_on_current(async move {
+        kv_set_backend(&manager, &selector, &key, &value)
+            .await
+            .map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(_) => Ok(ok_bool()),
+        Err(err) => bool_err(lua, &err),
+    }
+}
+
+fn kv_delete_result(
+    lua: &Lua,
+    manager: Arc<StoreManager>,
+    selector: ContextSelector,
+    key: String,
+) -> LuaResult<(Value, Value)> {
+    let result = block_on_current(async move {
+        kv_delete_backend(&manager, &selector, &key)
+            .await
+            .map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(_) => Ok(ok_bool()),
+        Err(err) => bool_err(lua, &err),
+    }
+}
 
 pub fn register_runtime_data_namespaces(
     lua: &Lua,
@@ -25,25 +135,14 @@ pub fn register_runtime_data_namespaces(
                 move |lua, (query, ctx, opts): (String, Table, Option<Value>)| {
                     let selector = table_to_selector(ctx)?;
                     let limit = search_limit_from_opt(opts)?;
-                    let manager = manager.clone();
-                    let embedding = embedding.clone();
-                    let result = block_on_current(async move {
-                        memory_search_backend(
-                            &manager,
-                            embedding.as_ref(),
-                            &selector,
-                            &query,
-                            limit,
-                        )
-                        .await
-                        .map_err(|e| e.to_string())
-                    });
-                    match result {
-                        Ok(rows) => {
-                            Ok(ok_value(Value::Table(memory_rows_to_lua_table(lua, rows)?)))
-                        }
-                        Err(err) => nil_err(lua, &err),
-                    }
+                    memory_search_result(
+                        lua,
+                        manager.clone(),
+                        embedding.clone(),
+                        selector,
+                        query,
+                        limit,
+                    )
                 },
             )?,
         )?;
@@ -62,31 +161,15 @@ pub fn register_runtime_data_namespaces(
                     Option<Table>,
                 )| {
                     let selector = table_to_selector(ctx)?;
-                    let metadata_json = if let Some(tbl) = metadata {
-                        lua.from_value::<serde_json::Value>(Value::Table(tbl))
-                            .map_err(|e| {
-                                mlua::Error::runtime(format!("invalid metadata table: {}", e))
-                            })?
-                    } else {
-                        serde_json::json!({})
-                    };
-                    let manager = manager.clone();
-                    let embedding = embedding.clone();
-                    let result = block_on_current(async move {
-                        memory_store_backend(
-                            &manager,
-                            embedding.as_ref(),
-                            &selector,
-                            &content,
-                            &metadata_json,
-                        )
-                        .await
-                        .map_err(|e| e.to_string())
-                    });
-                    match result {
-                        Ok(_) => Ok(ok_bool()),
-                        Err(err) => bool_err(lua, &err),
-                    }
+                    let metadata_json = metadata_json_or_empty(lua, metadata)?;
+                    memory_store_result(
+                        lua,
+                        manager.clone(),
+                        embedding.clone(),
+                        selector,
+                        content,
+                        metadata_json,
+                    )
                 },
             )?,
         )?;
@@ -101,17 +184,7 @@ pub fn register_runtime_data_namespaces(
             "get",
             lua.create_function(move |lua, (key, ctx): (String, Table)| {
                 let selector = table_to_selector(ctx)?;
-                let manager = manager.clone();
-                let result = block_on_current(async move {
-                    kv_get_backend(&manager, &selector, &key)
-                        .await
-                        .map_err(|e| e.to_string())
-                });
-                match result {
-                    Ok(Some(val)) => string_ok(lua, &val),
-                    Ok(None) => Ok((Value::Nil, Value::Nil)),
-                    Err(err) => nil_err(lua, &err),
-                }
+                kv_get_result(lua, manager.clone(), selector, key)
             })?,
         )?;
     }
@@ -121,16 +194,7 @@ pub fn register_runtime_data_namespaces(
             "set",
             lua.create_function(move |lua, (key, value, ctx): (String, String, Table)| {
                 let selector = table_to_selector(ctx)?;
-                let manager = manager.clone();
-                let result = block_on_current(async move {
-                    kv_set_backend(&manager, &selector, &key, &value)
-                        .await
-                        .map_err(|e| e.to_string())
-                });
-                match result {
-                    Ok(_) => Ok(ok_bool()),
-                    Err(err) => bool_err(lua, &err),
-                }
+                kv_set_result(lua, manager.clone(), selector, key, value)
             })?,
         )?;
     }
@@ -140,16 +204,7 @@ pub fn register_runtime_data_namespaces(
             "delete",
             lua.create_function(move |lua, (key, ctx): (String, Table)| {
                 let selector = table_to_selector(ctx)?;
-                let manager = manager.clone();
-                let result = block_on_current(async move {
-                    kv_delete_backend(&manager, &selector, &key)
-                        .await
-                        .map_err(|e| e.to_string())
-                });
-                match result {
-                    Ok(_) => Ok(ok_bool()),
-                    Err(err) => bool_err(lua, &err),
-                }
+                kv_delete_result(lua, manager.clone(), selector, key)
             })?,
         )?;
     }
