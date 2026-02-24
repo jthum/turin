@@ -48,6 +48,15 @@ pub struct AgentRuntimeHandle {
     queued_tasks: Arc<AtomicUsize>,
 }
 
+impl AgentRuntimeHandle {
+    fn is_running(&self) -> bool {
+        self.task
+            .as_ref()
+            .map(|jh| !jh.is_finished())
+            .unwrap_or(false)
+    }
+}
+
 /// Orchestrates peer agents, spinning them up on demand and routing tasks to their independent runtimes.
 pub struct AgentManager {
     /// The full configuration, used to look up agent profiles and instantiate kernels.
@@ -182,6 +191,10 @@ impl AgentManager {
     pub async fn list_statuses(&self) -> Vec<AgentStatusSnapshot> {
         let runtimes = self.runtimes.read().await;
         let pending = self.pending_result_agents.read().await;
+        let mut awaiting_by_agent: HashMap<&str, usize> = HashMap::new();
+        for agent_id in pending.values() {
+            *awaiting_by_agent.entry(agent_id.as_str()).or_default() += 1;
+        }
 
         let mut ids = vec![self.config.agent.id.clone()];
         ids.extend(self.config.agents.keys().cloned());
@@ -191,11 +204,8 @@ impl AgentManager {
         ids.into_iter()
             .map(|agent_id| {
                 let handle = runtimes.get(&agent_id);
-                let running = handle
-                    .and_then(|h| h.task.as_ref())
-                    .map(|jh| !jh.is_finished())
-                    .unwrap_or(false);
-                let awaiting_results = pending.values().filter(|a| *a == &agent_id).count();
+                let running = handle.map(|h| h.is_running()).unwrap_or(false);
+                let awaiting_results = *awaiting_by_agent.get(agent_id.as_str()).unwrap_or(&0);
                 let queued_tasks = handle
                     .map(|h| h.queued_tasks.load(Ordering::Relaxed))
                     .unwrap_or(0);

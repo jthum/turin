@@ -16,7 +16,7 @@ impl AgentManager {
         {
             let runtimes = self.runtimes.read().await;
             if let Some(handle) = runtimes.get(agent_id)
-                && Self::runtime_is_running(handle)
+                && handle.is_running()
             {
                 return Ok(Arc::clone(handle));
             }
@@ -144,7 +144,7 @@ impl AgentManager {
     ) -> Result<Arc<AgentRuntimeHandle>> {
         let mut runtimes = self.runtimes.write().await;
         if let Some(handle) = runtimes.get(agent_id)
-            && Self::runtime_is_running(handle)
+            && handle.is_running()
         {
             return Ok(Arc::clone(handle));
         }
@@ -152,13 +152,5 @@ impl AgentManager {
         let handle = Arc::new(self.start_agent(agent_id).await?);
         runtimes.insert(agent_id.to_string(), Arc::clone(&handle));
         Ok(handle)
-    }
-
-    fn runtime_is_running(handle: &AgentRuntimeHandle) -> bool {
-        handle
-            .task
-            .as_ref()
-            .map(|t| !t.is_finished())
-            .unwrap_or(false)
     }
 }
