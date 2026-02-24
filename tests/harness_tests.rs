@@ -1259,7 +1259,14 @@ async fn test_import_scoped_tracks_imported_module_subject_and_root() -> Result<
                 local dec, err = runtime.governance.check("runtime.db.query")
                 if dec == nil then error("runtime.governance.check failed: " .. tostring(err)) end
                 return dec
-            end
+            end,
+            nested = {
+                check_subject = function()
+                    local dec, err = runtime.governance.check("runtime.db.query")
+                    if dec == nil then error("nested runtime.governance.check failed: " .. tostring(err)) end
+                    return dec
+                end,
+            }
         }
     "#;
     std::fs::write(harness_dir.join("util.lua"), util_code)?;
@@ -1275,6 +1282,11 @@ async fn test_import_scoped_tracks_imported_module_subject_and_root() -> Result<
             if dec.subject_agent_id ~= "default" then error("subject_agent_id mismatch") end
             if dec.subject_module_name ~= "util" then
                 error("subject_module_name should be util, got " .. tostring(dec.subject_module_name))
+            end
+
+            local nested_dec = util.nested.check_subject()
+            if nested_dec.subject_module_name ~= "util" then
+                error("nested subject_module_name should be util, got " .. tostring(nested_dec.subject_module_name))
             end
 
             local ok, _ = pcall(function()
@@ -2087,7 +2099,7 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
                 local util = import_scoped("util", {
                     root = "core",
                     capabilities = {
-                        ["runtime.db.query"] = true
+                        ["runtime.db.*"] = true
                     }
                 })
 

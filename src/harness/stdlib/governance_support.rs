@@ -55,12 +55,6 @@ pub(crate) fn parse_delegated_capabilities(
             let subject = current_subject(app_data);
             for pair in t.pairs::<String, Value>() {
                 let (key, value) = pair?;
-                if key.ends_with(".*") {
-                    return Err(mlua::Error::runtime(format!(
-                        "{} opts.{} wildcard rules are not yet supported (key '{}')",
-                        caller_label, field_name, key
-                    )));
-                }
                 let allowed = match value {
                     Value::Boolean(b) => b,
                     _ => {
