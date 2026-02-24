@@ -2,6 +2,7 @@ use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{HarnessAppData, block_on_current};
 use crate::harness::stdlib::binding_common::{bool_err, json_ok, nil_err, nil_ok, ok_bool};
+use crate::harness::stdlib::governance_support::require_capability as require_governance_capability;
 use crate::harness::stdlib::policy_support::policy_scope_from_value;
 
 pub fn register_runtime_policy_namespace(
@@ -40,6 +41,11 @@ pub fn register_runtime_policy_namespace(
             "set",
             lua.create_function(
                 move |lua, (key, value, scope): (String, Value, Option<Value>)| {
+                    if let Err(err) =
+                        require_governance_capability(&app_data_snapshot, "runtime.policy.set")
+                    {
+                        return bool_err(lua, &err);
+                    }
                     let scope = policy_scope_from_value(&app_data_snapshot, scope)?;
                     let json_value = lua.from_value::<serde_json::Value>(value).map_err(|e| {
                         mlua::Error::runtime(format!("invalid policy value: {}", e))

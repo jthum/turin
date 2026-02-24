@@ -716,6 +716,104 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_governed_enforcement.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    let harness_code = r#"
+        function on_turn_prepare(ctx)
+            local d, de = runtime.governance.check("runtime.db.exec")
+            if d == nil then error("runtime.governance.check failed: " .. tostring(de)) end
+            if d.allowed ~= false then error("runtime.db.exec should be denied in governed mode") end
+            if d.enforcement_enabled ~= true then error("enforcement_enabled should be true") end
+
+            local q, qe = runtime.db.query("SELECT 1 AS n")
+            if q == nil then error("runtime.db.query should be allowed: " .. tostring(qe)) end
+            if #q < 1 then error("runtime.db.query should return one row") end
+
+            local changed, ce = runtime.db.exec("CREATE TABLE IF NOT EXISTS g2_guard (id INTEGER)")
+            if changed ~= nil or ce == nil then
+                error("runtime.db.exec should be denied in governed mode")
+            end
+
+            local okp, ep = runtime.policy.set("spawn.max_depth", 1)
+            if okp ~= false or ep == nil then
+                error("runtime.policy.set should be denied in governed mode")
+            end
+
+            local status_list, sle = runtime.agent.list()
+            if status_list == nil then error("runtime.agent.list should still be allowed: " .. tostring(sle)) end
+
+            return ALLOW
+        end
+    "#;
+    std::fs::write(harness_dir.join("governed.lua"), harness_code)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Governed enforcement test".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig {
+            profile: turin::kernel::config::GovernanceProfile::Governed,
+            enforcement_enabled: true,
+            ..turin::kernel::config::GovernanceConfig::default()
+        },
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise governed enforcement".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_runtime_db_api_and_context_glob() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_runtime_db_api.db");

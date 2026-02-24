@@ -47,6 +47,20 @@ pub struct GovernanceSnapshot {
     pub grants_max_ttl_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CapabilityDecision {
+    pub capability: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject_agent_id: Option<String>,
+    pub profile: GovernanceProfile,
+    pub enforcement_enabled: bool,
+    pub matched_rule: Option<String>,
+    pub matched_via_wildcard: bool,
+    pub baseline_allowed: bool,
+    pub allowed: bool,
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct GovernanceManager {
     config: GovernanceConfig,
@@ -111,6 +125,72 @@ impl GovernanceManager {
             grants_max_ttl_ms: self.config.grants.max_ttl_ms,
         }
     }
+
+    pub fn capability_decision(
+        &self,
+        agent_id: Option<&str>,
+        capability: &str,
+    ) -> CapabilityDecision {
+        let caps = preset_capabilities_for_profile(&self.config.profile);
+        let (matched_rule, matched_via_wildcard, matched_value) =
+            match_capability_rule(&caps, capability);
+
+        let baseline_allowed = match matched_value {
+            Some(v) => v,
+            None => matches!(self.config.profile, GovernanceProfile::Open),
+        };
+
+        let allowed = if self.config.enforcement_enabled {
+            baseline_allowed
+        } else {
+            true
+        };
+
+        let reason = if allowed {
+            None
+        } else {
+            Some(match &matched_rule {
+                Some(rule) => format!(
+                    "Governance denial: capability '{}' denied by profile '{}' (rule '{}')",
+                    capability,
+                    profile_name(&self.config.profile),
+                    rule
+                ),
+                None => format!(
+                    "Governance denial: capability '{}' denied by profile '{}' (no matching allow rule)",
+                    capability,
+                    profile_name(&self.config.profile)
+                ),
+            })
+        };
+
+        CapabilityDecision {
+            capability: capability.to_string(),
+            subject_agent_id: agent_id.map(str::to_string),
+            profile: self.config.profile.clone(),
+            enforcement_enabled: self.config.enforcement_enabled,
+            matched_rule,
+            matched_via_wildcard,
+            baseline_allowed,
+            allowed,
+            reason,
+        }
+    }
+
+    pub fn require_capability(
+        &self,
+        agent_id: Option<&str>,
+        capability: &str,
+    ) -> Result<(), String> {
+        let decision = self.capability_decision(agent_id, capability);
+        if decision.allowed {
+            Ok(())
+        } else {
+            Err(decision
+                .reason
+                .unwrap_or_else(|| "Governance denial".to_string()))
+        }
+    }
 }
 
 fn preset_capabilities_for_profile(
@@ -130,6 +210,7 @@ fn preset_capabilities_for_profile(
             caps.insert("runtime.db.exec".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.submit".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.await".into(), serde_json::Value::Bool(true));
+            caps.insert("runtime.agent.status".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.spawn".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.policy.set".into(), serde_json::Value::Bool(true));
             caps.insert("fs.write".into(), serde_json::Value::Bool(true));
@@ -139,6 +220,8 @@ fn preset_capabilities_for_profile(
             caps.insert("runtime.db.query".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.db.exec".into(), serde_json::Value::Bool(false));
             caps.insert("runtime.agent.submit".into(), serde_json::Value::Bool(true));
+            caps.insert("runtime.agent.await".into(), serde_json::Value::Bool(true));
+            caps.insert("runtime.agent.status".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.spawn".into(), serde_json::Value::Bool(false));
             caps.insert("runtime.policy.set".into(), serde_json::Value::Bool(false));
             caps.insert("fs.write".into(), serde_json::Value::Bool(false));
@@ -147,6 +230,45 @@ fn preset_capabilities_for_profile(
         GovernanceProfile::Custom => {}
     }
     caps
+}
+
+fn match_capability_rule(
+    caps: &BTreeMap<String, serde_json::Value>,
+    capability: &str,
+) -> (Option<String>, bool, Option<bool>) {
+    if let Some(v) = caps.get(capability).and_then(serde_json::Value::as_bool) {
+        return (Some(capability.to_string()), false, Some(v));
+    }
+
+    let mut best: Option<(&str, bool)> = None;
+    for (rule, value) in caps {
+        let Some(b) = value.as_bool() else {
+            continue;
+        };
+        let Some(prefix) = rule.strip_suffix(".*") else {
+            continue;
+        };
+        if capability == prefix || capability.starts_with(&format!("{prefix}.")) {
+            match best {
+                Some((best_rule, _)) if best_rule.len() >= rule.len() => {}
+                _ => best = Some((rule.as_str(), b)),
+            }
+        }
+    }
+
+    match best {
+        Some((rule, b)) => (Some(rule.to_string()), true, Some(b)),
+        None => (None, false, None),
+    }
+}
+
+fn profile_name(profile: &GovernanceProfile) -> &'static str {
+    match profile {
+        GovernanceProfile::Open => "open",
+        GovernanceProfile::Balanced => "balanced",
+        GovernanceProfile::Governed => "governed",
+        GovernanceProfile::Custom => "custom",
+    }
 }
 
 #[cfg(test)]
@@ -211,5 +333,38 @@ mod tests {
         );
         assert_eq!(snapshot.roots.len(), 1);
         assert_eq!(snapshot.agents.len(), 1);
+    }
+
+    #[test]
+    fn capability_decision_respects_profile_and_enforcement() {
+        let mut cfg = GovernanceConfig {
+            profile: GovernanceProfile::Governed,
+            enforcement_enabled: true,
+            ..GovernanceConfig::default()
+        };
+        let mgr = GovernanceManager::new(cfg.clone());
+
+        let deny_exec = mgr.capability_decision(Some("default"), "runtime.db.exec");
+        assert!(!deny_exec.allowed);
+        assert_eq!(deny_exec.matched_rule.as_deref(), Some("runtime.db.exec"));
+
+        let allow_query = mgr.capability_decision(Some("default"), "runtime.db.query");
+        assert!(allow_query.allowed);
+
+        let deny_unknown = mgr.capability_decision(Some("default"), "runtime.db.list_handles");
+        assert!(!deny_unknown.allowed);
+        assert!(
+            deny_unknown
+                .reason
+                .as_deref()
+                .unwrap()
+                .contains("no matching allow rule")
+        );
+
+        cfg.enforcement_enabled = false;
+        let mgr_obs = GovernanceManager::new(cfg);
+        let observed = mgr_obs.capability_decision(Some("default"), "runtime.db.exec");
+        assert!(!observed.baseline_allowed);
+        assert!(observed.allowed, "observability mode should not deny");
     }
 }

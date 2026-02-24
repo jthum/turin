@@ -2,6 +2,7 @@ pub mod agent_bindings;
 pub mod binding_common;
 pub mod context_selectors;
 pub mod db_support;
+pub mod governance_support;
 pub mod identity_support;
 pub mod memory_kv_bindings;
 pub mod policy_support;

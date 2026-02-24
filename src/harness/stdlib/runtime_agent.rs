@@ -2,6 +2,7 @@ use mlua::{Lua, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{HarnessAppData, block_on_current};
 use crate::harness::stdlib::binding_common::{json_ok, nil_err, string_ok};
+use crate::harness::stdlib::governance_support::require_capability as require_governance_capability;
 use crate::harness::stdlib::policy_support::{policy_bool, runtime_policy_snapshot};
 use crate::kernel::session::QueuedTask;
 
@@ -32,9 +33,15 @@ pub fn register_runtime_agent_namespace(
     let runtime_agent = lua.create_table()?;
     {
         let manager = app_data.agent_manager.clone();
+        let app_data_snapshot = app_data.clone();
         runtime_agent.set(
             "list",
             lua.create_function(move |lua, ()| {
+                if let Err(err) =
+                    require_governance_capability(&app_data_snapshot, "runtime.agent.status")
+                {
+                    return nil_err(lua, &err);
+                }
                 let manager = manager.clone();
                 let statuses = block_on_current(async move { manager.list_statuses().await });
                 json_ok(lua, &statuses)
@@ -43,9 +50,15 @@ pub fn register_runtime_agent_namespace(
     }
     {
         let manager = app_data.agent_manager.clone();
+        let app_data_snapshot = app_data.clone();
         runtime_agent.set(
             "get_status",
             lua.create_function(move |lua, agent_id: String| {
+                if let Err(err) =
+                    require_governance_capability(&app_data_snapshot, "runtime.agent.status")
+                {
+                    return nil_err(lua, &err);
+                }
                 let manager = manager.clone();
                 let status = block_on_current(async move { manager.get_status(&agent_id).await });
                 match status {
@@ -62,6 +75,11 @@ pub fn register_runtime_agent_namespace(
             "submit",
             lua.create_function(
                 move |lua, (agent_id, task_val, _opts): (String, Value, Option<Table>)| {
+                    if let Err(err) =
+                        require_governance_capability(&app_data_snapshot, "runtime.agent.submit")
+                    {
+                        return nil_err(lua, &err);
+                    }
                     let snapshot = runtime_policy_snapshot(&app_data_snapshot)
                         .map_err(mlua::Error::runtime)?;
                     if !policy_bool(&snapshot, "spawn.enabled", true) {
@@ -92,9 +110,15 @@ pub fn register_runtime_agent_namespace(
     }
     {
         let manager = app_data.agent_manager.clone();
+        let app_data_snapshot = app_data.clone();
         runtime_agent.set(
             "await",
             lua.create_function(move |lua, (task_id, opts): (String, Option<Table>)| {
+                if let Err(err) =
+                    require_governance_capability(&app_data_snapshot, "runtime.agent.await")
+                {
+                    return nil_err(lua, &err);
+                }
                 let timeout_ms = opts.as_ref().and_then(|t| t.get::<u64>("timeout_ms").ok());
                 let manager = manager.clone();
                 let result = block_on_current(async move {

@@ -6,6 +6,7 @@ use crate::harness::stdlib::db_support::{
     SqlParams, lua_table_to_sql_params, selector_from_db_opts, selector_from_db_value,
     sql_value_to_json,
 };
+use crate::harness::stdlib::governance_support::require_capability as require_governance_capability;
 use crate::harness::stdlib::policy_support::{
     policy_bool, policy_string, policy_u64, runtime_policy_snapshot,
 };
@@ -89,6 +90,11 @@ pub fn register_runtime_db_namespace(
         runtime_db.set(
             "open",
             lua.create_function(move |lua, arg: Value| {
+                if let Err(err) =
+                    require_governance_capability(&app_data_snapshot, "runtime.db.open")
+                {
+                    return nil_err(lua, &err);
+                }
                 let selector = selector_from_db_value(arg)?;
                 let snapshot =
                     runtime_policy_snapshot(&app_data_snapshot).map_err(mlua::Error::runtime)?;
@@ -121,9 +127,15 @@ pub fn register_runtime_db_namespace(
     }
     {
         let manager = app_data.store_manager.clone();
+        let app_data_snapshot = app_data.clone();
         runtime_db.set(
             "close",
             lua.create_function(move |lua, handle: Value| {
+                if let Err(err) =
+                    require_governance_capability(&app_data_snapshot, "runtime.db.close")
+                {
+                    return bool_err(lua, &err);
+                }
                 let handle_id = match handle {
                     Value::String(s) => s.to_str()?.to_string(),
                     Value::Table(t) => t.get::<String>("handle")?,
@@ -147,9 +159,15 @@ pub fn register_runtime_db_namespace(
     }
     {
         let manager = app_data.store_manager.clone();
+        let app_data_snapshot = app_data.clone();
         runtime_db.set(
             "list",
             lua.create_function(move |lua, ()| {
+                if let Err(err) =
+                    require_governance_capability(&app_data_snapshot, "runtime.db.list_handles")
+                {
+                    return nil_err(lua, &err);
+                }
                 let manager = manager.clone();
                 let handles = block_on_current(async move { manager.list_handles().await });
                 Ok(ok_value(Value::Table(store_handle_infos_to_lua_table(
@@ -165,6 +183,11 @@ pub fn register_runtime_db_namespace(
             "query",
             lua.create_function(
                 move |lua, (sql, params, opts): (String, Option<Table>, Option<Table>)| {
+                    if let Err(err) =
+                        require_governance_capability(&app_data_snapshot, "runtime.db.query")
+                    {
+                        return nil_err(lua, &err);
+                    }
                     let selector = selector_from_db_opts(opts)?;
                     let sql_params = lua_table_to_sql_params(params)?;
                     let snapshot = runtime_policy_snapshot(&app_data_snapshot)
@@ -218,6 +241,11 @@ pub fn register_runtime_db_namespace(
             "exec",
             lua.create_function(
                 move |lua, (sql, params, opts): (String, Option<Table>, Option<Table>)| {
+                    if let Err(err) =
+                        require_governance_capability(&app_data_snapshot, "runtime.db.exec")
+                    {
+                        return nil_err(lua, &err);
+                    }
                     let selector = selector_from_db_opts(opts)?;
                     let sql_params = lua_table_to_sql_params(params)?;
                     let snapshot = runtime_policy_snapshot(&app_data_snapshot)
