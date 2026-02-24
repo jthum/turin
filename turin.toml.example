@@ -25,7 +25,9 @@ directory = ".turin/harnesses"
 [providers.anthropic]
 type = "anthropic"
 api_key_env = "ANTHROPIC_API_KEY"
-# base_url = "https://api.anthropic.com/v1"  # Override for proxies
+# base_url = "https://api.anthropic.com/v1"  # Override for Anthropic-compatible endpoints
+# Note: Anthropic-compatible base_url should include the version path segment (usually /v1)
+# MiniMax example: "https://api.minimax.io/anthropic/v1"
 # max_retries = 2                # Optional transport tuning
 # request_timeout_secs = 60
 # total_timeout_secs = 120

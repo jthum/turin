@@ -287,6 +287,8 @@ type = "anthropic"
 api_key_env = "ANTHROPIC_API_KEY"
 # request_timeout_secs = 60
 # total_timeout_secs = 120
+# base_url = "https://api.anthropic.com/v1"  # Anthropic-compatible override (include /v1)
+# MiniMax example: "https://api.minimax.io/anthropic/v1"
 
 [providers.openai]
 type = "openai"

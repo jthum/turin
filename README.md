@@ -83,6 +83,8 @@ directory = ".turin/harnesses"
 
 [providers.anthropic]
 api_key_env = "ANTHROPIC_API_KEY"
+# Optional for Anthropic-compatible providers (must include API version path, usually /v1)
+# base_url = "https://api.minimax.io/anthropic/v1"
 
 [providers.openai]
 api_key_env = "OPENAI_API_KEY"
@@ -349,7 +351,9 @@ directory = ".turin/harnesses"     # Harness script directory
 [providers.anthropic]
 type = "anthropic"
 api_key_env = "ANTHROPIC_API_KEY"    # Env var containing API key
-# base_url = "https://api.anthropic.com/v1"  # Optional override
+# base_url = "https://api.anthropic.com/v1"  # Optional override for Anthropic-compatible endpoints
+# Note: Anthropic-compatible base_url should include the version path segment (usually /v1)
+# MiniMax example: "https://api.minimax.io/anthropic/v1"
 # max_retries = 2
 # request_timeout_secs = 60
 # total_timeout_secs = 120
