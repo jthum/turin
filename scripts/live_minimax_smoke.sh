@@ -800,7 +800,11 @@ function on_turn_prepare(ctx)
   orchestrator_once = true
 
   local grant, ge = runtime.governance.grant_issue({
-    capabilities = { ["runtime.db.query"] = true },
+    capabilities = {
+      ["runtime.db.query"] = true,
+      ["runtime.agent.submit"] = true,
+      ["runtime.agent.await"] = true
+    },
     reason = "peer grant propagation live test"
   })
   if grant == nil then
