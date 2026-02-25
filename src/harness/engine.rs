@@ -10,11 +10,13 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use tracing::error;
 
+use crate::display;
 use crate::harness::globals::{self, HarnessAppData};
 use crate::harness::verdict::{Verdict, compose_verdicts};
 
 fn format_lua_error(e: &mlua::Error) -> String {
     let err_str = e.to_string();
+    let ansi = display::stderr_ansi();
 
     // Attempt to parse standard Lua error format: "@path:line: message"
     // or mlua's "[string \"@path\"]:line: message"
@@ -34,15 +36,19 @@ fn format_lua_error(e: &mlua::Error) -> String {
                     .or_else(|| prefix.strip_prefix('@'))
                     .unwrap_or(prefix);
 
-                return format!(
-                    "\x1b[31m\x1b[1mScript Error\x1b[0m \x1b[31min {}\x1b[0m:\x1b[1m{}\x1b[0m\n\x1b[31m  Line {}: {}\x1b[0m",
-                    cleaned_prefix, "", line_num, message
+                let header = format!(
+                    "{} {} {}",
+                    display::paint("Script Error", "31;1", ansi),
+                    display::paint("in", "31", ansi),
+                    display::paint(cleaned_prefix, "31", ansi)
                 );
+                let line = display::paint(&format!("  Line {line_num}: {message}"), "31", ansi);
+                return format!("{header}\n{line}");
             }
         }
     }
 
-    format!("\x1b[31m\x1b[1mLua Error:\x1b[0m {}", err_str)
+    format!("{} {}", display::paint("Lua Error:", "31;1", ansi), err_str)
 }
 
 /// The harness engine manages script loading and hook evaluation.
