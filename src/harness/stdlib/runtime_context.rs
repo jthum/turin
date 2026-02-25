@@ -1,7 +1,7 @@
 use mlua::{Lua, MultiValue, Result as LuaResult, Table, Value};
 
-use crate::harness::globals::{HarnessAppData, block_on_current};
-use crate::harness::stdlib::binding_common::ok_value;
+use crate::harness::globals::HarnessAppData;
+use crate::harness::stdlib::binding_common::{bridge_async, ok_value};
 use crate::harness::stdlib::context_selectors::{parse_context_args, selector_to_lua_table};
 
 fn wildcard_match(pattern: &str, text: &str) -> bool {
@@ -45,7 +45,7 @@ pub fn register_runtime_context_namespace(
             "glob",
             lua.create_function(move |lua, pattern: String| {
                 let manager = manager.clone();
-                let aliases = block_on_current(async move { manager.list_aliases().await });
+                let aliases = bridge_async(async move { manager.list_aliases().await });
                 let out = lua.create_table()?;
                 let mut idx = 1;
                 for alias in aliases {

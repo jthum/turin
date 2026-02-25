@@ -1,9 +1,9 @@
 use mlua::{Lua, Result as LuaResult, Table, Value};
 
-use crate::harness::globals::{ActiveHarnessExecutionContext, HarnessAppData, block_on_current};
+use crate::harness::globals::{ActiveHarnessExecutionContext, HarnessAppData};
 use crate::harness::stdlib::binding_common::{
-    bool_err, memory_rows_to_lua_table, metadata_json_or_empty, nil_err, nil_ok, ok_bool, ok_value,
-    string_ok,
+    bool_err, bridge_async_result, memory_rows_to_lua_table, metadata_json_or_empty, nil_err,
+    nil_ok, ok_bool, ok_value, string_ok,
 };
 use crate::harness::stdlib::context_selectors::{
     normalize_selector, search_limit_from_opt, table_to_selector,
@@ -37,7 +37,7 @@ fn memory_search_result(
     query: String,
     limit: usize,
 ) -> LuaResult<(Value, Value)> {
-    let result = block_on_current(async move {
+    let result = bridge_async_result(async move {
         memory_search_backend(&manager, embedding.as_ref(), &selector, &query, limit)
             .await
             .map_err(|e| e.to_string())
@@ -56,7 +56,7 @@ fn memory_store_result(
     content: String,
     metadata_json: serde_json::Value,
 ) -> LuaResult<(Value, Value)> {
-    let result = block_on_current(async move {
+    let result = bridge_async_result(async move {
         memory_store_backend(
             &manager,
             embedding.as_ref(),
@@ -79,7 +79,7 @@ fn kv_get_result(
     selector: ContextSelector,
     key: String,
 ) -> LuaResult<(Value, Value)> {
-    let result = block_on_current(async move {
+    let result = bridge_async_result(async move {
         kv_get_backend(&manager, &selector, &key)
             .await
             .map_err(|e| e.to_string())
@@ -98,7 +98,7 @@ fn kv_set_result(
     key: String,
     value: String,
 ) -> LuaResult<(Value, Value)> {
-    let result = block_on_current(async move {
+    let result = bridge_async_result(async move {
         kv_set_backend(&manager, &selector, &key, &value)
             .await
             .map_err(|e| e.to_string())
@@ -115,7 +115,7 @@ fn kv_delete_result(
     selector: ContextSelector,
     key: String,
 ) -> LuaResult<(Value, Value)> {
-    let result = block_on_current(async move {
+    let result = bridge_async_result(async move {
         kv_delete_backend(&manager, &selector, &key)
             .await
             .map_err(|e| e.to_string())

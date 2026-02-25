@@ -1,7 +1,10 @@
 use mlua::{Lua, Result as LuaResult, Table, Value};
 
-use crate::harness::globals::{HarnessAppData, block_on_current};
-use crate::harness::stdlib::binding_common::{bool_err, bool_value_ok, json_ok, nil_err, ok_value};
+use crate::harness::globals::HarnessAppData;
+use crate::harness::stdlib::binding_common::{
+    bool_err, bool_value_ok, bridge_async, bridge_async_display_err, bridge_async_result, json_ok,
+    nil_err, ok_value,
+};
 use crate::harness::stdlib::db_support::{
     SqlParams, lua_table_to_sql_params, selector_from_db_opts, selector_from_db_value,
     sql_value_to_json,
@@ -104,7 +107,7 @@ pub fn register_runtime_db_namespace(
                 let settings = db_runtime_settings(&snapshot);
 
                 let manager = manager.clone();
-                let result = block_on_current(async move {
+                let result = bridge_async_display_err(async move {
                     manager
                         .open_handle(
                             &selector,
@@ -113,7 +116,6 @@ pub fn register_runtime_db_namespace(
                             settings.idle_close_secs,
                         )
                         .await
-                        .map_err(|e| e.to_string())
                 });
 
                 match result {
@@ -144,12 +146,8 @@ pub fn register_runtime_db_namespace(
                     }
                 };
                 let manager = manager.clone();
-                let result = block_on_current(async move {
-                    manager
-                        .close_handle(&handle_id)
-                        .await
-                        .map_err(|e| e.to_string())
-                });
+                let result =
+                    bridge_async_display_err(async move { manager.close_handle(&handle_id).await });
                 match result {
                     Ok(closed) => Ok(bool_value_ok(closed)),
                     Err(err) => bool_err(lua, &err),
@@ -169,7 +167,7 @@ pub fn register_runtime_db_namespace(
                     return nil_err(lua, &err);
                 }
                 let manager = manager.clone();
-                let handles = block_on_current(async move { manager.list_handles().await });
+                let handles = bridge_async(async move { manager.list_handles().await });
                 Ok(ok_value(Value::Table(store_handle_infos_to_lua_table(
                     lua, handles,
                 )?)))
@@ -197,7 +195,7 @@ pub fn register_runtime_db_namespace(
                     }
                     let settings = db_runtime_settings(&snapshot);
                     let manager = manager.clone();
-                    let result = block_on_current(async move {
+                    let result = bridge_async_result(async move {
                         let store = open_store_for_query_exec(manager, selector, settings).await?;
                         let conn = store.get_connection().await.map_err(|e| e.to_string())?;
                         let mut stmt = conn.prepare(&sql).await.map_err(|e| e.to_string())?;
@@ -255,7 +253,7 @@ pub fn register_runtime_db_namespace(
                     }
                     let settings = db_runtime_settings(&snapshot);
                     let manager = manager.clone();
-                    let result = block_on_current(async move {
+                    let result = bridge_async_result(async move {
                         let store = open_store_for_query_exec(manager, selector, settings).await?;
                         let conn = store.get_connection().await.map_err(|e| e.to_string())?;
                         let changed = match sql_params {

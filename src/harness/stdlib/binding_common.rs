@@ -1,5 +1,32 @@
+use std::fmt::Display;
+use std::future::Future;
+
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 use serde::Serialize;
+
+use crate::harness::globals::block_on_current;
+
+pub fn bridge_async<F>(fut: F) -> F::Output
+where
+    F: Future,
+{
+    block_on_current(fut)
+}
+
+pub fn bridge_async_result<F, T>(fut: F) -> Result<T, String>
+where
+    F: Future<Output = Result<T, String>>,
+{
+    block_on_current(fut)
+}
+
+pub fn bridge_async_display_err<F, T, E>(fut: F) -> Result<T, String>
+where
+    F: Future<Output = Result<T, E>>,
+    E: Display,
+{
+    block_on_current(async move { fut.await.map_err(|e| e.to_string()) })
+}
 
 pub fn ok_bool() -> (Value, Value) {
     (Value::Boolean(true), Value::Nil)

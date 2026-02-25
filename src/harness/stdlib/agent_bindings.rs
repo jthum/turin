@@ -1,8 +1,9 @@
 use mlua::{Lua, Result as LuaResult, Table, Value};
 
-use crate::harness::globals::{ActiveSessionQueue, HarnessAppData, block_on_current};
+use crate::harness::globals::{ActiveSessionQueue, HarnessAppData};
 use crate::harness::stdlib::binding_common::{
-    bool_err, nil_err, nil_ok, ok_bool, ok_value, string_ok, string_value,
+    bool_err, bridge_async, bridge_async_display_err, bridge_async_result, nil_err, nil_ok,
+    ok_bool, ok_value, string_ok, string_value,
 };
 use crate::harness::stdlib::governance_support::{
     apply_active_grant_ceiling_to_peer_delegation, parse_delegated_capabilities,
@@ -96,7 +97,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             }
             let spawn_q = spawn_q.clone();
             let queue_max = queue_max(&snapshot);
-            let enqueue_res = block_on_current(async move {
+            let enqueue_res = bridge_async_result(async move {
                 queue_push_one(
                     &spawn_q,
                     QueuedTask::ad_hoc(prompt.clone()),
@@ -161,7 +162,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 let timeout_ms = opts.as_ref().and_then(|t| t.get::<u64>("timeout_ms").ok());
 
                 let manager_submit = manager.clone();
-                let request_id = block_on_current(async move {
+                let request_id = bridge_async_display_err(async move {
                     manager_submit
                         .submit(
                             &target_agent,
@@ -169,7 +170,6 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                             delegated_capabilities,
                         )
                         .await
-                        .map_err(|e| e.to_string())
                 });
                 let request_id = match request_id {
                     Ok(id) => id,
@@ -177,11 +177,8 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 };
 
                 let manager_await = manager.clone();
-                let result = block_on_current(async move {
-                    manager_await
-                        .await_result(&request_id, timeout_ms)
-                        .await
-                        .map_err(|e| e.to_string())
+                let result = bridge_async_display_err(async move {
+                    manager_await.await_result(&request_id, timeout_ms).await
                 });
                 match result {
                     Ok(res) => {
@@ -221,7 +218,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             let snapshot =
                 runtime_policy_snapshot(&queue_policy_snapshot).map_err(mlua::Error::runtime)?;
             let queue_max = queue_max(&snapshot);
-            let res = block_on_current(async move {
+            let res = bridge_async_result(async move {
                 queue_push_one(&aq, QueuedTask::ad_hoc(cmd), queue_max, false).await
             });
             match res {
@@ -241,7 +238,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             let snapshot = runtime_policy_snapshot(&queue_next_policy_snapshot)
                 .map_err(mlua::Error::runtime)?;
             let queue_max = queue_max(&snapshot);
-            let res = block_on_current(async move {
+            let res = bridge_async_result(async move {
                 queue_push_one(&aq, QueuedTask::ad_hoc(cmd), queue_max, true).await
             });
             match res {
@@ -269,7 +266,8 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 .into_iter()
                 .map(QueuedTask::ad_hoc)
                 .collect::<Vec<_>>();
-            let res = block_on_current(async move { queue_push_many(&aq, tasks, queue_max).await });
+            let res =
+                bridge_async_result(async move { queue_push_many(&aq, tasks, queue_max).await });
             match res {
                 Ok(()) => Ok(ok_bool()),
                 Err(err) => bool_err(lua, &err),
@@ -284,7 +282,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             "load",
             lua.create_function(move |lua, session_id: String| {
                 let manager = manager.clone();
-                let result = block_on_current(async move {
+                let result = bridge_async_result(async move {
                     let store = manager.get_default().await.map_err(|e| e.to_string())?;
                     let uuid = uuid::Uuid::parse_str(&session_id).map_err(|e| e.to_string())?;
                     let row = store
@@ -314,7 +312,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     let limit = limit.unwrap_or(20);
                     let offset = offset.unwrap_or(0);
                     let manager = manager.clone();
-                    let result = block_on_current(async move {
+                    let result = bridge_async_result(async move {
                         let store = manager.get_default().await.map_err(|e| e.to_string())?;
                         store
                             .list_session_rows(limit, offset)
@@ -396,7 +394,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 "agent.send",
             )?;
             let m = agent_manager.clone();
-            block_on_current(async {
+            bridge_async(async {
                 let _ = m
                     .send(&id, QueuedTask::ad_hoc(prompt), delegated_capabilities)
                     .await;

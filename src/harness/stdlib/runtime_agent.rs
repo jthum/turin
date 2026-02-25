@@ -1,7 +1,9 @@
 use mlua::{Lua, Result as LuaResult, Table, Value};
 
-use crate::harness::globals::{HarnessAppData, block_on_current};
-use crate::harness::stdlib::binding_common::{json_ok, nil_err, string_ok};
+use crate::harness::globals::HarnessAppData;
+use crate::harness::stdlib::binding_common::{
+    bridge_async, bridge_async_display_err, json_ok, nil_err, string_ok,
+};
 use crate::harness::stdlib::governance_support::{
     apply_active_grant_ceiling_to_peer_delegation, parse_delegated_capabilities,
     require_capability as require_governance_capability,
@@ -47,7 +49,7 @@ pub fn register_runtime_agent_namespace(
                     return nil_err(lua, &err);
                 }
                 let manager = manager.clone();
-                let statuses = block_on_current(async move { manager.list_statuses().await });
+                let statuses = bridge_async(async move { manager.list_statuses().await });
                 json_ok(lua, &statuses)
             })?,
         )?;
@@ -64,7 +66,7 @@ pub fn register_runtime_agent_namespace(
                     return nil_err(lua, &err);
                 }
                 let manager = manager.clone();
-                let status = block_on_current(async move { manager.get_status(&agent_id).await });
+                let status = bridge_async(async move { manager.get_status(&agent_id).await });
                 match status {
                     Some(s) => json_ok(lua, &s),
                     None => nil_err(lua, "unknown agent"),
@@ -113,11 +115,10 @@ pub fn register_runtime_agent_namespace(
                     )?;
 
                     let manager = manager.clone();
-                    let result = block_on_current(async move {
+                    let result = bridge_async_display_err(async move {
                         manager
                             .submit(&agent_id, task, delegated_capabilities)
                             .await
-                            .map_err(|e| e.to_string())
                     });
                     match result {
                         Ok(task_id) => string_ok(lua, &task_id),
@@ -140,11 +141,8 @@ pub fn register_runtime_agent_namespace(
                 }
                 let timeout_ms = opts.as_ref().and_then(|t| t.get::<u64>("timeout_ms").ok());
                 let manager = manager.clone();
-                let result = block_on_current(async move {
-                    manager
-                        .await_result(&task_id, timeout_ms)
-                        .await
-                        .map_err(|e| e.to_string())
+                let result = bridge_async_display_err(async move {
+                    manager.await_result(&task_id, timeout_ms).await
                 });
                 match result {
                     Ok(res) => json_ok(lua, &res),

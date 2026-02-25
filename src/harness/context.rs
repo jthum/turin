@@ -2,6 +2,7 @@ use mlua::{LuaSerdeExt, MetaMethod, UserData, UserDataMethods, Value};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use crate::harness::globals::block_on_current;
 use crate::inference::provider::{InferenceMessage, ProviderClient};
 use std::collections::HashMap;
 
@@ -363,34 +364,32 @@ impl UserData for ContextWrapper {
                 Some(lua.from_value(args).map_err(mlua::Error::external)?)
             };
 
-            // Use block_in_place to bridge async client to sync Lua
-            let res = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    let (messages, model, provider_name) = {
-                        let state = state_arc.lock().expect("context state mutex poisoned");
-                        let msgs = messages_opt.unwrap_or_else(|| state.messages.clone());
-                        (msgs, state.model.clone(), state.provider.clone())
-                    };
+            // Bridge async provider completion into sync Lua callback.
+            let res = block_on_current(async {
+                let (messages, model, provider_name) = {
+                    let state = state_arc.lock().expect("context state mutex poisoned");
+                    let msgs = messages_opt.unwrap_or_else(|| state.messages.clone());
+                    (msgs, state.model.clone(), state.provider.clone())
+                };
 
-                    // Helper to map error
-                    let get_client = || -> Result<ProviderClient, String> {
-                        clients
-                            .get(&provider_name)
-                            .cloned()
-                            .ok_or_else(|| format!("Provider '{}' not initialized", provider_name))
-                    };
+                // Helper to map error
+                let get_client = || -> Result<ProviderClient, String> {
+                    clients
+                        .get(&provider_name)
+                        .cloned()
+                        .ok_or_else(|| format!("Provider '{}' not initialized", provider_name))
+                };
 
-                    match get_client() {
-                        Ok(client) => {
-                            let system_prompt = "Summarize the following conversation concisely.";
-                            client
-                                .completion(&model, system_prompt, &messages)
-                                .await
-                                .map_err(|e| format!("Completion failed: {}", e))
-                        }
-                        Err(e) => Err(e),
+                match get_client() {
+                    Ok(client) => {
+                        let system_prompt = "Summarize the following conversation concisely.";
+                        client
+                            .completion(&model, system_prompt, &messages)
+                            .await
+                            .map_err(|e| format!("Completion failed: {}", e))
                     }
-                })
+                    Err(e) => Err(e),
+                }
             });
 
             match res {

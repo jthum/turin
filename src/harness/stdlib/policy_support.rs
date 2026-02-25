@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use mlua::{Result as LuaResult, Value};
 
-use crate::harness::globals::{HarnessAppData, block_on_current};
+use crate::harness::globals::HarnessAppData;
+use crate::harness::stdlib::binding_common::bridge_async;
 use crate::harness::stdlib::identity_support::get_active_identity;
 use crate::kernel::policy::PolicyScope;
 
@@ -17,7 +18,7 @@ pub(crate) fn runtime_policy_snapshot(
     }
 
     let policy_manager = app_data.policy_manager.clone();
-    Ok(block_on_current(async move {
+    Ok(bridge_async(async move {
         policy_manager.snapshot(&scope).await
     }))
 }

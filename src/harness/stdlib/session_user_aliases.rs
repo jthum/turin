@@ -1,9 +1,9 @@
 use mlua::{Lua, Result as LuaResult, Table, Value};
 
-use crate::harness::globals::{HarnessAppData, block_on_current};
+use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{
-    bool_err, memory_rows_to_lua_table, metadata_json_or_empty, nil_err, nil_ok, ok_bool, ok_value,
-    string_ok,
+    bool_err, bridge_async_result, memory_rows_to_lua_table, metadata_json_or_empty, nil_err,
+    nil_ok, ok_bool, ok_value, string_ok,
 };
 use crate::harness::stdlib::context_selectors::{
     search_limit_from_opt, selector_from_active_scope_lua,
@@ -31,7 +31,7 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                     let selector = selector_from_active_scope_lua(&selector_app, scope)?;
                     let manager = manager.clone();
                     let embedding = embedding.clone();
-                    let result = block_on_current(async move {
+                    let result = bridge_async_result(async move {
                         memory_search_backend(
                             &manager,
                             embedding.as_ref(),
@@ -63,7 +63,7 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                         let metadata_json = metadata_json_or_empty(lua, metadata)?;
                         let manager = manager.clone();
                         let embedding = embedding.clone();
-                        let result = block_on_current(async move {
+                        let result = bridge_async_result(async move {
                             memory_store_backend(
                                 &manager,
                                 embedding.as_ref(),
@@ -101,7 +101,7 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                 lua.create_function(move |lua, key: String| {
                     let selector = selector_from_active_scope_lua(&selector_app, scope)?;
                     let manager = manager.clone();
-                    let result = block_on_current(async move {
+                    let result = bridge_async_result(async move {
                         kv_get_backend(&manager, &selector, &key)
                             .await
                             .map_err(|e| e.to_string())
@@ -122,7 +122,7 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                 lua.create_function(move |lua, (key, value): (String, String)| {
                     let selector = selector_from_active_scope_lua(&selector_app, scope)?;
                     let manager = manager.clone();
-                    let result = block_on_current(async move {
+                    let result = bridge_async_result(async move {
                         kv_set_backend(&manager, &selector, &key, &value)
                             .await
                             .map_err(|e| e.to_string())
@@ -142,7 +142,7 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                 lua.create_function(move |lua, key: String| {
                     let selector = selector_from_active_scope_lua(&selector_app, scope)?;
                     let manager = manager.clone();
-                    let result = block_on_current(async move {
+                    let result = bridge_async_result(async move {
                         kv_delete_backend(&manager, &selector, &key)
                             .await
                             .map_err(|e| e.to_string())
