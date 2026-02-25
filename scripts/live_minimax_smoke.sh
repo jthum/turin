@@ -189,8 +189,9 @@ normalize_base_url() {
 LIVE_BASE_URL_NORM="$(normalize_base_url "$LIVE_BASE_URL")"
 export TURIN_LIVE_API_KEY="$LIVE_API_KEY"
 if [[ "$DEBUG_REQUESTS" -eq 1 ]]; then
-  # Anthropic SDK request dumps are useful for Anthropic-compatible proxies.
+  # SDK request dumps are useful for provider-compat debugging.
   export ANTHROPIC_SDK_DEBUG_REQUESTS=1
+  export OPENAI_SDK_DEBUG_REQUESTS=1
 fi
 
 TMP_DIRS=()
