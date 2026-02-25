@@ -42,7 +42,7 @@ That gives you a few practical advantages:
 - **Composability**: workflows, memory policies, and routing strategies become harness modules
 - **Portability**: one binary, many harnesses, many providers
 
-## What Is Stable in v0.15.0
+## What Is Stable in the Current Baseline
 
 This release establishes the forward-looking public harness surface:
 

@@ -1,4 +1,4 @@
-# Writing Harness Scripts (v0.15.0)
+# Writing Harness Scripts
 
 This guide covers how to build production-quality Turin harnesses using the canonical `runtime.*` API, stable hook lifecycle, and opt-in governance features.
 

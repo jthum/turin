@@ -1,4 +1,4 @@
-# Testing Turin (v0.15.0)
+# Testing Turin
 
 This document covers Turin’s testing strategy and the commands used to validate changes locally.
 

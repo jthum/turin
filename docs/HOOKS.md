@@ -1,4 +1,4 @@
-# Turin Hooks (v0.15.0)
+# Turin Hooks
 
 This document defines Turin’s current harness hook lifecycle and hook contracts.
 

@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-02-25
+
+### Added
+- **Expanded Live Validation Suites**
+  - Added `--api-format openai` mode to `scripts/live_minimax_smoke.sh` for testing OpenAI-compatible endpoints (including MiniMax `https://api.minimax.io/v1`).
+  - Added `--report-json` output for machine-readable live test summaries (with per-case durations and temp dirs).
+  - Added repeatable `soak` suite support (`--suite soak`) and generic `--repeat` support, with iteration tracking in JSON reports.
+  - Added provider-debug wiring so `--debug-requests` enables both Anthropic and OpenAI SDK request/stream dumps.
+- **MiniMax OpenAI-Compatible Interop (via normalized SDK updates)**
+  - Added OpenAI request normalization `tool_choice = "auto"` when tools are present.
+  - Added OpenAI request/raw-SSE debug dump tooling for provider compatibility debugging.
+  - Added OpenAI stream normalization support for providers that emit final usage chunks with non-empty `choices` (MiniMax-compatible shape), including duplicate assistant-role chunk handling.
+- **Runtime Hardening and UX Polish**
+  - Added MCP client graceful shutdown / teardown path (including subprocess cleanup via upstream MCP SDK changes).
+  - Added runtime policy knob `hook.token_usage.reject_mode` with modes:
+    - `informational`
+    - `enforce_task`
+    - `enforce_session`
+  - Added terminal-aware display helpers across more CLI/kernel output surfaces and cleaned remaining ANSI hotspots.
+
+### Changed
+- **Live Validation Baselines (MiniMax M2.5)**
+  - Verified `smoke`, `core`, and `soak` suites against MiniMax Anthropic-compatible endpoint (`https://api.minimax.io/anthropic/v1`).
+  - Verified `smoke`, `core`, and `soak` suites against MiniMax OpenAI-compatible endpoint (`https://api.minimax.io/v1`).
+  - Recorded known-good `core` baselines (`12/12`) and `soak` baselines (`36/36`, `repeat_count=3`) for both wire protocols.
+- **Harness / CLI Cleanup**
+  - Extracted REPL command flow from `main.rs` and reduced config-loading duplication.
+  - Consolidated harness execution context state into a single lock-backed context object.
+  - Relaxed peer-agent live test assertions to tolerate provider reasoning wrappers while still requiring sentinel content.
+- **Dependency / Binary Trimming**
+  - Disabled unnecessary default features on several dependencies (`tokio`, `tokio-util`, `clap`, `turso`) and removed unused dependencies.
+  - Reduced release binary size through feature trimming (while keeping tests/clippy/builds green).
+
+### Fixed
+- **MiniMax OpenAI-Compatible Tool Calling**
+  - Fixed missing tool execution on OpenAI-compatible streaming path by handling provider final usage chunk shape and ensuring tool-call streams are finalized correctly.
+  - Fixed zero-token live summaries caused by missing `MessageEnd` emission on MiniMax-style final usage chunks.
+- **Live Suite Reliability / Portability**
+  - Removed hard dependency on `ripgrep` (`rg`) in the live suite (falls back to `grep`).
+  - Reduced live-suite output noise defaults (`--log-level error`) and improved JSON reporting for failure triage.
+  - Fixed `peer_grant` live case grant ceiling to include required orchestrator capabilities (`runtime.agent.submit` / `runtime.agent.await`) while still validating worker-side grant propagation.
+- **FFI/Panic Safety**
+  - Hardened Lua-facing harness execution-context access paths to avoid `unwrap()`-driven panics crossing the `mlua` callback boundary.
+
+### Documentation
+- Removed stale `v0.15.0` version labels from README/docs to keep documentation evergreen.
+- Expanded live-provider testing docs with:
+  - Anthropic/OpenAI-compatible MiniMax commands
+  - `core` / `soak` guidance
+  - repeat/soak workflow examples
+- Added a Turso acknowledgement to `README.md`.
+
 ## [0.15.0] - 2026-02-24
 
 ### Added

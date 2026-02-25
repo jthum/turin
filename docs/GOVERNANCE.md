@@ -1,4 +1,4 @@
-# Governance and Capabilities (v0.15.0)
+# Governance and Capabilities
 
 Turin’s governance system is **opt-in** and **flexibility-first**.
 
@@ -80,9 +80,9 @@ Wildcard rules are supported in many places using `prefix.*`, e.g.:
 - `runtime.db.*`
 - `runtime.agent.*`
 
-## Current Capability Registry (Comprehensive, v0.15.0)
+## Current Capability Registry (Comprehensive)
 
-This section lists the **currently enforced/checked capability names** in Turin v0.15.0.
+This section lists the **currently enforced/checked capability names** in the current Turin baseline.
 If a capability is not listed here, Turin may still expose related functionality, but it is not
 currently checked by the governance enforcement path as a named capability.
 

@@ -1,4 +1,4 @@
-# Turin Architecture (v0.15.0)
+# Turin Architecture
 
 This document describes Turin’s current architecture after the canonical stdlib, multi-db/multi-agent runtime, and governance refactors.
 

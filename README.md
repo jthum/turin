@@ -7,7 +7,7 @@ The model proposes actions. The harness (Luau scripts) decides what is allowed. 
 
 Turin is intentionally unopinionated about workflow and personality. It provides execution physics, persistence, tools, events, and a programmable harness surface so you can build radically different agents with the same binary.
 
-## What Turin Is (v0.15.0)
+## What Turin Is (Current Baseline)
 
 Turin now ships a coherent, canonical runtime with:
 
@@ -164,7 +164,7 @@ See `docs/PRIMITIVES.md` for the full surface.
 
 ## Hooks (Stable Lifecycle)
 
-Turin’s hook lifecycle is explicit and stable in v0.15.0.
+Turin’s hook lifecycle is explicit and stable in the current baseline.
 Core hooks include:
 
 - `on_session_start`
@@ -318,4 +318,4 @@ Turin's persistence layer is built on Turso — a native-Rust SQLite engine that
 
 ## Versioning Note
 
-Turin remains pre-1.0, but v0.15.0 formalizes the current canonical harness API (`runtime.*`) and governance model as the forward-looking baseline. Internal refactors may continue aggressively; public harness surfaces should now change more deliberately.
+Turin remains pre-1.0, but the current line formalizes the canonical harness API (`runtime.*`) and governance model as the forward-looking baseline. Internal refactors may continue aggressively; public harness surfaces should now change more deliberately.

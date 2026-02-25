@@ -1,6 +1,6 @@
-# Turin Docs Index (v0.15.0)
+# Turin Docs Index
 
-This is the documentation landing page for Turin v0.15.0.
+This is the documentation landing page for Turin.
 
 ## Start Here
 
