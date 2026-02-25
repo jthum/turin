@@ -99,6 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - write+read multi-tool roundtrip
   - Expanded and verified the opt-in `core` live validation suite against MiniMax M2.5 (12/12 passing), covering governance, peer agents, queue steering, runtime DB APIs, temporary grants, token-usage enforcement, immutable audit, and peer grant propagation.
   - Added MiniMax OpenAI-compatible live-suite mode (`--api-format openai`) and verified `smoke` + `core` suites against `https://api.minimax.io/v1` (including `core` 12/12 passing).
+  - Added repeatable `soak` suite support (`--suite soak`, `--repeat`) and verified MiniMax M2.5 soak baselines on both Anthropic-compatible and OpenAI-compatible endpoints (`36/36` passing over 3 iterations each).
   - Fixed MiniMax OpenAI-compatible tool-call interoperability in the normalized OpenAI SDK path by setting `tool_choice: "auto"` when tools are present and handling final usage chunks that include non-empty `choices`.
 
 ### Documentation

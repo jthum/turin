@@ -269,6 +269,13 @@ This baseline demonstrates end-to-end live validation across Turin’s core runt
 - immutable audit persistence
 - grant-ceiling propagation to peers
 
+Additional soak baseline:
+
+- Recorded on: `2026-02-25T10:03:38Z`
+- Turin commit: `beee361`
+- Suite: `soak` (`repeat_count=3`)
+- Result: `36 passed, 0 failed`
+
 ### OpenAI-Compatible Endpoint
 
 Recorded on: `2026-02-25T09:41:12Z`  
@@ -308,6 +315,13 @@ This baseline demonstrates the same end-to-end Turin core-runtime surface agains
 - queue steering
 - runtime DB APIs
 - temporary grants and immutable audit behavior
+
+Additional soak baseline:
+
+- Recorded on: `2026-02-25T10:08:29Z`
+- Turin commit: `beee361`
+- Suite: `soak` (`repeat_count=3`)
+- Result: `36 passed, 0 failed`
 
 Note: MiniMax OpenAI-compatible tool-call support required normalized SDK OpenAI stream handling fixes for provider-specific final usage chunk shape (`usage` + non-empty `choices`) and explicit `tool_choice: "auto"` when tools are present.
 
