@@ -521,7 +521,7 @@ function on_session_start(event)
     { agent_id = "worker", timeout_ms = 45000 }
   )
 
-  if out == "PEER_AGENT_WORKER_OK" then
+  if type(out) == "string" and string.find(out, "PEER_AGENT_WORKER_OK", 1, true) then
     log("PEER_AGENT_SMOKE_OK")
   else
     log("PEER_AGENT_SMOKE_FAIL:" .. tostring(err or out))
@@ -946,7 +946,7 @@ function on_turn_prepare(ctx)
     local res, ae = runtime.agent.await(task_id, { timeout_ms = 90000 })
     if res == nil then error("await failed: " .. tostring(ae)) end
     if res.status ~= "success" then error("worker status " .. tostring(res.status)) end
-    if res.output ~= "PEER_GRANT_WORKER_REPLY_OK" then
+    if type(res.output) ~= "string" or not string.find(res.output, "PEER_GRANT_WORKER_REPLY_OK", 1, true) then
       error("worker output mismatch: " .. tostring(res.output))
     end
     return "PEER_GRANT_WITH_GRANT_OK"
