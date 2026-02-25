@@ -20,6 +20,22 @@ pub fn bold(text: &str, ansi: bool) -> String {
     paint(text, "1", ansi)
 }
 
+pub fn ok_mark(ansi: bool) -> String {
+    paint("✓", "32;1", ansi)
+}
+
+pub fn warn_mark(ansi: bool) -> String {
+    paint("!", "33;1", ansi)
+}
+
+pub fn err_mark(ansi: bool) -> String {
+    paint("✗", "31;1", ansi)
+}
+
+pub fn info_mark(ansi: bool) -> String {
+    paint("ℹ", "34;1", ansi)
+}
+
 pub fn header(label: &str, ansi: bool) -> String {
     if ansi {
         format!("\x1b[36m\x1b[1m── {label} ──\x1b[0m")

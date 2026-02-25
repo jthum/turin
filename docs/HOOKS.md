@@ -287,8 +287,11 @@ Payload:
 
 Notes:
 
-- Informational/governance signal only.
-- `REJECT` currently logs a warning and does not halt execution by itself.
+- Default behavior is informational (`REJECT` logs a warning only).
+- Runtime policy can opt into enforcement via `hook.token_usage.reject_mode`:
+  - `informational` (default)
+  - `enforce_task` (reject current task)
+  - `enforce_session` (reject current task and stop queued session work)
 
 ## `on_plan_submit(event)`
 

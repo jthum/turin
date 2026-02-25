@@ -1,19 +1,27 @@
 use anyhow::Result;
 use std::path::Path;
+use turin::display;
 use turin::kernel::Kernel;
 use turin::kernel::config::TurinConfig;
 
 pub async fn run_check(config_path: &Path) -> Result<()> {
-    println!("\x1b[36m\x1b[1mChecking Turin project configuration...\x1b[0m");
+    let ansi = display::stdout_ansi();
+    println!(
+        "{}",
+        display::header("Checking Turin project configuration...", ansi)
+    );
 
     // 1. Load turin.toml
     let config = match TurinConfig::from_file(config_path) {
         Ok(c) => {
-            println!("\x1b[32m\x1b[1m✓\x1b[0m Configuration file is valid TOML.");
+            println!(
+                "{} Configuration file is valid TOML.",
+                display::ok_mark(ansi)
+            );
             c
         }
         Err(e) => {
-            println!("\x1b[31m\x1b[1m✗\x1b[0m Configuration error: {}", e);
+            println!("{} Configuration error: {}", display::err_mark(ansi), e);
             return Ok(());
         }
     };
@@ -24,19 +32,23 @@ pub async fn run_check(config_path: &Path) -> Result<()> {
         if let Some(ref env_var) = provider_config.api_key_env {
             if std::env::var(env_var).is_err() {
                 println!(
-                    "\x1b[33m\x1b[1m! Warning:\x1b[0m API key for provider '{}' ({}) is not set in environment.",
-                    provider, env_var
+                    "{} Warning: API key for provider '{}' ({}) is not set in environment.",
+                    display::warn_mark(ansi),
+                    provider,
+                    env_var
                 );
             } else {
                 println!(
-                    "\x1b[32m\x1b[1m✓\x1b[0m API key for provider '{}' is set.",
+                    "{} API key for provider '{}' is set.",
+                    display::ok_mark(ansi),
                     provider
                 );
             }
         }
     } else {
         println!(
-            "\x1b[31m\x1b[1m✗\x1b[0m Provider '{}' not found in [providers].",
+            "{} Provider '{}' not found in [providers].",
+            display::err_mark(ansi),
             provider
         );
     }
@@ -45,17 +57,18 @@ pub async fn run_check(config_path: &Path) -> Result<()> {
     let harness_dir = Path::new(&config.harness.directory);
     if !harness_dir.exists() {
         println!(
-            "\x1b[33m\x1b[1m! Warning:\x1b[0m Harness directory '{}' does not exist.",
+            "{} Warning: Harness directory '{}' does not exist.",
+            display::warn_mark(ansi),
             harness_dir.display()
         );
     } else {
-        println!("\x1b[32m\x1b[1m✓\x1b[0m Harness directory exists.");
+        println!("{} Harness directory exists.", display::ok_mark(ansi));
 
         println!("  Validating harness scripts...");
         let mut kernel = match Kernel::builder(config.clone()).build() {
             Ok(k) => k,
             Err(e) => {
-                println!("\x1b[31m\x1b[1m✗\x1b[0m Failed to build Kernel: {}", e);
+                println!("{} Failed to build Kernel: {}", display::err_mark(ansi), e);
                 return Ok(());
             }
         };
@@ -64,16 +77,24 @@ pub async fn run_check(config_path: &Path) -> Result<()> {
             Ok(_) => {
                 let loaded = kernel.loaded_scripts();
                 if loaded.is_empty() {
-                    println!("    \x1b[33m(No .lua scripts found in harness directory)\x1b[0m");
+                    println!(
+                        "    {}",
+                        display::paint("(No .lua scripts found in harness directory)", "33", ansi)
+                    );
                 } else {
                     for script in loaded {
-                        println!("    \x1b[32m\x1b[1m✓\x1b[0m Loaded and parsed: {}", script);
+                        println!(
+                            "    {} Loaded and parsed: {}",
+                            display::ok_mark(ansi),
+                            script
+                        );
                     }
                 }
             }
             Err(e) => {
                 println!(
-                    "\n\x1b[31m\x1b[1m✗ Harness validation failed:\x1b[0m\n{}",
+                    "\n{} Harness validation failed:\n{}",
+                    display::err_mark(ansi),
                     e
                 );
             }
@@ -84,16 +105,18 @@ pub async fn run_check(config_path: &Path) -> Result<()> {
     let db_path = Path::new(&config.persistence.database_path);
     if db_path.exists() {
         println!(
-            "\x1b[32m\x1b[1m✓\x1b[0m State database found at '{}'.",
+            "{} State database found at '{}'.",
+            display::ok_mark(ansi),
             db_path.display()
         );
     } else {
         println!(
-            "\x1b[34mℹ\x1b[0m State database will be created at '{}' on first run.",
+            "{} State database will be created at '{}' on first run.",
+            display::info_mark(ansi),
             db_path.display()
         );
     }
 
-    println!("\n\x1b[32m\x1b[1mValidation complete!\x1b[0m");
+    println!("\n{} Validation complete!", display::ok_mark(ansi));
     Ok(())
 }

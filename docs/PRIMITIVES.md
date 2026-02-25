@@ -285,6 +285,19 @@ Runtime policy storage API.
 
 When identity fields are missing, Turin fills from the active runtime identity when available.
 
+Common runtime policy keys (current):
+
+- `spawn.enabled`
+- `spawn.max_depth`
+- `mode.default`
+- `db.allow_dynamic_open`
+- `db.path_scope`
+- `db.max_open_handles`
+- `db.idle_close_secs`
+- `queue.max_depth`
+- `tool.exec_enabled`
+- `hook.token_usage.reject_mode` (`informational` | `enforce_task` | `enforce_session`)
+
 ## `runtime.governance`
 
 Governance observability and temporary grants.

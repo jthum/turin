@@ -391,6 +391,29 @@ High-risk built-in tools are also checked at execution time, including:
 
 This prevents bypass if a model emits direct tool calls that do not pass through the stdlib.
 
+## Runtime Policy Knobs (Selected, Current)
+
+Runtime policy is intentionally flexible and can remain harness-mutable when you choose to allow
+`runtime.policy.set`. Relevant current knobs include:
+
+- `spawn.enabled`
+- `spawn.max_depth`
+- `mode.default`
+- `db.allow_dynamic_open`
+- `db.path_scope`
+- `db.max_open_handles`
+- `db.idle_close_secs`
+- `queue.max_depth`
+- `tool.exec_enabled`
+- `hook.token_usage.reject_mode`
+  - `informational` (default)
+  - `enforce_task`
+  - `enforce_session`
+
+This hook token-usage mode is a good example of Turin’s philosophy:
+- default remains flexible/informational
+- stricter enforcement is opt-in via policy
+
 ## Runtime Observability APIs
 
 Use these from harness code to inspect effective governance state:
