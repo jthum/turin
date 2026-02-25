@@ -89,6 +89,7 @@ pub struct SessionState {
     pub next_plan_id: u32,
     pub status: SessionStatus,
     pub mode: crate::kernel::config::AgentMode,
+    pub stop_requested: bool,
 }
 
 impl Default for SessionState {
@@ -118,6 +119,7 @@ impl SessionState {
             next_plan_id: 1,
             status: SessionStatus::Inactive,
             mode: crate::kernel::config::AgentMode::Auto,
+            stop_requested: false,
         }
     }
 }

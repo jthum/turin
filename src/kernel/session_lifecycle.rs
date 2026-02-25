@@ -91,6 +91,7 @@ impl Kernel {
             }
         }
 
+        session.stop_requested = false;
         session.status = SessionStatus::Active;
         Ok(())
     }

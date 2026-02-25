@@ -4,6 +4,7 @@ use tracing::{error, instrument, warn};
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::config::AgentMode;
 use crate::kernel::event::TaskTerminalStatus;
+use crate::kernel::harness_hooks::TokenUsageHookAction;
 use crate::kernel::session::{QueuedTask, SessionState};
 use crate::kernel::turn;
 use crate::kernel::{Kernel, TaskExecutionResult};
@@ -121,10 +122,32 @@ impl Kernel {
                 Err(err) => break Err(err),
             };
 
-            self.evaluate_token_usage(session.total_input_tokens, session.total_output_tokens);
+            let token_usage_action = self.evaluate_token_usage(session).await;
             session.turn_index += 1;
             task_turn_count += 1;
             self.refresh_task_session_mode(session);
+
+            match token_usage_action {
+                TokenUsageHookAction::Continue => {}
+                TokenUsageHookAction::RejectTask { reason } => {
+                    warn!(
+                        task_id = %task.task_id,
+                        reason = %reason,
+                        "Task rejected by token usage policy"
+                    );
+                    break Ok(TaskTerminalStatus::Rejected);
+                }
+                TokenUsageHookAction::RejectSession { reason } => {
+                    warn!(
+                        task_id = %task.task_id,
+                        reason = %reason,
+                        "Session stop requested by token usage policy"
+                    );
+                    session.stop_requested = true;
+                    session.queue.lock().await.clear();
+                    break Ok(TaskTerminalStatus::Rejected);
+                }
+            }
 
             if session.mode == AgentMode::Stateless {
                 match completed_turn {

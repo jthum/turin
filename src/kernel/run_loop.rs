@@ -2,10 +2,10 @@ use anyhow::Result;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::harness::verdict::Verdict;
-use crate::kernel::event::{KernelEvent, LifecycleEvent};
-use crate::kernel::event::TaskTerminalStatus;
-use crate::kernel::session::{PlanProgress, QueuedTask, SessionState};
 use crate::kernel::Kernel;
+use crate::kernel::event::TaskTerminalStatus;
+use crate::kernel::event::{KernelEvent, LifecycleEvent};
+use crate::kernel::session::{PlanProgress, QueuedTask, SessionState};
 
 impl Kernel {
     /// Run the agent loop with the given prompt.
@@ -65,6 +65,14 @@ impl Kernel {
                 None,
             )
             .await?;
+
+            if session.stop_requested {
+                info!(
+                    session_id = %session.identity.session_id(),
+                    "Stopping run loop due to session stop request"
+                );
+                break;
+            }
         }
 
         Ok(())

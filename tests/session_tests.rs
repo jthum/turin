@@ -11,6 +11,7 @@ use turin::kernel::config::{
     AgentConfig, EmbeddingConfig, HarnessConfig, KernelConfig, PersistenceConfig, ProviderConfig,
     TurinConfig,
 };
+use turin::kernel::policy::PolicyScope;
 use turin::kernel::session::{QueuedTask, SessionStatus};
 
 // ─── Helpers ────────────────────────────────────────────────────
@@ -69,6 +70,20 @@ async fn make_kernel(tmp: &std::path::Path) -> Result<Kernel> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
     Ok(kernel)
+}
+
+fn event_has_task_status(events: &[turin::persistence::schema::EventRow], status: &str) -> bool {
+    events.iter().any(|e| {
+        e.event_type == "task_complete"
+            && serde_json::from_str::<serde_json::Value>(&e.payload)
+                .ok()
+                .and_then(|v| v.get("status").and_then(|s| s.as_str()).map(str::to_string))
+                .is_some_and(|s| s == status)
+    })
+}
+
+fn count_event_type(events: &[turin::persistence::schema::EventRow], event_type: &str) -> usize {
+    events.iter().filter(|e| e.event_type == event_type).count()
 }
 
 // ─── Session Lifecycle ──────────────────────────────────────────
@@ -360,15 +375,21 @@ async fn test_governance_grant_audit_events_persisted() -> Result<()> {
     if let Ok(store) = kernel.store_manager().get_default().await {
         let events = store.get_events(session.internal_id.unwrap()).await?;
         assert!(
-            events.iter().any(|e| e.event_type == "governance_grant_issue"),
+            events
+                .iter()
+                .any(|e| e.event_type == "governance_grant_issue"),
             "expected governance_grant_issue to be persisted"
         );
         assert!(
-            events.iter().any(|e| e.event_type == "governance_grant_use"),
+            events
+                .iter()
+                .any(|e| e.event_type == "governance_grant_use"),
             "expected governance_grant_use to be persisted"
         );
         assert!(
-            events.iter().any(|e| e.event_type == "governance_grant_revoke"),
+            events
+                .iter()
+                .any(|e| e.event_type == "governance_grant_revoke"),
             "expected governance_grant_revoke to be persisted"
         );
     }
@@ -468,5 +489,155 @@ async fn test_multitask_workflow_execution() -> Result<()> {
         session.history.len()
     );
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_token_usage_reject_is_informational_by_default() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir_all(&harness_dir)?;
+    std::fs::write(
+        harness_dir.join("token_budget.lua"),
+        r#"
+            function on_token_usage(usage)
+                return REJECT, "token budget exceeded"
+            end
+        "#,
+    )?;
+
+    let mut kernel = make_kernel(tmp.path()).await?;
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Should still complete".to_string()))
+        .await?;
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    if let Ok(store) = kernel.store_manager().get_default().await {
+        let events = store.get_events(session.internal_id.unwrap()).await?;
+        assert!(
+            event_has_task_status(&events, "success"),
+            "default token-usage reject mode should be informational"
+        );
+    }
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_token_usage_reject_can_enforce_task() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir_all(&harness_dir)?;
+    std::fs::write(
+        harness_dir.join("token_budget.lua"),
+        r#"
+            function on_token_usage(usage)
+                return REJECT, "token budget exceeded"
+            end
+        "#,
+    )?;
+
+    let mut kernel = make_kernel(tmp.path()).await?;
+    kernel
+        .policy_manager()
+        .set(
+            "hook.token_usage.reject_mode",
+            serde_json::Value::String("enforce_task".to_string()),
+            &PolicyScope {
+                scope: Some("global".to_string()),
+                ..PolicyScope::default()
+            },
+        )
+        .await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("Reject this task after first turn".to_string()),
+        )
+        .await?;
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    if let Ok(store) = kernel.store_manager().get_default().await {
+        let events = store.get_events(session.internal_id.unwrap()).await?;
+        assert!(
+            event_has_task_status(&events, "rejected"),
+            "task should be rejected when hook.token_usage.reject_mode=enforce_task"
+        );
+    }
+    assert_eq!(session.turn_index, 1, "task should stop after first turn");
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_token_usage_reject_can_enforce_session() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir_all(&harness_dir)?;
+    std::fs::write(
+        harness_dir.join("token_budget.lua"),
+        r#"
+            function on_token_usage(usage)
+                return REJECT, "session token budget exceeded"
+            end
+        "#,
+    )?;
+
+    let mut kernel = make_kernel(tmp.path()).await?;
+    kernel
+        .policy_manager()
+        .set(
+            "hook.token_usage.reject_mode",
+            serde_json::Value::String("enforce_session".to_string()),
+            &PolicyScope {
+                scope: Some("global".to_string()),
+                ..PolicyScope::default()
+            },
+        )
+        .await?;
+
+    let mut session = kernel.create_session().await;
+    {
+        let mut q = session.queue.lock().await;
+        let mut t1 = QueuedTask::ad_hoc("Task 1");
+        t1.task_id = "t_1".to_string();
+        let mut t2 = QueuedTask::ad_hoc("Task 2");
+        t2.task_id = "t_2".to_string();
+        q.push_back(t1);
+        q.push_back(t2);
+    }
+
+    kernel.run(&mut session, None).await?;
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    if let Ok(store) = kernel.store_manager().get_default().await {
+        let events = store.get_events(session.internal_id.unwrap()).await?;
+        assert_eq!(
+            count_event_type(&events, "task_start"),
+            1,
+            "enforce_session should stop the run loop before the second task starts"
+        );
+        assert!(
+            event_has_task_status(&events, "rejected"),
+            "first task should be rejected when enforce_session triggers"
+        );
+    }
+
+    assert!(session.stop_requested, "session stop should be requested");
+    assert!(
+        session.queue.lock().await.is_empty(),
+        "queue should be cleared"
+    );
+    assert_eq!(
+        session.turn_index, 1,
+        "session should stop after first turn"
+    );
+
+    kernel.end_session(&mut session).await?;
     Ok(())
 }

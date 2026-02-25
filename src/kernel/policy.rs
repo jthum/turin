@@ -26,6 +26,7 @@ pub struct RuntimePolicy {
     pub db_idle_close_secs: u64,
     pub queue_max_depth: usize,
     pub tool_exec_enabled: bool,
+    pub hook_token_usage_reject_mode: String,
 }
 
 impl Default for RuntimePolicy {
@@ -40,6 +41,7 @@ impl Default for RuntimePolicy {
             db_idle_close_secs: 300,
             queue_max_depth: 1024,
             tool_exec_enabled: true,
+            hook_token_usage_reject_mode: "informational".to_string(),
         }
     }
 }
@@ -86,6 +88,10 @@ impl RuntimePolicy {
         map.insert(
             "tool.exec_enabled".to_string(),
             Value::Bool(self.tool_exec_enabled),
+        );
+        map.insert(
+            "hook.token_usage.reject_mode".to_string(),
+            Value::String(self.hook_token_usage_reject_mode.clone()),
         );
         map
     }
@@ -214,7 +220,8 @@ fn validate_key(key: &str) -> Result<()> {
         | "db.max_open_handles"
         | "db.idle_close_secs"
         | "queue.max_depth"
-        | "tool.exec_enabled" => Ok(()),
+        | "tool.exec_enabled"
+        | "hook.token_usage.reject_mode" => Ok(()),
         _ => Err(anyhow!("Unknown policy key '{}'", key)),
     }
 }
@@ -246,6 +253,13 @@ fn validate_value(key: &str, value: &Value) -> Result<()> {
             Some("workspace_only" | "allow_any") => Ok(()),
             _ => Err(anyhow!(
                 "Policy '{}' expects one of: workspace_only, allow_any",
+                key
+            )),
+        },
+        "hook.token_usage.reject_mode" => match value.as_str() {
+            Some("informational" | "enforce_task" | "enforce_session") => Ok(()),
+            _ => Err(anyhow!(
+                "Policy '{}' expects one of: informational, enforce_task, enforce_session",
                 key
             )),
         },
@@ -325,5 +339,21 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("expects non-negative integer"));
+
+        let err = mgr
+            .set(
+                "hook.token_usage.reject_mode",
+                Value::String("bad".to_string()),
+                &PolicyScope {
+                    scope: Some("global".to_string()),
+                    ..PolicyScope::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("informational, enforce_task, enforce_session")
+        );
     }
 }
