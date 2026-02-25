@@ -16,12 +16,12 @@ Live tests are valuable, but they are not deterministic:
 
 Turin therefore treats live testing as an **opt-in validation layer** on top of the normal unit/integration test suite.
 
-## Manual Smoke Script (MiniMax / Anthropic-Compatible)
+## Manual Live Suites (MiniMax / Anthropic-Compatible)
 
-Turin includes a manual smoke script:
+Turin includes a manual live suite script:
 
 ```bash
-scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite smoke
 ```
 
 It is **not** run automatically by:
@@ -29,6 +29,18 @@ It is **not** run automatically by:
 - `cargo build`
 - `cargo test`
 - `cargo clippy`
+
+### Suite presets
+
+- `smoke` (default) — fast confidence checks (cheap, suitable before/after most changes)
+- `core` — broader end-to-end validation across governance/multi-db/multi-agent/grants/audit
+- `all` — currently the same as `core` (reserved for future expansion, soak/provider matrix additions)
+
+Run a suite:
+
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core
+```
 
 ### Supported cases
 
@@ -39,6 +51,11 @@ It is **not** run automatically by:
 - `governed_denial` — harness-driven governance denial sentinel + successful inference turn
 - `peer_agent` — harness-driven peer-agent `agent.complete(...)` roundtrip + successful main-agent turn
 - `queue_steer` — harness-driven queue steering via `on_all_tasks_complete` follow-up prompt injection
+- `runtime_db` — harness-driven `runtime.db.open/list/exec/query/close` + sqlite verification
+- `grant_flow` — temporary grant issue/use/revoke + durable audit event verification
+- `token_reject_task` — live `on_token_usage` `REJECT` with `hook.token_usage.reject_mode=enforce_task`
+- `immutable_audit` — immutable audit persists rejected `governance_snapshot` audit event
+- `peer_grant` — temporary grant ceiling propagation into peer-agent submit/await path
 
 Run specific cases:
 
@@ -47,6 +64,22 @@ scripts/live_minimax_smoke.sh \
   --env-file ~/Documents/minimax.env \
   --cases basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,queue_steer
 ```
+
+### What `core` covers (confidence-building set)
+
+The `core` suite is designed to validate Turin’s real value surface against a live endpoint:
+
+- live inference + streaming
+- tool roundtrips (`read_file`, `write_file`)
+- tool failure and recovery
+- governance enforcement denials
+- peer-agent orchestration
+- queue steering / follow-up task injection
+- runtime DB API (`runtime.db.*`)
+- temporary grants + grant audit events
+- token-usage hook enforcement mode (`enforce_task`)
+- immutable audit persistence semantics
+- grant ceiling propagation to peer agents
 
 ## Required Environment Variables
 
@@ -96,10 +129,30 @@ Run live checks in layers:
 
 1. **SDK-level repro/example** (faster iteration)
    - use `inference-sdk-rust` examples for provider wire-format debugging
-2. **Turin smoke script** (end-to-end kernel + harness + tools)
-3. **Project-specific harness validation** (your real harness stack and governance profile)
+2. **Turin `smoke` suite** (fast end-to-end kernel + harness + tools)
+3. **Turin `core` suite** (broader end-to-end feature validation)
+4. **Project-specific harness validation** (your real harness stack and governance profile)
 
 This keeps provider compatibility debugging out of Turin core while still validating Turin end-to-end.
+
+## Recommended Confidence Bar Before Asking Others to Try Turin
+
+At minimum, publish a provider/model + scenario statement based on real runs.
+
+Recommended baseline:
+
+1. `cargo test`
+2. `cargo clippy --all-targets -- -D warnings`
+3. `cargo build --release`
+4. `scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite smoke`
+5. `scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core`
+
+Then document:
+
+- provider + model used (for example, MiniMax M2.5 Anthropic-compatible)
+- exact base URL format (including `/v1` when required)
+- which live cases passed
+- known caveats / experimental surfaces
 
 ## Troubleshooting
 
@@ -112,6 +165,12 @@ Ensure the effective base URL includes `/v1`.
 
 This usually indicates a provider compatibility issue in the SDK wire format for tool-result turns.
 Debug at the SDK layer (`inference-sdk-rust`) and rerun Turin smoke once patched.
+
+### `dns error` / `Temporary failure in name resolution`
+
+This is an environment/network resolution issue, not a Turin/provider-wire-format issue.
+
+The live suite script retries `turin run` automatically for transient transport failures, but persistent DNS failures will still fail the case after retries.
 
 ### Benign warning: `FTS5 extension not available`
 

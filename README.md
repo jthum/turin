@@ -242,13 +242,19 @@ See `docs/GOVERNANCE.md` for configuration and runtime behavior.
 
 Turin does **not** call live providers during normal `cargo test` / `cargo build`.
 
-Use the smoke script when you want to validate a real endpoint (e.g. MiniMax Anthropic-compatible):
+Use the opt-in live suite script when you want to validate a real endpoint (e.g. MiniMax Anthropic-compatible):
 
 ```bash
-scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite smoke
 ```
 
-Current live smoke cases include:
+For broader real-world confidence (governance, multi-db, grants, audit, peer delegation):
+
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core
+```
+
+Current live cases include:
 - `basic`
 - `tool_read`
 - `tool_error`
@@ -256,13 +262,18 @@ Current live smoke cases include:
 - `governed_denial`
 - `peer_agent`
 - `queue_steer`
+- `runtime_db`
+- `grant_flow`
+- `token_reject_task`
+- `immutable_audit`
+- `peer_grant`
 
 Run a custom case set:
 
 ```bash
 scripts/live_minimax_smoke.sh \
   --env-file ~/Documents/minimax.env \
-  --cases basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,queue_steer
+  --cases basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,queue_steer,runtime_db,grant_flow
 ```
 
 See `docs/LIVE_PROVIDER_TESTING.md` for setup and troubleshooting.

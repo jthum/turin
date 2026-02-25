@@ -96,10 +96,16 @@ Most behavior should be validated there before spending provider quota.
 
 ## Live Provider Validation (Manual / Opt-In)
 
-## MiniMax Anthropic-compatible smoke suite
+## MiniMax Anthropic-compatible live suites
 
 ```bash
-scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite smoke
+```
+
+Broader core coverage (recommended before releases or public trials):
+
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core
 ```
 
 Custom case selection:
@@ -124,14 +130,14 @@ See `docs/LIVE_PROVIDER_TESTING.md` for environment setup and troubleshooting.
 1. `cargo test`
 2. `cargo clippy --all-targets -- -D warnings`
 3. `cargo build --release`
-4. optional live smoke (`basic`, `tool_read`)
+4. optional live `smoke` suite
 
 ### Governance changes
 
 1. unit tests (`kernel::governance`)
 2. harness integration tests (`tests/harness_tests.rs`)
 3. `cargo clippy --all-targets -- -D warnings`
-4. optional governed-mode live smoke (project-specific harness/config)
+4. optional governed-mode live `smoke`/`core` suite (project-specific harness/config)
 
 ### Provider compatibility debugging
 
@@ -170,5 +176,6 @@ Before cutting a release tag:
 2. `cargo clippy --all-targets -- -D warnings`
 3. `cargo build --release`
 4. record binary size
-5. run opt-in live smoke suite against at least one real provider/proxy
-6. verify docs/changelog/version consistency
+5. run opt-in live suites against at least one real provider/proxy
+6. record provider/model + cases passed in release notes or docs
+7. verify docs/changelog/version consistency
