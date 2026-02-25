@@ -114,6 +114,19 @@ Broader core coverage (recommended before releases or public trials):
 scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core
 ```
 
+Soak coverage (repeats the core case set; default `--repeat 3`):
+
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite soak
+```
+
+OpenAI-compatible core/soak:
+
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --api-format openai --suite core
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --api-format openai --suite soak
+```
+
 Custom case selection:
 
 ```bash
@@ -133,6 +146,12 @@ Machine-readable summary report (good for sharing failures):
 
 ```bash
 scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core --report-json live-report.json
+```
+
+Repeat a suite/custom case set:
+
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core --repeat 2
 ```
 
 See `docs/LIVE_PROVIDER_TESTING.md` for environment setup and troubleshooting.

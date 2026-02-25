@@ -44,12 +44,25 @@ It is **not** run automatically by:
 
 - `smoke` (default) — fast confidence checks (cheap, suitable before/after most changes)
 - `core` — broader end-to-end validation across governance/multi-db/multi-agent/grants/audit
-- `all` — currently the same as `core` (reserved for future expansion, soak/provider matrix additions)
+- `soak` — repeats the core case set (default `--repeat 3`) to catch flakiness and lifecycle issues
+- `all` — currently uses the same case set as `soak` (repeat count can be overridden)
 
 Run a suite:
 
 ```bash
 scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core
+```
+
+Run the soak suite (default 3 iterations of the core case set):
+
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite soak
+```
+
+Override iteration count (works with any suite/custom case set):
+
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core --repeat 2
 ```
 
 Write a machine-readable summary (useful when sharing results back for debugging):
@@ -62,6 +75,18 @@ Or print the JSON summary to stdout at the end:
 
 ```bash
 scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core --report-json -
+```
+
+MiniMax core/soak examples for both wire protocols:
+
+```bash
+# MiniMax Anthropic-compatible
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core --log-level error --report-json -
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite soak --log-level error --report-json -
+
+# MiniMax OpenAI-compatible
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --api-format openai --suite core --log-level error --report-json -
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --api-format openai --suite soak --log-level error --report-json -
 ```
 
 ### Supported cases

@@ -13,12 +13,13 @@ Options:
   --env-file PATH        Source env vars from a file (e.g. ~/Documents/minimax.env)
   --binary PATH          Turin binary path (default: target/release/turin)
   --api-format NAME      Provider wire format: anthropic|openai (default: anthropic)
-  --suite NAME           Suite preset: smoke|core|all (default: smoke)
+  --suite NAME           Suite preset: smoke|core|soak|all (default: smoke)
+  --repeat N             Repeat the selected case set N times (default: 1; soak defaults to 3)
   --log-level LEVEL      Turin log level for live runs (default: error)
   --report-json PATH     Write a JSON summary report to PATH (use - for stdout)
   --cases LIST           Comma-separated cases (default: basic,tool_read,tool_error,governed_denial)
                          Available: basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,queue_steer,runtime_db,grant_flow,token_reject_task,immutable_audit,peer_grant
-  --debug-requests       Enable Anthropic SDK request dumps (ANTHROPIC_SDK_DEBUG_REQUESTS=1)
+  --debug-requests       Enable SDK request/stream dumps (ANTHROPIC_SDK_DEBUG_REQUESTS / OPENAI_SDK_DEBUG_REQUESTS)
   --keep-tmp             Keep temp directories after success/failure (for debugging)
   -h, --help             Show this help
 
@@ -40,6 +41,8 @@ API_FORMAT="anthropic"
 CASES="basic,tool_read,tool_error,governed_denial"
 SUITE="smoke"
 CASES_EXPLICIT=0
+REPEAT_COUNT=1
+REPEAT_EXPLICIT=0
 DEBUG_REQUESTS=0
 KEEP_TMP=0
 LOG_LEVEL="error"
@@ -61,6 +64,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --suite)
       SUITE="${2:-}"
+      shift 2
+      ;;
+    --repeat)
+      REPEAT_COUNT="${2:-}"
+      REPEAT_EXPLICIT=1
       shift 2
       ;;
     --log-level)
@@ -107,27 +115,40 @@ esac
 case "$SUITE" in
   smoke) ;;
   core) ;;
+  soak) ;;
   all) ;;
   "")
     SUITE="smoke"
     ;;
   *)
-    echo "Unknown suite: $SUITE (expected smoke|core|all)" >&2
+    echo "Unknown suite: $SUITE (expected smoke|core|soak|all)" >&2
     exit 2
     ;;
 esac
 
+if ! [[ "$REPEAT_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Invalid --repeat value: $REPEAT_COUNT (expected positive integer)" >&2
+  exit 2
+fi
+
 SMOKE_CASES="basic,tool_read,tool_error,governed_denial"
 CORE_CASES="basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,queue_steer,runtime_db,grant_flow,token_reject_task,immutable_audit,peer_grant"
-ALL_CASES="$CORE_CASES"
+SOAK_CASES="$CORE_CASES"
+SOAK_REPEAT_DEFAULT=3
+ALL_CASES="$SOAK_CASES"
 
 # If --cases was not explicitly set, derive from --suite.
 if [[ "$CASES_EXPLICIT" -eq 0 ]]; then
   case "$SUITE" in
     smoke) CASES="$SMOKE_CASES" ;;
     core) CASES="$CORE_CASES" ;;
+    soak) CASES="$SOAK_CASES" ;;
     all) CASES="$ALL_CASES" ;;
   esac
+fi
+
+if [[ "$SUITE" == "soak" && "$REPEAT_EXPLICIT" -eq 0 ]]; then
+  REPEAT_COUNT="$SOAK_REPEAT_DEFAULT"
 fi
 
 if [[ -n "$ENV_FILE" ]]; then
@@ -263,6 +284,7 @@ write_report_json() {
   json+="\"model\":\"$(json_escape "$LIVE_MODEL")\","
   json+="\"base_url\":\"$(json_escape "$LIVE_BASE_URL_NORM")\","
   json+="\"suite\":\"$(json_escape "$SUITE")\","
+  json+="\"repeat_count\":$REPEAT_COUNT,"
   json+="\"cases_explicit\":$([[ "$CASES_EXPLICIT" -eq 1 ]] && printf true || printf false),"
   json+="\"cases_requested\":\"$(json_escape "$CASES")\","
   json+="\"log_level\":\"$(json_escape "$LOG_LEVEL")\","
@@ -276,6 +298,7 @@ write_report_json() {
     [[ "$i" -gt 0 ]] && json+=","
     json+="{"
     json+="\"name\":\"$(json_escape "${CASE_RESULT_NAMES[$i]}")\","
+    json+="\"iteration\":${CASE_RESULT_ITERS[$i]},"
     json+="\"status\":\"$(json_escape "${CASE_RESULT_STATUS[$i]}")\","
     json+="\"duration_sec\":${CASE_RESULT_DURATIONS[$i]}"
     if [[ -n "${CASE_RESULT_TMPS[$i]}" ]]; then
@@ -986,6 +1009,7 @@ IFS=',' read -r -a CASE_LIST <<< "$CASES"
 PASS_COUNT=0
 FAIL_COUNT=0
 CASE_RESULT_NAMES=()
+CASE_RESULT_ITERS=()
 CASE_RESULT_STATUS=()
 CASE_RESULT_DURATIONS=()
 CASE_RESULT_TMPS=()
@@ -1000,34 +1024,47 @@ if [[ "$CASES_EXPLICIT" -eq 1 ]]; then
 else
   printf 'Suite: %s\n' "$SUITE"
 fi
+printf 'Repeat count: %s\n' "$REPEAT_COUNT"
 printf 'Log level: %s\n' "$LOG_LEVEL"
 
-for case_name in "${CASE_LIST[@]}"; do
-  case_name="${case_name// /}"
-  if [[ -z "$case_name" ]]; then
-    continue
+STOP_ON_FAIL=0
+for ((iter = 1; iter <= REPEAT_COUNT; iter++)); do
+  if [[ "$REPEAT_COUNT" -gt 1 ]]; then
+    printf '\n=== Iteration %d/%d ===\n' "$iter" "$REPEAT_COUNT"
   fi
 
-  LAST_CASE_TMP=""
-  case_start_s="$(date +%s)"
-  if "run_${case_name}"; then
-    PASS_COUNT=$((PASS_COUNT + 1))
-    CASE_RESULT_STATUS+=("passed")
-  else
-    FAIL_COUNT=$((FAIL_COUNT + 1))
-    CASE_RESULT_STATUS+=("failed")
+  for case_name in "${CASE_LIST[@]}"; do
+    case_name="${case_name// /}"
+    if [[ -z "$case_name" ]]; then
+      continue
+    fi
+
+    LAST_CASE_TMP=""
+    case_start_s="$(date +%s)"
+    if "run_${case_name}"; then
+      PASS_COUNT=$((PASS_COUNT + 1))
+      CASE_RESULT_STATUS+=("passed")
+    else
+      FAIL_COUNT=$((FAIL_COUNT + 1))
+      CASE_RESULT_STATUS+=("failed")
+      case_end_s="$(date +%s)"
+      CASE_RESULT_NAMES+=("$case_name")
+      CASE_RESULT_ITERS+=("$iter")
+      CASE_RESULT_DURATIONS+=("$((case_end_s - case_start_s))")
+      CASE_RESULT_TMPS+=("${LAST_CASE_TMP:-}")
+      STOP_ON_FAIL=1
+      break
+    fi
+
     case_end_s="$(date +%s)"
     CASE_RESULT_NAMES+=("$case_name")
+    CASE_RESULT_ITERS+=("$iter")
     CASE_RESULT_DURATIONS+=("$((case_end_s - case_start_s))")
     CASE_RESULT_TMPS+=("${LAST_CASE_TMP:-}")
-    # Stop on first failure to preserve the failing temp dir context if --keep-tmp is set.
+  done
+  if [[ "$STOP_ON_FAIL" -eq 1 ]]; then
     break
   fi
-
-  case_end_s="$(date +%s)"
-  CASE_RESULT_NAMES+=("$case_name")
-  CASE_RESULT_DURATIONS+=("$((case_end_s - case_start_s))")
-  CASE_RESULT_TMPS+=("${LAST_CASE_TMP:-}")
 done
 
 printf '\nSummary: %d passed, %d failed\n' "$PASS_COUNT" "$FAIL_COUNT"

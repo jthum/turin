@@ -263,6 +263,12 @@ For broader real-world confidence (governance, multi-db, grants, audit, peer del
 scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core
 ```
 
+For flakiness/lifecycle confidence, run the soak suite (repeats the core case set; default `--repeat 3`):
+
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite soak
+```
+
 Current live cases include:
 - `basic`
 - `tool_read`
@@ -283,6 +289,13 @@ Run a custom case set:
 scripts/live_minimax_smoke.sh \
   --env-file ~/Documents/minimax.env \
   --cases basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,queue_steer,runtime_db,grant_flow
+```
+
+OpenAI-compatible endpoint examples (MiniMax):
+
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --api-format openai --suite core --log-level error --report-json -
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --api-format openai --suite soak --log-level error --report-json -
 ```
 
 See `docs/LIVE_PROVIDER_TESTING.md` for setup and troubleshooting.
