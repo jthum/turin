@@ -75,6 +75,7 @@ pub(crate) async fn run_repl(config: TurinConfig, verbose: bool) -> Result<()> {
     }
 
     kernel.end_session(&mut session).await?;
+    kernel.shutdown_mcp_clients().await;
     print_session_summary(&session);
     Ok(())
 }

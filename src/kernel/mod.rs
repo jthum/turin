@@ -64,6 +64,14 @@ pub struct Kernel {
     pub(crate) mcp_clients: Vec<McpClientEntry>,
 }
 
+impl Drop for Kernel {
+    fn drop(&mut self) {
+        // Ensure MCP client Arcs are dropped promptly so stdio transports can tear down
+        // subprocesses even when explicit async shutdown was not reached.
+        self.mcp_clients.clear();
+    }
+}
+
 /// A pending tool call collected during streaming.
 #[derive(Debug, Clone)]
 pub(crate) struct PendingToolCall {

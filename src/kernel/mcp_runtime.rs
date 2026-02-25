@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use mcp_sdk::client::McpClient;
 use mcp_sdk::transport::StdioTransport;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 use crate::kernel::Kernel;
 use crate::tools::mcp::McpToolProxy;
@@ -80,5 +80,24 @@ impl Kernel {
 
         info!(count = count, "MCP tools registered");
         Ok(count)
+    }
+
+    /// Best-effort shutdown for all active MCP subprocess clients owned by this kernel.
+    pub async fn shutdown_mcp_clients(&mut self) {
+        if self.mcp_clients.is_empty() {
+            return;
+        }
+
+        let entries = std::mem::take(&mut self.mcp_clients);
+        for entry in entries {
+            if let Err(err) = entry.client.shutdown().await {
+                warn!(
+                    command = %entry.command,
+                    args = ?entry.args,
+                    error = %err,
+                    "Failed to shutdown MCP client cleanly"
+                );
+            }
+        }
     }
 }

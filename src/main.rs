@@ -183,6 +183,7 @@ async fn main() -> Result<()> {
             kernel.start_session(&mut session).await?;
             kernel.run(&mut session, Some(prompt)).await?;
             kernel.end_session(&mut session).await?;
+            kernel.shutdown_mcp_clients().await;
             if !json {
                 commands::common::print_session_summary(&session);
             }
@@ -216,6 +217,7 @@ async fn main() -> Result<()> {
                 .with_context(|| format!("Failed to read script: {}", path.display()))?;
 
             kernel.run_script(&script_content)?;
+            kernel.shutdown_mcp_clients().await;
 
             Ok(())
         }

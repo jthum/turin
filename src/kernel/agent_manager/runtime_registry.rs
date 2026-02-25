@@ -135,6 +135,7 @@ impl AgentManager {
             if let Err(e) = kernel.end_session(&mut session).await {
                 warn!(agent_id = %agent_id_clone, error = %e, "Peer agent session end error");
             }
+            kernel.shutdown_mcp_clients().await;
         });
 
         Ok(AgentRuntimeHandle {
