@@ -13,6 +13,7 @@ Options:
   --binary PATH          Turin binary path (default: target/release/turin)
   --suite NAME           Suite preset: smoke|core|all (default: smoke)
   --log-level LEVEL      Turin log level for live runs (default: error)
+  --report-json PATH     Write a JSON summary report to PATH (use - for stdout)
   --cases LIST           Comma-separated cases (default: basic,tool_read,tool_error,governed_denial)
                          Available: basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,queue_steer,runtime_db,grant_flow,token_reject_task,immutable_audit,peer_grant
   --debug-requests       Enable Anthropic SDK request dumps (ANTHROPIC_SDK_DEBUG_REQUESTS=1)
@@ -34,6 +35,7 @@ CASES_EXPLICIT=0
 DEBUG_REQUESTS=0
 KEEP_TMP=0
 LOG_LEVEL="error"
+REPORT_JSON=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -51,6 +53,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --log-level)
       LOG_LEVEL="${2:-}"
+      shift 2
+      ;;
+    --report-json)
+      REPORT_JSON="${2:-}"
       shift 2
       ;;
     --cases)
@@ -179,6 +185,60 @@ qmatch() {
   fi
 }
 
+json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+}
+
+write_report_json() {
+  local rc="$1"
+  [[ -z "$REPORT_JSON" ]] && return 0
+
+  local generated_at
+  generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  local json
+  json="{"
+  json+="\"generated_at\":\"$(json_escape "$generated_at")\","
+  json+="\"binary\":\"$(json_escape "$BINARY")\","
+  json+="\"model\":\"$(json_escape "$ANTHROPIC_MODEL")\","
+  json+="\"base_url\":\"$(json_escape "$ANTHROPIC_BASE_URL_NORM")\","
+  json+="\"suite\":\"$(json_escape "$SUITE")\","
+  json+="\"cases_explicit\":$([[ "$CASES_EXPLICIT" -eq 1 ]] && printf true || printf false),"
+  json+="\"cases_requested\":\"$(json_escape "$CASES")\","
+  json+="\"log_level\":\"$(json_escape "$LOG_LEVEL")\","
+  json+="\"pass_count\":$PASS_COUNT,"
+  json+="\"fail_count\":$FAIL_COUNT,"
+  json+="\"exit_code\":$rc,"
+  json+="\"cases\":["
+
+  local i
+  for ((i = 0; i < ${#CASE_RESULT_NAMES[@]}; i++)); do
+    [[ "$i" -gt 0 ]] && json+=","
+    json+="{"
+    json+="\"name\":\"$(json_escape "${CASE_RESULT_NAMES[$i]}")\","
+    json+="\"status\":\"$(json_escape "${CASE_RESULT_STATUS[$i]}")\","
+    json+="\"duration_sec\":${CASE_RESULT_DURATIONS[$i]}"
+    if [[ -n "${CASE_RESULT_TMPS[$i]}" ]]; then
+      json+=",\"tmp_dir\":\"$(json_escape "${CASE_RESULT_TMPS[$i]}")\""
+    fi
+    json+="}"
+  done
+  json+="]}"
+
+  if [[ "$REPORT_JSON" == "-" ]]; then
+    printf '%s\n' "$json"
+  else
+    printf '%s\n' "$json" > "$REPORT_JSON"
+    printf 'Wrote JSON report: %s\n' "$REPORT_JSON"
+  fi
+}
+
 run_turin_capture() {
   local out="$1"
   shift
@@ -252,6 +312,7 @@ EOF_CFG
 run_basic() {
   local dir out
   dir="$(make_temp_env turin-live-basic)"
+  LAST_CASE_TMP="$dir"
   write_config "$dir" "You are a concise assistant. Reply exactly as instructed." 3
   out="$dir/out.txt"
 
@@ -270,6 +331,7 @@ run_basic() {
 run_tool_read() {
   local dir out nonce prompt
   dir="$(make_temp_env turin-live-toolread)"
+  LAST_CASE_TMP="$dir"
   write_config "$dir" "You are a coding assistant. Use tools when needed." 8
   nonce="MINIMAX_TOOL_NONCE_$(date +%s)_$RANDOM"
   printf '%s\n' "$nonce" > "$dir/work/nonce.txt"
@@ -291,6 +353,7 @@ run_tool_read() {
 run_tool_error() {
   local dir out prompt
   dir="$(make_temp_env turin-live-toolerror)"
+  LAST_CASE_TMP="$dir"
   write_config "$dir" "You are a coding assistant. Use tools when explicitly instructed." 8
   out="$dir/out.txt"
   prompt='First, call the read_file tool on missing_file_that_does_not_exist_12345.txt. Then reply with exactly: TOOL_ERROR_OK'
@@ -310,6 +373,7 @@ run_tool_error() {
 run_tool_write_read() {
   local dir out nonce prompt
   dir="$(make_temp_env turin-live-toolwriteread)"
+  LAST_CASE_TMP="$dir"
   write_config "$dir" "You are a coding assistant. Use tools when needed and follow exact output instructions." 10
   nonce="MINIMAX_WRITE_READ_NONCE_$(date +%s)_$RANDOM"
   out="$dir/out.txt"
@@ -338,6 +402,7 @@ run_tool_write_read() {
 run_governed_denial() {
   local dir out prompt
   dir="$(make_temp_env turin-live-governed)"
+  LAST_CASE_TMP="$dir"
   write_config "$dir" "You are a concise assistant. Reply exactly as instructed." 4
   cat >> "$dir/turin.toml" <<'EOF_GOV'
 
@@ -380,6 +445,7 @@ end
 run_peer_agent() {
   local dir out prompt
   dir="$(make_temp_env turin-live-peeragent)"
+  LAST_CASE_TMP="$dir"
   write_config "$dir" "You are a concise assistant. Reply exactly as instructed." 6
   cat >> "$dir/turin.toml" <<EOF_PEER
 
@@ -431,6 +497,7 @@ end
 run_queue_steer() {
   local dir out prompt
   dir="$(make_temp_env turin-live-queuesteer)"
+  LAST_CASE_TMP="$dir"
   write_config "$dir" "You are a concise assistant. Reply exactly as instructed." 8
   write_harness_main "$dir" '
 local queued_once = false
@@ -472,6 +539,7 @@ end
 run_runtime_db() {
   local dir out nonce db_file row_count file_nonce
   dir="$(make_temp_env turin-live-runtimedb)"
+  LAST_CASE_TMP="$dir"
   write_config "$dir" "You are a concise assistant. Reply exactly as instructed." 6
   nonce="RUNTIME_DB_NONCE_$(date +%s)_$RANDOM"
   write_harness_main "$dir" "
@@ -563,6 +631,7 @@ end
 run_grant_flow() {
   local dir out audit_issue audit_use audit_revoke
   dir="$(make_temp_env turin-live-grantflow)"
+  LAST_CASE_TMP="$dir"
   write_config "$dir" "You are a concise assistant. Reply exactly as instructed." 6
   cat >> "$dir/turin.toml" <<'EOF_GOV'
 
@@ -667,6 +736,7 @@ end
 run_token_reject_task() {
   local dir out
   dir="$(make_temp_env turin-live-tokenreject)"
+  LAST_CASE_TMP="$dir"
   write_config "$dir" "You are a concise assistant. Reply exactly as instructed." 6
   write_harness_main "$dir" '
 function on_session_start(event)
@@ -708,6 +778,7 @@ end
 run_immutable_audit() {
   local dir out audit_count
   dir="$(make_temp_env turin-live-immutableaudit)"
+  LAST_CASE_TMP="$dir"
   write_config "$dir" "You are a concise assistant. Reply exactly as instructed." 4
   cat >> "$dir/turin.toml" <<'EOF_GOV'
 
@@ -752,6 +823,7 @@ end
 run_peer_grant() {
   local dir out
   dir="$(make_temp_env turin-live-peergrant)"
+  LAST_CASE_TMP="$dir"
   write_config "$dir" "You are a concise assistant. Reply exactly as instructed." 8
   cat >> "$dir/turin.toml" <<EOF_PEER
 
@@ -859,6 +931,10 @@ end
 IFS=',' read -r -a CASE_LIST <<< "$CASES"
 PASS_COUNT=0
 FAIL_COUNT=0
+CASE_RESULT_NAMES=()
+CASE_RESULT_STATUS=()
+CASE_RESULT_DURATIONS=()
+CASE_RESULT_TMPS=()
 
 printf 'Turin live smoke tests (manual/opt-in)\n'
 printf 'Binary: %s\n' "$BINARY"
@@ -877,14 +953,33 @@ for case_name in "${CASE_LIST[@]}"; do
     continue
   fi
 
+  LAST_CASE_TMP=""
+  case_start_s="$(date +%s)"
   if "run_${case_name}"; then
     PASS_COUNT=$((PASS_COUNT + 1))
+    CASE_RESULT_STATUS+=("passed")
   else
     FAIL_COUNT=$((FAIL_COUNT + 1))
+    CASE_RESULT_STATUS+=("failed")
+    case_end_s="$(date +%s)"
+    CASE_RESULT_NAMES+=("$case_name")
+    CASE_RESULT_DURATIONS+=("$((case_end_s - case_start_s))")
+    CASE_RESULT_TMPS+=("${LAST_CASE_TMP:-}")
     # Stop on first failure to preserve the failing temp dir context if --keep-tmp is set.
     break
   fi
+
+  case_end_s="$(date +%s)"
+  CASE_RESULT_NAMES+=("$case_name")
+  CASE_RESULT_DURATIONS+=("$((case_end_s - case_start_s))")
+  CASE_RESULT_TMPS+=("${LAST_CASE_TMP:-}")
 done
 
 printf '\nSummary: %d passed, %d failed\n' "$PASS_COUNT" "$FAIL_COUNT"
-[[ "$FAIL_COUNT" -eq 0 ]]
+if [[ "$FAIL_COUNT" -eq 0 ]]; then
+  write_report_json 0
+  exit 0
+else
+  write_report_json 1
+  exit 1
+fi

@@ -42,6 +42,18 @@ Run a suite:
 scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core
 ```
 
+Write a machine-readable summary (useful when sharing results back for debugging):
+
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core --report-json live-report.json
+```
+
+Or print the JSON summary to stdout at the end:
+
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core --report-json -
+```
+
 ### Supported cases
 
 - `basic` — exact `PONG` response smoke test

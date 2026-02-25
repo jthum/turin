@@ -121,6 +121,12 @@ Request debug dumps (SDK layer):
 scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --debug-requests
 ```
 
+Machine-readable summary report (good for sharing failures):
+
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core --report-json live-report.json
+```
+
 See `docs/LIVE_PROVIDER_TESTING.md` for environment setup and troubleshooting.
 
 ## Suggested Validation Workflow for Major Changes
