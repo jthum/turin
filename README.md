@@ -312,6 +312,10 @@ See `docs/LIVE_PROVIDER_TESTING.md` for setup and troubleshooting.
 - `docs/TESTING.md` — local validation, test suite, and smoke workflows
 - `docs/LIVE_PROVIDER_TESTING.md` — live endpoint testing procedures
 
+## Thanks to the Turso Team
+
+Turin's persistence layer is built on Turso — a native-Rust SQLite engine that happens to be exactly what an agent runtime needs: embedded, fast, no separate process, and vector search built in. We could have made SQLite work, but Turso's direction — AgentFS, agentic workflow primitives, a genuine focus on what AI systems need from a database — made it feel less like a dependency and more like a collaborator. If you're building anything in this space, it's worth paying attention to what they're doing.
+
 ## Versioning Note
 
 Turin remains pre-1.0, but v0.15.0 formalizes the current canonical harness API (`runtime.*`) and governance model as the forward-looking baseline. Internal refactors may continue aggressively; public harness surfaces should now change more deliberately.
