@@ -199,7 +199,9 @@ Then document:
 - which live cases passed
 - known caveats / experimental surfaces
 
-## Latest Known-Good Live Validation Baseline (MiniMax)
+## Latest Known-Good Live Validation Baselines (MiniMax)
+
+### Anthropic-Compatible Endpoint
 
 Recorded on: `2026-02-25T07:58:06Z`  
 Turin commit: `146fe3e`  
@@ -242,7 +244,47 @@ This baseline demonstrates end-to-end live validation across Turin’s core runt
 - immutable audit persistence
 - grant-ceiling propagation to peers
 
-Note: this baseline is for MiniMax’s Anthropic-compatible endpoint. OpenAI-compatible validation can be run with `--api-format openai`.
+### OpenAI-Compatible Endpoint
+
+Recorded on: `2026-02-25T09:41:12Z`  
+Turin commit: `f0bfa29`  
+Provider/model: `MiniMax-M2.5` (OpenAI-compatible)  
+Base URL: `https://api.minimax.io/v1`
+
+Suite:
+
+- `core`
+
+Result:
+
+- `12 passed, 0 failed`
+
+Passed cases:
+
+- `basic`
+- `tool_read`
+- `tool_error`
+- `tool_write_read`
+- `governed_denial`
+- `peer_agent`
+- `queue_steer`
+- `runtime_db`
+- `grant_flow`
+- `token_reject_task`
+- `immutable_audit`
+- `peer_grant`
+
+This baseline demonstrates the same end-to-end Turin core-runtime surface against MiniMax’s OpenAI-compatible wire protocol, including:
+
+- inference + streaming
+- tool roundtrips (success + error + multi-tool)
+- governance enforcement
+- peer-agent orchestration and peer grant propagation
+- queue steering
+- runtime DB APIs
+- temporary grants and immutable audit behavior
+
+Note: MiniMax OpenAI-compatible tool-call support required normalized SDK OpenAI stream handling fixes for provider-specific final usage chunk shape (`usage` + non-empty `choices`) and explicit `tool_choice: "auto"` when tools are present.
 
 ## Troubleshooting
 
