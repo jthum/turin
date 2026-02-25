@@ -97,6 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - tool read roundtrip
     - tool error/recovery flow
     - write+read multi-tool roundtrip
+  - Expanded and verified the opt-in `core` live validation suite against MiniMax M2.5 (12/12 passing), covering governance, peer agents, queue steering, runtime DB APIs, temporary grants, token-usage enforcement, immutable audit, and peer grant propagation.
 
 ### Documentation
 - Rewrote and expanded core documentation for the canonical stdlib API, stable hooks, governance model, architecture, testing, and live provider validation.

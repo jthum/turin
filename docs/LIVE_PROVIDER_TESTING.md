@@ -166,6 +166,49 @@ Then document:
 - which live cases passed
 - known caveats / experimental surfaces
 
+## Latest Known-Good Live Validation Baseline (MiniMax)
+
+Recorded on: `2026-02-25T07:58:06Z`  
+Turin commit: `146fe3e`  
+Provider/model: `MiniMax-M2.5` (Anthropic-compatible)  
+Base URL: `https://api.minimax.io/anthropic/v1`
+
+Suite:
+
+- `core`
+
+Result:
+
+- `12 passed, 0 failed`
+
+Passed cases:
+
+- `basic`
+- `tool_read`
+- `tool_error`
+- `tool_write_read`
+- `governed_denial`
+- `peer_agent`
+- `queue_steer`
+- `runtime_db`
+- `grant_flow`
+- `token_reject_task`
+- `immutable_audit`
+- `peer_grant`
+
+This baseline demonstrates end-to-end live validation across Turin’s core runtime value surface:
+
+- live inference + streaming
+- tools (success + failure + multi-tool)
+- governance enforcement
+- peer-agent orchestration
+- queue steering
+- dynamic multi-db runtime APIs
+- temporary grants + grant audit events
+- token-usage enforcement modes
+- immutable audit persistence
+- grant-ceiling propagation to peers
+
 ## Troubleshooting
 
 ### `404 Not Found` on Anthropic-compatible endpoint
