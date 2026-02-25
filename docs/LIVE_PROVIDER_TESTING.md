@@ -2,7 +2,7 @@
 
 Turin does not run live endpoint tests during `cargo test` or `cargo build`.
 
-This document covers how to validate Turin against real providers manually, including Anthropic-compatible proxies such as MiniMax.
+This document covers how to validate Turin against real providers manually, including MiniMax via either its Anthropic-compatible or OpenAI-compatible endpoints.
 
 ## Why Live Tests Are Separate
 
@@ -16,12 +16,22 @@ Live tests are valuable, but they are not deterministic:
 
 Turin therefore treats live testing as an **opt-in validation layer** on top of the normal unit/integration test suite.
 
-## Manual Live Suites (MiniMax / Anthropic-Compatible)
+## Manual Live Suites (MiniMax)
 
 Turin includes a manual live suite script:
 
 ```bash
 scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite smoke
+```
+
+Anthropic-compatible (default wire format) and OpenAI-compatible modes are both supported:
+
+```bash
+# Anthropic-compatible (default)
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite smoke
+
+# OpenAI-compatible
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --api-format openai --suite smoke
 ```
 
 It is **not** run automatically by:
@@ -95,7 +105,7 @@ The `core` suite is designed to validate Turin’s real value surface against a 
 
 ## Required Environment Variables
 
-The script expects:
+Anthropic-compatible mode (default) expects:
 
 - `ANTHROPIC_API_KEY`
 - `ANTHROPIC_BASE_URL`
@@ -113,6 +123,22 @@ export ANTHROPIC_MODEL='MiniMax-M2.5'
 The script normalizes the base URL to include `/v1` if missing.
 For MiniMax, Turin’s Anthropic provider path handling expects the effective base URL to end in `/v1`.
 
+OpenAI-compatible mode (`--api-format openai`) expects:
+
+- `OPENAI_BASE_URL` (required)
+- `OPENAI_MODEL` (optional; falls back to `ANTHROPIC_MODEL`)
+- `OPENAI_API_KEY` (optional; falls back to `ANTHROPIC_API_KEY`)
+
+Example:
+
+```bash
+# ~/Documents/minimax.env (can coexist with Anthropic-compatible vars)
+export OPENAI_BASE_URL='https://api.minimax.io/v1'
+# Optional if reusing the same key/model:
+# export OPENAI_API_KEY='...'
+# export OPENAI_MODEL='MiniMax-M2.5'
+```
+
 ## Anthropic-Compatible Base URL Notes
 
 For Turin’s Anthropic provider path semantics:
@@ -125,6 +151,12 @@ Examples:
 - Anthropic official: `https://api.anthropic.com/v1`
 - MiniMax Anthropic-compatible: `https://api.minimax.io/anthropic/v1`
 
+## OpenAI-Compatible Base URL Notes
+
+For MiniMax’s OpenAI-compatible endpoint, configure:
+
+- `https://api.minimax.io/v1`
+
 ## Debugging Request/Response Compatibility
 
 If you need to debug Anthropic-compatible wire format issues (tool roundtrips, thinking blocks, etc.):
@@ -134,6 +166,7 @@ scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --debug-request
 ```
 
 This enables `ANTHROPIC_SDK_DEBUG_REQUESTS=1` for the normalized SDK request dumps.
+(`--debug-requests` is most useful in Anthropic-compatible mode.)
 
 ## Validation Strategy (Recommended)
 
@@ -161,7 +194,7 @@ Recommended baseline:
 
 Then document:
 
-- provider + model used (for example, MiniMax M2.5 Anthropic-compatible)
+- provider + model used (for example, MiniMax M2.5 Anthropic-compatible or OpenAI-compatible)
 - exact base URL format (including `/v1` when required)
 - which live cases passed
 - known caveats / experimental surfaces
@@ -208,6 +241,8 @@ This baseline demonstrates end-to-end live validation across Turin’s core runt
 - token-usage enforcement modes
 - immutable audit persistence
 - grant-ceiling propagation to peers
+
+Note: this baseline is for MiniMax’s Anthropic-compatible endpoint. OpenAI-compatible validation can be run with `--api-format openai`.
 
 ## Troubleshooting
 

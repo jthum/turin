@@ -242,10 +242,19 @@ See `docs/GOVERNANCE.md` for configuration and runtime behavior.
 
 Turin does **not** call live providers during normal `cargo test` / `cargo build`.
 
-Use the opt-in live suite script when you want to validate a real endpoint (e.g. MiniMax Anthropic-compatible):
+Use the opt-in live suite script when you want to validate a real endpoint (e.g. MiniMax Anthropic-compatible or OpenAI-compatible):
 
 ```bash
 scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite smoke
+```
+
+MiniMax OpenAI-compatible endpoint:
+
+```bash
+scripts/live_minimax_smoke.sh \
+  --env-file ~/Documents/minimax.env \
+  --api-format openai \
+  --suite smoke
 ```
 
 For broader real-world confidence (governance, multi-db, grants, audit, peer delegation):

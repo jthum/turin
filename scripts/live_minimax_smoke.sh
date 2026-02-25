@@ -5,12 +5,14 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/live_minimax_smoke.sh [options]
 
-Manual (opt-in) live smoke tests for Turin against an Anthropic-compatible endpoint
-such as MiniMax. This script does NOT run during normal cargo builds/tests.
+Manual (opt-in) live suite tests for Turin against MiniMax Anthropic-compatible
+or OpenAI-compatible endpoints. This script does NOT run during normal cargo
+builds/tests.
 
 Options:
   --env-file PATH        Source env vars from a file (e.g. ~/Documents/minimax.env)
   --binary PATH          Turin binary path (default: target/release/turin)
+  --api-format NAME      Provider wire format: anthropic|openai (default: anthropic)
   --suite NAME           Suite preset: smoke|core|all (default: smoke)
   --log-level LEVEL      Turin log level for live runs (default: error)
   --report-json PATH     Write a JSON summary report to PATH (use - for stdout)
@@ -21,14 +23,20 @@ Options:
   -h, --help             Show this help
 
 Required env vars (via shell or --env-file):
-  ANTHROPIC_API_KEY
-  ANTHROPIC_BASE_URL
-  ANTHROPIC_MODEL
+  Default (anthropic):
+    ANTHROPIC_API_KEY
+    ANTHROPIC_BASE_URL
+    ANTHROPIC_MODEL
+  OpenAI-compatible mode (--api-format openai):
+    OPENAI_BASE_URL
+    OPENAI_MODEL (optional; falls back to ANTHROPIC_MODEL)
+    OPENAI_API_KEY (optional; falls back to ANTHROPIC_API_KEY)
 USAGE
 }
 
 ENV_FILE=""
 BINARY="target/release/turin"
+API_FORMAT="anthropic"
 CASES="basic,tool_read,tool_error,governed_denial"
 SUITE="smoke"
 CASES_EXPLICIT=0
@@ -45,6 +53,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --binary)
       BINARY="${2:-}"
+      shift 2
+      ;;
+    --api-format)
+      API_FORMAT="${2:-}"
       shift 2
       ;;
     --suite)
@@ -84,6 +96,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+case "$API_FORMAT" in
+  anthropic|openai) ;;
+  *)
+    echo "Unknown --api-format: $API_FORMAT (expected anthropic|openai)" >&2
+    exit 2
+    ;;
+esac
+
 case "$SUITE" in
   smoke) ;;
   core) ;;
@@ -115,9 +135,39 @@ if [[ -n "$ENV_FILE" ]]; then
   source "$ENV_FILE"
 fi
 
-: "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required}"
-: "${ANTHROPIC_BASE_URL:?ANTHROPIC_BASE_URL is required}"
-: "${ANTHROPIC_MODEL:?ANTHROPIC_MODEL is required}"
+LIVE_API_KEY=""
+LIVE_BASE_URL=""
+LIVE_MODEL=""
+TURIN_PROVIDER_KIND=""
+
+case "$API_FORMAT" in
+  anthropic)
+    : "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required}"
+    : "${ANTHROPIC_BASE_URL:?ANTHROPIC_BASE_URL is required}"
+    : "${ANTHROPIC_MODEL:?ANTHROPIC_MODEL is required}"
+    LIVE_API_KEY="$ANTHROPIC_API_KEY"
+    LIVE_BASE_URL="$ANTHROPIC_BASE_URL"
+    LIVE_MODEL="$ANTHROPIC_MODEL"
+    TURIN_PROVIDER_KIND="anthropic"
+    ;;
+  openai)
+    : "${OPENAI_BASE_URL:?OPENAI_BASE_URL is required for --api-format openai}"
+    if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+      LIVE_API_KEY="$OPENAI_API_KEY"
+    else
+      : "${ANTHROPIC_API_KEY:?OPENAI_API_KEY or ANTHROPIC_API_KEY is required for --api-format openai}"
+      LIVE_API_KEY="$ANTHROPIC_API_KEY"
+    fi
+    LIVE_BASE_URL="$OPENAI_BASE_URL"
+    if [[ -n "${OPENAI_MODEL:-}" ]]; then
+      LIVE_MODEL="$OPENAI_MODEL"
+    else
+      : "${ANTHROPIC_MODEL:?OPENAI_MODEL or ANTHROPIC_MODEL is required for --api-format openai}"
+      LIVE_MODEL="$ANTHROPIC_MODEL"
+    fi
+    TURIN_PROVIDER_KIND="openai"
+    ;;
+esac
 
 if [[ ! -x "$BINARY" ]]; then
   echo "Turin binary not found or not executable: $BINARY" >&2
@@ -136,9 +186,10 @@ normalize_base_url() {
   printf '%s\n' "$base"
 }
 
-ANTHROPIC_BASE_URL_NORM="$(normalize_base_url "$ANTHROPIC_BASE_URL")"
-export ANTHROPIC_API_KEY ANTHROPIC_MODEL
+LIVE_BASE_URL_NORM="$(normalize_base_url "$LIVE_BASE_URL")"
+export TURIN_LIVE_API_KEY="$LIVE_API_KEY"
 if [[ "$DEBUG_REQUESTS" -eq 1 ]]; then
+  # Anthropic SDK request dumps are useful for Anthropic-compatible proxies.
   export ANTHROPIC_SDK_DEBUG_REQUESTS=1
 fi
 
@@ -206,8 +257,10 @@ write_report_json() {
   json="{"
   json+="\"generated_at\":\"$(json_escape "$generated_at")\","
   json+="\"binary\":\"$(json_escape "$BINARY")\","
-  json+="\"model\":\"$(json_escape "$ANTHROPIC_MODEL")\","
-  json+="\"base_url\":\"$(json_escape "$ANTHROPIC_BASE_URL_NORM")\","
+  json+="\"api_format\":\"$(json_escape "$API_FORMAT")\","
+  json+="\"provider_kind\":\"$(json_escape "$TURIN_PROVIDER_KIND")\","
+  json+="\"model\":\"$(json_escape "$LIVE_MODEL")\","
+  json+="\"base_url\":\"$(json_escape "$LIVE_BASE_URL_NORM")\","
   json+="\"suite\":\"$(json_escape "$SUITE")\","
   json+="\"cases_explicit\":$([[ "$CASES_EXPLICIT" -eq 1 ]] && printf true || printf false),"
   json+="\"cases_requested\":\"$(json_escape "$CASES")\","
@@ -289,8 +342,8 @@ write_config() {
   cat > "$dir/turin.toml" <<EOF_CFG
 [agent]
 system_prompt = "$system_prompt"
-model = "$ANTHROPIC_MODEL"
-provider = "anthropic"
+model = "$LIVE_MODEL"
+provider = "$TURIN_PROVIDER_KIND"
 
 [kernel]
 workspace_root = "$dir/work"
@@ -302,10 +355,10 @@ database_path = "$dir/state.db"
 [harness]
 directory = "$dir/harnesses"
 
-[providers.anthropic]
-type = "anthropic"
-api_key_env = "ANTHROPIC_API_KEY"
-base_url = "$ANTHROPIC_BASE_URL_NORM"
+[providers.$TURIN_PROVIDER_KIND]
+type = "$TURIN_PROVIDER_KIND"
+api_key_env = "TURIN_LIVE_API_KEY"
+base_url = "$LIVE_BASE_URL_NORM"
 EOF_CFG
 }
 
@@ -452,8 +505,8 @@ run_peer_agent() {
 [agents.worker]
 id = "worker"
 system_prompt = "You are a worker agent. Follow exact output instructions."
-model = "$ANTHROPIC_MODEL"
-provider = "anthropic"
+model = "$LIVE_MODEL"
+provider = "$TURIN_PROVIDER_KIND"
 mode = "stateful"
 EOF_PEER
   write_harness_main "$dir" '
@@ -838,8 +891,8 @@ require_audit_reason = true
 [agents.worker]
 id = "worker"
 system_prompt = "You are a worker agent. Follow exact output instructions."
-model = "$ANTHROPIC_MODEL"
-provider = "anthropic"
+model = "$LIVE_MODEL"
+provider = "$TURIN_PROVIDER_KIND"
 mode = "stateful"
 EOF_PEER
   write_harness_main "$dir" '
@@ -938,8 +991,9 @@ CASE_RESULT_TMPS=()
 
 printf 'Turin live smoke tests (manual/opt-in)\n'
 printf 'Binary: %s\n' "$BINARY"
-printf 'Model: %s\n' "$ANTHROPIC_MODEL"
-printf 'Base URL: %s\n' "$ANTHROPIC_BASE_URL_NORM"
+printf 'API format: %s (provider=%s)\n' "$API_FORMAT" "$TURIN_PROVIDER_KIND"
+printf 'Model: %s\n' "$LIVE_MODEL"
+printf 'Base URL: %s\n' "$LIVE_BASE_URL_NORM"
 if [[ "$CASES_EXPLICIT" -eq 1 ]]; then
   printf 'Suite: custom (--cases override)\n'
 else

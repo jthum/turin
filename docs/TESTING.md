@@ -96,10 +96,16 @@ Most behavior should be validated there before spending provider quota.
 
 ## Live Provider Validation (Manual / Opt-In)
 
-## MiniMax Anthropic-compatible live suites
+## MiniMax live suites (Anthropic-compatible or OpenAI-compatible)
 
 ```bash
 scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite smoke
+```
+
+OpenAI-compatible mode:
+
+```bash
+scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --api-format openai --suite smoke
 ```
 
 Broader core coverage (recommended before releases or public trials):
@@ -120,6 +126,8 @@ Request debug dumps (SDK layer):
 ```bash
 scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --debug-requests
 ```
+
+`--debug-requests` is primarily useful in Anthropic-compatible mode.
 
 Machine-readable summary report (good for sharing failures):
 
