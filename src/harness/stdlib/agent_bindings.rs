@@ -340,7 +340,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
         lua.create_function(move |lua, ()| {
             let mode = execution_ctx_get
                 .lock()
-                .unwrap()
+                .map_err(|_| mlua::Error::runtime("harness execution context mutex poisoned"))?
                 .session_mode
                 .clone()
                 .unwrap_or(crate::kernel::config::AgentMode::Auto);

@@ -7,7 +7,7 @@ pub(crate) fn get_active_identity(app_data: &HarnessAppData) -> anyhow::Result<R
     let session_id = app_data
         .execution_ctx
         .lock()
-        .unwrap()
+        .map_err(|_| anyhow::anyhow!("harness execution context mutex poisoned"))?
         .session_id
         .clone()
         .ok_or_else(|| anyhow::anyhow!("No active session context"))?;

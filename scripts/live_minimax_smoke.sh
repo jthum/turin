@@ -12,6 +12,7 @@ Options:
   --env-file PATH        Source env vars from a file (e.g. ~/Documents/minimax.env)
   --binary PATH          Turin binary path (default: target/release/turin)
   --suite NAME           Suite preset: smoke|core|all (default: smoke)
+  --log-level LEVEL      Turin log level for live runs (default: error)
   --cases LIST           Comma-separated cases (default: basic,tool_read,tool_error,governed_denial)
                          Available: basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,queue_steer,runtime_db,grant_flow,token_reject_task,immutable_audit,peer_grant
   --debug-requests       Enable Anthropic SDK request dumps (ANTHROPIC_SDK_DEBUG_REQUESTS=1)
@@ -32,6 +33,7 @@ SUITE="smoke"
 CASES_EXPLICIT=0
 DEBUG_REQUESTS=0
 KEEP_TMP=0
+LOG_LEVEL="error"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,6 +47,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --suite)
       SUITE="${2:-}"
+      shift 2
+      ;;
+    --log-level)
+      LOG_LEVEL="${2:-}"
       shift 2
       ;;
     --cases)
@@ -251,7 +257,7 @@ run_basic() {
 
   printf '\n[CASE] basic\n'
   run_turin_capture "$out" \
-    "$BINARY" run --config "$dir/turin.toml" --prompt "Reply with exactly: PONG" --log-level warn
+    "$BINARY" run --config "$dir/turin.toml" --prompt "Reply with exactly: PONG" --log-level "$LOG_LEVEL"
 
   if qmatch '^PONG$' "$out"; then
     printf '[PASS] basic (tmp=%s)\n' "$dir"
@@ -272,7 +278,7 @@ run_tool_read() {
 
   printf '\n[CASE] tool_read\n'
   run_turin_capture "$out" \
-    "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level warn
+    "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level "$LOG_LEVEL"
 
   if qmatch "^${nonce}$" "$out"; then
     printf '[PASS] tool_read (tmp=%s)\n' "$dir"
@@ -291,7 +297,7 @@ run_tool_error() {
 
   printf '\n[CASE] tool_error\n'
   run_turin_capture "$out" \
-    "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level warn
+    "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level "$LOG_LEVEL"
 
   if qmatch '^TOOL_ERROR_OK$' "$out"; then
     printf '[PASS] tool_error (tmp=%s)\n' "$dir"
@@ -311,7 +317,7 @@ run_tool_write_read() {
 
   printf '\n[CASE] tool_write_read\n'
   run_turin_capture "$out" \
-    "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level warn
+    "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level "$LOG_LEVEL"
 
   if [[ ! -f "$dir/work/nonce2.txt" ]]; then
     printf '[FAIL] tool_write_read (tmp=%s) nonce2.txt missing\n' "$dir" >&2
@@ -357,7 +363,7 @@ end
 
   printf '\n[CASE] governed_denial\n'
   run_turin_capture "$out" \
-    "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level warn
+    "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level "$LOG_LEVEL"
 
   if ! qmatch '^\[harness\] GOVERNED_DENIAL_OK$' "$out"; then
     printf '[FAIL] governed_denial (tmp=%s) missing denial sentinel\n' "$dir" >&2
@@ -408,7 +414,7 @@ end
 
   printf '\n[CASE] peer_agent\n'
   run_turin_capture "$out" \
-    "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level warn
+    "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level "$LOG_LEVEL"
 
   if ! qmatch '^\[harness\] PEER_AGENT_SMOKE_OK$' "$out"; then
     printf '[FAIL] peer_agent (tmp=%s) missing peer success sentinel\n' "$dir" >&2
@@ -445,7 +451,7 @@ end
 
   printf '\n[CASE] queue_steer\n'
   run_turin_capture "$out" \
-    "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level warn
+    "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level "$LOG_LEVEL"
 
   if ! qmatch '^\[harness\] QUEUE_STEER_HOOK_OK$' "$out"; then
     printf '[FAIL] queue_steer (tmp=%s) missing queue steering sentinel\n' "$dir" >&2
@@ -531,7 +537,7 @@ end
 
   printf '\n[CASE] runtime_db\n'
   run_turin_capture "$out" \
-    "$BINARY" run --config "$dir/turin.toml" --prompt 'Reply with exactly: RUNTIME_DB_MAIN_OK' --log-level warn
+    "$BINARY" run --config "$dir/turin.toml" --prompt 'Reply with exactly: RUNTIME_DB_MAIN_OK' --log-level "$LOG_LEVEL"
 
   if ! qmatch "^\[harness\] RUNTIME_DB_OK:${nonce}$" "$out"; then
     printf '[FAIL] runtime_db (tmp=%s) missing runtime.db success sentinel\n' "$dir" >&2
@@ -638,7 +644,7 @@ end
 
   printf '\n[CASE] grant_flow\n'
   run_turin_capture "$out" \
-    "$BINARY" run --config "$dir/turin.toml" --prompt 'Reply with exactly: GRANT_FLOW_MAIN_OK' --log-level warn
+    "$BINARY" run --config "$dir/turin.toml" --prompt 'Reply with exactly: GRANT_FLOW_MAIN_OK' --log-level "$LOG_LEVEL"
 
   if ! qmatch '^\[harness\] GRANT_FLOW_OK$' "$out"; then
     printf '[FAIL] grant_flow (tmp=%s) missing grant success sentinel\n' "$dir" >&2
@@ -686,7 +692,7 @@ end
 
   printf '\n[CASE] token_reject_task\n'
   run_turin_capture "$out" \
-    "$BINARY" run --config "$dir/turin.toml" --prompt 'Reply with exactly: TOKEN_REJECT_TASK_MAIN_OK' --log-level warn
+    "$BINARY" run --config "$dir/turin.toml" --prompt 'Reply with exactly: TOKEN_REJECT_TASK_MAIN_OK' --log-level "$LOG_LEVEL"
 
   if ! qmatch '^\[harness\] TOKEN_REJECT_SETUP_OK$' "$out"; then
     printf '[FAIL] token_reject_task (tmp=%s) setup failed\n' "$dir" >&2
@@ -725,7 +731,7 @@ end
 
   printf '\n[CASE] immutable_audit\n'
   run_turin_capture "$out" \
-    "$BINARY" run --config "$dir/turin.toml" --prompt 'Reply with exactly: IMMUTABLE_AUDIT_MAIN_OK' --log-level warn
+    "$BINARY" run --config "$dir/turin.toml" --prompt 'Reply with exactly: IMMUTABLE_AUDIT_MAIN_OK' --log-level "$LOG_LEVEL"
 
   if ! qmatch '^\[harness\] IMMUTABLE_AUDIT_REJECT_ATTEMPT$' "$out"; then
     printf '[FAIL] immutable_audit (tmp=%s) missing hook reject sentinel\n' "$dir" >&2
@@ -829,7 +835,7 @@ end
 
   printf '\n[CASE] peer_grant\n'
   run_turin_capture "$out" \
-    "$BINARY" run --config "$dir/turin.toml" --prompt 'Reply with exactly: PEER_GRANT_MAIN_OK' --log-level warn
+    "$BINARY" run --config "$dir/turin.toml" --prompt 'Reply with exactly: PEER_GRANT_MAIN_OK' --log-level "$LOG_LEVEL"
 
   if ! qmatch '^\[harness\] PEER_GRANT_WORKER_OK$' "$out"; then
     printf '[FAIL] peer_grant (tmp=%s) missing worker grant sentinel\n' "$dir" >&2
@@ -859,6 +865,7 @@ if [[ "$CASES_EXPLICIT" -eq 1 ]]; then
 else
   printf 'Suite: %s\n' "$SUITE"
 fi
+printf 'Log level: %s\n' "$LOG_LEVEL"
 
 for case_name in "${CASE_LIST[@]}"; do
   case_name="${case_name// /}"

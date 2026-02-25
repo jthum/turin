@@ -26,7 +26,10 @@ fn default_agent_selector(app_data: &HarnessAppData) -> LuaResult<ContextSelecto
 }
 
 fn has_active_session(execution_ctx: &ActiveHarnessExecutionContext) -> bool {
-    execution_ctx.lock().unwrap().session_id.is_some()
+    execution_ctx
+        .lock()
+        .map(|lock| lock.session_id.is_some())
+        .unwrap_or(false)
 }
 
 fn memory_search_result(
