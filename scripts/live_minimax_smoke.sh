@@ -163,6 +163,16 @@ sqlite_scalar() {
   sqlite3 -batch -noheader "$db" "$sql" | tr -d '\r\n'
 }
 
+qmatch() {
+  local pattern="$1"
+  local file="$2"
+  if command -v rg >/dev/null 2>&1; then
+    rg -q -- "$pattern" "$file"
+  else
+    grep -Eq -- "$pattern" "$file"
+  fi
+}
+
 run_turin_capture() {
   local out="$1"
   shift
@@ -190,7 +200,7 @@ run_turin_capture() {
       return "$rc"
     fi
 
-    if rg -q 'Network error:|dns error|Temporary failure in name resolution|error sending request for url|Connection reset by peer|timed out' "$out"; then
+    if qmatch 'Network error:|dns error|Temporary failure in name resolution|error sending request for url|Connection reset by peer|timed out' "$out"; then
       sleep "$attempt"
       attempt=$((attempt + 1))
       continue
@@ -243,7 +253,7 @@ run_basic() {
   run_turin_capture "$out" \
     "$BINARY" run --config "$dir/turin.toml" --prompt "Reply with exactly: PONG" --log-level warn
 
-  if rg -q '^PONG$' "$out"; then
+  if qmatch '^PONG$' "$out"; then
     printf '[PASS] basic (tmp=%s)\n' "$dir"
   else
     printf '[FAIL] basic (tmp=%s)\n' "$dir" >&2
@@ -264,7 +274,7 @@ run_tool_read() {
   run_turin_capture "$out" \
     "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level warn
 
-  if rg -q "^${nonce}$" "$out"; then
+  if qmatch "^${nonce}$" "$out"; then
     printf '[PASS] tool_read (tmp=%s)\n' "$dir"
   else
     printf '[FAIL] tool_read (tmp=%s)\n' "$dir" >&2
@@ -283,7 +293,7 @@ run_tool_error() {
   run_turin_capture "$out" \
     "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level warn
 
-  if rg -q '^TOOL_ERROR_OK$' "$out"; then
+  if qmatch '^TOOL_ERROR_OK$' "$out"; then
     printf '[PASS] tool_error (tmp=%s)\n' "$dir"
   else
     printf '[FAIL] tool_error (tmp=%s)\n' "$dir" >&2
@@ -307,11 +317,11 @@ run_tool_write_read() {
     printf '[FAIL] tool_write_read (tmp=%s) nonce2.txt missing\n' "$dir" >&2
     return 1
   fi
-  if ! rg -q "^${nonce}$" "$dir/work/nonce2.txt"; then
+  if ! qmatch "^${nonce}$" "$dir/work/nonce2.txt"; then
     printf '[FAIL] tool_write_read (tmp=%s) file contents mismatch\n' "$dir" >&2
     return 1
   fi
-  if rg -q "^${nonce}$" "$out"; then
+  if qmatch "^${nonce}$" "$out"; then
     printf '[PASS] tool_write_read (tmp=%s)\n' "$dir"
   else
     printf '[FAIL] tool_write_read (tmp=%s)\n' "$dir" >&2
@@ -349,11 +359,11 @@ end
   run_turin_capture "$out" \
     "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level warn
 
-  if ! rg -q '^\[harness\] GOVERNED_DENIAL_OK$' "$out"; then
+  if ! qmatch '^\[harness\] GOVERNED_DENIAL_OK$' "$out"; then
     printf '[FAIL] governed_denial (tmp=%s) missing denial sentinel\n' "$dir" >&2
     return 1
   fi
-  if rg -q '^GOVERNED_MAIN_OK$' "$out"; then
+  if qmatch '^GOVERNED_MAIN_OK$' "$out"; then
     printf '[PASS] governed_denial (tmp=%s)\n' "$dir"
   else
     printf '[FAIL] governed_denial (tmp=%s) main response mismatch\n' "$dir" >&2
@@ -400,11 +410,11 @@ end
   run_turin_capture "$out" \
     "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level warn
 
-  if ! rg -q '^\[harness\] PEER_AGENT_SMOKE_OK$' "$out"; then
+  if ! qmatch '^\[harness\] PEER_AGENT_SMOKE_OK$' "$out"; then
     printf '[FAIL] peer_agent (tmp=%s) missing peer success sentinel\n' "$dir" >&2
     return 1
   fi
-  if rg -q '^PEER_AGENT_MAIN_OK$' "$out"; then
+  if qmatch '^PEER_AGENT_MAIN_OK$' "$out"; then
     printf '[PASS] peer_agent (tmp=%s)\n' "$dir"
   else
     printf '[FAIL] peer_agent (tmp=%s) main response mismatch\n' "$dir" >&2
@@ -437,15 +447,15 @@ end
   run_turin_capture "$out" \
     "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level warn
 
-  if ! rg -q '^\[harness\] QUEUE_STEER_HOOK_OK$' "$out"; then
+  if ! qmatch '^\[harness\] QUEUE_STEER_HOOK_OK$' "$out"; then
     printf '[FAIL] queue_steer (tmp=%s) missing queue steering sentinel\n' "$dir" >&2
     return 1
   fi
-  if ! rg -q '^QUEUE_STEER_MAIN_OK$' "$out"; then
+  if ! qmatch '^QUEUE_STEER_MAIN_OK$' "$out"; then
     printf '[FAIL] queue_steer (tmp=%s) missing main response\n' "$dir" >&2
     return 1
   fi
-  if rg -q '^QUEUE_STEER_FOLLOWUP_OK$' "$out"; then
+  if qmatch '^QUEUE_STEER_FOLLOWUP_OK$' "$out"; then
     printf '[PASS] queue_steer (tmp=%s)\n' "$dir"
   else
     printf '[FAIL] queue_steer (tmp=%s) missing followup response\n' "$dir" >&2
@@ -523,11 +533,11 @@ end
   run_turin_capture "$out" \
     "$BINARY" run --config "$dir/turin.toml" --prompt 'Reply with exactly: RUNTIME_DB_MAIN_OK' --log-level warn
 
-  if ! rg -q "^\[harness\] RUNTIME_DB_OK:${nonce}$" "$out"; then
+  if ! qmatch "^\[harness\] RUNTIME_DB_OK:${nonce}$" "$out"; then
     printf '[FAIL] runtime_db (tmp=%s) missing runtime.db success sentinel\n' "$dir" >&2
     return 1
   fi
-  if ! rg -q '^RUNTIME_DB_MAIN_OK$' "$out"; then
+  if ! qmatch '^RUNTIME_DB_MAIN_OK$' "$out"; then
     printf '[FAIL] runtime_db (tmp=%s) main response mismatch\n' "$dir" >&2
     return 1
   fi
@@ -630,11 +640,11 @@ end
   run_turin_capture "$out" \
     "$BINARY" run --config "$dir/turin.toml" --prompt 'Reply with exactly: GRANT_FLOW_MAIN_OK' --log-level warn
 
-  if ! rg -q '^\[harness\] GRANT_FLOW_OK$' "$out"; then
+  if ! qmatch '^\[harness\] GRANT_FLOW_OK$' "$out"; then
     printf '[FAIL] grant_flow (tmp=%s) missing grant success sentinel\n' "$dir" >&2
     return 1
   fi
-  if ! rg -q '^GRANT_FLOW_MAIN_OK$' "$out"; then
+  if ! qmatch '^GRANT_FLOW_MAIN_OK$' "$out"; then
     printf '[FAIL] grant_flow (tmp=%s) main response mismatch\n' "$dir" >&2
     return 1
   fi
@@ -678,11 +688,11 @@ end
   run_turin_capture "$out" \
     "$BINARY" run --config "$dir/turin.toml" --prompt 'Reply with exactly: TOKEN_REJECT_TASK_MAIN_OK' --log-level warn
 
-  if ! rg -q '^\[harness\] TOKEN_REJECT_SETUP_OK$' "$out"; then
+  if ! qmatch '^\[harness\] TOKEN_REJECT_SETUP_OK$' "$out"; then
     printf '[FAIL] token_reject_task (tmp=%s) setup failed\n' "$dir" >&2
     return 1
   fi
-  if ! rg -q '^\[harness\] TOKEN_REJECT_TASK_STATUS:rejected$' "$out"; then
+  if ! qmatch '^\[harness\] TOKEN_REJECT_TASK_STATUS:rejected$' "$out"; then
     printf '[FAIL] token_reject_task (tmp=%s) missing rejected task status sentinel\n' "$dir" >&2
     return 1
   fi
@@ -717,11 +727,11 @@ end
   run_turin_capture "$out" \
     "$BINARY" run --config "$dir/turin.toml" --prompt 'Reply with exactly: IMMUTABLE_AUDIT_MAIN_OK' --log-level warn
 
-  if ! rg -q '^\[harness\] IMMUTABLE_AUDIT_REJECT_ATTEMPT$' "$out"; then
+  if ! qmatch '^\[harness\] IMMUTABLE_AUDIT_REJECT_ATTEMPT$' "$out"; then
     printf '[FAIL] immutable_audit (tmp=%s) missing hook reject sentinel\n' "$dir" >&2
     return 1
   fi
-  if ! rg -q '^IMMUTABLE_AUDIT_MAIN_OK$' "$out"; then
+  if ! qmatch '^IMMUTABLE_AUDIT_MAIN_OK$' "$out"; then
     printf '[FAIL] immutable_audit (tmp=%s) main response mismatch\n' "$dir" >&2
     return 1
   fi
@@ -821,15 +831,15 @@ end
   run_turin_capture "$out" \
     "$BINARY" run --config "$dir/turin.toml" --prompt 'Reply with exactly: PEER_GRANT_MAIN_OK' --log-level warn
 
-  if ! rg -q '^\[harness\] PEER_GRANT_WORKER_OK$' "$out"; then
+  if ! qmatch '^\[harness\] PEER_GRANT_WORKER_OK$' "$out"; then
     printf '[FAIL] peer_grant (tmp=%s) missing worker grant sentinel\n' "$dir" >&2
     return 1
   fi
-  if ! rg -q '^\[harness\] PEER_GRANT_ORCH_OK$' "$out"; then
+  if ! qmatch '^\[harness\] PEER_GRANT_ORCH_OK$' "$out"; then
     printf '[FAIL] peer_grant (tmp=%s) missing orchestrator grant sentinel\n' "$dir" >&2
     return 1
   fi
-  if ! rg -q '^PEER_GRANT_MAIN_OK$' "$out"; then
+  if ! qmatch '^PEER_GRANT_MAIN_OK$' "$out"; then
     printf '[FAIL] peer_grant (tmp=%s) main response mismatch\n' "$dir" >&2
     return 1
   fi
