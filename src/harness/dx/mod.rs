@@ -8,6 +8,8 @@ mod common;
 mod data;
 mod db;
 mod fs_json;
+mod governance;
+mod time;
 mod verdict;
 
 pub fn register_dx_globals(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
@@ -16,6 +18,8 @@ pub fn register_dx_globals(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()
     data::register_data_globals(lua)?;
     db::register_db_dx(lua)?;
     agent::register_agent_dx(lua)?;
+    governance::register_governance_dx(lua)?;
+    time::register_time_dx(lua)?;
     fs_json::register_fs_json_globals(lua)?;
     Ok(())
 }

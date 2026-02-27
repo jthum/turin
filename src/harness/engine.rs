@@ -1110,4 +1110,136 @@ mod tests {
             .unwrap();
         assert!(verdict.is_allowed());
     }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_dx_runtime_governance_grant_wrapper() {
+        let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("governance_dx.lua"),
+            r#"
+            function on_turn_prepare(ctx)
+                local gid = nil
+                local result = runtime.governance.grant({
+                    ttl_ms = 5000,
+                    capabilities = {
+                        ["runtime.db.query"] = true,
+                        ["runtime.governance.grant.get"] = true,
+                    }
+                }, function()
+                    local query_dec = access.check("runtime.db.query")
+                    if query_dec == nil or not query_dec.allowed then
+                        error("runtime.db.query should be allowed inside grant")
+                    end
+
+                    local policy_dec = access.check("runtime.policy.set")
+                    if policy_dec == nil then
+                        error("runtime.policy.set decision missing")
+                    end
+                    if policy_dec.allowed then
+                        error("runtime.policy.set should be denied by grant ceiling")
+                    end
+
+                    gid = query_dec.subject_grant_id
+                    if gid == nil or gid == "" then
+                        error("missing subject_grant_id in access decision")
+                    end
+
+                    return "grant_wrapper_ok"
+                end)
+
+                if result ~= "grant_wrapper_ok" then
+                    return REJECT, "runtime.governance.grant result mismatch"
+                end
+
+                local grant, ge = runtime.governance.grant_get(gid)
+                if grant ~= nil then
+                    return REJECT, "grant should be revoked after callback returns"
+                end
+                if ge == nil then
+                    return REJECT, "grant_get should report missing grant after revoke"
+                end
+
+                local ok, err = pcall(function()
+                    runtime.governance.grant({
+                        ttl_ms = 5000,
+                        capabilities = {
+                            ["runtime.db.query"] = true,
+                            ["runtime.governance.grant.revoke"] = true,
+                        }
+                    }, function()
+                        local dec = access.check("runtime.db.query")
+                        local inner_gid = dec.subject_grant_id
+                        local revoked, re = runtime.governance.grant_revoke(inner_gid)
+                        if not revoked then
+                            error("inner grant_revoke failed: " .. tostring(re))
+                        end
+                        error("grant callback sentinel")
+                    end)
+                end)
+                if ok then
+                    return REJECT, "runtime.governance.grant should fail when callback errors"
+                end
+                if not tostring(err):find("grant callback sentinel", 1, true) then
+                    return REJECT, "runtime.governance.grant should prioritize callback error"
+                end
+
+                return ALLOW
+            end
+            "#,
+        )
+        .unwrap();
+
+        engine.load_dir(dir.path()).unwrap();
+        let verdict = engine
+            .evaluate_userdata("on_turn_prepare", MockContext)
+            .unwrap();
+        assert!(verdict.is_allowed());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_dx_time_helpers() {
+        let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("time_dx.lua"),
+            r#"
+            function on_turn_prepare(ctx)
+                local now = tonumber(time.now_utc())
+                if now == nil then
+                    return REJECT, "time.now_utc should be numeric string"
+                end
+
+                local since_num = time.since(now - 2)
+                if since_num < 1 then
+                    return REJECT, "time.since(number) should be positive"
+                end
+
+                local since_str = time.since(tostring(now - 1))
+                if since_str < 0 then
+                    return REJECT, "time.since(string) should parse numeric string"
+                end
+
+                if not time.after(now - 1, 0.5) then
+                    return REJECT, "time.after should be true when elapsed >= threshold"
+                end
+
+                if time.after(now - 1, 10) then
+                    return REJECT, "time.after should be false for large threshold"
+                end
+
+                return ALLOW
+            end
+            "#,
+        )
+        .unwrap();
+
+        engine.load_dir(dir.path()).unwrap();
+        let verdict = engine
+            .evaluate_userdata("on_turn_prepare", MockContext)
+            .unwrap();
+        assert!(verdict.is_allowed());
+    }
 }
