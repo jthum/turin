@@ -11,8 +11,8 @@ This is the documentation landing page for Turin.
 ## Harness Authoring
 
 - `docs/HOOKS.md` — stable hook lifecycle, payloads, verdict semantics
-- `docs/PRIMITIVES.md` — **canonical harness API surface reference** (`runtime.*` + aliases)
-- `docs/HARNESS_GUIDE.md` — practical harness patterns, examples, governance-aware design
+- `docs/PRIMITIVES.md` — **canonical harness API surface reference** (`runtime.*`, aliases, and DX helpers)
+- `docs/HARNESS_GUIDE.md` — practical harness patterns, DX examples, governance-aware design
 
 ## Governance and Security (Opt-In)
 

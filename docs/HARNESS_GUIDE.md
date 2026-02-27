@@ -56,6 +56,130 @@ function on_tool_call(call)
 end
 ```
 
+## Writing With the DX Layer
+
+Turin now ships a first-party DX layer for harness authors.
+
+Use it when you want harnesses to read more like intent and less like plumbing.
+
+Important:
+
+- `runtime.*` is still the canonical primitive layer
+- DX helpers are wrappers over the same runtime/governance semantics
+- DX helpers are best for readability, especially in real harness code
+
+### Verdict helpers
+
+```lua
+function on_tool_call(call)
+  return verdict.reject_if(call.name == "shell_exec", "shell disabled")
+    or verdict.escalate_if(call.name == "write_file", "approve file write?")
+    or verdict.allow()
+end
+```
+
+### Access helpers
+
+```lua
+function on_turn_prepare(ctx)
+  if not allowed("runtime.db.exec") then
+    return verdict.reject("No DB exec capability")
+  end
+
+  needs("runtime.agent.submit")
+
+  local d = access.check("runtime.policy.set")
+  if not d.allowed then
+    log("policy mutation denied: " .. tostring(d.reason))
+  end
+
+  return ALLOW
+end
+```
+
+`needs(...)` raises a Lua error on denial. Use it when denial should abort the current path immediately.
+
+### Session and user helpers
+
+```lua
+function on_session_start(ev)
+  session.remember("User prefers concise answers")
+  user.set("timezone", "UTC")
+  session.incr("session_starts")
+  return ALLOW
+end
+```
+
+### Fluent DB access
+
+```lua
+function on_turn_prepare(ctx)
+  runtime.db.with("state", function(db)
+    db:exec("CREATE TABLE IF NOT EXISTS notes(id INTEGER PRIMARY KEY, text TEXT)")
+    db:exec("INSERT INTO notes(text) VALUES (?)", { "hello" })
+
+    local row = db:one("SELECT text FROM notes ORDER BY id DESC LIMIT 1")
+    if row and row.text == "hello" then
+      session.set("last_note", row.text)
+    end
+  end)
+
+  return ALLOW
+end
+```
+
+Notes:
+
+- `db:one(...)` returns the first row or `nil`
+- `runtime.db.with(...)` prioritizes callback errors over close errors
+
+### Fluent peer-agent access
+
+```lua
+function on_turn_prepare(ctx)
+  local reviewer = runtime.agent("reviewer")
+  local summary = reviewer:complete("Summarize the diff in 3 bullets")
+  session.set("review_summary", summary)
+  return ALLOW
+end
+```
+
+### Grant wrapper
+
+```lua
+function on_turn_prepare(ctx)
+  local result = runtime.governance.grant({
+    ttl_ms = 5000,
+    capabilities = {
+      ["runtime.agent.submit"] = true,
+      ["runtime.agent.await"] = true,
+    }
+  }, function()
+    return runtime.agent("reviewer"):complete("Review this patch")
+  end)
+
+  session.set("grant_review", result)
+  return ALLOW
+end
+```
+
+### Time and JSON helpers
+
+```lua
+function on_turn_prepare(ctx)
+  local started = session.get("started_at")
+  if started and time.after(started, 300) then
+    return verdict.escalate("Session has been running for more than 5 minutes")
+  end
+
+  local cfg = fs.read_json("config/agent.json")
+  cfg.last_seen = time.now_utc()
+  fs.write_json("config/agent.json", cfg, { pretty = true })
+
+  return ALLOW
+end
+```
+
 ## Module Imports (`import` / `import_scoped`)
 
 ### `import(name)`
@@ -175,6 +299,10 @@ end
 ## Using the Canonical Runtime API (`runtime.*`)
 
 Prefer `runtime.*` in new harnesses, even though aliases remain available.
+When in doubt:
+
+- use DX helpers for readability
+- use `runtime.*` directly when you need exact primitive control or want the tuple-style API explicitly
 
 ### Context selectors
 

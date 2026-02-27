@@ -30,6 +30,167 @@ Some functions return plain values (e.g. `time.epoch_seconds()`) or raise Lua ru
 - `ESCALATE`
 - `MODIFY`
 
+## DX Language Layer
+
+Turin also ships a first-party DX layer in `src/harness/dx/`.
+
+Important:
+
+- `runtime.*` remains the canonical primitive layer
+- DX helpers are ergonomic wrappers over those primitives
+- DX helpers do not bypass governance/capability enforcement
+- DX helpers often raise Lua runtime errors on denied/invalid operations instead of returning `(nil, err)`
+
+Use the DX layer when you want cleaner harness code. Use `runtime.*` directly when you want the most explicit primitive behavior.
+
+### `verdict`
+
+- `verdict.allow() -> verdict_table`
+- `verdict.reject(reason?) -> verdict_table`
+- `verdict.escalate(reason?) -> verdict_table`
+- `verdict.modify(value) -> verdict_table`
+- `verdict.reject_if(condition, reason) -> verdict_table|nil`
+- `verdict.escalate_if(condition, reason) -> verdict_table|nil`
+
+Example:
+
+```lua
+return verdict.reject_if(call.name == "shell_exec", "shell disabled")
+  or verdict.allow()
+```
+
+### Access helpers
+
+- `allowed(capability, opts?) -> boolean`
+- `needs(capability, opts?) -> true | error`
+- `access.check(capability, opts?) -> decision_table`
+
+`opts`:
+
+```lua
+{ agent_id = "reviewer" }
+```
+
+Notes:
+
+- `allowed(...)` is the top-level boolean predicate
+- `needs(...)` raises on denial; it does not return `(false, err)`
+- `access.check(...)` returns the same decision shape as `runtime.governance.check(...)`
+
+### `session` / `user` DX helpers
+
+These are layered on top of the existing scoped aliases.
+
+- `session.remember(content, metadata?)`
+- `session.recall(query, opts?)`
+- `session.get(key)`
+- `session.set(key, value)`
+- `session.del(key)`
+- `session.incr(key, by?) -> integer`
+
+- `user.remember(content, metadata?)`
+- `user.recall(query, opts?)`
+- `user.get(key)`
+- `user.set(key, value)`
+- `user.del(key)`
+- `user.incr(key, by?) -> integer`
+
+`incr` behavior:
+
+- missing key is treated as `0`
+- stored integer strings are parsed
+- return value is the new integer count
+- malformed stored values raise
+- overflow raises
+
+### DX `runtime.db(...)`
+
+`runtime.db` is callable in the DX layer:
+
+- `runtime.db(selector) -> db_proxy`
+- `runtime.db.with(selector, fn, opts?) -> <fn returns> | error`
+
+`db_proxy` methods:
+
+- `db:one(sql, params?, opts?) -> row|nil`
+- `db:all(sql, params?, opts?) -> rows`
+- `db:exec(sql, params?, opts?) -> changed_count`
+- `db:close()`
+
+Notes:
+
+- `:one(...)` returns the first row or `nil`
+- `runtime.db.with(...)` opens a handle, runs the callback, and closes the handle
+- if the callback errors, the callback error wins over any close error
+
+### DX `runtime.agent(...)`
+
+`runtime.agent` is callable in the DX layer:
+
+- `runtime.agent(agent_id) -> agent_proxy`
+
+`agent_proxy` methods:
+
+- `agent:submit(task, opts?) -> request_id`
+- `agent:await(request_id, opts?) -> result`
+- `agent:status() -> status`
+- `agent:complete(prompt, opts?) -> output_string`
+
+Notes:
+
+- `:complete(...)` is a convenience wrapper over submit + await
+- peer-agent governance, child-agent allowlists, delegated capability ceilings, and active grant ceilings still apply
+
+### DX `runtime.governance.grant(...)`
+
+- `runtime.governance.grant(spec, fn) -> <fn returns> | error`
+
+`spec` shape:
+
+```lua
+{
+  capabilities = { ["runtime.db.query"] = true },
+  ttl_ms = 10000,
+  max_uses = 1,
+  reason = "one-shot operation",
+}
+```
+
+Behavior:
+
+- issues a temporary grant
+- runs `fn` under that active grant
+- revokes the grant after the callback returns
+- if the callback errors, the callback error wins over revoke errors
+
+### DX `time`
+
+- `time.since(ts) -> number`
+- `time.after(ts, threshold) -> boolean`
+
+Current semantics:
+
+- `ts` may be a number or numeric string
+- values are interpreted as Unix epoch seconds
+- `time.since(...)` returns elapsed seconds as a Lua number
+- `time.after(...)` compares elapsed seconds against the given threshold in seconds
+
+### DX `fs`
+
+- `fs.read_json(path, opts?) -> value | error`
+- `fs.write_json(path, value, opts?) -> true | error`
+
+`opts` for `write_json`:
+
+```lua
+{ pretty = true }
+```
+
+Notes:
+
+- these wrap `fs.read/write` and `json.decode/encode`
+- existing `fs.read` / `fs.write` governance checks still apply
+
 ## System Globals
 
 ## `fs`

@@ -313,6 +313,7 @@ Runtime APIs (capability-gated):
 - `runtime.governance.grant_get(grant_id)`
 - `runtime.governance.grant_revoke(grant_id)`
 - `runtime.governance.with_grant(grant_id, fn)`
+- `runtime.governance.grant(spec, fn)` (DX wrapper over issue/use/revoke)
 
 Example:
 
@@ -339,6 +340,39 @@ Grant properties:
 - `max_uses` enforced
 - auditable issue/use/revoke events
 - active grant ceilings propagate to peer-agent delegation paths (downward-only)
+
+### DX governance helpers
+
+The DX layer adds a few helpers that are governance-relevant but do not change enforcement semantics:
+
+- `allowed(capability[, opts]) -> boolean`
+- `needs(capability[, opts]) -> true | error`
+- `access.check(capability[, opts]) -> decision_table`
+- `runtime.governance.grant(spec, fn)`
+
+Example:
+
+```lua
+if not allowed("runtime.db.exec") then
+  return verdict.reject("db exec denied")
+end
+
+local output = runtime.governance.grant({
+  ttl_ms = 5000,
+  capabilities = {
+    ["runtime.agent.submit"] = true,
+    ["runtime.agent.await"] = true,
+  },
+}, function()
+  return runtime.agent("reviewer"):complete("Review this patch")
+end)
+```
+
+Important semantics:
+
+- `needs(...)` raises a Lua runtime error on denial
+- `runtime.governance.grant(...)` is only convenience syntax; capability enforcement remains unchanged
+- `runtime.governance.grant(...)` prioritizes callback errors over revoke errors
 
 ## Audit Modes
 

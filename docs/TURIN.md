@@ -49,6 +49,7 @@ This release establishes the forward-looking public harness surface:
 - stable hook lifecycle semantics (`on_turn_prepare`, `on_plan_submit`, etc.)
 - canonical stdlib API under `runtime.*`
 - top-level ergonomic aliases (`memory`, `kv`, `agent`, `session`, `user`)
+- first-party DX helpers layered on top of the canonical API (`verdict`, `allowed`, `needs`, callable `runtime.db(...)`, callable `runtime.agent(...)`, grant/time/json helpers)
 - governance profiles/capabilities/import scoping/grants (opt-in)
 - multi-db and multi-agent orchestration primitives
 
