@@ -1816,8 +1816,14 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
     capability_profiles.insert(
         "reviewer_ro".to_string(),
         std::collections::HashMap::from([
-            ("runtime.db.query".to_string(), serde_json::Value::Bool(true)),
-            ("runtime.policy.set".to_string(), serde_json::Value::Bool(false)),
+            (
+                "runtime.db.query".to_string(),
+                serde_json::Value::Bool(true),
+            ),
+            (
+                "runtime.policy.set".to_string(),
+                serde_json::Value::Bool(false),
+            ),
         ]),
     );
     let mut governance_agents = std::collections::HashMap::new();

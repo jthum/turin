@@ -404,7 +404,9 @@ impl TurinConfig {
         for (agent_id, agent_cfg) in &self.governance.agents {
             if let Some(profile_name) = &agent_cfg.capability_profile {
                 anyhow::ensure!(
-                    self.governance.capability_profiles.contains_key(profile_name),
+                    self.governance
+                        .capability_profiles
+                        .contains_key(profile_name),
                     "governance.agents.{}.capability_profile '{}' not found in governance.capability_profiles",
                     agent_id,
                     profile_name

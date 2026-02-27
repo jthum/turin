@@ -275,7 +275,8 @@ impl GovernanceManager {
 
             if ceiling_denial_reason.is_none()
                 && let Some(grant_id) = subject.grant_id.as_deref()
-                && let Some(reason) = self.grant_ceiling_denial_reason(subject, grant_id, capability)
+                && let Some(reason) =
+                    self.grant_ceiling_denial_reason(subject, grant_id, capability)
             {
                 ceiling_denial_reason = Some(reason);
             }
@@ -402,7 +403,9 @@ impl GovernanceManager {
             return Err("grant capabilities must not be empty".to_string());
         }
         if !capabilities.values().any(|v| *v) {
-            return Err("grant capabilities must include at least one allowed capability".to_string());
+            return Err(
+                "grant capabilities must include at least one allowed capability".to_string(),
+            );
         }
         if let Some(ttl_ms) = ttl_ms {
             if ttl_ms == 0 {
@@ -425,7 +428,9 @@ impl GovernanceManager {
         if self.config.grants.require_audit_reason
             && reason.as_deref().is_none_or(|r| r.trim().is_empty())
         {
-            return Err("grant reason is required by governance.grants.require_audit_reason".to_string());
+            return Err(
+                "grant reason is required by governance.grants.require_audit_reason".to_string(),
+            );
         }
 
         let issued_at_ms = now_unix_ms()?;
@@ -444,7 +449,10 @@ impl GovernanceManager {
             uses_remaining: max_uses,
         };
 
-        let mut grants = self.grants.lock().map_err(|_| "governance grants mutex poisoned")?;
+        let mut grants = self
+            .grants
+            .lock()
+            .map_err(|_| "governance grants mutex poisoned")?;
         grants.insert(
             grant_id,
             ActiveGovernanceGrant {
@@ -459,7 +467,10 @@ impl GovernanceManager {
         subject: &GovernanceSubject,
         grant_id: &str,
     ) -> Result<Option<GovernanceGrantSnapshot>, String> {
-        let mut grants = self.grants.lock().map_err(|_| "governance grants mutex poisoned")?;
+        let mut grants = self
+            .grants
+            .lock()
+            .map_err(|_| "governance grants mutex poisoned")?;
         let now_ms = now_unix_ms()?;
         if let Some(entry) = grants.get(grant_id)
             && grant_expired(&entry.snapshot, now_ms)
@@ -482,7 +493,10 @@ impl GovernanceManager {
         if !self.config.grants.enabled {
             return Err("Governance grants are disabled".to_string());
         }
-        let mut grants = self.grants.lock().map_err(|_| "governance grants mutex poisoned")?;
+        let mut grants = self
+            .grants
+            .lock()
+            .map_err(|_| "governance grants mutex poisoned")?;
         let Some(entry) = grants.get(grant_id) else {
             return Ok(None);
         };
@@ -499,16 +513,16 @@ impl GovernanceManager {
         if !self.config.grants.enabled {
             return Err("Governance grants are disabled".to_string());
         }
-        let mut grants = self.grants.lock().map_err(|_| "governance grants mutex poisoned")?;
+        let mut grants = self
+            .grants
+            .lock()
+            .map_err(|_| "governance grants mutex poisoned")?;
         let now_ms = now_unix_ms()?;
         if let Some(entry) = grants.get(grant_id)
             && grant_expired(&entry.snapshot, now_ms)
         {
             grants.remove(grant_id);
-            return Err(format!(
-                "Governance grant '{}' has expired",
-                grant_id
-            ));
+            return Err(format!("Governance grant '{}' has expired", grant_id));
         }
 
         let entry = grants
@@ -987,8 +1001,14 @@ mod tests {
         cfg.capability_profiles.insert(
             "reviewer_ro".into(),
             HashMap::from([
-                ("runtime.db.query".to_string(), serde_json::Value::Bool(true)),
-                ("runtime.policy.set".to_string(), serde_json::Value::Bool(false)),
+                (
+                    "runtime.db.query".to_string(),
+                    serde_json::Value::Bool(true),
+                ),
+                (
+                    "runtime.policy.set".to_string(),
+                    serde_json::Value::Bool(false),
+                ),
             ]),
         );
         cfg.agents.insert(
@@ -1023,7 +1043,8 @@ mod tests {
         let reviewer_query = mgr.capability_decision_for_subject(&reviewer, "runtime.db.query");
         assert!(reviewer_query.allowed);
 
-        let default_policy = mgr.capability_decision_for_subject(&default_agent, "runtime.policy.set");
+        let default_policy =
+            mgr.capability_decision_for_subject(&default_agent, "runtime.policy.set");
         assert!(default_policy.allowed);
     }
 
@@ -1055,7 +1076,9 @@ mod tests {
             )
             .unwrap();
 
-        let entered = mgr.enter_grant_for_subject(&subject, &grant.grant_id).unwrap();
+        let entered = mgr
+            .enter_grant_for_subject(&subject, &grant.grant_id)
+            .unwrap();
         assert_eq!(entered.max_uses, Some(2));
         assert_eq!(entered.uses_remaining, Some(1));
 
@@ -1063,7 +1086,8 @@ mod tests {
             grant_id: Some(grant.grant_id.clone()),
             ..subject.clone()
         };
-        let deny_policy = mgr.capability_decision_for_subject(&granted_subject, "runtime.policy.set");
+        let deny_policy =
+            mgr.capability_decision_for_subject(&granted_subject, "runtime.policy.set");
         assert!(!deny_policy.allowed);
         assert!(
             deny_policy
@@ -1074,7 +1098,10 @@ mod tests {
         );
         let allow_query = mgr.capability_decision_for_subject(&granted_subject, "runtime.db.query");
         assert!(allow_query.allowed);
-        assert_eq!(allow_query.subject_grant_id.as_deref(), Some(grant.grant_id.as_str()));
+        assert_eq!(
+            allow_query.subject_grant_id.as_deref(),
+            Some(grant.grant_id.as_str())
+        );
 
         let second_enter = mgr.enter_grant_for_subject(&subject, &grant.grant_id);
         assert!(second_enter.is_ok());

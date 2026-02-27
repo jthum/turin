@@ -18,7 +18,8 @@ impl Kernel {
                 self.governance_manager.config().audit.mode,
                 crate::kernel::config::GovernanceAuditMode::Immutable
             ));
-        let protected_audit_event = audit_persist_before_hooks && matches!(event, KernelEvent::Audit(_));
+        let protected_audit_event =
+            audit_persist_before_hooks && matches!(event, KernelEvent::Audit(_));
 
         if protected_audit_event {
             self.persist_event_internal(

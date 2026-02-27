@@ -1,7 +1,7 @@
 //! Database connection pooling and dynamic Store routing.
 
-mod path_support;
 mod cache_support;
+mod path_support;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

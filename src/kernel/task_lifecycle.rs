@@ -2,9 +2,9 @@ use anyhow::Result;
 use tracing::{info, warn};
 
 use crate::harness::verdict::Verdict;
+use crate::kernel::Kernel;
 use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
 use crate::kernel::session::{QueuedTask, SessionState};
-use crate::kernel::Kernel;
 
 impl Kernel {
     pub(crate) async fn complete_task(
@@ -136,12 +136,14 @@ impl Kernel {
                     Some(session.identity.session_id()),
                     Some(session.mode.clone()),
                 );
-                engine.set_active_event_context(Some(crate::harness::globals::HarnessEventContext {
-                    json: self.json,
-                    internal_id: session.internal_id,
-                    event_tx: session.event_tx.clone(),
-                    durability_tx: session.durability_tx.clone(),
-                }));
+                engine.set_active_event_context(Some(
+                    crate::harness::globals::HarnessEventContext {
+                        json: self.json,
+                        internal_id: session.internal_id,
+                        event_tx: session.event_tx.clone(),
+                        durability_tx: session.durability_tx.clone(),
+                    },
+                ));
                 let result = engine.evaluate(
                     "on_inference_error",
                     serde_json::json!({
