@@ -22,6 +22,26 @@ fn copy_fixture(name: &str, dest: impl AsRef<Path>) -> Result<()> {
     Ok(())
 }
 
+fn copy_fixture_tree(name: &str, dest_dir: impl AsRef<Path>) -> Result<()> {
+    let src_dir = fixture_path(name);
+    let dest_dir = dest_dir.as_ref();
+    fs::create_dir_all(dest_dir)?;
+    for entry in fs::read_dir(src_dir)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let dest_path = dest_dir.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_fixture_tree(
+                &format!("{}/{}", name, entry.file_name().to_string_lossy()),
+                &dest_path,
+            )?;
+        } else {
+            fs::copy(entry.path(), dest_path)?;
+        }
+    }
+    Ok(())
+}
+
 fn mock_provider(response: &str) -> ProviderConfig {
     ProviderConfig {
         kind: "mock".to_string(),
@@ -245,6 +265,151 @@ async fn test_dx_fixture_peer_review_orchestrator() -> Result<()> {
     let mut session = kernel.create_session().await;
     kernel
         .run(&mut session, Some("Review the patch".to_string()))
+        .await?;
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_dx_fixture_import_scoped_capability_delegate() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    fs::create_dir(&harness_dir)?;
+    copy_fixture_tree("import_scoped_capability_delegate", &harness_dir)?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider("IMPORT_OK"));
+    let mut config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
+    config.governance = GovernanceConfig {
+        profile: GovernanceProfile::Balanced,
+        enforcement_enabled: true,
+        import: turin::kernel::config::GovernanceImportConfig {
+            mode: turin::kernel::config::GovernanceImportMode::Mixed,
+            default_root: Some("core".to_string()),
+            allow_unscoped_in_open: false,
+        },
+        roots: HashMap::from([(
+            "core".to_string(),
+            turin::kernel::config::GovernanceRootConfig {
+                path: harness_dir.to_string_lossy().to_string(),
+                writable_hint: false,
+                default_profile: Some("core_full".to_string()),
+                max_capabilities: HashMap::new(),
+            },
+        )]),
+        ..GovernanceConfig::default()
+    };
+
+    let mut kernel = build_kernel(config).await?;
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("Exercise scoped import delegation".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_dx_fixture_nested_import_widen_denial() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    fs::create_dir(&harness_dir)?;
+    copy_fixture_tree("nested_import_widen", &harness_dir)?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider("NESTED_OK"));
+    let mut config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
+    config.governance = GovernanceConfig {
+        profile: GovernanceProfile::Balanced,
+        enforcement_enabled: true,
+        import: turin::kernel::config::GovernanceImportConfig {
+            mode: turin::kernel::config::GovernanceImportMode::Mixed,
+            default_root: Some("core".to_string()),
+            allow_unscoped_in_open: false,
+        },
+        roots: HashMap::from([(
+            "core".to_string(),
+            turin::kernel::config::GovernanceRootConfig {
+                path: harness_dir.to_string_lossy().to_string(),
+                writable_hint: false,
+                default_profile: Some("core_full".to_string()),
+                max_capabilities: HashMap::new(),
+            },
+        )]),
+        ..GovernanceConfig::default()
+    };
+
+    let mut kernel = build_kernel(config).await?;
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("Exercise nested import widening denial".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_dx_fixture_peer_agent_denial() -> Result<()> {
+    let tmp = tempdir()?;
+    let orchestrator_harness_dir = tmp.path().join("harnesses");
+    let blocked_harness_dir = tmp.path().join("blocked_harnesses");
+    fs::create_dir(&orchestrator_harness_dir)?;
+    fs::create_dir(&blocked_harness_dir)?;
+    copy_fixture(
+        "peer_agent_denial.lua",
+        orchestrator_harness_dir.join("peer_agent_denial.lua"),
+    )?;
+    copy_fixture(
+        "peer_review_worker.lua",
+        blocked_harness_dir.join("peer_review_worker.lua"),
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider("DENIAL_OK"));
+    providers.insert("mock_blocked".to_string(), mock_provider("BLOCKED_OK"));
+    let mut config = base_config(
+        tmp.path(),
+        &orchestrator_harness_dir,
+        "mock_main",
+        providers,
+    );
+    config.governance = GovernanceConfig {
+        profile: GovernanceProfile::Balanced,
+        enforcement_enabled: true,
+        agents: HashMap::from([(
+            "default".to_string(),
+            turin::kernel::config::GovernanceAgentCapabilitiesConfig {
+                capability_profile: None,
+                max_capabilities: HashMap::new(),
+                allowed_child_agents: vec!["reviewer".to_string()],
+            },
+        )]),
+        ..GovernanceConfig::default()
+    };
+    config.agents.insert(
+        "blocked".to_string(),
+        AgentConfig {
+            id: "blocked".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock_blocked".to_string(),
+            system_prompt: "You are blocked.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: Some(blocked_harness_dir.to_string_lossy().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+
+    let mut kernel = build_kernel(config).await?;
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Exercise peer agent denial".to_string()))
         .await?;
     kernel.end_session(&mut session).await?;
     Ok(())

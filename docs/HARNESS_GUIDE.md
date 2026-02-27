@@ -68,6 +68,12 @@ Important:
 - DX helpers are wrappers over the same runtime/governance semantics
 - DX helpers are best for readability, especially in real harness code
 
+Concrete DX fixture harnesses live in:
+
+- `tests/fixtures/dx/`
+
+These are useful as small, executable reference harnesses rather than just inline snippets.
+
 ### Verdict helpers
 
 ```lua
