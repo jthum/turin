@@ -458,8 +458,34 @@ impl HarnessEngine {
 fn parse_verdict(lua: &Lua, values: MultiValue) -> Result<Verdict> {
     let mut iter = values.into_iter();
 
-    let verdict_code = match iter.next() {
-        Some(Value::Integer(n)) => n,
+    let first = iter.next();
+
+    let (verdict_code, first_payload) = match first {
+        Some(Value::Integer(n)) => (n, iter.next()),
+        Some(Value::Table(t)) => {
+            let verdict_code = t
+                .get::<i64>("code")
+                .map_err(|_| anyhow::anyhow!("Harness verdict table is missing integer 'code'"))?;
+            let reason = t.get::<Option<String>>("reason").ok().flatten();
+            let payload = if let Some(v) = t
+                .get::<Value>("patch")
+                .ok()
+                .filter(|v| !matches!(v, Value::Nil))
+            {
+                Some(v)
+            } else if let Some(v) = t
+                .get::<Value>("value")
+                .ok()
+                .filter(|v| !matches!(v, Value::Nil))
+            {
+                Some(v)
+            } else if let Some(reason) = reason {
+                Some(Value::String(lua.create_string(&reason)?))
+            } else {
+                None
+            };
+            (verdict_code, payload)
+        }
         Some(Value::Nil) | None => return Ok(Verdict::Allow), // No return = ALLOW
         other => {
             return Err(anyhow::anyhow!(
@@ -472,7 +498,7 @@ fn parse_verdict(lua: &Lua, values: MultiValue) -> Result<Verdict> {
     match verdict_code {
         1 => Ok(Verdict::Allow),
         2 | 3 => {
-            let reason = match iter.next() {
+            let reason = match first_payload {
                 Some(Value::String(s)) => s
                     .to_str()
                     .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in verdict reason: {}", e))?
@@ -486,7 +512,7 @@ fn parse_verdict(lua: &Lua, values: MultiValue) -> Result<Verdict> {
             }
         }
         4 => {
-            let val = match iter.next() {
+            let val = match first_payload {
                 Some(v) => lua.from_value::<serde_json::Value>(v).map_err(|e| {
                     anyhow::anyhow!("Failed to convert MODIFY value to JSON: {}", e)
                 })?,
@@ -506,14 +532,14 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    fn test_app_data() -> HarnessAppData {
+    fn test_app_data_for_root(root: PathBuf) -> HarnessAppData {
         HarnessAppData {
-            fs_root: PathBuf::from("."),
-            workspace_root: PathBuf::from("."),
-            store_manager: Arc::new(StoreManager::new(PathBuf::from("."))),
+            fs_root: root.clone(),
+            workspace_root: root.clone(),
+            store_manager: Arc::new(StoreManager::new(root.clone())),
             agent_manager: Arc::new(crate::kernel::agent_manager::AgentManager::new(
                 std::sync::Arc::new(crate::kernel::config::TurinConfig::default()),
-                Arc::new(StoreManager::new(PathBuf::from("."))),
+                Arc::new(StoreManager::new(root)),
             )),
             policy_manager: Arc::new(crate::kernel::policy::RuntimePolicyManager::new()),
             governance_manager: Arc::new(crate::kernel::governance::GovernanceManager::new(
@@ -533,6 +559,10 @@ mod tests {
             config: std::sync::Arc::new(crate::kernel::config::TurinConfig::default()),
             spawn_depth: 0,
         }
+    }
+
+    fn test_app_data() -> HarnessAppData {
+        test_app_data_for_root(PathBuf::from("."))
     }
 
     #[test]
@@ -864,5 +894,192 @@ mod tests {
             .unwrap();
         assert!(verdict.is_rejected());
         assert_eq!(verdict.reason(), Some("Blocked by harness"));
+    }
+
+    #[test]
+    fn test_verdict_helpers_support_or_chains() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("verdict_dx.lua"),
+            r#"
+            function on_tool_call(call)
+                return verdict.reject_if(call.name == "shell_exec", "blocked by dx")
+                    or verdict.allow()
+            end
+            "#,
+        )
+        .unwrap();
+
+        let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+        engine.load_dir(dir.path()).unwrap();
+
+        let verdict = engine
+            .evaluate(
+                "on_tool_call",
+                serde_json::json!({"name": "shell_exec", "args": {}}),
+            )
+            .unwrap();
+        assert!(verdict.is_rejected());
+        assert_eq!(verdict.reason(), Some("blocked by dx"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_dx_access_helpers() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("access_dx.lua"),
+            r#"
+            function on_turn_prepare(ctx)
+                if not allowed("runtime.db.exec") then
+                    return REJECT, "expected allowed in default config"
+                end
+                local decision = access.check("runtime.db.exec")
+                if type(decision) ~= "table" then
+                    return REJECT, "access.check did not return table"
+                end
+                needs("runtime.db.exec")
+                return ALLOW
+            end
+            "#,
+        )
+        .unwrap();
+
+        let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+        engine.load_dir(dir.path()).unwrap();
+        let verdict = engine
+            .evaluate_userdata("on_turn_prepare", MockContext)
+            .unwrap();
+        assert!(verdict.is_allowed());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_dx_session_user_kv_helpers() {
+        let root = TempDir::new().unwrap();
+        let mut engine =
+            HarnessEngine::new(test_app_data_for_root(root.path().to_path_buf())).unwrap();
+
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("data_dx.lua"),
+            r#"
+            function on_turn_prepare(ctx)
+                session.set("counter", "0")
+                local a = session.incr("counter")
+                local b = session.incr("counter", 2)
+                if a ~= 1 or b ~= 3 then
+                    return REJECT, "session.incr mismatch"
+                end
+
+                if session.get("counter") ~= "3" then
+                    return REJECT, "session.get mismatch"
+                end
+
+                user.set("tz", "UTC")
+                if user.get("tz") ~= "UTC" then
+                    return REJECT, "user.set/user.get mismatch"
+                end
+                user.del("tz")
+                if user.get("tz") ~= nil then
+                    return REJECT, "user.del mismatch"
+                end
+                return ALLOW
+            end
+            "#,
+        )
+        .unwrap();
+
+        engine.load_dir(dir.path()).unwrap();
+        let verdict = engine
+            .evaluate_userdata("on_turn_prepare", MockContext)
+            .unwrap();
+        assert!(verdict.is_allowed());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_dx_runtime_db_proxy_one_and_with_error_precedence() {
+        let root = TempDir::new().unwrap();
+        let mut engine =
+            HarnessEngine::new(test_app_data_for_root(root.path().to_path_buf())).unwrap();
+
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("db_dx.lua"),
+            r#"
+            function on_turn_prepare(ctx)
+                runtime.db.with("state", function(db)
+                    db:exec("CREATE TABLE IF NOT EXISTS dx_users(id INTEGER PRIMARY KEY, name TEXT)")
+                    db:exec("DELETE FROM dx_users")
+                    db:exec("INSERT INTO dx_users(name) VALUES (?)", {"alice"})
+
+                    local missing = db:one("SELECT name FROM dx_users WHERE id = ?", { 999 })
+                    if missing ~= nil then
+                        error("runtime.db:one should return nil when no rows")
+                    end
+
+                    local first = db:one("SELECT name FROM dx_users ORDER BY id LIMIT 1")
+                    if first == nil or first.name ~= "alice" then
+                        error("runtime.db:one returned wrong row")
+                    end
+                end)
+
+                local ok, err = pcall(function()
+                    runtime.db.with("state", function(db)
+                        db:close()
+                        error("callback error sentinel")
+                    end)
+                end)
+                if ok then
+                    return REJECT, "runtime.db.with should have failed"
+                end
+                if not tostring(err):find("callback error sentinel", 1, true) then
+                    return REJECT, "runtime.db.with should prioritize callback error"
+                end
+
+                return ALLOW
+            end
+            "#,
+        )
+        .unwrap();
+
+        engine.load_dir(dir.path()).unwrap();
+        let verdict = engine
+            .evaluate_userdata("on_turn_prepare", MockContext)
+            .unwrap();
+        assert!(verdict.is_allowed());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_dx_runtime_agent_status_proxy_and_fs_json_helpers() {
+        let root = TempDir::new().unwrap();
+        let mut engine =
+            HarnessEngine::new(test_app_data_for_root(root.path().to_path_buf())).unwrap();
+
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("agent_fs_dx.lua"),
+            r#"
+            function on_turn_prepare(ctx)
+                local status = runtime.agent("default"):status()
+                if status == nil or status.agent_id ~= "default" then
+                    return REJECT, "runtime.agent(...):status() mismatch"
+                end
+
+                fs.write_json("dx-config.json", { enabled = true, count = 3 }, { pretty = true })
+                local cfg = fs.read_json("dx-config.json")
+                if cfg.enabled ~= true or cfg.count ~= 3 then
+                    return REJECT, "fs.read_json/fs.write_json mismatch"
+                end
+
+                return ALLOW
+            end
+            "#,
+        )
+        .unwrap();
+
+        engine.load_dir(dir.path()).unwrap();
+        let verdict = engine
+            .evaluate_userdata("on_turn_prepare", MockContext)
+            .unwrap();
+        assert!(verdict.is_allowed());
     }
 }
