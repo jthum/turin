@@ -468,12 +468,6 @@ fn parse_verdict(lua: &Lua, values: MultiValue) -> Result<Verdict> {
                 .map_err(|_| anyhow::anyhow!("Harness verdict table is missing integer 'code'"))?;
             let reason = t.get::<Option<String>>("reason").ok().flatten();
             let payload = if let Some(v) = t
-                .get::<Value>("patch")
-                .ok()
-                .filter(|v| !matches!(v, Value::Nil))
-            {
-                Some(v)
-            } else if let Some(v) = t
                 .get::<Value>("value")
                 .ok()
                 .filter(|v| !matches!(v, Value::Nil))
@@ -921,6 +915,40 @@ mod tests {
             .unwrap();
         assert!(verdict.is_rejected());
         assert_eq!(verdict.reason(), Some("blocked by dx"));
+    }
+
+    #[test]
+    fn test_verdict_modify_helper() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("verdict_modify_dx.lua"),
+            r#"
+            function on_plan_submit(payload)
+                return verdict.modify({ "A", "B" })
+            end
+            "#,
+        )
+        .unwrap();
+
+        let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+        engine.load_dir(dir.path()).unwrap();
+
+        let verdict = engine
+            .evaluate(
+                "on_plan_submit",
+                serde_json::json!({ "action": "submit_plan" }),
+            )
+            .unwrap();
+
+        match verdict {
+            Verdict::Modify(val) => {
+                let arr = val.as_array().unwrap();
+                assert_eq!(arr.len(), 2);
+                assert_eq!(arr[0].as_str().unwrap(), "A");
+                assert_eq!(arr[1].as_str().unwrap(), "B");
+            }
+            other => panic!("Expected Modify verdict, got {:?}", other),
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]

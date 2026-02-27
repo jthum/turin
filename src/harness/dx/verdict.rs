@@ -4,15 +4,15 @@ fn verdict_table(
     lua: &Lua,
     code: i64,
     reason: Option<String>,
-    patch: Option<Value>,
+    value: Option<Value>,
 ) -> LuaResult<Table> {
     let table = lua.create_table()?;
     table.set("code", code)?;
     if let Some(reason) = reason {
         table.set("reason", reason)?;
     }
-    if let Some(patch) = patch {
-        table.set("patch", patch)?;
+    if let Some(value) = value {
+        table.set("value", value)?;
     }
     Ok(table)
 }
@@ -50,9 +50,9 @@ pub fn register_verdict_globals(lua: &Lua) -> LuaResult<()> {
     )?;
 
     verdict.set(
-        "patch",
-        lua.create_function(|lua, patch: Value| {
-            Ok(Value::Table(verdict_table(lua, 4, None, Some(patch))?))
+        "modify",
+        lua.create_function(|lua, value: Value| {
+            Ok(Value::Table(verdict_table(lua, 4, None, Some(value))?))
         })?,
     )?;
 
