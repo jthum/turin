@@ -46,9 +46,10 @@ That suite copies library entries into temporary workspaces, runs Turin with moc
 
 Pattern:
 
-- repository-level markdown contracts such as `SOUL.md` and `AGENTS.md`
-- harness injects those contracts into the effective prompt
-- runtime writes prompt-contract snapshots for debugging and observability
+- repository-level markdown contracts such as `SOUL.md`, `PROFILE.md`, `AGENTS.md`, and `INBOX.md`
+- harness builds a working brief from those files every turn
+- planning/review prompts are routed to specialist peer agents
+- runtime writes inspectable artifacts and logs activity into the runtime DB
 
 ## Governed Peer Review
 

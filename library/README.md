@@ -19,3 +19,10 @@ Validation:
 ```bash
 cargo test --test example_harness_examples
 ```
+
+Current highlighted entries:
+
+- `library/workflows/openclaw_style_personal_assistant/` — workspace-contract personal assistant with planner/reviewer routing and durable artifacts
+- `library/blocks/governed_peer_review/` — temporary-grant peer review
+- `library/blocks/delegated_peer_capabilities/` — delegated-capability peer completion
+- `library/blocks/durable_journal/` — durable runtime DB journaling

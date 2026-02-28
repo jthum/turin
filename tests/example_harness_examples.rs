@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::tempdir;
+use turin::kernel::Kernel;
 use turin::kernel::config::{
     AgentConfig, GovernanceConfig, GovernanceGrantsConfig, GovernanceProfile,
 };
@@ -19,36 +20,193 @@ fn library_workflow_path(name: &str) -> PathBuf {
     repo_path(Path::new("library").join("workflows").join(name))
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn test_openclaw_style_personal_assistant_workflow() -> Result<()> {
+struct WorkflowFixture {
+    tmp: tempfile::TempDir,
+    kernel: Kernel,
+}
+
+async fn build_openclaw_fixture(
+    main_response: &str,
+    planner_response: &str,
+    reviewer_response: &str,
+) -> Result<WorkflowFixture> {
     let tmp = tempdir()?;
-    let harness_dir = tmp.path().join("harnesses");
-    fs::create_dir(&harness_dir)?;
+    let main_harness_dir = tmp.path().join("harnesses");
+    let planner_harness_dir = tmp.path().join("planner_harnesses");
+    let reviewer_harness_dir = tmp.path().join("reviewer_harnesses");
+    fs::create_dir(&main_harness_dir)?;
+    fs::create_dir(&planner_harness_dir)?;
+    fs::create_dir(&reviewer_harness_dir)?;
+
     copy_dir_contents(
         library_workflow_path("openclaw_style_personal_assistant").join("workspace"),
         tmp.path(),
     )?;
     copy_dir_contents(
         library_workflow_path("openclaw_style_personal_assistant").join("harness"),
-        &harness_dir,
+        &main_harness_dir,
+    )?;
+    copy_dir_contents(
+        library_workflow_path("openclaw_style_personal_assistant")
+            .join("agents")
+            .join("planner"),
+        &planner_harness_dir,
+    )?;
+    copy_dir_contents(
+        library_workflow_path("openclaw_style_personal_assistant")
+            .join("agents")
+            .join("reviewer"),
+        &reviewer_harness_dir,
     )?;
 
     let mut providers = HashMap::new();
-    providers.insert("mock_main".to_string(), mock_provider("OPENCLAW_OK"));
-    let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
+    providers.insert("mock_main".to_string(), mock_provider(main_response));
+    providers.insert("mock_planner".to_string(), mock_provider(planner_response));
+    providers.insert(
+        "mock_reviewer".to_string(),
+        mock_provider(reviewer_response),
+    );
+    let mut config = base_config(tmp.path(), &main_harness_dir, "mock_main", providers);
+    config.agents.insert(
+        "planner".to_string(),
+        AgentConfig {
+            id: "planner".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock_planner".to_string(),
+            system_prompt: "You are a planner.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: Some(planner_harness_dir.to_string_lossy().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+    config.agents.insert(
+        "reviewer".to_string(),
+        AgentConfig {
+            id: "reviewer".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock_reviewer".to_string(),
+            system_prompt: "You are a reviewer.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: Some(reviewer_harness_dir.to_string_lossy().to_string()),
+            idle_grace_secs: None,
+        },
+    );
 
-    let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
-    let prompt = "Review src/main.rs and propose a safe plan".to_string();
-    kernel.run(&mut session, Some(prompt.clone())).await?;
-    kernel.end_session(&mut session).await?;
+    let kernel = build_kernel(config).await?;
+    Ok(WorkflowFixture { tmp, kernel })
+}
 
-    let contract = fs::read_to_string(tmp.path().join(".turin/runtime/openclaw-contract.md"))?;
-    let last_prompt =
-        fs::read_to_string(tmp.path().join(".turin/runtime/openclaw-last-prompt.txt"))?;
-    assert!(contract.contains("You are Turin"));
-    assert!(contract.contains("reviewer"));
-    assert_eq!(last_prompt, prompt);
+#[tokio::test(flavor = "multi_thread")]
+async fn test_openclaw_style_personal_assistant_routes_review_prompts() -> Result<()> {
+    let mut fixture = build_openclaw_fixture("MAIN_OK", "PLAN_OK", "REVIEW_OK").await?;
+    let prompt = "Review src/main.rs for regressions and missing checks".to_string();
+
+    let mut session = fixture.kernel.create_session().await;
+    fixture
+        .kernel
+        .run(&mut session, Some(prompt.clone()))
+        .await?;
+    fixture.kernel.end_session(&mut session).await?;
+
+    let runtime_dir = fixture.tmp.path().join(".turin/runtime/personal-assistant");
+    let contract = fs::read_to_string(runtime_dir.join("contract.md"))?;
+    let brief = fs::read_to_string(runtime_dir.join("brief.md"))?;
+    let route = fs::read_to_string(runtime_dir.join("route.txt"))?;
+    let delegated_output = fs::read_to_string(runtime_dir.join("delegated-output.txt"))?;
+    let reviewer_prompt = fs::read_to_string(runtime_dir.join("reviewer-last-request.txt"))?;
+
+    assert!(contract.contains("# SOUL.md"));
+    assert!(contract.contains("# PROFILE.md"));
+    assert!(contract.contains("# AGENTS.md"));
+    assert!(contract.contains("# INBOX.md"));
+    assert!(brief.contains("Route: reviewer"));
+    assert_eq!(route, "reviewer");
+    assert_eq!(delegated_output, "REVIEW_OK");
+    assert!(reviewer_prompt.contains("User request"));
+
+    let store = fixture.kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT route, delegated_agent, delegated_output, prompt \
+             FROM personal_assistant_activity ORDER BY id DESC LIMIT 1",
+            (),
+        )
+        .await?;
+    let row = rows.next().await?.expect("expected activity row");
+    let route_value: String = row.get(0)?;
+    let delegated_agent: String = row.get(1)?;
+    let delegated_output_value: String = row.get(2)?;
+    let prompt_value: String = row.get(3)?;
+    assert_eq!(route_value, "reviewer");
+    assert_eq!(delegated_agent, "reviewer");
+    assert_eq!(delegated_output_value, "REVIEW_OK");
+    assert_eq!(prompt_value, prompt);
+    drop(rows);
+
+    let mut reviewer_rows = conn
+        .query(
+            "SELECT s.agent_id, m.role, m.content \
+             FROM sessions s \
+             JOIN messages m ON m.session_id = s.id \
+             WHERE s.agent_id = 'reviewer' \
+             ORDER BY m.id",
+            (),
+        )
+        .await?;
+    let mut saw_reviewer_output = false;
+    while let Some(row) = reviewer_rows.next().await? {
+        let agent_id: String = row.get(0)?;
+        let role: String = row.get(1)?;
+        let content: String = row.get(2)?;
+        if agent_id == "reviewer" && role == "assistant" && content.contains("REVIEW_OK") {
+            saw_reviewer_output = true;
+            break;
+        }
+    }
+    assert!(saw_reviewer_output, "expected reviewer assistant output");
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_openclaw_style_personal_assistant_routes_planning_prompts() -> Result<()> {
+    let mut fixture = build_openclaw_fixture("MAIN_OK", "PLAN_OK", "REVIEW_OK").await?;
+    let prompt = "Plan the next three steps for stabilizing the harness library".to_string();
+
+    let mut session = fixture.kernel.create_session().await;
+    fixture
+        .kernel
+        .run(&mut session, Some(prompt.clone()))
+        .await?;
+    fixture.kernel.end_session(&mut session).await?;
+
+    let runtime_dir = fixture.tmp.path().join(".turin/runtime/personal-assistant");
+    let route = fs::read_to_string(runtime_dir.join("route.txt"))?;
+    let delegated_output = fs::read_to_string(runtime_dir.join("delegated-output.txt"))?;
+    let planner_prompt = fs::read_to_string(runtime_dir.join("planner-last-request.txt"))?;
+
+    assert_eq!(route, "planner");
+    assert_eq!(delegated_output, "PLAN_OK");
+    assert!(planner_prompt.contains("User request"));
+
+    let store = fixture.kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT route, delegated_agent, delegated_output \
+             FROM personal_assistant_activity ORDER BY id DESC LIMIT 1",
+            (),
+        )
+        .await?;
+    let row = rows.next().await?.expect("expected activity row");
+    let route_value: String = row.get(0)?;
+    let delegated_agent: String = row.get(1)?;
+    let delegated_output_value: String = row.get(2)?;
+    assert_eq!(route_value, "planner");
+    assert_eq!(delegated_agent, "planner");
+    assert_eq!(delegated_output_value, "PLAN_OK");
     Ok(())
 }
 
