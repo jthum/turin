@@ -25,6 +25,9 @@ library/
 - `library/blocks/spec_writer/`
 - `library/blocks/test_gap_finder/`
 - `library/blocks/repo_librarian/`
+- `library/blocks/release_readiness_checker/`
+- `library/blocks/docs_maintainer/`
+- `library/blocks/changelog_writer/`
 - `library/blocks/governed_peer_review/`
 - `library/blocks/delegated_peer_capabilities/`
 - `library/blocks/durable_journal/`
@@ -35,6 +38,7 @@ library/
 - `library/workflows/full_coding_harness/`
 - `library/workflows/bug_triage_desk/`
 - `library/workflows/release_manager/`
+- `library/workflows/docs_team_assistant/`
 
 ## Validation
 
@@ -91,6 +95,17 @@ Pattern:
 - readiness reviewer specialist assesses blockers and shipping risk
 - changelog writer specialist drafts release notes
 - runtime artifacts and DB rows capture the release-prep flow
+
+## Docs Team Assistant
+
+`library/workflows/docs_team_assistant/`
+
+Pattern:
+
+- checked-in documentation context (`PUBLIC_SURFACE.md`, `DOCS_TARGETS.md`, `DRIFT_NOTES.md`, `STYLE_NOTES.md`)
+- docs reviewer specialist identifies drift and stale claims
+- draft writer specialist prepares update text
+- runtime artifacts and DB rows capture the docs-maintenance flow
 
 ## Governed Peer Review
 
@@ -150,6 +165,36 @@ Pattern:
 
 - checked-in repository contract (`SOUL.md`, `AGENTS.md`, `ARCHITECTURE.md`, `CONVENTIONS.md`)
 - shapes the active agent toward repository-aware routing and guidance
+- writes runtime artifacts and records requests in the runtime DB
+
+## Release Readiness Checker
+
+`library/blocks/release_readiness_checker/`
+
+Pattern:
+
+- checked-in readiness contract (`CHECKLIST.md`, `RISK_REGISTER.md`, `RELEASE_NOTES_CONTEXT.md`)
+- shapes the active agent toward blocker/risk-based release assessment
+- writes runtime artifacts and records requests in the runtime DB
+
+## Docs Maintainer
+
+`library/blocks/docs_maintainer/`
+
+Pattern:
+
+- checked-in docs-maintenance contract (`PUBLIC_SURFACE.md`, `DOCS_POLICY.md`, `DRIFT_SIGNALS.md`)
+- shapes the active agent toward documentation drift analysis
+- writes runtime artifacts and records requests in the runtime DB
+
+## Changelog Writer
+
+`library/blocks/changelog_writer/`
+
+Pattern:
+
+- checked-in changelog contract (`RELEASE_SCOPE.md`, `MERGED_CHANGES.md`, `WRITING_STYLE.md`)
+- shapes the active agent toward concise release-note drafting
 - writes runtime artifacts and records requests in the runtime DB
 
 ## Delegated Peer Capabilities

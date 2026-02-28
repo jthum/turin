@@ -320,6 +320,79 @@ async fn build_release_manager_fixture(
     Ok(WorkflowFixture { tmp, kernel })
 }
 
+async fn build_docs_team_fixture(
+    main_response: &str,
+    reviewer_response: &str,
+    draft_response: &str,
+) -> Result<WorkflowFixture> {
+    let tmp = tempdir()?;
+    let main_harness_dir = tmp.path().join("harnesses");
+    let reviewer_harness_dir = tmp.path().join("docs_reviewer_harnesses");
+    let draft_harness_dir = tmp.path().join("draft_writer_harnesses");
+    fs::create_dir(&main_harness_dir)?;
+    fs::create_dir(&reviewer_harness_dir)?;
+    fs::create_dir(&draft_harness_dir)?;
+
+    copy_dir_contents(
+        library_workflow_path("docs_team_assistant").join("workspace"),
+        tmp.path(),
+    )?;
+    copy_dir_contents(
+        library_workflow_path("docs_team_assistant").join("harness"),
+        &main_harness_dir,
+    )?;
+    copy_dir_contents(
+        library_workflow_path("docs_team_assistant")
+            .join("agents")
+            .join("docs_reviewer"),
+        &reviewer_harness_dir,
+    )?;
+    copy_dir_contents(
+        library_workflow_path("docs_team_assistant")
+            .join("agents")
+            .join("draft_writer"),
+        &draft_harness_dir,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider(main_response));
+    providers.insert(
+        "mock_reviewer".to_string(),
+        mock_provider(reviewer_response),
+    );
+    providers.insert("mock_draft".to_string(), mock_provider(draft_response));
+    let mut config = base_config(tmp.path(), &main_harness_dir, "mock_main", providers);
+    config.agents.insert(
+        "docs_reviewer".to_string(),
+        AgentConfig {
+            id: "docs_reviewer".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock_reviewer".to_string(),
+            system_prompt: "You are a docs reviewer.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: Some(reviewer_harness_dir.to_string_lossy().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+    config.agents.insert(
+        "draft_writer".to_string(),
+        AgentConfig {
+            id: "draft_writer".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock_draft".to_string(),
+            system_prompt: "You are a draft writer.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: Some(draft_harness_dir.to_string_lossy().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+
+    let kernel = build_kernel(config).await?;
+    Ok(WorkflowFixture { tmp, kernel })
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_openclaw_style_personal_assistant_routes_review_prompts() -> Result<()> {
     let mut fixture = build_openclaw_fixture("MAIN_OK", "PLAN_OK", "REVIEW_OK").await?;
@@ -579,6 +652,55 @@ async fn test_release_manager_workflow() -> Result<()> {
     assert_eq!(prompt_value, prompt);
     assert_eq!(readiness_value, "READY_OK");
     assert_eq!(changelog_value, "CHANGELOG_OK");
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_docs_team_assistant_workflow() -> Result<()> {
+    let mut fixture = build_docs_team_fixture("MAIN_OK", "DOCS_REVIEW_OK", "DOCS_DRAFT_OK").await?;
+    let prompt = "Update the docs to reflect the latest harness library additions".to_string();
+
+    let mut session = fixture.kernel.create_session().await;
+    fixture
+        .kernel
+        .run(&mut session, Some(prompt.clone()))
+        .await?;
+    fixture.kernel.end_session(&mut session).await?;
+
+    let runtime_dir = fixture.tmp.path().join(".turin/runtime/docs-team");
+    let context = fs::read_to_string(runtime_dir.join("context.md"))?;
+    let review = fs::read_to_string(runtime_dir.join("review.md"))?;
+    let draft = fs::read_to_string(runtime_dir.join("draft.md"))?;
+    let brief = fs::read_to_string(runtime_dir.join("brief.md"))?;
+    let reviewer_prompt = fs::read_to_string(runtime_dir.join("docs-reviewer-last-request.txt"))?;
+    let draft_prompt = fs::read_to_string(runtime_dir.join("draft-writer-last-request.txt"))?;
+
+    assert!(context.contains("# PUBLIC_SURFACE.md"));
+    assert!(context.contains("# DOCS_TARGETS.md"));
+    assert!(context.contains("# DRIFT_NOTES.md"));
+    assert!(context.contains("# STYLE_NOTES.md"));
+    assert_eq!(review, "DOCS_REVIEW_OK");
+    assert_eq!(draft, "DOCS_DRAFT_OK");
+    assert!(brief.contains("## Review Findings"));
+    assert!(brief.contains("## Draft Update"));
+    assert!(reviewer_prompt.contains("Docs task"));
+    assert!(draft_prompt.contains("Review findings"));
+
+    let store = fixture.kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT prompt, review, draft FROM docs_team_runs ORDER BY id DESC LIMIT 1",
+            (),
+        )
+        .await?;
+    let row = rows.next().await?.expect("expected docs team row");
+    let prompt_value: String = row.get(0)?;
+    let review_value: String = row.get(1)?;
+    let draft_value: String = row.get(2)?;
+    assert_eq!(prompt_value, prompt);
+    assert_eq!(review_value, "DOCS_REVIEW_OK");
+    assert_eq!(draft_value, "DOCS_DRAFT_OK");
     Ok(())
 }
 
@@ -929,6 +1051,145 @@ async fn test_repo_librarian_block() -> Result<()> {
         )
         .await?;
     let row = rows.next().await?.expect("expected repo librarian row");
+    let stored_prompt: String = row.get(0)?;
+    assert_eq!(stored_prompt, prompt);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_release_readiness_checker_block() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    fs::create_dir(&harness_dir)?;
+    copy_dir_contents(
+        library_block_path("release_readiness_checker").join("workspace"),
+        tmp.path(),
+    )?;
+    copy_dir_contents(
+        library_block_path("release_readiness_checker").join("harness"),
+        &harness_dir,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider("READY_REPLY"));
+    let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
+
+    let mut kernel = build_kernel(config).await?;
+    let mut session = kernel.create_session().await;
+    let prompt = "Assess whether the next release looks ready to ship".to_string();
+    kernel.run(&mut session, Some(prompt.clone())).await?;
+    kernel.end_session(&mut session).await?;
+
+    let runtime_dir = tmp.path().join(".turin/runtime/release-readiness");
+    let contract = fs::read_to_string(runtime_dir.join("contract.md"))?;
+    let last_request = fs::read_to_string(runtime_dir.join("last-request.txt"))?;
+    assert!(contract.contains("# CHECKLIST.md"));
+    assert!(contract.contains("# RISK_REGISTER.md"));
+    assert!(contract.contains("# RELEASE_NOTES_CONTEXT.md"));
+    assert_eq!(last_request, prompt);
+
+    let store = kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT prompt FROM release_readiness_runs ORDER BY id DESC LIMIT 1",
+            (),
+        )
+        .await?;
+    let row = rows.next().await?.expect("expected release readiness row");
+    let stored_prompt: String = row.get(0)?;
+    assert_eq!(stored_prompt, prompt);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_docs_maintainer_block() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    fs::create_dir(&harness_dir)?;
+    copy_dir_contents(
+        library_block_path("docs_maintainer").join("workspace"),
+        tmp.path(),
+    )?;
+    copy_dir_contents(
+        library_block_path("docs_maintainer").join("harness"),
+        &harness_dir,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider("DOCS_REPLY"));
+    let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
+
+    let mut kernel = build_kernel(config).await?;
+    let mut session = kernel.create_session().await;
+    let prompt =
+        "Identify the docs that need updating after the latest library changes".to_string();
+    kernel.run(&mut session, Some(prompt.clone())).await?;
+    kernel.end_session(&mut session).await?;
+
+    let runtime_dir = tmp.path().join(".turin/runtime/docs-maintainer");
+    let contract = fs::read_to_string(runtime_dir.join("contract.md"))?;
+    let last_request = fs::read_to_string(runtime_dir.join("last-request.txt"))?;
+    assert!(contract.contains("# PUBLIC_SURFACE.md"));
+    assert!(contract.contains("# DOCS_POLICY.md"));
+    assert!(contract.contains("# DRIFT_SIGNALS.md"));
+    assert_eq!(last_request, prompt);
+
+    let store = kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT prompt FROM docs_maintainer_runs ORDER BY id DESC LIMIT 1",
+            (),
+        )
+        .await?;
+    let row = rows.next().await?.expect("expected docs maintainer row");
+    let stored_prompt: String = row.get(0)?;
+    assert_eq!(stored_prompt, prompt);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_changelog_writer_block() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    fs::create_dir(&harness_dir)?;
+    copy_dir_contents(
+        library_block_path("changelog_writer").join("workspace"),
+        tmp.path(),
+    )?;
+    copy_dir_contents(
+        library_block_path("changelog_writer").join("harness"),
+        &harness_dir,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider("CHANGELOG_REPLY"));
+    let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
+
+    let mut kernel = build_kernel(config).await?;
+    let mut session = kernel.create_session().await;
+    let prompt = "Draft a concise changelog entry for the latest harness library work".to_string();
+    kernel.run(&mut session, Some(prompt.clone())).await?;
+    kernel.end_session(&mut session).await?;
+
+    let runtime_dir = tmp.path().join(".turin/runtime/changelog-writer");
+    let contract = fs::read_to_string(runtime_dir.join("contract.md"))?;
+    let last_request = fs::read_to_string(runtime_dir.join("last-request.txt"))?;
+    assert!(contract.contains("# RELEASE_SCOPE.md"));
+    assert!(contract.contains("# MERGED_CHANGES.md"));
+    assert!(contract.contains("# WRITING_STYLE.md"));
+    assert_eq!(last_request, prompt);
+
+    let store = kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT prompt FROM changelog_writer_runs ORDER BY id DESC LIMIT 1",
+            (),
+        )
+        .await?;
+    let row = rows.next().await?.expect("expected changelog writer row");
     let stored_prompt: String = row.get(0)?;
     assert_eq!(stored_prompt, prompt);
     Ok(())

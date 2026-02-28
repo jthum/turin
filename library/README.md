@@ -26,11 +26,15 @@ Current highlighted entries:
 - `library/workflows/full_coding_harness/` — spec/task-driven coding workflow with planner + reviewer specialists
 - `library/workflows/bug_triage_desk/` — issue-intake workflow with triager + responder specialists
 - `library/workflows/release_manager/` — release-readiness workflow with review + changelog drafting
+- `library/workflows/docs_team_assistant/` — docs-maintenance workflow with review + draft writing
 - `library/blocks/code_reviewer/` — focused review contract for correctness/regression review
 - `library/blocks/task_planner/` — focused planning contract for sequenced task breakdowns
 - `library/blocks/spec_writer/` — focused contract for turning rough ideas into executable specs
 - `library/blocks/test_gap_finder/` — focused contract for identifying likely missing tests
 - `library/blocks/repo_librarian/` — focused contract for repository-aware routing and guidance
+- `library/blocks/release_readiness_checker/` — focused contract for blocker/risk-based release assessment
+- `library/blocks/docs_maintainer/` — focused contract for documentation drift analysis
+- `library/blocks/changelog_writer/` — focused contract for concise release-note drafting
 - `library/blocks/governed_peer_review/` — temporary-grant peer review
 - `library/blocks/delegated_peer_capabilities/` — delegated-capability peer completion
 - `library/blocks/durable_journal/` — durable runtime DB journaling
