@@ -27,6 +27,7 @@ library/
 ### Workflows
 
 - `library/workflows/openclaw_style_personal_assistant/`
+- `library/workflows/full_coding_harness/`
 
 ## Validation
 
@@ -50,6 +51,17 @@ Pattern:
 - harness builds a working brief from those files every turn
 - planning/review prompts are routed to specialist peer agents
 - runtime writes inspectable artifacts and logs activity into the runtime DB
+
+## Full Coding Harness
+
+`library/workflows/full_coding_harness/`
+
+Pattern:
+
+- checked-in coding context (`SPEC.md`, `TASKS.md`, `CONSTRAINTS.md`, `NOTES.md`)
+- planner specialist produces an execution plan
+- reviewer specialist critiques that plan for regressions and missing tests
+- runtime artifacts and DB rows capture the run for later inspection
 
 ## Governed Peer Review
 

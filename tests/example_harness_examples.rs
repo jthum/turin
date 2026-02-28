@@ -98,6 +98,79 @@ async fn build_openclaw_fixture(
     Ok(WorkflowFixture { tmp, kernel })
 }
 
+async fn build_full_coding_harness_fixture(
+    main_response: &str,
+    planner_response: &str,
+    reviewer_response: &str,
+) -> Result<WorkflowFixture> {
+    let tmp = tempdir()?;
+    let main_harness_dir = tmp.path().join("harnesses");
+    let planner_harness_dir = tmp.path().join("planner_harnesses");
+    let reviewer_harness_dir = tmp.path().join("reviewer_harnesses");
+    fs::create_dir(&main_harness_dir)?;
+    fs::create_dir(&planner_harness_dir)?;
+    fs::create_dir(&reviewer_harness_dir)?;
+
+    copy_dir_contents(
+        library_workflow_path("full_coding_harness").join("workspace"),
+        tmp.path(),
+    )?;
+    copy_dir_contents(
+        library_workflow_path("full_coding_harness").join("harness"),
+        &main_harness_dir,
+    )?;
+    copy_dir_contents(
+        library_workflow_path("full_coding_harness")
+            .join("agents")
+            .join("planner"),
+        &planner_harness_dir,
+    )?;
+    copy_dir_contents(
+        library_workflow_path("full_coding_harness")
+            .join("agents")
+            .join("reviewer"),
+        &reviewer_harness_dir,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider(main_response));
+    providers.insert("mock_planner".to_string(), mock_provider(planner_response));
+    providers.insert(
+        "mock_reviewer".to_string(),
+        mock_provider(reviewer_response),
+    );
+    let mut config = base_config(tmp.path(), &main_harness_dir, "mock_main", providers);
+    config.agents.insert(
+        "planner".to_string(),
+        AgentConfig {
+            id: "planner".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock_planner".to_string(),
+            system_prompt: "You are a planner.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: Some(planner_harness_dir.to_string_lossy().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+    config.agents.insert(
+        "reviewer".to_string(),
+        AgentConfig {
+            id: "reviewer".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock_reviewer".to_string(),
+            system_prompt: "You are a reviewer.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: Some(reviewer_harness_dir.to_string_lossy().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+
+    let kernel = build_kernel(config).await?;
+    Ok(WorkflowFixture { tmp, kernel })
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_openclaw_style_personal_assistant_routes_review_prompts() -> Result<()> {
     let mut fixture = build_openclaw_fixture("MAIN_OK", "PLAN_OK", "REVIEW_OK").await?;
@@ -207,6 +280,55 @@ async fn test_openclaw_style_personal_assistant_routes_planning_prompts() -> Res
     assert_eq!(route_value, "planner");
     assert_eq!(delegated_agent, "planner");
     assert_eq!(delegated_output_value, "PLAN_OK");
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_full_coding_harness_workflow() -> Result<()> {
+    let mut fixture = build_full_coding_harness_fixture("MAIN_OK", "PLAN_OK", "REVIEW_OK").await?;
+    let prompt = "Implement a practical coding workflow for Turin's harness library".to_string();
+
+    let mut session = fixture.kernel.create_session().await;
+    fixture
+        .kernel
+        .run(&mut session, Some(prompt.clone()))
+        .await?;
+    fixture.kernel.end_session(&mut session).await?;
+
+    let runtime_dir = fixture.tmp.path().join(".turin/runtime/coding-harness");
+    let context = fs::read_to_string(runtime_dir.join("context.md"))?;
+    let plan = fs::read_to_string(runtime_dir.join("plan.md"))?;
+    let review = fs::read_to_string(runtime_dir.join("review.md"))?;
+    let brief = fs::read_to_string(runtime_dir.join("brief.md"))?;
+    let planner_prompt = fs::read_to_string(runtime_dir.join("planner-last-request.txt"))?;
+    let reviewer_prompt = fs::read_to_string(runtime_dir.join("reviewer-last-request.txt"))?;
+
+    assert!(context.contains("# SPEC.md"));
+    assert!(context.contains("# TASKS.md"));
+    assert!(context.contains("# CONSTRAINTS.md"));
+    assert!(context.contains("# NOTES.md"));
+    assert_eq!(plan, "PLAN_OK");
+    assert_eq!(review, "REVIEW_OK");
+    assert!(brief.contains("## Plan"));
+    assert!(brief.contains("## Review"));
+    assert!(planner_prompt.contains("Workspace context"));
+    assert!(reviewer_prompt.contains("Proposed plan"));
+
+    let store = fixture.kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT prompt, plan, review FROM coding_harness_runs ORDER BY id DESC LIMIT 1",
+            (),
+        )
+        .await?;
+    let row = rows.next().await?.expect("expected coding harness run");
+    let prompt_value: String = row.get(0)?;
+    let plan_value: String = row.get(1)?;
+    let review_value: String = row.get(2)?;
+    assert_eq!(prompt_value, prompt);
+    assert_eq!(plan_value, "PLAN_OK");
+    assert_eq!(review_value, "REVIEW_OK");
     Ok(())
 }
 

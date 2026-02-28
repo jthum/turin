@@ -308,6 +308,7 @@ Turin now ships a Harness Library under `library/`.
 Current entries include:
 
 - `library/workflows/openclaw_style_personal_assistant/` — markdown-driven personal assistant with planner/reviewer routing and durable artifacts
+- `library/workflows/full_coding_harness/` — spec/task-driven coding workflow with planner + reviewer specialists
 - `library/blocks/governed_peer_review/` — peer-agent review under temporary grants
 - `library/blocks/delegated_peer_capabilities/` — peer completion with an explicit delegated capability ceiling
 - `library/blocks/durable_journal/` — durable note/journal pattern over `runtime.db`
