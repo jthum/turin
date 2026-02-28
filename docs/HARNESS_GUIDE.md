@@ -156,6 +156,17 @@ function on_turn_prepare(ctx)
 end
 ```
 
+Canonical equivalent:
+
+```lua
+function on_turn_prepare(ctx)
+  local summary, err = runtime.agent.complete("reviewer", "Summarize the diff in 3 bullets")
+  if not summary then error(err) end
+  session.set("review_summary", summary)
+  return ALLOW
+end
+```
+
 ### Grant wrapper
 
 ```lua

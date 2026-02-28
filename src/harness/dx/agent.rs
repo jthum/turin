@@ -8,6 +8,7 @@ fn create_agent_proxy(
     submit_fn: Function,
     await_fn: Function,
     status_fn: Function,
+    complete_fn: Function,
 ) -> LuaResult<Table> {
     let proxy = lua.create_table()?;
 
@@ -53,65 +54,20 @@ fn create_agent_proxy(
     }
 
     {
-        let submit_fn = submit_fn.clone();
-        let await_fn = await_fn.clone();
+        let complete_fn = complete_fn.clone();
         let agent_id = agent_id.clone();
         proxy.set(
             "complete",
-            lua.create_function(move |lua, (_self, prompt, opts): (Table, String, Option<Table>)| {
-                let task = lua.create_table()?;
-                task.set("prompt", prompt)?;
-                if let Some(opts_tbl) = opts.as_ref()
-                    && let Ok(title) = opts_tbl.get::<String>("title")
-                {
-                    task.set("title", title)?;
-                }
-
-                let request_id_value = call_and_raise_on_err(
-                    lua,
-                    &submit_fn,
-                    (agent_id.clone(), Value::Table(task), opts.clone()),
-                    "runtime.agent.submit",
-                )?;
-                let request_id = match request_id_value {
-                    Value::String(s) => s.to_str()?.to_string(),
-                    other => {
-                        return Err(mlua::Error::runtime(format!(
-                            "[runtime.agent.complete] submit returned non-string request id: {:?}",
-                            other
-                        )))
-                    }
-                };
-
-                let awaited = call_and_raise_on_err(
-                    lua,
-                    &await_fn,
-                    (request_id, opts),
-                    "runtime.agent.await",
-                )?;
-                let result = match awaited {
-                    Value::Table(t) => t,
-                    other => {
-                        return Err(mlua::Error::runtime(format!(
-                            "[runtime.agent.complete] await returned non-table result: {:?}",
-                            other
-                        )))
-                    }
-                };
-
-                if let Some(err) = result.get::<Option<String>>("error")? {
-                    return Err(mlua::Error::runtime(format!(
-                        "[runtime.agent.complete] {}",
-                        err
-                    )));
-                }
-
-                if let Some(output) = result.get::<Option<String>>("output")? {
-                    Ok(Value::String(lua.create_string(&output)?))
-                } else {
-                    Ok(Value::String(lua.create_string("")?))
-                }
-            })?,
+            lua.create_function(
+                move |lua, (_self, prompt, opts): (Table, String, Option<Table>)| {
+                    call_and_raise_on_err(
+                        lua,
+                        &complete_fn,
+                        (agent_id.clone(), prompt, opts),
+                        "runtime.agent.complete",
+                    )
+                },
+            )?,
         )?;
     }
 
@@ -126,6 +82,7 @@ pub fn register_agent_dx(lua: &Lua) -> LuaResult<()> {
     let submit_fn: Function = runtime_agent.get("submit")?;
     let await_fn: Function = runtime_agent.get("await")?;
     let status_fn: Function = runtime_agent.get("get_status")?;
+    let complete_fn: Function = runtime_agent.get("complete")?;
 
     let mt = lua.create_table()?;
     mt.set(
@@ -137,6 +94,7 @@ pub fn register_agent_dx(lua: &Lua) -> LuaResult<()> {
                 submit_fn.clone(),
                 await_fn.clone(),
                 status_fn.clone(),
+                complete_fn.clone(),
             )
         })?,
     )?;

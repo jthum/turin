@@ -24,4 +24,6 @@ Use this pattern when:
 
 - requests a short-lived grant for peer-agent work
 - sends the latest user prompt to the reviewer agent
+- writes `.turin/runtime/peer-review.txt` with the reviewer output
+- writes `.turin/runtime/peer-review-input.txt` with the delegated prompt
 - injects the reviewer output back into the main agent's effective system prompt

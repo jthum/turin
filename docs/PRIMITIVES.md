@@ -138,7 +138,7 @@ Notes:
 
 Notes:
 
-- `:complete(...)` is a convenience wrapper over submit + await
+- `:complete(...)` delegates to the canonical `runtime.agent.complete(...)` primitive
 - peer-agent governance, child-agent allowlists, delegated capability ceilings, and active grant ceilings still apply
 
 ### DX `runtime.governance.grant(...)`
@@ -392,6 +392,7 @@ Peer-agent orchestration API.
 - `runtime.agent.get_status(agent_id) -> status|nil, err?`
 - `runtime.agent.submit(agent_id, task, opts?) -> task_id|nil, err?`
 - `runtime.agent.await(task_id, opts?) -> result|nil, err?`
+- `runtime.agent.complete(agent_id, prompt, opts?) -> output|nil, err?`
 
 `task` can be:
 
@@ -413,6 +414,19 @@ Peer-agent orchestration API.
 
 ```lua
 { timeout_ms = 30000 }
+```
+
+`opts` for `complete`:
+
+```lua
+{
+  title = "peer review",
+  timeout_ms = 30000,
+  capabilities = {
+    ["runtime.db.query"] = true,
+    ["runtime.db.exec"] = false,
+  }
+}
 ```
 
 Governance integration:

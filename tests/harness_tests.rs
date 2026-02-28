@@ -10,7 +10,9 @@ use turin::inference::provider::{
 };
 use turin::kernel::Kernel;
 use turin::kernel::config::{
-    AgentConfig, EmbeddingConfig, HarnessConfig, PersistenceConfig, ProviderConfig, TurinConfig,
+    AgentConfig, AgentMode, EmbeddingConfig, GovernanceConfig, GovernanceGrantsConfig,
+    GovernanceProfile, HarnessConfig, KernelConfig, PersistenceConfig, ProviderConfig,
+    TurinConfig,
 };
 use turin::kernel::identity::ContextSelector;
 
@@ -2878,6 +2880,139 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
         )
         .await?;
     kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_runtime_agent_complete.db");
+    let orchestrator_harness_dir = tmp.path().join("harnesses_orchestrator");
+    let worker_harness_dir = tmp.path().join("harnesses_worker");
+    std::fs::create_dir(&orchestrator_harness_dir)?;
+    std::fs::create_dir(&worker_harness_dir)?;
+
+    let orchestrator_harness = r#"
+        function on_turn_prepare(ctx)
+            local review = runtime.governance.grant({
+                ttl_ms = 5000,
+                capabilities = {
+                    ["runtime.agent.submit"] = true,
+                    ["runtime.agent.await"] = true,
+                    ["runtime.agent.status"] = true,
+                }
+            }, function()
+                local out, err = runtime.agent.complete("worker", "say hello", { timeout_ms = 5000, title = "hello" })
+                if out == nil then error("runtime.agent.complete failed: " .. tostring(err)) end
+                return out
+            end)
+
+            if review ~= "worker-ok" then
+                error("runtime.agent.complete output mismatch: " .. tostring(review))
+            end
+
+            local ok, err = fs.write(".turin/runtime/peer-complete.txt", review)
+            if not ok then error("fs.write after runtime.agent.complete failed: " .. tostring(err)) end
+            session.set("peer_complete_marker", "done")
+            return ALLOW
+        end
+    "#;
+    std::fs::write(
+        orchestrator_harness_dir.join("orchestrator.lua"),
+        orchestrator_harness,
+    )?;
+    std::fs::write(worker_harness_dir.join("worker.lua"), "-- worker harness\n")?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("worker-ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut agents = std::collections::HashMap::new();
+    agents.insert(
+        "worker".to_string(),
+        AgentConfig {
+            id: "worker".to_string(),
+            system_prompt: "worker".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness_dir: Some(worker_harness_dir.to_string_lossy().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+
+    let cfg = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            system_prompt: "orchestrator".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness_dir: None,
+            idle_grace_secs: None,
+        },
+        agents,
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_string_lossy().to_string(),
+            max_turns: 4,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_string_lossy().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: orchestrator_harness_dir.to_string_lossy().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: GovernanceConfig {
+            profile: GovernanceProfile::Balanced,
+            enforcement_enabled: true,
+            grants: GovernanceGrantsConfig {
+                enabled: true,
+                max_ttl_ms: Some(60_000),
+                require_audit_reason: false,
+            },
+            ..GovernanceConfig::default()
+        },
+    };
+
+    let mut kernel = Kernel::builder(cfg).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise runtime agent complete".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    let artifact = tmp
+        .path()
+        .join(".turin")
+        .join("runtime")
+        .join("peer-complete.txt");
+    assert!(
+        artifact.exists(),
+        "expected post-complete artifact to exist"
+    );
+    assert_eq!(std::fs::read_to_string(&artifact)?, "worker-ok");
 
     Ok(())
 }

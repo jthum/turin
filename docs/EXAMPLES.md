@@ -58,7 +58,7 @@ Pattern:
 
 - main agent delegates to a reviewer peer agent
 - delegation runs under a temporary grant
-- the reviewer output is folded back into the main agent's prompt shaping
+- the reviewer output is written to runtime artifacts and folded back into prompt shaping
 
 ## Durable Journal
 

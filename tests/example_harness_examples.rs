@@ -100,6 +100,11 @@ async fn test_governed_peer_review_example() -> Result<()> {
     kernel.run(&mut session, Some(prompt.clone())).await?;
     kernel.end_session(&mut session).await?;
 
+    let review_artifact = tmp.path().join(".turin/runtime/peer-review.txt");
+    let input_artifact = tmp.path().join(".turin/runtime/peer-review-input.txt");
+    assert_eq!(fs::read_to_string(review_artifact)?, "REVIEW_OK");
+    assert_eq!(fs::read_to_string(input_artifact)?, prompt);
+
     let store = kernel.store_manager().get_default().await?;
     let conn = store.get_connection().await?;
     let mut rows = conn

@@ -17,6 +17,16 @@ function on_turn_prepare(ctx)
     error("peer review returned empty output")
   end
 
+  local ok, err = fs.write(".turin/runtime/peer-review.txt", review)
+  if not ok then
+    error("failed to write peer review artifact: " .. tostring(err))
+  end
+
+  ok, err = fs.write(".turin/runtime/peer-review-input.txt", prompt)
+  if not ok then
+    error("failed to write peer review input artifact: " .. tostring(err))
+  end
+
   ctx.system_prompt = table.concat({
     ctx.system_prompt or "",
     "",

@@ -31,6 +31,14 @@ fn parse_submit_task(task_val: Value) -> LuaResult<QueuedTask> {
     }
 }
 
+fn title_from_opts(opts: Option<&Table>) -> Option<String> {
+    opts.and_then(|t| t.get::<String>("title").ok())
+}
+
+fn timeout_ms_from_opts(opts: Option<&Table>) -> Option<u64> {
+    opts.and_then(|t| t.get::<u64>("timeout_ms").ok())
+}
+
 pub fn register_runtime_agent_namespace(
     lua: &Lua,
     runtime_table: &Table,
@@ -149,6 +157,67 @@ pub fn register_runtime_agent_namespace(
                     Err(err) => nil_err(lua, &err),
                 }
             })?,
+        )?;
+    }
+    {
+        let manager = app_data.agent_manager.clone();
+        let app_data_snapshot = app_data.clone();
+        runtime_agent.set(
+            "complete",
+            lua.create_function(
+                move |lua, (agent_id, prompt, opts): (String, String, Option<Table>)| {
+                    if let Err(err) =
+                        require_governance_capability(&app_data_snapshot, "runtime.agent.submit")
+                    {
+                        return nil_err(lua, &err);
+                    }
+                    if let Err(err) =
+                        require_governance_capability(&app_data_snapshot, "runtime.agent.await")
+                    {
+                        return nil_err(lua, &err);
+                    }
+                    if let Err(err) = require_child_agent_governance(&app_data_snapshot, &agent_id)
+                    {
+                        return nil_err(lua, &err);
+                    }
+                    let snapshot = runtime_policy_snapshot(&app_data_snapshot)
+                        .map_err(mlua::Error::runtime)?;
+                    if !policy_bool(&snapshot, "spawn.enabled", true) {
+                        return nil_err(lua, "Policy denial: spawn.enabled=false");
+                    }
+
+                    let mut task = QueuedTask::ad_hoc(prompt);
+                    task.title = title_from_opts(opts.as_ref());
+                    let timeout_ms = timeout_ms_from_opts(opts.as_ref());
+                    let delegated_capabilities = parse_delegated_capabilities(
+                        &app_data_snapshot,
+                        opts.as_ref(),
+                        "capabilities",
+                        "runtime.agent.complete",
+                    )?;
+                    let delegated_capabilities = apply_active_grant_ceiling_to_peer_delegation(
+                        &app_data_snapshot,
+                        delegated_capabilities,
+                        "runtime.agent.complete",
+                    )?;
+
+                    let manager = manager.clone();
+                    let result = bridge_async_display_err(async move {
+                        let request_id = manager
+                            .submit(&agent_id, task, delegated_capabilities)
+                            .await?;
+                        let result = manager.await_result(&request_id, timeout_ms).await?;
+                        if let Some(err) = result.error {
+                            anyhow::bail!(err);
+                        }
+                        Ok(result.output.unwrap_or_default())
+                    });
+                    match result {
+                        Ok(output) => string_ok(lua, &output),
+                        Err(err) => nil_err(lua, &err),
+                    }
+                },
+            )?,
         )?;
     }
     runtime_table.set("agent", runtime_agent)?;
