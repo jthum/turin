@@ -619,15 +619,14 @@ async fn test_agent_complete_applies_delegated_capability_ceiling() -> Result<()
 
     let orchestrator_harness = r#"
         function on_turn_prepare(ctx)
-            local out, err = agent.complete("delegated worker run", {
-                agent_id = "worker",
+            local out, err = runtime.agent.complete("worker", "delegated worker run", {
                 timeout_ms = 5000,
                 capabilities = {
                     ["runtime.db.query"] = true
                 }
             })
-            if out == nil then error("agent.complete failed: " .. tostring(err)) end
-            if out ~= "worker-ok" then error("agent.complete output mismatch: " .. tostring(out)) end
+            if out == nil then error("runtime.agent.complete failed: " .. tostring(err)) end
+            if out ~= "worker-ok" then error("runtime.agent.complete output mismatch: " .. tostring(out)) end
             return ALLOW
         end
     "#;
@@ -638,19 +637,33 @@ async fn test_agent_complete_applies_delegated_capability_ceiling() -> Result<()
 
     let worker_harness = r#"
         function on_turn_prepare(ctx)
-            local dec, de = runtime.governance.check("runtime.policy.set")
-            if dec == nil then error("worker governance.check failed: " .. tostring(de)) end
-            if dec.subject_agent_id ~= "worker" then error("worker subject_agent_id mismatch") end
-            if dec.allowed then
-                error("delegated worker should have runtime.policy.set denied")
+            local query_dec, qe = runtime.governance.check("runtime.db.query")
+            if query_dec == nil then error("worker runtime.db.query check failed: " .. tostring(qe)) end
+            if query_dec.subject_agent_id ~= "worker" then error("worker subject_agent_id mismatch") end
+            if not query_dec.allowed then
+                error("delegated worker should have runtime.db.query allowed")
             end
 
-            local ok, err = runtime.policy.set("peer.alias.delegation.test", true)
-            if ok ~= false or err == nil then
-                error("worker runtime.policy.set should be denied by delegated ceiling")
+            local rows, qerr = runtime.db.query("SELECT 42 AS n")
+            if rows == nil then
+                error("worker runtime.db.query should be allowed by delegated ceiling: " .. tostring(qerr))
+            end
+            if #rows < 1 or rows[1].n ~= 42 then
+                error("worker runtime.db.query returned unexpected rows")
+            end
+
+            local exec_dec, ede = runtime.governance.check("runtime.db.exec")
+            if exec_dec == nil then error("worker runtime.db.exec check failed: " .. tostring(ede)) end
+            if exec_dec.allowed then
+                error("delegated worker should have runtime.db.exec denied")
+            end
+
+            local changed, err = runtime.db.exec("CREATE TABLE IF NOT EXISTS peer_forbidden (id INTEGER)")
+            if changed ~= nil or err == nil then
+                error("worker runtime.db.exec should be denied by delegated ceiling")
             end
             if string.find(tostring(err), "delegated capabilities", 1, true) == nil then
-                error("worker denial should mention delegated capabilities")
+                error("worker runtime.db.exec denial should mention delegated capabilities")
             end
 
             return ALLOW

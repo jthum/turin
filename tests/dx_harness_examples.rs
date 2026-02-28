@@ -427,3 +427,67 @@ async fn test_dx_fixture_peer_agent_denial() -> Result<()> {
     kernel.end_session(&mut session).await?;
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_dx_fixture_peer_complete_delegated_caps() -> Result<()> {
+    let tmp = tempdir()?;
+    let orchestrator_harness_dir = tmp.path().join("harnesses");
+    let reviewer_harness_dir = tmp.path().join("reviewer_harnesses");
+    fs::create_dir(&orchestrator_harness_dir)?;
+    fs::create_dir(&reviewer_harness_dir)?;
+    copy_fixture(
+        "peer_complete_delegated_caps.lua",
+        orchestrator_harness_dir.join("peer_complete_delegated_caps.lua"),
+    )?;
+    copy_fixture(
+        "peer_complete_delegated_caps_worker.lua",
+        reviewer_harness_dir.join("peer_complete_delegated_caps_worker.lua"),
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider("MAIN_OK"));
+    providers.insert("mock_review".to_string(), mock_provider("REVIEW_QUERY_OK"));
+    let mut config = base_config(
+        tmp.path(),
+        &orchestrator_harness_dir,
+        "mock_main",
+        providers,
+    );
+    config.governance = GovernanceConfig {
+        profile: GovernanceProfile::Balanced,
+        enforcement_enabled: true,
+        agents: HashMap::from([(
+            "default".to_string(),
+            turin::kernel::config::GovernanceAgentCapabilitiesConfig {
+                capability_profile: None,
+                max_capabilities: HashMap::new(),
+                allowed_child_agents: vec!["reviewer".to_string()],
+            },
+        )]),
+        ..GovernanceConfig::default()
+    };
+    config.agents.insert(
+        "reviewer".to_string(),
+        AgentConfig {
+            id: "reviewer".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock_review".to_string(),
+            system_prompt: "You are a reviewer.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: Some(reviewer_harness_dir.to_string_lossy().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+
+    let mut kernel = build_kernel(config).await?;
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("Exercise delegated caps via runtime.agent(...):complete".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
