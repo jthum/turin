@@ -11,8 +11,7 @@ use turin::inference::provider::{
 use turin::kernel::Kernel;
 use turin::kernel::config::{
     AgentConfig, AgentMode, EmbeddingConfig, GovernanceConfig, GovernanceGrantsConfig,
-    GovernanceProfile, HarnessConfig, KernelConfig, PersistenceConfig, ProviderConfig,
-    TurinConfig,
+    GovernanceProfile, HarnessConfig, KernelConfig, PersistenceConfig, ProviderConfig, TurinConfig,
 };
 use turin::kernel::identity::ContextSelector;
 
@@ -2914,7 +2913,20 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
 
             local ok, err = fs.write(".turin/runtime/peer-complete.txt", review)
             if not ok then error("fs.write after runtime.agent.complete failed: " .. tostring(err)) end
-            session.set("peer_complete_marker", "done")
+
+            local changed, derr = runtime.db.exec([[
+                CREATE TABLE IF NOT EXISTS peer_complete_probe (
+                    id INTEGER PRIMARY KEY,
+                    review TEXT NOT NULL
+                )
+            ]])
+            if changed == nil then error("runtime.db.exec create after runtime.agent.complete failed: " .. tostring(derr)) end
+
+            changed, derr = runtime.db.exec(
+                "INSERT INTO peer_complete_probe(review) VALUES (?)",
+                { review }
+            )
+            if changed == nil then error("runtime.db.exec insert after runtime.agent.complete failed: " .. tostring(derr)) end
             return ALLOW
         end
     "#;
@@ -3013,6 +3025,21 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
         "expected post-complete artifact to exist"
     );
     assert_eq!(std::fs::read_to_string(&artifact)?, "worker-ok");
+
+    let store = kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT review FROM peer_complete_probe ORDER BY id DESC LIMIT 1",
+            (),
+        )
+        .await?;
+    let row = rows
+        .next()
+        .await?
+        .expect("expected peer_complete_probe row");
+    let stored_review: String = row.get(0)?;
+    assert_eq!(stored_review, "worker-ok");
 
     Ok(())
 }
