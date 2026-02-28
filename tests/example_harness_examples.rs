@@ -578,6 +578,96 @@ async fn test_durable_journal_example() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_code_reviewer_block() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    fs::create_dir(&harness_dir)?;
+    copy_dir_contents(
+        library_block_path("code_reviewer").join("workspace"),
+        tmp.path(),
+    )?;
+    copy_dir_contents(
+        library_block_path("code_reviewer").join("harness"),
+        &harness_dir,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider("REVIEW_REPLY"));
+    let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
+
+    let mut kernel = build_kernel(config).await?;
+    let mut session = kernel.create_session().await;
+    let prompt = "Review the patch for risky assumptions in the provider layer".to_string();
+    kernel.run(&mut session, Some(prompt.clone())).await?;
+    kernel.end_session(&mut session).await?;
+
+    let runtime_dir = tmp.path().join(".turin/runtime/code-review");
+    let context = fs::read_to_string(runtime_dir.join("context.md"))?;
+    let last_request = fs::read_to_string(runtime_dir.join("last-request.txt"))?;
+    assert!(context.contains("# REVIEW_STYLE.md"));
+    assert!(context.contains("# RISK_AREAS.md"));
+    assert_eq!(last_request, prompt);
+
+    let store = kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT prompt FROM code_review_runs ORDER BY id DESC LIMIT 1",
+            (),
+        )
+        .await?;
+    let row = rows.next().await?.expect("expected code review row");
+    let stored_prompt: String = row.get(0)?;
+    assert_eq!(stored_prompt, prompt);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_task_planner_block() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    fs::create_dir(&harness_dir)?;
+    copy_dir_contents(
+        library_block_path("task_planner").join("workspace"),
+        tmp.path(),
+    )?;
+    copy_dir_contents(
+        library_block_path("task_planner").join("harness"),
+        &harness_dir,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider("PLAN_REPLY"));
+    let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
+
+    let mut kernel = build_kernel(config).await?;
+    let mut session = kernel.create_session().await;
+    let prompt = "Break down the next phase of the harness library work".to_string();
+    kernel.run(&mut session, Some(prompt.clone())).await?;
+    kernel.end_session(&mut session).await?;
+
+    let runtime_dir = tmp.path().join(".turin/runtime/task-planner");
+    let context = fs::read_to_string(runtime_dir.join("context.md"))?;
+    let last_request = fs::read_to_string(runtime_dir.join("last-request.txt"))?;
+    assert!(context.contains("# PLANNING_STYLE.md"));
+    assert!(context.contains("# DELIVERY_CONSTRAINTS.md"));
+    assert_eq!(last_request, prompt);
+
+    let store = kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT prompt FROM task_planner_runs ORDER BY id DESC LIMIT 1",
+            (),
+        )
+        .await?;
+    let row = rows.next().await?.expect("expected task planner row");
+    let stored_prompt: String = row.get(0)?;
+    assert_eq!(stored_prompt, prompt);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_delegated_peer_capabilities_example() -> Result<()> {
     let tmp = tempdir()?;
     let main_harness_dir = tmp.path().join("main_harnesses");

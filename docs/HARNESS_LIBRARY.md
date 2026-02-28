@@ -20,6 +20,8 @@ library/
 
 ### Blocks
 
+- `library/blocks/code_reviewer/`
+- `library/blocks/task_planner/`
 - `library/blocks/governed_peer_review/`
 - `library/blocks/delegated_peer_capabilities/`
 - `library/blocks/durable_journal/`
@@ -84,6 +86,26 @@ Pattern:
 - main agent delegates to a reviewer peer agent
 - delegation runs under a temporary grant
 - reviewer output is written to runtime artifacts and folded back into prompt shaping
+
+## Code Reviewer
+
+`library/blocks/code_reviewer/`
+
+Pattern:
+
+- checked-in review contract (`REVIEW_STYLE.md`, `RISK_AREAS.md`)
+- shapes the active agent toward regression-oriented review
+- writes runtime artifacts and records review requests in the runtime DB
+
+## Task Planner
+
+`library/blocks/task_planner/`
+
+Pattern:
+
+- checked-in planning contract (`PLANNING_STYLE.md`, `DELIVERY_CONSTRAINTS.md`)
+- shapes the active agent toward sequenced task planning
+- writes runtime artifacts and records planning requests in the runtime DB
 
 ## Delegated Peer Capabilities
 
