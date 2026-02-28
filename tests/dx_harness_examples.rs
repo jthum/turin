@@ -3,97 +3,24 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::tempdir;
-use turin::kernel::Kernel;
 use turin::kernel::config::{
-    AgentConfig, EmbeddingConfig, GovernanceConfig, GovernanceGrantsConfig, GovernanceProfile,
-    HarnessConfig, KernelConfig, PersistenceConfig, ProviderConfig, TurinConfig,
+    AgentConfig, GovernanceConfig, GovernanceGrantsConfig, GovernanceProfile,
 };
 
+mod support;
+
+use support::{base_config, build_kernel, copy_file, copy_tree, mock_provider, repo_path};
+
 fn fixture_path(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("dx")
-        .join(name)
+    repo_path(Path::new("tests").join("fixtures").join("dx").join(name))
 }
 
 fn copy_fixture(name: &str, dest: impl AsRef<Path>) -> Result<()> {
-    fs::copy(fixture_path(name), dest)?;
-    Ok(())
+    copy_file(fixture_path(name), dest)
 }
 
 fn copy_fixture_tree(name: &str, dest_dir: impl AsRef<Path>) -> Result<()> {
-    let src_dir = fixture_path(name);
-    let dest_dir = dest_dir.as_ref();
-    fs::create_dir_all(dest_dir)?;
-    for entry in fs::read_dir(src_dir)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let dest_path = dest_dir.join(entry.file_name());
-        if file_type.is_dir() {
-            copy_fixture_tree(
-                &format!("{}/{}", name, entry.file_name().to_string_lossy()),
-                &dest_path,
-            )?;
-        } else {
-            fs::copy(entry.path(), dest_path)?;
-        }
-    }
-    Ok(())
-}
-
-fn mock_provider(response: &str) -> ProviderConfig {
-    ProviderConfig {
-        kind: "mock".to_string(),
-        api_key_env: None,
-        base_url: Some(response.to_string()),
-        ..ProviderConfig::default()
-    }
-}
-
-fn base_config(
-    workspace_root: &Path,
-    harness_dir: &Path,
-    default_provider: &str,
-    providers: HashMap<String, ProviderConfig>,
-) -> TurinConfig {
-    TurinConfig {
-        agent: AgentConfig {
-            id: "default".to_string(),
-            model: "mock-model".to_string(),
-            provider: default_provider.to_string(),
-            system_prompt: "DX fixture test".to_string(),
-            thinking: None,
-            mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: None,
-            idle_grace_secs: None,
-        },
-        agents: HashMap::new(),
-        kernel: KernelConfig {
-            workspace_root: workspace_root.to_string_lossy().to_string(),
-            max_turns: 4,
-            heartbeat_interval_secs: 30,
-            initial_spawn_depth: 0,
-        },
-        persistence: PersistenceConfig {
-            database_path: workspace_root.join("test.db").to_string_lossy().to_string(),
-        },
-        harness: HarnessConfig {
-            directory: harness_dir.to_string_lossy().to_string(),
-            fs_root: ".".to_string(),
-        },
-        providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
-        governance: GovernanceConfig::default(),
-    }
-}
-
-async fn build_kernel(config: TurinConfig) -> Result<Kernel> {
-    let mut kernel = Kernel::builder(config).build()?;
-    kernel.init_state().await?;
-    kernel.init_clients()?;
-    kernel.init_harness().await?;
-    Ok(kernel)
+    copy_tree(fixture_path(name), dest_dir)
 }
 
 #[tokio::test(flavor = "multi_thread")]

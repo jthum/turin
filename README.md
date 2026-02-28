@@ -300,6 +300,18 @@ scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --api-format op
 
 See `docs/LIVE_PROVIDER_TESTING.md` for setup and troubleshooting.
 
+## Copyable Example Library
+
+Turin now ships a copyable example library under `examples/`.
+
+Current packs include:
+
+- `examples/harnesses/openclaw_style_workspace/` — markdown-driven `SOUL.md` + `AGENTS.md` harness
+- `examples/harnesses/governed_peer_review/` — peer-agent review under temporary grants
+- `examples/harnesses/durable_journal/` — durable note/journal pattern over `runtime.db`
+
+Examples are exercised by `cargo test --test example_harness_examples`, so they stay runnable instead of drifting into stale documentation.
+
 ## Documentation Map
 
 - `docs/INDEX.md` — docs landing page and recommended reading paths
@@ -308,6 +320,7 @@ See `docs/LIVE_PROVIDER_TESTING.md` for setup and troubleshooting.
 - `docs/HOOKS.md` — stable hook lifecycle, payloads, verdict semantics
 - `docs/PRIMITIVES.md` — canonical stdlib API + aliases
 - `docs/HARNESS_GUIDE.md` — writing production harness scripts
+- `docs/EXAMPLES.md` — copyable, tested example packs
 - `docs/GOVERNANCE.md` — capability model, profiles, import scoping, grants
 - `docs/TESTING.md` — local validation, test suite, and smoke workflows
 - `docs/LIVE_PROVIDER_TESTING.md` — live endpoint testing procedures

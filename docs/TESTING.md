@@ -91,6 +91,7 @@ Turin’s test suite includes dedicated coverage for:
 - temporary grants and immutable audit semantics
 - peer-agent orchestration
 - path traversal/security checks
+- copyable example packs under `examples/`
 
 Most behavior should be validated there before spending provider quota.
 
@@ -198,6 +199,8 @@ This keeps provider-specific logic out of Turin and speeds debugging.
 - Prefer focused test files while developing:
   - `cargo test --test harness_tests`
   - `cargo test --test agent_loop_tests`
+  - `cargo test --test dx_harness_examples`
+  - `cargo test --test example_harness_examples`
 - Run full `cargo test` before committing
 - Reserve live tests for behavior that depends on real provider responses
 
