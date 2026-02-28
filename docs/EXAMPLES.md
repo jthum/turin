@@ -13,6 +13,7 @@ These examples are meant to be:
 - `examples/README.md`
 - `examples/harnesses/openclaw_style_workspace/`
 - `examples/harnesses/governed_peer_review/`
+- `examples/harnesses/delegated_peer_capabilities/`
 - `examples/harnesses/durable_journal/`
 
 ## Example Pack Layout
@@ -59,6 +60,17 @@ Pattern:
 - main agent delegates to a reviewer peer agent
 - delegation runs under a temporary grant
 - the reviewer output is written to runtime artifacts and folded back into prompt shaping
+
+## Delegated Peer Capabilities
+
+`examples/harnesses/delegated_peer_capabilities/`
+
+Pattern:
+
+- main agent calls a reviewer peer through `runtime.agent(...):complete(...)`
+- the call site delegates only a narrow capability slice
+- the reviewer harness proves read/query is allowed while mutation stays denied
+- runtime artifacts capture the delegated prompt and reviewer output
 
 ## Durable Journal
 

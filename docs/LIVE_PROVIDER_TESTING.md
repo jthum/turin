@@ -97,6 +97,7 @@ scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --api-format op
 - `tool_write_read` — multi-tool (`write_file` + `read_file`) roundtrip
 - `governed_denial` — harness-driven governance denial sentinel + successful inference turn
 - `peer_agent` — harness-driven peer-agent `agent.complete(...)` roundtrip + successful main-agent turn
+- `peer_complete_caps` — DX `runtime.agent(...):complete(...)` with explicit delegated `runtime.db.query` ceiling and worker-side denial of `runtime.db.exec`
 - `queue_steer` — harness-driven queue steering via `on_all_tasks_complete` follow-up prompt injection
 - `runtime_db` — harness-driven `runtime.db.open/list/exec/query/close` + sqlite verification
 - `grant_flow` — temporary grant issue/use/revoke + durable audit event verification
@@ -109,7 +110,7 @@ Run specific cases:
 ```bash
 scripts/live_minimax_smoke.sh \
   --env-file ~/Documents/minimax.env \
-  --cases basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,queue_steer
+  --cases basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,peer_complete_caps,queue_steer
 ```
 
 ### What `core` covers (confidence-building set)
@@ -121,6 +122,7 @@ The `core` suite is designed to validate Turin’s real value surface against a 
 - tool failure and recovery
 - governance enforcement denials
 - peer-agent orchestration
+- explicit delegated capability ceilings through peer completion
 - queue steering / follow-up task injection
 - runtime DB API (`runtime.db.*`)
 - temporary grants + grant audit events

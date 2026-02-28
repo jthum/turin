@@ -132,7 +132,7 @@ Custom case selection:
 
 ```bash
 scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env \
-  --cases basic,tool_read,tool_error,tool_write_read
+  --cases basic,tool_read,tool_error,tool_write_read,peer_complete_caps
 ```
 
 Request debug dumps (SDK layer):

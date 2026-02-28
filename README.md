@@ -276,6 +276,7 @@ Current live cases include:
 - `tool_write_read`
 - `governed_denial`
 - `peer_agent`
+- `peer_complete_caps`
 - `queue_steer`
 - `runtime_db`
 - `grant_flow`
@@ -288,7 +289,7 @@ Run a custom case set:
 ```bash
 scripts/live_minimax_smoke.sh \
   --env-file ~/Documents/minimax.env \
-  --cases basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,queue_steer,runtime_db,grant_flow
+  --cases basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,peer_complete_caps,queue_steer,runtime_db,grant_flow
 ```
 
 OpenAI-compatible endpoint examples (MiniMax):
@@ -308,6 +309,7 @@ Current packs include:
 
 - `examples/harnesses/openclaw_style_workspace/` — markdown-driven `SOUL.md` + `AGENTS.md` harness
 - `examples/harnesses/governed_peer_review/` — peer-agent review under temporary grants
+- `examples/harnesses/delegated_peer_capabilities/` — peer completion with an explicit delegated capability ceiling
 - `examples/harnesses/durable_journal/` — durable note/journal pattern over `runtime.db`
 
 Examples are exercised by `cargo test --test example_harness_examples`, so they stay runnable instead of drifting into stale documentation.

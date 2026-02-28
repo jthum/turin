@@ -170,3 +170,97 @@ async fn test_durable_journal_example() -> Result<()> {
     assert_eq!(stored_prompt, prompt);
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_delegated_peer_capabilities_example() -> Result<()> {
+    let tmp = tempdir()?;
+    let main_harness_dir = tmp.path().join("main_harnesses");
+    let reviewer_harness_dir = tmp.path().join("reviewer_harnesses");
+    fs::create_dir(&main_harness_dir)?;
+    fs::create_dir(&reviewer_harness_dir)?;
+    copy_dir_contents(
+        example_path("delegated_peer_capabilities").join("harness"),
+        &main_harness_dir,
+    )?;
+    copy_dir_contents(
+        example_path("delegated_peer_capabilities")
+            .join("agents")
+            .join("reviewer"),
+        &reviewer_harness_dir,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider("MAIN_OK"));
+    providers.insert(
+        "mock_review".to_string(),
+        mock_provider("DELEGATED_REVIEW_OK"),
+    );
+    let mut config = base_config(tmp.path(), &main_harness_dir, "mock_main", providers);
+    config.governance = GovernanceConfig {
+        profile: GovernanceProfile::Balanced,
+        enforcement_enabled: true,
+        agents: HashMap::from([(
+            "default".to_string(),
+            turin::kernel::config::GovernanceAgentCapabilitiesConfig {
+                capability_profile: None,
+                max_capabilities: HashMap::new(),
+                allowed_child_agents: vec!["reviewer".to_string()],
+            },
+        )]),
+        ..GovernanceConfig::default()
+    };
+    config.agents.insert(
+        "reviewer".to_string(),
+        AgentConfig {
+            id: "reviewer".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock_review".to_string(),
+            system_prompt: "You are a reviewer.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: Some(reviewer_harness_dir.to_string_lossy().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+
+    let mut kernel = build_kernel(config).await?;
+    let mut session = kernel.create_session().await;
+    let prompt = "Review the request with constrained peer capabilities".to_string();
+    kernel.run(&mut session, Some(prompt.clone())).await?;
+    kernel.end_session(&mut session).await?;
+
+    let review_artifact = tmp.path().join(".turin/runtime/delegated-review.txt");
+    let input_artifact = tmp.path().join(".turin/runtime/delegated-review-input.txt");
+    assert_eq!(fs::read_to_string(review_artifact)?, "DELEGATED_REVIEW_OK");
+    assert_eq!(fs::read_to_string(input_artifact)?, prompt);
+
+    let store = kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT s.agent_id, m.role, m.content \
+             FROM sessions s \
+             JOIN messages m ON m.session_id = s.id \
+             WHERE s.agent_id = 'reviewer' \
+             ORDER BY m.id",
+            (),
+        )
+        .await?;
+    let mut saw_reviewer_output = false;
+    while let Some(row) = rows.next().await? {
+        let agent_id: String = row.get(0)?;
+        let role: String = row.get(1)?;
+        let content: String = row.get(2)?;
+        if agent_id == "reviewer" && role == "assistant" && content.contains("DELEGATED_REVIEW_OK")
+        {
+            saw_reviewer_output = true;
+            break;
+        }
+    }
+    assert!(
+        saw_reviewer_output,
+        "expected persisted reviewer assistant output"
+    );
+
+    Ok(())
+}

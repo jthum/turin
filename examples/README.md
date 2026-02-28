@@ -31,4 +31,5 @@ That keeps the library honest: if an example stops working, CI/local validation 
 
 - `examples/harnesses/openclaw_style_workspace/`
 - `examples/harnesses/governed_peer_review/`
+- `examples/harnesses/delegated_peer_capabilities/`
 - `examples/harnesses/durable_journal/`
