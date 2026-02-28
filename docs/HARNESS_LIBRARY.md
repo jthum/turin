@@ -28,6 +28,7 @@ library/
 
 - `library/workflows/openclaw_style_personal_assistant/`
 - `library/workflows/full_coding_harness/`
+- `library/workflows/bug_triage_desk/`
 
 ## Validation
 
@@ -62,6 +63,17 @@ Pattern:
 - planner specialist produces an execution plan
 - reviewer specialist critiques that plan for regressions and missing tests
 - runtime artifacts and DB rows capture the run for later inspection
+
+## Bug Triage Desk
+
+`library/workflows/bug_triage_desk/`
+
+Pattern:
+
+- checked-in triage context (`SEVERITY_POLICY.md`, `OWNERSHIP.md`, `KNOWN_ISSUES.md`, `RUNBOOK.md`)
+- triager specialist classifies severity, owner, and next checks
+- responder specialist drafts an operator-facing follow-up
+- runtime artifacts and DB rows capture the triage flow
 
 ## Governed Peer Review
 

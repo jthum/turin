@@ -171,6 +171,79 @@ async fn build_full_coding_harness_fixture(
     Ok(WorkflowFixture { tmp, kernel })
 }
 
+async fn build_bug_triage_fixture(
+    main_response: &str,
+    triager_response: &str,
+    responder_response: &str,
+) -> Result<WorkflowFixture> {
+    let tmp = tempdir()?;
+    let main_harness_dir = tmp.path().join("harnesses");
+    let triager_harness_dir = tmp.path().join("triager_harnesses");
+    let responder_harness_dir = tmp.path().join("responder_harnesses");
+    fs::create_dir(&main_harness_dir)?;
+    fs::create_dir(&triager_harness_dir)?;
+    fs::create_dir(&responder_harness_dir)?;
+
+    copy_dir_contents(
+        library_workflow_path("bug_triage_desk").join("workspace"),
+        tmp.path(),
+    )?;
+    copy_dir_contents(
+        library_workflow_path("bug_triage_desk").join("harness"),
+        &main_harness_dir,
+    )?;
+    copy_dir_contents(
+        library_workflow_path("bug_triage_desk")
+            .join("agents")
+            .join("triager"),
+        &triager_harness_dir,
+    )?;
+    copy_dir_contents(
+        library_workflow_path("bug_triage_desk")
+            .join("agents")
+            .join("responder"),
+        &responder_harness_dir,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider(main_response));
+    providers.insert("mock_triager".to_string(), mock_provider(triager_response));
+    providers.insert(
+        "mock_responder".to_string(),
+        mock_provider(responder_response),
+    );
+    let mut config = base_config(tmp.path(), &main_harness_dir, "mock_main", providers);
+    config.agents.insert(
+        "triager".to_string(),
+        AgentConfig {
+            id: "triager".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock_triager".to_string(),
+            system_prompt: "You are a triager.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: Some(triager_harness_dir.to_string_lossy().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+    config.agents.insert(
+        "responder".to_string(),
+        AgentConfig {
+            id: "responder".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock_responder".to_string(),
+            system_prompt: "You are a responder.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: Some(responder_harness_dir.to_string_lossy().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+
+    let kernel = build_kernel(config).await?;
+    Ok(WorkflowFixture { tmp, kernel })
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_openclaw_style_personal_assistant_routes_review_prompts() -> Result<()> {
     let mut fixture = build_openclaw_fixture("MAIN_OK", "PLAN_OK", "REVIEW_OK").await?;
@@ -329,6 +402,55 @@ async fn test_full_coding_harness_workflow() -> Result<()> {
     assert_eq!(prompt_value, prompt);
     assert_eq!(plan_value, "PLAN_OK");
     assert_eq!(review_value, "REVIEW_OK");
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_bug_triage_desk_workflow() -> Result<()> {
+    let mut fixture = build_bug_triage_fixture("MAIN_OK", "TRIAGE_OK", "RESPONSE_OK").await?;
+    let prompt = "Bug: saving settings sometimes resets the theme after restart".to_string();
+
+    let mut session = fixture.kernel.create_session().await;
+    fixture
+        .kernel
+        .run(&mut session, Some(prompt.clone()))
+        .await?;
+    fixture.kernel.end_session(&mut session).await?;
+
+    let runtime_dir = fixture.tmp.path().join(".turin/runtime/bug-triage");
+    let context = fs::read_to_string(runtime_dir.join("context.md"))?;
+    let triage = fs::read_to_string(runtime_dir.join("triage.md"))?;
+    let response = fs::read_to_string(runtime_dir.join("response.md"))?;
+    let brief = fs::read_to_string(runtime_dir.join("brief.md"))?;
+    let triager_prompt = fs::read_to_string(runtime_dir.join("triager-last-request.txt"))?;
+    let responder_prompt = fs::read_to_string(runtime_dir.join("responder-last-request.txt"))?;
+
+    assert!(context.contains("# SEVERITY_POLICY.md"));
+    assert!(context.contains("# OWNERSHIP.md"));
+    assert!(context.contains("# KNOWN_ISSUES.md"));
+    assert!(context.contains("# RUNBOOK.md"));
+    assert_eq!(triage, "TRIAGE_OK");
+    assert_eq!(response, "RESPONSE_OK");
+    assert!(brief.contains("## Triage"));
+    assert!(brief.contains("## Response"));
+    assert!(triager_prompt.contains("Bug report"));
+    assert!(responder_prompt.contains("Triage summary"));
+
+    let store = fixture.kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT prompt, triage, response FROM bug_triage_runs ORDER BY id DESC LIMIT 1",
+            (),
+        )
+        .await?;
+    let row = rows.next().await?.expect("expected bug triage run");
+    let prompt_value: String = row.get(0)?;
+    let triage_value: String = row.get(1)?;
+    let response_value: String = row.get(2)?;
+    assert_eq!(prompt_value, prompt);
+    assert_eq!(triage_value, "TRIAGE_OK");
+    assert_eq!(response_value, "RESPONSE_OK");
     Ok(())
 }
 
