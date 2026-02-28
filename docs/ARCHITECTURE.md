@@ -133,7 +133,7 @@ The tool execution path is split into dedicated `kernel::turn` submodules and in
 - `agent_bindings.rs` — top-level `agent.*` aliases (queue + peer convenience)
 - `memory_kv_bindings.rs` — top-level `memory.*`, `kv.*`
 - `session_user_aliases.rs` — scoped aliases for `session.*` / `user.*`
-- `system_globals.rs` — `fs`, `json`, `time`, `log`, `import`, `import_scoped`
+- `system_globals.rs` — `fs`, `json`, `time`, `log`, `import`, `import_scoped`, `use`, `use_scoped`, `watch`
 
 ### Kernel
 

@@ -4,7 +4,7 @@ use anyhow::Result;
 use tracing::{error, info, warn};
 
 use crate::harness::verdict::Verdict;
-use crate::inference::provider::InferenceContent;
+use crate::inference::provider::{InferenceContent, InferenceRole};
 use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
 use crate::kernel::session::{QueuedTask, SessionState};
 use crate::kernel::{Kernel, TaskExecutionResult};
@@ -166,6 +166,9 @@ pub(super) async fn run_peer_task(
 
 fn last_assistant_text(session: &SessionState) -> Option<String> {
     session.history.iter().rev().find_map(|msg| {
+        if msg.role != InferenceRole::Assistant {
+            return None;
+        }
         msg.content.iter().find_map(|c| match c {
             InferenceContent::Text { text } => Some(text.clone()),
             _ => None,

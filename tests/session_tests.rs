@@ -243,6 +243,73 @@ async fn test_harness_reload_picks_up_new_scripts() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_explicit_watch_reloads_nested_used_blocks() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    let blocks_dir = harness_dir.join("blocks");
+    std::fs::create_dir_all(&blocks_dir)?;
+
+    std::fs::write(
+        harness_dir.join("main.lua"),
+        r#"
+            watch("blocks")
+            use("blocks/feature")
+        "#,
+    )?;
+    std::fs::write(
+        blocks_dir.join("feature.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local ok, err = fs.write("watch-marker.txt", "v1")
+                if not ok then error(err) end
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut kernel = make_kernel(tmp.path()).await?;
+    kernel.start_watcher()?;
+
+    let marker_path = tmp.path().join("watch-marker.txt");
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("before nested reload".to_string()))
+        .await?;
+    kernel.end_session(&mut session).await?;
+    assert_eq!(std::fs::read_to_string(&marker_path)?, "v1");
+
+    std::fs::write(
+        blocks_dir.join("feature.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local ok, err = fs.write("watch-marker.txt", "v2")
+                if not ok then error(err) end
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut saw_v2 = false;
+    for _ in 0..10 {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let mut session = kernel.create_session().await;
+        kernel
+            .run(&mut session, Some("after nested reload".to_string()))
+            .await?;
+        kernel.end_session(&mut session).await?;
+
+        if std::fs::read_to_string(&marker_path).ok().as_deref() == Some("v2") {
+            saw_v2 = true;
+            break;
+        }
+    }
+
+    assert!(saw_v2, "explicit watch should reload nested used blocks");
+    Ok(())
+}
+
 // ─── State Store Integration ────────────────────────────────────
 
 #[tokio::test]

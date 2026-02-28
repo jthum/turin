@@ -224,14 +224,16 @@ Notes:
 
 Writes a harness-prefixed diagnostic line to stderr.
 
-## `import(name)` and `import_scoped(name, opts?)`
+## `import(name)`, `import_scoped(name, opts?)`, `use(name, opts?)`, `use_scoped(name, opts?)`
 
 Harness module import helpers.
 
-- `import(name)` — unscoped import (governance may restrict this)
-- `import_scoped(name, opts)` — scoped import with governance root assertion and optional delegated capability ceiling
+- `import(name)` — unscoped module import (governance may restrict this)
+- `import_scoped(name, opts)` — scoped module import with governance root assertion and optional delegated capability ceiling
+- `use(name, opts?)` — mount a behavior block during harness load
+- `use_scoped(name, opts?)` — mount a behavior block with governance root assertion and optional delegated capability ceiling
 
-`opts` (for `import_scoped`):
+`opts` (for `import_scoped` / `use_scoped`, and optionally `use` where relevant):
 
 ```lua
 {
@@ -240,7 +242,13 @@ Harness module import helpers.
     ["runtime.db.query"] = true,
     ["runtime.db.exec"] = false,
     ["runtime.db.*"] = true,
-  }
+  },
+  config = {                 -- `use(...)` only; exposed to the block as `block.config`
+    strict = true
+  },
+  when = function(hook, payload) -- `use(...)` only; runtime gate, not dynamic registration
+    return hook == "on_turn_prepare"
+  end
 }
 ```
 
@@ -249,6 +257,26 @@ Notes:
 - Imported module functions are wrapped so governance checks run under the imported module/root subject context.
 - Nested exported tables/functions are recursively wrapped.
 - Nested imports cannot widen delegated capabilities beyond the importer’s delegation.
+- `use(...)` and `use_scoped(...)` are load-time only; calling them from a hook is a runtime error.
+- `use(...)` accepts either:
+  - script-style hook blocks (`function on_turn_prepare(...) ... end`)
+  - returned-table hook blocks (`return { on_turn_prepare = function(...) ... end }`)
+- `use(...)` activates the block in the normal hook pipeline; `import(...)` stays side-effect free.
+
+## `watch(path)`
+
+Registers an extra harness-relative path for hot reload.
+
+```lua
+watch("blocks")
+watch("plugins")
+```
+
+Notes:
+
+- `watch(...)` is load-time only.
+- Turin still watches the top-level harness directory by default.
+- watched subpaths are explicit; nested trees are not watched unless you register them.
 
 ## Canonical Runtime API (`runtime.*`)
 

@@ -127,7 +127,7 @@ impl Kernel {
     pub fn loaded_scripts(&self) -> Vec<String> {
         let lock = self.lock_harness();
         if let Some(ref engine) = *lock {
-            engine.loaded_scripts().to_vec()
+            engine.loaded_scripts()
         } else {
             Vec::new()
         }

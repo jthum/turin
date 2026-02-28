@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - Unreleased
+
+### Added
+- **Harness Composition Primitives**
+  - Added `use(name, opts?)` for mounting reusable behavior blocks during harness load.
+  - Added `use_scoped(name, opts?)` for governance-scoped behavior blocks with delegated capability ceilings.
+  - Added nested-path module resolution for harness-local imports such as `import("blocks/foo")`.
+- **Explicit Watch Model**
+  - Added `watch(path)` for explicitly registering extra harness-relative paths for hot reload.
+  - Kept the existing top-level harness directory watch as the default, with watched subtrees opt-in from harness code.
+
+### Changed
+- **Harness Loading**
+  - Harness blocks can now be reused as ordinary harness scripts via `use(...)`, without rewriting them into `return { ... }` form.
+  - Hook-contributing modules loaded through `use(...)` now participate in the same hook pipeline as top-level harness scripts.
+- **Peer Completion Output Extraction**
+  - Peer-task output extraction now only returns assistant-role text, preventing `runtime.agent.complete(...)` from accidentally returning the delegated user prompt.
+
+### Fixed
+- **Delegated Capability Preservation**
+  - Hook evaluation now preserves an active delegated capability ceiling when a module does not define its own module-scoped ceiling, avoiding accidental loss of peer-task delegation during hook execution.
+- **Hot Reload Coverage**
+  - Added regression coverage proving nested `use(...)` blocks reload when declared through `watch("...")`.
+
 ## [0.17.0] - 2026-02-28
 
 ### Added

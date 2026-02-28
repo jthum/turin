@@ -124,6 +124,7 @@ impl Kernel {
         let app_data = HarnessAppData {
             fs_root,
             workspace_root: PathBuf::from(&self.config.kernel.workspace_root),
+            harness_directory: harness_dir.clone(),
             store_manager: self.store_manager.clone(),
             agent_manager: self.agent_manager.clone(),
             policy_manager: self.policy_manager.clone(),
@@ -134,6 +135,9 @@ impl Kernel {
             execution_ctx: Arc::new(std::sync::Mutex::new(HarnessExecutionContext::default())),
             config: self.config.clone(),
             spawn_depth: self.config.kernel.initial_spawn_depth,
+            active_modules: Arc::new(std::sync::Mutex::new(Vec::new())),
+            watch_roots: Arc::new(std::sync::Mutex::new(Vec::new())),
+            loading_phase: Arc::new(std::sync::Mutex::new(true)),
         };
 
         let mut engine =
@@ -145,6 +149,7 @@ impl Kernel {
                 harness_dir.display()
             )
         })?;
+        engine.set_loading_phase(false);
 
         let script_count = engine.loaded_scripts().len();
         if script_count > 0 {
@@ -195,6 +200,7 @@ impl Kernel {
                 let app_data = HarnessAppData {
                     fs_root,
                     workspace_root: PathBuf::from(&config.kernel.workspace_root),
+                    harness_directory: harness_dir.clone(),
                     store_manager: store_manager.clone(),
                     agent_manager: agent_manager.clone(),
                     policy_manager: policy_manager.clone(),
@@ -207,11 +213,15 @@ impl Kernel {
                     )),
                     config: config.clone(),
                     spawn_depth: config.kernel.initial_spawn_depth,
+                    active_modules: Arc::new(std::sync::Mutex::new(Vec::new())),
+                    watch_roots: Arc::new(std::sync::Mutex::new(Vec::new())),
+                    loading_phase: Arc::new(std::sync::Mutex::new(true)),
                 };
 
                 match HarnessEngine::new(app_data) {
                     Ok(mut engine) => match engine.load_dir(&harness_dir) {
                         Ok(_) => {
+                            engine.set_loading_phase(false);
                             let script_count = engine.loaded_scripts().len();
                             let mut h = harness.lock().expect("harness mutex poisoned");
                             *h = Some(engine);
@@ -249,6 +259,13 @@ impl Kernel {
             warn!(directory = %harness_dir.display(), "Harness directory does not exist, skipping watcher");
             return Ok(());
         }
+
+        let explicit_watch_roots = {
+            let h = self.lock_harness();
+            h.as_ref()
+                .map(|engine| engine.explicit_watch_roots())
+                .unwrap_or_default()
+        };
 
         // We use an async channel to debounce events
         let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(10);
@@ -301,6 +318,19 @@ impl Kernel {
             })?;
 
         watcher.watch(&harness_dir, RecursiveMode::NonRecursive)?;
+        for extra_root in explicit_watch_roots {
+            if !extra_root.exists() {
+                warn!(path = %extra_root.display(), "Explicit watch path does not exist, skipping");
+                continue;
+            }
+            let mode = if extra_root.is_dir() {
+                RecursiveMode::Recursive
+            } else {
+                RecursiveMode::NonRecursive
+            };
+            watcher.watch(&extra_root, mode)?;
+            info!(path = %extra_root.display(), recursive = matches!(mode, RecursiveMode::Recursive), "Watching explicit harness path");
+        }
         self.check_watcher = Some(watcher);
 
         info!(directory = %harness_dir.display(), "Watching harness directory");

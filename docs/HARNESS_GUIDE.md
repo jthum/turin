@@ -42,6 +42,16 @@ Recommended structure:
 
 Scripts are loaded as modules and can export functions/tables. Hooks can exist in globals or returned module tables (engine discovers them).
 
+Turin auto-loads top-level `.lua` files in the harness directory.
+
+Nested files are inert unless you explicitly bring them in with:
+
+- `import(...)` / `import_scoped(...)` for code reuse
+- `use(...)` / `use_scoped(...)` for behavior blocks that contribute hooks
+- `watch(...)` for extra hot-reload roots
+
+That means you can keep the flat multi-file style for simple harnesses, or move to an entrypoint-style structure by keeping one top-level `main.lua` and placing reusable blocks/modules under subdirectories.
+
 ## Your First Harness
 
 ```lua
@@ -203,7 +213,7 @@ function on_turn_prepare(ctx)
 end
 ```
 
-## Module Imports (`import` / `import_scoped`)
+## Composition (`import`, `use`, `watch`)
 
 ### `import(name)`
 
@@ -230,6 +240,69 @@ local plugin = import_scoped("plugins/reformatter", {
 ```
 
 Use this when you want self-evolving or semi-trusted harness modules with constrained authority.
+
+### `use(name, opts?)`
+
+Mount a behavior block during harness load.
+
+```lua
+use("blocks/harden_shell_execution")
+use("blocks/track_user_manners", {
+  when = function(hook, payload)
+    return hook == "on_turn_prepare"
+  end
+})
+```
+
+Use this when the block’s job is to contribute hook behavior rather than return functions you call manually.
+
+Supported block styles:
+
+- script-style hooks:
+
+```lua
+function on_tool_call(call)
+  ...
+end
+```
+
+- returned-table hooks:
+
+```lua
+return {
+  on_tool_call = function(call)
+    ...
+  end
+}
+```
+
+### `use_scoped(name, opts?)`
+
+Scoped behavior mount with the same governance root/delegation rules as `import_scoped(...)`.
+
+```lua
+use_scoped("plugins/harden_shell_execution", {
+  root = "plugins_writable",
+  capabilities = {
+    ["runtime.db.query"] = true
+  }
+})
+```
+
+### `watch(path)`
+
+Register extra harness-relative paths for hot reload.
+
+```lua
+watch("blocks")
+watch("plugins")
+```
+
+Notes:
+
+- `use(...)`, `use_scoped(...)`, and `watch(...)` are load-time only.
+- Turin still watches the top-level harness directory by default.
+- nested directories are only hot-reloaded if you explicitly watch them.
 
 ## Hook Patterns
 

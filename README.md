@@ -19,7 +19,7 @@ Turin now ships a coherent, canonical runtime with:
 - **Opt-in governance model** with profiles, capabilities, import scoping, agent ceilings, and temporary grants
 - **Harness Library** with reusable `blocks/` and ready-to-run `workflows/`
 - **Provider-agnostic core** (provider quirks belong in `inference-sdk-rust`, not Turin)
-- **Hot-reloadable harness scripts** with `import(...)` and `import_scoped(...)`
+- **Composable harness scripts** with `import(...)`, `import_scoped(...)`, `use(...)`, and explicit `watch(...)`
 - **Durable event persistence** and optional immutable audit behavior
 
 ## Philosophy
@@ -47,7 +47,7 @@ Simple things should be simple. Powerful things should be possible.
 - **First-party DX layer**:
   - `verdict`, `allowed`, `needs`, `session`, `user`, callable `runtime.db(...)`, callable `runtime.agent(...)`
 - **Top-level ergonomic aliases**:
-  - `fs`, `json`, `time`, `log`, `import`, `import_scoped`
+  - `fs`, `json`, `time`, `log`, `import`, `import_scoped`, `use`, `use_scoped`, `watch`
   - `memory`, `kv`, `session`, `user`, `agent`
 - **Multi-provider support** through normalized `InferenceProvider` clients (`anthropic`, `openai`, `mock`, compatible proxies)
 - **Persistent state** for sessions, messages, events, tool executions, KV, and memory records
@@ -179,7 +179,7 @@ Turin’s harness surface is split between **canonical runtime APIs** and **ergo
 - `memory.as(ctx)` / `kv.as(ctx)` for scoped proxies
 - `session.memory/kv.*`, `user.memory/kv.*`
 - `agent.spawn`, `agent.complete`, `agent.send`, `agent.session.*`, `agent.mode.*`
-- `fs`, `json`, `time`, `log`, `import`, `import_scoped`
+- `fs`, `json`, `time`, `log`, `import`, `import_scoped`, `use`, `use_scoped`, `watch`
 
 See `docs/PRIMITIVES.md` for the full surface.
 
@@ -252,7 +252,7 @@ Governance is **not** hardcoded restriction. It is an opt-in capability system l
 ### Core governance features
 
 - Capability enforcement for `runtime.*` APIs and built-in tools
-- Import scoping (`import_scoped`) with governance roots
+- Import / behavior-block scoping (`import_scoped`, `use_scoped`) with governance roots
 - Per-agent ceilings and child-agent allowlists
 - Temporary grants (TTL / max-uses)
 - Optional immutable audit persistence semantics

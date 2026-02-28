@@ -126,7 +126,7 @@ Notes:
 - `harness.import.unscoped`
 - `harness.import.scoped`
 
-These apply at the import boundary (`import(...)`, `import_scoped(...)`) when governance enforcement is enabled.
+These apply at the import / behavior-mount boundary (`import(...)`, `import_scoped(...)`, `use(...)`, `use_scoped(...)`) when governance enforcement is enabled.
 
 ### Filesystem and Built-in Tools
 
@@ -176,7 +176,7 @@ Turin tracks context such as:
 
 This matters for import scoping, grants, and auditability.
 
-## Import Governance (`import` / `import_scoped`)
+## Import And Block Governance (`import` / `use`)
 
 Configured in `[governance.import]`:
 
@@ -192,19 +192,28 @@ allow_unscoped_in_open = true   # open profile escape hatch
 #### `legacy`
 
 - `import(...)` allowed
+- `use(...)` allowed
 - `import_scoped(...)` disabled
+- `use_scoped(...)` disabled
 - Best for older or simple harnesses
 
 #### `mixed`
 
-- both `import(...)` and `import_scoped(...)` allowed
+- both `import(...)` / `import_scoped(...)` and `use(...)` / `use_scoped(...)` allowed
 - good migration path
 
 #### `scoped`
 
-- unscoped `import(...)` can be disabled
-- `import_scoped(...)` requires `opts.root` or `default_root`
+- unscoped `import(...)` / `use(...)` can be disabled
+- `import_scoped(...)` / `use_scoped(...)` require `opts.root` or `default_root`
 - best for compartmentalized harness systems
+
+Relevant capability names:
+
+- `harness.import.unscoped`
+- `harness.import.scoped`
+- `harness.use.unscoped`
+- `harness.use.scoped`
 
 ### Governance Roots
 

@@ -22,6 +22,9 @@ const MAX_HARNESS_FILE_SIZE: usize = 10 * 1024 * 1024;
 
 pub type SessionQueue = Arc<Mutex<VecDeque<QueuedTask>>>;
 pub type ActiveSessionQueue = Arc<Mutex<Option<SessionQueue>>>;
+pub type ActiveHarnessModuleList = Arc<std::sync::Mutex<Vec<String>>>;
+pub type ExplicitWatchRoots = Arc<std::sync::Mutex<Vec<PathBuf>>>;
+pub type HarnessLoadPhase = Arc<std::sync::Mutex<bool>>;
 
 #[derive(Clone)]
 pub struct HarnessEventContext {
@@ -49,6 +52,7 @@ pub type ActiveHarnessExecutionContext = Arc<std::sync::Mutex<HarnessExecutionCo
 pub struct HarnessAppData {
     pub fs_root: PathBuf,
     pub workspace_root: PathBuf,
+    pub harness_directory: PathBuf,
     pub store_manager: Arc<StoreManager>,
     pub agent_manager: Arc<crate::kernel::agent_manager::AgentManager>,
     pub policy_manager: Arc<crate::kernel::policy::RuntimePolicyManager>,
@@ -59,6 +63,9 @@ pub struct HarnessAppData {
     pub queue: ActiveSessionQueue,
     pub config: Arc<crate::kernel::config::TurinConfig>,
     pub spawn_depth: u32,
+    pub active_modules: ActiveHarnessModuleList,
+    pub watch_roots: ExplicitWatchRoots,
+    pub loading_phase: HarnessLoadPhase,
 }
 
 pub(crate) fn block_on_current<F>(fut: F) -> F::Output

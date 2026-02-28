@@ -54,8 +54,300 @@ fn format_lua_error(e: &mlua::Error) -> String {
 /// The harness engine manages script loading and hook evaluation.
 pub struct HarnessEngine {
     lua: Lua,
-    /// Names of loaded scripts (in evaluation order)
-    scripts: Vec<String>,
+}
+
+pub(crate) const KNOWN_HOOKS: &[&str] = &[
+    "on_tool_call",
+    "on_tool_result",
+    "on_token_usage",
+    "on_session_start",
+    "on_session_end",
+    "on_task_start",
+    "on_turn_start",
+    "on_turn_prepare",
+    "on_turn_end",
+    "on_inference_error",
+    "on_plan_submit",
+    "on_task_complete",
+    "on_plan_complete",
+    "on_all_tasks_complete",
+    "on_kernel_event",
+];
+
+pub(crate) fn ensure_module_registry(lua: &Lua) -> mlua::Result<(Table, Table, Table)> {
+    let globals = lua.globals();
+    if !globals.contains_key("__harness_modules")? {
+        globals.set("__harness_modules", lua.create_table()?)?;
+    }
+    if !globals.contains_key("__harness_module_meta")? {
+        globals.set("__harness_module_meta", lua.create_table()?)?;
+    }
+    if !globals.contains_key("__harness_module_path_index")? {
+        globals.set("__harness_module_path_index", lua.create_table()?)?;
+    }
+
+    Ok((
+        globals.get("__harness_modules")?,
+        globals.get("__harness_module_meta")?,
+        globals.get("__harness_module_path_index")?,
+    ))
+}
+
+pub(crate) fn active_module_names(lua: &Lua) -> Vec<String> {
+    lua.app_data_ref::<HarnessAppData>()
+        .and_then(|app_data| app_data.active_modules.lock().ok().map(|v| v.clone()))
+        .unwrap_or_default()
+}
+
+pub(crate) fn clear_active_modules(lua: &Lua) {
+    if let Some(app_data) = lua.app_data_ref::<HarnessAppData>()
+        && let Ok(mut lock) = app_data.active_modules.lock()
+    {
+        lock.clear();
+    }
+}
+
+pub(crate) fn push_active_module(lua: &Lua, module_name: &str) {
+    if let Some(app_data) = lua.app_data_ref::<HarnessAppData>()
+        && let Ok(mut lock) = app_data.active_modules.lock()
+        && !lock.iter().any(|name| name == module_name)
+    {
+        lock.push(module_name.to_string());
+    }
+}
+
+pub(crate) fn explicit_watch_roots(lua: &Lua) -> Vec<PathBuf> {
+    lua.app_data_ref::<HarnessAppData>()
+        .and_then(|app_data| app_data.watch_roots.lock().ok().map(|v| v.clone()))
+        .unwrap_or_default()
+}
+
+pub(crate) fn register_watch_root(lua: &Lua, path: PathBuf) {
+    if let Some(app_data) = lua.app_data_ref::<HarnessAppData>()
+        && let Ok(mut lock) = app_data.watch_roots.lock()
+        && !lock.iter().any(|p| p == &path)
+    {
+        lock.push(path);
+    }
+}
+
+pub(crate) fn set_loading_phase(lua: &Lua, is_loading: bool) {
+    if let Some(app_data) = lua.app_data_ref::<HarnessAppData>()
+        && let Ok(mut lock) = app_data.loading_phase.lock()
+    {
+        *lock = is_loading;
+    }
+}
+
+pub(crate) fn is_loading_phase(lua: &Lua) -> bool {
+    lua.app_data_ref::<HarnessAppData>()
+        .and_then(|app_data| app_data.loading_phase.lock().ok().map(|v| *v))
+        .unwrap_or(false)
+}
+
+pub(crate) fn lookup_loaded_module_by_canonical_path(lua: &Lua, path: &Path) -> Option<String> {
+    let (_, _, path_index) = ensure_module_registry(lua).ok()?;
+    let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    path_index
+        .get::<String>(canon.to_string_lossy().to_string())
+        .ok()
+}
+
+pub(crate) fn register_module_path(lua: &Lua, module_name: &str, path: &Path) -> mlua::Result<()> {
+    let (_, _, path_index) = ensure_module_registry(lua)?;
+    let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    path_index.set(canon.to_string_lossy().to_string(), module_name)
+}
+
+pub(crate) fn resolve_governance_root_name(lua: &Lua, script_path: &Path) -> Option<String> {
+    let app_data = lua.app_data_ref::<HarnessAppData>()?;
+    let script_canon =
+        std::fs::canonicalize(script_path).unwrap_or_else(|_| PathBuf::from(script_path));
+
+    let mut best: Option<(usize, String)> = None;
+    for (root_name, root_cfg) in &app_data.config.governance.roots {
+        let configured = PathBuf::from(&root_cfg.path);
+        let root_path = if configured.is_absolute() {
+            configured
+        } else {
+            app_data.workspace_root.join(configured)
+        };
+        let root_canon = std::fs::canonicalize(&root_path).unwrap_or(root_path);
+        if script_canon.starts_with(&root_canon) {
+            let score = root_canon.components().count();
+            match &best {
+                Some((best_score, _)) if *best_score >= score => {}
+                _ => best = Some((score, root_name.clone())),
+            }
+        }
+    }
+
+    best.map(|(_, name)| name)
+}
+
+fn build_block_table(
+    lua: &Lua,
+    module_name: &str,
+    path: &Path,
+    block_name: Option<&str>,
+    block_config: Option<&Table>,
+) -> mlua::Result<Table> {
+    let block = lua.create_table()?;
+    block.set("name", block_name.unwrap_or(module_name))?;
+    block.set("path", path.to_string_lossy().to_string())?;
+    if let Some(config) = block_config {
+        block.set("config", config.clone())?;
+    } else {
+        block.set("config", lua.create_table()?)?;
+    }
+    Ok(block)
+}
+
+fn wrap_hook_with_when(
+    lua: &Lua,
+    hook_name: &str,
+    when_fn: Function,
+    func: Function,
+) -> mlua::Result<Function> {
+    let hook_name = hook_name.to_string();
+    lua.create_function(move |_lua, args: MultiValue| {
+        let payload = args.front().cloned().unwrap_or(Value::Nil);
+        let allowed = when_fn.call::<bool>((hook_name.clone(), payload))?;
+        if !allowed {
+            return Ok(MultiValue::new());
+        }
+        func.call::<MultiValue>(args)
+    })
+}
+
+pub(crate) struct ModuleLoadOptions {
+    pub activate: bool,
+    pub block_name: Option<String>,
+    pub block_config: Option<Table>,
+    pub when_fn: Option<Function>,
+    pub delegated_capabilities: Option<BTreeMap<String, bool>>,
+    pub cache_by_path: bool,
+}
+
+pub(crate) fn load_module_from_source(
+    lua: &Lua,
+    module_name: &str,
+    source: &str,
+    path: &Path,
+    opts: ModuleLoadOptions,
+) -> Result<()> {
+    let (modules, module_meta, _) = ensure_module_registry(lua)?;
+    let globals = lua.globals();
+    let module_root = resolve_governance_root_name(lua, path);
+    let prev_module = lua.app_data_ref::<HarnessAppData>().and_then(|app_data| {
+        app_data
+            .execution_ctx
+            .lock()
+            .ok()
+            .and_then(|ctx| ctx.harness_module.clone())
+    });
+    let prev_root = lua.app_data_ref::<HarnessAppData>().and_then(|app_data| {
+        app_data
+            .execution_ctx
+            .lock()
+            .ok()
+            .and_then(|ctx| ctx.harness_root.clone())
+    });
+    let prev_caps = lua.app_data_ref::<HarnessAppData>().and_then(|app_data| {
+        app_data
+            .execution_ctx
+            .lock()
+            .ok()
+            .and_then(|ctx| ctx.import_capabilities.clone())
+    });
+    if let Some(app_data) = lua.app_data_ref::<HarnessAppData>()
+        && let Ok(mut lock) = app_data.execution_ctx.lock()
+    {
+        lock.harness_module = Some(module_name.to_string());
+        lock.harness_root = module_root.clone();
+        lock.import_capabilities = opts.delegated_capabilities.clone().or(prev_caps.clone());
+    }
+
+    let env = lua.create_table()?;
+    let meta = lua.create_table()?;
+    meta.set("__index", globals)?;
+    let _ = env.set_metatable(Some(meta));
+    env.set(
+        "block",
+        build_block_table(
+            lua,
+            module_name,
+            path,
+            opts.block_name.as_deref(),
+            opts.block_config.as_ref(),
+        )?,
+    )?;
+
+    let eval_result = lua
+        .load(source)
+        .set_name(format!("@{}", path.display()))
+        .set_environment(env.clone())
+        .eval();
+    if let Some(app_data) = lua.app_data_ref::<HarnessAppData>()
+        && let Ok(mut lock) = app_data.execution_ctx.lock()
+    {
+        lock.harness_module = prev_module;
+        lock.harness_root = prev_root;
+        lock.import_capabilities = prev_caps;
+    }
+    let retval: Value = eval_result.map_err(|e| {
+        anyhow::anyhow!(format!(
+            "Failed to load harness script '{}':\n{}",
+            path.display(),
+            format_lua_error(&e)
+        ))
+    })?;
+
+    let module_exports = match retval {
+        Value::Table(t) => t,
+        _ => lua.create_table()?,
+    };
+
+    for hook in KNOWN_HOOKS {
+        if !module_exports.contains_key(*hook)?
+            && let Ok(func) = env.get::<Function>(*hook)
+        {
+            let wrapped = if let Some(ref when_fn) = opts.when_fn {
+                wrap_hook_with_when(lua, hook, when_fn.clone(), func)?
+            } else {
+                func
+            };
+            module_exports.set(*hook, wrapped)?;
+        } else if let Some(ref when_fn) = opts.when_fn
+            && let Ok(func) = module_exports.get::<Function>(*hook)
+        {
+            module_exports.set(
+                *hook,
+                wrap_hook_with_when(lua, hook, when_fn.clone(), func)?,
+            )?;
+        }
+    }
+
+    modules.set(module_name, module_exports)?;
+    let meta = lua.create_table()?;
+    meta.set("name", module_name)?;
+    meta.set("path", path.to_string_lossy().to_string())?;
+    meta.set("spec", opts.block_name.as_deref().unwrap_or(module_name))?;
+    if let Some(root_name) = module_root {
+        meta.set("root", root_name)?;
+    }
+    if let Some(caps) = opts.delegated_capabilities {
+        let caps_value = lua.to_value(&caps)?;
+        meta.set("delegated_capabilities", caps_value)?;
+    }
+    module_meta.set(module_name, meta)?;
+    if opts.cache_by_path {
+        register_module_path(lua, module_name, path)?;
+    }
+    if opts.activate {
+        push_active_module(lua, module_name);
+    }
+    Ok(())
 }
 
 impl HarnessEngine {
@@ -86,10 +378,7 @@ impl HarnessEngine {
         const MAX_LUA_MEMORY: usize = 32 * 1024 * 1024;
         lua.set_memory_limit(MAX_LUA_MEMORY)?;
 
-        Ok(Self {
-            lua,
-            scripts: Vec::new(),
-        })
+        Ok(Self { lua })
     }
 
     /// Load all `.lua` files from the given directory.
@@ -98,9 +387,13 @@ impl HarnessEngine {
     /// are registered in the Lua environment. If the directory doesn't exist,
     /// no scripts are loaded (harness-free operation).
     pub fn load_dir(&mut self, dir: &Path) -> Result<()> {
+        set_loading_phase(&self.lua, true);
         if !dir.exists() {
+            set_loading_phase(&self.lua, false);
             return Ok(());
         }
+
+        clear_active_modules(&self.lua);
 
         let mut entries: Vec<_> = std::fs::read_dir(dir)
             .with_context(|| format!("Failed to read harness directory: {}", dir.display()))?
@@ -130,6 +423,7 @@ impl HarnessEngine {
             self.load_script(&name, &source, &path)?;
         }
 
+        set_loading_phase(&self.lua, false);
         Ok(())
     }
 
@@ -140,85 +434,20 @@ impl HarnessEngine {
     /// writes to the chunk's local environment, so we reference hooks directly
     /// by name after executing the script source.
     fn load_script(&mut self, name: &str, source: &str, path: &Path) -> Result<()> {
-        let globals = self.lua.globals();
-
-        // Ensure __harness_modules exists in global registry if not already
-        if !globals.contains_key("__harness_modules")? {
-            globals.set("__harness_modules", self.lua.create_table()?)?;
-        }
-        if !globals.contains_key("__harness_module_meta")? {
-            globals.set("__harness_module_meta", self.lua.create_table()?)?;
-        }
-        let modules: Table = globals.get("__harness_modules")?;
-        let module_meta: Table = globals.get("__harness_module_meta")?;
-
-        // Create a sandboxed environment for this script.
-        // Writes go to 'env', reads fall back to 'globals' (via __index).
-        let env = self.lua.create_table()?;
-        let meta = self.lua.create_table()?;
-        meta.set("__index", globals)?;
-        let _ = env.set_metatable(Some(meta));
-
-        // Load and execute string in the sandboxed environment, capturing return value
-        let retval: Value = self
-            .lua
-            .load(source)
-            .set_name(format!("@{}", path.display()))
-            .set_environment(env.clone())
-            .eval()
-            .map_err(|e| {
-                anyhow::anyhow!(format!(
-                    "Failed to load harness script '{}':\n{}",
-                    path.display(),
-                    format_lua_error(&e)
-                ))
-            })?;
-
-        // Extract known hooks: priority to return value (module table), fallback to env (globals)
-        let module_exports = match retval {
-            Value::Table(t) => t,
-            _ => self.lua.create_table()?,
-        };
-
-        let known_hooks = [
-            "on_tool_call",
-            "on_tool_result",
-            "on_token_usage",
-            "on_session_start",
-            "on_session_end",
-            "on_task_start",
-            "on_turn_start",
-            "on_turn_prepare",
-            "on_turn_end",
-            "on_inference_error",
-            "on_plan_submit",
-            "on_task_complete",
-            "on_plan_complete",
-            "on_all_tasks_complete",
-            "on_kernel_event",
-        ];
-
-        for hook in known_hooks {
-            // If hook is already in exports (from return table), keep it.
-            // Otherwise, check if it exists in the script's global env.
-            if !module_exports.contains_key(hook)?
-                && let Ok(func) = env.get::<Function>(hook)
-            {
-                module_exports.set(hook, func)?;
-            }
-        }
-
-        // Register the module
-        modules.set(name, module_exports)?;
-        let meta = self.lua.create_table()?;
-        meta.set("name", name)?;
-        meta.set("path", path.to_string_lossy().to_string())?;
-        if let Some(root_name) = self.resolve_governance_root_name(path) {
-            meta.set("root", root_name)?;
-        }
-        module_meta.set(name, meta)?;
-        self.scripts.push(name.to_string());
-        Ok(())
+        load_module_from_source(
+            &self.lua,
+            name,
+            source,
+            path,
+            ModuleLoadOptions {
+                activate: true,
+                block_name: Some(name.to_string()),
+                block_config: None,
+                when_fn: None,
+                delegated_capabilities: None,
+                cache_by_path: true,
+            },
+        )
     }
 
     /// Call a hook function across all loaded scripts and compose the verdicts.
@@ -282,6 +511,18 @@ impl HarnessEngine {
         }
     }
 
+    pub fn get_active_capability_delegation(&self) -> Option<BTreeMap<String, bool>> {
+        self.lua
+            .app_data_ref::<HarnessAppData>()
+            .and_then(|app_data| {
+                app_data
+                    .execution_ctx
+                    .lock()
+                    .ok()
+                    .and_then(|lock| lock.import_capabilities.clone())
+            })
+    }
+
     pub fn set_active_event_context(
         &self,
         ctx: Option<crate::harness::globals::HarnessEventContext>,
@@ -310,30 +551,15 @@ impl HarnessEngine {
         meta.get::<String>("root").ok()
     }
 
-    fn resolve_governance_root_name(&self, script_path: &Path) -> Option<String> {
-        let app_data = self.lua.app_data_ref::<HarnessAppData>()?;
-        let script_canon =
-            std::fs::canonicalize(script_path).unwrap_or_else(|_| PathBuf::from(script_path));
-
-        let mut best: Option<(usize, String)> = None;
-        for (root_name, root_cfg) in &app_data.config.governance.roots {
-            let configured = PathBuf::from(&root_cfg.path);
-            let root_path = if configured.is_absolute() {
-                configured
-            } else {
-                app_data.workspace_root.join(configured)
-            };
-            let root_canon = std::fs::canonicalize(&root_path).unwrap_or(root_path);
-            if script_canon.starts_with(&root_canon) {
-                let score = root_canon.components().count();
-                match &best {
-                    Some((best_score, _)) if *best_score >= score => {}
-                    _ => best = Some((score, root_name.clone())),
-                }
-            }
-        }
-
-        best.map(|(_, name)| name)
+    fn lookup_module_import_capabilities(
+        &self,
+        module_name: &str,
+    ) -> Option<BTreeMap<String, bool>> {
+        let globals = self.lua.globals();
+        let module_meta: Table = globals.get("__harness_module_meta").ok()?;
+        let meta: Table = module_meta.get(module_name).ok()?;
+        let caps_value: Value = meta.get("delegated_capabilities").ok()?;
+        self.lua.from_value(caps_value).ok()
     }
 
     /// Call a hook across all loaded scripts, returning individual verdicts.
@@ -357,7 +583,7 @@ impl HarnessEngine {
             .to_value(&payload)
             .map_err(|e| anyhow::anyhow!("Failed to convert payload to Lua: {}", e))?;
 
-        for script_name in &self.scripts {
+        for script_name in active_module_names(&self.lua) {
             let module: Value = modules_table
                 .get(script_name.as_str())
                 .unwrap_or(Value::Nil);
@@ -371,9 +597,14 @@ impl HarnessEngine {
 
             match hook_fn {
                 Value::Function(func) => {
-                    self.set_active_harness_module(Some(script_name));
+                    let prev_caps = self.get_active_capability_delegation();
+                    let module_caps = self.lookup_module_import_capabilities(&script_name);
+                    let effective_caps = module_caps.or_else(|| prev_caps.clone());
+                    self.set_active_harness_module(Some(&script_name));
+                    self.set_active_capability_delegation(effective_caps);
                     let result = func.call::<MultiValue>(lua_payload.clone()).map_err(|e| {
                         self.set_active_harness_module(None);
+                        self.set_active_capability_delegation(prev_caps.clone());
                         anyhow::anyhow!(
                             "Harness '{}' hook '{}' failed:\n{}",
                             script_name,
@@ -382,6 +613,7 @@ impl HarnessEngine {
                         )
                     })?;
                     self.set_active_harness_module(None);
+                    self.set_active_capability_delegation(prev_caps);
 
                     let verdict = parse_verdict(&self.lua, result)?;
                     verdicts.push(verdict);
@@ -415,7 +647,7 @@ impl HarnessEngine {
             _ => return Ok(verdicts),
         };
 
-        for name in &self.scripts {
+        for name in active_module_names(&self.lua) {
             if let Ok(module) = modules_table.get::<Table>(name.as_str())
                 && let Ok(func) = module.get::<Function>(hook_name)
             {
@@ -423,16 +655,22 @@ impl HarnessEngine {
                     anyhow::anyhow!("Failed to create userdata for hook '{}': {}", hook_name, e)
                 })?;
 
-                self.set_active_harness_module(Some(name));
+                let prev_caps = self.get_active_capability_delegation();
+                let module_caps = self.lookup_module_import_capabilities(&name);
+                let effective_caps = module_caps.or_else(|| prev_caps.clone());
+                self.set_active_harness_module(Some(&name));
+                self.set_active_capability_delegation(effective_caps);
                 match func.call::<MultiValue>(ud) {
                     Ok(result) => {
                         self.set_active_harness_module(None);
+                        self.set_active_capability_delegation(prev_caps);
                         if let Ok(v) = parse_verdict(&self.lua, result) {
                             verdicts.push(v);
                         }
                     }
                     Err(e) => {
                         self.set_active_harness_module(None);
+                        self.set_active_capability_delegation(prev_caps);
                         error!(hook = %hook_name, script = %name, "Error in harness hook:\n{}", format_lua_error(&e));
                     }
                 }
@@ -442,9 +680,17 @@ impl HarnessEngine {
         Ok(verdicts)
     }
 
-    /// Get the names of loaded scripts.
-    pub fn loaded_scripts(&self) -> &[String] {
-        &self.scripts
+    /// Get the names of active hook-contributing scripts/modules.
+    pub fn loaded_scripts(&self) -> Vec<String> {
+        active_module_names(&self.lua)
+    }
+
+    pub fn explicit_watch_roots(&self) -> Vec<PathBuf> {
+        explicit_watch_roots(&self.lua)
+    }
+
+    pub fn set_loading_phase(&self, is_loading: bool) {
+        set_loading_phase(&self.lua, is_loading);
     }
 }
 
@@ -530,6 +776,7 @@ mod tests {
         HarnessAppData {
             fs_root: root.clone(),
             workspace_root: root.clone(),
+            harness_directory: root.clone(),
             store_manager: Arc::new(StoreManager::new(root.clone())),
             agent_manager: Arc::new(crate::kernel::agent_manager::AgentManager::new(
                 std::sync::Arc::new(crate::kernel::config::TurinConfig::default()),
@@ -552,6 +799,9 @@ mod tests {
             )),
             config: std::sync::Arc::new(crate::kernel::config::TurinConfig::default()),
             spawn_depth: 0,
+            active_modules: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            watch_roots: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            loading_phase: std::sync::Arc::new(std::sync::Mutex::new(true)),
         }
     }
 
@@ -709,7 +959,7 @@ mod tests {
         let mut engine = HarnessEngine::new(test_app_data()).unwrap();
         engine.load_dir(dir.path()).unwrap();
 
-        assert_eq!(engine.loaded_scripts(), &["a_permissive", "b_safety"]);
+        assert_eq!(engine.loaded_scripts(), vec!["a_permissive", "b_safety"]);
 
         let verdict = engine
             .evaluate(
@@ -720,6 +970,160 @@ mod tests {
         assert_eq!(
             verdict,
             Verdict::Reject("Blocked by safety harness".to_string())
+        );
+    }
+
+    #[test]
+    fn test_engine_imports_nested_module_from_subdirectory() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("modules")).unwrap();
+        std::fs::write(
+            dir.path().join("modules").join("helper.lua"),
+            r#"
+            return {
+                ping = function()
+                    return "pong"
+                end
+            }
+            "#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("main.lua"),
+            r#"
+            function on_turn_prepare(ctx)
+                local helper = import("modules/helper")
+                if helper.ping() ~= "pong" then
+                    error("nested import returned wrong value")
+                end
+                return ALLOW
+            end
+            "#,
+        )
+        .unwrap();
+
+        let mut engine =
+            HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+        engine.load_dir(dir.path()).unwrap();
+
+        let verdict = engine
+            .evaluate("on_turn_prepare", serde_json::json!({}))
+            .unwrap();
+        assert_eq!(verdict, Verdict::Allow);
+    }
+
+    #[test]
+    fn test_engine_use_activates_script_and_table_blocks() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("blocks")).unwrap();
+        std::fs::write(
+            dir.path().join("blocks").join("script_style.lua"),
+            r#"
+            function on_turn_prepare(ctx)
+                return ESCALATE, "script-style block"
+            end
+            "#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("blocks").join("table_style.lua"),
+            r#"
+            return {
+                on_turn_prepare = function(ctx)
+                    return REJECT, "table-style block"
+                end
+            }
+            "#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("main.lua"),
+            r#"
+            use("blocks/script_style")
+            use("blocks/table_style", {
+                when = function(hook, payload)
+                    return hook == "on_turn_prepare"
+                end
+            })
+            "#,
+        )
+        .unwrap();
+
+        let mut engine =
+            HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+        engine.load_dir(dir.path()).unwrap();
+
+        assert_eq!(
+            engine.loaded_scripts(),
+            vec![
+                "blocks/script_style#use1".to_string(),
+                "blocks/table_style#use1".to_string(),
+                "main".to_string()
+            ]
+        );
+
+        let verdict = engine
+            .evaluate("on_turn_prepare", serde_json::json!({}))
+            .unwrap();
+        assert_eq!(verdict, Verdict::Reject("table-style block".to_string()));
+    }
+
+    #[test]
+    fn test_engine_use_rejected_outside_load_phase() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("blocks")).unwrap();
+        std::fs::write(
+            dir.path().join("blocks").join("late.lua"),
+            r#"
+            function on_turn_prepare(ctx)
+                return ALLOW
+            end
+            "#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("main.lua"),
+            r#"
+            function on_turn_prepare(ctx)
+                use("blocks/late")
+                return ALLOW
+            end
+            "#,
+        )
+        .unwrap();
+
+        let mut engine =
+            HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+        engine.load_dir(dir.path()).unwrap();
+
+        let err = engine
+            .evaluate("on_turn_prepare", serde_json::json!({}))
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("use(...) can only be called during harness load")
+        );
+    }
+
+    #[test]
+    fn test_engine_watch_registers_explicit_roots() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("blocks")).unwrap();
+        std::fs::write(
+            dir.path().join("main.lua"),
+            r#"
+            watch("blocks")
+            "#,
+        )
+        .unwrap();
+
+        let mut engine =
+            HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+        engine.load_dir(dir.path()).unwrap();
+
+        assert_eq!(
+            engine.explicit_watch_roots(),
+            vec![dir.path().join("blocks")]
         );
     }
 

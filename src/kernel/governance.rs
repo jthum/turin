@@ -627,6 +627,7 @@ fn preset_capabilities_for_profile(
                 serde_json::Value::Bool(true),
             );
             caps.insert("harness.import.*".into(), serde_json::Value::Bool(true));
+            caps.insert("harness.use.*".into(), serde_json::Value::Bool(true));
             caps.insert("fs.read".into(), serde_json::Value::Bool(true));
             caps.insert("fs.write".into(), serde_json::Value::Bool(true));
             caps.insert("shell.exec".into(), serde_json::Value::Bool(true));
@@ -651,6 +652,8 @@ fn preset_capabilities_for_profile(
                 "harness.import.scoped".into(),
                 serde_json::Value::Bool(true),
             );
+            caps.insert("harness.use.unscoped".into(), serde_json::Value::Bool(true));
+            caps.insert("harness.use.scoped".into(), serde_json::Value::Bool(true));
             caps.insert("fs.read".into(), serde_json::Value::Bool(true));
             caps.insert("fs.write".into(), serde_json::Value::Bool(true));
             caps.insert("shell.exec".into(), serde_json::Value::Bool(false));
@@ -675,6 +678,11 @@ fn preset_capabilities_for_profile(
                 "harness.import.scoped".into(),
                 serde_json::Value::Bool(true),
             );
+            caps.insert(
+                "harness.use.unscoped".into(),
+                serde_json::Value::Bool(false),
+            );
+            caps.insert("harness.use.scoped".into(), serde_json::Value::Bool(true));
             caps.insert("fs.read".into(), serde_json::Value::Bool(true));
             caps.insert("fs.write".into(), serde_json::Value::Bool(false));
             caps.insert("shell.exec".into(), serde_json::Value::Bool(false));
