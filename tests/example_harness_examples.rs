@@ -11,21 +11,25 @@ mod support;
 
 use support::{base_config, build_kernel, copy_dir_contents, mock_provider, repo_path};
 
-fn example_path(name: &str) -> PathBuf {
-    repo_path(Path::new("examples").join("harnesses").join(name))
+fn library_block_path(name: &str) -> PathBuf {
+    repo_path(Path::new("library").join("blocks").join(name))
+}
+
+fn library_workflow_path(name: &str) -> PathBuf {
+    repo_path(Path::new("library").join("workflows").join(name))
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_openclaw_style_workspace_example() -> Result<()> {
+async fn test_openclaw_style_personal_assistant_workflow() -> Result<()> {
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harnesses");
     fs::create_dir(&harness_dir)?;
     copy_dir_contents(
-        example_path("openclaw_style_workspace").join("workspace"),
+        library_workflow_path("openclaw_style_personal_assistant").join("workspace"),
         tmp.path(),
     )?;
     copy_dir_contents(
-        example_path("openclaw_style_workspace").join("harness"),
+        library_workflow_path("openclaw_style_personal_assistant").join("harness"),
         &harness_dir,
     )?;
 
@@ -56,11 +60,11 @@ async fn test_governed_peer_review_example() -> Result<()> {
     fs::create_dir(&main_harness_dir)?;
     fs::create_dir(&reviewer_harness_dir)?;
     copy_dir_contents(
-        example_path("governed_peer_review").join("harness"),
+        library_block_path("governed_peer_review").join("harness"),
         &main_harness_dir,
     )?;
     copy_dir_contents(
-        example_path("governed_peer_review")
+        library_block_path("governed_peer_review")
             .join("agents")
             .join("reviewer"),
         &reviewer_harness_dir,
@@ -140,7 +144,7 @@ async fn test_durable_journal_example() -> Result<()> {
     let harness_dir = tmp.path().join("harnesses");
     fs::create_dir(&harness_dir)?;
     copy_dir_contents(
-        example_path("durable_journal").join("harness"),
+        library_block_path("durable_journal").join("harness"),
         &harness_dir,
     )?;
 
@@ -179,11 +183,11 @@ async fn test_delegated_peer_capabilities_example() -> Result<()> {
     fs::create_dir(&main_harness_dir)?;
     fs::create_dir(&reviewer_harness_dir)?;
     copy_dir_contents(
-        example_path("delegated_peer_capabilities").join("harness"),
+        library_block_path("delegated_peer_capabilities").join("harness"),
         &main_harness_dir,
     )?;
     copy_dir_contents(
-        example_path("delegated_peer_capabilities")
+        library_block_path("delegated_peer_capabilities")
             .join("agents")
             .join("reviewer"),
         &reviewer_harness_dir,

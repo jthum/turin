@@ -91,7 +91,7 @@ Turin’s test suite includes dedicated coverage for:
 - temporary grants and immutable audit semantics
 - peer-agent orchestration
 - path traversal/security checks
-- copyable example packs under `examples/`
+- harness library entries under `library/`
 
 Most behavior should be validated there before spending provider quota.
 

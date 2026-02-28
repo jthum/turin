@@ -74,11 +74,11 @@ Concrete DX fixture harnesses live in:
 
 These are useful as small, executable reference harnesses rather than just inline snippets.
 
-Copyable real-world example packs live in:
+Ready-to-use harness library entries live in:
 
-- `examples/harnesses/`
+- `library/`
 
-Those examples are intended as starting points you can lift into a project with minimal editing.
+Those harnesses are intended as starting points you can lift into a project with minimal editing.
 
 ### Verdict helpers
 
