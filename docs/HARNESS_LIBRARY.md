@@ -22,6 +22,9 @@ library/
 
 - `library/blocks/code_reviewer/`
 - `library/blocks/task_planner/`
+- `library/blocks/spec_writer/`
+- `library/blocks/test_gap_finder/`
+- `library/blocks/repo_librarian/`
 - `library/blocks/governed_peer_review/`
 - `library/blocks/delegated_peer_capabilities/`
 - `library/blocks/durable_journal/`
@@ -106,6 +109,36 @@ Pattern:
 - checked-in planning contract (`PLANNING_STYLE.md`, `DELIVERY_CONSTRAINTS.md`)
 - shapes the active agent toward sequenced task planning
 - writes runtime artifacts and records planning requests in the runtime DB
+
+## Spec Writer
+
+`library/blocks/spec_writer/`
+
+Pattern:
+
+- checked-in spec-writing contract (`IDEA.md`, `ACCEPTANCE.md`, `CONTEXT.md`)
+- shapes the active agent toward concrete implementation/spec writing
+- writes runtime artifacts and records requests in the runtime DB
+
+## Test Gap Finder
+
+`library/blocks/test_gap_finder/`
+
+Pattern:
+
+- checked-in test-review contract (`CHANGE_SUMMARY.md`, `TESTING_POLICY.md`, `RISK_AREAS.md`)
+- shapes the active agent toward identifying missing tests and risky untested paths
+- writes runtime artifacts and records requests in the runtime DB
+
+## Repo Librarian
+
+`library/blocks/repo_librarian/`
+
+Pattern:
+
+- checked-in repository contract (`SOUL.md`, `AGENTS.md`, `ARCHITECTURE.md`, `CONVENTIONS.md`)
+- shapes the active agent toward repository-aware routing and guidance
+- writes runtime artifacts and records requests in the runtime DB
 
 ## Delegated Peer Capabilities
 

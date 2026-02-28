@@ -668,6 +668,145 @@ async fn test_task_planner_block() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_spec_writer_block() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    fs::create_dir(&harness_dir)?;
+    copy_dir_contents(
+        library_block_path("spec_writer").join("workspace"),
+        tmp.path(),
+    )?;
+    copy_dir_contents(
+        library_block_path("spec_writer").join("harness"),
+        &harness_dir,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider("SPEC_REPLY"));
+    let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
+
+    let mut kernel = build_kernel(config).await?;
+    let mut session = kernel.create_session().await;
+    let prompt = "Turn the rough idea into a concrete implementation spec".to_string();
+    kernel.run(&mut session, Some(prompt.clone())).await?;
+    kernel.end_session(&mut session).await?;
+
+    let runtime_dir = tmp.path().join(".turin/runtime/spec-writer");
+    let contract = fs::read_to_string(runtime_dir.join("contract.md"))?;
+    let last_request = fs::read_to_string(runtime_dir.join("last-request.txt"))?;
+    assert!(contract.contains("# IDEA.md"));
+    assert!(contract.contains("# ACCEPTANCE.md"));
+    assert!(contract.contains("# CONTEXT.md"));
+    assert_eq!(last_request, prompt);
+
+    let store = kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT prompt FROM spec_writer_runs ORDER BY id DESC LIMIT 1",
+            (),
+        )
+        .await?;
+    let row = rows.next().await?.expect("expected spec writer row");
+    let stored_prompt: String = row.get(0)?;
+    assert_eq!(stored_prompt, prompt);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_test_gap_finder_block() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    fs::create_dir(&harness_dir)?;
+    copy_dir_contents(
+        library_block_path("test_gap_finder").join("workspace"),
+        tmp.path(),
+    )?;
+    copy_dir_contents(
+        library_block_path("test_gap_finder").join("harness"),
+        &harness_dir,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider("TEST_GAP_REPLY"));
+    let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
+
+    let mut kernel = build_kernel(config).await?;
+    let mut session = kernel.create_session().await;
+    let prompt = "Identify the likely missing tests for the governance refactor".to_string();
+    kernel.run(&mut session, Some(prompt.clone())).await?;
+    kernel.end_session(&mut session).await?;
+
+    let runtime_dir = tmp.path().join(".turin/runtime/test-gap-finder");
+    let contract = fs::read_to_string(runtime_dir.join("contract.md"))?;
+    let last_request = fs::read_to_string(runtime_dir.join("last-request.txt"))?;
+    assert!(contract.contains("# CHANGE_SUMMARY.md"));
+    assert!(contract.contains("# TESTING_POLICY.md"));
+    assert!(contract.contains("# RISK_AREAS.md"));
+    assert_eq!(last_request, prompt);
+
+    let store = kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT prompt FROM test_gap_runs ORDER BY id DESC LIMIT 1",
+            (),
+        )
+        .await?;
+    let row = rows.next().await?.expect("expected test gap row");
+    let stored_prompt: String = row.get(0)?;
+    assert_eq!(stored_prompt, prompt);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_repo_librarian_block() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    fs::create_dir(&harness_dir)?;
+    copy_dir_contents(
+        library_block_path("repo_librarian").join("workspace"),
+        tmp.path(),
+    )?;
+    copy_dir_contents(
+        library_block_path("repo_librarian").join("harness"),
+        &harness_dir,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider("REPO_REPLY"));
+    let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
+
+    let mut kernel = build_kernel(config).await?;
+    let mut session = kernel.create_session().await;
+    let prompt = "Route this task according to the repository contracts".to_string();
+    kernel.run(&mut session, Some(prompt.clone())).await?;
+    kernel.end_session(&mut session).await?;
+
+    let runtime_dir = tmp.path().join(".turin/runtime/repo-librarian");
+    let contract = fs::read_to_string(runtime_dir.join("contract.md"))?;
+    let last_request = fs::read_to_string(runtime_dir.join("last-request.txt"))?;
+    assert!(contract.contains("# SOUL.md"));
+    assert!(contract.contains("# AGENTS.md"));
+    assert!(contract.contains("# ARCHITECTURE.md"));
+    assert!(contract.contains("# CONVENTIONS.md"));
+    assert_eq!(last_request, prompt);
+
+    let store = kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT prompt FROM repo_librarian_runs ORDER BY id DESC LIMIT 1",
+            (),
+        )
+        .await?;
+    let row = rows.next().await?.expect("expected repo librarian row");
+    let stored_prompt: String = row.get(0)?;
+    assert_eq!(stored_prompt, prompt);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_delegated_peer_capabilities_example() -> Result<()> {
     let tmp = tempdir()?;
     let main_harness_dir = tmp.path().join("main_harnesses");

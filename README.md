@@ -312,6 +312,9 @@ Current entries include:
 - `library/workflows/bug_triage_desk/` — issue-intake workflow with triager + responder specialists
 - `library/blocks/code_reviewer/` — focused review contract for correctness/regression review
 - `library/blocks/task_planner/` — focused planning contract for sequenced task breakdowns
+- `library/blocks/spec_writer/` — focused contract for turning rough ideas into executable specs
+- `library/blocks/test_gap_finder/` — focused contract for identifying likely missing tests
+- `library/blocks/repo_librarian/` — focused contract for repository-aware routing and guidance
 - `library/blocks/governed_peer_review/` — peer-agent review under temporary grants
 - `library/blocks/delegated_peer_capabilities/` — peer completion with an explicit delegated capability ceiling
 - `library/blocks/durable_journal/` — durable note/journal pattern over `runtime.db`
