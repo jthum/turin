@@ -14,6 +14,8 @@ use turin::kernel::config::{
     GovernanceProfile, HarnessConfig, KernelConfig, PersistenceConfig, ProviderConfig, TurinConfig,
 };
 use turin::kernel::identity::ContextSelector;
+use turin::kernel::policy::PolicyScope;
+use turin::persistence::manager::StoreSelector;
 
 struct ToolMockProvider {
     tool_name: String,
@@ -2927,6 +2929,17 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
                 { review }
             )
             if changed == nil then error("runtime.db.exec insert after runtime.agent.complete failed: " .. tostring(derr)) end
+
+            local pok, perr = runtime.policy.set("queue.max_depth", 77)
+            if not pok then error("runtime.policy.set after runtime.agent.complete failed: " .. tostring(perr)) end
+
+            local pval, pgerr = runtime.policy.get("queue.max_depth")
+            if pgerr ~= nil then error("runtime.policy.get after runtime.agent.complete failed: " .. tostring(pgerr)) end
+            if pval ~= 77 then error("runtime.policy.get after runtime.agent.complete mismatch: " .. tostring(pval)) end
+
+            session.set("peer_complete_marker", "done")
+            local marker = session.get("peer_complete_marker")
+            if marker ~= "done" then error("session.get after runtime.agent.complete mismatch: " .. tostring(marker)) end
             return ALLOW
         end
     "#;
@@ -3040,6 +3053,24 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
         .expect("expected peer_complete_probe row");
     let stored_review: String = row.get(0)?;
     assert_eq!(stored_review, "worker-ok");
+
+    let policy_value = kernel
+        .policy_manager()
+        .get("queue.max_depth", &PolicyScope::default())
+        .await?;
+    assert_eq!(policy_value, Some(serde_json::json!(77)));
+
+    let session_selector = ContextSelector {
+        tags: vec![format!("session:{}", session.identity.session_id())],
+        namespace: "default".to_string(),
+        visibility: "private".to_string(),
+    };
+    let session_store = kernel
+        .store_manager()
+        .open(&StoreSelector::Alias(session_selector.to_alias()))
+        .await?;
+    let marker = session_store.kv_get("peer_complete_marker").await?;
+    assert_eq!(marker.as_deref(), Some("done"));
 
     Ok(())
 }
