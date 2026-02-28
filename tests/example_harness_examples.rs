@@ -244,6 +244,82 @@ async fn build_bug_triage_fixture(
     Ok(WorkflowFixture { tmp, kernel })
 }
 
+async fn build_release_manager_fixture(
+    main_response: &str,
+    reviewer_response: &str,
+    changelog_response: &str,
+) -> Result<WorkflowFixture> {
+    let tmp = tempdir()?;
+    let main_harness_dir = tmp.path().join("harnesses");
+    let reviewer_harness_dir = tmp.path().join("readiness_harnesses");
+    let changelog_harness_dir = tmp.path().join("changelog_harnesses");
+    fs::create_dir(&main_harness_dir)?;
+    fs::create_dir(&reviewer_harness_dir)?;
+    fs::create_dir(&changelog_harness_dir)?;
+
+    copy_dir_contents(
+        library_workflow_path("release_manager").join("workspace"),
+        tmp.path(),
+    )?;
+    copy_dir_contents(
+        library_workflow_path("release_manager").join("harness"),
+        &main_harness_dir,
+    )?;
+    copy_dir_contents(
+        library_workflow_path("release_manager")
+            .join("agents")
+            .join("readiness_reviewer"),
+        &reviewer_harness_dir,
+    )?;
+    copy_dir_contents(
+        library_workflow_path("release_manager")
+            .join("agents")
+            .join("changelog_writer"),
+        &changelog_harness_dir,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider(main_response));
+    providers.insert(
+        "mock_reviewer".to_string(),
+        mock_provider(reviewer_response),
+    );
+    providers.insert(
+        "mock_changelog".to_string(),
+        mock_provider(changelog_response),
+    );
+    let mut config = base_config(tmp.path(), &main_harness_dir, "mock_main", providers);
+    config.agents.insert(
+        "readiness_reviewer".to_string(),
+        AgentConfig {
+            id: "readiness_reviewer".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock_reviewer".to_string(),
+            system_prompt: "You are a readiness reviewer.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: Some(reviewer_harness_dir.to_string_lossy().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+    config.agents.insert(
+        "changelog_writer".to_string(),
+        AgentConfig {
+            id: "changelog_writer".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock_changelog".to_string(),
+            system_prompt: "You are a changelog writer.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: Some(changelog_harness_dir.to_string_lossy().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+
+    let kernel = build_kernel(config).await?;
+    Ok(WorkflowFixture { tmp, kernel })
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_openclaw_style_personal_assistant_routes_review_prompts() -> Result<()> {
     let mut fixture = build_openclaw_fixture("MAIN_OK", "PLAN_OK", "REVIEW_OK").await?;
@@ -451,6 +527,58 @@ async fn test_bug_triage_desk_workflow() -> Result<()> {
     assert_eq!(prompt_value, prompt);
     assert_eq!(triage_value, "TRIAGE_OK");
     assert_eq!(response_value, "RESPONSE_OK");
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_release_manager_workflow() -> Result<()> {
+    let mut fixture = build_release_manager_fixture("MAIN_OK", "READY_OK", "CHANGELOG_OK").await?;
+    let prompt = "Prepare the next Turin pre-release checkpoint".to_string();
+
+    let mut session = fixture.kernel.create_session().await;
+    fixture
+        .kernel
+        .run(&mut session, Some(prompt.clone()))
+        .await?;
+    fixture.kernel.end_session(&mut session).await?;
+
+    let runtime_dir = fixture.tmp.path().join(".turin/runtime/release-manager");
+    let context = fs::read_to_string(runtime_dir.join("context.md"))?;
+    let readiness = fs::read_to_string(runtime_dir.join("readiness.md"))?;
+    let changelog = fs::read_to_string(runtime_dir.join("changelog.md"))?;
+    let brief = fs::read_to_string(runtime_dir.join("brief.md"))?;
+    let reviewer_prompt =
+        fs::read_to_string(runtime_dir.join("readiness-reviewer-last-request.txt"))?;
+    let changelog_prompt =
+        fs::read_to_string(runtime_dir.join("changelog-writer-last-request.txt"))?;
+
+    assert!(context.contains("# RELEASE_GOALS.md"));
+    assert!(context.contains("# CHANGELOG_NOTES.md"));
+    assert!(context.contains("# OPEN_ISSUES.md"));
+    assert!(context.contains("# CHECKLIST.md"));
+    assert!(context.contains("# CONSTRAINTS.md"));
+    assert_eq!(readiness, "READY_OK");
+    assert_eq!(changelog, "CHANGELOG_OK");
+    assert!(brief.contains("## Readiness Review"));
+    assert!(brief.contains("## Draft Release Notes"));
+    assert!(reviewer_prompt.contains("Release request"));
+    assert!(changelog_prompt.contains("Readiness review"));
+
+    let store = fixture.kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT prompt, readiness, changelog FROM release_manager_runs ORDER BY id DESC LIMIT 1",
+            (),
+        )
+        .await?;
+    let row = rows.next().await?.expect("expected release manager row");
+    let prompt_value: String = row.get(0)?;
+    let readiness_value: String = row.get(1)?;
+    let changelog_value: String = row.get(2)?;
+    assert_eq!(prompt_value, prompt);
+    assert_eq!(readiness_value, "READY_OK");
+    assert_eq!(changelog_value, "CHANGELOG_OK");
     Ok(())
 }
 

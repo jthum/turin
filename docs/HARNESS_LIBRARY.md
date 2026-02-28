@@ -34,6 +34,7 @@ library/
 - `library/workflows/openclaw_style_personal_assistant/`
 - `library/workflows/full_coding_harness/`
 - `library/workflows/bug_triage_desk/`
+- `library/workflows/release_manager/`
 
 ## Validation
 
@@ -79,6 +80,17 @@ Pattern:
 - triager specialist classifies severity, owner, and next checks
 - responder specialist drafts an operator-facing follow-up
 - runtime artifacts and DB rows capture the triage flow
+
+## Release Manager
+
+`library/workflows/release_manager/`
+
+Pattern:
+
+- checked-in release context (`RELEASE_GOALS.md`, `CHANGELOG_NOTES.md`, `OPEN_ISSUES.md`, `CHECKLIST.md`, `CONSTRAINTS.md`)
+- readiness reviewer specialist assesses blockers and shipping risk
+- changelog writer specialist drafts release notes
+- runtime artifacts and DB rows capture the release-prep flow
 
 ## Governed Peer Review
 
