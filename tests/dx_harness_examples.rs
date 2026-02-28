@@ -240,6 +240,92 @@ async fn test_dx_fixture_import_scoped_capability_delegate() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_dx_fixture_import_scoped_complete_delegate() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    let reviewer_harness_dir = tmp.path().join("reviewer_harnesses");
+    fs::create_dir(&harness_dir)?;
+    fs::create_dir(&reviewer_harness_dir)?;
+    copy_fixture_tree("import_scoped_complete_delegate", &harness_dir)?;
+    copy_fixture(
+        "peer_review_worker.lua",
+        reviewer_harness_dir.join("peer_review_worker.lua"),
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider("IMPORT_COMPLETE_OK"));
+    providers.insert("mock_review".to_string(), mock_provider("REVIEW_OK"));
+    let mut config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
+    config.governance = GovernanceConfig {
+        profile: GovernanceProfile::Balanced,
+        enforcement_enabled: true,
+        import: turin::kernel::config::GovernanceImportConfig {
+            mode: turin::kernel::config::GovernanceImportMode::Mixed,
+            default_root: Some("core".to_string()),
+            allow_unscoped_in_open: false,
+        },
+        roots: HashMap::from([(
+            "core".to_string(),
+            turin::kernel::config::GovernanceRootConfig {
+                path: harness_dir.to_string_lossy().to_string(),
+                writable_hint: false,
+                default_profile: Some("core_full".to_string()),
+                max_capabilities: HashMap::new(),
+            },
+        )]),
+        agents: HashMap::from([(
+            "default".to_string(),
+            turin::kernel::config::GovernanceAgentCapabilitiesConfig {
+                capability_profile: None,
+                max_capabilities: HashMap::new(),
+                allowed_child_agents: vec!["reviewer".to_string()],
+            },
+        )]),
+        ..GovernanceConfig::default()
+    };
+    config.agents.insert(
+        "reviewer".to_string(),
+        AgentConfig {
+            id: "reviewer".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock_review".to_string(),
+            system_prompt: "You are a reviewer.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: Some(reviewer_harness_dir.to_string_lossy().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+
+    let mut kernel = build_kernel(config).await?;
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("Exercise scoped import delegated complete".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    let store = kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT review FROM delegated_complete_probe ORDER BY id DESC LIMIT 1",
+            (),
+        )
+        .await?;
+    let row = rows
+        .next()
+        .await?
+        .expect("expected delegated_complete_probe row");
+    let review: String = row.get(0)?;
+    assert_eq!(review, "REVIEW_OK");
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_dx_fixture_nested_import_widen_denial() -> Result<()> {
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harnesses");

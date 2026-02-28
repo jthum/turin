@@ -3074,3 +3074,238 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
 
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_runtime_agent_complete_preserves_nested_grant_context() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp
+        .path()
+        .join("test_runtime_agent_complete_nested_grant.db");
+    let orchestrator_harness_dir = tmp.path().join("harnesses_orchestrator");
+    let worker_harness_dir = tmp.path().join("harnesses_worker");
+    std::fs::create_dir(&orchestrator_harness_dir)?;
+    std::fs::create_dir(&worker_harness_dir)?;
+
+    let orchestrator_harness = r#"
+        function on_turn_prepare(ctx)
+            local outer_gid = nil
+            local inner_gid = nil
+
+            local result = runtime.governance.grant({
+                ttl_ms = 5000,
+                capabilities = {
+                    ["runtime.agent.submit"] = true,
+                    ["runtime.agent.await"] = true,
+                    ["runtime.agent.status"] = true,
+                    ["runtime.governance.grant.issue"] = true,
+                    ["runtime.governance.grant.use"] = true,
+                    ["runtime.governance.grant.revoke"] = true,
+                    ["runtime.db.exec"] = true,
+                }
+            }, function()
+                local submit_dec = access.check("runtime.agent.submit")
+                if submit_dec == nil or not submit_dec.allowed then
+                    error("outer grant should allow runtime.agent.submit")
+                end
+                outer_gid = submit_dec.subject_grant_id
+                if outer_gid == nil or outer_gid == "" then
+                    error("outer grant id missing")
+                end
+
+                local review, err = runtime.agent.complete("worker", "say hello", { timeout_ms = 5000, title = "hello" })
+                if review == nil then
+                    error("runtime.agent.complete failed inside nested grant test: " .. tostring(err))
+                end
+                if review ~= "worker-ok" then
+                    error("runtime.agent.complete output mismatch: " .. tostring(review))
+                end
+
+                local nested = runtime.governance.grant({
+                    ttl_ms = 5000,
+                    capabilities = {
+                        ["runtime.db.exec"] = true,
+                    }
+                }, function()
+                    local db_dec = access.check("runtime.db.exec")
+                    if db_dec == nil or not db_dec.allowed then
+                        error("inner grant should allow runtime.db.exec")
+                    end
+                    inner_gid = db_dec.subject_grant_id
+                    if inner_gid == nil or inner_gid == "" then
+                        error("inner grant id missing")
+                    end
+                    if inner_gid == outer_gid then
+                        error("inner grant should have a distinct grant id")
+                    end
+
+                    local policy_dec = access.check("runtime.policy.set")
+                    if policy_dec == nil or policy_dec.allowed then
+                        error("inner grant should keep runtime.policy.set denied")
+                    end
+
+                    local changed, derr = runtime.db.exec([[
+                        CREATE TABLE IF NOT EXISTS nested_complete_probe (
+                            id INTEGER PRIMARY KEY,
+                            review TEXT NOT NULL,
+                            outer_grant_id TEXT NOT NULL,
+                            inner_grant_id TEXT NOT NULL
+                        )
+                    ]])
+                    if changed == nil then
+                        error("runtime.db.exec create after nested grant failed: " .. tostring(derr))
+                    end
+
+                    changed, derr = runtime.db.exec(
+                        "INSERT INTO nested_complete_probe(review, outer_grant_id, inner_grant_id) VALUES (?, ?, ?)",
+                        { review, outer_gid, inner_gid }
+                    )
+                    if changed == nil then
+                        error("runtime.db.exec insert after nested grant failed: " .. tostring(derr))
+                    end
+
+                    return "nested-ok"
+                end)
+
+                if nested ~= "nested-ok" then
+                    error("nested grant result mismatch: " .. tostring(nested))
+                end
+
+                local restored = access.check("runtime.agent.submit")
+                if restored == nil or not restored.allowed then
+                    error("outer grant should be restored after nested grant")
+                end
+                if restored.subject_grant_id ~= outer_gid then
+                    error("outer grant id should be restored after nested grant")
+                end
+
+                return review
+            end)
+
+            if result ~= "worker-ok" then
+                error("outer grant result mismatch: " .. tostring(result))
+            end
+
+            local base_dec = access.check("runtime.agent.submit")
+            if base_dec ~= nil and base_dec.subject_grant_id ~= nil then
+                error("grant id should be cleared after outer grant")
+            end
+
+            return ALLOW
+        end
+    "#;
+    std::fs::write(
+        orchestrator_harness_dir.join("orchestrator.lua"),
+        orchestrator_harness,
+    )?;
+    std::fs::write(worker_harness_dir.join("worker.lua"), "-- worker harness\n")?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("worker-ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut agents = std::collections::HashMap::new();
+    agents.insert(
+        "worker".to_string(),
+        AgentConfig {
+            id: "worker".to_string(),
+            system_prompt: "worker".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness_dir: Some(worker_harness_dir.to_string_lossy().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+
+    let cfg = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            system_prompt: "orchestrator".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness_dir: None,
+            idle_grace_secs: None,
+        },
+        agents,
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_string_lossy().to_string(),
+            max_turns: 4,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_string_lossy().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: orchestrator_harness_dir.to_string_lossy().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: GovernanceConfig {
+            profile: GovernanceProfile::Balanced,
+            enforcement_enabled: true,
+            grants: GovernanceGrantsConfig {
+                enabled: true,
+                max_ttl_ms: Some(60_000),
+                require_audit_reason: false,
+            },
+            ..GovernanceConfig::default()
+        },
+    };
+
+    let mut kernel = Kernel::builder(cfg).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise runtime agent complete nested grant".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    let store = kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
+    let mut rows = conn
+        .query(
+            "SELECT review, outer_grant_id, inner_grant_id FROM nested_complete_probe ORDER BY id DESC LIMIT 1",
+            (),
+        )
+        .await?;
+    let row = rows
+        .next()
+        .await?
+        .expect("expected nested_complete_probe row");
+    let stored_review: String = row.get(0)?;
+    let outer_grant_id: String = row.get(1)?;
+    let inner_grant_id: String = row.get(2)?;
+    assert_eq!(stored_review, "worker-ok");
+    assert!(
+        !outer_grant_id.is_empty(),
+        "outer grant id should be persisted"
+    );
+    assert!(
+        !inner_grant_id.is_empty(),
+        "inner grant id should be persisted"
+    );
+    assert_ne!(
+        outer_grant_id, inner_grant_id,
+        "nested grants should use distinct grant ids"
+    );
+
+    Ok(())
+}
