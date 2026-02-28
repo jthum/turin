@@ -12,10 +12,12 @@ Turin is intentionally unopinionated about workflow and personality. It provides
 Turin now ships a coherent, canonical runtime with:
 
 - **Canonical Harness API** (`runtime.*`) plus ergonomic aliases (`memory.*`, `kv.*`, `agent.*`, `session.*`, `user.*`)
+- **First-party Harness DX layer** (`verdict.*`, `allowed`, `needs`, callable `runtime.db(...)`, callable `runtime.agent(...)`, grant/time/json helpers)
 - **Multi-DB runtime** with dynamic DB handles (`runtime.db.open/query/exec/list/close`)
 - **Multi-agent runtime** with peer agent submit/await/status orchestration (`runtime.agent.*`)
 - **Stable hook model** with explicit lifecycle hooks and typed event payloads
 - **Opt-in governance model** with profiles, capabilities, import scoping, agent ceilings, and temporary grants
+- **Harness Library** with reusable `blocks/` and ready-to-run `workflows/`
 - **Provider-agnostic core** (provider quirks belong in `inference-sdk-rust`, not Turin)
 - **Hot-reloadable harness scripts** with `import(...)` and `import_scoped(...)`
 - **Durable event persistence** and optional immutable audit behavior
@@ -42,6 +44,8 @@ Simple things should be simple. Powerful things should be possible.
 - **Harness scripting in Luau** for governance, workflows, context engineering, memory policies, and orchestration
 - **Canonical stdlib API**:
   - `runtime.context`, `runtime.memory`, `runtime.kv`, `runtime.db`, `runtime.agent`, `runtime.policy`, `runtime.governance`
+- **First-party DX layer**:
+  - `verdict`, `allowed`, `needs`, `session`, `user`, callable `runtime.db(...)`, callable `runtime.agent(...)`
 - **Top-level ergonomic aliases**:
   - `fs`, `json`, `time`, `log`, `import`, `import_scoped`
   - `memory`, `kv`, `session`, `user`, `agent`
@@ -51,6 +55,23 @@ Simple things should be simple. Powerful things should be possible.
 - **Peer-agent orchestration** with status inspection and async submit/await result handling
 - **Opt-in governance** with profiles/capabilities/import scoping/agent ceilings/grants
 - **Live provider smoke tooling** (manual/opt-in) for real endpoint validation
+
+## Harness Library
+
+Turin ships a Harness Library under `library/`:
+
+- `library/blocks/` — reusable harness units for focused jobs
+- `library/workflows/` — complete end-to-end harness systems
+
+Current workflows include:
+
+- `openclaw_style_personal_assistant`
+- `full_coding_harness`
+- `bug_triage_desk`
+- `release_manager`
+- `docs_team_assistant`
+
+See `docs/HARNESS_LIBRARY.md` for the current catalog and validation approach.
 
 ## Quickstart
 

@@ -258,6 +258,10 @@ Passed cases:
 - `immutable_audit`
 - `peer_grant`
 
+Additional standalone validation recorded on: `2026-02-28T06:01:02Z`
+
+- `peer_complete_caps` — `1 passed, 0 failed`
+
 This baseline demonstrates end-to-end live validation across Turin’s core runtime value surface:
 
 - live inference + streaming

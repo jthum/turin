@@ -14,6 +14,7 @@ This is the documentation landing page for Turin.
 - `docs/PRIMITIVES.md` — **canonical harness API surface reference** (`runtime.*`, aliases, and DX helpers)
 - `docs/HARNESS_GUIDE.md` — practical harness patterns, DX examples, governance-aware design
 - `docs/HARNESS_LIBRARY.md` — ready-to-use harness library entries and how they are validated
+- `library/README.md` — Harness Library catalog from the repository root
 
 ## Governance and Security (Opt-In)
 

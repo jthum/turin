@@ -5,6 +5,90 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-02-28
+
+### Added
+- **First-Party Harness DX Layer**
+  - Added first-party DX helpers under `src/harness/dx/` and documented them as part of Turin's script-author surface.
+  - Added verdict helpers:
+    - `verdict.allow`
+    - `verdict.reject`
+    - `verdict.escalate`
+    - `verdict.modify`
+    - `verdict.reject_if`
+    - `verdict.escalate_if`
+  - Added access helpers:
+    - `allowed(...)`
+    - `needs(...)`
+    - `access.check(...)`
+  - Added session/user DX helpers:
+    - `session.*`
+    - `user.*`
+    - including `remember`, `recall`, `get`, `set`, `del`, and `incr`
+  - Added callable DX surfaces:
+    - `runtime.db(selector)` with `:one`, `:all`, `:exec`, `:close`, and `runtime.db.with(...)`
+    - `runtime.agent(agent_id)` with `:complete`, `:submit`, `:await`, and `:status`
+  - Added DX helpers for:
+    - `runtime.governance.grant(spec, fn)`
+    - `time.since(...)`
+    - `time.after(...)`
+    - `fs.read_json(...)`
+    - `fs.write_json(...)`
+- **Harness Library**
+  - Added a first-class Harness Library under `library/` with:
+    - `blocks/` for reusable harness units
+    - `workflows/` for complete end-to-end harness systems
+  - Added current workflow entries:
+    - `openclaw_style_personal_assistant`
+    - `full_coding_harness`
+    - `bug_triage_desk`
+    - `release_manager`
+    - `docs_team_assistant`
+  - Added current block entries:
+    - `code_reviewer`
+    - `task_planner`
+    - `spec_writer`
+    - `test_gap_finder`
+    - `repo_librarian`
+    - `release_readiness_checker`
+    - `docs_maintainer`
+    - `changelog_writer`
+    - `governed_peer_review`
+    - `delegated_peer_capabilities`
+    - `durable_journal`
+- **Expanded Harness/Example Validation**
+  - Added realistic DX fixture coverage and import-scoping fixture coverage for the new DX layer.
+  - Added Harness Library integration coverage through `cargo test --test example_harness_examples`.
+  - Added live-provider `peer_complete_caps` coverage to `scripts/live_minimax_smoke.sh` for delegated-capability peer completion validation.
+
+### Changed
+- **Canonical Peer Completion API**
+  - Added native canonical `runtime.agent.complete(agent_id, prompt, opts?)` and rewired DX `runtime.agent(...):complete(...)` to use the native path.
+  - Reduced boilerplate for canonical peer completion from explicit `submit + await + unwrap` to a single primitive call.
+- **Documentation Surface**
+  - Promoted the DX layer and Harness Library into the main documentation set.
+  - Added dedicated Harness Library documentation and expanded practical harness guidance.
+- **Harness Library Structure**
+  - Reorganized serious harnesses into the canonical `library/blocks/` and `library/workflows/` taxonomy.
+
+### Fixed
+- **Peer Completion Post-Effect Reliability**
+  - Fixed the quality gap where side effects immediately after peer completion could behave inconsistently in harness flows.
+  - Added regression coverage proving post-`runtime.agent.complete(...)` side effects across:
+    - filesystem writes
+    - DB writes
+    - runtime policy mutation
+    - session state mutation
+    - nested temporary grants
+    - import-scoped delegated flows
+- **Delegated Capability Propagation**
+  - Hardened delegated capability behavior for peer completion in both canonical and DX call sites.
+  - Added regression coverage proving delegated peers can use explicitly granted capability slices while remaining denied non-delegated mutations.
+
+### Documentation
+- Updated `README.md` to surface the Harness Library and first-party DX layer more clearly.
+- Updated docs index and live-provider docs to reflect the current Harness Library and delegated peer-completion validation surface.
+
 ## [0.16.0] - 2026-02-25
 
 ### Added
