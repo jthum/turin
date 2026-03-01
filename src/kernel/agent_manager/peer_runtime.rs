@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use crate::harness::verdict::Verdict;
@@ -25,8 +26,8 @@ pub(super) struct PeerRunOutcome {
 }
 
 impl PeerRuntime {
-    pub(super) async fn start(manager: &AgentManager, agent_id: &str) -> Result<Self> {
-        let mut kernel = manager.build_shared_peer_kernel()?;
+    pub(super) async fn start(manager: Arc<AgentManager>, agent_id: &str) -> Result<Self> {
+        let mut kernel = fork_peer_kernel(&manager)?;
         if kernel.clients.is_empty() {
             kernel.init_clients()?;
         }
@@ -277,4 +278,30 @@ impl PeerRuntime {
             engine.set_active_capability_delegation(None);
         }
     }
+}
+
+pub(super) fn fork_peer_kernel(manager: &AgentManager) -> Result<crate::kernel::Kernel> {
+    let shared = manager
+        .shared_runtime()
+        .ok_or_else(|| anyhow::anyhow!("AgentManager shared runtime not bound"))?;
+    let inference = manager
+        .shared_inference
+        .lock()
+        .expect("agent manager shared inference mutex poisoned")
+        .clone();
+
+    Ok(crate::kernel::Kernel {
+        config: Arc::clone(&manager.config),
+        json: shared.json,
+        tool_registry: shared.tool_registry.clone(),
+        store_manager: Arc::clone(&manager.store_manager),
+        agent_manager: manager.self_arc()?,
+        policy_manager: Arc::clone(&shared.policy_manager),
+        governance_manager: Arc::clone(&shared.governance_manager),
+        harness_manager: Arc::clone(&shared.harness_manager),
+        check_watcher: None,
+        clients: inference.clients,
+        embedding_provider: inference.embedding_provider,
+        mcp_clients: Vec::new(),
+    })
 }

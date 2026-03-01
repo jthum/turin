@@ -149,32 +149,6 @@ impl AgentManager {
             .ok_or_else(|| anyhow::anyhow!("AgentManager self handle not bound"))
     }
 
-    pub(crate) fn build_shared_peer_kernel(&self) -> Result<crate::kernel::Kernel> {
-        let shared = self
-            .shared_runtime()
-            .ok_or_else(|| anyhow::anyhow!("AgentManager shared runtime not bound"))?;
-        let inference = self
-            .shared_inference
-            .lock()
-            .expect("agent manager shared inference mutex poisoned")
-            .clone();
-
-        Ok(crate::kernel::Kernel {
-            config: Arc::clone(&self.config),
-            json: shared.json,
-            tool_registry: shared.tool_registry.clone(),
-            store_manager: Arc::clone(&self.store_manager),
-            agent_manager: self.self_arc()?,
-            policy_manager: Arc::clone(&shared.policy_manager),
-            governance_manager: Arc::clone(&shared.governance_manager),
-            harness_manager: Arc::clone(&shared.harness_manager),
-            check_watcher: None,
-            clients: inference.clients,
-            embedding_provider: inference.embedding_provider,
-            mcp_clients: Vec::new(),
-        })
-    }
-
     /// Dispatch a task to an agent by ID. If the agent isn't running, it will be started automatically.
     pub async fn send(
         &self,
@@ -451,7 +425,7 @@ mod tests {
             .with_tool_registry(registry.clone())
             .build()?;
 
-        let peer_kernel = kernel.agent_manager.build_shared_peer_kernel()?;
+        let peer_kernel = super::peer_runtime::fork_peer_kernel(&kernel.agent_manager)?;
 
         assert_eq!(peer_kernel.tool_registry.len(), registry.len());
         assert!(peer_kernel.tool_registry.get("test_tool").is_some());

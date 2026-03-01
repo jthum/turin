@@ -45,7 +45,7 @@ impl AgentManager {
         let join_handle = tokio::spawn(async move {
             debug!(agent_id = %agent_id_clone, "Peer agent loop initializing");
 
-            let mut runtime = match PeerRuntime::start(&manager, &agent_id_clone).await {
+            let mut runtime = match PeerRuntime::start(manager.clone(), &agent_id_clone).await {
                 Ok(runtime) => runtime,
                 Err(e) => {
                     error!(agent_id = %agent_id_clone, error = %e, "Peer agent failed to start session");
