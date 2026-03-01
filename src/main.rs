@@ -164,6 +164,11 @@ enum DaemonCommands {
         #[command(subcommand)]
         command: DaemonAgentCommands,
     },
+    /// Manage daemon tasks
+    Task {
+        #[command(subcommand)]
+        command: DaemonTaskCommands,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -260,6 +265,43 @@ enum DaemonAgentCommands {
     Delete {
         /// Agent ID
         id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum DaemonTaskCommands {
+    /// Submit a task to a daemon-managed agent
+    Submit {
+        /// Agent ID
+        agent_id: String,
+        /// Prompt to submit
+        prompt: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one daemon task by request ID
+    Get {
+        /// Request ID returned by task submission
+        request_id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// List daemon tasks
+    List {
         /// Path to turin.toml config file
         #[arg(long, default_value = "turin.toml")]
         config: PathBuf,
@@ -497,6 +539,22 @@ async fn main() -> Result<()> {
                 }
                 DaemonAgentCommands::Delete { id, config, json } => {
                     commands::daemon::run_agent_delete(&config, &id, json).await
+                }
+            },
+            DaemonCommands::Task { command } => match command {
+                DaemonTaskCommands::Submit {
+                    agent_id,
+                    prompt,
+                    config,
+                    json,
+                } => commands::daemon::run_task_submit(&config, &agent_id, &prompt, json).await,
+                DaemonTaskCommands::Get {
+                    request_id,
+                    config,
+                    json,
+                } => commands::daemon::run_task_get(&config, &request_id, json).await,
+                DaemonTaskCommands::List { config, json } => {
+                    commands::daemon::run_task_list(&config, json).await
                 }
             },
         },

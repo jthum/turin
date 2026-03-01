@@ -40,11 +40,13 @@ impl AgentManager {
 
         let (tx, mut rx) = mpsc::channel::<PeerAgentTaskEnvelope>(100);
         let queued_tasks = Arc::new(AtomicUsize::new(0));
+        let active_tasks = Arc::new(AtomicUsize::new(0));
         let agent_id_clone = agent_id.to_string();
         let idle_grace_secs = agent_profile.idle_grace_secs;
         let manager = Arc::clone(self);
 
         let queued_tasks_bg = queued_tasks.clone();
+        let active_tasks_bg = active_tasks.clone();
         let join_handle = tokio::spawn(async move {
             debug!(agent_id = %agent_id_clone, "Peer agent loop initializing");
 
@@ -81,7 +83,9 @@ impl AgentManager {
                     break;
                 };
                 queued_tasks_bg.fetch_sub(1, Ordering::Relaxed);
+                active_tasks_bg.fetch_add(1, Ordering::Relaxed);
                 runtime.handle_envelope(envelope).await;
+                active_tasks_bg.fetch_sub(1, Ordering::Relaxed);
             }
 
             info!(agent_id = %agent_id_clone, "Peer agent queue closed, terminating runtime");
@@ -93,6 +97,7 @@ impl AgentManager {
             tx,
             task: Some(join_handle),
             queued_tasks,
+            active_tasks,
         })
     }
 

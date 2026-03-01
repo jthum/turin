@@ -8,7 +8,9 @@ use crate::daemon::registry::{
     scan_registry, snapshot, write_agent_file,
 };
 use crate::kernel::Kernel;
+use crate::kernel::agent_manager::TaskStatusSnapshot;
 use crate::kernel::config::{AgentMode, ThinkingConfig, TurinConfig};
+use crate::kernel::session::QueuedTask;
 
 #[derive(Debug, Clone)]
 pub struct DaemonWatchPaths {
@@ -131,6 +133,13 @@ impl DaemonState {
     }
 
     pub async fn rescan(&mut self) -> Result<DaemonStatus> {
+        let active = self.kernel.agent_manager().list_statuses().await;
+        if active.iter().any(|status| {
+            status.active_tasks > 0 || status.queued_tasks > 0 || status.awaiting_results > 0
+        }) {
+            anyhow::bail!("Cannot rescan while agent runtimes have active or queued tasks");
+        }
+
         let mut bootstrap_config = TurinConfig::from_file(&self.config_path)
             .with_context(|| format!("Failed to load '{}'", self.config_path.display()))?;
         normalize_bootstrap_paths(&mut bootstrap_config, &self.config_base);
@@ -275,6 +284,45 @@ impl DaemonState {
     fn agent_dir(&self, agent_id: &str) -> PathBuf {
         self.watch_paths().agents_dir.join(agent_id)
     }
+
+    pub async fn submit_task(&self, agent_id: &str, prompt: String) -> Result<TaskStatusSnapshot> {
+        self.ensure_enabled_agent(agent_id)?;
+        let request_id = self
+            .kernel
+            .agent_manager()
+            .submit(agent_id, QueuedTask::ad_hoc(prompt), None)
+            .await?;
+        self.kernel
+            .agent_manager()
+            .get_task(&request_id)
+            .await
+            .ok_or_else(|| anyhow!("Task '{}' was submitted but is not visible", request_id))
+    }
+
+    pub async fn list_tasks(&self) -> Vec<TaskStatusSnapshot> {
+        self.kernel.agent_manager().list_tasks().await
+    }
+
+    pub async fn get_task(&self, request_id: &str) -> Option<TaskStatusSnapshot> {
+        self.kernel.agent_manager().get_task(request_id).await
+    }
+
+    fn ensure_enabled_agent(&self, agent_id: &str) -> Result<()> {
+        if agent_id == self.bootstrap_config.agent.id {
+            return Ok(());
+        }
+
+        let agent = self
+            .registry_load
+            .agents
+            .iter()
+            .find(|agent| agent.id == agent_id)
+            .ok_or_else(|| anyhow!("Agent '{}' not found", agent_id))?;
+        if !agent.enabled {
+            anyhow::bail!("Agent '{}' is disabled", agent_id);
+        }
+        Ok(())
+    }
 }
 
 fn normalize_bootstrap_paths(config: &mut TurinConfig, config_base: &Path) {
@@ -335,6 +383,7 @@ fn scaffold_local_harness(agent_dir: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+    use tokio::time::{Duration, sleep};
 
     fn write_bootstrap(root: &Path) -> Result<PathBuf> {
         std::fs::create_dir_all(root.join("default-harness"))?;
@@ -430,6 +479,43 @@ type = "no_op"
                 .all(|agent| agent.id != "docs-reviewer")
         );
         assert!(!temp.path().join("agents").join("docs-reviewer").exists());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn submit_task_exposes_completed_result_and_blocks_rescan_while_active() -> Result<()> {
+        let temp = tempdir()?;
+        let config_path = write_bootstrap(temp.path())?;
+        let mut state = DaemonState::load(&config_path).await?;
+
+        let task = state
+            .submit_task("default", "Hello daemon".to_string())
+            .await?;
+        assert_eq!(task.agent_id, "default");
+        assert_eq!(task.state, "pending");
+        assert!(state.rescan().await.is_err());
+
+        let mut saw_completed = false;
+        for _ in 0..50 {
+            if let Some(snapshot) = state.get_task(&task.request_id).await
+                && snapshot.state == "completed"
+            {
+                saw_completed = true;
+                assert!(snapshot.status.is_some());
+                break;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+        assert!(saw_completed, "daemon task did not complete in time");
+
+        let tasks = state.list_tasks().await;
+        assert!(
+            tasks
+                .iter()
+                .any(|entry| entry.request_id == task.request_id)
+        );
+        assert!(state.rescan().await.is_ok());
 
         Ok(())
     }

@@ -56,6 +56,17 @@ struct UpdateAgentParams {
     idle_grace_secs: Option<u64>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct SubmitTaskParams {
+    agent_id: String,
+    prompt: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TaskIdParams {
+    request_id: String,
+}
+
 fn default_enabled() -> bool {
     true
 }
@@ -427,6 +438,69 @@ async fn dispatch(
                     ResponseEnvelope::err(request.id, "agent_delete_failed", err.to_string(), None)
                 }
             }
+        }
+        "task.submit" => {
+            let params: SubmitTaskParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse task.submit params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let guard = state.lock().await;
+            match guard.submit_task(&params.agent_id, params.prompt).await {
+                Ok(task) => match serde_json::to_value(task) {
+                    Ok(value) => ResponseEnvelope::ok(request.id, value),
+                    Err(err) => ResponseEnvelope::err(
+                        request.id,
+                        "serialize_error",
+                        format!("Failed to serialize submitted task: {}", err),
+                        None,
+                    ),
+                },
+                Err(err) => {
+                    ResponseEnvelope::err(request.id, "task_submit_failed", err.to_string(), None)
+                }
+            }
+        }
+        "task.get" => {
+            let params: TaskIdParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse task.get params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let guard = state.lock().await;
+            match guard.get_task(&params.request_id).await {
+                Some(task) => match serde_json::to_value(task) {
+                    Ok(value) => ResponseEnvelope::ok(request.id, value),
+                    Err(err) => ResponseEnvelope::err(
+                        request.id,
+                        "serialize_error",
+                        format!("Failed to serialize task: {}", err),
+                        None,
+                    ),
+                },
+                None => ResponseEnvelope::err(
+                    request.id,
+                    "task_not_found",
+                    format!("Task '{}' not found", params.request_id),
+                    None,
+                ),
+            }
+        }
+        "task.list" => {
+            let guard = state.lock().await;
+            ResponseEnvelope::ok(request.id, json!({ "tasks": guard.list_tasks().await }))
         }
         "harness.list" => {
             let guard = state.lock().await;

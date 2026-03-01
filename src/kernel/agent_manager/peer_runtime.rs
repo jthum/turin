@@ -13,6 +13,7 @@ use crate::kernel::session::QueuedTask;
 use super::{AgentManager, PeerAgentTaskEnvelope, PeerAgentTaskResult};
 
 pub(super) struct PeerRuntime {
+    manager: Arc<AgentManager>,
     host: ExecutionHost,
     session: crate::kernel::session::SessionState,
     agent_id: String,
@@ -37,6 +38,7 @@ impl PeerRuntime {
         host.start_session(&mut session).await?;
 
         Ok(Self {
+            manager,
             host,
             session,
             agent_id: agent_id.to_string(),
@@ -52,7 +54,7 @@ impl PeerRuntime {
             let request_id = envelope
                 .request_id
                 .unwrap_or_else(|| uuid::Uuid::now_v7().simple().to_string());
-            let _ = tx_result.send(match result {
+            let completed = match result {
                 Ok(ok) => PeerAgentTaskResult {
                     request_id,
                     agent_id: self.agent_id.clone(),
@@ -71,7 +73,9 @@ impl PeerRuntime {
                     output: None,
                     error: Some(e.to_string()),
                 },
-            });
+            };
+            let _ = tx_result.send(completed.clone());
+            self.manager.record_completed_result(completed).await;
         } else if let Err(e) = result {
             error!(agent_id = %self.agent_id, error = %e, "Peer agent task failed");
         }

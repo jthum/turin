@@ -3,6 +3,7 @@ mod runtime_registry;
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
@@ -37,8 +38,21 @@ pub struct PeerAgentTaskResult {
 pub struct AgentStatusSnapshot {
     pub agent_id: String,
     pub running: bool,
+    pub active_tasks: usize,
     pub queued_tasks: usize,
     pub awaiting_results: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TaskStatusSnapshot {
+    pub request_id: String,
+    pub agent_id: String,
+    pub state: String,
+    pub runtime_task_id: Option<String>,
+    pub status: Option<TaskTerminalStatus>,
+    pub task_turn_count: Option<u32>,
+    pub output: Option<String>,
+    pub error: Option<String>,
 }
 
 struct PeerAgentTaskEnvelope {
@@ -56,6 +70,8 @@ pub struct AgentRuntimeHandle {
     task: Option<JoinHandle<()>>,
     /// Approximate number of tasks currently queued in the runtime channel.
     queued_tasks: Arc<AtomicUsize>,
+    /// Number of tasks currently executing inside the runtime loop.
+    active_tasks: Arc<AtomicUsize>,
 }
 
 impl AgentRuntimeHandle {
@@ -82,6 +98,29 @@ pub(crate) struct SharedInferenceState {
     pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
 }
 
+#[derive(Default)]
+struct CompletedTaskCache {
+    order: VecDeque<String>,
+    results: HashMap<String, PeerAgentTaskResult>,
+}
+
+impl CompletedTaskCache {
+    const MAX_ENTRIES: usize = 1024;
+
+    fn insert(&mut self, result: PeerAgentTaskResult) {
+        let request_id = result.request_id.clone();
+        if !self.results.contains_key(&request_id) {
+            self.order.push_back(request_id.clone());
+        }
+        self.results.insert(request_id, result);
+        while self.order.len() > Self::MAX_ENTRIES {
+            if let Some(evicted) = self.order.pop_front() {
+                self.results.remove(&evicted);
+            }
+        }
+    }
+}
+
 /// Orchestrates peer agents, spinning them up on demand and routing tasks to their independent runtimes.
 pub struct AgentManager {
     /// The full configuration, used to look up agent profiles and instantiate kernels.
@@ -94,6 +133,8 @@ pub struct AgentManager {
     pending_results: RwLock<HashMap<String, oneshot::Receiver<PeerAgentTaskResult>>>,
     /// Mapping of request id -> agent id for status accounting.
     pending_result_agents: RwLock<HashMap<String, String>>,
+    /// Bounded cache of completed task results for daemon/control-plane inspection.
+    completed_results: RwLock<CompletedTaskCache>,
     /// Shared runtime pieces used to fork peer kernels without cloning the whole kernel topology.
     shared_runtime: OnceLock<SharedPeerRuntimeContext>,
     /// Live inference state copied from the root kernel after provider initialization.
@@ -109,6 +150,7 @@ impl AgentManager {
             runtimes: RwLock::new(HashMap::new()),
             pending_results: RwLock::new(HashMap::new()),
             pending_result_agents: RwLock::new(HashMap::new()),
+            completed_results: RwLock::new(CompletedTaskCache::default()),
             shared_runtime: OnceLock::new(),
             shared_inference: Mutex::new(SharedInferenceState::default()),
         }
@@ -208,6 +250,10 @@ impl AgentManager {
         request_id: &str,
         timeout_ms: Option<u64>,
     ) -> Result<PeerAgentTaskResult> {
+        if let Some(result) = self.completed_result(request_id).await {
+            return Ok(result);
+        }
+
         let mut rx = {
             let mut pending = self.pending_results.write().await;
             pending.remove(request_id).ok_or_else(|| {
@@ -249,7 +295,9 @@ impl AgentManager {
             self.pending_result_agents.write().await.remove(request_id);
         }
 
-        result
+        let result = result?;
+        self.record_completed_result(result.clone()).await;
+        Ok(result)
     }
 
     /// List configured agents with runtime status.
@@ -274,9 +322,13 @@ impl AgentManager {
                 let queued_tasks = handle
                     .map(|h| h.queued_tasks.load(Ordering::Relaxed))
                     .unwrap_or(0);
+                let active_tasks = handle
+                    .map(|h| h.active_tasks.load(Ordering::Relaxed))
+                    .unwrap_or(0);
                 AgentStatusSnapshot {
                     agent_id,
                     running,
+                    active_tasks,
                     queued_tasks,
                     awaiting_results,
                 }
@@ -290,6 +342,51 @@ impl AgentManager {
             .await
             .into_iter()
             .find(|s| s.agent_id == agent_id)
+    }
+
+    pub async fn list_tasks(&self) -> Vec<TaskStatusSnapshot> {
+        let pending = self.pending_result_agents.read().await;
+        let mut snapshots: Vec<_> = pending
+            .iter()
+            .map(|(request_id, agent_id)| TaskStatusSnapshot {
+                request_id: request_id.clone(),
+                agent_id: agent_id.clone(),
+                state: "pending".to_string(),
+                runtime_task_id: None,
+                status: None,
+                task_turn_count: None,
+                output: None,
+                error: None,
+            })
+            .collect();
+        drop(pending);
+
+        let completed = self.completed_results.read().await;
+        snapshots.extend(
+            completed
+                .results
+                .values()
+                .cloned()
+                .map(|result| TaskStatusSnapshot {
+                    request_id: result.request_id,
+                    agent_id: result.agent_id,
+                    state: "completed".to_string(),
+                    runtime_task_id: Some(result.runtime_task_id),
+                    status: Some(result.status),
+                    task_turn_count: Some(result.task_turn_count),
+                    output: result.output,
+                    error: result.error,
+                }),
+        );
+        snapshots.sort_by(|a, b| a.request_id.cmp(&b.request_id));
+        snapshots
+    }
+
+    pub async fn get_task(&self, request_id: &str) -> Option<TaskStatusSnapshot> {
+        self.list_tasks()
+            .await
+            .into_iter()
+            .find(|task| task.request_id == request_id)
     }
 
     async fn enqueue_runtime_task(
@@ -308,6 +405,24 @@ impl AgentManager {
     async fn remove_pending_request(&self, request_id: &str) {
         self.pending_results.write().await.remove(request_id);
         self.pending_result_agents.write().await.remove(request_id);
+    }
+
+    pub(crate) async fn record_completed_result(&self, result: PeerAgentTaskResult) {
+        self.pending_result_agents
+            .write()
+            .await
+            .remove(&result.request_id);
+        let mut completed = self.completed_results.write().await;
+        completed.insert(result);
+    }
+
+    async fn completed_result(&self, request_id: &str) -> Option<PeerAgentTaskResult> {
+        self.completed_results
+            .read()
+            .await
+            .results
+            .get(request_id)
+            .cloned()
     }
 }
 
@@ -396,7 +511,7 @@ mod tests {
             providers,
             embeddings: Some(EmbeddingConfig::NoOp),
             governance: GovernanceConfig::default(),
-        daemon: Default::default(),
+            daemon: Default::default(),
         }
     }
 

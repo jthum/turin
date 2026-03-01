@@ -87,6 +87,11 @@ impl Kernel {
         &self.store_manager
     }
 
+    /// Access the agent manager.
+    pub fn agent_manager(&self) -> &Arc<crate::kernel::agent_manager::AgentManager> {
+        &self.agent_manager
+    }
+
     /// Access the runtime policy manager.
     pub fn policy_manager(&self) -> &Arc<RuntimePolicyManager> {
         &self.policy_manager

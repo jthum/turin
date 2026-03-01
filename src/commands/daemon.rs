@@ -84,6 +84,36 @@ pub async fn run_agent_delete(
     print_response(response, json_output)
 }
 
+pub async fn run_task_submit(
+    config_path: &std::path::Path,
+    agent_id: &str,
+    prompt: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(
+        config_path,
+        "task.submit",
+        json!({ "agent_id": agent_id, "prompt": prompt }),
+    )
+    .await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_task_get(
+    config_path: &std::path::Path,
+    request_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response =
+        send_request(config_path, "task.get", json!({ "request_id": request_id })).await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_task_list(config_path: &std::path::Path, json_output: bool) -> Result<()> {
+    let response = send_request(config_path, "task.list", json!({})).await?;
+    print_response(response, json_output)
+}
+
 pub async fn run_stop(config_path: &std::path::Path, json_output: bool) -> Result<()> {
     let response = send_request(config_path, "daemon.stop", json!({})).await?;
     print_response(response, json_output)
