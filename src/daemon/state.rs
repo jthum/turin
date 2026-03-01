@@ -48,6 +48,16 @@ pub struct CreateAgentInput {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct UpdateAgentInput {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub system_prompt: Option<String>,
+    pub thinking: Option<ThinkingConfig>,
+    pub mode: Option<AgentMode>,
+    pub idle_grace_secs: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentDetail {
     pub id: String,
@@ -192,6 +202,40 @@ impl DaemonState {
         let mut file = read_agent_file(&agent_dir)?
             .ok_or_else(|| anyhow!("Agent '{}' does not exist", agent_id))?;
         file.enabled = enabled;
+        write_agent_file(&agent_dir, &file)?;
+        self.rescan().await?;
+        self.agent_detail(agent_id)?
+            .ok_or_else(|| anyhow!("Agent '{}' could not be reloaded", agent_id))
+    }
+
+    pub async fn update_agent(
+        &mut self,
+        agent_id: &str,
+        input: UpdateAgentInput,
+    ) -> Result<AgentDetail> {
+        let agent_dir = self.agent_dir(agent_id);
+        let mut file = read_agent_file(&agent_dir)?
+            .ok_or_else(|| anyhow!("Agent '{}' does not exist", agent_id))?;
+
+        if let Some(provider) = input.provider {
+            file.provider = provider;
+        }
+        if let Some(model) = input.model {
+            file.model = model;
+        }
+        if let Some(system_prompt) = input.system_prompt {
+            file.system_prompt = Some(system_prompt);
+        }
+        if let Some(thinking) = input.thinking {
+            file.thinking = Some(thinking);
+        }
+        if let Some(mode) = input.mode {
+            file.mode = Some(mode);
+        }
+        if let Some(idle_grace_secs) = input.idle_grace_secs {
+            file.idle_grace_secs = Some(idle_grace_secs);
+        }
+
         write_agent_file(&agent_dir, &file)?;
         self.rescan().await?;
         self.agent_detail(agent_id)?
@@ -360,6 +404,22 @@ type = "no_op"
 
         let disabled = state.set_agent_enabled("docs-reviewer", false).await?;
         assert!(!disabled.enabled);
+
+        let updated = state
+            .update_agent(
+                "docs-reviewer",
+                UpdateAgentInput {
+                    model: Some("mock-model-2".to_string()),
+                    system_prompt: Some("Review docs carefully".to_string()),
+                    ..UpdateAgentInput::default()
+                },
+            )
+            .await?;
+        assert_eq!(updated.model, "mock-model-2");
+        assert_eq!(
+            updated.system_prompt.as_deref(),
+            Some("Review docs carefully")
+        );
 
         let status = state.delete_agent("docs-reviewer").await?;
         assert!(

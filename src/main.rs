@@ -225,6 +225,26 @@ enum DaemonAgentCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Update a daemon-managed agent config
+    Update {
+        /// Agent ID
+        id: String,
+        /// Optional provider override
+        #[arg(long)]
+        provider: Option<String>,
+        /// Optional model override
+        #[arg(long)]
+        model: Option<String>,
+        /// Optional system prompt override
+        #[arg(long)]
+        system_prompt: Option<String>,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Disable a daemon-managed agent
     Disable {
         /// Agent ID
@@ -451,6 +471,26 @@ async fn main() -> Result<()> {
                 }
                 DaemonAgentCommands::Enable { id, config, json } => {
                     commands::daemon::run_agent_enable(&config, &id, json).await
+                }
+                DaemonAgentCommands::Update {
+                    id,
+                    provider,
+                    model,
+                    system_prompt,
+                    config,
+                    json,
+                } => {
+                    commands::daemon::run_agent_update(
+                        &config,
+                        serde_json::json!({
+                            "id": id,
+                            "provider": provider,
+                            "model": model,
+                            "system_prompt": system_prompt,
+                        }),
+                        json,
+                    )
+                    .await
                 }
                 DaemonAgentCommands::Disable { id, config, json } => {
                     commands::daemon::run_agent_disable(&config, &id, json).await

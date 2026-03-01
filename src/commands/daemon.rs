@@ -66,6 +66,15 @@ pub async fn run_agent_disable(
     print_response(response, json_output)
 }
 
+pub async fn run_agent_update(
+    config_path: &std::path::Path,
+    params: Value,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "agent.update", params).await?;
+    print_response(response, json_output)
+}
+
 pub async fn run_agent_delete(
     config_path: &std::path::Path,
     agent_id: &str,

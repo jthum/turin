@@ -11,7 +11,9 @@ use tokio::sync::{Mutex, watch};
 use tracing::{error, info, warn};
 
 use crate::daemon::protocol::{RequestEnvelope, ResponseEnvelope};
-use crate::daemon::state::{CreateAgentInput, DaemonState, DaemonStatus, DaemonWatchPaths};
+use crate::daemon::state::{
+    CreateAgentInput, DaemonState, DaemonStatus, DaemonWatchPaths, UpdateAgentInput,
+};
 
 #[derive(Debug, serde::Deserialize)]
 struct CreateAgentParams {
@@ -35,6 +37,23 @@ struct CreateAgentParams {
 #[derive(Debug, serde::Deserialize)]
 struct AgentIdParams {
     id: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct UpdateAgentParams {
+    id: String,
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    system_prompt: Option<String>,
+    #[serde(default)]
+    thinking: Option<crate::kernel::config::ThinkingConfig>,
+    #[serde(default)]
+    mode: Option<crate::kernel::config::AgentMode>,
+    #[serde(default)]
+    idle_grace_secs: Option<u64>,
 }
 
 fn default_enabled() -> bool {
@@ -337,6 +356,47 @@ async fn dispatch(
                 },
                 Err(err) => {
                     ResponseEnvelope::err(request.id, "agent_toggle_failed", err.to_string(), None)
+                }
+            }
+        }
+        "agent.update" => {
+            let params: UpdateAgentParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse agent.update params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let mut guard = state.lock().await;
+            match guard
+                .update_agent(
+                    &params.id,
+                    UpdateAgentInput {
+                        provider: params.provider,
+                        model: params.model,
+                        system_prompt: params.system_prompt,
+                        thinking: params.thinking,
+                        mode: params.mode,
+                        idle_grace_secs: params.idle_grace_secs,
+                    },
+                )
+                .await
+            {
+                Ok(agent) => match serde_json::to_value(agent) {
+                    Ok(value) => ResponseEnvelope::ok(request.id, value),
+                    Err(err) => ResponseEnvelope::err(
+                        request.id,
+                        "serialize_error",
+                        format!("Failed to serialize updated agent: {}", err),
+                        None,
+                    ),
+                },
+                Err(err) => {
+                    ResponseEnvelope::err(request.id, "agent_update_failed", err.to_string(), None)
                 }
             }
         }
