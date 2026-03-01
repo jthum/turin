@@ -39,7 +39,7 @@ impl Kernel {
         pending_tool_calls: Vec<PendingToolCall>,
     ) -> Result<TurnOutcome> {
         let (immediate_records, validated_calls) =
-            self.evaluate_pending_tool_calls(&pending_tool_calls);
+            self.evaluate_pending_tool_calls(session, &pending_tool_calls);
         let final_by_id = self
             .execute_validated_tool_calls(session, tool_ctx, validated_calls, immediate_records)
             .await;
@@ -51,6 +51,7 @@ impl Kernel {
 
     fn evaluate_pending_tool_calls(
         &self,
+        session: &SessionState,
         pending_tool_calls: &[PendingToolCall],
     ) -> (Vec<FinalToolRecord>, Vec<(PendingToolCall, Verdict)>) {
         let mut immediate_records: Vec<FinalToolRecord> = Vec::new();
@@ -58,7 +59,7 @@ impl Kernel {
         let ansi_stdout = display::stdout_ansi();
 
         for tc in pending_tool_calls {
-            let verdict = self.evaluate_tool_call(&tc.name, &tc.id, &tc.args);
+            let verdict = self.evaluate_tool_call(session, &tc.name, &tc.id, &tc.args);
             match &verdict {
                 Verdict::Reject(reason) => {
                     if !self.json {
@@ -264,6 +265,7 @@ impl Kernel {
             }
 
             let (content, is_error) = self.apply_tool_result_hook(
+                session,
                 &record.id,
                 &record.name,
                 &record.args,

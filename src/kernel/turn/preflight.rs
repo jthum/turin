@@ -87,7 +87,8 @@ impl Kernel {
             }),
         );
 
-        let harness = self.lock_harness();
+        let runtime = self.runtime_for_session(session);
+        let harness = runtime.lock_engine();
         if let Some(ref engine) = *harness {
             match engine.evaluate(
                 "on_turn_start",
@@ -134,7 +135,8 @@ impl Kernel {
             }),
         );
 
-        let harness = self.lock_harness();
+        let runtime = self.runtime_for_session(session);
+        let harness = runtime.lock_engine();
         if let Some(ref engine) = *harness {
             let ctx = ContextWrapper::new(
                 req.model.clone(),

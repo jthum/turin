@@ -135,7 +135,8 @@ impl Kernel {
         );
 
         let verdict = {
-            let harness = self.lock_harness();
+            let runtime = self.runtime_for_session(session);
+            let harness = runtime.lock_engine();
             if let Some(ref engine) = *harness {
                 match engine.evaluate(
                     "on_all_tasks_complete",
@@ -230,7 +231,8 @@ impl Kernel {
         task: &QueuedTask,
         queue_depth_after_pop: usize,
     ) -> Verdict {
-        let harness = self.lock_harness();
+        let runtime = self.runtime_for_session(session);
+        let harness = runtime.lock_engine();
         if let Some(ref engine) = *harness {
             match engine.evaluate(
                 "on_task_start",

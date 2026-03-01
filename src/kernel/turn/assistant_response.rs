@@ -31,7 +31,8 @@ impl Kernel {
         );
 
         {
-            let harness = self.lock_harness();
+            let runtime = self.runtime_for_session(session);
+            let harness = runtime.lock_engine();
             if let Some(ref engine) = *harness
                 && let Err(e) = engine.evaluate(
                     "on_turn_end",

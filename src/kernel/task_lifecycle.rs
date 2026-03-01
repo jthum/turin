@@ -28,7 +28,8 @@ impl Kernel {
         );
 
         let verdict_result = {
-            let harness = self.lock_harness();
+            let runtime = self.runtime_for_session(session);
+            let harness = runtime.lock_engine();
             if let Some(ref engine) = *harness {
                 Some(engine.evaluate(
                     "on_task_complete",
@@ -98,7 +99,8 @@ impl Kernel {
                 );
 
                 {
-                    let harness = self.lock_harness();
+                    let runtime = self.runtime_for_session(session);
+                    let harness = runtime.lock_engine();
                     if let Some(ref engine) = *harness
                         && let Err(e) = engine.evaluate(
                             "on_plan_complete",
@@ -130,7 +132,8 @@ impl Kernel {
         error: &str,
     ) -> Result<bool> {
         let verdict_result = {
-            let harness = self.lock_harness();
+            let runtime = self.runtime_for_session(session);
+            let harness = runtime.lock_engine();
             if let Some(ref engine) = *harness {
                 engine.set_active_session(
                     Some(session.identity.session_id()),

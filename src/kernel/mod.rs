@@ -123,6 +123,20 @@ impl Kernel {
         self.harness_manager.lock_default_engine()
     }
 
+    pub(crate) fn runtime_for_agent(
+        &self,
+        agent_id: &str,
+    ) -> Arc<crate::kernel::harness_runtime::HarnessRuntime> {
+        Arc::clone(self.harness_manager.resolve_harness(Some(agent_id)))
+    }
+
+    pub(crate) fn runtime_for_session(
+        &self,
+        session: &crate::kernel::session::SessionState,
+    ) -> Arc<crate::kernel::harness_runtime::HarnessRuntime> {
+        self.runtime_for_agent(session.identity.agent_id())
+    }
+
     /// Get names of all loaded harness scripts.
     pub fn loaded_scripts(&self) -> Vec<String> {
         self.harness_manager.default_runtime().loaded_scripts()

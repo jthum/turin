@@ -28,7 +28,7 @@ pub(super) async fn run_peer_task(
         session.next_task_id += 1;
     }
 
-    set_peer_task_capability_ceiling(kernel, delegated_capabilities.clone());
+    set_peer_task_capability_ceiling(kernel, session, delegated_capabilities.clone());
     let outcome = async {
         kernel.persist_event(
             session,
@@ -43,7 +43,8 @@ pub(super) async fn run_peer_task(
         );
 
         let task_start_verdict = {
-            let harness = kernel.lock_harness();
+            let runtime = kernel.runtime_for_session(session);
+            let harness = runtime.lock_engine();
             if let Some(ref engine) = *harness {
                 match engine.evaluate(
                     "on_task_start",
@@ -160,7 +161,7 @@ pub(super) async fn run_peer_task(
         })
     }
     .await;
-    clear_peer_task_capability_ceiling(kernel);
+    clear_peer_task_capability_ceiling(kernel, session);
     outcome
 }
 
@@ -176,15 +177,21 @@ fn last_assistant_text(session: &SessionState) -> Option<String> {
     })
 }
 
-fn set_peer_task_capability_ceiling(kernel: &Kernel, caps: Option<BTreeMap<String, bool>>) {
-    let harness = kernel.lock_harness();
+fn set_peer_task_capability_ceiling(
+    kernel: &Kernel,
+    session: &SessionState,
+    caps: Option<BTreeMap<String, bool>>,
+) {
+    let runtime = kernel.runtime_for_session(session);
+    let harness = runtime.lock_engine();
     if let Some(ref engine) = *harness {
         engine.set_active_capability_delegation(caps);
     }
 }
 
-fn clear_peer_task_capability_ceiling(kernel: &Kernel) {
-    let harness = kernel.lock_harness();
+fn clear_peer_task_capability_ceiling(kernel: &Kernel, session: &SessionState) {
+    let runtime = kernel.runtime_for_session(session);
+    let harness = runtime.lock_engine();
     if let Some(ref engine) = *harness {
         engine.set_active_capability_delegation(None);
     }

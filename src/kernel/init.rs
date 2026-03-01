@@ -108,9 +108,9 @@ impl Kernel {
     #[instrument(skip(self), fields(directory = %self.config.harness.directory))]
     pub async fn init_harness(&mut self) -> Result<()> {
         info!("Initializing harness");
-        self.harness_manager
-            .default_runtime()
-            .init(self.harness_init_context())?;
+        for runtime in self.harness_manager.runtimes() {
+            runtime.init(self.harness_init_context())?;
+        }
         Ok(())
     }
 
@@ -118,9 +118,9 @@ impl Kernel {
     #[instrument(skip(self))]
     pub async fn reload_harness(&mut self) -> Result<()> {
         info!("Reloading harness");
-        self.harness_manager
-            .default_runtime()
-            .reload(self.harness_init_context())?;
+        for runtime in self.harness_manager.runtimes() {
+            runtime.reload(self.harness_init_context())?;
+        }
         Ok(())
     }
 
@@ -139,7 +139,7 @@ impl Kernel {
             return Ok(());
         }
 
-        let explicit_watch_roots = runtime.explicit_watch_roots();
+        let explicit_watch_roots = self.harness_manager.explicit_watch_roots();
 
         // We use an async channel to debounce events
         let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(10);

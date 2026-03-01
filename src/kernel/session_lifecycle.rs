@@ -81,7 +81,8 @@ impl Kernel {
         );
 
         {
-            let harness = self.lock_harness();
+            let runtime = self.runtime_for_session(session);
+            let harness = runtime.lock_engine();
             if let Some(ref engine) = *harness {
                 engine.set_active_queue(Some(session.queue.clone()));
                 if let Err(e) = engine.evaluate(
@@ -119,7 +120,8 @@ impl Kernel {
         );
 
         {
-            let harness = self.lock_harness();
+            let runtime = self.runtime_for_session(session);
+            let harness = runtime.lock_engine();
             if let Some(ref engine) = *harness {
                 if let Err(e) = engine.evaluate(
                     "on_session_end",

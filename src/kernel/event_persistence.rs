@@ -32,7 +32,8 @@ impl Kernel {
 
         // Allow harness to observe/intercept any event.
         {
-            let harness_guard = self.lock_harness();
+            let runtime = self.runtime_for_session(session);
+            let harness_guard = runtime.lock_engine();
             if let Some(engine) = &*harness_guard {
                 let payload = serde_json::to_value(event).unwrap_or_default();
                 if let Ok(verdict) = engine.evaluate("on_kernel_event", payload)

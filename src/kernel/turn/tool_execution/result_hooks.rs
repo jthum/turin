@@ -5,6 +5,7 @@ use tracing::warn;
 use crate::display;
 use crate::harness::verdict::Verdict;
 use crate::kernel::Kernel;
+use crate::kernel::session::SessionState;
 
 impl Kernel {
     pub(super) fn prompt_for_approval(&self, reason: &str) -> bool {
@@ -26,13 +27,15 @@ impl Kernel {
 
     pub(super) fn apply_tool_result_hook(
         &self,
+        session: &SessionState,
         id: &str,
         name: &str,
         args: &serde_json::Value,
         content: String,
         is_error: bool,
     ) -> (String, bool) {
-        let harness = self.lock_harness();
+        let runtime = self.runtime_for_session(session);
+        let harness = runtime.lock_engine();
         let Some(engine) = &*harness else {
             return (content, is_error);
         };

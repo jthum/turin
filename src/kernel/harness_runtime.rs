@@ -36,22 +36,37 @@ pub(crate) struct HarnessRuntime {
 }
 
 impl HarnessRuntime {
+    pub(crate) fn new(
+        harness_id: impl Into<String>,
+        directory: impl Into<PathBuf>,
+        fs_root: impl Into<PathBuf>,
+        workspace_root: impl Into<PathBuf>,
+        spawn_depth: u32,
+    ) -> Self {
+        Self {
+            harness_id: harness_id.into(),
+            directory: directory.into(),
+            fs_root: fs_root.into(),
+            workspace_root: workspace_root.into(),
+            spawn_depth,
+            engine: std::sync::Mutex::new(None),
+        }
+    }
+
     pub(crate) fn from_config(harness_id: impl Into<String>, config: &TurinConfig) -> Self {
-        let directory = PathBuf::from(&config.harness.directory);
         let fs_root = if config.harness.fs_root == "." {
             PathBuf::from(&config.kernel.workspace_root)
         } else {
             PathBuf::from(&config.harness.fs_root)
         };
 
-        Self {
-            harness_id: harness_id.into(),
-            directory,
+        Self::new(
+            harness_id,
+            PathBuf::from(&config.harness.directory),
             fs_root,
-            workspace_root: PathBuf::from(&config.kernel.workspace_root),
-            spawn_depth: config.kernel.initial_spawn_depth,
-            engine: std::sync::Mutex::new(None),
-        }
+            PathBuf::from(&config.kernel.workspace_root),
+            config.kernel.initial_spawn_depth,
+        )
     }
 
     pub(crate) fn lock_engine(&self) -> std::sync::MutexGuard<'_, Option<HarnessEngine>> {

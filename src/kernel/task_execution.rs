@@ -33,7 +33,7 @@ impl Kernel {
 
         let task_status_result = self.run_task_turn_loop(session, task, &tool_ctx).await;
 
-        self.clear_task_active_session();
+        self.clear_task_active_session(session);
 
         let (status, task_turn_count) = task_status_result?;
         Ok(TaskExecutionResult {
@@ -71,7 +71,8 @@ impl Kernel {
     }
 
     fn set_task_active_session(&self, session: &SessionState) {
-        let harness = self.lock_harness();
+        let runtime = self.runtime_for_session(session);
+        let harness = runtime.lock_engine();
         if let Some(ref engine) = *harness {
             engine.set_active_session(
                 Some(session.identity.session_id()),
@@ -86,8 +87,9 @@ impl Kernel {
         }
     }
 
-    fn clear_task_active_session(&self) {
-        let harness = self.lock_harness();
+    fn clear_task_active_session(&self, session: &SessionState) {
+        let runtime = self.runtime_for_session(session);
+        let harness = runtime.lock_engine();
         if let Some(ref engine) = *harness {
             engine.set_active_session(None, None);
             engine.set_active_event_context(None);
@@ -176,7 +178,8 @@ impl Kernel {
     }
 
     fn refresh_task_session_mode(&self, session: &mut SessionState) {
-        let harness = self.lock_harness();
+        let runtime = self.runtime_for_session(session);
+        let harness = runtime.lock_engine();
         if let Some(ref engine) = *harness
             && let Some(m) = engine.get_active_session_mode()
         {

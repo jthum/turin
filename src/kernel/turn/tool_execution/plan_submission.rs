@@ -17,7 +17,8 @@ impl Kernel {
         let mut should_clear_existing = clear_existing;
 
         let verdict_result = {
-            let harness = self.lock_harness();
+            let runtime = self.runtime_for_session(session);
+            let harness = runtime.lock_engine();
             (*harness).as_ref().map(|engine| {
                 engine.evaluate(
                     "on_plan_submit",

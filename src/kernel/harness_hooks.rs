@@ -25,11 +25,13 @@ impl Kernel {
     /// Returns the composed verdict. If no harness is loaded, returns `Allow`.
     pub(crate) fn evaluate_tool_call(
         &self,
+        session: &SessionState,
         name: &str,
         id: &str,
         args: &serde_json::Value,
     ) -> Verdict {
-        let harness = self.lock_harness();
+        let runtime = self.runtime_for_session(session);
+        let harness = runtime.lock_engine();
         if let Some(ref engine) = *harness {
             let payload = serde_json::json!({
                 "name": name,
@@ -66,7 +68,8 @@ impl Kernel {
         session: &SessionState,
     ) -> TokenUsageHookAction {
         let verdict_result = {
-            let harness = self.lock_harness();
+            let runtime = self.runtime_for_session(session);
+            let harness = runtime.lock_engine();
             if let Some(ref engine) = *harness {
                 let payload = serde_json::json!({
                     "input_tokens": session.total_input_tokens,
