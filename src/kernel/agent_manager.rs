@@ -5,8 +5,10 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{OnceLock, Weak};
+use std::sync::{Mutex, OnceLock, Weak};
 
+use crate::inference::embeddings::EmbeddingProvider;
+use crate::inference::provider::ProviderClient;
 use crate::kernel::config::TurinConfig;
 use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::governance::GovernanceManager;
@@ -72,6 +74,12 @@ pub(crate) struct SharedPeerRuntimeContext {
     pub(crate) harness_manager: Arc<HarnessManager>,
 }
 
+#[derive(Clone, Default)]
+pub(crate) struct SharedInferenceState {
+    pub(crate) clients: HashMap<String, ProviderClient>,
+    pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+}
+
 /// Orchestrates peer agents, spinning them up on demand and routing tasks to their independent runtimes.
 pub struct AgentManager {
     /// The full configuration, used to look up agent profiles and instantiate kernels.
@@ -88,6 +96,8 @@ pub struct AgentManager {
     self_handle: OnceLock<Weak<AgentManager>>,
     /// Shared runtime pieces used to fork peer kernels without cloning the whole kernel topology.
     shared_runtime: OnceLock<SharedPeerRuntimeContext>,
+    /// Live inference state copied from the root kernel after provider initialization.
+    shared_inference: Mutex<SharedInferenceState>,
 }
 
 impl AgentManager {
@@ -101,6 +111,7 @@ impl AgentManager {
             pending_result_agents: RwLock::new(HashMap::new()),
             self_handle: OnceLock::new(),
             shared_runtime: OnceLock::new(),
+            shared_inference: Mutex::new(SharedInferenceState::default()),
         }
     }
 
@@ -116,6 +127,20 @@ impl AgentManager {
         self.shared_runtime.get()
     }
 
+    pub(crate) fn bind_inference_state(
+        &self,
+        clients: HashMap<String, ProviderClient>,
+        embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    ) {
+        *self
+            .shared_inference
+            .lock()
+            .expect("agent manager shared inference mutex poisoned") = SharedInferenceState {
+            clients,
+            embedding_provider,
+        };
+    }
+
     pub(crate) fn self_arc(&self) -> Result<Arc<AgentManager>> {
         self.self_handle
             .get()
@@ -127,6 +152,11 @@ impl AgentManager {
         let shared = self
             .shared_runtime()
             .ok_or_else(|| anyhow::anyhow!("AgentManager shared runtime not bound"))?;
+        let inference = self
+            .shared_inference
+            .lock()
+            .expect("agent manager shared inference mutex poisoned")
+            .clone();
 
         Ok(crate::kernel::Kernel {
             config: Arc::clone(&self.config),
@@ -138,8 +168,8 @@ impl AgentManager {
             governance_manager: Arc::clone(&shared.governance_manager),
             harness_manager: Arc::clone(&shared.harness_manager),
             check_watcher: None,
-            clients: HashMap::new(),
-            embedding_provider: None,
+            clients: inference.clients,
+            embedding_provider: inference.embedding_provider,
             mcp_clients: Vec::new(),
         })
     }

@@ -88,6 +88,8 @@ impl Kernel {
         };
 
         self.embedding_provider = Some(Arc::from(embedding_provider));
+        self.agent_manager
+            .bind_inference_state(self.clients.clone(), self.embedding_provider.clone());
 
         Ok(())
     }

@@ -38,7 +38,9 @@ impl AgentManager {
         };
 
         let mut kernel = self.build_shared_peer_kernel()?;
-        kernel.init_clients()?;
+        if kernel.clients.is_empty() {
+            kernel.init_clients()?;
+        }
 
         let (tx, mut rx) = mpsc::channel::<PeerAgentTaskEnvelope>(100);
         let queued_tasks = Arc::new(AtomicUsize::new(0));
