@@ -9,6 +9,13 @@ use crate::daemon::registry::{
 use crate::kernel::Kernel;
 use crate::kernel::config::TurinConfig;
 
+#[derive(Debug, Clone)]
+pub struct DaemonWatchPaths {
+    pub config_path: PathBuf,
+    pub agents_dir: PathBuf,
+    pub harnesses_dir: PathBuf,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DaemonStatus {
     pub config_path: String,
@@ -73,9 +80,25 @@ impl DaemonState {
         }
     }
 
+    pub fn watch_paths(&self) -> DaemonWatchPaths {
+        DaemonWatchPaths {
+            config_path: self.config_path.clone(),
+            agents_dir: self
+                .bootstrap_config
+                .resolve_daemon_agents_dir(&self.config_base),
+            harnesses_dir: self
+                .bootstrap_config
+                .resolve_daemon_harnesses_dir(&self.config_base),
+        }
+    }
+
     pub async fn rescan(&mut self) -> Result<DaemonStatus> {
-        let registry_load = scan_registry(&self.bootstrap_config, &self.config_base)?;
-        let effective_config = build_effective_config(&self.bootstrap_config, &registry_load)?;
+        let mut bootstrap_config = TurinConfig::from_file(&self.config_path)
+            .with_context(|| format!("Failed to load '{}'", self.config_path.display()))?;
+        normalize_bootstrap_paths(&mut bootstrap_config, &self.config_base);
+
+        let registry_load = scan_registry(&bootstrap_config, &self.config_base)?;
+        let effective_config = build_effective_config(&bootstrap_config, &registry_load)?;
 
         let mut new_kernel = Kernel::builder(effective_config).build()?;
         new_kernel.init_state().await?;
@@ -84,6 +107,7 @@ impl DaemonState {
         new_kernel.start_watcher()?;
 
         let old_kernel = std::mem::replace(&mut self.kernel, new_kernel);
+        self.bootstrap_config = bootstrap_config;
         self.registry_load = registry_load;
 
         tokio::spawn(async move {
