@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **First-Class Multi-Harness Internals**
+  - Replaced the old single-harness kernel slot with a manager-backed harness runtime model.
+  - Moved the session/task/turn execution stack under `ExecutionHost`, leaving `Kernel` as a thinner composition shell around execution hosting and watcher ownership.
+  - Peer runtimes now execute against `ExecutionHost` directly instead of wrapping a full `Kernel`.
+- **Named Harness Binding**
+  - Agents now bind to named harnesses through `[harnesses.*]` plus `harness = "<id>"` on agent configs.
+  - Removed per-agent path override wiring in favor of explicit harness IDs.
+- **Shared Runtime Reuse**
+  - Peer execution now reuses configured tool registry, governance/policy managers, harness manager, provider clients, and embedding provider more directly.
+
+### Added
+- **Harness Runtime Introspection**
+  - Added harness runtime snapshots and agent-targeted loaded-script inspection surfaces.
+  - `turin check` now validates all configured harness runtimes rather than only the default harness.
+
+### Fixed
+- **Peer Harness Hot Reload**
+  - Peer and secondary harness roots now participate in watcher-driven reload through the shared harness manager.
+
 ## [0.18.0] - 2026-02-28
 
 ### Added

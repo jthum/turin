@@ -16,16 +16,23 @@ This document describes Turin’s current architecture after the canonical stdli
 
 The kernel owns:
 
+- runtime composition and top-level control flow
+- watcher ownership and harness reload orchestration
+- peer-agent runtime orchestration
+- runtime policy storage and governance evaluation
+
+It does **not** embed workflow policy or prompt logic.
+
+Execution-heavy behavior now lives primarily under `ExecutionHost`, which owns:
+
 - session lifecycle
 - task/plan loop orchestration
 - turn execution and stream processing
 - tool execution and auditing
 - persistence and event durability
 - harness hook invocation
-- peer-agent runtime orchestration
-- runtime policy storage and governance evaluation
-
-It does **not** embed workflow policy or prompt logic.
+- provider client initialization/use
+- MCP runtime ownership for the current execution host
 
 ### 2. Harness Engine (Luau via `mlua`)
 
@@ -138,21 +145,27 @@ The tool execution path is split into dedicated `kernel::turn` submodules and in
 ### Kernel
 
 - `src/kernel/mod.rs`
-  - thin kernel struct + core composition/root wiring
+  - thin kernel shell + runtime composition/root wiring
+- `src/kernel/execution_host.rs`
+  - shared execution-owned state and agent/harness resolution helpers
 - `src/kernel/init.rs`
-  - client/harness/state initialization
+  - execution-host initialization + kernel watcher startup
+- `src/kernel/harness_manager.rs`
+  - named harness registry, agent->harness binding, runtime lookup
+- `src/kernel/harness_runtime.rs`
+  - per-harness engine/app-data/watch-root lifecycle
 - `src/kernel/session_lifecycle.rs`
-  - create/start/end session logic
+  - execution-host-owned create/start/end session logic
 - `src/kernel/event_persistence.rs`
-  - event broadcast + durability lane + `on_kernel_event`
+  - execution-host-owned event broadcast + durability lane + `on_kernel_event`
 - `src/kernel/harness_hooks.rs`
-  - `on_tool_call` / `on_token_usage` helpers
+  - execution-host-owned `on_tool_call` / `on_token_usage` helpers
 - `src/kernel/run_loop.rs`
-  - task queue orchestration and `run()` entrypoint
+  - execution-host-owned task queue orchestration and `run()` entrypoint
 - `src/kernel/task_execution.rs`
-  - task execution orchestration
+  - execution-host-owned task execution orchestration
 - `src/kernel/task_lifecycle.rs`
-  - task completion, inference error handling, plan completion callbacks
+  - execution-host-owned task completion, inference error handling, plan completion callbacks
 - `src/kernel/turn/*`
   - turn preflight, streaming, assistant finalization, tool execution pipeline
 - `src/kernel/agent_manager/*`
@@ -242,6 +255,8 @@ Features:
 - result awaiting (`await_result`)
 - status listing/inspection
 - idle shutdown and restart
+
+Peer runtime execution is now centered in `src/kernel/agent_manager/peer_runtime.rs`, where a peer runtime owns an `ExecutionHost` rather than a full `Kernel`. That keeps peer sessions on the same execution model as direct sessions while still letting the top-level kernel own watcher/control concerns.
 
 ### Delegation and Governance Integration
 

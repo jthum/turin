@@ -20,6 +20,7 @@ Turin now ships a coherent, canonical runtime with:
 - **Harness Library** with reusable `blocks/` and ready-to-run `workflows/`
 - **Provider-agnostic core** (provider quirks belong in `inference-sdk-rust`, not Turin)
 - **Composable harness scripts** with `import(...)`, `import_scoped(...)`, `use(...)`, and explicit `watch(...)`
+- **Named harness programs** so different configured agents can bind to different harness directories in one runtime
 - **Durable event persistence** and optional immutable audit behavior
 
 ## Philosophy
@@ -107,6 +108,17 @@ database_path = ".turin/state.db"
 [harness]
 directory = ".turin/harnesses"
 
+# Optional named harnesses for other configured agents
+# [harnesses.reviewer]
+# directory = ".turin/harnesses-reviewer"
+
+# [agents.reviewer]
+# id = "reviewer"
+# system_prompt = "You are a strict code reviewer."
+# model = "claude-sonnet-4-20250514"
+# provider = "anthropic"
+# harness = "reviewer"
+
 [providers.anthropic]
 type = "anthropic"
 api_key_env = "ANTHROPIC_API_KEY"
@@ -140,7 +152,9 @@ target/release/turin run --prompt "List the files in this project and summarize 
 ## CLI Commands
 
 - `turin run --prompt ...` — one-shot execution
+- `turin run --agent reviewer --prompt ...` — run against a specific configured agent/harness binding
 - `turin repl` — interactive session
+- `turin repl --agent reviewer` — interactive session for a specific configured agent
 - `turin script PATH` — run a harness script directly for testing
 - `turin init` — scaffold a Turin project
 - `turin check` — validate config + harness scripts
@@ -237,6 +251,8 @@ local result, aerr = runtime.agent.await(task_id, { timeout_ms = 30_000 })
 ```
 
 Peer-agent dispatch can be governed by capabilities, per-agent ceilings, allowlists, and temporary grants.
+
+Configured agents can also bind to different named harnesses in the same Turin runtime. The default harness comes from `[harness]`; additional harnesses live under `[harnesses.*]`, and each agent can opt into one with `harness = "<id>"`.
 
 ## Governance (Opt-In, Flexibility-First)
 

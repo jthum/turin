@@ -27,6 +27,8 @@ Default directory:
 directory = ".turin/harnesses"
 ```
 
+Additional named harnesses can be configured under `[harnesses.*]`, and agents can bind to them with `harness = "<id>"`. That lets one Turin runtime host multiple distinct harness programs without forcing them into one shared script tree.
+
 Recommended structure:
 
 ```text

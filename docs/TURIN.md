@@ -9,6 +9,7 @@ Turin provides:
 - persistence and event logging
 - a programmable harness runtime (Luau)
 - opt-in governance and capability enforcement
+- named harness programs for agent-specific workflow binding
 
 Your harness scripts define behavior. Turin enforces execution.
 
@@ -41,6 +42,18 @@ That gives you a few practical advantages:
 - **Deterministic enforcement**: a `REJECT` verdict is code, not a prompt suggestion
 - **Composability**: workflows, memory policies, and routing strategies become harness modules
 - **Portability**: one binary, many harnesses, many providers
+
+## Named Harnesses
+
+Turin’s default harness comes from `[harness]`, but additional harness programs can be declared under `[harnesses.*]` and bound to configured agents with `harness = "<id>"`.
+
+That means a single Turin runtime can host genuinely different behavior programs:
+
+- a coding harness for one agent
+- a docs harness for another
+- a reviewer harness for a third
+
+without collapsing them into one large branching script tree.
 
 ## What Is Stable in the Current Baseline
 

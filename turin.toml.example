@@ -1,4 +1,4 @@
-# Turin Example Configuration (v0.15.0)
+# Turin Example Configuration
 # Copy this file to turin.toml and customize for your runtime.
 
 [agent]
