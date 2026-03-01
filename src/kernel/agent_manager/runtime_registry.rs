@@ -61,6 +61,9 @@ impl AgentManager {
                 error!(agent_id = %agent_id_clone, error = %e, "Peer agent failed to initialize harness");
                 return;
             }
+            if let Err(e) = kernel.start_watcher() {
+                warn!(agent_id = %agent_id_clone, error = %e, "Peer agent failed to start harness watcher");
+            }
 
             let mut session = kernel.create_session().await;
             if let Err(e) = kernel.start_session(&mut session).await {

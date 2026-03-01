@@ -130,9 +130,13 @@ impl Kernel {
         use notify::{RecursiveMode, Watcher};
         use std::time::Duration;
 
-        let runtime = self.harness_manager.default_runtime().clone();
+        let runtimes: Vec<_> = self.harness_manager.runtimes().cloned().collect();
         let init_ctx = self.harness_init_context();
-        let harness_dir = runtime.directory().to_path_buf();
+        let harness_dir = self
+            .harness_manager
+            .default_runtime()
+            .directory()
+            .to_path_buf();
 
         if !harness_dir.exists() {
             warn!(directory = %harness_dir.display(), "Harness directory does not exist, skipping watcher");
@@ -153,12 +157,18 @@ impl Kernel {
                 while rx.try_recv().is_ok() {}
 
                 info!("Hot-reload triggered by file change");
-                let runtime = runtime.clone();
+                let runtimes = runtimes.clone();
                 let ctx = init_ctx.clone();
 
                 tokio::spawn(async move {
-                    if let Err(err) = runtime.reload(ctx) {
-                        error!(error = %err, "Harness hot-reload failed");
+                    for runtime in runtimes {
+                        if let Err(err) = runtime.reload(ctx.clone()) {
+                            error!(
+                                harness_id = %runtime.directory().display(),
+                                error = %err,
+                                "Harness hot-reload failed"
+                            );
+                        }
                     }
                 });
             }
