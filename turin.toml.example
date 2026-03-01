@@ -7,7 +7,7 @@ system_prompt = "You are a helpful coding assistant."
 model = "claude-sonnet-4-20250514"   # or any configured provider model
 provider = "anthropic"               # key under [providers.*]
 mode = "auto"                        # auto | stateful | stateless
-# harness_dir = ".turin/harnesses-reviewer"  # optional peer-agent override
+# harness = "default"                        # optional explicit harness binding
 # idle_grace_secs = 60                       # optional peer runtime idle shutdown grace
 
 # Optional extended thinking (provider/model dependent)
@@ -22,7 +22,7 @@ mode = "auto"                        # auto | stateful | stateless
 # model = "claude-sonnet-4-20250514"
 # provider = "anthropic"
 # mode = "stateful"
-# harness_dir = ".turin/harnesses-reviewer"
+# harness = "reviewer"
 # idle_grace_secs = 120
 
 [kernel]
@@ -37,6 +37,12 @@ database_path = ".turin/state.db"
 [harness]
 directory = ".turin/harnesses"
 # fs_root defaults to workspace_root; set to "/" for unrestricted access (not recommended by default)
+# fs_root = "."
+
+# Optional additional harness programs.
+# Agents bind to these by id via `harness = "<id>"`.
+# [harnesses.reviewer]
+# directory = ".turin/harnesses-reviewer"
 # fs_root = "."
 
 # Provider definitions are keyed by name and referenced by [agent].provider / [agents.*].provider

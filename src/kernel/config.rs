@@ -16,6 +16,8 @@ pub struct TurinConfig {
     #[serde(default)]
     pub harness: HarnessConfig,
     #[serde(default)]
+    pub harnesses: std::collections::HashMap<String, HarnessConfig>,
+    #[serde(default)]
     pub providers: ProvidersConfig,
     #[serde(default)]
     pub embeddings: Option<EmbeddingConfig>,
@@ -57,9 +59,9 @@ pub struct AgentConfig {
     /// Agent execution mode ("auto", "stateful", "stateless")
     #[serde(default)]
     pub mode: AgentMode,
-    /// Optional per-agent harness directory override (peer agent topology).
+    /// Optional per-agent harness binding. Omit to use the default `[harness]`.
     #[serde(default)]
-    pub harness_dir: Option<String>,
+    pub harness: Option<String>,
     /// Optional idle shutdown grace period for peer runtimes.
     #[serde(default)]
     pub idle_grace_secs: Option<u64>,
@@ -339,6 +341,27 @@ impl TurinConfig {
             "kernel.heartbeat_interval_secs must be greater than 0"
         );
 
+        anyhow::ensure!(
+            !self.harness.directory.trim().is_empty(),
+            "harness.directory must not be empty"
+        );
+
+        for (harness_id, harness_cfg) in &self.harnesses {
+            anyhow::ensure!(
+                !harness_id.trim().is_empty(),
+                "harnesses contains an empty harness id"
+            );
+            anyhow::ensure!(
+                harness_id != "default",
+                "harnesses.default is reserved; use [harness] for the default harness"
+            );
+            anyhow::ensure!(
+                !harness_cfg.directory.trim().is_empty(),
+                "harnesses.{}.directory must not be empty",
+                harness_id
+            );
+        }
+
         for (provider_name, provider) in &self.providers {
             if let Some(timeout_secs) = provider.request_timeout_secs {
                 anyhow::ensure!(
@@ -414,7 +437,43 @@ impl TurinConfig {
             }
         }
 
+        for (agent_id, agent_cfg) in
+            std::iter::once((&self.agent.id, &self.agent)).chain(self.agents.iter())
+        {
+            if let Some(harness_id) = &agent_cfg.harness {
+                anyhow::ensure!(
+                    harness_id == "default" || self.harnesses.contains_key(harness_id),
+                    "agent '{}': harness '{}' not found in [harnesses.*]",
+                    agent_id,
+                    harness_id
+                );
+            }
+        }
+
         Ok(())
+    }
+
+    pub fn harness_id_for_agent<'a>(&self, agent: &'a AgentConfig) -> &'a str {
+        agent.harness.as_deref().unwrap_or("default")
+    }
+
+    pub fn harness_config_by_id(&self, harness_id: &str) -> Result<&HarnessConfig> {
+        if harness_id == "default" {
+            Ok(&self.harness)
+        } else {
+            self.harnesses
+                .get(harness_id)
+                .ok_or_else(|| anyhow::anyhow!("Unknown harness id: {}", harness_id))
+        }
+    }
+
+    pub fn harness_binding_for_agent<'a, 'b>(
+        &'a self,
+        agent: &'b AgentConfig,
+    ) -> Result<(&'b str, &'a HarnessConfig)> {
+        let harness_id = self.harness_id_for_agent(agent);
+        let harness = self.harness_config_by_id(harness_id)?;
+        Ok((harness_id, harness))
     }
 
     /// Resolve the workspace root path relative to a base directory.
@@ -437,7 +496,7 @@ impl Default for AgentConfig {
             provider: "mock".to_string(),
             thinking: None,
             mode: AgentMode::Auto,
-            harness_dir: None,
+            harness: None,
             idle_grace_secs: None,
         }
     }

@@ -10,7 +10,9 @@ use turin::kernel::config::{
 
 mod support;
 
-use support::{base_config, build_kernel, copy_dir_contents, mock_provider, repo_path};
+use support::{
+    base_config, bind_named_harness, build_kernel, copy_dir_contents, mock_provider, repo_path,
+};
 
 fn library_block_path(name: &str) -> PathBuf {
     repo_path(Path::new("library").join("blocks").join(name))
@@ -67,6 +69,8 @@ async fn build_openclaw_fixture(
         mock_provider(reviewer_response),
     );
     let mut config = base_config(tmp.path(), &main_harness_dir, "mock_main", providers);
+    bind_named_harness(&mut config, "planner", &planner_harness_dir);
+    bind_named_harness(&mut config, "reviewer", &reviewer_harness_dir);
     config.agents.insert(
         "planner".to_string(),
         AgentConfig {
@@ -76,7 +80,7 @@ async fn build_openclaw_fixture(
             system_prompt: "You are a planner.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: Some(planner_harness_dir.to_string_lossy().to_string()),
+            harness: Some("planner".to_string()),
             idle_grace_secs: None,
         },
     );
@@ -89,7 +93,7 @@ async fn build_openclaw_fixture(
             system_prompt: "You are a reviewer.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: Some(reviewer_harness_dir.to_string_lossy().to_string()),
+            harness: Some("reviewer".to_string()),
             idle_grace_secs: None,
         },
     );
@@ -140,6 +144,8 @@ async fn build_full_coding_harness_fixture(
         mock_provider(reviewer_response),
     );
     let mut config = base_config(tmp.path(), &main_harness_dir, "mock_main", providers);
+    bind_named_harness(&mut config, "planner", &planner_harness_dir);
+    bind_named_harness(&mut config, "reviewer", &reviewer_harness_dir);
     config.agents.insert(
         "planner".to_string(),
         AgentConfig {
@@ -149,7 +155,7 @@ async fn build_full_coding_harness_fixture(
             system_prompt: "You are a planner.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: Some(planner_harness_dir.to_string_lossy().to_string()),
+            harness: Some("planner".to_string()),
             idle_grace_secs: None,
         },
     );
@@ -162,7 +168,7 @@ async fn build_full_coding_harness_fixture(
             system_prompt: "You are a reviewer.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: Some(reviewer_harness_dir.to_string_lossy().to_string()),
+            harness: Some("reviewer".to_string()),
             idle_grace_secs: None,
         },
     );
@@ -213,6 +219,8 @@ async fn build_bug_triage_fixture(
         mock_provider(responder_response),
     );
     let mut config = base_config(tmp.path(), &main_harness_dir, "mock_main", providers);
+    bind_named_harness(&mut config, "triager", &triager_harness_dir);
+    bind_named_harness(&mut config, "responder", &responder_harness_dir);
     config.agents.insert(
         "triager".to_string(),
         AgentConfig {
@@ -222,7 +230,7 @@ async fn build_bug_triage_fixture(
             system_prompt: "You are a triager.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: Some(triager_harness_dir.to_string_lossy().to_string()),
+            harness: Some("triager".to_string()),
             idle_grace_secs: None,
         },
     );
@@ -235,7 +243,7 @@ async fn build_bug_triage_fixture(
             system_prompt: "You are a responder.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: Some(responder_harness_dir.to_string_lossy().to_string()),
+            harness: Some("responder".to_string()),
             idle_grace_secs: None,
         },
     );
@@ -289,6 +297,8 @@ async fn build_release_manager_fixture(
         mock_provider(changelog_response),
     );
     let mut config = base_config(tmp.path(), &main_harness_dir, "mock_main", providers);
+    bind_named_harness(&mut config, "readiness_reviewer", &reviewer_harness_dir);
+    bind_named_harness(&mut config, "changelog_writer", &changelog_harness_dir);
     config.agents.insert(
         "readiness_reviewer".to_string(),
         AgentConfig {
@@ -298,7 +308,7 @@ async fn build_release_manager_fixture(
             system_prompt: "You are a readiness reviewer.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: Some(reviewer_harness_dir.to_string_lossy().to_string()),
+            harness: Some("readiness_reviewer".to_string()),
             idle_grace_secs: None,
         },
     );
@@ -311,7 +321,7 @@ async fn build_release_manager_fixture(
             system_prompt: "You are a changelog writer.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: Some(changelog_harness_dir.to_string_lossy().to_string()),
+            harness: Some("changelog_writer".to_string()),
             idle_grace_secs: None,
         },
     );
@@ -362,6 +372,8 @@ async fn build_docs_team_fixture(
     );
     providers.insert("mock_draft".to_string(), mock_provider(draft_response));
     let mut config = base_config(tmp.path(), &main_harness_dir, "mock_main", providers);
+    bind_named_harness(&mut config, "docs_reviewer", &reviewer_harness_dir);
+    bind_named_harness(&mut config, "draft_writer", &draft_harness_dir);
     config.agents.insert(
         "docs_reviewer".to_string(),
         AgentConfig {
@@ -371,7 +383,7 @@ async fn build_docs_team_fixture(
             system_prompt: "You are a docs reviewer.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: Some(reviewer_harness_dir.to_string_lossy().to_string()),
+            harness: Some("docs_reviewer".to_string()),
             idle_grace_secs: None,
         },
     );
@@ -384,7 +396,7 @@ async fn build_docs_team_fixture(
             system_prompt: "You are a draft writer.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: Some(draft_harness_dir.to_string_lossy().to_string()),
+            harness: Some("draft_writer".to_string()),
             idle_grace_secs: None,
         },
     );
@@ -726,6 +738,7 @@ async fn test_governed_peer_review_example() -> Result<()> {
     providers.insert("mock_main".to_string(), mock_provider("MAIN_OK"));
     providers.insert("mock_review".to_string(), mock_provider("REVIEW_OK"));
     let mut config = base_config(tmp.path(), &main_harness_dir, "mock_main", providers);
+    bind_named_harness(&mut config, "reviewer", &reviewer_harness_dir);
     config.governance = GovernanceConfig {
         profile: GovernanceProfile::Balanced,
         enforcement_enabled: true,
@@ -745,7 +758,7 @@ async fn test_governed_peer_review_example() -> Result<()> {
             system_prompt: "You are a reviewer.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: Some(reviewer_harness_dir.to_string_lossy().to_string()),
+            harness: Some("reviewer".to_string()),
             idle_grace_secs: None,
         },
     );
@@ -1220,6 +1233,7 @@ async fn test_delegated_peer_capabilities_example() -> Result<()> {
         mock_provider("DELEGATED_REVIEW_OK"),
     );
     let mut config = base_config(tmp.path(), &main_harness_dir, "mock_main", providers);
+    bind_named_harness(&mut config, "reviewer", &reviewer_harness_dir);
     config.governance = GovernanceConfig {
         profile: GovernanceProfile::Balanced,
         enforcement_enabled: true,
@@ -1242,7 +1256,7 @@ async fn test_delegated_peer_capabilities_example() -> Result<()> {
             system_prompt: "You are a reviewer.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: Some(reviewer_harness_dir.to_string_lossy().to_string()),
+            harness: Some("reviewer".to_string()),
             idle_grace_secs: None,
         },
     );

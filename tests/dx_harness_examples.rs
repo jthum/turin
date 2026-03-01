@@ -9,7 +9,9 @@ use turin::kernel::config::{
 
 mod support;
 
-use support::{base_config, build_kernel, copy_file, copy_tree, mock_provider, repo_path};
+use support::{
+    base_config, bind_named_harness, build_kernel, copy_file, copy_tree, mock_provider, repo_path,
+};
 
 fn fixture_path(name: &str) -> PathBuf {
     repo_path(Path::new("tests").join("fixtures").join("dx").join(name))
@@ -164,6 +166,7 @@ async fn test_dx_fixture_peer_review_orchestrator() -> Result<()> {
         "mock_main",
         providers,
     );
+    bind_named_harness(&mut config, "reviewer", &reviewer_harness_dir);
     config.governance = GovernanceConfig {
         profile: GovernanceProfile::Balanced,
         enforcement_enabled: true,
@@ -183,7 +186,7 @@ async fn test_dx_fixture_peer_review_orchestrator() -> Result<()> {
             system_prompt: "You are a reviewer.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: Some(reviewer_harness_dir.to_string_lossy().to_string()),
+            harness: Some("reviewer".to_string()),
             idle_grace_secs: None,
         },
     );
@@ -256,6 +259,7 @@ async fn test_dx_fixture_import_scoped_complete_delegate() -> Result<()> {
     providers.insert("mock_main".to_string(), mock_provider("IMPORT_COMPLETE_OK"));
     providers.insert("mock_review".to_string(), mock_provider("REVIEW_OK"));
     let mut config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
+    bind_named_harness(&mut config, "reviewer", &reviewer_harness_dir);
     config.governance = GovernanceConfig {
         profile: GovernanceProfile::Balanced,
         enforcement_enabled: true,
@@ -292,7 +296,7 @@ async fn test_dx_fixture_import_scoped_complete_delegate() -> Result<()> {
             system_prompt: "You are a reviewer.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: Some(reviewer_harness_dir.to_string_lossy().to_string()),
+            harness: Some("reviewer".to_string()),
             idle_grace_secs: None,
         },
     );
@@ -392,6 +396,7 @@ async fn test_dx_fixture_peer_agent_denial() -> Result<()> {
         "mock_main",
         providers,
     );
+    bind_named_harness(&mut config, "blocked", &blocked_harness_dir);
     config.governance = GovernanceConfig {
         profile: GovernanceProfile::Balanced,
         enforcement_enabled: true,
@@ -414,7 +419,7 @@ async fn test_dx_fixture_peer_agent_denial() -> Result<()> {
             system_prompt: "You are blocked.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: Some(blocked_harness_dir.to_string_lossy().to_string()),
+            harness: Some("blocked".to_string()),
             idle_grace_secs: None,
         },
     );
@@ -453,6 +458,7 @@ async fn test_dx_fixture_peer_complete_delegated_caps() -> Result<()> {
         "mock_main",
         providers,
     );
+    bind_named_harness(&mut config, "reviewer", &reviewer_harness_dir);
     config.governance = GovernanceConfig {
         profile: GovernanceProfile::Balanced,
         enforcement_enabled: true,
@@ -475,7 +481,7 @@ async fn test_dx_fixture_peer_complete_delegated_caps() -> Result<()> {
             system_prompt: "You are a reviewer.".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: Some(reviewer_harness_dir.to_string_lossy().to_string()),
+            harness: Some("reviewer".to_string()),
             idle_grace_secs: None,
         },
     );

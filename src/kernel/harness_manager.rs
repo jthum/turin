@@ -33,33 +33,27 @@ impl HarnessManager {
         let mut runtimes = HashMap::new();
         runtimes.insert(default_harness_id.clone(), Arc::clone(&default_runtime));
 
+        for (harness_id, harness_cfg) in &config.harnesses {
+            let runtime = Arc::new(HarnessRuntime::new(
+                harness_id.clone(),
+                PathBuf::from(&harness_cfg.directory),
+                fs_root.clone(),
+                workspace_root.clone(),
+                spawn_depth,
+            ));
+            runtimes.insert(harness_id.clone(), runtime);
+        }
+
         let mut bindings = HashMap::new();
-        bindings.insert(config.agent.id.clone(), default_harness_id.clone());
-
-        let mut runtime_by_dir = HashMap::new();
-        runtime_by_dir.insert(config.harness.directory.clone(), default_harness_id.clone());
-
+        bindings.insert(
+            config.agent.id.clone(),
+            config.harness_id_for_agent(&config.agent).to_string(),
+        );
         for (agent_id, agent_cfg) in &config.agents {
-            let runtime_id = if let Some(dir) = &agent_cfg.harness_dir {
-                if let Some(existing) = runtime_by_dir.get(dir) {
-                    existing.clone()
-                } else {
-                    let runtime_id = format!("agent:{}", agent_id);
-                    let runtime = Arc::new(HarnessRuntime::new(
-                        runtime_id.clone(),
-                        PathBuf::from(dir),
-                        fs_root.clone(),
-                        workspace_root.clone(),
-                        spawn_depth,
-                    ));
-                    runtimes.insert(runtime_id.clone(), runtime);
-                    runtime_by_dir.insert(dir.clone(), runtime_id.clone());
-                    runtime_id
-                }
-            } else {
-                default_harness_id.clone()
-            };
-            bindings.insert(agent_id.clone(), runtime_id);
+            bindings.insert(
+                agent_id.clone(),
+                config.harness_id_for_agent(agent_cfg).to_string(),
+            );
         }
 
         Ok(Self {

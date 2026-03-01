@@ -65,7 +65,7 @@ pub fn base_config(
             system_prompt: "Harness example test".to_string(),
             thinking: None,
             mode: turin::kernel::config::AgentMode::Auto,
-            harness_dir: None,
+            harness: None,
             idle_grace_secs: None,
         },
         agents: HashMap::new(),
@@ -82,10 +82,21 @@ pub fn base_config(
             directory: harness_dir.to_string_lossy().to_string(),
             fs_root: ".".to_string(),
         },
+        harnesses: HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::NoOp),
         governance: GovernanceConfig::default(),
     }
+}
+
+pub fn bind_named_harness(config: &mut TurinConfig, harness_id: &str, harness_dir: &Path) {
+    config.harnesses.insert(
+        harness_id.to_string(),
+        HarnessConfig {
+            directory: harness_dir.to_string_lossy().to_string(),
+            fs_root: ".".to_string(),
+        },
+    );
 }
 
 pub async fn build_kernel(config: TurinConfig) -> Result<Kernel> {

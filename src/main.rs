@@ -194,17 +194,15 @@ async fn main() -> Result<()> {
                     anyhow::anyhow!("Unknown agent profile: {}", selected_agent_id)
                 })?
             };
-            let harness_dir = selected_agent
-                .harness_dir
-                .as_deref()
-                .unwrap_or(&config.harness.directory);
+            let (harness_id, harness_cfg) = config.harness_binding_for_agent(selected_agent)?;
 
             tracing::info!(
                 agent_id = %selected_agent_id,
                 model = %selected_agent.model,
                 provider = %selected_agent.provider,
                 workspace = %config.kernel.workspace_root,
-                harness_dir = %harness_dir,
+                harness_id = %harness_id,
+                harness_dir = %harness_cfg.directory,
                 db = %config.persistence.database_path,
                 "Config loaded"
             );

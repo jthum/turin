@@ -53,51 +53,68 @@ pub async fn run_check(config_path: &Path) -> Result<()> {
         );
     }
 
-    // 3. Validate Harness
-    let harness_dir = Path::new(&config.harness.directory);
-    if !harness_dir.exists() {
-        println!(
-            "{} Warning: Harness directory '{}' does not exist.",
-            display::warn_mark(ansi),
-            harness_dir.display()
-        );
-    } else {
-        println!("{} Harness directory exists.", display::ok_mark(ansi));
+    // 3. Validate Harnesses
+    let mut harness_entries = Vec::new();
+    harness_entries.push(("default".to_string(), config.harness.directory.clone()));
+    for (harness_id, harness_cfg) in &config.harnesses {
+        harness_entries.push((harness_id.clone(), harness_cfg.directory.clone()));
+    }
 
-        println!("  Validating harness scripts...");
-        let mut kernel = match Kernel::builder(config.clone()).build() {
-            Ok(k) => k,
-            Err(e) => {
-                println!("{} Failed to build Kernel: {}", display::err_mark(ansi), e);
-                return Ok(());
-            }
-        };
+    for (harness_id, harness_dir) in &harness_entries {
+        let harness_dir = Path::new(harness_dir);
+        if !harness_dir.exists() {
+            println!(
+                "{} Warning: Harness '{}' directory '{}' does not exist.",
+                display::warn_mark(ansi),
+                harness_id,
+                harness_dir.display()
+            );
+        } else {
+            println!(
+                "{} Harness '{}' directory exists.",
+                display::ok_mark(ansi),
+                harness_id
+            );
+        }
+    }
 
-        match kernel.init_harness().await {
-            Ok(_) => {
-                let loaded = kernel.loaded_scripts();
-                if loaded.is_empty() {
+    println!("  Validating harness scripts...");
+    let mut kernel = match Kernel::builder(config.clone()).build() {
+        Ok(k) => k,
+        Err(e) => {
+            println!("{} Failed to build Kernel: {}", display::err_mark(ansi), e);
+            return Ok(());
+        }
+    };
+
+    match kernel.init_harness().await {
+        Ok(_) => {
+            let loaded = kernel.loaded_scripts();
+            if loaded.is_empty() {
+                println!(
+                    "    {}",
+                    display::paint(
+                        "(No .lua scripts found in default harness directory)",
+                        "33",
+                        ansi
+                    )
+                );
+            } else {
+                for script in loaded {
                     println!(
-                        "    {}",
-                        display::paint("(No .lua scripts found in harness directory)", "33", ansi)
+                        "    {} Loaded and parsed: {}",
+                        display::ok_mark(ansi),
+                        script
                     );
-                } else {
-                    for script in loaded {
-                        println!(
-                            "    {} Loaded and parsed: {}",
-                            display::ok_mark(ansi),
-                            script
-                        );
-                    }
                 }
             }
-            Err(e) => {
-                println!(
-                    "\n{} Harness validation failed:\n{}",
-                    display::err_mark(ansi),
-                    e
-                );
-            }
+        }
+        Err(e) => {
+            println!(
+                "\n{} Harness validation failed:\n{}",
+                display::err_mark(ansi),
+                e
+            );
         }
     }
 
