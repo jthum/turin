@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-03-01
+
 ### Changed
 - **First-Class Multi-Harness Internals**
   - Replaced the old single-harness kernel slot with a manager-backed harness runtime model.
@@ -17,15 +19,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Removed per-agent path override wiring in favor of explicit harness IDs.
 - **Shared Runtime Reuse**
   - Peer execution now reuses configured tool registry, governance/policy managers, harness manager, provider clients, and embedding provider more directly.
+- **Targeted Multi-Harness Reload**
+  - Harness file watching now reloads only the affected harness runtime(s) rather than reloading every configured harness.
+  - Watcher roots are rebuilt after reload so changed `watch(...)` declarations take effect without requiring a restart.
 
 ### Added
 - **Harness Runtime Introspection**
   - Added harness runtime snapshots and agent-targeted loaded-script inspection surfaces.
   - `turin check` now validates all configured harness runtimes rather than only the default harness.
+  - Harness snapshots and `turin check` now surface watched roots in addition to harness IDs, bound agents, and loaded scripts.
 
 ### Fixed
 - **Peer Harness Hot Reload**
   - Peer and secondary harness roots now participate in watcher-driven reload through the shared harness manager.
+- **Shared Harness Reuse / Isolation Coverage**
+  - Added regressions proving multiple agents bound to the same named harness resolve to the same runtime while other harnesses remain isolated.
+- **Default-Harness Fallback Footguns**
+  - Removed the old default-harness convenience path from kernel execution surfaces and tightened fallback visibility around missing harness bindings.
 
 ## [0.18.0] - 2026-02-28
 

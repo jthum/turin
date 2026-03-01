@@ -52,6 +52,8 @@ Nested files are inert unless you explicitly bring them in with:
 - `use(...)` / `use_scoped(...)` for behavior blocks that contribute hooks
 - `watch(...)` for extra hot-reload roots
 
+Hot reload remains whole-harness, not per-file. In a multi-harness runtime, Turin now reloads only the affected harness runtime(s) for a file change instead of reloading every configured harness. If a harness reload changes its own `watch(...)` declarations, watcher roots are rebuilt from the reloaded harness state.
+
 That means you can keep the flat multi-file style for simple harnesses, or move to an entrypoint-style structure by keeping one top-level `main.lua` and placing reusable blocks/modules under subdirectories.
 
 ## Your First Harness

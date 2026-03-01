@@ -258,6 +258,21 @@ Features:
 
 Peer runtime execution is now centered in `src/kernel/agent_manager/peer_runtime.rs`, where a peer runtime owns an `ExecutionHost` rather than a full `Kernel`. That keeps peer sessions on the same execution model as direct sessions while still letting the top-level kernel own watcher/control concerns.
 
+## Multi-Harness Reload Model
+
+- Each configured harness is represented by its own `HarnessRuntime`.
+- File watching is configured from:
+  - the harness directory itself
+  - any explicit `watch(...)` roots declared during harness load
+- A file change now reloads only the owning harness runtime(s), not every runtime in the process.
+- After reload, watcher roots are rebuilt from the reloaded harness graph so changes to `watch(...)` declarations take effect without restart.
+
+This keeps reload semantics simple:
+
+- reload scope is per harness runtime
+- reload operation is still full-runtime and atomic
+- no partial file-level hot patching is attempted
+
 ### Delegation and Governance Integration
 
 Peer dispatch can carry delegated capability ceilings. Effective authority is constrained by:
