@@ -11,7 +11,35 @@ use tokio::sync::{Mutex, watch};
 use tracing::{error, info, warn};
 
 use crate::daemon::protocol::{RequestEnvelope, ResponseEnvelope};
-use crate::daemon::state::{DaemonState, DaemonStatus, DaemonWatchPaths};
+use crate::daemon::state::{CreateAgentInput, DaemonState, DaemonStatus, DaemonWatchPaths};
+
+#[derive(Debug, serde::Deserialize)]
+struct CreateAgentParams {
+    id: String,
+    provider: String,
+    model: String,
+    #[serde(default)]
+    system_prompt: Option<String>,
+    #[serde(default)]
+    thinking: Option<crate::kernel::config::ThinkingConfig>,
+    #[serde(default)]
+    mode: Option<crate::kernel::config::AgentMode>,
+    #[serde(default)]
+    harness: Option<String>,
+    #[serde(default)]
+    idle_grace_secs: Option<u64>,
+    #[serde(default = "default_enabled")]
+    enabled: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AgentIdParams {
+    id: String,
+}
+
+fn default_enabled() -> bool {
+    true
+}
 
 pub async fn serve(config_path: &Path) -> Result<()> {
     let state = Arc::new(Mutex::new(DaemonState::load(config_path).await?));
@@ -207,6 +235,138 @@ async fn dispatch(
                 request.id,
                 json!({ "agents": guard.registry_snapshot().agents }),
             )
+        }
+        "agent.get" => {
+            let params: AgentIdParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse agent.get params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let guard = state.lock().await;
+            match guard.agent_detail(&params.id) {
+                Ok(Some(agent)) => match serde_json::to_value(agent) {
+                    Ok(value) => ResponseEnvelope::ok(request.id, value),
+                    Err(err) => ResponseEnvelope::err(
+                        request.id,
+                        "serialize_error",
+                        format!("Failed to serialize agent detail: {}", err),
+                        None,
+                    ),
+                },
+                Ok(None) => ResponseEnvelope::err(
+                    request.id,
+                    "agent_not_found",
+                    format!("Agent '{}' not found", params.id),
+                    None,
+                ),
+                Err(err) => {
+                    ResponseEnvelope::err(request.id, "agent_get_failed", err.to_string(), None)
+                }
+            }
+        }
+        "agent.create" => {
+            let params: CreateAgentParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse agent.create params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let mut guard = state.lock().await;
+            match guard
+                .create_agent(CreateAgentInput {
+                    id: params.id,
+                    provider: params.provider,
+                    model: params.model,
+                    system_prompt: params.system_prompt,
+                    thinking: params.thinking,
+                    mode: params.mode,
+                    harness: params.harness,
+                    idle_grace_secs: params.idle_grace_secs,
+                    enabled: params.enabled,
+                })
+                .await
+            {
+                Ok(agent) => match serde_json::to_value(agent) {
+                    Ok(value) => ResponseEnvelope::ok(request.id, value),
+                    Err(err) => ResponseEnvelope::err(
+                        request.id,
+                        "serialize_error",
+                        format!("Failed to serialize created agent: {}", err),
+                        None,
+                    ),
+                },
+                Err(err) => {
+                    ResponseEnvelope::err(request.id, "agent_create_failed", err.to_string(), None)
+                }
+            }
+        }
+        "agent.enable" | "agent.disable" => {
+            let params: AgentIdParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse agent toggle params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let enabled = request.op == "agent.enable";
+            let mut guard = state.lock().await;
+            match guard.set_agent_enabled(&params.id, enabled).await {
+                Ok(agent) => match serde_json::to_value(agent) {
+                    Ok(value) => ResponseEnvelope::ok(request.id, value),
+                    Err(err) => ResponseEnvelope::err(
+                        request.id,
+                        "serialize_error",
+                        format!("Failed to serialize agent toggle result: {}", err),
+                        None,
+                    ),
+                },
+                Err(err) => {
+                    ResponseEnvelope::err(request.id, "agent_toggle_failed", err.to_string(), None)
+                }
+            }
+        }
+        "agent.delete" => {
+            let params: AgentIdParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse agent.delete params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let mut guard = state.lock().await;
+            match guard.delete_agent(&params.id).await {
+                Ok(status) => match serde_json::to_value(status) {
+                    Ok(value) => ResponseEnvelope::ok(request.id, value),
+                    Err(err) => ResponseEnvelope::err(
+                        request.id,
+                        "serialize_error",
+                        format!("Failed to serialize delete status: {}", err),
+                        None,
+                    ),
+                },
+                Err(err) => {
+                    ResponseEnvelope::err(request.id, "agent_delete_failed", err.to_string(), None)
+                }
+            }
         }
         "harness.list" => {
             let guard = state.lock().await;

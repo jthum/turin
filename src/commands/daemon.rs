@@ -25,6 +25,56 @@ pub async fn run_rescan(config_path: &std::path::Path, json_output: bool) -> Res
     print_response(response, json_output)
 }
 
+pub async fn run_agent_list(config_path: &std::path::Path, json_output: bool) -> Result<()> {
+    let response = send_request(config_path, "agent.list", json!({})).await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_agent_get(
+    config_path: &std::path::Path,
+    agent_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "agent.get", json!({ "id": agent_id })).await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_agent_create(
+    config_path: &std::path::Path,
+    params: Value,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "agent.create", params).await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_agent_enable(
+    config_path: &std::path::Path,
+    agent_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "agent.enable", json!({ "id": agent_id })).await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_agent_disable(
+    config_path: &std::path::Path,
+    agent_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "agent.disable", json!({ "id": agent_id })).await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_agent_delete(
+    config_path: &std::path::Path,
+    agent_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "agent.delete", json!({ "id": agent_id })).await?;
+    print_response(response, json_output)
+}
+
 pub async fn run_stop(config_path: &std::path::Path, json_output: bool) -> Result<()> {
     let response = send_request(config_path, "daemon.stop", json!({})).await?;
     print_response(response, json_output)

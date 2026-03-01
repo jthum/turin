@@ -72,28 +72,60 @@ pub struct RegistryLoad {
     pub issues: Vec<RegistryIssue>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct AgentFileConfig {
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct AgentFileConfig {
     #[serde(default)]
-    id: Option<String>,
+    pub id: Option<String>,
     #[serde(default = "default_enabled")]
-    enabled: bool,
+    pub enabled: bool,
     #[serde(default)]
-    system_prompt: Option<String>,
-    model: String,
-    provider: String,
+    pub system_prompt: Option<String>,
+    pub model: String,
+    pub provider: String,
     #[serde(default)]
-    thinking: Option<ThinkingConfig>,
+    pub thinking: Option<ThinkingConfig>,
     #[serde(default)]
-    mode: Option<AgentMode>,
+    pub mode: Option<AgentMode>,
     #[serde(default)]
-    harness: Option<String>,
+    pub harness: Option<String>,
     #[serde(default)]
-    idle_grace_secs: Option<u64>,
+    pub idle_grace_secs: Option<u64>,
 }
 
 fn default_enabled() -> bool {
     true
+}
+
+pub(crate) fn read_agent_file(agent_dir: &Path) -> Result<Option<AgentFileConfig>> {
+    let agent_toml = agent_dir.join("agent.toml");
+    if !agent_toml.exists() {
+        return Ok(None);
+    }
+
+    let raw = fs::read_to_string(&agent_toml)
+        .with_context(|| format!("Failed to read '{}'", agent_toml.display()))?;
+    let parsed: AgentFileConfig = toml::from_str(&raw)
+        .with_context(|| format!("Failed to parse '{}'", agent_toml.display()))?;
+    Ok(Some(parsed))
+}
+
+pub(crate) fn write_agent_file(agent_dir: &Path, config: &AgentFileConfig) -> Result<()> {
+    fs::create_dir_all(agent_dir)
+        .with_context(|| format!("Failed to create agent directory '{}'", agent_dir.display()))?;
+    let agent_toml = agent_dir.join("agent.toml");
+    let tmp_path = agent_dir.join(format!(".agent.toml.{}.tmp", uuid::Uuid::now_v7().simple()));
+    let body = toml::to_string_pretty(config)
+        .with_context(|| format!("Failed to serialize '{}'", agent_toml.display()))?;
+    fs::write(&tmp_path, body)
+        .with_context(|| format!("Failed to write '{}'", tmp_path.display()))?;
+    fs::rename(&tmp_path, &agent_toml).with_context(|| {
+        format!(
+            "Failed to atomically replace '{}' from '{}'",
+            agent_toml.display(),
+            tmp_path.display()
+        )
+    })?;
+    Ok(())
 }
 
 pub fn scan_registry(config: &TurinConfig, config_base: &Path) -> Result<RegistryLoad> {
@@ -196,15 +228,9 @@ fn scan_agent_dir(
         anyhow::bail!("'default' is reserved for the bootstrap agent");
     }
 
-    let agent_toml = agent_dir.join("agent.toml");
-    if !agent_toml.exists() {
+    let Some(parsed) = read_agent_file(agent_dir)? else {
         return Ok(None);
-    }
-
-    let raw = fs::read_to_string(&agent_toml)
-        .with_context(|| format!("Failed to read '{}'", agent_toml.display()))?;
-    let parsed: AgentFileConfig = toml::from_str(&raw)
-        .with_context(|| format!("Failed to parse '{}'", agent_toml.display()))?;
+    };
 
     if let Some(explicit_id) = &parsed.id
         && explicit_id != &agent_id

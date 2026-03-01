@@ -69,7 +69,7 @@ pub struct AgentConfig {
     pub idle_grace_secs: Option<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct ThinkingConfig {
     pub enabled: bool,
     pub budget_tokens: Option<u32>,

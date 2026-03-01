@@ -159,6 +159,94 @@ enum DaemonCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Manage filesystem-backed daemon agents
+    Agent {
+        #[command(subcommand)]
+        command: DaemonAgentCommands,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum DaemonAgentCommands {
+    /// List daemon-managed agents
+    List {
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one daemon-managed agent
+    Get {
+        /// Agent ID
+        id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Create a daemon-managed agent directory
+    Create {
+        /// Agent ID / directory name
+        id: String,
+        /// Provider name
+        #[arg(long)]
+        provider: String,
+        /// Model identifier
+        #[arg(long)]
+        model: String,
+        /// Optional system prompt override
+        #[arg(long)]
+        system_prompt: Option<String>,
+        /// Optional shared harness binding
+        #[arg(long)]
+        harness: Option<String>,
+        /// Create the agent disabled
+        #[arg(long)]
+        disabled: bool,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Enable a daemon-managed agent
+    Enable {
+        /// Agent ID
+        id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Disable a daemon-managed agent
+    Disable {
+        /// Agent ID
+        id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete a daemon-managed agent directory
+    Delete {
+        /// Agent ID
+        id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
@@ -330,6 +418,47 @@ async fn main() -> Result<()> {
             DaemonCommands::Stop { config, json } => {
                 commands::daemon::run_stop(&config, json).await
             }
+            DaemonCommands::Agent { command } => match command {
+                DaemonAgentCommands::List { config, json } => {
+                    commands::daemon::run_agent_list(&config, json).await
+                }
+                DaemonAgentCommands::Get { id, config, json } => {
+                    commands::daemon::run_agent_get(&config, &id, json).await
+                }
+                DaemonAgentCommands::Create {
+                    id,
+                    provider,
+                    model,
+                    system_prompt,
+                    harness,
+                    disabled,
+                    config,
+                    json,
+                } => {
+                    commands::daemon::run_agent_create(
+                        &config,
+                        serde_json::json!({
+                            "id": id,
+                            "provider": provider,
+                            "model": model,
+                            "system_prompt": system_prompt,
+                            "harness": harness,
+                            "enabled": !disabled,
+                        }),
+                        json,
+                    )
+                    .await
+                }
+                DaemonAgentCommands::Enable { id, config, json } => {
+                    commands::daemon::run_agent_enable(&config, &id, json).await
+                }
+                DaemonAgentCommands::Disable { id, config, json } => {
+                    commands::daemon::run_agent_disable(&config, &id, json).await
+                }
+                DaemonAgentCommands::Delete { id, config, json } => {
+                    commands::daemon::run_agent_delete(&config, &id, json).await
+                }
+            },
         },
     }
 }
