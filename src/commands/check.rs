@@ -89,23 +89,31 @@ pub async fn run_check(config_path: &Path) -> Result<()> {
 
     match kernel.init_harness().await {
         Ok(_) => {
-            let loaded = kernel.loaded_scripts();
-            if loaded.is_empty() {
+            for snapshot in kernel.harness_snapshots() {
                 println!(
-                    "    {}",
-                    display::paint(
-                        "(No .lua scripts found in default harness directory)",
-                        "33",
-                        ansi
-                    )
+                    "    {} Harness '{}' -> {}",
+                    display::ok_mark(ansi),
+                    snapshot.harness_id,
+                    snapshot.directory
                 );
-            } else {
-                for script in loaded {
+                if snapshot.bound_agents.is_empty() {
+                    println!("      bound agents: (none)");
+                } else {
+                    println!("      bound agents: {}", snapshot.bound_agents.join(", "));
+                }
+                if snapshot.loaded_scripts.is_empty() {
                     println!(
-                        "    {} Loaded and parsed: {}",
-                        display::ok_mark(ansi),
-                        script
+                        "      {}",
+                        display::paint("(No .lua scripts found in harness directory)", "33", ansi)
                     );
+                } else {
+                    for script in snapshot.loaded_scripts {
+                        println!(
+                            "      {} Loaded and parsed: {}",
+                            display::ok_mark(ansi),
+                            script
+                        );
+                    }
                 }
             }
         }

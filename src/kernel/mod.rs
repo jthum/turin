@@ -38,6 +38,14 @@ use crate::tools::registry::ToolRegistry;
 use mcp_runtime::McpClientEntry;
 use notify::RecommendedWatcher;
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HarnessRuntimeSnapshot {
+    pub harness_id: String,
+    pub directory: String,
+    pub bound_agents: Vec<String>,
+    pub loaded_scripts: Vec<String>,
+}
+
 /// The Turin Kernel — manages the agent loop, event system, and tool execution.
 ///
 /// The Kernel has no opinions about agent behavior. It provides the physics:
@@ -140,6 +148,40 @@ impl Kernel {
     /// Get names of all loaded harness scripts.
     pub fn loaded_scripts(&self) -> Vec<String> {
         self.harness_manager.default_runtime().loaded_scripts()
+    }
+
+    pub fn loaded_scripts_for_agent(&self, agent_id: &str) -> Result<Vec<String>> {
+        self.agent_config_for(agent_id)?;
+        Ok(self.runtime_for_agent(agent_id).loaded_scripts())
+    }
+
+    pub fn harness_snapshots(&self) -> Vec<HarnessRuntimeSnapshot> {
+        let mut bound_agents: HashMap<String, Vec<String>> = HashMap::new();
+        for (agent_id, harness_id) in self.harness_manager.agent_bindings() {
+            bound_agents
+                .entry(harness_id.clone())
+                .or_default()
+                .push(agent_id.clone());
+        }
+
+        let mut snapshots: Vec<_> = self
+            .harness_manager
+            .runtime_entries()
+            .map(|(harness_id, runtime)| {
+                let mut agents = bound_agents.remove(harness_id).unwrap_or_default();
+                agents.sort();
+                let mut loaded_scripts = runtime.loaded_scripts();
+                loaded_scripts.sort();
+                HarnessRuntimeSnapshot {
+                    harness_id: harness_id.clone(),
+                    directory: runtime.directory().display().to_string(),
+                    bound_agents: agents,
+                    loaded_scripts,
+                }
+            })
+            .collect();
+        snapshots.sort_by(|a, b| a.harness_id.cmp(&b.harness_id));
+        snapshots
     }
 
     /// Add a provider client manually (e.g. for testing).

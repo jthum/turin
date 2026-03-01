@@ -67,18 +67,22 @@ impl HarnessManager {
         &self.default_runtime
     }
 
+    pub(crate) fn runtime_id_for_agent(&self, agent_id: Option<&str>) -> &str {
+        let Some(agent_id) = agent_id else {
+            return "default";
+        };
+        self.agent_bindings
+            .get(agent_id)
+            .map(String::as_str)
+            .unwrap_or("default")
+    }
+
     pub(crate) fn lock_default_engine(&self) -> std::sync::MutexGuard<'_, Option<HarnessEngine>> {
         self.resolve_harness(None).lock_engine()
     }
 
     pub(crate) fn resolve_harness(&self, agent_id: Option<&str>) -> &Arc<HarnessRuntime> {
-        let Some(agent_id) = agent_id else {
-            return self.default_runtime();
-        };
-
-        let Some(runtime_id) = self.agent_bindings.get(agent_id) else {
-            return self.default_runtime();
-        };
+        let runtime_id = self.runtime_id_for_agent(agent_id);
 
         self.runtimes
             .get(runtime_id)
@@ -87,6 +91,14 @@ impl HarnessManager {
 
     pub(crate) fn runtimes(&self) -> impl Iterator<Item = &Arc<HarnessRuntime>> {
         self.runtimes.values()
+    }
+
+    pub(crate) fn runtime_entries(&self) -> impl Iterator<Item = (&String, &Arc<HarnessRuntime>)> {
+        self.runtimes.iter()
+    }
+
+    pub(crate) fn agent_bindings(&self) -> impl Iterator<Item = (&String, &String)> {
+        self.agent_bindings.iter()
     }
 
     pub(crate) fn explicit_watch_roots(&self) -> Vec<PathBuf> {

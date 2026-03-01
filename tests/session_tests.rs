@@ -558,6 +558,25 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
     kernel.start_session(&mut writer_session).await?;
     kernel.end_session(&mut writer_session).await?;
 
+    let writer_scripts = kernel.loaded_scripts_for_agent("writer")?;
+    assert_eq!(writer_scripts, vec!["main".to_string()]);
+
+    let snapshots = kernel.harness_snapshots();
+    assert_eq!(snapshots.len(), 2);
+    let default_snapshot = snapshots
+        .iter()
+        .find(|snapshot| snapshot.harness_id == "default")
+        .expect("expected default harness snapshot");
+    assert_eq!(default_snapshot.bound_agents, vec!["default".to_string()]);
+    assert_eq!(default_snapshot.loaded_scripts, vec!["main".to_string()]);
+
+    let writer_snapshot = snapshots
+        .iter()
+        .find(|snapshot| snapshot.harness_id == "writer")
+        .expect("expected writer harness snapshot");
+    assert_eq!(writer_snapshot.bound_agents, vec!["writer".to_string()]);
+    assert_eq!(writer_snapshot.loaded_scripts, vec!["main".to_string()]);
+
     assert_eq!(
         std::fs::read_to_string(tmp.path().join(".turin/runtime/default-harness.txt"))?,
         "default"
