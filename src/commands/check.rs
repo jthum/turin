@@ -101,6 +101,14 @@ pub async fn run_check(config_path: &Path) -> Result<()> {
                 } else {
                     println!("      bound agents: {}", snapshot.bound_agents.join(", "));
                 }
+                if snapshot.watched_roots.is_empty() {
+                    println!("      watched roots: (none)");
+                } else {
+                    println!("      watched roots:");
+                    for root in snapshot.watched_roots {
+                        println!("        - {}", root);
+                    }
+                }
                 if snapshot.loaded_scripts.is_empty() {
                     println!(
                         "      {}",

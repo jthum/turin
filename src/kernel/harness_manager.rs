@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::harness::engine::HarnessEngine;
 use anyhow::Result;
+use tracing::debug;
 
 use super::config::TurinConfig;
 use super::harness_runtime::HarnessRuntime;
@@ -71,22 +71,30 @@ impl HarnessManager {
         let Some(agent_id) = agent_id else {
             return "default";
         };
-        self.agent_bindings
-            .get(agent_id)
-            .map(String::as_str)
-            .unwrap_or("default")
-    }
-
-    pub(crate) fn lock_default_engine(&self) -> std::sync::MutexGuard<'_, Option<HarnessEngine>> {
-        self.resolve_harness(None).lock_engine()
+        if let Some(binding) = self.agent_bindings.get(agent_id) {
+            binding.as_str()
+        } else {
+            debug!(
+                agent_id = %agent_id,
+                "Agent has no named harness binding; falling back to default harness"
+            );
+            "default"
+        }
     }
 
     pub(crate) fn resolve_harness(&self, agent_id: Option<&str>) -> &Arc<HarnessRuntime> {
         let runtime_id = self.runtime_id_for_agent(agent_id);
 
-        self.runtimes
-            .get(runtime_id)
-            .unwrap_or_else(|| self.default_runtime())
+        if let Some(runtime) = self.runtimes.get(runtime_id) {
+            runtime
+        } else {
+            debug!(
+                requested_harness_id = %runtime_id,
+                agent_id = ?agent_id,
+                "Named harness binding was missing from registry; falling back to default harness"
+            );
+            self.default_runtime()
+        }
     }
 
     pub(crate) fn runtimes(&self) -> impl Iterator<Item = &Arc<HarnessRuntime>> {
@@ -100,12 +108,110 @@ impl HarnessManager {
     pub(crate) fn agent_bindings(&self) -> impl Iterator<Item = (&String, &String)> {
         self.agent_bindings.iter()
     }
+}
 
-    pub(crate) fn explicit_watch_roots(&self) -> Vec<PathBuf> {
-        let mut roots = Vec::new();
-        for runtime in self.runtimes.values() {
-            roots.extend(runtime.explicit_watch_roots());
-        }
-        roots
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::config::{
+        AgentConfig, AgentMode, EmbeddingConfig, HarnessConfig, KernelConfig, PersistenceConfig,
+        ProviderConfig, TurinConfig,
+    };
+    use std::collections::HashMap;
+    use tempfile::tempdir;
+
+    #[test]
+    fn shared_harness_bindings_resolve_to_same_runtime() -> Result<()> {
+        let tmp = tempdir()?;
+        let default_harness = tmp.path().join("default-harness");
+        let shared_harness = tmp.path().join("shared-harness");
+        std::fs::create_dir_all(&default_harness)?;
+        std::fs::create_dir_all(&shared_harness)?;
+
+        let mut providers = HashMap::new();
+        providers.insert(
+            "mock".to_string(),
+            ProviderConfig {
+                kind: "mock".to_string(),
+                ..ProviderConfig::default()
+            },
+        );
+
+        let config = TurinConfig {
+            agent: AgentConfig {
+                id: "default".to_string(),
+                system_prompt: "Default".to_string(),
+                model: "mock-model".to_string(),
+                provider: "mock".to_string(),
+                thinking: None,
+                mode: AgentMode::Auto,
+                harness: None,
+                idle_grace_secs: None,
+            },
+            agents: HashMap::from([
+                (
+                    "writer".to_string(),
+                    AgentConfig {
+                        id: "writer".to_string(),
+                        system_prompt: "Writer".to_string(),
+                        model: "mock-model".to_string(),
+                        provider: "mock".to_string(),
+                        thinking: None,
+                        mode: AgentMode::Auto,
+                        harness: Some("shared".to_string()),
+                        idle_grace_secs: None,
+                    },
+                ),
+                (
+                    "reviewer".to_string(),
+                    AgentConfig {
+                        id: "reviewer".to_string(),
+                        system_prompt: "Reviewer".to_string(),
+                        model: "mock-model".to_string(),
+                        provider: "mock".to_string(),
+                        thinking: None,
+                        mode: AgentMode::Auto,
+                        harness: Some("shared".to_string()),
+                        idle_grace_secs: None,
+                    },
+                ),
+            ]),
+            kernel: KernelConfig {
+                workspace_root: tmp.path().to_string_lossy().to_string(),
+                max_turns: 5,
+                heartbeat_interval_secs: 30,
+                initial_spawn_depth: 0,
+            },
+            persistence: PersistenceConfig {
+                database_path: tmp.path().join("test.db").to_string_lossy().to_string(),
+            },
+            harness: HarnessConfig {
+                directory: default_harness.to_string_lossy().to_string(),
+                fs_root: ".".to_string(),
+            },
+            harnesses: HashMap::from([(
+                "shared".to_string(),
+                HarnessConfig {
+                    directory: shared_harness.to_string_lossy().to_string(),
+                    fs_root: ".".to_string(),
+                },
+            )]),
+            providers,
+            embeddings: Some(EmbeddingConfig::NoOp),
+            governance: crate::kernel::config::GovernanceConfig::default(),
+        };
+
+        let manager = HarnessManager::from_config(&config)?;
+        let writer = manager.resolve_harness(Some("writer"));
+        let reviewer = manager.resolve_harness(Some("reviewer"));
+        let default = manager.resolve_harness(Some("default"));
+
+        assert!(Arc::ptr_eq(writer, reviewer));
+        assert!(!Arc::ptr_eq(writer, default));
+        assert_eq!(manager.runtime_id_for_agent(Some("writer")), "shared");
+        assert_eq!(manager.runtime_id_for_agent(Some("reviewer")), "shared");
+        assert_eq!(manager.runtime_id_for_agent(Some("default")), "default");
+
+        Ok(())
     }
 }

@@ -15,6 +15,12 @@ use crate::kernel::governance::GovernanceManager;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::persistence::manager::StoreManager;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct HarnessWatchRoot {
+    pub(crate) path: PathBuf,
+    pub(crate) recursive: bool,
+}
+
 #[derive(Clone)]
 pub(crate) struct HarnessRuntimeInitContext {
     pub(crate) config: Arc<TurinConfig>,
@@ -77,12 +83,46 @@ impl HarnessRuntime {
         &self.directory
     }
 
+    pub(crate) fn harness_id(&self) -> &str {
+        &self.harness_id
+    }
+
     pub(crate) fn explicit_watch_roots(&self) -> Vec<PathBuf> {
         let engine = self.lock_engine();
         engine
             .as_ref()
             .map(HarnessEngine::explicit_watch_roots)
             .unwrap_or_default()
+    }
+
+    pub(crate) fn watch_roots(&self) -> Vec<HarnessWatchRoot> {
+        let mut roots = vec![HarnessWatchRoot {
+            path: absolutize_path(&self.directory),
+            recursive: false,
+        }];
+
+        for root in self.explicit_watch_roots() {
+            let watch_root = HarnessWatchRoot {
+                path: absolutize_path(&root),
+                recursive: root.is_dir(),
+            };
+            if !roots.contains(&watch_root) {
+                roots.push(watch_root);
+            }
+        }
+
+        roots
+    }
+
+    pub(crate) fn owns_path(&self, path: &Path) -> bool {
+        let path = absolutize_path(path);
+        self.watch_roots().into_iter().any(|root| {
+            if root.recursive {
+                path == root.path || path.starts_with(&root.path)
+            } else {
+                path == root.path || path.parent() == Some(root.path.as_path())
+            }
+        })
     }
 
     pub(crate) fn loaded_scripts(&self) -> Vec<String> {
@@ -160,5 +200,15 @@ impl HarnessRuntime {
             watch_roots: Arc::new(std::sync::Mutex::new(Vec::new())),
             loading_phase: Arc::new(std::sync::Mutex::new(true)),
         }
+    }
+}
+
+fn absolutize_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
     }
 }

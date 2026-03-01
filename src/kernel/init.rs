@@ -6,12 +6,14 @@
 
 use anyhow::{Context, Result};
 use notify::Event;
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, info, instrument, warn};
 
 use super::Kernel;
 use super::execution_host::ExecutionHost;
-use super::harness_runtime::HarnessRuntimeInitContext;
+use super::harness_runtime::{HarnessRuntime, HarnessRuntimeInitContext};
 use crate::inference::provider::{self, ProviderClient};
 
 impl ExecutionHost {
@@ -150,88 +152,163 @@ impl Kernel {
     /// Start watching the harness directory for changes (background thread).
     #[instrument(skip(self))]
     pub fn start_watcher(&mut self) -> Result<()> {
-        use notify::{RecursiveMode, Watcher};
         use std::time::Duration;
 
         let runtimes: Vec<_> = self.harness_manager.runtimes().cloned().collect();
+        let task_runtimes = runtimes.clone();
         let init_ctx = self.harness_init_context();
-        let harness_roots: Vec<_> = self
-            .harness_manager
-            .runtimes()
-            .map(|runtime| runtime.directory().to_path_buf())
-            .collect();
-
-        let explicit_watch_roots = self.harness_manager.explicit_watch_roots();
+        let watcher_slot = Arc::clone(&self.check_watcher);
 
         // We use an async channel to debounce events
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(10);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<PathBuf>>(32);
+        let reload_tx = tx.clone();
 
         // Spawn background task to handle reloads with debouncing
         tokio::spawn(async move {
-            while rx.recv().await.is_some() {
+            while let Some(mut changed_paths) = rx.recv().await {
                 // Debounce: Wait for more events
                 tokio::time::sleep(Duration::from_millis(200)).await;
                 // Clear any pending events that arrived during sleep
-                while rx.try_recv().is_ok() {}
+                while let Ok(mut more_paths) = rx.try_recv() {
+                    changed_paths.append(&mut more_paths);
+                }
 
-                info!("Hot-reload triggered by file change");
-                let runtimes = runtimes.clone();
+                let affected = affected_runtimes(&task_runtimes, &changed_paths);
+                if affected.is_empty() {
+                    continue;
+                }
+
+                info!(
+                    count = affected.len(),
+                    "Hot-reload triggered by file change"
+                );
                 let ctx = init_ctx.clone();
+                let harness_ids: Vec<_> = affected
+                    .iter()
+                    .map(|runtime| runtime.harness_id().to_string())
+                    .collect();
+                info!(?harness_ids, "Reloading affected harness runtimes");
 
-                tokio::spawn(async move {
-                    for runtime in runtimes {
-                        if let Err(err) = runtime.reload(ctx.clone()) {
-                            error!(
-                                harness_id = %runtime.directory().display(),
-                                error = %err,
-                                "Harness hot-reload failed"
-                            );
-                        }
+                for runtime in &affected {
+                    if let Err(err) = runtime.reload(ctx.clone()) {
+                        error!(
+                            harness_id = %runtime.harness_id(),
+                            error = %err,
+                            "Harness hot-reload failed"
+                        );
                     }
-                });
+                }
+
+                match build_harness_watcher(&task_runtimes, reload_tx.clone()) {
+                    Ok(watcher) => {
+                        let mut slot = watcher_slot
+                            .lock()
+                            .expect("watcher mutex poisoned during rebuild");
+                        *slot = watcher;
+                    }
+                    Err(err) => {
+                        error!(error = %err, "Failed to rebuild harness watcher");
+                    }
+                }
             }
         });
 
-        let mut watcher =
-            notify::recommended_watcher(move |res: notify::Result<Event>| match res {
-                Ok(event) => {
-                    if event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove() {
-                        let _ = tx.blocking_send(());
-                    }
-                }
-                Err(e) => error!(error = ?e, "Watcher channel error"),
-            })?;
-
-        let mut watched_any = false;
-        for harness_dir in harness_roots {
-            if !harness_dir.exists() {
-                warn!(directory = %harness_dir.display(), "Harness directory does not exist, skipping watcher");
-                continue;
-            }
-            watcher.watch(&harness_dir, RecursiveMode::NonRecursive)?;
-            watched_any = true;
-            info!(directory = %harness_dir.display(), "Watching harness directory");
-        }
-        for extra_root in explicit_watch_roots {
-            if !extra_root.exists() {
-                warn!(path = %extra_root.display(), "Explicit watch path does not exist, skipping");
-                continue;
-            }
-            let mode = if extra_root.is_dir() {
-                RecursiveMode::Recursive
-            } else {
-                RecursiveMode::NonRecursive
-            };
-            watcher.watch(&extra_root, mode)?;
-            info!(path = %extra_root.display(), recursive = matches!(mode, RecursiveMode::Recursive), "Watching explicit harness path");
-            watched_any = true;
-        }
-        if !watched_any {
-            warn!("No harness directories or explicit watch roots available, skipping watcher");
-            return Ok(());
-        }
-        self.check_watcher = Some(watcher);
+        let watcher = build_harness_watcher(&runtimes, tx)?;
+        let mut slot = self
+            .check_watcher
+            .lock()
+            .expect("watcher mutex poisoned during startup");
+        *slot = watcher;
 
         Ok(())
     }
+}
+
+fn affected_runtimes(
+    runtimes: &[Arc<HarnessRuntime>],
+    changed_paths: &[PathBuf],
+) -> Vec<Arc<HarnessRuntime>> {
+    let mut seen = HashSet::new();
+    let mut affected = Vec::new();
+
+    for runtime in runtimes {
+        if changed_paths.iter().any(|path| runtime.owns_path(path))
+            && seen.insert(runtime.harness_id().to_string())
+        {
+            affected.push(Arc::clone(runtime));
+        }
+    }
+
+    affected
+}
+
+fn build_harness_watcher(
+    runtimes: &[Arc<HarnessRuntime>],
+    tx: tokio::sync::mpsc::Sender<Vec<PathBuf>>,
+) -> Result<Option<notify::RecommendedWatcher>> {
+    use notify::{RecursiveMode, Watcher};
+
+    let roots = collect_watch_roots(runtimes);
+    if roots.is_empty() {
+        warn!("No harness directories or explicit watch roots available, skipping watcher");
+        return Ok(None);
+    }
+
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| match res {
+        Ok(event) => {
+            if event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove() {
+                let _ = tx.blocking_send(event.paths.clone());
+            }
+        }
+        Err(e) => error!(error = ?e, "Watcher channel error"),
+    })?;
+
+    for root in roots {
+        if !root.path.exists() {
+            warn!(
+                path = %root.path.display(),
+                harness_id = %root.harness_id,
+                "Watch path does not exist, skipping"
+            );
+            continue;
+        }
+        let mode = if root.recursive {
+            RecursiveMode::Recursive
+        } else {
+            RecursiveMode::NonRecursive
+        };
+        watcher.watch(&root.path, mode)?;
+        info!(
+            harness_id = %root.harness_id,
+            path = %root.path.display(),
+            recursive = matches!(mode, RecursiveMode::Recursive),
+            "Watching harness path"
+        );
+    }
+
+    Ok(Some(watcher))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct OwnedWatchRoot {
+    harness_id: String,
+    path: PathBuf,
+    recursive: bool,
+}
+
+fn collect_watch_roots(runtimes: &[Arc<HarnessRuntime>]) -> Vec<OwnedWatchRoot> {
+    let mut roots = Vec::new();
+    for runtime in runtimes {
+        for root in runtime.watch_roots() {
+            let owned = OwnedWatchRoot {
+                harness_id: runtime.harness_id().to_string(),
+                path: root.path,
+                recursive: root.recursive,
+            };
+            if !roots.contains(&owned) {
+                roots.push(owned);
+            }
+        }
+    }
+    roots
 }

@@ -312,6 +312,118 @@ async fn test_explicit_watch_reloads_nested_used_blocks() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_watcher_rebuilds_when_watch_roots_change() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    let blocks_dir = harness_dir.join("blocks");
+    let extras_dir = harness_dir.join("extras");
+    std::fs::create_dir_all(&blocks_dir)?;
+    std::fs::create_dir_all(&extras_dir)?;
+
+    std::fs::write(
+        harness_dir.join("main.lua"),
+        r#"
+            watch("blocks")
+            use("blocks/feature")
+        "#,
+    )?;
+    std::fs::write(
+        blocks_dir.join("feature.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local ok, err = fs.write("dynamic-watch-marker.txt", "blocks-v1")
+                if not ok then error(err) end
+                return ALLOW
+            end
+        "#,
+    )?;
+    std::fs::write(
+        extras_dir.join("feature.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local ok, err = fs.write("dynamic-watch-marker.txt", "extras-v1")
+                if not ok then error(err) end
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut kernel = make_kernel(tmp.path()).await?;
+    kernel.start_watcher()?;
+
+    let marker_path = tmp.path().join("dynamic-watch-marker.txt");
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("before watch-root change".to_string()))
+        .await?;
+    kernel.end_session(&mut session).await?;
+    assert_eq!(std::fs::read_to_string(&marker_path)?, "blocks-v1");
+
+    std::fs::write(
+        harness_dir.join("main.lua"),
+        r#"
+            watch("blocks")
+            watch("extras")
+            use("blocks/feature")
+            use("extras/feature")
+        "#,
+    )?;
+
+    let mut saw_extra_v1 = false;
+    for _ in 0..10 {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let mut session = kernel.create_session().await;
+        kernel
+            .run(&mut session, Some("after watch-root change".to_string()))
+            .await?;
+        kernel.end_session(&mut session).await?;
+
+        if std::fs::read_to_string(&marker_path).ok().as_deref() == Some("extras-v1") {
+            saw_extra_v1 = true;
+            break;
+        }
+    }
+
+    assert!(
+        saw_extra_v1,
+        "reloading main.lua should rebuild watcher roots and activate extras block"
+    );
+
+    std::fs::write(
+        extras_dir.join("feature.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local ok, err = fs.write("dynamic-watch-marker.txt", "extras-v2")
+                if not ok then error(err) end
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut saw_extra_v2 = false;
+    for _ in 0..10 {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let mut session = kernel.create_session().await;
+        kernel
+            .run(&mut session, Some("after nested extras reload".to_string()))
+            .await?;
+        kernel.end_session(&mut session).await?;
+
+        if std::fs::read_to_string(&marker_path).ok().as_deref() == Some("extras-v2") {
+            saw_extra_v2 = true;
+            break;
+        }
+    }
+
+    assert!(
+        saw_extra_v2,
+        "watcher should rebuild after watch-root changes so new nested roots hot-reload"
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test-peer-reload.db");
@@ -453,6 +565,151 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
 }
 
 #[tokio::test]
+async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test-affected-reload.db");
+    let default_harness_dir = tmp.path().join("harnesses-default");
+    let writer_harness_dir = tmp.path().join("harnesses-writer");
+    std::fs::create_dir_all(&default_harness_dir)?;
+    std::fs::create_dir_all(&writer_harness_dir)?;
+
+    std::fs::write(
+        default_harness_dir.join("main.lua"),
+        r#"
+            local current, _ = fs.read(".turin/runtime/default-load-count.txt")
+            local next_count = (tonumber(current or "0") or 0) + 1
+            local ok, err = fs.write(".turin/runtime/default-load-count.txt", tostring(next_count))
+            if not ok then error(err) end
+
+            function on_session_start(event)
+                return ALLOW
+            end
+        "#,
+    )?;
+    std::fs::write(
+        writer_harness_dir.join("main.lua"),
+        r#"
+            local current, _ = fs.read(".turin/runtime/writer-load-count.txt")
+            local next_count = (tonumber(current or "0") or 0) + 1
+            local ok, err = fs.write(".turin/runtime/writer-load-count.txt", tostring(next_count))
+            if not ok then error(err) end
+
+            function on_session_start(event)
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("Mock response".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut agents = HashMap::new();
+    agents.insert(
+        "writer".to_string(),
+        AgentConfig {
+            id: "writer".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Writer agent.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness: Some("writer".to_string()),
+            idle_grace_secs: None,
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Default agent.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+        },
+        agents,
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 5,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: default_harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        harnesses: std::collections::HashMap::from([(
+            "writer".to_string(),
+            HarnessConfig {
+                directory: writer_harness_dir.to_string_lossy().to_string(),
+                fs_root: ".".to_string(),
+            },
+        )]),
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+    kernel.start_watcher()?;
+
+    let default_count_path = tmp.path().join(".turin/runtime/default-load-count.txt");
+    let writer_count_path = tmp.path().join(".turin/runtime/writer-load-count.txt");
+
+    assert_eq!(std::fs::read_to_string(&default_count_path)?, "1");
+    assert_eq!(std::fs::read_to_string(&writer_count_path)?, "1");
+
+    std::fs::write(
+        writer_harness_dir.join("main.lua"),
+        r#"
+            local current, _ = fs.read(".turin/runtime/writer-load-count.txt")
+            local next_count = (tonumber(current or "0") or 0) + 1
+            local ok, err = fs.write(".turin/runtime/writer-load-count.txt", tostring(next_count))
+            if not ok then error(err) end
+
+            function on_session_start(event)
+                return ALLOW
+            end
+
+            -- trigger writer harness reload only
+        "#,
+    )?;
+
+    let mut saw_writer_reload = false;
+    for _ in 0..10 {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let default_count = std::fs::read_to_string(&default_count_path).ok();
+        let writer_count = std::fs::read_to_string(&writer_count_path).ok();
+        if default_count.as_deref() == Some("1") && writer_count.as_deref() == Some("2") {
+            saw_writer_reload = true;
+            break;
+        }
+    }
+
+    assert!(
+        saw_writer_reload,
+        "changing a named harness should reload only that harness runtime"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test-multi-harness.db");
@@ -569,6 +826,10 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
         .expect("expected default harness snapshot");
     assert_eq!(default_snapshot.bound_agents, vec!["default".to_string()]);
     assert_eq!(default_snapshot.loaded_scripts, vec!["main".to_string()]);
+    assert_eq!(
+        default_snapshot.watched_roots,
+        vec![default_harness_dir.to_string_lossy().to_string()]
+    );
 
     let writer_snapshot = snapshots
         .iter()
@@ -576,6 +837,10 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
         .expect("expected writer harness snapshot");
     assert_eq!(writer_snapshot.bound_agents, vec!["writer".to_string()]);
     assert_eq!(writer_snapshot.loaded_scripts, vec!["main".to_string()]);
+    assert_eq!(
+        writer_snapshot.watched_roots,
+        vec![writer_harness_dir.to_string_lossy().to_string()]
+    );
 
     assert_eq!(
         std::fs::read_to_string(tmp.path().join(".turin/runtime/default-harness.txt"))?,

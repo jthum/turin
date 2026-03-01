@@ -77,7 +77,7 @@ impl RuntimeBuilder {
                 embedding_provider: self.embedding_provider,
                 mcp_clients: Vec::new(),
             },
-            check_watcher: None,
+            check_watcher: Arc::new(std::sync::Mutex::new(None)),
         })
     }
 }

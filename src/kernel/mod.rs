@@ -39,6 +39,7 @@ pub struct HarnessRuntimeSnapshot {
     pub harness_id: String,
     pub directory: String,
     pub bound_agents: Vec<String>,
+    pub watched_roots: Vec<String>,
     pub loaded_scripts: Vec<String>,
 }
 
@@ -50,7 +51,7 @@ pub struct HarnessRuntimeSnapshot {
 pub struct Kernel {
     pub(crate) host: ExecutionHost,
     /// Watcher handle to keep it alive
-    pub(crate) check_watcher: Option<RecommendedWatcher>,
+    pub(crate) check_watcher: Arc<std::sync::Mutex<Option<RecommendedWatcher>>>,
 }
 
 impl Drop for Kernel {
@@ -101,19 +102,6 @@ impl Kernel {
         &self.config
     }
 
-    /// Lock the harness mutex.
-    ///
-    /// Panics if the mutex is poisoned (previous holder panicked).
-    /// A poisoned harness is an unrecoverable state — continuing would
-    /// risk executing tool calls with a partially-updated engine.
-    ///
-    /// Callers must keep the guard's lifetime fully synchronous (no `.await` while held).
-    pub fn lock_harness(
-        &self,
-    ) -> std::sync::MutexGuard<'_, Option<crate::harness::engine::HarnessEngine>> {
-        self.harness_manager.lock_default_engine()
-    }
-
     /// Get names of all loaded harness scripts.
     pub fn loaded_scripts(&self) -> Vec<String> {
         self.harness_manager.default_runtime().loaded_scripts()
@@ -141,10 +129,18 @@ impl Kernel {
                 agents.sort();
                 let mut loaded_scripts = runtime.loaded_scripts();
                 loaded_scripts.sort();
+                let mut watched_roots: Vec<_> = runtime
+                    .watch_roots()
+                    .into_iter()
+                    .map(|root| root.path.display().to_string())
+                    .collect();
+                watched_roots.sort();
+                watched_roots.dedup();
                 HarnessRuntimeSnapshot {
                     harness_id: harness_id.clone(),
                     directory: runtime.directory().display().to_string(),
                     bound_agents: agents,
+                    watched_roots,
                     loaded_scripts,
                 }
             })
