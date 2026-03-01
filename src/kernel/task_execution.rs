@@ -2,15 +2,16 @@ use anyhow::Result;
 use tracing::{error, instrument, warn};
 
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
+use crate::kernel::TaskExecutionResult;
 use crate::kernel::config::AgentMode;
 use crate::kernel::event::TaskTerminalStatus;
+use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::harness_hooks::TokenUsageHookAction;
 use crate::kernel::session::{QueuedTask, SessionState};
 use crate::kernel::turn;
-use crate::kernel::{Kernel, TaskExecutionResult};
 use crate::tools::ToolContext;
 
-impl Kernel {
+impl ExecutionHost {
     /// Execute a single task (one specific prompt) within the persistent session.
     #[instrument(skip(self, session, task), fields(task_id = %task.task_id))]
     pub(super) async fn run_task(

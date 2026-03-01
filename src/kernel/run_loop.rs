@@ -5,6 +5,7 @@ use crate::harness::verdict::Verdict;
 use crate::kernel::Kernel;
 use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::event::{KernelEvent, LifecycleEvent};
+use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::{PlanProgress, QueuedTask, SessionState};
 
 impl Kernel {
@@ -158,7 +159,7 @@ impl Kernel {
         };
 
         if let Some(Verdict::Modify(new_tasks_val)) = verdict {
-            let new_tasks = Self::parse_task_list(&new_tasks_val, None, None);
+            let new_tasks = ExecutionHost::parse_task_list(&new_tasks_val, None, None);
             if !new_tasks.is_empty() {
                 let mut q = session.queue.lock().await;
                 for task in new_tasks {

@@ -1,10 +1,10 @@
 use tracing::error;
 
 use crate::harness::verdict::Verdict;
-use crate::kernel::Kernel;
+use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::{PlanProgress, QueuedTask, SessionState};
 
-impl Kernel {
+impl ExecutionHost {
     pub(super) async fn handle_plan_submission(
         &mut self,
         session: &mut SessionState,
@@ -50,13 +50,13 @@ impl Kernel {
                         should_clear_existing = new_clear;
                     }
                     if let Some(new_tasks_val) = obj.get("tasks") {
-                        plan_tasks = Kernel::parse_task_list(new_tasks_val, None, None)
+                        plan_tasks = ExecutionHost::parse_task_list(new_tasks_val, None, None)
                             .into_iter()
                             .map(|t| t.prompt)
                             .collect();
                     }
                 } else if new_val.is_array() {
-                    plan_tasks = Kernel::parse_task_list(&new_val, None, None)
+                    plan_tasks = ExecutionHost::parse_task_list(&new_val, None, None)
                         .into_iter()
                         .map(|t| t.prompt)
                         .collect();

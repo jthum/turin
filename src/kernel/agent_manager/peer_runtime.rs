@@ -7,12 +7,13 @@ use crate::harness::verdict::Verdict;
 use crate::inference::provider::{InferenceContent, InferenceRole};
 use crate::kernel::TaskExecutionResult;
 use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
+use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::QueuedTask;
 
 use super::{AgentManager, PeerAgentTaskEnvelope, PeerAgentTaskResult};
 
 pub(super) struct PeerRuntime {
-    kernel: crate::kernel::Kernel,
+    host: ExecutionHost,
     session: crate::kernel::session::SessionState,
     agent_id: String,
 }
@@ -27,16 +28,16 @@ pub(super) struct PeerRunOutcome {
 
 impl PeerRuntime {
     pub(super) async fn start(manager: Arc<AgentManager>, agent_id: &str) -> Result<Self> {
-        let mut kernel = fork_peer_kernel(&manager)?;
-        if kernel.clients.is_empty() {
-            kernel.init_clients()?;
+        let mut host = fork_peer_kernel(&manager);
+        if host.clients.is_empty() {
+            host.init_clients()?;
         }
 
-        let mut session = kernel.create_session_for_agent(agent_id).await;
-        kernel.start_session(&mut session).await?;
+        let mut session = host.create_session_for_agent(agent_id).await;
+        host.start_session(&mut session).await?;
 
         Ok(Self {
-            kernel,
+            host,
             session,
             agent_id: agent_id.to_string(),
         })
@@ -77,10 +78,10 @@ impl PeerRuntime {
     }
 
     pub(super) async fn shutdown(mut self) {
-        if let Err(e) = self.kernel.end_session(&mut self.session).await {
+        if let Err(e) = self.host.end_session(&mut self.session).await {
             warn!(agent_id = %self.agent_id, error = %e, "Peer agent session end error");
         }
-        self.kernel.shutdown_mcp_clients().await;
+        self.host.shutdown_mcp_clients().await;
         info!(agent_id = %self.agent_id, "Peer runtime shut down");
     }
 
@@ -96,7 +97,7 @@ impl PeerRuntime {
 
         self.set_capability_ceiling(delegated_capabilities.clone());
         let outcome = async {
-            self.kernel.persist_event(
+            self.host.persist_event(
                 &self.session,
                 &KernelEvent::Lifecycle(LifecycleEvent::TaskStart {
                     identity: self.session.identity.clone(),
@@ -109,7 +110,7 @@ impl PeerRuntime {
             );
 
             let task_start_verdict = {
-                let runtime = self.kernel.runtime_for_session(&self.session);
+                let runtime = self.host.runtime_for_session(&self.session);
                 let harness = runtime.lock_engine();
                 if let Some(ref engine) = *harness {
                     match engine.evaluate(
@@ -142,7 +143,7 @@ impl PeerRuntime {
                         reason = %reason,
                         "Peer task rejected by on_task_start"
                     );
-                    self.kernel
+                    self.host
                         .complete_task(
                             &mut self.session,
                             &task,
@@ -174,7 +175,7 @@ impl PeerRuntime {
                         reason = %reason,
                         "Peer task escalated at on_task_start; treating as rejected"
                     );
-                    self.kernel
+                    self.host
                         .complete_task(
                             &mut self.session,
                             &task,
@@ -196,9 +197,9 @@ impl PeerRuntime {
             info!(task_id = %task.task_id, prompt = %task.prompt, "Running peer task");
 
             let run_result: TaskExecutionResult =
-                match self.kernel.run_task(&mut self.session, &task).await {
+                match self.host.run_task(&mut self.session, &task).await {
                     Ok(result) => {
-                        self.kernel
+                        self.host
                             .complete_task(
                                 &mut self.session,
                                 &task,
@@ -213,10 +214,10 @@ impl PeerRuntime {
                         error!(task_id = %task.task_id, error = %e, "Peer task failed with runtime error");
                         let error_message = e.to_string();
                         let recovered = self
-                            .kernel
+                            .host
                             .handle_inference_error(&mut self.session, &task, &error_message)
                             .await?;
-                        self.kernel
+                        self.host
                             .complete_task(
                                 &mut self.session,
                                 &task,
@@ -264,7 +265,7 @@ impl PeerRuntime {
     }
 
     fn set_capability_ceiling(&self, caps: Option<BTreeMap<String, bool>>) {
-        let runtime = self.kernel.runtime_for_session(&self.session);
+        let runtime = self.host.runtime_for_session(&self.session);
         let harness = runtime.lock_engine();
         if let Some(ref engine) = *harness {
             engine.set_active_capability_delegation(caps);
@@ -272,7 +273,7 @@ impl PeerRuntime {
     }
 
     fn clear_capability_ceiling(&self) {
-        let runtime = self.kernel.runtime_for_session(&self.session);
+        let runtime = self.host.runtime_for_session(&self.session);
         let harness = runtime.lock_engine();
         if let Some(ref engine) = *harness {
             engine.set_active_capability_delegation(None);
@@ -280,17 +281,17 @@ impl PeerRuntime {
     }
 }
 
-pub(super) fn fork_peer_kernel(manager: &Arc<AgentManager>) -> Result<crate::kernel::Kernel> {
+pub(super) fn fork_peer_kernel(manager: &Arc<AgentManager>) -> ExecutionHost {
     let shared = manager
         .shared_runtime()
-        .ok_or_else(|| anyhow::anyhow!("AgentManager shared runtime not bound"))?;
+        .expect("AgentManager shared runtime not bound");
     let inference = manager
         .shared_inference
         .lock()
         .expect("agent manager shared inference mutex poisoned")
         .clone();
 
-    Ok(crate::kernel::Kernel {
+    ExecutionHost {
         config: Arc::clone(&manager.config),
         json: shared.json,
         tool_registry: shared.tool_registry.clone(),
@@ -299,9 +300,8 @@ pub(super) fn fork_peer_kernel(manager: &Arc<AgentManager>) -> Result<crate::ker
         policy_manager: Arc::clone(&shared.policy_manager),
         governance_manager: Arc::clone(&shared.governance_manager),
         harness_manager: Arc::clone(&shared.harness_manager),
-        check_watcher: None,
         clients: inference.clients,
         embedding_provider: inference.embedding_provider,
         mcp_clients: Vec::new(),
-    })
+    }
 }

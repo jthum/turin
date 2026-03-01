@@ -1,7 +1,7 @@
 use tracing::{info, warn};
 
 use crate::harness::verdict::Verdict;
-use crate::kernel::Kernel;
+use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::policy::PolicyScope;
 use crate::kernel::session::SessionState;
 
@@ -19,7 +19,7 @@ enum TokenUsageRejectMode {
     EnforceSession,
 }
 
-impl Kernel {
+impl ExecutionHost {
     /// Evaluate harness `on_tool_call` hook.
     ///
     /// Returns the composed verdict. If no harness is loaded, returns `Allow`.

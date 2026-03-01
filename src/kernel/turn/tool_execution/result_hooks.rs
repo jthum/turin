@@ -4,10 +4,10 @@ use tracing::warn;
 
 use crate::display;
 use crate::harness::verdict::Verdict;
-use crate::kernel::Kernel;
+use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::SessionState;
 
-impl Kernel {
+impl ExecutionHost {
     pub(super) fn prompt_for_approval(&self, reason: &str) -> bool {
         warn!(reason = %reason, "Escalation requires user approval");
         let ansi_stderr = display::stderr_ansi();

@@ -10,11 +10,12 @@ use tracing::{info, warn};
 use crate::display;
 use crate::harness::verdict::Verdict;
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
+use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::SessionState;
 use crate::tools::{ToolContext, ToolEffect, ToolError, ToolOutput};
 
+use super::super::PendingToolCall;
 use super::super::event::{AuditEvent, KernelEvent};
-use super::super::{Kernel, PendingToolCall};
 use super::TurnOutcome;
 use crate::kernel::governance::{GovernanceSubject, tool_capability_name};
 
@@ -30,7 +31,7 @@ struct FinalToolRecord {
     emit_exec_start: bool,
 }
 
-impl Kernel {
+impl ExecutionHost {
     /// Phase 1-3 of tool execution: verdict evaluation, parallel execution, side effects, and result collection.
     pub(super) async fn execute_tool_calls(
         &mut self,
@@ -65,7 +66,7 @@ impl Kernel {
                     if !self.json {
                         println!(
                             "{}",
-                            display::rejection_line("✗ Rejected by harness:", reason, ansi_stdout)
+                            display::rejection_line("✗ Rejected by harness:", reason, ansi_stdout,)
                         );
                     }
                     warn!(tool = %tc.name, reason = %reason, "Tool rejected by on_tool_call");

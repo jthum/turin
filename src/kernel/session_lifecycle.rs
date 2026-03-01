@@ -4,11 +4,11 @@ use anyhow::Result;
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{info, warn};
 
-use crate::kernel::Kernel;
 use crate::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent};
+use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::{SessionState, SessionStatus};
 
-impl Kernel {
+impl ExecutionHost {
     /// Create a new session.
     pub async fn create_session(&self) -> SessionState {
         self.create_session_for_agent(&self.config.agent.id).await

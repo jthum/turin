@@ -10,10 +10,11 @@ use std::sync::Arc;
 use tracing::{error, info, instrument, warn};
 
 use super::Kernel;
+use super::execution_host::ExecutionHost;
 use super::harness_runtime::HarnessRuntimeInitContext;
 use crate::inference::provider::{self, ProviderClient};
 
-impl Kernel {
+impl ExecutionHost {
     fn harness_init_context(&self) -> HarnessRuntimeInitContext {
         HarnessRuntimeInitContext {
             config: self.config.clone(),
@@ -26,11 +27,29 @@ impl Kernel {
         }
     }
 
+    /// Create the appropriate provider client from config.
+    pub(crate) fn create_client(
+        &self,
+        _name: &str,
+        config: &crate::kernel::config::ProviderConfig,
+    ) -> Result<ProviderClient> {
+        let client = provider::create_provider_client(config)?;
+        Ok(ProviderClient::new(config.kind.clone(), client))
+    }
+}
+
+impl ExecutionHost {
     /// Initialize all configured provider clients. Call before `init_harness()` and `run()`.
     pub fn init_clients(&mut self) -> Result<()> {
-        for (name, config) in &self.config.providers {
-            let client = self.create_client(name, config)?;
-            self.clients.insert(name.clone(), client);
+        let providers: Vec<_> = self
+            .config
+            .providers
+            .iter()
+            .map(|(name, config)| (name.clone(), config.clone()))
+            .collect();
+        for (name, config) in providers {
+            let client = self.create_client(&name, &config)?;
+            self.clients.insert(name, client);
         }
 
         for agent in std::iter::once(&self.config.agent).chain(self.config.agents.values()) {
@@ -125,7 +144,9 @@ impl Kernel {
         }
         Ok(())
     }
+}
 
+impl Kernel {
     /// Start watching the harness directory for changes (background thread).
     #[instrument(skip(self))]
     pub fn start_watcher(&mut self) -> Result<()> {
@@ -212,15 +233,5 @@ impl Kernel {
         self.check_watcher = Some(watcher);
 
         Ok(())
-    }
-
-    /// Create the appropriate provider client from config.
-    pub(crate) fn create_client(
-        &self,
-        _name: &str,
-        config: &crate::kernel::config::ProviderConfig,
-    ) -> Result<ProviderClient> {
-        let client = provider::create_provider_client(config)?;
-        Ok(ProviderClient::new(config.kind.clone(), client))
     }
 }

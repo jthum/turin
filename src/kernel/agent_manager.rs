@@ -412,7 +412,7 @@ mod tests {
             .with_tool_registry(registry.clone())
             .build()?;
 
-        let peer_kernel = super::peer_runtime::fork_peer_kernel(&kernel.agent_manager)?;
+        let peer_kernel = super::peer_runtime::fork_peer_kernel(&kernel.agent_manager);
 
         assert_eq!(peer_kernel.tool_registry.len(), registry.len());
         assert!(peer_kernel.tool_registry.get("test_tool").is_some());

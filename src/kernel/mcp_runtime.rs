@@ -5,7 +5,7 @@ use mcp_sdk::client::McpClient;
 use mcp_sdk::transport::StdioTransport;
 use tracing::{info, instrument, warn};
 
-use crate::kernel::Kernel;
+use crate::kernel::execution_host::ExecutionHost;
 use crate::tools::mcp::McpToolProxy;
 
 pub(crate) struct McpClientEntry {
@@ -14,7 +14,7 @@ pub(crate) struct McpClientEntry {
     pub client: Arc<McpClient<mcp_sdk::transport::StdioTransport>>,
 }
 
-impl Kernel {
+impl ExecutionHost {
     /// Connect to an MCP server, initialize it, and register its tools.
     #[instrument(skip(self, args), fields(command = %command, args = ?args))]
     pub(crate) async fn spawn_mcp_server(
@@ -25,15 +25,15 @@ impl Kernel {
         let args_str: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
         // Check for existing client.
-        if let Some(entry) = self
+        if let Some(client) = self
             .mcp_clients
             .iter()
             .find(|e| e.command == command && e.args == args)
+            .map(|entry| Arc::clone(&entry.client))
         {
             info!(command = %command, "Reusing existing MCP client");
 
-            let list_result = entry
-                .client
+            let list_result = client
                 .list_tools()
                 .await
                 .with_context(|| "Failed to list MCP tools on reused client")?;
@@ -41,7 +41,7 @@ impl Kernel {
 
             // Refresh tool registry entries in case the registry changed since initial attach.
             for tool_def in list_result.tools {
-                let proxy = McpToolProxy::new(entry.client.clone(), tool_def);
+                let proxy = McpToolProxy::new(client.clone(), tool_def);
                 let _ = self.tool_registry.register(Box::new(proxy));
             }
             return Ok(count);

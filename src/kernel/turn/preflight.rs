@@ -10,8 +10,8 @@ use crate::harness::verdict::Verdict;
 use crate::inference::provider;
 use crate::kernel::session::SessionState;
 
-use super::super::Kernel;
 use super::super::event::{KernelEvent, LifecycleEvent};
+use super::super::execution_host::ExecutionHost;
 use super::{TurnContext, merge_request_option_overrides};
 
 pub(super) enum TurnPreflight {
@@ -34,7 +34,7 @@ struct TurnRequestState {
     request_options_override: RequestOptionsOverride,
 }
 
-impl Kernel {
+impl ExecutionHost {
     pub(super) async fn prepare_turn_stream(
         &mut self,
         session: &mut SessionState,

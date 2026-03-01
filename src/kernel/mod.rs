@@ -3,6 +3,7 @@ pub mod builder;
 pub mod config;
 pub mod event;
 mod event_persistence;
+mod execution_host;
 pub mod governance;
 mod harness_hooks;
 mod harness_manager;
@@ -19,23 +20,18 @@ mod task_lifecycle;
 mod task_planning;
 mod turn;
 
-use agent_manager::AgentManager;
-use anyhow::Result;
-use builder::RuntimeBuilder;
-use config::TurinConfig;
-use event::TaskTerminalStatus;
-use harness_manager::HarnessManager;
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::persistence::manager::StoreManager;
+use anyhow::Result;
+use builder::RuntimeBuilder;
+use config::TurinConfig;
+use event::TaskTerminalStatus;
+use execution_host::ExecutionHost;
+use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::tools::registry::ToolRegistry;
-use mcp_runtime::McpClientEntry;
 use notify::RecommendedWatcher;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -52,29 +48,16 @@ pub struct HarnessRuntimeSnapshot {
 /// transport, streaming, tool execution, persistence, and event hooks.
 /// Harness scripts define the behavior.
 pub struct Kernel {
-    pub(crate) config: Arc<TurinConfig>,
-    pub(crate) json: bool,
-    pub(crate) tool_registry: ToolRegistry,
-    pub(crate) store_manager: Arc<StoreManager>,
-    pub(crate) agent_manager: Arc<AgentManager>,
-    pub(crate) policy_manager: Arc<RuntimePolicyManager>,
-    pub(crate) governance_manager: Arc<GovernanceManager>,
-    /// First-class harness manager. In the current checkpoint it still resolves to the
-    /// default harness runtime, but it replaces the old single-engine kernel slot.
-    pub(crate) harness_manager: Arc<HarnessManager>,
+    pub(crate) host: ExecutionHost,
     /// Watcher handle to keep it alive
     pub(crate) check_watcher: Option<RecommendedWatcher>,
-    pub(crate) clients: HashMap<String, ProviderClient>,
-    pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
-
-    pub(crate) mcp_clients: Vec<McpClientEntry>,
 }
 
 impl Drop for Kernel {
     fn drop(&mut self) {
         // Ensure MCP client Arcs are dropped promptly so stdio transports can tear down
         // subprocesses even when explicit async shutdown was not reached.
-        self.mcp_clients.clear();
+        self.host.mcp_clients.clear();
     }
 }
 
@@ -131,20 +114,6 @@ impl Kernel {
         self.harness_manager.lock_default_engine()
     }
 
-    pub(crate) fn runtime_for_agent(
-        &self,
-        agent_id: &str,
-    ) -> Arc<crate::kernel::harness_runtime::HarnessRuntime> {
-        Arc::clone(self.harness_manager.resolve_harness(Some(agent_id)))
-    }
-
-    pub(crate) fn runtime_for_session(
-        &self,
-        session: &crate::kernel::session::SessionState,
-    ) -> Arc<crate::kernel::harness_runtime::HarnessRuntime> {
-        self.runtime_for_agent(session.identity.agent_id())
-    }
-
     /// Get names of all loaded harness scripts.
     pub fn loaded_scripts(&self) -> Vec<String> {
         self.harness_manager.default_runtime().loaded_scripts()
@@ -195,25 +164,18 @@ impl Kernel {
             .default_runtime()
             .load_script_str(script)
     }
+}
 
-    pub(crate) fn agent_config_for(
-        &self,
-        agent_id: &str,
-    ) -> Result<&crate::kernel::config::AgentConfig> {
-        if agent_id == self.config.agent.id {
-            Ok(&self.config.agent)
-        } else {
-            self.config
-                .agents
-                .get(agent_id)
-                .ok_or_else(|| anyhow::anyhow!("Unknown agent profile: {}", agent_id))
-        }
+impl std::ops::Deref for Kernel {
+    type Target = ExecutionHost;
+
+    fn deref(&self) -> &Self::Target {
+        &self.host
     }
+}
 
-    pub(crate) fn agent_config_for_session(
-        &self,
-        session: &crate::kernel::session::SessionState,
-    ) -> Result<&crate::kernel::config::AgentConfig> {
-        self.agent_config_for(session.identity.agent_id())
+impl std::ops::DerefMut for Kernel {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.host
     }
 }

@@ -8,6 +8,7 @@ use crate::kernel::policy::RuntimePolicyManager;
 use crate::kernel::{
     Kernel, TurinConfig,
     agent_manager::{AgentManager, SharedPeerRuntimeContext},
+    execution_host::ExecutionHost,
     harness_manager::HarnessManager,
 };
 use crate::persistence::manager::StoreManager;
@@ -63,18 +64,20 @@ impl RuntimeBuilder {
             harness_manager: Arc::clone(&harness_manager),
         });
         Ok(Kernel {
-            config: config_arc,
-            json: self.json,
-            tool_registry: self.tool_registry,
-            store_manager,
-            agent_manager,
-            policy_manager,
-            governance_manager,
-            harness_manager,
+            host: ExecutionHost {
+                config: config_arc,
+                json: self.json,
+                tool_registry: self.tool_registry,
+                store_manager,
+                agent_manager,
+                policy_manager,
+                governance_manager,
+                harness_manager,
+                clients: HashMap::new(),
+                embedding_provider: self.embedding_provider,
+                mcp_clients: Vec::new(),
+            },
             check_watcher: None,
-            clients: HashMap::new(),
-            embedding_provider: self.embedding_provider,
-            mcp_clients: Vec::new(),
         })
     }
 }

@@ -2,11 +2,11 @@ use anyhow::Result;
 use tracing::{info, warn};
 
 use crate::harness::verdict::Verdict;
-use crate::kernel::Kernel;
 use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
+use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::{QueuedTask, SessionState};
 
-impl Kernel {
+impl ExecutionHost {
     pub(crate) async fn complete_task(
         &mut self,
         session: &mut SessionState,

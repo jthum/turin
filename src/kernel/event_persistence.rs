@@ -1,11 +1,11 @@
 use tokio::sync::broadcast;
 use tracing::{debug, instrument, warn};
 
-use crate::kernel::Kernel;
 use crate::kernel::event::KernelEvent;
+use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::SessionState;
 
-impl Kernel {
+impl ExecutionHost {
     /// Persist an event to the state store in the background.
     #[instrument(skip(self, session, event), fields(event_type = %event.event_type()))]
     pub(crate) fn persist_event(&self, session: &SessionState, event: &KernelEvent) {

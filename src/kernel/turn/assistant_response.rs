@@ -1,13 +1,14 @@
 use tracing::warn;
 
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
+use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::SessionState;
 
+use super::super::PendingToolCall;
 use super::super::event::{KernelEvent, LifecycleEvent};
-use super::super::{Kernel, PendingToolCall};
 use super::TurnContext;
 
-impl Kernel {
+impl ExecutionHost {
     pub(super) async fn finalize_assistant_turn_output(
         &mut self,
         session: &mut SessionState,

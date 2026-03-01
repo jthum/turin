@@ -16,7 +16,7 @@ use crate::inference::provider::{self};
 use crate::kernel::session::SessionState;
 use crate::tools::ToolContext;
 
-use super::Kernel;
+use super::execution_host::ExecutionHost;
 use preflight::TurnPreflight;
 
 #[derive(Debug, Clone)]
@@ -61,7 +61,7 @@ fn merge_request_option_overrides(
     Ok(options)
 }
 
-impl Kernel {
+impl ExecutionHost {
     /// Execute a single turn of the agent loop.
     pub(crate) async fn execute_turn(
         &mut self,

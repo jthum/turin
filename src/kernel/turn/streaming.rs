@@ -5,10 +5,11 @@ use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
 
 use crate::display;
+use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::SessionState;
 
+use super::super::PendingToolCall;
 use super::super::event::{KernelEvent, StreamEvent};
-use super::super::{Kernel, PendingToolCall};
 
 #[derive(Debug, Default)]
 pub(super) struct TurnStreamOutput {
@@ -18,7 +19,7 @@ pub(super) struct TurnStreamOutput {
     pub pending_tool_calls: Vec<PendingToolCall>,
 }
 
-impl Kernel {
+impl ExecutionHost {
     pub(super) async fn collect_turn_stream_output(
         &mut self,
         session: &mut SessionState,
