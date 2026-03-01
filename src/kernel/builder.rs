@@ -55,7 +55,6 @@ impl RuntimeBuilder {
         let policy_manager = Arc::new(RuntimePolicyManager::new());
         let governance_manager = Arc::new(GovernanceManager::new(config_arc.governance.clone()));
         let harness_manager = Arc::new(HarnessManager::from_config(config_arc.as_ref())?);
-        agent_manager.bind_self_handle(Arc::downgrade(&agent_manager));
         agent_manager.bind_shared_runtime(SharedPeerRuntimeContext {
             json: self.json,
             tool_registry: self.tool_registry.clone(),

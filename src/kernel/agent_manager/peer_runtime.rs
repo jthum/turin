@@ -280,7 +280,7 @@ impl PeerRuntime {
     }
 }
 
-pub(super) fn fork_peer_kernel(manager: &AgentManager) -> Result<crate::kernel::Kernel> {
+pub(super) fn fork_peer_kernel(manager: &Arc<AgentManager>) -> Result<crate::kernel::Kernel> {
     let shared = manager
         .shared_runtime()
         .ok_or_else(|| anyhow::anyhow!("AgentManager shared runtime not bound"))?;
@@ -295,7 +295,7 @@ pub(super) fn fork_peer_kernel(manager: &AgentManager) -> Result<crate::kernel::
         json: shared.json,
         tool_registry: shared.tool_registry.clone(),
         store_manager: Arc::clone(&manager.store_manager),
-        agent_manager: manager.self_arc()?,
+        agent_manager: Arc::clone(manager),
         policy_manager: Arc::clone(&shared.policy_manager),
         governance_manager: Arc::clone(&shared.governance_manager),
         harness_manager: Arc::clone(&shared.harness_manager),

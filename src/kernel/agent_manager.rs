@@ -4,8 +4,9 @@ mod runtime_registry;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, OnceLock, Weak};
 
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
@@ -93,8 +94,6 @@ pub struct AgentManager {
     pending_results: RwLock<HashMap<String, oneshot::Receiver<PeerAgentTaskResult>>>,
     /// Mapping of request id -> agent id for status accounting.
     pending_result_agents: RwLock<HashMap<String, String>>,
-    /// Weak self-handle used when constructing shared peer kernels.
-    self_handle: OnceLock<Weak<AgentManager>>,
     /// Shared runtime pieces used to fork peer kernels without cloning the whole kernel topology.
     shared_runtime: OnceLock<SharedPeerRuntimeContext>,
     /// Live inference state copied from the root kernel after provider initialization.
@@ -110,14 +109,9 @@ impl AgentManager {
             runtimes: RwLock::new(HashMap::new()),
             pending_results: RwLock::new(HashMap::new()),
             pending_result_agents: RwLock::new(HashMap::new()),
-            self_handle: OnceLock::new(),
             shared_runtime: OnceLock::new(),
             shared_inference: Mutex::new(SharedInferenceState::default()),
         }
-    }
-
-    pub(crate) fn bind_self_handle(&self, handle: Weak<AgentManager>) {
-        let _ = self.self_handle.set(handle);
     }
 
     pub(crate) fn bind_shared_runtime(&self, runtime: SharedPeerRuntimeContext) {
@@ -142,16 +136,9 @@ impl AgentManager {
         };
     }
 
-    pub(crate) fn self_arc(&self) -> Result<Arc<AgentManager>> {
-        self.self_handle
-            .get()
-            .and_then(Weak::upgrade)
-            .ok_or_else(|| anyhow::anyhow!("AgentManager self handle not bound"))
-    }
-
     /// Dispatch a task to an agent by ID. If the agent isn't running, it will be started automatically.
     pub async fn send(
-        &self,
+        self: &Arc<Self>,
         agent_id: &str,
         task: QueuedTask,
         delegated_capabilities: Option<BTreeMap<String, bool>>,
@@ -172,7 +159,7 @@ impl AgentManager {
 
     /// Submit a task to a peer agent and return a request ID for later `await_result`.
     pub async fn submit(
-        &self,
+        self: &Arc<Self>,
         agent_id: &str,
         task: QueuedTask,
         delegated_capabilities: Option<BTreeMap<String, bool>>,

@@ -9,7 +9,10 @@ use super::peer_runtime::PeerRuntime;
 use super::{AgentManager, AgentRuntimeHandle, PeerAgentTaskEnvelope};
 
 impl AgentManager {
-    pub(super) async fn ensure_runtime(&self, agent_id: &str) -> Result<Arc<AgentRuntimeHandle>> {
+    pub(super) async fn ensure_runtime(
+        self: &Arc<Self>,
+        agent_id: &str,
+    ) -> Result<Arc<AgentRuntimeHandle>> {
         {
             let runtimes = self.runtimes.read().await;
             if let Some(handle) = runtimes.get(agent_id)
@@ -23,7 +26,7 @@ impl AgentManager {
     }
 
     /// Internal method to boot a background peer runtime for a specific agent profile.
-    async fn start_agent(&self, agent_id: &str) -> Result<AgentRuntimeHandle> {
+    async fn start_agent(self: &Arc<Self>, agent_id: &str) -> Result<AgentRuntimeHandle> {
         info!(agent_id = %agent_id, "Starting background peer agent runtime");
 
         let agent_profile = if agent_id == self.config.agent.id {
@@ -39,7 +42,7 @@ impl AgentManager {
         let queued_tasks = Arc::new(AtomicUsize::new(0));
         let agent_id_clone = agent_id.to_string();
         let idle_grace_secs = agent_profile.idle_grace_secs;
-        let manager = self.self_arc()?;
+        let manager = Arc::clone(self);
 
         let queued_tasks_bg = queued_tasks.clone();
         let join_handle = tokio::spawn(async move {
@@ -94,7 +97,7 @@ impl AgentManager {
     }
 
     async fn ensure_runtime_with_write_lock(
-        &self,
+        self: &Arc<Self>,
         agent_id: &str,
     ) -> Result<Arc<AgentRuntimeHandle>> {
         let mut runtimes = self.runtimes.write().await;
