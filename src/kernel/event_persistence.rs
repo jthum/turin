@@ -31,24 +31,25 @@ impl Kernel {
         }
 
         // Allow harness to observe/intercept any event.
-        if let Ok(harness_guard) = self.harness.lock()
-            && let Some(engine) = &*harness_guard
         {
-            let payload = serde_json::to_value(event).unwrap_or_default();
-            if let Ok(verdict) = engine.evaluate("on_kernel_event", payload)
-                && verdict.is_rejected()
-            {
-                if protected_audit_event {
-                    warn!(
-                        event_type = %event.event_type(),
-                        "Event REJECTED by harness on_kernel_event but already persisted (immutable audit)"
-                    );
-                } else {
-                    warn!(event_type = %event.event_type(), "Event REJECTED by harness on_kernel_event");
-                    return;
+            let harness_guard = self.lock_harness();
+            if let Some(engine) = &*harness_guard {
+                let payload = serde_json::to_value(event).unwrap_or_default();
+                if let Ok(verdict) = engine.evaluate("on_kernel_event", payload)
+                    && verdict.is_rejected()
+                {
+                    if protected_audit_event {
+                        warn!(
+                            event_type = %event.event_type(),
+                            "Event REJECTED by harness on_kernel_event but already persisted (immutable audit)"
+                        );
+                    } else {
+                        warn!(event_type = %event.event_type(), "Event REJECTED by harness on_kernel_event");
+                        return;
+                    }
                 }
+                // NOTE: MODIFY is intentionally ignored for general events for now.
             }
-            // NOTE: MODIFY is intentionally ignored for general events for now.
         }
 
         if !protected_audit_event {

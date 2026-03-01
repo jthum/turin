@@ -6,31 +6,27 @@
 
 use anyhow::{Context, Result};
 use notify::Event;
-use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{error, info, instrument, warn};
 
 use super::Kernel;
-use super::config::TurinConfig;
-use crate::harness::engine::HarnessEngine;
-use crate::harness::globals::{HarnessAppData, HarnessExecutionContext};
-use crate::inference::embeddings::EmbeddingProvider;
+use super::harness_runtime::HarnessRuntimeInitContext;
 use crate::inference::provider::{self, ProviderClient};
 
-struct HarnessReloadCtx {
-    harness: Arc<std::sync::Mutex<Option<HarnessEngine>>>,
-    config: Arc<TurinConfig>,
-    clients: HashMap<String, ProviderClient>,
-    store_manager: Arc<crate::persistence::manager::StoreManager>,
-    agent_manager: Arc<crate::kernel::agent_manager::AgentManager>,
-    policy_manager: Arc<crate::kernel::policy::RuntimePolicyManager>,
-    governance_manager: Arc<crate::kernel::governance::GovernanceManager>,
-    embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
-    active_queue: crate::harness::globals::ActiveSessionQueue,
-}
-
 impl Kernel {
+    fn harness_init_context(&self) -> HarnessRuntimeInitContext {
+        HarnessRuntimeInitContext {
+            config: self.config.clone(),
+            clients: self.clients.clone(),
+            store_manager: self.store_manager.clone(),
+            agent_manager: self.agent_manager.clone(),
+            policy_manager: self.policy_manager.clone(),
+            governance_manager: self.governance_manager.clone(),
+            embedding_provider: self.embedding_provider.clone(),
+            queue: self.active_queue.clone(),
+        }
+    }
+
     /// Initialize all configured provider clients. Call before `init_harness()` and `run()`.
     pub fn init_clients(&mut self) -> Result<()> {
         for (name, config) in &self.config.providers {
@@ -112,59 +108,9 @@ impl Kernel {
     #[instrument(skip(self), fields(directory = %self.config.harness.directory))]
     pub async fn init_harness(&mut self) -> Result<()> {
         info!("Initializing harness");
-        let harness_dir = PathBuf::from(&self.config.harness.directory);
-
-        // Resolve fs_root: "." means workspace root, otherwise use as-is
-        let fs_root = if self.config.harness.fs_root == "." {
-            PathBuf::from(&self.config.kernel.workspace_root)
-        } else {
-            PathBuf::from(&self.config.harness.fs_root)
-        };
-
-        let app_data = HarnessAppData {
-            fs_root,
-            workspace_root: PathBuf::from(&self.config.kernel.workspace_root),
-            harness_directory: harness_dir.clone(),
-            store_manager: self.store_manager.clone(),
-            agent_manager: self.agent_manager.clone(),
-            policy_manager: self.policy_manager.clone(),
-            governance_manager: self.governance_manager.clone(),
-            clients: self.clients.clone(),
-            embedding_provider: self.embedding_provider.clone(),
-            queue: self.active_queue.clone(),
-            execution_ctx: Arc::new(std::sync::Mutex::new(HarnessExecutionContext::default())),
-            config: self.config.clone(),
-            spawn_depth: self.config.kernel.initial_spawn_depth,
-            active_modules: Arc::new(std::sync::Mutex::new(Vec::new())),
-            watch_roots: Arc::new(std::sync::Mutex::new(Vec::new())),
-            loading_phase: Arc::new(std::sync::Mutex::new(true)),
-        };
-
-        let mut engine =
-            HarnessEngine::new(app_data).with_context(|| "Failed to create harness engine")?;
-
-        engine.load_dir(&harness_dir).with_context(|| {
-            format!(
-                "Failed to load harness scripts from '{}'",
-                harness_dir.display()
-            )
-        })?;
-        engine.set_loading_phase(false);
-
-        let script_count = engine.loaded_scripts().len();
-        if script_count > 0 {
-            info!(count = script_count, directory = %harness_dir.display(), "Harness scripts loaded");
-            for name in engine.loaded_scripts() {
-                debug!(script = %name, "Loaded harness script");
-            }
-        } else {
-            warn!(directory = %harness_dir.display(), "No harness scripts found");
-        }
-
-        {
-            let mut h = self.lock_harness();
-            *h = Some(engine);
-        }
+        self.harness_manager
+            .default_runtime()
+            .init(self.harness_init_context())?;
         Ok(())
     }
 
@@ -172,70 +118,10 @@ impl Kernel {
     #[instrument(skip(self))]
     pub async fn reload_harness(&mut self) -> Result<()> {
         info!("Reloading harness");
-        self.init_harness().await
-    }
-
-    #[instrument(skip_all)]
-    fn reload_harness_static(ctx: HarnessReloadCtx) -> Result<()> {
-        let HarnessReloadCtx {
-            harness,
-            config,
-            clients,
-            store_manager,
-            agent_manager,
-            policy_manager,
-            governance_manager,
-            embedding_provider,
-            active_queue,
-        } = ctx;
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                let harness_dir = PathBuf::from(&config.harness.directory);
-                let fs_root = if config.harness.fs_root == "." {
-                    PathBuf::from(&config.kernel.workspace_root)
-                } else {
-                    PathBuf::from(&config.harness.fs_root)
-                };
-
-                let app_data = HarnessAppData {
-                    fs_root,
-                    workspace_root: PathBuf::from(&config.kernel.workspace_root),
-                    harness_directory: harness_dir.clone(),
-                    store_manager: store_manager.clone(),
-                    agent_manager: agent_manager.clone(),
-                    policy_manager: policy_manager.clone(),
-                    governance_manager: governance_manager.clone(),
-                    clients,
-                    embedding_provider,
-                    queue: active_queue,
-                    execution_ctx: Arc::new(std::sync::Mutex::new(
-                        HarnessExecutionContext::default(),
-                    )),
-                    config: config.clone(),
-                    spawn_depth: config.kernel.initial_spawn_depth,
-                    active_modules: Arc::new(std::sync::Mutex::new(Vec::new())),
-                    watch_roots: Arc::new(std::sync::Mutex::new(Vec::new())),
-                    loading_phase: Arc::new(std::sync::Mutex::new(true)),
-                };
-
-                match HarnessEngine::new(app_data) {
-                    Ok(mut engine) => match engine.load_dir(&harness_dir) {
-                        Ok(_) => {
-                            engine.set_loading_phase(false);
-                            let script_count = engine.loaded_scripts().len();
-                            let mut h = harness.lock().expect("harness mutex poisoned");
-                            *h = Some(engine);
-                            info!(count = script_count, "Harness reloaded successfully");
-                        }
-                        Err(e) => error!(error = %e, "Failed to load harness scripts"),
-                    },
-                    Err(e) => {
-                        error!(error = %e, "Failed to create harness engine during static reload")
-                    }
-                }
-                Ok(())
-            })
-        })
+        self.harness_manager
+            .default_runtime()
+            .reload(self.harness_init_context())?;
+        Ok(())
     }
 
     /// Start watching the harness directory for changes (background thread).
@@ -244,28 +130,16 @@ impl Kernel {
         use notify::{RecursiveMode, Watcher};
         use std::time::Duration;
 
-        let harness_clone = self.harness.clone();
-        let config_clone = self.config.clone();
-        let clients_clone = self.clients.clone();
-        let store_clone = self.store_manager.clone();
-        let embedding_clone = self.embedding_provider.clone();
-        let queue_clone = self.active_queue.clone();
-        let agent_m_clone = self.agent_manager.clone();
-        let policy_m_clone = self.policy_manager.clone();
-        let governance_m_clone = self.governance_manager.clone();
-        let harness_dir = PathBuf::from(&config_clone.harness.directory);
+        let runtime = self.harness_manager.default_runtime().clone();
+        let init_ctx = self.harness_init_context();
+        let harness_dir = runtime.directory().to_path_buf();
 
         if !harness_dir.exists() {
             warn!(directory = %harness_dir.display(), "Harness directory does not exist, skipping watcher");
             return Ok(());
         }
 
-        let explicit_watch_roots = {
-            let h = self.lock_harness();
-            h.as_ref()
-                .map(|engine| engine.explicit_watch_roots())
-                .unwrap_or_default()
-        };
+        let explicit_watch_roots = runtime.explicit_watch_roots();
 
         // We use an async channel to debounce events
         let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(10);
@@ -279,28 +153,11 @@ impl Kernel {
                 while rx.try_recv().is_ok() {}
 
                 info!("Hot-reload triggered by file change");
-                let h = harness_clone.clone();
-                let c = config_clone.clone();
-                let cl = clients_clone.clone();
-                let s = store_clone.clone();
-                let am = agent_m_clone.clone();
-                let pm = policy_m_clone.clone();
-                let gm = governance_m_clone.clone();
-                let e = embedding_clone.clone();
-                let q = queue_clone.clone();
+                let runtime = runtime.clone();
+                let ctx = init_ctx.clone();
 
                 tokio::spawn(async move {
-                    if let Err(err) = Self::reload_harness_static(HarnessReloadCtx {
-                        harness: h,
-                        config: c,
-                        clients: cl,
-                        store_manager: s,
-                        agent_manager: am,
-                        policy_manager: pm,
-                        governance_manager: gm,
-                        embedding_provider: e,
-                        active_queue: q,
-                    }) {
+                    if let Err(err) = runtime.reload(ctx) {
                         error!(error = %err, "Harness hot-reload failed");
                     }
                 });

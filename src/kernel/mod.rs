@@ -5,6 +5,8 @@ pub mod event;
 mod event_persistence;
 pub mod governance;
 mod harness_hooks;
+mod harness_manager;
+mod harness_runtime;
 pub mod identity;
 mod init;
 mod mcp_runtime;
@@ -22,10 +24,10 @@ use anyhow::Result;
 use builder::RuntimeBuilder;
 use config::TurinConfig;
 use event::TaskTerminalStatus;
+use harness_manager::HarnessManager;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::harness::engine::HarnessEngine;
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
 use crate::kernel::governance::GovernanceManager;
@@ -49,11 +51,9 @@ pub struct Kernel {
     pub(crate) agent_manager: Arc<AgentManager>,
     pub(crate) policy_manager: Arc<RuntimePolicyManager>,
     pub(crate) governance_manager: Arc<GovernanceManager>,
-    /// Thread-safe harness engine for hot-reloading.
-    ///
-    /// Uses `std::sync::Mutex` intentionally: harness/Luau execution is synchronous and
-    /// the engine is accessed from sync hook/tool paths. Do not hold this lock across `.await`.
-    pub(crate) harness: Arc<std::sync::Mutex<Option<HarnessEngine>>>,
+    /// First-class harness manager. In the current checkpoint it still resolves to the
+    /// default harness runtime, but it replaces the old single-engine kernel slot.
+    pub(crate) harness_manager: Arc<HarnessManager>,
     /// Watcher handle to keep it alive
     pub(crate) check_watcher: Option<RecommendedWatcher>,
     pub(crate) clients: HashMap<String, ProviderClient>,
@@ -119,18 +119,15 @@ impl Kernel {
     /// risk executing tool calls with a partially-updated engine.
     ///
     /// Callers must keep the guard's lifetime fully synchronous (no `.await` while held).
-    pub fn lock_harness(&self) -> std::sync::MutexGuard<'_, Option<HarnessEngine>> {
-        self.harness.lock().expect("harness mutex poisoned")
+    pub fn lock_harness(
+        &self,
+    ) -> std::sync::MutexGuard<'_, Option<crate::harness::engine::HarnessEngine>> {
+        self.harness_manager.lock_default_engine()
     }
 
     /// Get names of all loaded harness scripts.
     pub fn loaded_scripts(&self) -> Vec<String> {
-        let lock = self.lock_harness();
-        if let Some(ref engine) = *lock {
-            engine.loaded_scripts()
-        } else {
-            Vec::new()
-        }
+        self.harness_manager.default_runtime().loaded_scripts()
     }
 
     /// Add a provider client manually (e.g. for testing).
@@ -140,12 +137,8 @@ impl Kernel {
 
     /// Run a Lua script directly in the harness (for testing/verification).
     pub fn run_script(&self, script: &str) -> Result<()> {
-        let mut harness_lock = self.lock_harness();
-        if let Some(ref mut engine) = *harness_lock {
-            engine.load_script_str(script)?;
-        } else {
-            anyhow::bail!("Harness not initialized");
-        }
-        Ok(())
+        self.harness_manager
+            .default_runtime()
+            .load_script_str(script)
     }
 }

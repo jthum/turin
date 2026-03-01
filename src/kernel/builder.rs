@@ -6,7 +6,10 @@ use std::sync::Arc;
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::policy::RuntimePolicyManager;
-use crate::kernel::{Kernel, TurinConfig, agent_manager::AgentManager};
+use crate::kernel::{
+    Kernel, TurinConfig, agent_manager::AgentManager, harness_manager::HarnessManager,
+    harness_runtime::HarnessRuntime,
+};
 use crate::persistence::manager::StoreManager;
 use crate::tools::builtins::create_default_registry;
 use crate::tools::registry::ToolRegistry;
@@ -51,6 +54,10 @@ impl RuntimeBuilder {
         let agent_manager = Arc::new(AgentManager::new(config_arc.clone(), store_manager.clone()));
         let policy_manager = Arc::new(RuntimePolicyManager::new());
         let governance_manager = Arc::new(GovernanceManager::new(config_arc.governance.clone()));
+        let harness_manager = Arc::new(HarnessManager::new(HarnessRuntime::from_config(
+            "default",
+            config_arc.as_ref(),
+        )));
         Ok(Kernel {
             config: config_arc,
             json: self.json,
@@ -59,7 +66,7 @@ impl RuntimeBuilder {
             agent_manager,
             policy_manager,
             governance_manager,
-            harness: Arc::new(std::sync::Mutex::new(None)),
+            harness_manager,
             check_watcher: None,
             clients: HashMap::new(),
             embedding_provider: self.embedding_provider,
