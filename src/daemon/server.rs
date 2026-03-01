@@ -634,6 +634,40 @@ async fn dispatch(
                 }),
             )
         }
+        "harness.create" => {
+            let params: AgentIdParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse harness.create params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let mut guard = state.lock().await;
+            match guard.create_shared_harness(&params.id).await {
+                Ok(harness) => match serde_json::to_value(harness) {
+                    Ok(value) => {
+                        emit_event(&event_tx, "harness.created", value.clone());
+                        ResponseEnvelope::ok(request.id, value)
+                    }
+                    Err(err) => ResponseEnvelope::err(
+                        request.id,
+                        "serialize_error",
+                        format!("Failed to serialize created harness: {}", err),
+                        None,
+                    ),
+                },
+                Err(err) => ResponseEnvelope::err(
+                    request.id,
+                    "harness_create_failed",
+                    err.to_string(),
+                    None,
+                ),
+            }
+        }
         "harness.get" => {
             let params: AgentIdParams = match serde_json::from_value(request.params) {
                 Ok(params) => params,
@@ -720,6 +754,42 @@ async fn dispatch(
                 Err(err) => ResponseEnvelope::err(
                     request.id,
                     "harness_validate_failed",
+                    err.to_string(),
+                    None,
+                ),
+            }
+        }
+        "harness.delete" => {
+            let params: AgentIdParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse harness.delete params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let mut guard = state.lock().await;
+            match guard.delete_shared_harness(&params.id).await {
+                Ok(status) => match serde_json::to_value(&status) {
+                    Ok(value) => {
+                        emit_event(&event_tx, "harness.deleted", json!({ "id": params.id }));
+                        emit_event(&event_tx, "runtime.rescanned", value.clone());
+                        emit_registry_issue_events(&event_tx, &status);
+                        ResponseEnvelope::ok(request.id, value)
+                    }
+                    Err(err) => ResponseEnvelope::err(
+                        request.id,
+                        "serialize_error",
+                        format!("Failed to serialize harness delete result: {}", err),
+                        None,
+                    ),
+                },
+                Err(err) => ResponseEnvelope::err(
+                    request.id,
+                    "harness_delete_failed",
                     err.to_string(),
                     None,
                 ),

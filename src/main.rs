@@ -341,6 +341,17 @@ enum DaemonHarnessCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Create a shared harness directory
+    Create {
+        /// Harness ID
+        id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Show one harness by ID
     Get {
         /// Harness ID
@@ -365,6 +376,17 @@ enum DaemonHarnessCommands {
     },
     /// Validate one harness by ID without mutating the live runtime
     Validate {
+        /// Harness ID
+        id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete a shared harness directory
+    Delete {
         /// Harness ID
         id: String,
         /// Path to turin.toml config file
@@ -659,6 +681,9 @@ async fn main() -> Result<()> {
                 DaemonHarnessCommands::List { config, json } => {
                     commands::daemon::run_harness_list(&config, json).await
                 }
+                DaemonHarnessCommands::Create { id, config, json } => {
+                    commands::daemon::run_harness_create(&config, &id, json).await
+                }
                 DaemonHarnessCommands::Get { id, config, json } => {
                     commands::daemon::run_harness_get(&config, &id, json).await
                 }
@@ -667,6 +692,9 @@ async fn main() -> Result<()> {
                 }
                 DaemonHarnessCommands::Validate { id, config, json } => {
                     commands::daemon::run_harness_validate(&config, &id, json).await
+                }
+                DaemonHarnessCommands::Delete { id, config, json } => {
+                    commands::daemon::run_harness_delete(&config, &id, json).await
                 }
             },
             DaemonCommands::Session { command } => match command {

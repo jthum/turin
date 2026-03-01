@@ -148,6 +148,15 @@ pub async fn run_harness_list(config_path: &std::path::Path, json_output: bool) 
     print_response(response, json_output)
 }
 
+pub async fn run_harness_create(
+    config_path: &std::path::Path,
+    harness_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "harness.create", json!({ "id": harness_id })).await?;
+    print_response(response, json_output)
+}
+
 pub async fn run_harness_get(
     config_path: &std::path::Path,
     harness_id: &str,
@@ -173,6 +182,15 @@ pub async fn run_harness_validate(
 ) -> Result<()> {
     let response =
         send_request(config_path, "harness.validate", json!({ "id": harness_id })).await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_harness_delete(
+    config_path: &std::path::Path,
+    harness_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "harness.delete", json!({ "id": harness_id })).await?;
     print_response(response, json_output)
 }
 

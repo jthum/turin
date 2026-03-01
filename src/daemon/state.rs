@@ -462,6 +462,43 @@ impl DaemonState {
         }))
     }
 
+    pub async fn create_shared_harness(&mut self, harness_id: &str) -> Result<HarnessDetail> {
+        validate_harness_id(harness_id)?;
+        let harness_dir = self.watch_paths().harnesses_dir.join(harness_id);
+        if harness_dir.exists() {
+            anyhow::bail!("Harness '{}' already exists", harness_id);
+        }
+        scaffold_shared_harness(&harness_dir)?;
+        self.rescan().await?;
+        self.harness_detail(harness_id)
+            .ok_or_else(|| anyhow!("Harness '{}' was created but not loaded", harness_id))
+    }
+
+    pub async fn delete_shared_harness(&mut self, harness_id: &str) -> Result<DaemonStatus> {
+        if harness_id == "default" || harness_id.starts_with("agent::") {
+            anyhow::bail!("Harness '{}' is not a managed shared harness", harness_id);
+        }
+
+        if let Some(detail) = self.harness_detail(harness_id)
+            && !detail.bound_agents.is_empty()
+        {
+            anyhow::bail!(
+                "Harness '{}' is still bound to agents: {}",
+                harness_id,
+                detail.bound_agents.join(", ")
+            );
+        }
+
+        let harness_dir = self.watch_paths().harnesses_dir.join(harness_id);
+        if !harness_dir.is_dir() {
+            anyhow::bail!("Harness '{}' does not exist", harness_id);
+        }
+
+        std::fs::remove_dir_all(&harness_dir)
+            .with_context(|| format!("Failed to remove '{}'", harness_dir.display()))?;
+        self.rescan().await
+    }
+
     fn ensure_enabled_agent(&self, agent_id: &str) -> Result<()> {
         if agent_id == self.bootstrap_config.agent.id {
             return Ok(());
@@ -512,10 +549,39 @@ fn validate_agent_id(agent_id: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_harness_id(harness_id: &str) -> Result<()> {
+    if harness_id.trim().is_empty() {
+        anyhow::bail!("Harness ID cannot be empty");
+    }
+    if harness_id == "default" {
+        anyhow::bail!("'default' is reserved for the bootstrap harness");
+    }
+    if harness_id.starts_with("agent::") {
+        anyhow::bail!("Harness IDs cannot start with 'agent::'");
+    }
+    if harness_id.contains('/') || harness_id.contains('\\') || harness_id.contains("..") {
+        anyhow::bail!(
+            "Harness ID '{}' contains invalid path characters",
+            harness_id
+        );
+    }
+    Ok(())
+}
+
 fn scaffold_local_harness(agent_dir: &Path) -> Result<()> {
     let harness_dir = agent_dir.join("harness");
     std::fs::create_dir_all(&harness_dir)
         .with_context(|| format!("Failed to create '{}'", harness_dir.display()))?;
+    scaffold_harness_main(&harness_dir)
+}
+
+fn scaffold_shared_harness(harness_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(harness_dir)
+        .with_context(|| format!("Failed to create '{}'", harness_dir.display()))?;
+    scaffold_harness_main(harness_dir)
+}
+
+fn scaffold_harness_main(harness_dir: &Path) -> Result<()> {
     let main_lua = harness_dir.join("main.lua");
     if main_lua.exists() {
         return Ok(());
@@ -802,6 +868,33 @@ type = "no_op"
             .harness_detail("shared")
             .expect("shared harness still visible");
         assert!(still_loaded.loaded_scripts.iter().all(|s| s != "broken"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn shared_harness_create_and_delete_are_filesystem_backed() -> Result<()> {
+        let temp = tempdir()?;
+        let config_path = write_bootstrap(temp.path())?;
+        let mut state = DaemonState::load(&config_path).await?;
+
+        let created = state.create_shared_harness("reviewer").await?;
+        assert_eq!(created.harness_id, "reviewer");
+        assert!(
+            temp.path()
+                .join("harnesses")
+                .join("reviewer")
+                .join("main.lua")
+                .exists()
+        );
+
+        let status = state.delete_shared_harness("reviewer").await?;
+        assert!(
+            status
+                .harnesses
+                .iter()
+                .all(|harness| harness.harness_id != "reviewer")
+        );
 
         Ok(())
     }
