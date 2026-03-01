@@ -23,7 +23,6 @@ impl Kernel {
             policy_manager: self.policy_manager.clone(),
             governance_manager: self.governance_manager.clone(),
             embedding_provider: self.embedding_provider.clone(),
-            queue: self.active_queue.clone(),
         }
     }
 

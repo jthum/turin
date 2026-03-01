@@ -21,7 +21,6 @@ use std::sync::Arc;
 const MAX_HARNESS_FILE_SIZE: usize = 10 * 1024 * 1024;
 
 pub type SessionQueue = Arc<Mutex<VecDeque<QueuedTask>>>;
-pub type ActiveSessionQueue = Arc<Mutex<Option<SessionQueue>>>;
 pub type ActiveHarnessModuleList = Arc<std::sync::Mutex<Vec<String>>>;
 pub type ExplicitWatchRoots = Arc<std::sync::Mutex<Vec<PathBuf>>>;
 pub type HarnessLoadPhase = Arc<std::sync::Mutex<bool>>;
@@ -38,6 +37,7 @@ pub struct HarnessEventContext {
 pub struct HarnessExecutionContext {
     pub session_id: Option<String>,
     pub session_mode: Option<crate::kernel::config::AgentMode>,
+    pub queue: Option<SessionQueue>,
     pub harness_module: Option<String>,
     pub harness_root: Option<String>,
     pub import_capabilities: Option<BTreeMap<String, bool>>,
@@ -60,7 +60,6 @@ pub struct HarnessAppData {
     pub execution_ctx: ActiveHarnessExecutionContext,
     pub clients: HashMap<String, ProviderClient>,
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
-    pub queue: ActiveSessionQueue,
     pub config: Arc<crate::kernel::config::TurinConfig>,
     pub spawn_depth: u32,
     pub active_modules: ActiveHarnessModuleList,

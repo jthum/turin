@@ -1,6 +1,6 @@
 use mlua::{Lua, Result as LuaResult, Table, Value};
 
-use crate::harness::globals::{ActiveSessionQueue, HarnessAppData};
+use crate::harness::globals::{ActiveHarnessExecutionContext, HarnessAppData};
 use crate::harness::stdlib::binding_common::{
     bool_err, bridge_async, bridge_async_display_err, bridge_async_result, nil_err, nil_ok,
     ok_bool, ok_value, string_ok, string_value,
@@ -21,50 +21,52 @@ fn queue_max(snapshot: &std::collections::HashMap<String, serde_json::Value>) ->
 }
 
 async fn queue_push_one(
-    aq: &ActiveSessionQueue,
+    execution_ctx: &ActiveHarnessExecutionContext,
     task: QueuedTask,
     queue_max: usize,
     push_front: bool,
 ) -> Result<(), String> {
-    if let Some(q) = &*aq.lock().await {
-        let mut q = q.lock().await;
-        if q.len() >= queue_max {
-            return Err(format!(
-                "Policy denial: queue.max_depth={} reached",
-                queue_max
-            ));
-        }
-        if push_front {
-            q.push_front(task);
-        } else {
-            q.push_back(task);
-        }
-        Ok(())
-    } else {
-        Err("No active session queue".to_string())
+    let queue = execution_ctx
+        .lock()
+        .ok()
+        .and_then(|lock| lock.queue.clone())
+        .ok_or_else(|| "No active session queue".to_string())?;
+    let mut q = queue.lock().await;
+    if q.len() >= queue_max {
+        return Err(format!(
+            "Policy denial: queue.max_depth={} reached",
+            queue_max
+        ));
     }
+    if push_front {
+        q.push_front(task);
+    } else {
+        q.push_back(task);
+    }
+    Ok(())
 }
 
 async fn queue_push_many(
-    aq: &ActiveSessionQueue,
+    execution_ctx: &ActiveHarnessExecutionContext,
     tasks: Vec<QueuedTask>,
     queue_max: usize,
 ) -> Result<(), String> {
-    if let Some(q) = &*aq.lock().await {
-        let mut q = q.lock().await;
-        if q.len().saturating_add(tasks.len()) > queue_max {
-            return Err(format!(
-                "Policy denial: queue.max_depth={} would be exceeded",
-                queue_max
-            ));
-        }
-        for task in tasks {
-            q.push_back(task);
-        }
-        Ok(())
-    } else {
-        Err("No active session queue".to_string())
+    let queue = execution_ctx
+        .lock()
+        .ok()
+        .and_then(|lock| lock.queue.clone())
+        .ok_or_else(|| "No active session queue".to_string())?;
+    let mut q = queue.lock().await;
+    if q.len().saturating_add(tasks.len()) > queue_max {
+        return Err(format!(
+            "Policy denial: queue.max_depth={} would be exceeded",
+            queue_max
+        ));
     }
+    for task in tasks {
+        q.push_back(task);
+    }
+    Ok(())
 }
 
 pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
@@ -75,7 +77,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
     let agent_manager = app_data.agent_manager.clone();
 
     // agent.spawn (local subtask enqueue for current session queue)
-    let spawn_q = app_data.queue.clone();
+    let spawn_q = app_data.execution_ctx.clone();
     let spawn_policy_snapshot = app_data.clone();
     let spawn_depth = app_data.spawn_depth;
     agent_table.set(
@@ -209,7 +211,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
     )?;
 
     // agent.session.queue
-    let aq = app_data.queue.clone();
+    let aq = app_data.execution_ctx.clone();
     let queue_policy_snapshot = app_data.clone();
     session_ns.set(
         "queue",
@@ -229,7 +231,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
     )?;
 
     // agent.session.queue_next
-    let aq2 = app_data.queue.clone();
+    let aq2 = app_data.execution_ctx.clone();
     let queue_next_policy_snapshot = app_data.clone();
     session_ns.set(
         "queue_next",
@@ -249,7 +251,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
     )?;
 
     // agent.session.queue_all
-    let aq3 = app_data.queue.clone();
+    let aq3 = app_data.execution_ctx.clone();
     let queue_all_policy_snapshot = app_data.clone();
     session_ns.set(
         "queue_all",

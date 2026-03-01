@@ -58,8 +58,6 @@ pub struct Kernel {
     pub(crate) check_watcher: Option<RecommendedWatcher>,
     pub(crate) clients: HashMap<String, ProviderClient>,
     pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
-    /// Active session queue for harness interaction
-    pub(crate) active_queue: crate::harness::globals::ActiveSessionQueue,
 
     pub(crate) mcp_clients: Vec<McpClientEntry>,
 }

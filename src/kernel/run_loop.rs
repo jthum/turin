@@ -14,12 +14,6 @@ impl Kernel {
         // Ensure session is started
         self.start_session(session).await?;
 
-        // Set active queue for harness
-        {
-            let mut aq = self.active_queue.lock().await;
-            *aq = Some(session.queue.clone());
-        }
-
         if let Some(p) = prompt {
             self.enqueue_initial_run_prompt(session, p).await;
         }

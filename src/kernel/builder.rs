@@ -70,7 +70,6 @@ impl RuntimeBuilder {
             check_watcher: None,
             clients: HashMap::new(),
             embedding_provider: self.embedding_provider,
-            active_queue: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
             mcp_clients: Vec::new(),
         })
     }

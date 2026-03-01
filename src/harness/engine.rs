@@ -494,6 +494,14 @@ impl HarnessEngine {
         }
     }
 
+    pub fn set_active_queue(&self, queue: Option<crate::harness::globals::SessionQueue>) {
+        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
+            && let Ok(mut lock) = app_data.execution_ctx.lock()
+        {
+            lock.queue = queue;
+        }
+    }
+
     pub fn get_active_session_mode(&self) -> Option<crate::kernel::config::AgentMode> {
         if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
             && let Ok(lock) = app_data.execution_ctx.lock()
@@ -788,12 +796,12 @@ mod tests {
             )),
             clients: std::collections::HashMap::new(),
             embedding_provider: None,
-            queue: std::sync::Arc::new(tokio::sync::Mutex::new(Some(std::sync::Arc::new(
-                tokio::sync::Mutex::new(std::collections::VecDeque::new()),
-            )))),
             execution_ctx: std::sync::Arc::new(std::sync::Mutex::new(
                 crate::harness::globals::HarnessExecutionContext {
                     session_id: Some("test-session".to_string()),
+                    queue: Some(std::sync::Arc::new(tokio::sync::Mutex::new(
+                        std::collections::VecDeque::new(),
+                    ))),
                     ..Default::default()
                 },
             )),

@@ -77,17 +77,18 @@ impl Kernel {
 
         {
             let harness = self.lock_harness();
-            if let Some(ref engine) = *harness
-                && let Err(e) = engine.evaluate(
+            if let Some(ref engine) = *harness {
+                engine.set_active_queue(Some(session.queue.clone()));
+                if let Err(e) = engine.evaluate(
                     "on_session_start",
                     serde_json::json!({
                         "identity": session.identity.clone(),
                         "session_id": session_id,
                         "governance": governance_snapshot,
                     }),
-                )
-            {
-                warn!(error = %e, "Harness on_session_start failed");
+                ) {
+                    warn!(error = %e, "Harness on_session_start failed");
+                }
             }
         }
 
@@ -114,8 +115,8 @@ impl Kernel {
 
         {
             let harness = self.lock_harness();
-            if let Some(ref engine) = *harness
-                && let Err(e) = engine.evaluate(
+            if let Some(ref engine) = *harness {
+                if let Err(e) = engine.evaluate(
                     "on_session_end",
                     serde_json::json!({
                         "identity": session.identity.clone(),
@@ -124,9 +125,10 @@ impl Kernel {
                         "total_input_tokens": session.total_input_tokens,
                         "total_output_tokens": session.total_output_tokens,
                     }),
-                )
-            {
-                warn!(error = %e, "Harness on_session_end failed");
+                ) {
+                    warn!(error = %e, "Harness on_session_end failed");
+                }
+                engine.set_active_queue(None);
             }
         }
 
@@ -139,12 +141,6 @@ impl Kernel {
             warn!(error = %e, "Background persistence task join error");
         }
         session.cancel_token.cancel();
-
-        // Clear active queue.
-        {
-            let mut aq = self.active_queue.lock().await;
-            *aq = None;
-        }
 
         session.status = SessionStatus::Inactive;
         Ok(())
