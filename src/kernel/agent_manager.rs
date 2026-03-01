@@ -1,5 +1,4 @@
 mod peer_runtime;
-mod peer_task;
 mod runtime_registry;
 
 use std::collections::BTreeMap;
