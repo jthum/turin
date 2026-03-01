@@ -169,6 +169,11 @@ enum DaemonCommands {
         #[command(subcommand)]
         command: DaemonTaskCommands,
     },
+    /// Manage daemon harnesses
+    Harness {
+        #[command(subcommand)]
+        command: DaemonHarnessCommands,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -302,6 +307,52 @@ enum DaemonTaskCommands {
     },
     /// List daemon tasks
     List {
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum DaemonHarnessCommands {
+    /// List daemon-visible harness runtimes
+    List {
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one harness by ID
+    Get {
+        /// Harness ID
+        id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reload one harness by ID
+    Reload {
+        /// Harness ID
+        id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Validate one harness by ID without mutating the live runtime
+    Validate {
+        /// Harness ID
+        id: String,
         /// Path to turin.toml config file
         #[arg(long, default_value = "turin.toml")]
         config: PathBuf,
@@ -555,6 +606,20 @@ async fn main() -> Result<()> {
                 } => commands::daemon::run_task_get(&config, &request_id, json).await,
                 DaemonTaskCommands::List { config, json } => {
                     commands::daemon::run_task_list(&config, json).await
+                }
+            },
+            DaemonCommands::Harness { command } => match command {
+                DaemonHarnessCommands::List { config, json } => {
+                    commands::daemon::run_harness_list(&config, json).await
+                }
+                DaemonHarnessCommands::Get { id, config, json } => {
+                    commands::daemon::run_harness_get(&config, &id, json).await
+                }
+                DaemonHarnessCommands::Reload { id, config, json } => {
+                    commands::daemon::run_harness_reload(&config, &id, json).await
+                }
+                DaemonHarnessCommands::Validate { id, config, json } => {
+                    commands::daemon::run_harness_validate(&config, &id, json).await
                 }
             },
         },

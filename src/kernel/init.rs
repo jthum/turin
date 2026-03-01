@@ -146,6 +146,24 @@ impl ExecutionHost {
         }
         Ok(())
     }
+
+    pub async fn reload_named_harness(&mut self, harness_id: &str) -> Result<()> {
+        let runtime = self
+            .harness_manager
+            .runtime_by_id(harness_id)
+            .ok_or_else(|| anyhow::anyhow!("Unknown harness '{}'", harness_id))?;
+        info!(harness_id = %harness_id, "Reloading named harness");
+        runtime.reload(self.harness_init_context())?;
+        Ok(())
+    }
+
+    pub fn validate_named_harness(&self, harness_id: &str) -> Result<usize> {
+        let runtime = self
+            .harness_manager
+            .runtime_by_id(harness_id)
+            .ok_or_else(|| anyhow::anyhow!("Unknown harness '{}'", harness_id))?;
+        runtime.validate(self.harness_init_context())
+    }
 }
 
 impl Kernel {

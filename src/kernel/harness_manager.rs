@@ -108,6 +108,10 @@ impl HarnessManager {
     pub(crate) fn agent_bindings(&self) -> impl Iterator<Item = (&String, &String)> {
         self.agent_bindings.iter()
     }
+
+    pub(crate) fn runtime_by_id(&self, harness_id: &str) -> Option<&Arc<HarnessRuntime>> {
+        self.runtimes.get(harness_id)
+    }
 }
 
 #[cfg(test)]
@@ -199,7 +203,7 @@ mod tests {
             providers,
             embeddings: Some(EmbeddingConfig::NoOp),
             governance: crate::kernel::config::GovernanceConfig::default(),
-        daemon: Default::default(),
+            daemon: Default::default(),
         };
 
         let manager = HarnessManager::from_config(&config)?;

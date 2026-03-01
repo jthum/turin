@@ -511,6 +511,91 @@ async fn dispatch(
                 }),
             )
         }
+        "harness.get" => {
+            let params: AgentIdParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse harness.get params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let guard = state.lock().await;
+            match guard.harness_detail(&params.id) {
+                Some(harness) => match serde_json::to_value(harness) {
+                    Ok(value) => ResponseEnvelope::ok(request.id, value),
+                    Err(err) => ResponseEnvelope::err(
+                        request.id,
+                        "serialize_error",
+                        format!("Failed to serialize harness detail: {}", err),
+                        None,
+                    ),
+                },
+                None => ResponseEnvelope::err(
+                    request.id,
+                    "harness_not_found",
+                    format!("Harness '{}' not found", params.id),
+                    None,
+                ),
+            }
+        }
+        "harness.reload" => {
+            let params: AgentIdParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse harness.reload params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let mut guard = state.lock().await;
+            match guard.reload_harness(&params.id).await {
+                Ok(harness) => match serde_json::to_value(harness) {
+                    Ok(value) => ResponseEnvelope::ok(request.id, value),
+                    Err(err) => ResponseEnvelope::err(
+                        request.id,
+                        "serialize_error",
+                        format!("Failed to serialize harness reload result: {}", err),
+                        None,
+                    ),
+                },
+                Err(err) => ResponseEnvelope::err(
+                    request.id,
+                    "harness_reload_failed",
+                    err.to_string(),
+                    None,
+                ),
+            }
+        }
+        "harness.validate" => {
+            let params: AgentIdParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse harness.validate params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let guard = state.lock().await;
+            match guard.validate_harness(&params.id) {
+                Ok(result) => ResponseEnvelope::ok(request.id, result),
+                Err(err) => ResponseEnvelope::err(
+                    request.id,
+                    "harness_validate_failed",
+                    err.to_string(),
+                    None,
+                ),
+            }
+        }
         "daemon.stop" => {
             let _ = shutdown_tx.send(true);
             ResponseEnvelope::ok(request.id, json!({ "stopping": true }))

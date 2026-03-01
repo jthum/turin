@@ -117,6 +117,12 @@ impl Kernel {
         Ok(self.runtime_for_agent(agent_id).loaded_scripts())
     }
 
+    pub fn harness_snapshot(&self, harness_id: &str) -> Option<HarnessRuntimeSnapshot> {
+        self.harness_snapshots()
+            .into_iter()
+            .find(|snapshot| snapshot.harness_id == harness_id)
+    }
+
     pub fn harness_snapshots(&self) -> Vec<HarnessRuntimeSnapshot> {
         let mut bound_agents: HashMap<String, Vec<String>> = HashMap::new();
         for (agent_id, harness_id) in self.harness_manager.agent_bindings() {

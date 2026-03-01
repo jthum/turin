@@ -74,6 +74,15 @@ pub struct AgentDetail {
     pub has_local_harness: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct HarnessDetail {
+    pub harness_id: String,
+    pub directory: String,
+    pub bound_agents: Vec<String>,
+    pub watched_roots: Vec<String>,
+    pub loaded_scripts: Vec<String>,
+}
+
 impl DaemonState {
     pub async fn load(config_path: &Path) -> Result<Self> {
         let config_path = config_path.to_path_buf();
@@ -307,6 +316,37 @@ impl DaemonState {
         self.kernel.agent_manager().get_task(request_id).await
     }
 
+    pub fn harness_detail(&self, harness_id: &str) -> Option<HarnessDetail> {
+        self.kernel
+            .harness_snapshot(harness_id)
+            .map(|snapshot| HarnessDetail {
+                harness_id: snapshot.harness_id,
+                directory: snapshot.directory,
+                bound_agents: snapshot.bound_agents,
+                watched_roots: snapshot.watched_roots,
+                loaded_scripts: snapshot.loaded_scripts,
+            })
+    }
+
+    pub async fn reload_harness(&mut self, harness_id: &str) -> Result<HarnessDetail> {
+        self.kernel.reload_named_harness(harness_id).await?;
+        self.harness_detail(harness_id)
+            .ok_or_else(|| anyhow!("Harness '{}' was reloaded but is not visible", harness_id))
+    }
+
+    pub fn validate_harness(&self, harness_id: &str) -> Result<serde_json::Value> {
+        let script_count = self.kernel.validate_named_harness(harness_id)?;
+        let detail = self
+            .harness_detail(harness_id)
+            .ok_or_else(|| anyhow!("Harness '{}' not found", harness_id))?;
+        Ok(serde_json::json!({
+            "harness_id": detail.harness_id,
+            "directory": detail.directory,
+            "script_count": script_count,
+            "valid": true,
+        }))
+    }
+
     fn ensure_enabled_agent(&self, agent_id: &str) -> Result<()> {
         if agent_id == self.bootstrap_config.agent.id {
             return Ok(());
@@ -516,6 +556,63 @@ type = "no_op"
                 .any(|entry| entry.request_id == task.request_id)
         );
         assert!(state.rescan().await.is_ok());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn harness_reload_and_validate_are_targeted() -> Result<()> {
+        let temp = tempdir()?;
+        let shared_harness = temp.path().join("harnesses").join("shared");
+        std::fs::create_dir_all(&shared_harness)?;
+        std::fs::write(shared_harness.join("main.lua"), "-- shared\n")?;
+        let config_path = write_bootstrap(temp.path())?;
+        let mut state = DaemonState::load(&config_path).await?;
+
+        let agent = state
+            .create_agent(CreateAgentInput {
+                id: "shared-agent".to_string(),
+                provider: "mock".to_string(),
+                model: "mock-model".to_string(),
+                system_prompt: None,
+                thinking: None,
+                mode: None,
+                harness: Some("shared".to_string()),
+                idle_grace_secs: None,
+                enabled: true,
+            })
+            .await?;
+        assert_eq!(agent.harness.as_deref(), Some("shared"));
+
+        let detail = state
+            .harness_detail("shared")
+            .expect("shared harness visible");
+        assert_eq!(detail.harness_id, "shared");
+        assert!(detail.bound_agents.contains(&"shared-agent".to_string()));
+
+        std::fs::write(shared_harness.join("extra.lua"), "-- extra\n")?;
+        let reloaded = state.reload_harness("shared").await?;
+        assert!(reloaded.loaded_scripts.iter().any(|s| s == "extra"));
+
+        let validation = state.validate_harness("shared")?;
+        assert_eq!(validation["harness_id"], "shared");
+        assert_eq!(validation["valid"], true);
+        assert!(
+            validation["script_count"]
+                .as_u64()
+                .expect("script_count number")
+                >= 2
+        );
+
+        std::fs::write(
+            shared_harness.join("broken.lua"),
+            "function on_turn_prepare(",
+        )?;
+        assert!(state.validate_harness("shared").is_err());
+        let still_loaded = state
+            .harness_detail("shared")
+            .expect("shared harness still visible");
+        assert!(still_loaded.loaded_scripts.iter().all(|s| s != "broken"));
 
         Ok(())
     }

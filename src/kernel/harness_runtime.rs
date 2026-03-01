@@ -144,16 +144,7 @@ impl HarnessRuntime {
     }
 
     pub(crate) fn init(&self, ctx: HarnessRuntimeInitContext) -> Result<usize> {
-        let mut engine = HarnessEngine::new(self.build_app_data(ctx))
-            .context("Failed to create harness engine")?;
-        engine.load_dir(&self.directory).with_context(|| {
-            format!(
-                "Failed to load harness scripts from '{}'",
-                self.directory.display()
-            )
-        })?;
-        engine.set_loading_phase(false);
-
+        let engine = self.build_engine(ctx)?;
         let script_count = engine.loaded_scripts().len();
         if script_count > 0 {
             info!(
@@ -182,6 +173,11 @@ impl HarnessRuntime {
         self.init(ctx)
     }
 
+    pub(crate) fn validate(&self, ctx: HarnessRuntimeInitContext) -> Result<usize> {
+        let engine = self.build_engine(ctx)?;
+        Ok(engine.loaded_scripts().len())
+    }
+
     fn build_app_data(&self, ctx: HarnessRuntimeInitContext) -> HarnessAppData {
         HarnessAppData {
             fs_root: self.fs_root.clone(),
@@ -200,6 +196,19 @@ impl HarnessRuntime {
             watch_roots: Arc::new(std::sync::Mutex::new(Vec::new())),
             loading_phase: Arc::new(std::sync::Mutex::new(true)),
         }
+    }
+
+    fn build_engine(&self, ctx: HarnessRuntimeInitContext) -> Result<HarnessEngine> {
+        let mut engine = HarnessEngine::new(self.build_app_data(ctx))
+            .context("Failed to create harness engine")?;
+        engine.load_dir(&self.directory).with_context(|| {
+            format!(
+                "Failed to load harness scripts from '{}'",
+                self.directory.display()
+            )
+        })?;
+        engine.set_loading_phase(false);
+        Ok(engine)
     }
 }
 

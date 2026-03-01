@@ -114,6 +114,39 @@ pub async fn run_task_list(config_path: &std::path::Path, json_output: bool) -> 
     print_response(response, json_output)
 }
 
+pub async fn run_harness_list(config_path: &std::path::Path, json_output: bool) -> Result<()> {
+    let response = send_request(config_path, "harness.list", json!({})).await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_harness_get(
+    config_path: &std::path::Path,
+    harness_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "harness.get", json!({ "id": harness_id })).await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_harness_reload(
+    config_path: &std::path::Path,
+    harness_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "harness.reload", json!({ "id": harness_id })).await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_harness_validate(
+    config_path: &std::path::Path,
+    harness_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response =
+        send_request(config_path, "harness.validate", json!({ "id": harness_id })).await?;
+    print_response(response, json_output)
+}
+
 pub async fn run_stop(config_path: &std::path::Path, json_output: bool) -> Result<()> {
     let response = send_request(config_path, "daemon.stop", json!({})).await?;
     print_response(response, json_output)
