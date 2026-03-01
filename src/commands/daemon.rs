@@ -114,6 +114,35 @@ pub async fn run_task_list(config_path: &std::path::Path, json_output: bool) -> 
     print_response(response, json_output)
 }
 
+pub async fn run_session_list(
+    config_path: &std::path::Path,
+    limit: usize,
+    offset: usize,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(
+        config_path,
+        "session.list",
+        json!({ "limit": limit, "offset": offset }),
+    )
+    .await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_session_get(
+    config_path: &std::path::Path,
+    session_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(
+        config_path,
+        "session.get",
+        json!({ "session_id": session_id }),
+    )
+    .await?;
+    print_response(response, json_output)
+}
+
 pub async fn run_harness_list(config_path: &std::path::Path, json_output: bool) -> Result<()> {
     let response = send_request(config_path, "harness.list", json!({})).await?;
     print_response(response, json_output)

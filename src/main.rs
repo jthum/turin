@@ -183,6 +183,11 @@ enum DaemonCommands {
         #[command(subcommand)]
         command: DaemonHarnessCommands,
     },
+    /// Inspect persisted daemon sessions
+    Session {
+        #[command(subcommand)]
+        command: DaemonSessionCommands,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -362,6 +367,36 @@ enum DaemonHarnessCommands {
     Validate {
         /// Harness ID
         id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum DaemonSessionCommands {
+    /// List recent persisted sessions
+    List {
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Maximum number of sessions to return
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+        /// Offset into the session list
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one persisted session by session ID
+    Get {
+        /// Session ID
+        session_id: String,
         /// Path to turin.toml config file
         #[arg(long, default_value = "turin.toml")]
         config: PathBuf,
@@ -633,6 +668,19 @@ async fn main() -> Result<()> {
                 DaemonHarnessCommands::Validate { id, config, json } => {
                     commands::daemon::run_harness_validate(&config, &id, json).await
                 }
+            },
+            DaemonCommands::Session { command } => match command {
+                DaemonSessionCommands::List {
+                    config,
+                    limit,
+                    offset,
+                    json,
+                } => commands::daemon::run_session_list(&config, limit, offset, json).await,
+                DaemonSessionCommands::Get {
+                    session_id,
+                    config,
+                    json,
+                } => commands::daemon::run_session_get(&config, &session_id, json).await,
             },
         },
     }

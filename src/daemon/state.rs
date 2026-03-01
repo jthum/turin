@@ -83,6 +83,55 @@ pub struct HarnessDetail {
     pub loaded_scripts: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionSummary {
+    pub internal_id: i64,
+    pub session_id: String,
+    pub agent_id: String,
+    pub metadata: Option<serde_json::Value>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionEventDetail {
+    pub id: i64,
+    pub event_type: String,
+    pub payload: serde_json::Value,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionMessageDetail {
+    pub id: i64,
+    pub turn_index: u32,
+    pub role: String,
+    pub content: serde_json::Value,
+    pub token_count: Option<u64>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionToolExecutionDetail {
+    pub id: i64,
+    pub turn_index: u32,
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub args: serde_json::Value,
+    pub output: Option<serde_json::Value>,
+    pub is_error: bool,
+    pub duration_ms: Option<u64>,
+    pub verdict: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionDetail {
+    pub session: SessionSummary,
+    pub events: Vec<SessionEventDetail>,
+    pub messages: Vec<SessionMessageDetail>,
+    pub tool_executions: Vec<SessionToolExecutionDetail>,
+}
+
 impl DaemonState {
     pub async fn load(config_path: &Path) -> Result<Self> {
         let config_path = config_path.to_path_buf();
@@ -316,6 +365,72 @@ impl DaemonState {
         self.kernel.agent_manager().get_task(request_id).await
     }
 
+    pub async fn list_sessions(&self, limit: usize, offset: usize) -> Result<Vec<SessionSummary>> {
+        let store = self.kernel.store_manager().get_default().await?;
+        let rows = store.list_session_rows(limit, offset).await?;
+        Ok(rows.iter().map(session_summary_from_row).collect())
+    }
+
+    pub async fn get_session(&self, session_id: &str) -> Result<Option<SessionDetail>> {
+        let public_id = uuid::Uuid::parse_str(session_id)
+            .with_context(|| format!("Invalid session id '{}'", session_id))?;
+        let store = self.kernel.store_manager().get_default().await?;
+        let Some(row) = store.get_session_row_by_public_id(public_id).await? else {
+            return Ok(None);
+        };
+
+        let events = store
+            .get_events(row.id)
+            .await?
+            .into_iter()
+            .map(|event| SessionEventDetail {
+                id: event.id,
+                event_type: event.event_type,
+                payload: parse_json_or_string(&event.payload),
+                created_at: event.created_at,
+            })
+            .collect();
+
+        let messages = store
+            .get_messages(row.id)
+            .await?
+            .into_iter()
+            .map(|message| SessionMessageDetail {
+                id: message.id,
+                turn_index: message.turn_index,
+                role: message.role,
+                content: parse_json_or_string(&message.content),
+                token_count: message.token_count,
+                created_at: message.created_at,
+            })
+            .collect();
+
+        let tool_executions = store
+            .get_tool_executions(row.id)
+            .await?
+            .into_iter()
+            .map(|execution| SessionToolExecutionDetail {
+                id: execution.id,
+                turn_index: execution.turn_index,
+                tool_call_id: execution.tool_call_id,
+                tool_name: execution.tool_name,
+                args: parse_json_or_string(&execution.args),
+                output: execution.output.as_deref().map(parse_json_or_string),
+                is_error: execution.is_error,
+                duration_ms: execution.duration_ms,
+                verdict: execution.verdict,
+                created_at: execution.created_at,
+            })
+            .collect();
+
+        Ok(Some(SessionDetail {
+            session: session_summary_from_row(&row),
+            events,
+            messages,
+            tool_executions,
+        }))
+    }
+
     pub fn harness_detail(&self, harness_id: &str) -> Option<HarnessDetail> {
         self.kernel
             .harness_snapshot(harness_id)
@@ -417,6 +532,41 @@ fn scaffold_local_harness(agent_dir: &Path) -> Result<()> {
         )
     })?;
     Ok(())
+}
+
+fn session_summary_from_row(row: &crate::persistence::schema::SessionRow) -> SessionSummary {
+    SessionSummary {
+        internal_id: row.id,
+        session_id: format_uuid_bytes_simple(&row.public_id),
+        agent_id: row.agent_id.clone(),
+        metadata: row
+            .metadata
+            .as_deref()
+            .and_then(|raw| serde_json::from_str(raw).ok())
+            .or_else(|| {
+                row.metadata
+                    .as_ref()
+                    .map(|raw| serde_json::Value::String(raw.clone()))
+            }),
+        created_at: row.created_at.clone(),
+    }
+}
+
+fn format_uuid_bytes_simple(bytes: &[u8]) -> String {
+    uuid::Uuid::from_slice(bytes)
+        .map(|uuid| uuid.simple().to_string())
+        .unwrap_or_else(|_| {
+            let mut out = String::with_capacity(bytes.len() * 2);
+            for byte in bytes {
+                use std::fmt::Write as _;
+                let _ = write!(&mut out, "{:02x}", byte);
+            }
+            out
+        })
+}
+
+fn parse_json_or_string(raw: &str) -> serde_json::Value {
+    serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
 }
 
 #[cfg(test)]
@@ -556,6 +706,45 @@ type = "no_op"
                 .any(|entry| entry.request_id == task.request_id)
         );
         assert!(state.rescan().await.is_ok());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_list_and_get_expose_persisted_session_details() -> Result<()> {
+        let temp = tempdir()?;
+        let config_path = write_bootstrap(temp.path())?;
+        let state = DaemonState::load(&config_path).await?;
+
+        let task = state
+            .submit_task("default", "Hello session".to_string())
+            .await?;
+
+        let mut saw_completed = false;
+        for _ in 0..50 {
+            if let Some(snapshot) = state.get_task(&task.request_id).await
+                && snapshot.state == "completed"
+            {
+                saw_completed = true;
+                break;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+        assert!(saw_completed, "daemon task did not complete in time");
+
+        let sessions = state.list_sessions(10, 0).await?;
+        assert!(!sessions.is_empty());
+        let session = &sessions[0];
+        assert_eq!(session.agent_id, "default");
+
+        let detail = state
+            .get_session(&session.session_id)
+            .await?
+            .expect("session detail visible");
+        assert_eq!(detail.session.session_id, session.session_id);
+        assert_eq!(detail.session.agent_id, "default");
+        assert!(!detail.events.is_empty());
+        assert!(!detail.messages.is_empty());
 
         Ok(())
     }

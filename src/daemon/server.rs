@@ -67,8 +67,25 @@ struct TaskIdParams {
     request_id: String,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct SessionIdParams {
+    session_id: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SessionListParams {
+    #[serde(default = "default_session_limit")]
+    limit: usize,
+    #[serde(default)]
+    offset: usize,
+}
+
 fn default_enabled() -> bool {
     true
+}
+
+fn default_session_limit() -> usize {
+    50
 }
 
 pub async fn serve(config_path: &Path) -> Result<()> {
@@ -553,6 +570,60 @@ async fn dispatch(
         "task.list" => {
             let guard = state.lock().await;
             ResponseEnvelope::ok(request.id, json!({ "tasks": guard.list_tasks().await }))
+        }
+        "session.list" => {
+            let params: SessionListParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse session.list params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let guard = state.lock().await;
+            match guard.list_sessions(params.limit, params.offset).await {
+                Ok(sessions) => ResponseEnvelope::ok(request.id, json!({ "sessions": sessions })),
+                Err(err) => {
+                    ResponseEnvelope::err(request.id, "session_list_failed", err.to_string(), None)
+                }
+            }
+        }
+        "session.get" => {
+            let params: SessionIdParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse session.get params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let guard = state.lock().await;
+            match guard.get_session(&params.session_id).await {
+                Ok(Some(session)) => match serde_json::to_value(session) {
+                    Ok(value) => ResponseEnvelope::ok(request.id, value),
+                    Err(err) => ResponseEnvelope::err(
+                        request.id,
+                        "serialize_error",
+                        format!("Failed to serialize session detail: {}", err),
+                        None,
+                    ),
+                },
+                Ok(None) => ResponseEnvelope::err(
+                    request.id,
+                    "session_not_found",
+                    format!("Session '{}' not found", params.session_id),
+                    None,
+                ),
+                Err(err) => {
+                    ResponseEnvelope::err(request.id, "session_get_failed", err.to_string(), None)
+                }
+            }
         }
         "harness.list" => {
             let guard = state.lock().await;
