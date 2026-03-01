@@ -44,6 +44,10 @@ enum Commands {
         #[arg(long)]
         provider: Option<String>,
 
+        /// Run the named configured agent instead of the default root agent
+        #[arg(long)]
+        agent: Option<String>,
+
         /// Show verbose event-level output
         #[arg(long)]
         verbose: bool,
@@ -66,6 +70,10 @@ enum Commands {
         /// Override the provider from config
         #[arg(long)]
         provider: Option<String>,
+
+        /// Run the REPL against the named configured agent instead of the default root agent
+        #[arg(long)]
+        agent: Option<String>,
 
         /// Show verbose event-level output
         #[arg(long)]
@@ -133,17 +141,31 @@ fn load_config_with_overrides(
     config_path: &Path,
     model: Option<String>,
     provider: Option<String>,
+    agent_id: Option<&str>,
 ) -> Result<TurinConfig> {
     let mut config =
         TurinConfig::from_file(config_path).with_context(|| "Failed to load config")?;
 
+    let target = if let Some(agent_id) = agent_id {
+        if agent_id == config.agent.id {
+            &mut config.agent
+        } else {
+            config
+                .agents
+                .get_mut(agent_id)
+                .ok_or_else(|| anyhow::anyhow!("Unknown agent profile: {}", agent_id))?
+        }
+    } else {
+        &mut config.agent
+    };
+
     if let Some(m) = model {
-        config.agent.model = m;
+        target.model = m;
     }
     if let Some(p) = provider {
-        config.agent.provider = p;
-        config.validate()?;
+        target.provider = p;
     }
+    config.validate()?;
 
     Ok(config)
 }
@@ -159,16 +181,30 @@ async fn main() -> Result<()> {
             config,
             model,
             provider,
+            agent,
             verbose: _,
             json,
         } => {
-            let config = load_config_with_overrides(&config, model, provider)?;
+            let config = load_config_with_overrides(&config, model, provider, agent.as_deref())?;
+            let selected_agent_id = agent.unwrap_or_else(|| config.agent.id.clone());
+            let selected_agent = if selected_agent_id == config.agent.id {
+                &config.agent
+            } else {
+                config.agents.get(&selected_agent_id).ok_or_else(|| {
+                    anyhow::anyhow!("Unknown agent profile: {}", selected_agent_id)
+                })?
+            };
+            let harness_dir = selected_agent
+                .harness_dir
+                .as_deref()
+                .unwrap_or(&config.harness.directory);
 
             tracing::info!(
-                model = %config.agent.model,
-                provider = %config.agent.provider,
+                agent_id = %selected_agent_id,
+                model = %selected_agent.model,
+                provider = %selected_agent.provider,
                 workspace = %config.kernel.workspace_root,
-                harness_dir = %config.harness.directory,
+                harness_dir = %harness_dir,
                 db = %config.persistence.database_path,
                 "Config loaded"
             );
@@ -179,7 +215,7 @@ async fn main() -> Result<()> {
             kernel.init_clients()?;
             kernel.init_harness().await?;
             kernel.start_watcher()?;
-            let mut session = kernel.create_session().await;
+            let mut session = kernel.create_session_for_agent(&selected_agent_id).await;
             kernel.start_session(&mut session).await?;
             kernel.run(&mut session, Some(prompt)).await?;
             kernel.end_session(&mut session).await?;
@@ -193,10 +229,11 @@ async fn main() -> Result<()> {
             config,
             model,
             provider,
+            agent,
             verbose,
         } => {
-            let config = load_config_with_overrides(&config, model, provider)?;
-            commands::repl::run_repl(config, verbose).await
+            let config = load_config_with_overrides(&config, model, provider, agent.as_deref())?;
+            commands::repl::run_repl(config, verbose, agent).await
         }
         Commands::Script {
             path,
@@ -204,7 +241,7 @@ async fn main() -> Result<()> {
             model,
             provider,
         } => {
-            let config = load_config_with_overrides(&config, model, provider)?;
+            let config = load_config_with_overrides(&config, model, provider, None)?;
 
             // Build kernel
             let mut kernel = Kernel::builder(config).json_mode(false).build()?;

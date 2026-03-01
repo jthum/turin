@@ -10,10 +10,25 @@ use turin::kernel::session::SessionState;
 
 use crate::commands::common::print_session_summary;
 
-pub(crate) async fn run_repl(config: TurinConfig, verbose: bool) -> Result<()> {
+pub(crate) async fn run_repl(
+    config: TurinConfig,
+    verbose: bool,
+    agent_id: Option<String>,
+) -> Result<()> {
+    let selected_agent_id = agent_id.unwrap_or_else(|| config.agent.id.clone());
+    let selected_agent = if selected_agent_id == config.agent.id {
+        &config.agent
+    } else {
+        config
+            .agents
+            .get(&selected_agent_id)
+            .ok_or_else(|| anyhow::anyhow!("Unknown agent profile: {}", selected_agent_id))?
+    };
+
     tracing::info!(
-        model = %config.agent.model,
-        provider = %config.agent.provider,
+        agent_id = %selected_agent_id,
+        model = %selected_agent.model,
+        provider = %selected_agent.provider,
         "Config loaded (REPL mode)"
     );
 
@@ -30,7 +45,7 @@ pub(crate) async fn run_repl(config: TurinConfig, verbose: bool) -> Result<()> {
         println!("Type 'exit' or Ctrl+D to quit. Type '/reload' to reload harness.");
     }
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session_for_agent(&selected_agent_id).await;
     kernel.start_session(&mut session).await?;
 
     let ansi = display::stdout_ansi();
@@ -44,8 +59,14 @@ pub(crate) async fn run_repl(config: TurinConfig, verbose: bool) -> Result<()> {
                 }
 
                 if line.starts_with('/') {
-                    let should_continue =
-                        handle_slash_command(&mut kernel, &mut session, line, ansi).await?;
+                    let should_continue = handle_slash_command(
+                        &mut kernel,
+                        &mut session,
+                        line,
+                        ansi,
+                        selected_agent_id.as_str(),
+                    )
+                    .await?;
                     if !should_continue {
                         break;
                     }
@@ -85,6 +106,7 @@ async fn handle_slash_command(
     session: &mut SessionState,
     line: &str,
     ansi: bool,
+    selected_agent_id: &str,
 ) -> Result<bool> {
     let parts: Vec<&str> = line.split_whitespace().collect();
     let cmd = parts[0].to_lowercase();
@@ -98,14 +120,19 @@ async fn handle_slash_command(
                 session.identity.session_id()
             );
             println!(
+                "  {}      {}",
+                display::bold("Agent:", ansi),
+                selected_agent_id
+            );
+            println!(
                 "  {}   {}",
                 display::bold("Provider:", ansi),
-                kernel.config().agent.provider
+                active_agent_config(kernel, selected_agent_id)?.provider
             );
             println!(
                 "  {}      {}",
                 display::bold("Model:", ansi),
-                kernel.config().agent.model
+                active_agent_config(kernel, selected_agent_id)?.model
             );
             println!(
                 "  {}      {}",
@@ -212,4 +239,19 @@ async fn handle_slash_command(
     }
 
     Ok(true)
+}
+
+fn active_agent_config<'a>(
+    kernel: &'a Kernel,
+    selected_agent_id: &str,
+) -> Result<&'a turin::kernel::config::AgentConfig> {
+    if selected_agent_id == kernel.config().agent.id {
+        Ok(&kernel.config().agent)
+    } else {
+        kernel
+            .config()
+            .agents
+            .get(selected_agent_id)
+            .ok_or_else(|| anyhow::anyhow!("Unknown agent profile: {}", selected_agent_id))
+    }
 }

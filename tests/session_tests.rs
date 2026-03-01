@@ -310,6 +310,117 @@ async fn test_explicit_watch_reloads_nested_used_blocks() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test-multi-harness.db");
+    let default_harness_dir = tmp.path().join("harnesses-default");
+    let writer_harness_dir = tmp.path().join("harnesses-writer");
+    std::fs::create_dir_all(&default_harness_dir)?;
+    std::fs::create_dir_all(&writer_harness_dir)?;
+
+    std::fs::write(
+        default_harness_dir.join("main.lua"),
+        r#"
+            function on_session_start(event)
+                local ok, err = fs.write(".turin/runtime/default-harness.txt", "default")
+                if not ok then error(err) end
+                return ALLOW
+            end
+        "#,
+    )?;
+    std::fs::write(
+        writer_harness_dir.join("main.lua"),
+        r#"
+            function on_session_start(event)
+                local ok, err = fs.write(".turin/runtime/writer-harness.txt", "writer")
+                if not ok then error(err) end
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("Mock response".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut agents = HashMap::new();
+    agents.insert(
+        "writer".to_string(),
+        AgentConfig {
+            id: "writer".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Writer agent.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: Some(writer_harness_dir.to_str().unwrap().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Default agent.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness_dir: None,
+            idle_grace_secs: None,
+        },
+        agents,
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 5,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: default_harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut default_session = kernel.create_session().await;
+    kernel.start_session(&mut default_session).await?;
+    kernel.end_session(&mut default_session).await?;
+
+    let mut writer_session = kernel.create_session_for_agent("writer").await;
+    kernel.start_session(&mut writer_session).await?;
+    kernel.end_session(&mut writer_session).await?;
+
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join(".turin/runtime/default-harness.txt"))?,
+        "default"
+    );
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join(".turin/runtime/writer-harness.txt"))?,
+        "writer"
+    );
+
+    Ok(())
+}
+
 // ─── State Store Integration ────────────────────────────────────
 
 #[tokio::test]
