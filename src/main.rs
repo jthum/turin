@@ -107,6 +107,58 @@ enum Commands {
         #[arg(long, default_value = "turin.toml")]
         config: std::path::PathBuf,
     },
+
+    /// Run or control the Turin daemon
+    Daemon {
+        #[command(subcommand)]
+        command: DaemonCommands,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum DaemonCommands {
+    /// Start the daemon in the foreground
+    Start {
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+    },
+    /// Ping the daemon
+    Ping {
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show daemon status
+    Status {
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Rescan filesystem-backed daemon state
+    Rescan {
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Stop the daemon
+    Stop {
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
@@ -264,5 +316,20 @@ async fn main() -> Result<()> {
             commands::check::run_check(&config).await?;
             Ok(())
         }
+        Commands::Daemon { command } => match command {
+            DaemonCommands::Start { config } => commands::daemon::run_start(&config).await,
+            DaemonCommands::Ping { config, json } => {
+                commands::daemon::run_ping(&config, json).await
+            }
+            DaemonCommands::Status { config, json } => {
+                commands::daemon::run_status(&config, json).await
+            }
+            DaemonCommands::Rescan { config, json } => {
+                commands::daemon::run_rescan(&config, json).await
+            }
+            DaemonCommands::Stop { config, json } => {
+                commands::daemon::run_stop(&config, json).await
+            }
+        },
     }
 }

@@ -86,6 +86,7 @@ pub fn base_config(
         providers,
         embeddings: Some(EmbeddingConfig::NoOp),
         governance: GovernanceConfig::default(),
+        daemon: Default::default(),
     }
 }
 

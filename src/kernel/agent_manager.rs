@@ -396,6 +396,7 @@ mod tests {
             providers,
             embeddings: Some(EmbeddingConfig::NoOp),
             governance: GovernanceConfig::default(),
+        daemon: Default::default(),
         }
     }
 

@@ -199,6 +199,7 @@ mod tests {
             providers,
             embeddings: Some(EmbeddingConfig::NoOp),
             governance: crate::kernel::config::GovernanceConfig::default(),
+        daemon: Default::default(),
         };
 
         let manager = HarnessManager::from_config(&config)?;

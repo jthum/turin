@@ -61,6 +61,7 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
         providers,
         embeddings: Some(EmbeddingConfig::NoOp),
         governance: turin::kernel::config::GovernanceConfig::default(),
+        daemon: Default::default(),
     }
 }
 
@@ -514,6 +515,7 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
         providers,
         embeddings: Some(EmbeddingConfig::NoOp),
         governance: turin::kernel::config::GovernanceConfig::default(),
+        daemon: Default::default(),
     };
 
     let mut kernel = Kernel::builder(config).build()?;
@@ -661,6 +663,7 @@ async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::NoOp),
         governance: turin::kernel::config::GovernanceConfig::default(),
+        daemon: Default::default(),
     };
 
     let mut kernel = Kernel::builder(config).build()?;
@@ -800,6 +803,7 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
         providers,
         embeddings: Some(EmbeddingConfig::NoOp),
         governance: turin::kernel::config::GovernanceConfig::default(),
+        daemon: Default::default(),
     };
 
     let mut kernel = Kernel::builder(config).build()?;
@@ -1055,6 +1059,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::NoOp),
         governance: turin::kernel::config::GovernanceConfig::default(),
+        daemon: Default::default(),
     };
 
     let mut kernel = Kernel::builder(config).build()?;

@@ -23,6 +23,8 @@ pub struct TurinConfig {
     pub embeddings: Option<EmbeddingConfig>,
     #[serde(default)]
     pub governance: GovernanceConfig,
+    #[serde(default)]
+    pub daemon: DaemonConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -131,6 +133,26 @@ impl Default for HarnessConfig {
         Self {
             directory: default_harness_directory(),
             fs_root: default_harness_fs_root(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct DaemonConfig {
+    #[serde(default = "default_daemon_agents_dir")]
+    pub agents_dir: String,
+    #[serde(default = "default_daemon_harnesses_dir")]
+    pub harnesses_dir: String,
+    #[serde(default = "default_daemon_socket_path")]
+    pub socket_path: String,
+}
+
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        Self {
+            agents_dir: default_daemon_agents_dir(),
+            harnesses_dir: default_daemon_harnesses_dir(),
+            socket_path: default_daemon_socket_path(),
         }
     }
 }
@@ -301,6 +323,18 @@ fn default_harness_fs_root() -> String {
     ".".to_string()
 }
 
+fn default_daemon_agents_dir() -> String {
+    "agents".to_string()
+}
+
+fn default_daemon_harnesses_dir() -> String {
+    "harnesses".to_string()
+}
+
+fn default_daemon_socket_path() -> String {
+    ".turin/daemon.sock".to_string()
+}
+
 // ─── Loading ─────────────────────────────────────────────────────
 
 impl TurinConfig {
@@ -344,6 +378,18 @@ impl TurinConfig {
         anyhow::ensure!(
             !self.harness.directory.trim().is_empty(),
             "harness.directory must not be empty"
+        );
+        anyhow::ensure!(
+            !self.daemon.agents_dir.trim().is_empty(),
+            "daemon.agents_dir must not be empty"
+        );
+        anyhow::ensure!(
+            !self.daemon.harnesses_dir.trim().is_empty(),
+            "daemon.harnesses_dir must not be empty"
+        );
+        anyhow::ensure!(
+            !self.daemon.socket_path.trim().is_empty(),
+            "daemon.socket_path must not be empty"
         );
 
         for (harness_id, harness_cfg) in &self.harnesses {
@@ -484,6 +530,38 @@ impl TurinConfig {
         } else {
             base.join(root)
         }
+    }
+
+    pub fn resolve_daemon_agents_dir(&self, base: &Path) -> PathBuf {
+        resolve_under_workspace(base, &self.kernel.workspace_root, &self.daemon.agents_dir)
+    }
+
+    pub fn resolve_daemon_harnesses_dir(&self, base: &Path) -> PathBuf {
+        resolve_under_workspace(
+            base,
+            &self.kernel.workspace_root,
+            &self.daemon.harnesses_dir,
+        )
+    }
+
+    pub fn resolve_daemon_socket_path(&self, base: &Path) -> PathBuf {
+        resolve_under_workspace(base, &self.kernel.workspace_root, &self.daemon.socket_path)
+    }
+}
+
+fn resolve_under_workspace(base: &Path, workspace_root: &str, value: &str) -> PathBuf {
+    let workspace_root = Path::new(workspace_root);
+    let workspace = if workspace_root.is_absolute() {
+        workspace_root.to_path_buf()
+    } else {
+        base.join(workspace_root)
+    };
+
+    let path = Path::new(value);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        workspace.join(path)
     }
 }
 
