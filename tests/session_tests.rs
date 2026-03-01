@@ -310,6 +310,140 @@ async fn test_explicit_watch_reloads_nested_used_blocks() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test-peer-reload.db");
+    let default_harness_dir = tmp.path().join("harnesses-default");
+    let reviewer_harness_dir = tmp.path().join("harnesses-reviewer");
+    std::fs::create_dir_all(&default_harness_dir)?;
+    std::fs::create_dir_all(&reviewer_harness_dir)?;
+
+    std::fs::write(
+        default_harness_dir.join("main.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local out, err = runtime.agent.complete("reviewer", "review this")
+                if out == nil then error(err) end
+                return ALLOW
+            end
+        "#,
+    )?;
+    std::fs::write(
+        reviewer_harness_dir.join("main.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local ok, err = fs.write(".turin/runtime/peer-watch-marker.txt", "v1")
+                if not ok then error(err) end
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("Mock response".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut agents = HashMap::new();
+    agents.insert(
+        "reviewer".to_string(),
+        AgentConfig {
+            id: "reviewer".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Reviewer agent.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Stateless,
+            harness_dir: Some(reviewer_harness_dir.to_str().unwrap().to_string()),
+            idle_grace_secs: None,
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Default agent.".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Stateless,
+            harness_dir: None,
+            idle_grace_secs: None,
+        },
+        agents,
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 5,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: default_harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: turin::kernel::config::GovernanceConfig::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+    kernel.start_watcher()?;
+
+    let marker_path = tmp.path().join(".turin/runtime/peer-watch-marker.txt");
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("initial review".to_string()))
+        .await?;
+    kernel.end_session(&mut session).await?;
+    assert_eq!(std::fs::read_to_string(&marker_path)?, "v1");
+
+    std::fs::write(
+        reviewer_harness_dir.join("main.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local ok, err = fs.write(".turin/runtime/peer-watch-marker.txt", "v2")
+                if not ok then error(err) end
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut saw_v2 = false;
+    for _ in 0..10 {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let mut session = kernel.create_session().await;
+        kernel
+            .run(&mut session, Some("post reload review".to_string()))
+            .await?;
+        kernel.end_session(&mut session).await?;
+
+        if std::fs::read_to_string(&marker_path).ok().as_deref() == Some("v2") {
+            saw_v2 = true;
+            break;
+        }
+    }
+
+    assert!(
+        saw_v2,
+        "shared harness manager should hot-reload peer agent harnesses"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Result<()> {
     let tmp = tempdir()?;

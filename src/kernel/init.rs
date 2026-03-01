@@ -134,16 +134,11 @@ impl Kernel {
 
         let runtimes: Vec<_> = self.harness_manager.runtimes().cloned().collect();
         let init_ctx = self.harness_init_context();
-        let harness_dir = self
+        let harness_roots: Vec<_> = self
             .harness_manager
-            .default_runtime()
-            .directory()
-            .to_path_buf();
-
-        if !harness_dir.exists() {
-            warn!(directory = %harness_dir.display(), "Harness directory does not exist, skipping watcher");
-            return Ok(());
-        }
+            .runtimes()
+            .map(|runtime| runtime.directory().to_path_buf())
+            .collect();
 
         let explicit_watch_roots = self.harness_manager.explicit_watch_roots();
 
@@ -186,7 +181,16 @@ impl Kernel {
                 Err(e) => error!(error = ?e, "Watcher channel error"),
             })?;
 
-        watcher.watch(&harness_dir, RecursiveMode::NonRecursive)?;
+        let mut watched_any = false;
+        for harness_dir in harness_roots {
+            if !harness_dir.exists() {
+                warn!(directory = %harness_dir.display(), "Harness directory does not exist, skipping watcher");
+                continue;
+            }
+            watcher.watch(&harness_dir, RecursiveMode::NonRecursive)?;
+            watched_any = true;
+            info!(directory = %harness_dir.display(), "Watching harness directory");
+        }
         for extra_root in explicit_watch_roots {
             if !extra_root.exists() {
                 warn!(path = %extra_root.display(), "Explicit watch path does not exist, skipping");
@@ -199,10 +203,13 @@ impl Kernel {
             };
             watcher.watch(&extra_root, mode)?;
             info!(path = %extra_root.display(), recursive = matches!(mode, RecursiveMode::Recursive), "Watching explicit harness path");
+            watched_any = true;
+        }
+        if !watched_any {
+            warn!("No harness directories or explicit watch roots available, skipping watcher");
+            return Ok(());
         }
         self.check_watcher = Some(watcher);
-
-        info!(directory = %harness_dir.display(), "Watching harness directory");
 
         Ok(())
     }
