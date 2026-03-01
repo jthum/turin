@@ -139,4 +139,25 @@ impl Kernel {
             .default_runtime()
             .load_script_str(script)
     }
+
+    pub(crate) fn agent_config_for(
+        &self,
+        agent_id: &str,
+    ) -> Result<&crate::kernel::config::AgentConfig> {
+        if agent_id == self.config.agent.id {
+            Ok(&self.config.agent)
+        } else {
+            self.config
+                .agents
+                .get(agent_id)
+                .ok_or_else(|| anyhow::anyhow!("Unknown agent profile: {}", agent_id))
+        }
+    }
+
+    pub(crate) fn agent_config_for_session(
+        &self,
+        session: &crate::kernel::session::SessionState,
+    ) -> Result<&crate::kernel::config::AgentConfig> {
+        self.agent_config_for(session.identity.agent_id())
+    }
 }

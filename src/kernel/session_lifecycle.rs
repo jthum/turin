@@ -11,8 +11,13 @@ use crate::kernel::session::{SessionState, SessionStatus};
 impl Kernel {
     /// Create a new session.
     pub async fn create_session(&self) -> SessionState {
+        self.create_session_for_agent(&self.config.agent.id).await
+    }
+
+    /// Create a new session bound to a specific configured agent profile.
+    pub async fn create_session_for_agent(&self, agent_id: &str) -> SessionState {
         let mut session = SessionState::new();
-        session.identity.set_agent_id(self.config.agent.id.clone());
+        session.identity.set_agent_id(agent_id.to_string());
 
         // Spawn background persistence if state is available.
         if let Ok(store) = self.store_manager.get_default().await {

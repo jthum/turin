@@ -132,8 +132,10 @@ impl Kernel {
         }
 
         let kernel = &*self;
+        let active_agent_id = session.identity.agent_id().to_string();
         let futures = validated_calls.into_iter().map(|(tc, verdict)| {
             let tool_ctx = tool_ctx.clone();
+            let active_agent_id = active_agent_id.clone();
             async move {
                 let verdict_str = verdict.to_string();
                 let final_args = match verdict {
@@ -146,7 +148,7 @@ impl Kernel {
 
                 let start = Instant::now();
                 let effect_res = if let Some(capability) = tool_capability_name(&tc.name) {
-                    let subject = GovernanceSubject::for_agent(kernel.config.agent.id.as_str());
+                    let subject = GovernanceSubject::for_agent(active_agent_id.as_str());
                     match kernel
                         .governance_manager
                         .require_capability_for_subject(&subject, capability)

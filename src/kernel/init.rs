@@ -33,16 +33,17 @@ impl Kernel {
             self.clients.insert(name.clone(), client);
         }
 
-        // Ensure the default provider is available
-        let default_provider_name = &self.config.agent.provider;
-
-        if !self.clients.contains_key(default_provider_name)
-            && !self.config.providers.contains_key(default_provider_name)
-        {
-            anyhow::bail!(
-                "Default provider '{}' not found in [providers] configuration",
-                default_provider_name
-            );
+        for agent in std::iter::once(&self.config.agent).chain(self.config.agents.values()) {
+            let provider_name = &agent.provider;
+            if !self.clients.contains_key(provider_name)
+                && !self.config.providers.contains_key(provider_name)
+            {
+                anyhow::bail!(
+                    "Provider '{}' required by agent '{}' not found in [providers] configuration",
+                    provider_name,
+                    agent.id
+                );
+            }
         }
 
         // Initialize embedding provider

@@ -40,7 +40,7 @@ impl Kernel {
         session: &mut SessionState,
         turn_ctx: &TurnContext,
     ) -> Result<TurnPreflight> {
-        let mut req = self.default_turn_request_state();
+        let mut req = self.default_turn_request_state(session)?;
 
         if self.emit_turn_start_and_gate(session, turn_ctx) {
             return Ok(TurnPreflight::Rejected);
@@ -54,20 +54,19 @@ impl Kernel {
         Ok(TurnPreflight::Ready(prepared))
     }
 
-    fn default_turn_request_state(&self) -> TurnRequestState {
-        TurnRequestState {
-            model: self.config.agent.model.clone(),
-            provider_name: self.config.agent.provider.clone(),
-            system_prompt: self.config.agent.system_prompt.clone(),
-            thinking_budget: self
-                .config
-                .agent
+    fn default_turn_request_state(&self, session: &SessionState) -> Result<TurnRequestState> {
+        let agent = self.agent_config_for_session(session)?;
+        Ok(TurnRequestState {
+            model: agent.model.clone(),
+            provider_name: agent.provider.clone(),
+            system_prompt: agent.system_prompt.clone(),
+            thinking_budget: agent
                 .thinking
                 .as_ref()
                 .and_then(|t| if t.enabled { t.budget_tokens } else { None })
                 .unwrap_or(0),
             request_options_override: RequestOptionsOverride::default(),
-        }
+        })
     }
 
     fn emit_turn_start_and_gate(&self, session: &mut SessionState, turn_ctx: &TurnContext) -> bool {
