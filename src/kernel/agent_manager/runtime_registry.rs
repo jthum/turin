@@ -5,7 +5,6 @@ use anyhow::Result;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use crate::kernel::Kernel;
 use crate::kernel::event::TaskTerminalStatus;
 
 use super::peer_task::run_peer_task;
@@ -25,7 +24,7 @@ impl AgentManager {
         self.ensure_runtime_with_write_lock(agent_id).await
     }
 
-    /// Internal method to boot a new Kernel and background loop for a specific agent profile.
+    /// Internal method to boot a background peer runtime for a specific agent profile.
     async fn start_agent(&self, agent_id: &str) -> Result<AgentRuntimeHandle> {
         info!(agent_id = %agent_id, "Starting background peer agent runtime");
 
@@ -38,14 +37,7 @@ impl AgentManager {
                 .ok_or_else(|| anyhow::anyhow!("Unknown agent profile: {}", agent_id))?
         };
 
-        let mut peer_config = (*self.config).clone();
-        peer_config.agent = agent_profile.clone();
-        if let Some(harness_dir) = &agent_profile.harness_dir {
-            peer_config.harness.directory = harness_dir.clone();
-        }
-
-        let mut kernel = Kernel::builder(peer_config).build()?;
-        kernel.store_manager = self.store_manager.clone();
+        let mut kernel = self.build_shared_peer_kernel()?;
         kernel.init_clients()?;
 
         let (tx, mut rx) = mpsc::channel::<PeerAgentTaskEnvelope>(100);
@@ -57,15 +49,7 @@ impl AgentManager {
         let join_handle = tokio::spawn(async move {
             debug!(agent_id = %agent_id_clone, "Peer agent loop initializing");
 
-            if let Err(e) = kernel.init_harness().await {
-                error!(agent_id = %agent_id_clone, error = %e, "Peer agent failed to initialize harness");
-                return;
-            }
-            if let Err(e) = kernel.start_watcher() {
-                warn!(agent_id = %agent_id_clone, error = %e, "Peer agent failed to start harness watcher");
-            }
-
-            let mut session = kernel.create_session().await;
+            let mut session = kernel.create_session_for_agent(&agent_id_clone).await;
             if let Err(e) = kernel.start_session(&mut session).await {
                 error!(agent_id = %agent_id_clone, error = %e, "Peer agent failed to start session");
                 return;

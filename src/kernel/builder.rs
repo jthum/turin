@@ -6,7 +6,9 @@ use crate::inference::embeddings::EmbeddingProvider;
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::kernel::{
-    Kernel, TurinConfig, agent_manager::AgentManager, harness_manager::HarnessManager,
+    Kernel, TurinConfig,
+    agent_manager::{AgentManager, SharedPeerRuntimeContext},
+    harness_manager::HarnessManager,
 };
 use crate::persistence::manager::StoreManager;
 use crate::tools::builtins::create_default_registry;
@@ -53,6 +55,13 @@ impl RuntimeBuilder {
         let policy_manager = Arc::new(RuntimePolicyManager::new());
         let governance_manager = Arc::new(GovernanceManager::new(config_arc.governance.clone()));
         let harness_manager = Arc::new(HarnessManager::from_config(config_arc.as_ref())?);
+        agent_manager.bind_self_handle(Arc::downgrade(&agent_manager));
+        agent_manager.bind_shared_runtime(SharedPeerRuntimeContext {
+            json: self.json,
+            policy_manager: Arc::clone(&policy_manager),
+            governance_manager: Arc::clone(&governance_manager),
+            harness_manager: Arc::clone(&harness_manager),
+        });
         Ok(Kernel {
             config: config_arc,
             json: self.json,

@@ -5,11 +5,16 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{OnceLock, Weak};
 
 use crate::kernel::config::TurinConfig;
 use crate::kernel::event::TaskTerminalStatus;
+use crate::kernel::governance::GovernanceManager;
+use crate::kernel::harness_manager::HarnessManager;
+use crate::kernel::policy::RuntimePolicyManager;
 use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreManager;
+use crate::tools::builtins::create_default_registry;
 use anyhow::Result;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -59,6 +64,14 @@ impl AgentRuntimeHandle {
     }
 }
 
+#[derive(Clone)]
+pub(crate) struct SharedPeerRuntimeContext {
+    pub(crate) json: bool,
+    pub(crate) policy_manager: Arc<RuntimePolicyManager>,
+    pub(crate) governance_manager: Arc<GovernanceManager>,
+    pub(crate) harness_manager: Arc<HarnessManager>,
+}
+
 /// Orchestrates peer agents, spinning them up on demand and routing tasks to their independent runtimes.
 pub struct AgentManager {
     /// The full configuration, used to look up agent profiles and instantiate kernels.
@@ -71,6 +84,10 @@ pub struct AgentManager {
     pending_results: RwLock<HashMap<String, oneshot::Receiver<PeerAgentTaskResult>>>,
     /// Mapping of request id -> agent id for status accounting.
     pending_result_agents: RwLock<HashMap<String, String>>,
+    /// Weak self-handle used when constructing shared peer kernels.
+    self_handle: OnceLock<Weak<AgentManager>>,
+    /// Shared runtime pieces used to fork peer kernels without cloning the whole kernel topology.
+    shared_runtime: OnceLock<SharedPeerRuntimeContext>,
 }
 
 impl AgentManager {
@@ -82,7 +99,49 @@ impl AgentManager {
             runtimes: RwLock::new(HashMap::new()),
             pending_results: RwLock::new(HashMap::new()),
             pending_result_agents: RwLock::new(HashMap::new()),
+            self_handle: OnceLock::new(),
+            shared_runtime: OnceLock::new(),
         }
+    }
+
+    pub(crate) fn bind_self_handle(&self, handle: Weak<AgentManager>) {
+        let _ = self.self_handle.set(handle);
+    }
+
+    pub(crate) fn bind_shared_runtime(&self, runtime: SharedPeerRuntimeContext) {
+        let _ = self.shared_runtime.set(runtime);
+    }
+
+    pub(crate) fn shared_runtime(&self) -> Option<&SharedPeerRuntimeContext> {
+        self.shared_runtime.get()
+    }
+
+    pub(crate) fn self_arc(&self) -> Result<Arc<AgentManager>> {
+        self.self_handle
+            .get()
+            .and_then(Weak::upgrade)
+            .ok_or_else(|| anyhow::anyhow!("AgentManager self handle not bound"))
+    }
+
+    pub(crate) fn build_shared_peer_kernel(&self) -> Result<crate::kernel::Kernel> {
+        let shared = self
+            .shared_runtime()
+            .ok_or_else(|| anyhow::anyhow!("AgentManager shared runtime not bound"))?;
+
+        Ok(crate::kernel::Kernel {
+            config: Arc::clone(&self.config),
+            json: shared.json,
+            tool_registry: create_default_registry(),
+            store_manager: Arc::clone(&self.store_manager),
+            agent_manager: self.self_arc()?,
+            policy_manager: Arc::clone(&shared.policy_manager),
+            governance_manager: Arc::clone(&shared.governance_manager),
+            harness_manager: Arc::clone(&shared.harness_manager),
+            check_watcher: None,
+            clients: HashMap::new(),
+            embedding_provider: None,
+            mcp_clients: Vec::new(),
+        })
     }
 
     /// Dispatch a task to an agent by ID. If the agent isn't running, it will be started automatically.
