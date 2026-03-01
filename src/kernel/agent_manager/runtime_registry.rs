@@ -3,12 +3,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Result;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
-use crate::kernel::event::TaskTerminalStatus;
-
-use super::peer_task::run_peer_task;
-use super::{AgentManager, AgentRuntimeHandle, PeerAgentTaskEnvelope, PeerAgentTaskResult};
+use super::peer_runtime::PeerRuntime;
+use super::{AgentManager, AgentRuntimeHandle, PeerAgentTaskEnvelope};
 
 impl AgentManager {
     pub(super) async fn ensure_runtime(&self, agent_id: &str) -> Result<Arc<AgentRuntimeHandle>> {
@@ -37,25 +35,23 @@ impl AgentManager {
                 .ok_or_else(|| anyhow::anyhow!("Unknown agent profile: {}", agent_id))?
         };
 
-        let mut kernel = self.build_shared_peer_kernel()?;
-        if kernel.clients.is_empty() {
-            kernel.init_clients()?;
-        }
-
         let (tx, mut rx) = mpsc::channel::<PeerAgentTaskEnvelope>(100);
         let queued_tasks = Arc::new(AtomicUsize::new(0));
         let agent_id_clone = agent_id.to_string();
         let idle_grace_secs = agent_profile.idle_grace_secs;
+        let manager = self.self_arc()?;
 
         let queued_tasks_bg = queued_tasks.clone();
         let join_handle = tokio::spawn(async move {
             debug!(agent_id = %agent_id_clone, "Peer agent loop initializing");
 
-            let mut session = kernel.create_session_for_agent(&agent_id_clone).await;
-            if let Err(e) = kernel.start_session(&mut session).await {
-                error!(agent_id = %agent_id_clone, error = %e, "Peer agent failed to start session");
-                return;
-            }
+            let mut runtime = match PeerRuntime::start(&manager, &agent_id_clone).await {
+                Ok(runtime) => runtime,
+                Err(e) => {
+                    error!(agent_id = %agent_id_clone, error = %e, "Peer agent failed to start session");
+                    return;
+                }
+            };
 
             info!(agent_id = %agent_id_clone, "Peer agent loop ready for tasks");
 
@@ -82,49 +78,12 @@ impl AgentManager {
                     break;
                 };
                 queued_tasks_bg.fetch_sub(1, Ordering::Relaxed);
-                let result = run_peer_task(
-                    &mut kernel,
-                    &mut session,
-                    envelope.task,
-                    envelope.delegated_capabilities,
-                )
-                .await;
-
-                if let Some(tx_result) = envelope.result_tx {
-                    let request_id = envelope
-                        .request_id
-                        .unwrap_or_else(|| uuid::Uuid::now_v7().simple().to_string());
-                    let _ = tx_result.send(match result {
-                        Ok(ok) => PeerAgentTaskResult {
-                            request_id,
-                            agent_id: agent_id_clone.clone(),
-                            runtime_task_id: ok.runtime_task_id,
-                            status: ok.status,
-                            task_turn_count: ok.task_turn_count,
-                            output: ok.output,
-                            error: None,
-                        },
-                        Err(e) => PeerAgentTaskResult {
-                            request_id,
-                            agent_id: agent_id_clone.clone(),
-                            runtime_task_id: String::new(),
-                            status: TaskTerminalStatus::Error,
-                            task_turn_count: 0,
-                            output: None,
-                            error: Some(e.to_string()),
-                        },
-                    });
-                } else if let Err(e) = result {
-                    error!(agent_id = %agent_id_clone, error = %e, "Peer agent task failed");
-                }
+                runtime.handle_envelope(envelope).await;
             }
 
             info!(agent_id = %agent_id_clone, "Peer agent queue closed, terminating runtime");
 
-            if let Err(e) = kernel.end_session(&mut session).await {
-                warn!(agent_id = %agent_id_clone, error = %e, "Peer agent session end error");
-            }
-            kernel.shutdown_mcp_clients().await;
+            runtime.shutdown().await;
         });
 
         Ok(AgentRuntimeHandle {
