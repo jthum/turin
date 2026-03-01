@@ -57,6 +57,12 @@ struct UpdateAgentParams {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct BindHarnessParams {
+    id: String,
+    harness_id: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct SubmitTaskParams {
     agent_id: String,
     prompt: String,
@@ -303,6 +309,10 @@ async fn dispatch(
                 }
             }
         }
+        "runtime.errors" => {
+            let guard = state.lock().await;
+            ResponseEnvelope::ok(request.id, json!({ "issues": guard.runtime_errors() }))
+        }
         "agent.list" => {
             let guard = state.lock().await;
             ResponseEnvelope::ok(
@@ -470,6 +480,87 @@ async fn dispatch(
                 Err(err) => {
                     ResponseEnvelope::err(request.id, "agent_update_failed", err.to_string(), None)
                 }
+            }
+        }
+        "agent.bind_harness" => {
+            let params: BindHarnessParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse agent.bind_harness params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let mut guard = state.lock().await;
+            match guard
+                .bind_agent_shared_harness(&params.id, &params.harness_id)
+                .await
+            {
+                Ok(agent) => match serde_json::to_value(agent) {
+                    Ok(value) => {
+                        emit_event(&event_tx, "agent.updated", value.clone());
+                        emit_event(
+                            &event_tx,
+                            "agent.harness_bound",
+                            json!({ "id": params.id, "harness_id": params.harness_id }),
+                        );
+                        ResponseEnvelope::ok(request.id, value)
+                    }
+                    Err(err) => ResponseEnvelope::err(
+                        request.id,
+                        "serialize_error",
+                        format!("Failed to serialize rebound agent: {}", err),
+                        None,
+                    ),
+                },
+                Err(err) => ResponseEnvelope::err(
+                    request.id,
+                    "agent_bind_harness_failed",
+                    err.to_string(),
+                    None,
+                ),
+            }
+        }
+        "agent.use_local_harness" => {
+            let params: AgentIdParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse agent.use_local_harness params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let mut guard = state.lock().await;
+            match guard.use_local_agent_harness(&params.id).await {
+                Ok(agent) => match serde_json::to_value(agent) {
+                    Ok(value) => {
+                        emit_event(&event_tx, "agent.updated", value.clone());
+                        emit_event(
+                            &event_tx,
+                            "agent.local_harness_enabled",
+                            json!({ "id": params.id }),
+                        );
+                        ResponseEnvelope::ok(request.id, value)
+                    }
+                    Err(err) => ResponseEnvelope::err(
+                        request.id,
+                        "serialize_error",
+                        format!("Failed to serialize local-harness agent: {}", err),
+                        None,
+                    ),
+                },
+                Err(err) => ResponseEnvelope::err(
+                    request.id,
+                    "agent_use_local_harness_failed",
+                    err.to_string(),
+                    None,
+                ),
             }
         }
         "agent.delete" => {

@@ -75,6 +75,35 @@ pub async fn run_agent_update(
     print_response(response, json_output)
 }
 
+pub async fn run_agent_bind_harness(
+    config_path: &std::path::Path,
+    agent_id: &str,
+    harness_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(
+        config_path,
+        "agent.bind_harness",
+        json!({ "id": agent_id, "harness_id": harness_id }),
+    )
+    .await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_agent_use_local_harness(
+    config_path: &std::path::Path,
+    agent_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(
+        config_path,
+        "agent.use_local_harness",
+        json!({ "id": agent_id }),
+    )
+    .await?;
+    print_response(response, json_output)
+}
+
 pub async fn run_agent_delete(
     config_path: &std::path::Path,
     agent_id: &str,
@@ -253,6 +282,11 @@ pub async fn run_events(config_path: &std::path::Path, json_output: bool) -> Res
 
 pub async fn run_stop(config_path: &std::path::Path, json_output: bool) -> Result<()> {
     let response = send_request(config_path, "daemon.stop", json!({})).await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_runtime_errors(config_path: &std::path::Path, json_output: bool) -> Result<()> {
+    let response = send_request(config_path, "runtime.errors", json!({})).await?;
     print_response(response, json_output)
 }
 

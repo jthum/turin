@@ -150,6 +150,15 @@ enum DaemonCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Show isolated runtime loading errors
+    Errors {
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Stop the daemon
     Stop {
         /// Path to turin.toml config file
@@ -282,6 +291,30 @@ enum DaemonAgentCommands {
     },
     /// Delete a daemon-managed agent directory
     Delete {
+        /// Agent ID
+        id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Bind an agent to a shared harness
+    BindHarness {
+        /// Agent ID
+        id: String,
+        /// Shared harness ID
+        harness_id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Switch an agent back to a local harness
+    UseLocalHarness {
         /// Agent ID
         id: String,
         /// Path to turin.toml config file
@@ -594,6 +627,9 @@ async fn main() -> Result<()> {
             DaemonCommands::Rescan { config, json } => {
                 commands::daemon::run_rescan(&config, json).await
             }
+            DaemonCommands::Errors { config, json } => {
+                commands::daemon::run_runtime_errors(&config, json).await
+            }
             DaemonCommands::Stop { config, json } => {
                 commands::daemon::run_stop(&config, json).await
             }
@@ -659,6 +695,17 @@ async fn main() -> Result<()> {
                 }
                 DaemonAgentCommands::Delete { id, config, json } => {
                     commands::daemon::run_agent_delete(&config, &id, json).await
+                }
+                DaemonAgentCommands::BindHarness {
+                    id,
+                    harness_id,
+                    config,
+                    json,
+                } => {
+                    commands::daemon::run_agent_bind_harness(&config, &id, &harness_id, json).await
+                }
+                DaemonAgentCommands::UseLocalHarness { id, config, json } => {
+                    commands::daemon::run_agent_use_local_harness(&config, &id, json).await
                 }
             },
             DaemonCommands::Task { command } => match command {

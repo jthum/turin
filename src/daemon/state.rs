@@ -227,6 +227,10 @@ impl DaemonState {
         snapshot(&self.registry_load)
     }
 
+    pub fn runtime_errors(&self) -> Vec<crate::daemon::registry::RegistryIssue> {
+        self.registry_snapshot().issues
+    }
+
     pub async fn create_agent(&mut self, input: CreateAgentInput) -> Result<AgentDetail> {
         validate_agent_id(&input.id)?;
         let agent_dir = self.agent_dir(&input.id);
@@ -307,6 +311,63 @@ impl DaemonState {
         self.rescan().await?;
         self.agent_detail(agent_id)?
             .ok_or_else(|| anyhow!("Agent '{}' could not be reloaded", agent_id))
+    }
+
+    pub async fn bind_agent_shared_harness(
+        &mut self,
+        agent_id: &str,
+        harness_id: &str,
+    ) -> Result<AgentDetail> {
+        validate_harness_id(harness_id)?;
+
+        let shared_dir = self.watch_paths().harnesses_dir.join(harness_id);
+        if !shared_dir.is_dir() {
+            anyhow::bail!("Shared harness '{}' does not exist", harness_id);
+        }
+
+        let agent_dir = self.agent_dir(agent_id);
+        let mut file = read_agent_file(&agent_dir)?
+            .ok_or_else(|| anyhow!("Agent '{}' does not exist", agent_id))?;
+
+        let local_harness_dir = agent_dir.join("harness");
+        if local_harness_dir.is_dir() {
+            if local_harness_is_scaffold(&local_harness_dir)? {
+                std::fs::remove_dir_all(&local_harness_dir).with_context(|| {
+                    format!(
+                        "Failed to remove scaffold local harness '{}'",
+                        local_harness_dir.display()
+                    )
+                })?;
+            } else {
+                anyhow::bail!(
+                    "Agent '{}' has a non-scaffold local harness; remove or migrate it before binding a shared harness",
+                    agent_id
+                );
+            }
+        }
+
+        file.harness = Some(harness_id.to_string());
+        write_agent_file(&agent_dir, &file)?;
+        self.rescan().await?;
+        self.agent_detail(agent_id)?
+            .ok_or_else(|| anyhow!("Agent '{}' could not be rebound", agent_id))
+    }
+
+    pub async fn use_local_agent_harness(&mut self, agent_id: &str) -> Result<AgentDetail> {
+        let agent_dir = self.agent_dir(agent_id);
+        let mut file = read_agent_file(&agent_dir)?
+            .ok_or_else(|| anyhow!("Agent '{}' does not exist", agent_id))?;
+
+        file.harness = None;
+        write_agent_file(&agent_dir, &file)?;
+        scaffold_local_harness(&agent_dir)?;
+        self.rescan().await?;
+        self.agent_detail(agent_id)?.ok_or_else(|| {
+            anyhow!(
+                "Agent '{}' could not be switched to local harness",
+                agent_id
+            )
+        })
     }
 
     pub async fn delete_agent(&mut self, agent_id: &str) -> Result<DaemonStatus> {
@@ -573,6 +634,27 @@ fn scaffold_local_harness(agent_dir: &Path) -> Result<()> {
     std::fs::create_dir_all(&harness_dir)
         .with_context(|| format!("Failed to create '{}'", harness_dir.display()))?;
     scaffold_harness_main(&harness_dir)
+}
+
+fn local_harness_is_scaffold(harness_dir: &Path) -> Result<bool> {
+    let mut entries = std::fs::read_dir(harness_dir)
+        .with_context(|| format!("Failed to read '{}'", harness_dir.display()))?
+        .collect::<std::io::Result<Vec<_>>>()
+        .with_context(|| format!("Failed to enumerate '{}'", harness_dir.display()))?;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    if entries.len() != 1 {
+        return Ok(false);
+    }
+
+    let entry = &entries[0];
+    if entry.file_name() != "main.lua" {
+        return Ok(false);
+    }
+
+    let body = std::fs::read_to_string(entry.path())
+        .with_context(|| format!("Failed to read '{}'", entry.path().display()))?;
+    Ok(body == "-- Turin daemon scaffold\n")
 }
 
 fn scaffold_shared_harness(harness_dir: &Path) -> Result<()> {
@@ -895,6 +977,71 @@ type = "no_op"
                 .iter()
                 .all(|harness| harness.harness_id != "reviewer")
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn agent_can_bind_shared_harness_and_switch_back_to_local() -> Result<()> {
+        let temp = tempdir()?;
+        let config_path = write_bootstrap(temp.path())?;
+        let mut state = DaemonState::load(&config_path).await?;
+
+        state.create_shared_harness("reviewer").await?;
+        state
+            .create_agent(CreateAgentInput {
+                id: "writer".to_string(),
+                provider: "mock".to_string(),
+                model: "mock-model".to_string(),
+                system_prompt: None,
+                thinking: None,
+                mode: None,
+                harness: None,
+                idle_grace_secs: None,
+                enabled: true,
+            })
+            .await?;
+
+        let rebound = state
+            .bind_agent_shared_harness("writer", "reviewer")
+            .await?;
+        assert_eq!(rebound.harness.as_deref(), Some("reviewer"));
+        assert!(!rebound.has_local_harness);
+        assert!(
+            !temp
+                .path()
+                .join("agents")
+                .join("writer")
+                .join("harness")
+                .exists()
+        );
+
+        let local = state.use_local_agent_harness("writer").await?;
+        assert_eq!(local.harness, None);
+        assert!(local.has_local_harness);
+        assert!(
+            temp.path()
+                .join("agents")
+                .join("writer")
+                .join("harness")
+                .exists()
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn runtime_errors_surface_invalid_agent_configs_without_global_failure() -> Result<()> {
+        let temp = tempdir()?;
+        let config_path = write_bootstrap(temp.path())?;
+        let bad_agent_dir = temp.path().join("agents").join("broken");
+        std::fs::create_dir_all(&bad_agent_dir)?;
+        std::fs::write(bad_agent_dir.join("agent.toml"), "provider = [")?;
+
+        let state = DaemonState::load(&config_path).await?;
+        let errors = state.runtime_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].path.contains("broken"));
 
         Ok(())
     }
