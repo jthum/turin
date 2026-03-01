@@ -16,7 +16,7 @@ use crate::kernel::harness_manager::HarnessManager;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreManager;
-use crate::tools::builtins::create_default_registry;
+use crate::tools::registry::ToolRegistry;
 use anyhow::Result;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -69,6 +69,7 @@ impl AgentRuntimeHandle {
 #[derive(Clone)]
 pub(crate) struct SharedPeerRuntimeContext {
     pub(crate) json: bool,
+    pub(crate) tool_registry: ToolRegistry,
     pub(crate) policy_manager: Arc<RuntimePolicyManager>,
     pub(crate) governance_manager: Arc<GovernanceManager>,
     pub(crate) harness_manager: Arc<HarnessManager>,
@@ -161,7 +162,7 @@ impl AgentManager {
         Ok(crate::kernel::Kernel {
             config: Arc::clone(&self.config),
             json: shared.json,
-            tool_registry: create_default_registry(),
+            tool_registry: shared.tool_registry.clone(),
             store_manager: Arc::clone(&self.store_manager),
             agent_manager: self.self_arc()?,
             policy_manager: Arc::clone(&shared.policy_manager),
@@ -346,5 +347,115 @@ impl AgentManager {
     async fn remove_pending_request(&self, request_id: &str) {
         self.pending_results.write().await.remove(request_id);
         self.pending_result_agents.write().await.remove(request_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::Kernel;
+    use crate::kernel::config::{
+        AgentConfig, EmbeddingConfig, GovernanceConfig, HarnessConfig, KernelConfig,
+        PersistenceConfig, ProviderConfig, TurinConfig,
+    };
+    use crate::tools::{Tool, ToolContext, ToolEffect, ToolError};
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use tempfile::tempdir;
+
+    struct TestTool;
+
+    #[async_trait]
+    impl Tool for TestTool {
+        fn name(&self) -> &str {
+            "test_tool"
+        }
+
+        fn description(&self) -> &str {
+            "test tool"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            json!({
+                "type": "object",
+                "properties": {}
+            })
+        }
+
+        async fn execute(
+            &self,
+            _params: serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> Result<ToolEffect, ToolError> {
+            Ok(ToolEffect::Output(crate::tools::ToolOutput::new(
+                "ok".to_string(),
+            )))
+        }
+    }
+
+    fn test_config(workspace_root: &std::path::Path, harness_dir: &std::path::Path) -> TurinConfig {
+        let mut providers = HashMap::new();
+        providers.insert(
+            "mock".to_string(),
+            ProviderConfig {
+                kind: "mock".to_string(),
+                api_key_env: None,
+                base_url: Some("Mock response".to_string()),
+                ..ProviderConfig::default()
+            },
+        );
+
+        TurinConfig {
+            agent: AgentConfig {
+                id: "default".to_string(),
+                model: "mock-model".to_string(),
+                provider: "mock".to_string(),
+                system_prompt: "test".to_string(),
+                thinking: None,
+                mode: crate::kernel::config::AgentMode::Auto,
+                harness: None,
+                idle_grace_secs: None,
+            },
+            agents: HashMap::new(),
+            kernel: KernelConfig {
+                workspace_root: workspace_root.to_string_lossy().to_string(),
+                max_turns: 4,
+                heartbeat_interval_secs: 30,
+                initial_spawn_depth: 0,
+            },
+            persistence: PersistenceConfig {
+                database_path: workspace_root.join("test.db").to_string_lossy().to_string(),
+            },
+            harness: HarnessConfig {
+                directory: harness_dir.to_string_lossy().to_string(),
+                fs_root: ".".to_string(),
+            },
+            harnesses: HashMap::new(),
+            providers,
+            embeddings: Some(EmbeddingConfig::NoOp),
+            governance: GovernanceConfig::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn build_shared_peer_kernel_reuses_configured_tool_registry() -> Result<()> {
+        let tmp = tempdir()?;
+        let harness_dir = tmp.path().join("harness");
+        std::fs::create_dir_all(&harness_dir)?;
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(TestTool))?;
+
+        let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir))
+            .with_tool_registry(registry.clone())
+            .build()?;
+
+        let peer_kernel = kernel.agent_manager.build_shared_peer_kernel()?;
+
+        assert_eq!(peer_kernel.tool_registry.len(), registry.len());
+        assert!(peer_kernel.tool_registry.get("test_tool").is_some());
+
+        Ok(())
     }
 }

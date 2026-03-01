@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use super::{Tool, ToolContext};
 
@@ -8,14 +9,9 @@ use super::{Tool, ToolContext};
 /// - Tool lookup by name
 /// - JSON schema generation for LLM tool definitions
 /// - Tool execution dispatch
+#[derive(Clone, Default)]
 pub struct ToolRegistry {
-    tools: BTreeMap<String, Box<dyn Tool>>,
-}
-
-impl Default for ToolRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
+    tools: BTreeMap<String, Arc<dyn Tool>>,
 }
 
 impl ToolRegistry {
@@ -31,13 +27,13 @@ impl ToolRegistry {
         if self.tools.contains_key(&name) {
             anyhow::bail!("Tool '{}' already registered", name);
         }
-        self.tools.insert(name, tool);
+        self.tools.insert(name, Arc::from(tool));
         Ok(())
     }
 
     /// Get a tool by name.
-    pub fn get(&self, name: &str) -> Option<&dyn Tool> {
-        self.tools.get(name).map(|t| t.as_ref())
+    pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.tools.get(name).cloned()
     }
 
     /// Generate JSON tool definitions for the LLM API.
@@ -122,5 +118,19 @@ mod tests {
         let mut registry = ToolRegistry::new();
         registry.register(Box::new(builtins::ReadFileTool)).unwrap();
         registry.register(Box::new(builtins::ReadFileTool)).unwrap(); // should panic
+    }
+
+    #[test]
+    fn test_registry_clone_is_independent() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(builtins::ReadFileTool)).unwrap();
+
+        let mut cloned = registry.clone();
+        cloned.register(Box::new(builtins::WriteFileTool)).unwrap();
+
+        assert_eq!(registry.len(), 1);
+        assert_eq!(cloned.len(), 2);
+        assert!(registry.get("write_file").is_none());
+        assert!(cloned.get("write_file").is_some());
     }
 }

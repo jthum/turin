@@ -58,6 +58,7 @@ impl RuntimeBuilder {
         agent_manager.bind_self_handle(Arc::downgrade(&agent_manager));
         agent_manager.bind_shared_runtime(SharedPeerRuntimeContext {
             json: self.json,
+            tool_registry: self.tool_registry.clone(),
             policy_manager: Arc::clone(&policy_manager),
             governance_manager: Arc::clone(&governance_manager),
             harness_manager: Arc::clone(&harness_manager),
