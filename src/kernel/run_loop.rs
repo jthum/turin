@@ -2,13 +2,12 @@ use anyhow::Result;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::harness::verdict::Verdict;
-use crate::kernel::Kernel;
+use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::event::{KernelEvent, LifecycleEvent};
-use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::{PlanProgress, QueuedTask, SessionState};
 
-impl Kernel {
+impl ExecutionHost {
     /// Run the agent loop with the given prompt.
     #[instrument(skip(self, session), fields(session_id = %session.identity.session_id()))]
     pub async fn run(&mut self, session: &mut SessionState, prompt: Option<String>) -> Result<()> {
