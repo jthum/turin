@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
-use turin::daemon::protocol::{ErrorEnvelope, RequestEnvelope, ResponseEnvelope};
+use turin::daemon::protocol::{ErrorEnvelope, EventEnvelope, RequestEnvelope, ResponseEnvelope};
 use turin::kernel::config::TurinConfig;
 
 pub async fn run_start(config_path: &std::path::Path) -> Result<()> {
@@ -145,6 +145,63 @@ pub async fn run_harness_validate(
     let response =
         send_request(config_path, "harness.validate", json!({ "id": harness_id })).await?;
     print_response(response, json_output)
+}
+
+pub async fn run_events(config_path: &std::path::Path, json_output: bool) -> Result<()> {
+    let socket_path = resolve_socket_path(config_path)?;
+    let stream = UnixStream::connect(&socket_path).await.with_context(|| {
+        format!(
+            "Failed to connect to daemon socket '{}'",
+            socket_path.display()
+        )
+    })?;
+
+    let (reader, mut writer) = stream.into_split();
+    let request = RequestEnvelope {
+        id: Some(format!("req-{}", uuid::Uuid::new_v4())),
+        op: "runtime.events.subscribe".to_string(),
+        params: json!({}),
+    };
+
+    writer
+        .write_all(serde_json::to_string(&request)?.as_bytes())
+        .await?;
+    writer.write_all(b"\n").await?;
+
+    let mut lines = BufReader::new(reader).lines();
+    let Some(line) = lines.next_line().await? else {
+        anyhow::bail!("Daemon closed event stream before acknowledging subscription");
+    };
+    let response: ResponseEnvelope =
+        serde_json::from_str(&line).with_context(|| "Failed to parse daemon subscription ack")?;
+    if !response.ok {
+        let error = response.error.unwrap_or(ErrorEnvelope {
+            code: "unknown_error".to_string(),
+            message: "Unknown daemon error".to_string(),
+            details: None,
+        });
+        anyhow::bail!("{}: {}", error.code, error.message);
+    }
+
+    while let Some(line) = lines.next_line().await? {
+        let event: EventEnvelope =
+            serde_json::from_str(&line).with_context(|| "Failed to parse daemon event")?;
+        if json_output {
+            println!("{}", serde_json::to_string(&event)?);
+        } else if event.data.is_null()
+            || event.data == serde_json::Value::Object(Default::default())
+        {
+            println!("{}", event.event);
+        } else {
+            println!(
+                "{} {}",
+                event.event,
+                serde_json::to_string_pretty(&event.data)?
+            );
+        }
+    }
+
+    Ok(())
 }
 
 pub async fn run_stop(config_path: &std::path::Path, json_output: bool) -> Result<()> {

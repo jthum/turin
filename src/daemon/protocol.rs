@@ -28,6 +28,13 @@ pub struct ResponseEnvelope {
     pub error: Option<ErrorEnvelope>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EventEnvelope {
+    pub event: String,
+    #[serde(default)]
+    pub data: Value,
+}
+
 impl ResponseEnvelope {
     pub fn ok(id: Option<String>, result: Value) -> Self {
         Self {
@@ -53,6 +60,15 @@ impl ResponseEnvelope {
                 message: message.into(),
                 details,
             }),
+        }
+    }
+}
+
+impl EventEnvelope {
+    pub fn new(event: impl Into<String>, data: Value) -> Self {
+        Self {
+            event: event.into(),
+            data,
         }
     }
 }

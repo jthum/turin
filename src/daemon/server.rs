@@ -7,10 +7,10 @@ use notify::Event;
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{Mutex, watch};
+use tokio::sync::{Mutex, broadcast, watch};
 use tracing::{error, info, warn};
 
-use crate::daemon::protocol::{RequestEnvelope, ResponseEnvelope};
+use crate::daemon::protocol::{EventEnvelope, RequestEnvelope, ResponseEnvelope};
 use crate::daemon::state::{
     CreateAgentInput, DaemonState, DaemonStatus, DaemonWatchPaths, UpdateAgentInput,
 };
@@ -91,9 +91,15 @@ pub async fn serve(config_path: &Path) -> Result<()> {
     info!(socket = %socket_path.display(), "Turin daemon started");
 
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    let (event_tx, _) = broadcast::channel(512);
     let watcher_slot = Arc::new(std::sync::Mutex::new(None));
-    let daemon_watcher_tx =
-        start_daemon_watcher(Arc::clone(&state), Arc::clone(&watcher_slot)).await?;
+    let daemon_watcher_tx = start_daemon_watcher(
+        Arc::clone(&state),
+        Arc::clone(&watcher_slot),
+        event_tx.clone(),
+    )
+    .await?;
+    start_task_event_poller(Arc::clone(&state), event_tx.clone(), shutdown_rx.clone());
 
     loop {
         tokio::select! {
@@ -113,7 +119,9 @@ pub async fn serve(config_path: &Path) -> Result<()> {
                         let state = Arc::clone(&state);
                         let watcher_slot = Arc::clone(&watcher_slot);
                         let daemon_watcher_tx = daemon_watcher_tx.clone();
+                        let event_tx = event_tx.clone();
                         let shutdown_tx = shutdown_tx.clone();
+                        let shutdown_rx = shutdown_rx.clone();
                         tokio::spawn(async move {
                             if let Err(err) =
                                 handle_client(
@@ -121,7 +129,9 @@ pub async fn serve(config_path: &Path) -> Result<()> {
                                     state,
                                     watcher_slot,
                                     daemon_watcher_tx,
+                                    event_tx,
                                     shutdown_tx,
+                                    shutdown_rx,
                                 )
                                 .await
                             {
@@ -172,7 +182,9 @@ async fn handle_client(
     state: Arc<Mutex<DaemonState>>,
     watcher_slot: Arc<std::sync::Mutex<Option<notify::RecommendedWatcher>>>,
     daemon_watcher_tx: tokio::sync::mpsc::Sender<Vec<PathBuf>>,
+    event_tx: broadcast::Sender<EventEnvelope>,
     shutdown_tx: watch::Sender<bool>,
+    shutdown_rx: watch::Receiver<bool>,
 ) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
@@ -199,11 +211,24 @@ async fn handle_client(
             }
         };
 
+        if request.op == "runtime.events.subscribe" {
+            stream_events(
+                request,
+                Arc::clone(&state),
+                event_tx.subscribe(),
+                shutdown_rx,
+                &mut writer,
+            )
+            .await?;
+            break;
+        }
+
         let response = dispatch(
             request,
             Arc::clone(&state),
             Arc::clone(&watcher_slot),
             daemon_watcher_tx.clone(),
+            event_tx.clone(),
             shutdown_tx.clone(),
         )
         .await;
@@ -221,6 +246,7 @@ async fn dispatch(
     state: Arc<Mutex<DaemonState>>,
     watcher_slot: Arc<std::sync::Mutex<Option<notify::RecommendedWatcher>>>,
     daemon_watcher_tx: tokio::sync::mpsc::Sender<Vec<PathBuf>>,
+    event_tx: broadcast::Sender<EventEnvelope>,
     shutdown_tx: watch::Sender<bool>,
 ) -> ResponseEnvelope {
     match request.op.as_str() {
@@ -244,7 +270,8 @@ async fn dispatch(
             }
         }
         "runtime.rescan" => {
-            match rescan_and_refresh_watcher(state, watcher_slot, daemon_watcher_tx).await {
+            match rescan_and_refresh_watcher(state, watcher_slot, daemon_watcher_tx, event_tx).await
+            {
                 Ok(status) => match serde_json::to_value(status) {
                     Ok(value) => ResponseEnvelope::ok(request.id, value),
                     Err(err) => ResponseEnvelope::err(
@@ -328,7 +355,10 @@ async fn dispatch(
                 .await
             {
                 Ok(agent) => match serde_json::to_value(agent) {
-                    Ok(value) => ResponseEnvelope::ok(request.id, value),
+                    Ok(value) => {
+                        emit_event(&event_tx, "agent.created", value.clone());
+                        ResponseEnvelope::ok(request.id, value)
+                    }
                     Err(err) => ResponseEnvelope::err(
                         request.id,
                         "serialize_error",
@@ -357,7 +387,18 @@ async fn dispatch(
             let mut guard = state.lock().await;
             match guard.set_agent_enabled(&params.id, enabled).await {
                 Ok(agent) => match serde_json::to_value(agent) {
-                    Ok(value) => ResponseEnvelope::ok(request.id, value),
+                    Ok(value) => {
+                        emit_event(
+                            &event_tx,
+                            if enabled {
+                                "agent.enabled"
+                            } else {
+                                "agent.disabled"
+                            },
+                            value.clone(),
+                        );
+                        ResponseEnvelope::ok(request.id, value)
+                    }
                     Err(err) => ResponseEnvelope::err(
                         request.id,
                         "serialize_error",
@@ -398,7 +439,10 @@ async fn dispatch(
                 .await
             {
                 Ok(agent) => match serde_json::to_value(agent) {
-                    Ok(value) => ResponseEnvelope::ok(request.id, value),
+                    Ok(value) => {
+                        emit_event(&event_tx, "agent.updated", value.clone());
+                        ResponseEnvelope::ok(request.id, value)
+                    }
                     Err(err) => ResponseEnvelope::err(
                         request.id,
                         "serialize_error",
@@ -425,8 +469,13 @@ async fn dispatch(
             };
             let mut guard = state.lock().await;
             match guard.delete_agent(&params.id).await {
-                Ok(status) => match serde_json::to_value(status) {
-                    Ok(value) => ResponseEnvelope::ok(request.id, value),
+                Ok(status) => match serde_json::to_value(&status) {
+                    Ok(value) => {
+                        emit_event(&event_tx, "agent.deleted", json!({ "id": params.id }));
+                        emit_event(&event_tx, "runtime.rescanned", value.clone());
+                        emit_registry_issue_events(&event_tx, &status);
+                        ResponseEnvelope::ok(request.id, value)
+                    }
                     Err(err) => ResponseEnvelope::err(
                         request.id,
                         "serialize_error",
@@ -454,7 +503,10 @@ async fn dispatch(
             let guard = state.lock().await;
             match guard.submit_task(&params.agent_id, params.prompt).await {
                 Ok(task) => match serde_json::to_value(task) {
-                    Ok(value) => ResponseEnvelope::ok(request.id, value),
+                    Ok(value) => {
+                        emit_event(&event_tx, "task.submitted", value.clone());
+                        ResponseEnvelope::ok(request.id, value)
+                    }
                     Err(err) => ResponseEnvelope::err(
                         request.id,
                         "serialize_error",
@@ -557,7 +609,10 @@ async fn dispatch(
             let mut guard = state.lock().await;
             match guard.reload_harness(&params.id).await {
                 Ok(harness) => match serde_json::to_value(harness) {
-                    Ok(value) => ResponseEnvelope::ok(request.id, value),
+                    Ok(value) => {
+                        emit_event(&event_tx, "harness.reloaded", value.clone());
+                        ResponseEnvelope::ok(request.id, value)
+                    }
                     Err(err) => ResponseEnvelope::err(
                         request.id,
                         "serialize_error",
@@ -587,7 +642,10 @@ async fn dispatch(
             };
             let guard = state.lock().await;
             match guard.validate_harness(&params.id) {
-                Ok(result) => ResponseEnvelope::ok(request.id, result),
+                Ok(result) => {
+                    emit_event(&event_tx, "harness.validated", result.clone());
+                    ResponseEnvelope::ok(request.id, result)
+                }
                 Err(err) => ResponseEnvelope::err(
                     request.id,
                     "harness_validate_failed",
@@ -597,6 +655,7 @@ async fn dispatch(
             }
         }
         "daemon.stop" => {
+            emit_event(&event_tx, "daemon.stopping", json!({}));
             let _ = shutdown_tx.send(true);
             ResponseEnvelope::ok(request.id, json!({ "stopping": true }))
         }
@@ -609,9 +668,117 @@ async fn dispatch(
     }
 }
 
+fn emit_event(tx: &broadcast::Sender<EventEnvelope>, event: &str, data: serde_json::Value) {
+    let _ = tx.send(EventEnvelope::new(event, data));
+}
+
+fn emit_registry_issue_events(tx: &broadcast::Sender<EventEnvelope>, status: &DaemonStatus) {
+    for issue in &status.registry.issues {
+        if let Ok(data) = serde_json::to_value(issue) {
+            emit_event(tx, "runtime.issue", data);
+        }
+    }
+}
+
+async fn stream_events(
+    request: RequestEnvelope,
+    state: Arc<Mutex<DaemonState>>,
+    mut event_rx: broadcast::Receiver<EventEnvelope>,
+    mut shutdown_rx: watch::Receiver<bool>,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> Result<()> {
+    let ack = ResponseEnvelope::ok(request.id, json!({ "subscribed": true }));
+    writer
+        .write_all(serde_json::to_string(&ack)?.as_bytes())
+        .await?;
+    writer.write_all(b"\n").await?;
+
+    let snapshot = {
+        let guard = state.lock().await;
+        serde_json::to_value(guard.status())?
+    };
+    let snapshot_event = EventEnvelope::new("runtime.snapshot", snapshot);
+    writer
+        .write_all(serde_json::to_string(&snapshot_event)?.as_bytes())
+        .await?;
+    writer.write_all(b"\n").await?;
+
+    loop {
+        tokio::select! {
+            _ = shutdown_rx.changed() => {
+                if *shutdown_rx.borrow() {
+                    break;
+                }
+            }
+            event = event_rx.recv() => {
+                match event {
+                    Ok(event) => {
+                        writer
+                            .write_all(serde_json::to_string(&event)?.as_bytes())
+                            .await?;
+                        writer.write_all(b"\n").await?;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        let lagged = EventEnvelope::new("runtime.events_lagged", json!({ "skipped": skipped }));
+                        writer
+                            .write_all(serde_json::to_string(&lagged)?.as_bytes())
+                            .await?;
+                        writer.write_all(b"\n").await?;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn start_task_event_poller(
+    state: Arc<Mutex<DaemonState>>,
+    event_tx: broadcast::Sender<EventEnvelope>,
+    mut shutdown_rx: watch::Receiver<bool>,
+) {
+    tokio::spawn(async move {
+        let mut seen: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
+
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() {
+                        break;
+                    }
+                }
+                _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                    let tasks = {
+                        let guard = state.lock().await;
+                        guard.list_tasks().await
+                    };
+
+                    for task in tasks {
+                        let Ok(value) = serde_json::to_value(&task) else {
+                            continue;
+                        };
+                        let changed = seen
+                            .get(&task.request_id)
+                            .map(|previous| previous != &value)
+                            .unwrap_or(true);
+                        if changed {
+                            emit_event(&event_tx, "task.updated", value.clone());
+                            seen.insert(task.request_id.clone(), value);
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
 async fn start_daemon_watcher(
     state: Arc<Mutex<DaemonState>>,
     watcher_slot: Arc<std::sync::Mutex<Option<notify::RecommendedWatcher>>>,
+    event_tx: broadcast::Sender<EventEnvelope>,
 ) -> Result<tokio::sync::mpsc::Sender<Vec<PathBuf>>> {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<PathBuf>>(32);
     let watcher_tx = tx.clone();
@@ -644,6 +811,7 @@ async fn start_daemon_watcher(
                 Arc::clone(&state_for_task),
                 Arc::clone(&watcher_slot_for_task),
                 task_watcher_tx.clone(),
+                event_tx.clone(),
             )
             .await
             {
@@ -669,6 +837,7 @@ async fn rescan_and_refresh_watcher(
     state: Arc<Mutex<DaemonState>>,
     watcher_slot: Arc<std::sync::Mutex<Option<notify::RecommendedWatcher>>>,
     tx: tokio::sync::mpsc::Sender<Vec<PathBuf>>,
+    event_tx: broadcast::Sender<EventEnvelope>,
 ) -> Result<DaemonStatus> {
     let (status, watch_paths) = {
         let mut guard = state.lock().await;
@@ -683,6 +852,8 @@ async fn rescan_and_refresh_watcher(
         .expect("daemon watcher mutex poisoned during refresh");
     *slot = watcher;
 
+    emit_event(&event_tx, "runtime.rescanned", json!(status.clone()));
+    emit_registry_issue_events(&event_tx, &status);
     Ok(status)
 }
 

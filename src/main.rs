@@ -159,6 +159,15 @@ enum DaemonCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Tail daemon runtime events
+    Events {
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output NDJSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Manage filesystem-backed daemon agents
     Agent {
         #[command(subcommand)]
@@ -530,6 +539,9 @@ async fn main() -> Result<()> {
             }
             DaemonCommands::Stop { config, json } => {
                 commands::daemon::run_stop(&config, json).await
+            }
+            DaemonCommands::Events { config, json } => {
+                commands::daemon::run_events(&config, json).await
             }
             DaemonCommands::Agent { command } => match command {
                 DaemonAgentCommands::List { config, json } => {
