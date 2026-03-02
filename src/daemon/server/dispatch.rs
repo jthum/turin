@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use serde_json::json;
-use tokio::sync::{Mutex, broadcast, watch};
+use tokio::sync::{RwLock, broadcast, watch};
 
 use crate::daemon::protocol::{
     BindHarnessParams, CreateAgentParams, DaemonRequest, EntityIdParams, EventEnvelope,
@@ -16,7 +16,7 @@ use super::watch::rescan_and_refresh_watcher;
 
 pub(super) async fn dispatch(
     request: RequestEnvelope,
-    state: Arc<Mutex<DaemonState>>,
+    state: Arc<RwLock<DaemonState>>,
     watcher_slot: Arc<std::sync::Mutex<Option<notify::RecommendedWatcher>>>,
     daemon_watcher_tx: tokio::sync::mpsc::Sender<Vec<std::path::PathBuf>>,
     event_tx: broadcast::Sender<EventEnvelope>,
@@ -31,7 +31,7 @@ pub(super) async fn dispatch(
             }),
         ),
         DaemonRequest::DaemonStatus(_) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             serialize_response(request.id, guard.status().await, "daemon status")
         }
         DaemonRequest::RuntimeRescan(_) => {
@@ -68,18 +68,18 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::RuntimeErrors(_) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             ResponseEnvelope::ok(request.id, json!({ "issues": guard.runtime_errors() }))
         }
         DaemonRequest::AgentList(_) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             ResponseEnvelope::ok(
                 request.id,
                 json!({ "agents": guard.registry_snapshot().agents }),
             )
         }
         DaemonRequest::AgentGet(EntityIdParams { id }) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             match guard.agent_detail(&id) {
                 Ok(Some(agent)) => serialize_response(request.id, agent, "agent detail"),
                 Ok(None) => ResponseEnvelope::err(
@@ -94,7 +94,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::AgentStatus(EntityIdParams { id }) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             match guard.agent_runtime_status(&id).await {
                 Ok(Some(status)) => serialize_response(request.id, status, "agent status"),
                 Ok(None) => ResponseEnvelope::err(
@@ -109,7 +109,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::AgentIssues(EntityIdParams { id }) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             match guard.agent_issues(&id) {
                 Ok(Some(issues)) => {
                     ResponseEnvelope::ok(request.id, json!({ "agent_id": id, "issues": issues }))
@@ -136,7 +136,7 @@ pub(super) async fn dispatch(
             idle_grace_secs,
             enabled,
         }) => {
-            let mut guard = state.lock().await;
+            let mut guard = state.write().await;
             match guard
                 .create_agent(CreateAgentInput {
                     id,
@@ -164,7 +164,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::AgentEnable(EntityIdParams { id }) => {
-            let mut guard = state.lock().await;
+            let mut guard = state.write().await;
             match guard.set_agent_enabled(&id, true).await {
                 Ok(agent) => serialize_response_with_event(
                     request.id,
@@ -179,7 +179,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::AgentDisable(EntityIdParams { id }) => {
-            let mut guard = state.lock().await;
+            let mut guard = state.write().await;
             match guard.set_agent_enabled(&id, false).await {
                 Ok(agent) => serialize_response_with_event(
                     request.id,
@@ -202,7 +202,7 @@ pub(super) async fn dispatch(
             mode,
             idle_grace_secs,
         }) => {
-            let mut guard = state.lock().await;
+            let mut guard = state.write().await;
             match guard
                 .update_agent(
                     &id,
@@ -230,7 +230,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::AgentReload(EntityIdParams { id }) => {
-            let mut guard = state.lock().await;
+            let mut guard = state.write().await;
             match guard.reload_agent(&id).await {
                 Ok(agent) => serialize_response_with_event(
                     request.id,
@@ -245,7 +245,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::AgentBindHarness(BindHarnessParams { id, harness_id }) => {
-            let mut guard = state.lock().await;
+            let mut guard = state.write().await;
             match guard.bind_agent_shared_harness(&id, &harness_id).await {
                 Ok(agent) => match serialize_value(&request.id, agent, "rebound agent") {
                     Ok(value) => {
@@ -268,7 +268,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::AgentUseLocalHarness(EntityIdParams { id }) => {
-            let mut guard = state.lock().await;
+            let mut guard = state.write().await;
             match guard.use_local_agent_harness(&id).await {
                 Ok(agent) => match serialize_value(&request.id, agent, "local-harness agent") {
                     Ok(value) => {
@@ -291,7 +291,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::AgentDelete(EntityIdParams { id }) => {
-            let mut guard = state.lock().await;
+            let mut guard = state.write().await;
             match guard.delete_agent(&id).await {
                 Ok(status) => match serialize_value(&request.id, &status, "delete status") {
                     Ok(value) => {
@@ -308,7 +308,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::TaskSubmit(SubmitTaskParams { agent_id, prompt }) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             match guard.submit_task(&agent_id, prompt).await {
                 Ok(task) => serialize_response_with_event(
                     request.id,
@@ -323,7 +323,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::TaskGet(TaskIdParams { request_id }) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             match guard.get_task(&request_id).await {
                 Some(task) => serialize_response(request.id, task, "task"),
                 None => ResponseEnvelope::err(
@@ -338,7 +338,7 @@ pub(super) async fn dispatch(
             request_id,
             timeout_ms,
         }) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             match guard.wait_for_task(&request_id, timeout_ms).await {
                 Ok(task) => ResponseEnvelope::ok(request.id, json!(task)),
                 Err(err) => {
@@ -347,7 +347,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::TaskCancel(TaskIdParams { request_id }) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             match guard.cancel_task(&request_id).await {
                 Ok(task) => {
                     let value = json!(task);
@@ -367,11 +367,11 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::TaskList(_) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             ResponseEnvelope::ok(request.id, json!({ "tasks": guard.list_tasks().await }))
         }
         DaemonRequest::SessionList(SessionListParams { limit, offset }) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             match guard.list_sessions(limit, offset).await {
                 Ok(sessions) => ResponseEnvelope::ok(request.id, json!({ "sessions": sessions })),
                 Err(err) => {
@@ -380,7 +380,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::SessionGet(SessionIdParams { session_id }) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             match guard.get_session(&session_id).await {
                 Ok(Some(session)) => serialize_response(request.id, session, "session detail"),
                 Ok(None) => ResponseEnvelope::err(
@@ -395,7 +395,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::SessionCancel(SessionIdParams { session_id }) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             match guard.cancel_session(&session_id).await {
                 Ok(result) => {
                     emit_event(&event_tx, "session.cancel_requested", result.clone());
@@ -410,7 +410,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::SessionKill(SessionIdParams { session_id }) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             match guard.kill_session(&session_id).await {
                 Ok(result) => {
                     emit_event(&event_tx, "session.killed", result.clone());
@@ -422,7 +422,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::HarnessList(_) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             ResponseEnvelope::ok(
                 request.id,
                 json!({
@@ -431,7 +431,7 @@ pub(super) async fn dispatch(
             )
         }
         DaemonRequest::HarnessCreate(EntityIdParams { id }) => {
-            let mut guard = state.lock().await;
+            let mut guard = state.write().await;
             match guard.create_shared_harness(&id).await {
                 Ok(harness) => serialize_response_with_event(
                     request.id,
@@ -449,7 +449,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::HarnessGet(EntityIdParams { id }) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             match guard.harness_detail(&id) {
                 Some(harness) => serialize_response(request.id, harness, "harness detail"),
                 None => ResponseEnvelope::err(
@@ -461,7 +461,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::HarnessIssues(EntityIdParams { id }) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             match guard.harness_issues(&id) {
                 Ok(Some(issues)) => {
                     ResponseEnvelope::ok(request.id, json!({ "harness_id": id, "issues": issues }))
@@ -481,7 +481,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::HarnessReload(EntityIdParams { id }) => {
-            let mut guard = state.lock().await;
+            let mut guard = state.write().await;
             match guard.reload_harness(&id).await {
                 Ok(harness) => serialize_response_with_event(
                     request.id,
@@ -499,7 +499,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::HarnessValidate(EntityIdParams { id }) => {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             match guard.validate_harness(&id) {
                 Ok(result) => {
                     emit_event(&event_tx, "harness.validated", result.clone());
@@ -514,7 +514,7 @@ pub(super) async fn dispatch(
             }
         }
         DaemonRequest::HarnessDelete(EntityIdParams { id }) => {
-            let mut guard = state.lock().await;
+            let mut guard = state.write().await;
             match guard.delete_shared_harness(&id).await {
                 Ok(status) => {
                     match serialize_value(&request.id, &status, "harness delete result") {

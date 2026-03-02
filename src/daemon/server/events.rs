@@ -6,7 +6,7 @@ use anyhow::Result;
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
 use tokio::net::unix::OwnedWriteHalf;
-use tokio::sync::{Mutex, broadcast, watch};
+use tokio::sync::{RwLock, broadcast, watch};
 
 use crate::daemon::protocol::{EventEnvelope, RequestEnvelope, ResponseEnvelope};
 use crate::daemon::state::{DaemonState, DaemonStatus};
@@ -15,7 +15,7 @@ use super::dispatch::{classify_registry_issue, emit_event};
 
 pub(super) async fn stream_events(
     request: RequestEnvelope,
-    state: Arc<Mutex<DaemonState>>,
+    state: Arc<RwLock<DaemonState>>,
     mut event_rx: broadcast::Receiver<EventEnvelope>,
     mut shutdown_rx: watch::Receiver<bool>,
     writer: &mut OwnedWriteHalf,
@@ -27,7 +27,7 @@ pub(super) async fn stream_events(
     writer.write_all(b"\n").await?;
 
     let snapshot = {
-        let guard = state.lock().await;
+        let guard = state.read().await;
         serde_json::to_value(guard.status().await)?
     };
     let snapshot_event = EventEnvelope::new("runtime.snapshot", snapshot);
@@ -37,7 +37,7 @@ pub(super) async fn stream_events(
     writer.write_all(b"\n").await?;
 
     let status: DaemonStatus = {
-        let guard = state.lock().await;
+        let guard = state.read().await;
         guard.status().await
     };
     for issue in &status.registry.issues {
@@ -82,7 +82,7 @@ pub(super) async fn stream_events(
 }
 
 pub(super) fn start_task_event_poller(
-    state: Arc<Mutex<DaemonState>>,
+    state: Arc<RwLock<DaemonState>>,
     event_tx: broadcast::Sender<EventEnvelope>,
     mut shutdown_rx: watch::Receiver<bool>,
 ) {
@@ -98,7 +98,7 @@ pub(super) fn start_task_event_poller(
                 }
                 _ = tokio::time::sleep(Duration::from_millis(250)) => {
                     let tasks = {
-                        let guard = state.lock().await;
+                        let guard = state.read().await;
                         guard.list_tasks().await
                     };
 

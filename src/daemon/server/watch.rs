@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use notify::Event;
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::{RwLock, broadcast};
 use tracing::{error, info, warn};
 
 use crate::daemon::protocol::EventEnvelope;
@@ -12,7 +12,7 @@ use crate::daemon::state::{DaemonState, DaemonStatus, DaemonWatchPaths};
 use super::dispatch::{emit_event, emit_registry_issue_events};
 
 pub(super) async fn start_daemon_watcher(
-    state: Arc<Mutex<DaemonState>>,
+    state: Arc<RwLock<DaemonState>>,
     watcher_slot: Arc<std::sync::Mutex<Option<notify::RecommendedWatcher>>>,
     event_tx: broadcast::Sender<EventEnvelope>,
 ) -> Result<tokio::sync::mpsc::Sender<Vec<PathBuf>>> {
@@ -30,7 +30,7 @@ pub(super) async fn start_daemon_watcher(
             }
 
             let watch_paths = {
-                let guard = state_for_task.lock().await;
+                let guard = state_for_task.read().await;
                 guard.watch_paths()
             };
 
@@ -57,7 +57,7 @@ pub(super) async fn start_daemon_watcher(
     });
 
     let watch_paths = {
-        let guard = state.lock().await;
+        let guard = state.read().await;
         guard.watch_paths()
     };
     let watcher = build_daemon_watcher(&watch_paths, tx)?;
@@ -70,13 +70,13 @@ pub(super) async fn start_daemon_watcher(
 }
 
 pub(super) async fn rescan_and_refresh_watcher(
-    state: Arc<Mutex<DaemonState>>,
+    state: Arc<RwLock<DaemonState>>,
     watcher_slot: Arc<std::sync::Mutex<Option<notify::RecommendedWatcher>>>,
     tx: tokio::sync::mpsc::Sender<Vec<PathBuf>>,
     event_tx: broadcast::Sender<EventEnvelope>,
 ) -> Result<DaemonStatus> {
     let (status, watch_paths) = {
-        let mut guard = state.lock().await;
+        let mut guard = state.write().await;
         let status = guard.rescan().await?;
         let watch_paths = guard.watch_paths();
         (status, watch_paths)

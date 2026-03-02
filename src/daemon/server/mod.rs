@@ -10,16 +10,16 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{Mutex, broadcast, watch as watch_channel};
+use tokio::sync::{RwLock, broadcast, watch as watch_channel};
 use tracing::{error, info, warn};
 
 use crate::daemon::protocol::{DaemonRequest, RequestEnvelope, ResponseEnvelope};
 use crate::daemon::state::DaemonState;
 
 pub async fn serve(config_path: &Path) -> Result<()> {
-    let state = Arc::new(Mutex::new(DaemonState::load(config_path).await?));
+    let state = Arc::new(RwLock::new(DaemonState::load(config_path).await?));
     let socket_path = {
-        let guard = state.lock().await;
+        let guard = state.read().await;
         guard.socket_path().to_path_buf()
     };
 
@@ -124,7 +124,7 @@ async fn cleanup_stale_socket(socket_path: &Path) -> Result<()> {
 
 async fn handle_client(
     stream: UnixStream,
-    state: Arc<Mutex<DaemonState>>,
+    state: Arc<RwLock<DaemonState>>,
     watcher_slot: Arc<std::sync::Mutex<Option<notify::RecommendedWatcher>>>,
     daemon_watcher_tx: tokio::sync::mpsc::Sender<Vec<PathBuf>>,
     event_tx: broadcast::Sender<crate::daemon::protocol::EventEnvelope>,
