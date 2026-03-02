@@ -151,6 +151,7 @@ turin daemon agent delete <id>
 turin daemon task submit <agent_id> "prompt"
 turin daemon task submit <agent_id> "prompt" --wait
 turin daemon task wait <request_id> --timeout-ms 30000
+turin daemon task cancel <request_id>
 turin daemon task get <request_id>
 turin daemon task list
 ```
@@ -187,6 +188,7 @@ The daemon now exposes:
 - per-harness isolated registry/load issues via `harness.issues`
 - persisted session inspection
 - task submission/list/get/wait
+- queued-task cancellation
 - runtime event subscription
 
 The CLI defaults are also intentionally human-readable:
@@ -195,6 +197,17 @@ The CLI defaults are also intentionally human-readable:
 - `turin daemon task *` renders compact task summaries by default
 - `turin daemon session *` renders readable session summaries and persisted detail tables by default
 - `--json` remains available everywhere when a machine-readable response is needed
+
+Task state semantics are intentionally explicit:
+
+- `queued`: accepted by the daemon and waiting in an agent runtime queue
+- `running`: currently executing inside an agent runtime
+- `completed`: reached a terminal status (`success`, `rejected`, `max_turns`, `error`, `cancelled`)
+
+`task.cancel` is truthful by design:
+
+- queued tasks can be cancelled
+- running tasks are not interrupted and return a structured failure instead
 
 This makes the daemon usable as the control surface for future channels, desktop, and web clients without forcing those clients to scrape files directly.
 

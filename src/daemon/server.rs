@@ -751,6 +751,30 @@ async fn dispatch(
                 }
             }
         }
+        "task.cancel" => {
+            let params: TaskIdParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse task.cancel params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let guard = state.lock().await;
+            match guard.cancel_task(&params.request_id).await {
+                Ok(task) => {
+                    let value = json!(task);
+                    emit_event(&event_tx, "task.cancelled", value.clone());
+                    ResponseEnvelope::ok(request.id, value)
+                }
+                Err(err) => {
+                    ResponseEnvelope::err(request.id, "task_cancel_failed", err.to_string(), None)
+                }
+            }
+        }
         "task.list" => {
             let guard = state.lock().await;
             ResponseEnvelope::ok(request.id, json!({ "tasks": guard.list_tasks().await }))

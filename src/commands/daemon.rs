@@ -390,6 +390,26 @@ pub async fn run_task_wait(
     Ok(())
 }
 
+pub async fn run_task_cancel(
+    config_path: &std::path::Path,
+    request_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(
+        config_path,
+        "task.cancel",
+        json!({ "request_id": request_id }),
+    )
+    .await?;
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let task: TaskStatusView = decode_result(response)?;
+    print_task_status("Cancelled task", &task);
+    Ok(())
+}
+
 pub async fn run_task_list(config_path: &std::path::Path, json_output: bool) -> Result<()> {
     let response = send_request(config_path, "task.list", json!({})).await?;
     if json_output {

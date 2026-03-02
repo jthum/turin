@@ -1,8 +1,9 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Result;
-use tokio::sync::mpsc;
+use tokio::sync::Notify;
 use tracing::{debug, error, info};
 
 use super::peer_runtime::PeerRuntime;
@@ -38,12 +39,17 @@ impl AgentManager {
                 .ok_or_else(|| anyhow::anyhow!("Unknown agent profile: {}", agent_id))?
         };
 
-        let (tx, mut rx) = mpsc::channel::<PeerAgentTaskEnvelope>(100);
+        let queue = Arc::new(std::sync::Mutex::new(
+            VecDeque::<PeerAgentTaskEnvelope>::new(),
+        ));
+        let notify = Arc::new(Notify::new());
         let queued_tasks = Arc::new(AtomicUsize::new(0));
         let active_tasks = Arc::new(AtomicUsize::new(0));
         let agent_id_clone = agent_id.to_string();
         let idle_grace_secs = agent_profile.idle_grace_secs;
         let manager = Arc::clone(self);
+        let queue_bg = Arc::clone(&queue);
+        let notify_bg = Arc::clone(&notify);
 
         let queued_tasks_bg = queued_tasks.clone();
         let active_tasks_bg = active_tasks.clone();
@@ -61,12 +67,18 @@ impl AgentManager {
             info!(agent_id = %agent_id_clone, "Peer agent loop ready for tasks");
 
             loop {
-                let envelope = if let Some(idle_secs) = idle_grace_secs {
-                    match tokio::time::timeout(std::time::Duration::from_secs(idle_secs), rx.recv())
-                        .await
-                    {
-                        Ok(maybe) => maybe,
-                        Err(_) => {
+                let envelope = {
+                    let mut queue = queue_bg.lock().expect("agent runtime queue mutex poisoned");
+                    queue.pop_front()
+                };
+                let Some(mut envelope) = envelope else {
+                    if let Some(idle_secs) = idle_grace_secs {
+                        let notified = tokio::time::timeout(
+                            std::time::Duration::from_secs(idle_secs),
+                            notify_bg.notified(),
+                        )
+                        .await;
+                        if notified.is_err() {
                             info!(
                                 agent_id = %agent_id_clone,
                                 idle_grace_secs = idle_secs,
@@ -74,27 +86,29 @@ impl AgentManager {
                             );
                             break;
                         }
+                    } else {
+                        notify_bg.notified().await;
                     }
-                } else {
-                    rx.recv().await
-                };
-
-                let Some(envelope) = envelope else {
-                    break;
+                    continue;
                 };
                 queued_tasks_bg.fetch_sub(1, Ordering::Relaxed);
                 active_tasks_bg.fetch_add(1, Ordering::Relaxed);
+                if let Some(request_id) = envelope.request_id.as_deref() {
+                    let runtime_task_id = runtime.allocate_runtime_task_id(&mut envelope.task);
+                    manager.mark_task_running(request_id, runtime_task_id).await;
+                }
                 runtime.handle_envelope(envelope).await;
                 active_tasks_bg.fetch_sub(1, Ordering::Relaxed);
             }
 
-            info!(agent_id = %agent_id_clone, "Peer agent queue closed, terminating runtime");
+            info!(agent_id = %agent_id_clone, "Peer agent loop terminating runtime");
 
             runtime.shutdown().await;
         });
 
         Ok(AgentRuntimeHandle {
-            tx,
+            queue,
+            notify,
             task: Some(join_handle),
             queued_tasks,
             active_tasks,

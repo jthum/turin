@@ -20,7 +20,7 @@ use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreManager;
 use crate::tools::registry::ToolRegistry;
 use anyhow::Result;
-use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::sync::{Notify, RwLock, oneshot};
 use tokio::task::JoinHandle;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -55,6 +55,19 @@ pub struct TaskStatusSnapshot {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingTaskState {
+    Queued,
+    Running,
+}
+
+#[derive(Debug, Clone)]
+struct PendingTaskRecord {
+    agent_id: String,
+    state: PendingTaskState,
+    runtime_task_id: Option<String>,
+}
+
 struct PeerAgentTaskEnvelope {
     task: QueuedTask,
     request_id: Option<String>,
@@ -64,8 +77,10 @@ struct PeerAgentTaskEnvelope {
 
 /// A handle to a running peer agent.
 pub struct AgentRuntimeHandle {
-    /// The channel to send tasks to the background agent loop.
-    tx: mpsc::Sender<PeerAgentTaskEnvelope>,
+    /// Explicit queued envelopes awaiting execution.
+    queue: Arc<Mutex<VecDeque<PeerAgentTaskEnvelope>>>,
+    /// Notification used to wake the background runtime when new work arrives.
+    notify: Arc<Notify>,
     /// The background task running the agent's event loop.
     task: Option<JoinHandle<()>>,
     /// Approximate number of tasks currently queued in the runtime channel.
@@ -131,8 +146,8 @@ pub struct AgentManager {
     runtimes: RwLock<HashMap<String, Arc<AgentRuntimeHandle>>>,
     /// Task result receivers keyed by runtime request id (consumed by `await_result`).
     pending_results: RwLock<HashMap<String, oneshot::Receiver<PeerAgentTaskResult>>>,
-    /// Mapping of request id -> agent id for status accounting.
-    pending_result_agents: RwLock<HashMap<String, String>>,
+    /// Mapping of request id -> current non-terminal task state for status accounting.
+    pending_task_states: RwLock<HashMap<String, PendingTaskRecord>>,
     /// Bounded cache of completed task results for daemon/control-plane inspection.
     completed_results: RwLock<CompletedTaskCache>,
     /// Shared runtime pieces used to fork peer kernels without cloning the whole kernel topology.
@@ -149,7 +164,7 @@ impl AgentManager {
             store_manager,
             runtimes: RwLock::new(HashMap::new()),
             pending_results: RwLock::new(HashMap::new()),
-            pending_result_agents: RwLock::new(HashMap::new()),
+            pending_task_states: RwLock::new(HashMap::new()),
             completed_results: RwLock::new(CompletedTaskCache::default()),
             shared_runtime: OnceLock::new(),
             shared_inference: Mutex::new(SharedInferenceState::default()),
@@ -213,8 +228,15 @@ impl AgentManager {
             pending.insert(request_id.clone(), rx_result);
         }
         {
-            let mut map = self.pending_result_agents.write().await;
-            map.insert(request_id.clone(), agent_id.to_string());
+            let mut pending = self.pending_task_states.write().await;
+            pending.insert(
+                request_id.clone(),
+                PendingTaskRecord {
+                    agent_id: agent_id.to_string(),
+                    state: PendingTaskState::Queued,
+                    runtime_task_id: None,
+                },
+            );
         }
 
         let handle = match self.ensure_runtime(agent_id).await {
@@ -261,7 +283,6 @@ impl AgentManager {
             })?
         };
 
-        let mut timed_out = false;
         let result = if let Some(ms) = timeout_ms {
             match tokio::time::timeout(std::time::Duration::from_millis(ms), &mut rx).await {
                 Ok(Ok(res)) => Ok(res),
@@ -270,7 +291,6 @@ impl AgentManager {
                     request_id
                 )),
                 Err(_) => {
-                    timed_out = true;
                     self.pending_results
                         .write()
                         .await
@@ -291,10 +311,6 @@ impl AgentManager {
             }
         };
 
-        if !timed_out {
-            self.pending_result_agents.write().await.remove(request_id);
-        }
-
         let result = result?;
         self.record_completed_result(result.clone()).await;
         Ok(result)
@@ -303,10 +319,12 @@ impl AgentManager {
     /// List configured agents with runtime status.
     pub async fn list_statuses(&self) -> Vec<AgentStatusSnapshot> {
         let runtimes = self.runtimes.read().await;
-        let pending = self.pending_result_agents.read().await;
+        let pending = self.pending_task_states.read().await;
         let mut awaiting_by_agent: HashMap<&str, usize> = HashMap::new();
-        for agent_id in pending.values() {
-            *awaiting_by_agent.entry(agent_id.as_str()).or_default() += 1;
+        for pending in pending.values() {
+            *awaiting_by_agent
+                .entry(pending.agent_id.as_str())
+                .or_default() += 1;
         }
 
         let mut ids = vec![self.config.agent.id.clone()];
@@ -345,14 +363,17 @@ impl AgentManager {
     }
 
     pub async fn list_tasks(&self) -> Vec<TaskStatusSnapshot> {
-        let pending = self.pending_result_agents.read().await;
+        let pending = self.pending_task_states.read().await;
         let mut snapshots: Vec<_> = pending
             .iter()
-            .map(|(request_id, agent_id)| TaskStatusSnapshot {
+            .map(|(request_id, pending)| TaskStatusSnapshot {
                 request_id: request_id.clone(),
-                agent_id: agent_id.clone(),
-                state: "pending".to_string(),
-                runtime_task_id: None,
+                agent_id: pending.agent_id.clone(),
+                state: match pending.state {
+                    PendingTaskState::Queued => "queued".to_string(),
+                    PendingTaskState::Running => "running".to_string(),
+                },
+                runtime_task_id: pending.runtime_task_id.clone(),
                 status: None,
                 task_turn_count: None,
                 output: None,
@@ -394,21 +415,29 @@ impl AgentManager {
         handle: &Arc<AgentRuntimeHandle>,
         envelope: PeerAgentTaskEnvelope,
     ) -> Result<()> {
-        handle.queued_tasks.fetch_add(1, Ordering::Relaxed);
-        if let Err(e) = handle.tx.send(envelope).await {
-            handle.queued_tasks.fetch_sub(1, Ordering::Relaxed);
-            anyhow::bail!("Failed to route task to agent queue: {}", e);
+        {
+            let mut queue = handle
+                .queue
+                .lock()
+                .expect("agent runtime queue mutex poisoned");
+            queue.push_back(envelope);
         }
+        handle.queued_tasks.fetch_add(1, Ordering::Relaxed);
+        handle.notify.notify_one();
         Ok(())
     }
 
     async fn remove_pending_request(&self, request_id: &str) {
         self.pending_results.write().await.remove(request_id);
-        self.pending_result_agents.write().await.remove(request_id);
+        self.pending_task_states.write().await.remove(request_id);
     }
 
     pub(crate) async fn record_completed_result(&self, result: PeerAgentTaskResult) {
-        self.pending_result_agents
+        self.pending_results
+            .write()
+            .await
+            .remove(&result.request_id);
+        self.pending_task_states
             .write()
             .await
             .remove(&result.request_id);
@@ -423,6 +452,92 @@ impl AgentManager {
             .results
             .get(request_id)
             .cloned()
+    }
+
+    pub(crate) async fn mark_task_running(&self, request_id: &str, runtime_task_id: String) {
+        if let Some(pending) = self.pending_task_states.write().await.get_mut(request_id) {
+            pending.state = PendingTaskState::Running;
+            pending.runtime_task_id = Some(runtime_task_id);
+        }
+    }
+
+    pub async fn cancel_task(&self, request_id: &str) -> Result<TaskStatusSnapshot> {
+        if let Some(result) = self.completed_result(request_id).await {
+            anyhow::bail!(
+                "Task '{}' is already terminal ({:?})",
+                request_id,
+                result.status
+            );
+        }
+
+        let pending = self
+            .pending_task_states
+            .read()
+            .await
+            .get(request_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", request_id))?;
+
+        if pending.state == PendingTaskState::Running {
+            anyhow::bail!(
+                "Task '{}' is already running and cannot be cancelled",
+                request_id
+            );
+        }
+
+        let handle = {
+            let runtimes = self.runtimes.read().await;
+            runtimes.get(&pending.agent_id).cloned().ok_or_else(|| {
+                anyhow::anyhow!("Agent runtime '{}' is not available", pending.agent_id)
+            })?
+        };
+
+        let removed = {
+            let mut queue = handle
+                .queue
+                .lock()
+                .expect("agent runtime queue mutex poisoned");
+            let Some(index) = queue
+                .iter()
+                .position(|envelope| envelope.request_id.as_deref() == Some(request_id))
+            else {
+                anyhow::bail!("Task '{}' is no longer queued", request_id);
+            };
+            queue.remove(index)
+        };
+
+        let Some(envelope) = removed else {
+            anyhow::bail!("Task '{}' is no longer queued", request_id);
+        };
+
+        handle.queued_tasks.fetch_sub(1, Ordering::Relaxed);
+
+        let completed = PeerAgentTaskResult {
+            request_id: request_id.to_string(),
+            agent_id: pending.agent_id.clone(),
+            runtime_task_id: String::new(),
+            status: TaskTerminalStatus::Cancelled,
+            task_turn_count: 0,
+            output: None,
+            error: Some("Task cancelled before execution".to_string()),
+        };
+
+        if let Some(tx_result) = envelope.result_tx {
+            let _ = tx_result.send(completed.clone());
+        }
+
+        self.record_completed_result(completed.clone()).await;
+
+        Ok(TaskStatusSnapshot {
+            request_id: completed.request_id,
+            agent_id: completed.agent_id,
+            state: "completed".to_string(),
+            runtime_task_id: Some(completed.runtime_task_id),
+            status: Some(completed.status),
+            task_turn_count: Some(completed.task_turn_count),
+            output: completed.output,
+            error: completed.error,
+        })
     }
 }
 
@@ -532,6 +647,111 @@ mod tests {
 
         assert_eq!(peer_kernel.tool_registry.len(), registry.len());
         assert!(peer_kernel.tool_registry.get("test_tool").is_some());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancel_task_removes_queued_work_and_records_terminal_result() -> Result<()> {
+        let tmp = tempdir()?;
+        let harness_dir = tmp.path().join("harness");
+        std::fs::create_dir_all(&harness_dir)?;
+
+        let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+        let manager = kernel.agent_manager();
+        let request_id = "req_cancelled".to_string();
+        let (tx_result, rx_result) = oneshot::channel();
+
+        manager
+            .pending_results
+            .write()
+            .await
+            .insert(request_id.clone(), rx_result);
+        manager.pending_task_states.write().await.insert(
+            request_id.clone(),
+            PendingTaskRecord {
+                agent_id: "default".to_string(),
+                state: PendingTaskState::Queued,
+                runtime_task_id: None,
+            },
+        );
+
+        let mut queue = VecDeque::new();
+        queue.push_back(PeerAgentTaskEnvelope {
+            task: QueuedTask::ad_hoc("cancel me".to_string()),
+            request_id: Some(request_id.clone()),
+            result_tx: Some(tx_result),
+            delegated_capabilities: None,
+        });
+
+        manager.runtimes.write().await.insert(
+            "default".to_string(),
+            Arc::new(AgentRuntimeHandle {
+                queue: Arc::new(Mutex::new(queue)),
+                notify: Arc::new(Notify::new()),
+                task: None,
+                queued_tasks: Arc::new(AtomicUsize::new(1)),
+                active_tasks: Arc::new(AtomicUsize::new(0)),
+            }),
+        );
+
+        let snapshot = manager.cancel_task(&request_id).await?;
+        assert_eq!(snapshot.state, "completed");
+        assert_eq!(snapshot.status, Some(TaskTerminalStatus::Cancelled));
+        assert_eq!(
+            snapshot.error.as_deref(),
+            Some("Task cancelled before execution")
+        );
+        assert!(
+            manager
+                .pending_task_states
+                .read()
+                .await
+                .get(&request_id)
+                .is_none()
+        );
+        assert!(
+            manager
+                .pending_results
+                .read()
+                .await
+                .get(&request_id)
+                .is_none()
+        );
+
+        let completed = manager
+            .get_task(&request_id)
+            .await
+            .expect("cancelled task should be visible");
+        assert_eq!(completed.status, Some(TaskTerminalStatus::Cancelled));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancel_task_rejects_running_work() -> Result<()> {
+        let tmp = tempdir()?;
+        let harness_dir = tmp.path().join("harness");
+        std::fs::create_dir_all(&harness_dir)?;
+
+        let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+        let manager = kernel.agent_manager();
+        let request_id = "req_running".to_string();
+
+        manager.pending_task_states.write().await.insert(
+            request_id.clone(),
+            PendingTaskRecord {
+                agent_id: "default".to_string(),
+                state: PendingTaskState::Running,
+                runtime_task_id: Some("t_1".to_string()),
+            },
+        );
+
+        let err = manager
+            .cancel_task(&request_id)
+            .await
+            .expect_err("running task");
+        assert!(err.to_string().contains("already running"));
 
         Ok(())
     }

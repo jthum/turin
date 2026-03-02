@@ -394,6 +394,17 @@ enum DaemonTaskCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Cancel one queued daemon task by request ID
+    Cancel {
+        /// Request ID returned by task submission
+        request_id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// List daemon tasks
     List {
         /// Path to turin.toml config file
@@ -792,6 +803,11 @@ async fn main() -> Result<()> {
                     config,
                     json,
                 } => commands::daemon::run_task_wait(&config, &request_id, timeout_ms, json).await,
+                DaemonTaskCommands::Cancel {
+                    request_id,
+                    config,
+                    json,
+                } => commands::daemon::run_task_cancel(&config, &request_id, json).await,
                 DaemonTaskCommands::List { config, json } => {
                     commands::daemon::run_task_list(&config, json).await
                 }

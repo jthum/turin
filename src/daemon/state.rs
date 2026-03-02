@@ -458,6 +458,10 @@ impl DaemonState {
         self.kernel.agent_manager().get_task(request_id).await
     }
 
+    pub async fn cancel_task(&self, request_id: &str) -> Result<TaskStatusSnapshot> {
+        self.kernel.agent_manager().cancel_task(request_id).await
+    }
+
     pub async fn wait_for_task(
         &self,
         request_id: &str,
@@ -466,14 +470,14 @@ impl DaemonState {
         let Some(initial) = self.get_task(request_id).await else {
             anyhow::bail!("Task '{}' not found", request_id);
         };
-        if initial.state != "pending" {
+        if initial.state != "queued" && initial.state != "running" {
             return Ok(initial);
         }
 
         let deadline = timeout_ms.map(|ms| tokio::time::Instant::now() + Duration::from_millis(ms));
         loop {
             if let Some(snapshot) = self.get_task(request_id).await {
-                if snapshot.state != "pending" {
+                if snapshot.state != "queued" && snapshot.state != "running" {
                     return Ok(snapshot);
                 }
             } else {
@@ -966,7 +970,7 @@ type = "no_op"
             .submit_task("default", "Hello daemon".to_string())
             .await?;
         assert_eq!(task.agent_id, "default");
-        assert_eq!(task.state, "pending");
+        assert!(matches!(task.state.as_str(), "queued" | "running"));
         assert!(state.rescan().await.is_err());
 
         let mut saw_completed = false;
@@ -1314,7 +1318,7 @@ type = "no_op"
         let task = state
             .submit_task("default", "Hello status".to_string())
             .await?;
-        assert_eq!(task.state, "pending");
+        assert!(matches!(task.state.as_str(), "queued" | "running"));
 
         let mut saw_running = false;
         for _ in 0..50 {

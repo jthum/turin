@@ -89,15 +89,20 @@ impl PeerRuntime {
         info!(agent_id = %self.agent_id, "Peer runtime shut down");
     }
 
+    pub(super) fn allocate_runtime_task_id(&mut self, task: &mut QueuedTask) -> String {
+        if task.task_id.is_empty() {
+            task.task_id = format!("t_{}", self.session.next_task_id);
+            self.session.next_task_id += 1;
+        }
+        task.task_id.clone()
+    }
+
     async fn run_queued_task(
         &mut self,
         mut task: QueuedTask,
         delegated_capabilities: Option<BTreeMap<String, bool>>,
     ) -> Result<PeerRunOutcome> {
-        if task.task_id.is_empty() {
-            task.task_id = format!("t_{}", self.session.next_task_id);
-            self.session.next_task_id += 1;
-        }
+        self.allocate_runtime_task_id(&mut task);
 
         self.set_capability_ceiling(delegated_capabilities.clone());
         let outcome = async {

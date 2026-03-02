@@ -30,8 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `task.submit`
     - `task.get`
     - `task.wait`
+    - `task.cancel`
     - `task.list`
   - Added `turin daemon task submit ... --wait` for the common “submit then block for result” workflow.
+  - Added truthful queued-task cancellation; running tasks now reject cancellation instead of pretending to interrupt live inference.
 - **Daemon Harness Management**
   - Added daemon APIs and CLI wrappers for:
     - `harness.list`
@@ -54,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Daemon CLI Readability**
   - Added human-readable default output for daemon task and session inspection commands instead of raw JSON-shaped blobs.
   - Added richer human-readable detail output for `agent.get`, `agent.status`, `agent.issues`, `harness.get`, and `harness.issues`.
+  - Daemon task surfaces now distinguish `queued`, `running`, and terminal task states instead of collapsing all in-flight work into `pending`.
 - **Filesystem-Authoritative Runtime Model**
   - Agent directories are now treated as the authoritative persisted daemon state.
   - Shared harness rebinding now preserves user code by only auto-removing default scaffold local harnesses.
