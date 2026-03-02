@@ -67,6 +67,77 @@ struct IssueListView {
     issues: Vec<IssueView>,
 }
 
+#[derive(Debug, Deserialize)]
+struct TaskStatusView {
+    request_id: String,
+    agent_id: String,
+    state: String,
+    runtime_task_id: Option<String>,
+    status: Option<String>,
+    task_turn_count: Option<u32>,
+    output: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TaskListView {
+    tasks: Vec<TaskStatusView>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionSummaryView {
+    internal_id: i64,
+    session_id: String,
+    agent_id: String,
+    metadata: Option<Value>,
+    created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionListView {
+    sessions: Vec<SessionSummaryView>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionEventDetailView {
+    id: i64,
+    event_type: String,
+    payload: Value,
+    created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionMessageDetailView {
+    id: i64,
+    turn_index: u32,
+    role: String,
+    content: Value,
+    token_count: Option<u64>,
+    created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionToolExecutionDetailView {
+    id: i64,
+    turn_index: u32,
+    tool_call_id: String,
+    tool_name: String,
+    args: Value,
+    output: Option<Value>,
+    is_error: bool,
+    duration_ms: Option<u64>,
+    verdict: String,
+    created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionDetailView {
+    session: SessionSummaryView,
+    events: Vec<SessionEventDetailView>,
+    messages: Vec<SessionMessageDetailView>,
+    tool_executions: Vec<SessionToolExecutionDetailView>,
+}
+
 pub async fn run_start(config_path: &std::path::Path) -> Result<()> {
     turin::daemon::server::serve(config_path).await
 }
@@ -219,7 +290,12 @@ pub async fn run_task_submit(
     )
     .await?;
     if !wait {
-        return print_response(response, json_output);
+        if json_output {
+            return print_response(response, true);
+        }
+        let task: TaskStatusView = decode_result(response)?;
+        print_task_status("Submitted task", &task);
+        return Ok(());
     }
 
     if !response.ok {
@@ -243,7 +319,13 @@ pub async fn run_task_get(
 ) -> Result<()> {
     let response =
         send_request(config_path, "task.get", json!({ "request_id": request_id })).await?;
-    print_response(response, json_output)
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let task: TaskStatusView = decode_result(response)?;
+    print_task_status("Task", &task);
+    Ok(())
 }
 
 pub async fn run_task_wait(
@@ -258,12 +340,24 @@ pub async fn run_task_wait(
         json!({ "request_id": request_id, "timeout_ms": timeout_ms }),
     )
     .await?;
-    print_response(response, json_output)
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let task: TaskStatusView = decode_result(response)?;
+    print_task_status("Task", &task);
+    Ok(())
 }
 
 pub async fn run_task_list(config_path: &std::path::Path, json_output: bool) -> Result<()> {
     let response = send_request(config_path, "task.list", json!({})).await?;
-    print_response(response, json_output)
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let tasks: TaskListView = decode_result(response)?;
+    print_task_list(tasks);
+    Ok(())
 }
 
 pub async fn run_session_list(
@@ -278,7 +372,13 @@ pub async fn run_session_list(
         json!({ "limit": limit, "offset": offset }),
     )
     .await?;
-    print_response(response, json_output)
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let sessions: SessionListView = decode_result(response)?;
+    print_session_list(sessions);
+    Ok(())
 }
 
 pub async fn run_session_get(
@@ -292,7 +392,13 @@ pub async fn run_session_get(
         json!({ "session_id": session_id }),
     )
     .await?;
-    print_response(response, json_output)
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let session: SessionDetailView = decode_result(response)?;
+    print_session_detail(session);
+    Ok(())
 }
 
 pub async fn run_harness_list(config_path: &std::path::Path, json_output: bool) -> Result<()> {
@@ -643,6 +749,187 @@ fn print_harness_list(status: DaemonStatusView) {
     print_table(&rows);
 }
 
+fn print_task_status(title: &str, task: &TaskStatusView) {
+    println!("{}", title);
+    println!("  request_id:      {}", task.request_id);
+    println!("  agent:           {}", task.agent_id);
+    println!("  state:           {}", task.state);
+    if let Some(runtime_task_id) = &task.runtime_task_id {
+        println!("  runtime_task_id: {}", runtime_task_id);
+    }
+    if let Some(status) = &task.status {
+        println!("  terminal_status: {}", status);
+    }
+    if let Some(turns) = task.task_turn_count {
+        println!("  task_turns:      {}", turns);
+    }
+    if let Some(error) = &task.error {
+        println!("  error:");
+        print_indented(error);
+    }
+    if let Some(output) = &task.output {
+        println!("  output:");
+        print_indented(output);
+    }
+}
+
+fn print_task_list(tasks: TaskListView) {
+    let mut rows = Vec::new();
+    rows.push(vec![
+        "REQUEST".to_string(),
+        "AGENT".to_string(),
+        "STATE".to_string(),
+        "STATUS".to_string(),
+        "TURNS".to_string(),
+        "OUT".to_string(),
+        "ERR".to_string(),
+    ]);
+
+    for task in tasks.tasks {
+        rows.push(vec![
+            task.request_id,
+            task.agent_id,
+            task.state,
+            task.status.unwrap_or_else(|| "-".to_string()),
+            task.task_turn_count
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            yes_no(task.output.is_some()),
+            yes_no(task.error.is_some()),
+        ]);
+    }
+
+    print_table(&rows);
+}
+
+fn print_session_list(sessions: SessionListView) {
+    let mut rows = Vec::new();
+    rows.push(vec![
+        "SESSION".to_string(),
+        "AGENT".to_string(),
+        "CREATED".to_string(),
+        "META".to_string(),
+        "DB_ID".to_string(),
+    ]);
+
+    for session in sessions.sessions {
+        rows.push(vec![
+            session.session_id,
+            session.agent_id,
+            session.created_at,
+            yes_no(session.metadata.is_some()),
+            session.internal_id.to_string(),
+        ]);
+    }
+
+    print_table(&rows);
+}
+
+fn print_session_detail(session: SessionDetailView) {
+    println!("Session");
+    println!("  session_id: {}", session.session.session_id);
+    println!("  agent:      {}", session.session.agent_id);
+    println!("  created_at: {}", session.session.created_at);
+    println!("  db_id:      {}", session.session.internal_id);
+    if let Some(metadata) = &session.session.metadata {
+        println!("  metadata:   {}", json_snippet(metadata, 120));
+    }
+
+    println!();
+    println!(
+        "Counts: {} events, {} messages, {} tool executions",
+        session.events.len(),
+        session.messages.len(),
+        session.tool_executions.len()
+    );
+
+    if !session.events.is_empty() {
+        println!("\nEvents");
+        let mut rows = Vec::new();
+        rows.push(vec![
+            "ID".to_string(),
+            "TYPE".to_string(),
+            "CREATED".to_string(),
+            "PAYLOAD".to_string(),
+        ]);
+        for event in session.events {
+            rows.push(vec![
+                event.id.to_string(),
+                event.event_type,
+                event.created_at,
+                json_snippet(&event.payload, 72),
+            ]);
+        }
+        print_table(&rows);
+    }
+
+    if !session.messages.is_empty() {
+        println!("\nMessages");
+        let mut rows = Vec::new();
+        rows.push(vec![
+            "ID".to_string(),
+            "TURN".to_string(),
+            "ROLE".to_string(),
+            "TOKENS".to_string(),
+            "CREATED".to_string(),
+            "CONTENT".to_string(),
+        ]);
+        for message in session.messages {
+            rows.push(vec![
+                message.id.to_string(),
+                message.turn_index.to_string(),
+                message.role,
+                message
+                    .token_count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                message.created_at,
+                json_snippet(&message.content, 72),
+            ]);
+        }
+        print_table(&rows);
+    }
+
+    if !session.tool_executions.is_empty() {
+        println!("\nTool Executions");
+        let mut rows = Vec::new();
+        rows.push(vec![
+            "ID".to_string(),
+            "TURN".to_string(),
+            "TOOL".to_string(),
+            "VERDICT".to_string(),
+            "ERR".to_string(),
+            "DURATION".to_string(),
+            "ARGS".to_string(),
+            "OUTPUT".to_string(),
+            "CALL_ID".to_string(),
+            "CREATED".to_string(),
+        ]);
+        for execution in session.tool_executions {
+            rows.push(vec![
+                execution.id.to_string(),
+                execution.turn_index.to_string(),
+                execution.tool_name,
+                execution.verdict,
+                yes_no(execution.is_error),
+                execution
+                    .duration_ms
+                    .map(|ms| format!("{}ms", ms))
+                    .unwrap_or_else(|| "-".to_string()),
+                json_snippet(&execution.args, 48),
+                execution
+                    .output
+                    .as_ref()
+                    .map(|value| json_snippet(value, 48))
+                    .unwrap_or_else(|| "-".to_string()),
+                execution.tool_call_id,
+                execution.created_at,
+            ]);
+        }
+        print_table(&rows);
+    }
+}
+
 fn print_issue_list(title: &str, issues: &[IssueView]) {
     println!("{}", title);
     if issues.is_empty() {
@@ -657,6 +944,27 @@ fn print_issue_list(title: &str, issues: &[IssueView]) {
 
 fn yes_no(value: bool) -> String {
     if value { "yes" } else { "no" }.to_string()
+}
+
+fn json_snippet(value: &Value, max_chars: usize) -> String {
+    let mut rendered = match value {
+        Value::String(text) => text.clone(),
+        other => serde_json::to_string(other).unwrap_or_else(|_| "<unserializable>".to_string()),
+    };
+    rendered = rendered.replace('\n', "\\n");
+    let char_count = rendered.chars().count();
+    if char_count > max_chars {
+        let truncated: String = rendered.chars().take(max_chars.saturating_sub(1)).collect();
+        format!("{}…", truncated)
+    } else {
+        rendered
+    }
+}
+
+fn print_indented(text: &str) {
+    for line in text.lines() {
+        println!("    {}", line);
+    }
 }
 
 fn print_table(rows: &[Vec<String>]) {
