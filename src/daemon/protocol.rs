@@ -1,12 +1,170 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::kernel::config::{AgentMode, ThinkingConfig};
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct NoParams {}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CreateAgentParams {
+    pub id: String,
+    pub provider: String,
+    pub model: String,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+    #[serde(default)]
+    pub thinking: Option<ThinkingConfig>,
+    #[serde(default)]
+    pub mode: Option<AgentMode>,
+    #[serde(default)]
+    pub harness: Option<String>,
+    #[serde(default)]
+    pub idle_grace_secs: Option<u64>,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EntityIdParams {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UpdateAgentParams {
+    pub id: String,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+    #[serde(default)]
+    pub thinking: Option<ThinkingConfig>,
+    #[serde(default)]
+    pub mode: Option<AgentMode>,
+    #[serde(default)]
+    pub idle_grace_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BindHarnessParams {
+    pub id: String,
+    pub harness_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SubmitTaskParams {
+    pub agent_id: String,
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskIdParams {
+    pub request_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WaitTaskParams {
+    pub request_id: String,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SessionIdParams {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SessionListParams {
+    #[serde(default = "default_session_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub offset: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "op", content = "params")]
+pub enum DaemonRequest {
+    #[serde(rename = "daemon.ping")]
+    DaemonPing(NoParams),
+    #[serde(rename = "daemon.status")]
+    DaemonStatus(NoParams),
+    #[serde(rename = "daemon.stop")]
+    DaemonStop(NoParams),
+    #[serde(rename = "runtime.rescan")]
+    RuntimeRescan(NoParams),
+    #[serde(rename = "runtime.reload")]
+    RuntimeReload(NoParams),
+    #[serde(rename = "runtime.errors")]
+    RuntimeErrors(NoParams),
+    #[serde(rename = "runtime.events.subscribe")]
+    RuntimeEventsSubscribe(NoParams),
+    #[serde(rename = "agent.list")]
+    AgentList(NoParams),
+    #[serde(rename = "agent.get")]
+    AgentGet(EntityIdParams),
+    #[serde(rename = "agent.status")]
+    AgentStatus(EntityIdParams),
+    #[serde(rename = "agent.issues")]
+    AgentIssues(EntityIdParams),
+    #[serde(rename = "agent.create")]
+    AgentCreate(CreateAgentParams),
+    #[serde(rename = "agent.enable")]
+    AgentEnable(EntityIdParams),
+    #[serde(rename = "agent.disable")]
+    AgentDisable(EntityIdParams),
+    #[serde(rename = "agent.update")]
+    AgentUpdate(UpdateAgentParams),
+    #[serde(rename = "agent.reload")]
+    AgentReload(EntityIdParams),
+    #[serde(rename = "agent.bind_harness")]
+    AgentBindHarness(BindHarnessParams),
+    #[serde(rename = "agent.use_local_harness")]
+    AgentUseLocalHarness(EntityIdParams),
+    #[serde(rename = "agent.delete")]
+    AgentDelete(EntityIdParams),
+    #[serde(rename = "task.submit")]
+    TaskSubmit(SubmitTaskParams),
+    #[serde(rename = "task.get")]
+    TaskGet(TaskIdParams),
+    #[serde(rename = "task.wait")]
+    TaskWait(WaitTaskParams),
+    #[serde(rename = "task.cancel")]
+    TaskCancel(TaskIdParams),
+    #[serde(rename = "task.list")]
+    TaskList(NoParams),
+    #[serde(rename = "session.list")]
+    SessionList(SessionListParams),
+    #[serde(rename = "session.get")]
+    SessionGet(SessionIdParams),
+    #[serde(rename = "session.cancel")]
+    SessionCancel(SessionIdParams),
+    #[serde(rename = "session.kill")]
+    SessionKill(SessionIdParams),
+    #[serde(rename = "harness.list")]
+    HarnessList(NoParams),
+    #[serde(rename = "harness.create")]
+    HarnessCreate(EntityIdParams),
+    #[serde(rename = "harness.get")]
+    HarnessGet(EntityIdParams),
+    #[serde(rename = "harness.issues")]
+    HarnessIssues(EntityIdParams),
+    #[serde(rename = "harness.reload")]
+    HarnessReload(EntityIdParams),
+    #[serde(rename = "harness.validate")]
+    HarnessValidate(EntityIdParams),
+    #[serde(rename = "harness.delete")]
+    HarnessDelete(EntityIdParams),
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RequestEnvelope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    pub op: String,
-    #[serde(default)]
-    pub params: Value,
+    #[serde(flatten)]
+    pub request: DaemonRequest,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -69,6 +227,69 @@ impl EventEnvelope {
         Self {
             event: event.into(),
             data,
+        }
+    }
+}
+
+impl RequestEnvelope {
+    pub fn new(id: Option<String>, request: DaemonRequest) -> Self {
+        Self { id, request }
+    }
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+fn default_session_limit() -> usize {
+    50
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn request_envelope_round_trips_typed_shape() {
+        let request = RequestEnvelope::new(
+            Some("req_1".to_string()),
+            DaemonRequest::TaskSubmit(SubmitTaskParams {
+                agent_id: "writer".to_string(),
+                prompt: "review this".to_string(),
+            }),
+        );
+
+        let value = serde_json::to_value(&request).expect("serialize request");
+        assert_eq!(value["id"], "req_1");
+        assert_eq!(value["op"], "task.submit");
+        assert_eq!(value["params"]["agent_id"], "writer");
+        assert_eq!(value["params"]["prompt"], "review this");
+
+        let decoded: RequestEnvelope = serde_json::from_value(value).expect("deserialize request");
+        match decoded.request {
+            DaemonRequest::TaskSubmit(params) => {
+                assert_eq!(params.agent_id, "writer");
+                assert_eq!(params.prompt, "review this");
+            }
+            other => panic!("unexpected request variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn raw_daemon_wire_shape_deserializes_into_typed_request() {
+        let decoded: RequestEnvelope = serde_json::from_value(json!({
+            "id": "req_2",
+            "op": "agent.disable",
+            "params": { "id": "docs-reviewer" }
+        }))
+        .expect("deserialize request");
+
+        match decoded.request {
+            DaemonRequest::AgentDisable(EntityIdParams { id }) => {
+                assert_eq!(id, "docs-reviewer");
+            }
+            other => panic!("unexpected request variant: {other:?}"),
         }
     }
 }

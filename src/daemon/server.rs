@@ -4,102 +4,21 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use notify::Event;
+use serde::Serialize;
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, broadcast, watch};
 use tracing::{error, info, warn};
 
-use crate::daemon::protocol::{EventEnvelope, RequestEnvelope, ResponseEnvelope};
+use crate::daemon::protocol::{
+    BindHarnessParams, CreateAgentParams, DaemonRequest, EntityIdParams, EventEnvelope,
+    RequestEnvelope, ResponseEnvelope, SessionIdParams, SessionListParams, SubmitTaskParams,
+    TaskIdParams, UpdateAgentParams, WaitTaskParams,
+};
 use crate::daemon::state::{
     CreateAgentInput, DaemonState, DaemonStatus, DaemonWatchPaths, UpdateAgentInput,
 };
-
-#[derive(Debug, serde::Deserialize)]
-struct CreateAgentParams {
-    id: String,
-    provider: String,
-    model: String,
-    #[serde(default)]
-    system_prompt: Option<String>,
-    #[serde(default)]
-    thinking: Option<crate::kernel::config::ThinkingConfig>,
-    #[serde(default)]
-    mode: Option<crate::kernel::config::AgentMode>,
-    #[serde(default)]
-    harness: Option<String>,
-    #[serde(default)]
-    idle_grace_secs: Option<u64>,
-    #[serde(default = "default_enabled")]
-    enabled: bool,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct AgentIdParams {
-    id: String,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct UpdateAgentParams {
-    id: String,
-    #[serde(default)]
-    provider: Option<String>,
-    #[serde(default)]
-    model: Option<String>,
-    #[serde(default)]
-    system_prompt: Option<String>,
-    #[serde(default)]
-    thinking: Option<crate::kernel::config::ThinkingConfig>,
-    #[serde(default)]
-    mode: Option<crate::kernel::config::AgentMode>,
-    #[serde(default)]
-    idle_grace_secs: Option<u64>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct BindHarnessParams {
-    id: String,
-    harness_id: String,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct SubmitTaskParams {
-    agent_id: String,
-    prompt: String,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct TaskIdParams {
-    request_id: String,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct WaitTaskParams {
-    request_id: String,
-    #[serde(default)]
-    timeout_ms: Option<u64>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct SessionIdParams {
-    session_id: String,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct SessionListParams {
-    #[serde(default = "default_session_limit")]
-    limit: usize,
-    #[serde(default)]
-    offset: usize,
-}
-
-fn default_enabled() -> bool {
-    true
-}
-
-fn default_session_limit() -> usize {
-    50
-}
 
 pub async fn serve(config_path: &Path) -> Result<()> {
     let state = Arc::new(Mutex::new(DaemonState::load(config_path).await?));
@@ -241,7 +160,7 @@ async fn handle_client(
             }
         };
 
-        if request.op == "runtime.events.subscribe" {
+        if matches!(request.request, DaemonRequest::RuntimeEventsSubscribe(_)) {
             stream_events(
                 request,
                 Arc::clone(&state),
@@ -279,44 +198,28 @@ async fn dispatch(
     event_tx: broadcast::Sender<EventEnvelope>,
     shutdown_tx: watch::Sender<bool>,
 ) -> ResponseEnvelope {
-    match request.op.as_str() {
-        "daemon.ping" => ResponseEnvelope::ok(
+    match request.request {
+        DaemonRequest::DaemonPing(_) => ResponseEnvelope::ok(
             request.id,
             json!({
                 "pong": true,
                 "version": env!("CARGO_PKG_VERSION"),
             }),
         ),
-        "daemon.status" => {
+        DaemonRequest::DaemonStatus(_) => {
             let guard = state.lock().await;
-            match serde_json::to_value(guard.status().await) {
-                Ok(value) => ResponseEnvelope::ok(request.id, value),
-                Err(err) => ResponseEnvelope::err(
-                    request.id,
-                    "serialize_error",
-                    format!("Failed to serialize daemon status: {}", err),
-                    None,
-                ),
-            }
+            serialize_response(request.id, guard.status().await, "daemon status")
         }
-        "runtime.rescan" => {
+        DaemonRequest::RuntimeRescan(_) => {
             match rescan_and_refresh_watcher(state, watcher_slot, daemon_watcher_tx, event_tx).await
             {
-                Ok(status) => match serde_json::to_value(status) {
-                    Ok(value) => ResponseEnvelope::ok(request.id, value),
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize rescan result: {}", err),
-                        None,
-                    ),
-                },
+                Ok(status) => serialize_response(request.id, status, "rescan result"),
                 Err(err) => {
                     ResponseEnvelope::err(request.id, "rescan_failed", err.to_string(), None)
                 }
             }
         }
-        "runtime.reload" => {
+        DaemonRequest::RuntimeReload(_) => {
             match rescan_and_refresh_watcher(
                 state,
                 watcher_slot,
@@ -325,18 +228,13 @@ async fn dispatch(
             )
             .await
             {
-                Ok(status) => match serde_json::to_value(status) {
-                    Ok(value) => {
-                        emit_event(&event_tx, "runtime.reloaded", value.clone());
-                        ResponseEnvelope::ok(request.id, value)
-                    }
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize reload result: {}", err),
-                        None,
-                    ),
-                },
+                Ok(status) => serialize_response_with_event(
+                    request.id,
+                    status,
+                    "reload result",
+                    &event_tx,
+                    "runtime.reloaded",
+                ),
                 Err(err) => ResponseEnvelope::err(
                     request.id,
                     "runtime_reload_failed",
@@ -345,44 +243,25 @@ async fn dispatch(
                 ),
             }
         }
-        "runtime.errors" => {
+        DaemonRequest::RuntimeErrors(_) => {
             let guard = state.lock().await;
             ResponseEnvelope::ok(request.id, json!({ "issues": guard.runtime_errors() }))
         }
-        "agent.list" => {
+        DaemonRequest::AgentList(_) => {
             let guard = state.lock().await;
             ResponseEnvelope::ok(
                 request.id,
                 json!({ "agents": guard.registry_snapshot().agents }),
             )
         }
-        "agent.get" => {
-            let params: AgentIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse agent.get params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::AgentGet(EntityIdParams { id }) => {
             let guard = state.lock().await;
-            match guard.agent_detail(&params.id) {
-                Ok(Some(agent)) => match serde_json::to_value(agent) {
-                    Ok(value) => ResponseEnvelope::ok(request.id, value),
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize agent detail: {}", err),
-                        None,
-                    ),
-                },
+            match guard.agent_detail(&id) {
+                Ok(Some(agent)) => serialize_response(request.id, agent, "agent detail"),
                 Ok(None) => ResponseEnvelope::err(
                     request.id,
                     "agent_not_found",
-                    format!("Agent '{}' not found", params.id),
+                    format!("Agent '{}' not found", id),
                     None,
                 ),
                 Err(err) => {
@@ -390,33 +269,14 @@ async fn dispatch(
                 }
             }
         }
-        "agent.status" => {
-            let params: AgentIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse agent.status params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::AgentStatus(EntityIdParams { id }) => {
             let guard = state.lock().await;
-            match guard.agent_runtime_status(&params.id).await {
-                Ok(Some(status)) => match serde_json::to_value(status) {
-                    Ok(value) => ResponseEnvelope::ok(request.id, value),
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize agent status: {}", err),
-                        None,
-                    ),
-                },
+            match guard.agent_runtime_status(&id).await {
+                Ok(Some(status)) => serialize_response(request.id, status, "agent status"),
                 Ok(None) => ResponseEnvelope::err(
                     request.id,
                     "agent_not_found",
-                    format!("Agent '{}' not found", params.id),
+                    format!("Agent '{}' not found", id),
                     None,
                 ),
                 Err(err) => {
@@ -424,28 +284,16 @@ async fn dispatch(
                 }
             }
         }
-        "agent.issues" => {
-            let params: AgentIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse agent.issues params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::AgentIssues(EntityIdParams { id }) => {
             let guard = state.lock().await;
-            match guard.agent_issues(&params.id) {
-                Ok(Some(issues)) => ResponseEnvelope::ok(
-                    request.id,
-                    json!({ "agent_id": params.id, "issues": issues }),
-                ),
+            match guard.agent_issues(&id) {
+                Ok(Some(issues)) => {
+                    ResponseEnvelope::ok(request.id, json!({ "agent_id": id, "issues": issues }))
+                }
                 Ok(None) => ResponseEnvelope::err(
                     request.id,
                     "agent_not_found",
-                    format!("Agent '{}' not found", params.id),
+                    format!("Agent '{}' not found", id),
                     None,
                 ),
                 Err(err) => {
@@ -453,198 +301,139 @@ async fn dispatch(
                 }
             }
         }
-        "agent.create" => {
-            let params: CreateAgentParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse agent.create params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::AgentCreate(CreateAgentParams {
+            id,
+            provider,
+            model,
+            system_prompt,
+            thinking,
+            mode,
+            harness,
+            idle_grace_secs,
+            enabled,
+        }) => {
             let mut guard = state.lock().await;
             match guard
                 .create_agent(CreateAgentInput {
-                    id: params.id,
-                    provider: params.provider,
-                    model: params.model,
-                    system_prompt: params.system_prompt,
-                    thinking: params.thinking,
-                    mode: params.mode,
-                    harness: params.harness,
-                    idle_grace_secs: params.idle_grace_secs,
-                    enabled: params.enabled,
+                    id,
+                    provider,
+                    model,
+                    system_prompt,
+                    thinking,
+                    mode,
+                    harness,
+                    idle_grace_secs,
+                    enabled,
                 })
                 .await
             {
-                Ok(agent) => match serde_json::to_value(agent) {
-                    Ok(value) => {
-                        emit_event(&event_tx, "agent.created", value.clone());
-                        ResponseEnvelope::ok(request.id, value)
-                    }
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize created agent: {}", err),
-                        None,
-                    ),
-                },
+                Ok(agent) => serialize_response_with_event(
+                    request.id,
+                    agent,
+                    "created agent",
+                    &event_tx,
+                    "agent.created",
+                ),
                 Err(err) => {
                     ResponseEnvelope::err(request.id, "agent_create_failed", err.to_string(), None)
                 }
             }
         }
-        "agent.enable" | "agent.disable" => {
-            let params: AgentIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse agent toggle params: {}", err),
-                        None,
-                    );
-                }
-            };
-            let enabled = request.op == "agent.enable";
+        DaemonRequest::AgentEnable(EntityIdParams { id }) => {
             let mut guard = state.lock().await;
-            match guard.set_agent_enabled(&params.id, enabled).await {
-                Ok(agent) => match serde_json::to_value(agent) {
-                    Ok(value) => {
-                        emit_event(
-                            &event_tx,
-                            if enabled {
-                                "agent.enabled"
-                            } else {
-                                "agent.disabled"
-                            },
-                            value.clone(),
-                        );
-                        ResponseEnvelope::ok(request.id, value)
-                    }
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize agent toggle result: {}", err),
-                        None,
-                    ),
-                },
+            match guard.set_agent_enabled(&id, true).await {
+                Ok(agent) => serialize_response_with_event(
+                    request.id,
+                    agent,
+                    "agent toggle result",
+                    &event_tx,
+                    "agent.enabled",
+                ),
                 Err(err) => {
                     ResponseEnvelope::err(request.id, "agent_toggle_failed", err.to_string(), None)
                 }
             }
         }
-        "agent.update" => {
-            let params: UpdateAgentParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
+        DaemonRequest::AgentDisable(EntityIdParams { id }) => {
+            let mut guard = state.lock().await;
+            match guard.set_agent_enabled(&id, false).await {
+                Ok(agent) => serialize_response_with_event(
+                    request.id,
+                    agent,
+                    "agent toggle result",
+                    &event_tx,
+                    "agent.disabled",
+                ),
                 Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse agent.update params: {}", err),
-                        None,
-                    );
+                    ResponseEnvelope::err(request.id, "agent_toggle_failed", err.to_string(), None)
                 }
-            };
+            }
+        }
+        DaemonRequest::AgentUpdate(UpdateAgentParams {
+            id,
+            provider,
+            model,
+            system_prompt,
+            thinking,
+            mode,
+            idle_grace_secs,
+        }) => {
             let mut guard = state.lock().await;
             match guard
                 .update_agent(
-                    &params.id,
+                    &id,
                     UpdateAgentInput {
-                        provider: params.provider,
-                        model: params.model,
-                        system_prompt: params.system_prompt,
-                        thinking: params.thinking,
-                        mode: params.mode,
-                        idle_grace_secs: params.idle_grace_secs,
+                        provider,
+                        model,
+                        system_prompt,
+                        thinking,
+                        mode,
+                        idle_grace_secs,
                     },
                 )
                 .await
             {
-                Ok(agent) => match serde_json::to_value(agent) {
-                    Ok(value) => {
-                        emit_event(&event_tx, "agent.updated", value.clone());
-                        ResponseEnvelope::ok(request.id, value)
-                    }
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize updated agent: {}", err),
-                        None,
-                    ),
-                },
+                Ok(agent) => serialize_response_with_event(
+                    request.id,
+                    agent,
+                    "updated agent",
+                    &event_tx,
+                    "agent.updated",
+                ),
                 Err(err) => {
                     ResponseEnvelope::err(request.id, "agent_update_failed", err.to_string(), None)
                 }
             }
         }
-        "agent.reload" => {
-            let params: AgentIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse agent.reload params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::AgentReload(EntityIdParams { id }) => {
             let mut guard = state.lock().await;
-            match guard.reload_agent(&params.id).await {
-                Ok(agent) => match serde_json::to_value(agent) {
-                    Ok(value) => {
-                        emit_event(&event_tx, "agent.reloaded", value.clone());
-                        ResponseEnvelope::ok(request.id, value)
-                    }
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize reloaded agent: {}", err),
-                        None,
-                    ),
-                },
+            match guard.reload_agent(&id).await {
+                Ok(agent) => serialize_response_with_event(
+                    request.id,
+                    agent,
+                    "reloaded agent",
+                    &event_tx,
+                    "agent.reloaded",
+                ),
                 Err(err) => {
                     ResponseEnvelope::err(request.id, "agent_reload_failed", err.to_string(), None)
                 }
             }
         }
-        "agent.bind_harness" => {
-            let params: BindHarnessParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse agent.bind_harness params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::AgentBindHarness(BindHarnessParams { id, harness_id }) => {
             let mut guard = state.lock().await;
-            match guard
-                .bind_agent_shared_harness(&params.id, &params.harness_id)
-                .await
-            {
-                Ok(agent) => match serde_json::to_value(agent) {
+            match guard.bind_agent_shared_harness(&id, &harness_id).await {
+                Ok(agent) => match serialize_value(&request.id, agent, "rebound agent") {
                     Ok(value) => {
                         emit_event(&event_tx, "agent.updated", value.clone());
                         emit_event(
                             &event_tx,
                             "agent.harness_bound",
-                            json!({ "id": params.id, "harness_id": params.harness_id }),
+                            json!({ "id": id, "harness_id": harness_id }),
                         );
                         ResponseEnvelope::ok(request.id, value)
                     }
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize rebound agent: {}", err),
-                        None,
-                    ),
+                    Err(response) => *response,
                 },
                 Err(err) => ResponseEnvelope::err(
                     request.id,
@@ -654,36 +443,20 @@ async fn dispatch(
                 ),
             }
         }
-        "agent.use_local_harness" => {
-            let params: AgentIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse agent.use_local_harness params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::AgentUseLocalHarness(EntityIdParams { id }) => {
             let mut guard = state.lock().await;
-            match guard.use_local_agent_harness(&params.id).await {
-                Ok(agent) => match serde_json::to_value(agent) {
+            match guard.use_local_agent_harness(&id).await {
+                Ok(agent) => match serialize_value(&request.id, agent, "local-harness agent") {
                     Ok(value) => {
                         emit_event(&event_tx, "agent.updated", value.clone());
                         emit_event(
                             &event_tx,
                             "agent.local_harness_enabled",
-                            json!({ "id": params.id }),
+                            json!({ "id": id }),
                         );
                         ResponseEnvelope::ok(request.id, value)
                     }
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize local-harness agent: {}", err),
-                        None,
-                    ),
+                    Err(response) => *response,
                 },
                 Err(err) => ResponseEnvelope::err(
                     request.id,
@@ -693,138 +466,65 @@ async fn dispatch(
                 ),
             }
         }
-        "agent.delete" => {
-            let params: AgentIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse agent.delete params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::AgentDelete(EntityIdParams { id }) => {
             let mut guard = state.lock().await;
-            match guard.delete_agent(&params.id).await {
-                Ok(status) => match serde_json::to_value(&status) {
+            match guard.delete_agent(&id).await {
+                Ok(status) => match serialize_value(&request.id, &status, "delete status") {
                     Ok(value) => {
-                        emit_event(&event_tx, "agent.deleted", json!({ "id": params.id }));
+                        emit_event(&event_tx, "agent.deleted", json!({ "id": id }));
                         emit_event(&event_tx, "runtime.rescanned", value.clone());
                         emit_registry_issue_events(&event_tx, &status);
                         ResponseEnvelope::ok(request.id, value)
                     }
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize delete status: {}", err),
-                        None,
-                    ),
+                    Err(response) => *response,
                 },
                 Err(err) => {
                     ResponseEnvelope::err(request.id, "agent_delete_failed", err.to_string(), None)
                 }
             }
         }
-        "task.submit" => {
-            let params: SubmitTaskParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse task.submit params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::TaskSubmit(SubmitTaskParams { agent_id, prompt }) => {
             let guard = state.lock().await;
-            match guard.submit_task(&params.agent_id, params.prompt).await {
-                Ok(task) => match serde_json::to_value(task) {
-                    Ok(value) => {
-                        emit_event(&event_tx, "task.submitted", value.clone());
-                        ResponseEnvelope::ok(request.id, value)
-                    }
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize submitted task: {}", err),
-                        None,
-                    ),
-                },
+            match guard.submit_task(&agent_id, prompt).await {
+                Ok(task) => serialize_response_with_event(
+                    request.id,
+                    task,
+                    "submitted task",
+                    &event_tx,
+                    "task.submitted",
+                ),
                 Err(err) => {
                     ResponseEnvelope::err(request.id, "task_submit_failed", err.to_string(), None)
                 }
             }
         }
-        "task.get" => {
-            let params: TaskIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse task.get params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::TaskGet(TaskIdParams { request_id }) => {
             let guard = state.lock().await;
-            match guard.get_task(&params.request_id).await {
-                Some(task) => match serde_json::to_value(task) {
-                    Ok(value) => ResponseEnvelope::ok(request.id, value),
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize task: {}", err),
-                        None,
-                    ),
-                },
+            match guard.get_task(&request_id).await {
+                Some(task) => serialize_response(request.id, task, "task"),
                 None => ResponseEnvelope::err(
                     request.id,
                     "task_not_found",
-                    format!("Task '{}' not found", params.request_id),
+                    format!("Task '{}' not found", request_id),
                     None,
                 ),
             }
         }
-        "task.wait" => {
-            let params: WaitTaskParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse task.wait params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::TaskWait(WaitTaskParams {
+            request_id,
+            timeout_ms,
+        }) => {
             let guard = state.lock().await;
-            match guard
-                .wait_for_task(&params.request_id, params.timeout_ms)
-                .await
-            {
+            match guard.wait_for_task(&request_id, timeout_ms).await {
                 Ok(task) => ResponseEnvelope::ok(request.id, json!(task)),
                 Err(err) => {
                     ResponseEnvelope::err(request.id, "task_wait_failed", err.to_string(), None)
                 }
             }
         }
-        "task.cancel" => {
-            let params: TaskIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse task.cancel params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::TaskCancel(TaskIdParams { request_id }) => {
             let guard = state.lock().await;
-            match guard.cancel_task(&params.request_id).await {
+            match guard.cancel_task(&request_id).await {
                 Ok(task) => {
                     let value = json!(task);
                     let event_name = if value.get("state").and_then(|state| state.as_str())
@@ -842,57 +542,27 @@ async fn dispatch(
                 }
             }
         }
-        "task.list" => {
+        DaemonRequest::TaskList(_) => {
             let guard = state.lock().await;
             ResponseEnvelope::ok(request.id, json!({ "tasks": guard.list_tasks().await }))
         }
-        "session.list" => {
-            let params: SessionListParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse session.list params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::SessionList(SessionListParams { limit, offset }) => {
             let guard = state.lock().await;
-            match guard.list_sessions(params.limit, params.offset).await {
+            match guard.list_sessions(limit, offset).await {
                 Ok(sessions) => ResponseEnvelope::ok(request.id, json!({ "sessions": sessions })),
                 Err(err) => {
                     ResponseEnvelope::err(request.id, "session_list_failed", err.to_string(), None)
                 }
             }
         }
-        "session.get" => {
-            let params: SessionIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse session.get params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::SessionGet(SessionIdParams { session_id }) => {
             let guard = state.lock().await;
-            match guard.get_session(&params.session_id).await {
-                Ok(Some(session)) => match serde_json::to_value(session) {
-                    Ok(value) => ResponseEnvelope::ok(request.id, value),
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize session detail: {}", err),
-                        None,
-                    ),
-                },
+            match guard.get_session(&session_id).await {
+                Ok(Some(session)) => serialize_response(request.id, session, "session detail"),
                 Ok(None) => ResponseEnvelope::err(
                     request.id,
                     "session_not_found",
-                    format!("Session '{}' not found", params.session_id),
+                    format!("Session '{}' not found", session_id),
                     None,
                 ),
                 Err(err) => {
@@ -900,20 +570,9 @@ async fn dispatch(
                 }
             }
         }
-        "session.cancel" => {
-            let params: SessionIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse session.cancel params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::SessionCancel(SessionIdParams { session_id }) => {
             let guard = state.lock().await;
-            match guard.cancel_session(&params.session_id).await {
+            match guard.cancel_session(&session_id).await {
                 Ok(result) => {
                     emit_event(&event_tx, "session.cancel_requested", result.clone());
                     ResponseEnvelope::ok(request.id, result)
@@ -926,20 +585,9 @@ async fn dispatch(
                 ),
             }
         }
-        "session.kill" => {
-            let params: SessionIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse session.kill params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::SessionKill(SessionIdParams { session_id }) => {
             let guard = state.lock().await;
-            match guard.kill_session(&params.session_id).await {
+            match guard.kill_session(&session_id).await {
                 Ok(result) => {
                     emit_event(&event_tx, "session.killed", result.clone());
                     ResponseEnvelope::ok(request.id, result)
@@ -949,7 +597,7 @@ async fn dispatch(
                 }
             }
         }
-        "harness.list" => {
+        DaemonRequest::HarnessList(_) => {
             let guard = state.lock().await;
             ResponseEnvelope::ok(
                 request.id,
@@ -958,32 +606,16 @@ async fn dispatch(
                 }),
             )
         }
-        "harness.create" => {
-            let params: AgentIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse harness.create params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::HarnessCreate(EntityIdParams { id }) => {
             let mut guard = state.lock().await;
-            match guard.create_shared_harness(&params.id).await {
-                Ok(harness) => match serde_json::to_value(harness) {
-                    Ok(value) => {
-                        emit_event(&event_tx, "harness.created", value.clone());
-                        ResponseEnvelope::ok(request.id, value)
-                    }
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize created harness: {}", err),
-                        None,
-                    ),
-                },
+            match guard.create_shared_harness(&id).await {
+                Ok(harness) => serialize_response_with_event(
+                    request.id,
+                    harness,
+                    "created harness",
+                    &event_tx,
+                    "harness.created",
+                ),
                 Err(err) => ResponseEnvelope::err(
                     request.id,
                     "harness_create_failed",
@@ -992,59 +624,28 @@ async fn dispatch(
                 ),
             }
         }
-        "harness.get" => {
-            let params: AgentIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse harness.get params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::HarnessGet(EntityIdParams { id }) => {
             let guard = state.lock().await;
-            match guard.harness_detail(&params.id) {
-                Some(harness) => match serde_json::to_value(harness) {
-                    Ok(value) => ResponseEnvelope::ok(request.id, value),
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize harness detail: {}", err),
-                        None,
-                    ),
-                },
+            match guard.harness_detail(&id) {
+                Some(harness) => serialize_response(request.id, harness, "harness detail"),
                 None => ResponseEnvelope::err(
                     request.id,
                     "harness_not_found",
-                    format!("Harness '{}' not found", params.id),
+                    format!("Harness '{}' not found", id),
                     None,
                 ),
             }
         }
-        "harness.issues" => {
-            let params: AgentIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse harness.issues params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::HarnessIssues(EntityIdParams { id }) => {
             let guard = state.lock().await;
-            match guard.harness_issues(&params.id) {
-                Ok(Some(issues)) => ResponseEnvelope::ok(
-                    request.id,
-                    json!({ "harness_id": params.id, "issues": issues }),
-                ),
+            match guard.harness_issues(&id) {
+                Ok(Some(issues)) => {
+                    ResponseEnvelope::ok(request.id, json!({ "harness_id": id, "issues": issues }))
+                }
                 Ok(None) => ResponseEnvelope::err(
                     request.id,
                     "harness_not_found",
-                    format!("Harness '{}' not found", params.id),
+                    format!("Harness '{}' not found", id),
                     None,
                 ),
                 Err(err) => ResponseEnvelope::err(
@@ -1055,32 +656,16 @@ async fn dispatch(
                 ),
             }
         }
-        "harness.reload" => {
-            let params: AgentIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse harness.reload params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::HarnessReload(EntityIdParams { id }) => {
             let mut guard = state.lock().await;
-            match guard.reload_harness(&params.id).await {
-                Ok(harness) => match serde_json::to_value(harness) {
-                    Ok(value) => {
-                        emit_event(&event_tx, "harness.reloaded", value.clone());
-                        ResponseEnvelope::ok(request.id, value)
-                    }
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize harness reload result: {}", err),
-                        None,
-                    ),
-                },
+            match guard.reload_harness(&id).await {
+                Ok(harness) => serialize_response_with_event(
+                    request.id,
+                    harness,
+                    "harness reload result",
+                    &event_tx,
+                    "harness.reloaded",
+                ),
                 Err(err) => ResponseEnvelope::err(
                     request.id,
                     "harness_reload_failed",
@@ -1089,20 +674,9 @@ async fn dispatch(
                 ),
             }
         }
-        "harness.validate" => {
-            let params: AgentIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse harness.validate params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::HarnessValidate(EntityIdParams { id }) => {
             let guard = state.lock().await;
-            match guard.validate_harness(&params.id) {
+            match guard.validate_harness(&id) {
                 Ok(result) => {
                     emit_event(&event_tx, "harness.validated", result.clone());
                     ResponseEnvelope::ok(request.id, result)
@@ -1115,34 +689,20 @@ async fn dispatch(
                 ),
             }
         }
-        "harness.delete" => {
-            let params: AgentIdParams = match serde_json::from_value(request.params) {
-                Ok(params) => params,
-                Err(err) => {
-                    return ResponseEnvelope::err(
-                        request.id,
-                        "invalid_params",
-                        format!("Failed to parse harness.delete params: {}", err),
-                        None,
-                    );
-                }
-            };
+        DaemonRequest::HarnessDelete(EntityIdParams { id }) => {
             let mut guard = state.lock().await;
-            match guard.delete_shared_harness(&params.id).await {
-                Ok(status) => match serde_json::to_value(&status) {
-                    Ok(value) => {
-                        emit_event(&event_tx, "harness.deleted", json!({ "id": params.id }));
-                        emit_event(&event_tx, "runtime.rescanned", value.clone());
-                        emit_registry_issue_events(&event_tx, &status);
-                        ResponseEnvelope::ok(request.id, value)
+            match guard.delete_shared_harness(&id).await {
+                Ok(status) => {
+                    match serialize_value(&request.id, &status, "harness delete result") {
+                        Ok(value) => {
+                            emit_event(&event_tx, "harness.deleted", json!({ "id": id }));
+                            emit_event(&event_tx, "runtime.rescanned", value.clone());
+                            emit_registry_issue_events(&event_tx, &status);
+                            ResponseEnvelope::ok(request.id, value)
+                        }
+                        Err(response) => *response,
                     }
-                    Err(err) => ResponseEnvelope::err(
-                        request.id,
-                        "serialize_error",
-                        format!("Failed to serialize harness delete result: {}", err),
-                        None,
-                    ),
-                },
+                }
                 Err(err) => ResponseEnvelope::err(
                     request.id,
                     "harness_delete_failed",
@@ -1151,18 +711,60 @@ async fn dispatch(
                 ),
             }
         }
-        "daemon.stop" => {
+        DaemonRequest::RuntimeEventsSubscribe(_) => ResponseEnvelope::err(
+            request.id,
+            "invalid_operation_context",
+            "runtime.events.subscribe must be handled by the event stream path",
+            None,
+        ),
+        DaemonRequest::DaemonStop(_) => {
             emit_event(&event_tx, "daemon.stopping", json!({}));
             let _ = shutdown_tx.send(true);
             ResponseEnvelope::ok(request.id, json!({ "stopping": true }))
         }
-        _ => ResponseEnvelope::err(
-            request.id,
-            "unknown_operation",
-            format!("Unknown daemon operation '{}'", request.op),
-            None,
-        ),
     }
+}
+
+fn serialize_response<T: Serialize>(
+    id: Option<String>,
+    value: T,
+    context: &str,
+) -> ResponseEnvelope {
+    match serialize_value(&id, value, context) {
+        Ok(value) => ResponseEnvelope::ok(id, value),
+        Err(response) => *response,
+    }
+}
+
+fn serialize_response_with_event<T: Serialize>(
+    id: Option<String>,
+    value: T,
+    context: &str,
+    event_tx: &broadcast::Sender<EventEnvelope>,
+    event_name: &str,
+) -> ResponseEnvelope {
+    match serialize_value(&id, value, context) {
+        Ok(value) => {
+            emit_event(event_tx, event_name, value.clone());
+            ResponseEnvelope::ok(id, value)
+        }
+        Err(response) => *response,
+    }
+}
+
+fn serialize_value<T: Serialize>(
+    id: &Option<String>,
+    value: T,
+    context: &str,
+) -> Result<serde_json::Value, Box<ResponseEnvelope>> {
+    serde_json::to_value(value).map_err(|err| {
+        Box::new(ResponseEnvelope::err(
+            id.clone(),
+            "serialize_error",
+            format!("Failed to serialize {}: {}", context, err),
+            None,
+        ))
+    })
 }
 
 fn emit_event(tx: &broadcast::Sender<EventEnvelope>, event: &str, data: serde_json::Value) {

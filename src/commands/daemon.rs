@@ -5,7 +5,9 @@ use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
-use turin::daemon::protocol::{ErrorEnvelope, EventEnvelope, RequestEnvelope, ResponseEnvelope};
+use turin::daemon::protocol::{
+    DaemonRequest, ErrorEnvelope, EventEnvelope, NoParams, RequestEnvelope, ResponseEnvelope,
+};
 use turin::kernel::config::TurinConfig;
 
 #[derive(Debug, Deserialize)]
@@ -594,11 +596,10 @@ pub async fn run_events(config_path: &std::path::Path, json_output: bool) -> Res
     })?;
 
     let (reader, mut writer) = stream.into_split();
-    let request = RequestEnvelope {
-        id: Some(format!("req-{}", uuid::Uuid::new_v4())),
-        op: "runtime.events.subscribe".to_string(),
-        params: json!({}),
-    };
+    let request = RequestEnvelope::new(
+        Some(format!("req-{}", uuid::Uuid::new_v4())),
+        DaemonRequest::RuntimeEventsSubscribe(NoParams::default()),
+    );
 
     writer
         .write_all(serde_json::to_string(&request)?.as_bytes())
@@ -1212,11 +1213,12 @@ async fn send_request(
     })?;
 
     let (reader, mut writer) = stream.into_split();
-    let request = RequestEnvelope {
-        id: Some(format!("req-{}", uuid::Uuid::new_v4())),
-        op: op.to_string(),
-        params,
-    };
+    let request: RequestEnvelope = serde_json::from_value(json!({
+        "id": format!("req-{}", uuid::Uuid::new_v4()),
+        "op": op,
+        "params": params,
+    }))
+    .with_context(|| format!("Failed to build daemon request '{}'", op))?;
 
     writer
         .write_all(serde_json::to_string(&request)?.as_bytes())
