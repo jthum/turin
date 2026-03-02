@@ -1,10 +1,71 @@
 use anyhow::{Context, Result};
+use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use turin::daemon::protocol::{ErrorEnvelope, EventEnvelope, RequestEnvelope, ResponseEnvelope};
 use turin::kernel::config::TurinConfig;
+
+#[derive(Debug, Deserialize)]
+struct DaemonStatusView {
+    config_path: String,
+    workspace_root: String,
+    socket_path: String,
+    registry: RegistrySnapshotView,
+    harnesses: Vec<HarnessRuntimeView>,
+    agent_runtimes: Vec<AgentRuntimeView>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RegistrySnapshotView {
+    agents: Vec<AgentSummaryView>,
+    shared_harnesses: Vec<SharedHarnessView>,
+    issues: Vec<IssueView>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentSummaryView {
+    id: String,
+    enabled: bool,
+    provider: String,
+    model: String,
+    harness_ref: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SharedHarnessView {
+    id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct HarnessRuntimeView {
+    harness_id: String,
+    bound_agents: Vec<String>,
+    watched_roots: Vec<String>,
+    loaded_scripts: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentRuntimeView {
+    agent_id: String,
+    running: bool,
+    active_tasks: usize,
+    queued_tasks: usize,
+    awaiting_results: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct IssueView {
+    path: String,
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct IssueListView {
+    issues: Vec<IssueView>,
+}
 
 pub async fn run_start(config_path: &std::path::Path) -> Result<()> {
     turin::daemon::server::serve(config_path).await
@@ -17,7 +78,13 @@ pub async fn run_ping(config_path: &std::path::Path, json_output: bool) -> Resul
 
 pub async fn run_status(config_path: &std::path::Path, json_output: bool) -> Result<()> {
     let response = send_request(config_path, "daemon.status", json!({})).await?;
-    print_response(response, json_output)
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let status: DaemonStatusView = decode_result(response)?;
+    print_daemon_status(status);
+    Ok(())
 }
 
 pub async fn run_rescan(config_path: &std::path::Path, json_output: bool) -> Result<()> {
@@ -26,8 +93,14 @@ pub async fn run_rescan(config_path: &std::path::Path, json_output: bool) -> Res
 }
 
 pub async fn run_agent_list(config_path: &std::path::Path, json_output: bool) -> Result<()> {
-    let response = send_request(config_path, "agent.list", json!({})).await?;
-    print_response(response, json_output)
+    let response = send_request(config_path, "daemon.status", json!({})).await?;
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let status: DaemonStatusView = decode_result(response)?;
+    print_agent_list(status);
+    Ok(())
 }
 
 pub async fn run_agent_get(
@@ -223,8 +296,14 @@ pub async fn run_session_get(
 }
 
 pub async fn run_harness_list(config_path: &std::path::Path, json_output: bool) -> Result<()> {
-    let response = send_request(config_path, "harness.list", json!({})).await?;
-    print_response(response, json_output)
+    let response = send_request(config_path, "daemon.status", json!({})).await?;
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let status: DaemonStatusView = decode_result(response)?;
+    print_harness_list(status);
+    Ok(())
 }
 
 pub async fn run_harness_create(
@@ -337,7 +416,13 @@ pub async fn run_stop(config_path: &std::path::Path, json_output: bool) -> Resul
 
 pub async fn run_runtime_errors(config_path: &std::path::Path, json_output: bool) -> Result<()> {
     let response = send_request(config_path, "runtime.errors", json!({})).await?;
-    print_response(response, json_output)
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let issues: IssueListView = decode_result(response)?;
+    print_issue_list("Runtime issues", &issues.issues);
+    Ok(())
 }
 
 fn print_response(response: ResponseEnvelope, json_output: bool) -> Result<()> {
@@ -360,6 +445,248 @@ fn print_response(response: ResponseEnvelope, json_output: bool) -> Result<()> {
             details: None,
         });
         anyhow::bail!("{}: {}", error.code, error.message);
+    }
+}
+
+fn decode_result<T: serde::de::DeserializeOwned>(response: ResponseEnvelope) -> Result<T> {
+    if response.ok {
+        let value = response
+            .result
+            .ok_or_else(|| anyhow::anyhow!("Daemon response did not include a result payload"))?;
+        Ok(serde_json::from_value(value)?)
+    } else {
+        let error = response.error.unwrap_or(ErrorEnvelope {
+            code: "unknown_error".to_string(),
+            message: "Unknown daemon error".to_string(),
+            details: None,
+        });
+        anyhow::bail!("{}: {}", error.code, error.message);
+    }
+}
+
+fn print_daemon_status(status: DaemonStatusView) {
+    println!("Config:    {}", status.config_path);
+    println!("Workspace: {}", status.workspace_root);
+    println!("Socket:    {}", status.socket_path);
+    println!(
+        "Agents:    {} daemon-managed, {} shared harnesses, {} issues",
+        status.registry.agents.len(),
+        status.registry.shared_harnesses.len(),
+        status.registry.issues.len()
+    );
+
+    if !status.agent_runtimes.is_empty() {
+        println!("\nAgent Runtimes");
+        let mut runtime_by_agent: HashMap<_, _> = status
+            .agent_runtimes
+            .into_iter()
+            .map(|runtime| (runtime.agent_id.clone(), runtime))
+            .collect();
+
+        let mut rows = Vec::new();
+        rows.push(vec![
+            "AGENT".to_string(),
+            "ENABLED".to_string(),
+            "RUNNING".to_string(),
+            "ACTIVE".to_string(),
+            "QUEUED".to_string(),
+            "AWAIT".to_string(),
+            "HARNESS".to_string(),
+            "MODEL".to_string(),
+        ]);
+
+        for agent in &status.registry.agents {
+            let runtime = runtime_by_agent
+                .remove(&agent.id)
+                .unwrap_or(AgentRuntimeView {
+                    agent_id: agent.id.clone(),
+                    running: false,
+                    active_tasks: 0,
+                    queued_tasks: 0,
+                    awaiting_results: 0,
+                });
+            rows.push(vec![
+                agent.id.clone(),
+                yes_no(agent.enabled),
+                yes_no(runtime.running),
+                runtime.active_tasks.to_string(),
+                runtime.queued_tasks.to_string(),
+                runtime.awaiting_results.to_string(),
+                agent.harness_ref.clone(),
+                agent.model.clone(),
+            ]);
+        }
+
+        for (agent_id, runtime) in runtime_by_agent {
+            rows.push(vec![
+                agent_id,
+                "bootstrap".to_string(),
+                yes_no(runtime.running),
+                runtime.active_tasks.to_string(),
+                runtime.queued_tasks.to_string(),
+                runtime.awaiting_results.to_string(),
+                "default".to_string(),
+                "-".to_string(),
+            ]);
+        }
+
+        print_table(&rows);
+    }
+
+    if !status.harnesses.is_empty() {
+        println!("\nHarness Runtimes");
+        let mut rows = Vec::new();
+        rows.push(vec![
+            "HARNESS".to_string(),
+            "KIND".to_string(),
+            "BOUND".to_string(),
+            "SCRIPTS".to_string(),
+            "WATCHED".to_string(),
+        ]);
+        for harness in status.harnesses {
+            let kind = if harness.harness_id == "default" {
+                "default"
+            } else if harness.harness_id.starts_with("agent::") {
+                "local"
+            } else {
+                "shared"
+            };
+            rows.push(vec![
+                harness.harness_id,
+                kind.to_string(),
+                harness.bound_agents.len().to_string(),
+                harness.loaded_scripts.len().to_string(),
+                harness.watched_roots.len().to_string(),
+            ]);
+        }
+        print_table(&rows);
+    }
+
+    if !status.registry.issues.is_empty() {
+        println!();
+        print_issue_list("Runtime issues", &status.registry.issues);
+    }
+}
+
+fn print_agent_list(status: DaemonStatusView) {
+    let runtime_by_agent: HashMap<_, _> = status
+        .agent_runtimes
+        .into_iter()
+        .map(|runtime| (runtime.agent_id.clone(), runtime))
+        .collect();
+
+    let mut rows = Vec::new();
+    rows.push(vec![
+        "AGENT".to_string(),
+        "ENABLED".to_string(),
+        "RUNNING".to_string(),
+        "ACTIVE".to_string(),
+        "QUEUED".to_string(),
+        "AWAIT".to_string(),
+        "HARNESS".to_string(),
+        "PROVIDER".to_string(),
+        "MODEL".to_string(),
+    ]);
+
+    for agent in status.registry.agents {
+        let runtime = runtime_by_agent.get(&agent.id);
+        rows.push(vec![
+            agent.id,
+            yes_no(agent.enabled),
+            yes_no(runtime.map(|r| r.running).unwrap_or(false)),
+            runtime.map(|r| r.active_tasks).unwrap_or(0).to_string(),
+            runtime.map(|r| r.queued_tasks).unwrap_or(0).to_string(),
+            runtime.map(|r| r.awaiting_results).unwrap_or(0).to_string(),
+            agent.harness_ref,
+            agent.provider,
+            agent.model,
+        ]);
+    }
+
+    print_table(&rows);
+}
+
+fn print_harness_list(status: DaemonStatusView) {
+    let shared_ids: std::collections::HashSet<_> = status
+        .registry
+        .shared_harnesses
+        .into_iter()
+        .map(|shared| shared.id)
+        .collect();
+
+    let mut rows = Vec::new();
+    rows.push(vec![
+        "HARNESS".to_string(),
+        "KIND".to_string(),
+        "BOUND".to_string(),
+        "SCRIPTS".to_string(),
+        "WATCHED".to_string(),
+    ]);
+
+    for harness in status.harnesses {
+        let kind = if harness.harness_id == "default" {
+            "default"
+        } else if shared_ids.contains(&harness.harness_id) {
+            "shared"
+        } else {
+            "local"
+        };
+        rows.push(vec![
+            harness.harness_id,
+            kind.to_string(),
+            harness.bound_agents.len().to_string(),
+            harness.loaded_scripts.len().to_string(),
+            harness.watched_roots.len().to_string(),
+        ]);
+    }
+
+    print_table(&rows);
+}
+
+fn print_issue_list(title: &str, issues: &[IssueView]) {
+    println!("{}", title);
+    if issues.is_empty() {
+        println!("  none");
+        return;
+    }
+    for issue in issues {
+        println!("- {}", issue.path);
+        println!("  {}", issue.message);
+    }
+}
+
+fn yes_no(value: bool) -> String {
+    if value { "yes" } else { "no" }.to_string()
+}
+
+fn print_table(rows: &[Vec<String>]) {
+    if rows.is_empty() {
+        return;
+    }
+    let cols = rows[0].len();
+    let mut widths = vec![0usize; cols];
+    for row in rows {
+        for (idx, cell) in row.iter().enumerate() {
+            widths[idx] = widths[idx].max(cell.len());
+        }
+    }
+
+    for (row_idx, row) in rows.iter().enumerate() {
+        let line = row
+            .iter()
+            .enumerate()
+            .map(|(idx, cell)| format!("{:width$}", cell, width = widths[idx]))
+            .collect::<Vec<_>>()
+            .join("  ");
+        println!("{}", line);
+        if row_idx == 0 {
+            let sep = widths
+                .iter()
+                .map(|width| "-".repeat(*width))
+                .collect::<Vec<_>>()
+                .join("  ");
+            println!("{}", sep);
+        }
     }
 }
 
