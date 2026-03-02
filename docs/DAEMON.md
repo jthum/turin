@@ -135,6 +135,7 @@ turin daemon events
 turin daemon agent list
 turin daemon agent get <id>
 turin daemon agent status <id>
+turin daemon agent issues <id>
 turin daemon agent create <id> --provider mock --model mock-model
 turin daemon agent update <id> --model new-model
 turin daemon agent enable <id>
@@ -181,6 +182,7 @@ The daemon now exposes:
   - harness runtime snapshots
   - live agent runtime snapshots
 - per-agent live runtime status via `agent.status`
+- per-agent isolated registry/load issues via `agent.issues`
 - persisted session inspection
 - task submission/list/get/wait
 - runtime event subscription
