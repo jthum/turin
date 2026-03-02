@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Args, Parser};
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -119,72 +119,43 @@ enum Commands {
 enum DaemonCommands {
     /// Start the daemon in the foreground
     Start {
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
+        #[command(flatten)]
+        args: DaemonConfigArgs,
     },
     /// Ping the daemon
     Ping {
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Show daemon status
     Status {
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Rescan filesystem-backed daemon state
     Rescan {
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Reload filesystem-backed daemon state
     Reload {
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Show isolated runtime loading errors
     Errors {
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Stop the daemon
     Stop {
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Tail daemon runtime events
     Events {
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output NDJSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Manage filesystem-backed daemon agents
     Agent {
@@ -212,56 +183,36 @@ enum DaemonCommands {
 enum DaemonAgentCommands {
     /// List daemon-managed agents
     List {
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Show one daemon-managed agent
     Get {
         /// Agent ID
         id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Show live runtime status for one daemon-managed agent
     Status {
         /// Agent ID
         id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Show isolated daemon issues for one agent directory
     Issues {
         /// Agent ID
         id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Reload one daemon-managed agent from disk
     Reload {
         /// Agent ID
         id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Create a daemon-managed agent directory
     Create {
@@ -282,23 +233,15 @@ enum DaemonAgentCommands {
         /// Create the agent disabled
         #[arg(long)]
         disabled: bool,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Enable a daemon-managed agent
     Enable {
         /// Agent ID
         id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Update a daemon-managed agent config
     Update {
@@ -313,34 +256,22 @@ enum DaemonAgentCommands {
         /// Optional system prompt override
         #[arg(long)]
         system_prompt: Option<String>,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Disable a daemon-managed agent
     Disable {
         /// Agent ID
         id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Delete a daemon-managed agent directory
     Delete {
         /// Agent ID
         id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Bind an agent to a shared harness
     BindHarness {
@@ -348,23 +279,15 @@ enum DaemonAgentCommands {
         id: String,
         /// Shared harness ID
         harness_id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Switch an agent back to a local harness
     UseLocalHarness {
         /// Agent ID
         id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
 }
 
@@ -382,23 +305,15 @@ enum DaemonTaskCommands {
         /// Optional wait timeout in milliseconds (only meaningful with --wait)
         #[arg(long)]
         timeout_ms: Option<u64>,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Show one daemon task by request ID
     Get {
         /// Request ID returned by task submission
         request_id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Wait for one daemon task to complete
     Wait {
@@ -407,32 +322,20 @@ enum DaemonTaskCommands {
         /// Optional timeout in milliseconds
         #[arg(long)]
         timeout_ms: Option<u64>,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Cancel one daemon task by request ID
     Cancel {
         /// Request ID returned by task submission
         request_id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// List daemon tasks
     List {
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
 }
 
@@ -440,78 +343,50 @@ enum DaemonTaskCommands {
 enum DaemonHarnessCommands {
     /// List daemon-visible harness runtimes
     List {
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Create a shared harness directory
     Create {
         /// Harness ID
         id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Show one harness by ID
     Get {
         /// Harness ID
         id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Show isolated daemon issues for one harness directory
     Issues {
         /// Harness ID
         id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Reload one harness by ID
     Reload {
         /// Harness ID
         id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Validate one harness by ID without mutating the live runtime
     Validate {
         /// Harness ID
         id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Delete a shared harness directory
     Delete {
         /// Harness ID
         id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
 }
 
@@ -519,52 +394,52 @@ enum DaemonHarnessCommands {
 enum DaemonSessionCommands {
     /// List recent persisted sessions
     List {
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
         /// Maximum number of sessions to return
         #[arg(long, default_value_t = 50)]
         limit: usize,
         /// Offset into the session list
         #[arg(long, default_value_t = 0)]
         offset: usize,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Show one persisted session by session ID
     Get {
         /// Session ID
         session_id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Cooperatively cancel one active daemon session
     Cancel {
         /// Session ID
         session_id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
     /// Force-kill one active daemon session
     Kill {
         /// Session ID
         session_id: String,
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
-        config: PathBuf,
-        /// Output JSON
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
     },
+}
+
+#[derive(Args, Debug, Clone)]
+struct DaemonConfigArgs {
+    /// Path to turin.toml config file
+    #[arg(long, default_value = "turin.toml")]
+    config: PathBuf,
+}
+
+#[derive(Args, Debug, Clone)]
+struct DaemonOutputArgs {
+    #[command(flatten)]
+    config: DaemonConfigArgs,
+    /// Output JSON
+    #[arg(long)]
+    json: bool,
 }
 
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
@@ -723,43 +598,43 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Daemon { command } => match command {
-            DaemonCommands::Start { config } => commands::daemon::run_start(&config).await,
-            DaemonCommands::Ping { config, json } => {
-                commands::daemon::run_ping(&config, json).await
+            DaemonCommands::Start { args } => commands::daemon::run_start(&args.config).await,
+            DaemonCommands::Ping { args } => {
+                commands::daemon::run_ping(&args.config.config, args.json).await
             }
-            DaemonCommands::Status { config, json } => {
-                commands::daemon::run_status(&config, json).await
+            DaemonCommands::Status { args } => {
+                commands::daemon::run_status(&args.config.config, args.json).await
             }
-            DaemonCommands::Rescan { config, json } => {
-                commands::daemon::run_rescan(&config, json).await
+            DaemonCommands::Rescan { args } => {
+                commands::daemon::run_rescan(&args.config.config, args.json).await
             }
-            DaemonCommands::Reload { config, json } => {
-                commands::daemon::run_reload(&config, json).await
+            DaemonCommands::Reload { args } => {
+                commands::daemon::run_reload(&args.config.config, args.json).await
             }
-            DaemonCommands::Errors { config, json } => {
-                commands::daemon::run_runtime_errors(&config, json).await
+            DaemonCommands::Errors { args } => {
+                commands::daemon::run_runtime_errors(&args.config.config, args.json).await
             }
-            DaemonCommands::Stop { config, json } => {
-                commands::daemon::run_stop(&config, json).await
+            DaemonCommands::Stop { args } => {
+                commands::daemon::run_stop(&args.config.config, args.json).await
             }
-            DaemonCommands::Events { config, json } => {
-                commands::daemon::run_events(&config, json).await
+            DaemonCommands::Events { args } => {
+                commands::daemon::run_events(&args.config.config, args.json).await
             }
             DaemonCommands::Agent { command } => match command {
-                DaemonAgentCommands::List { config, json } => {
-                    commands::daemon::run_agent_list(&config, json).await
+                DaemonAgentCommands::List { args } => {
+                    commands::daemon::run_agent_list(&args.config.config, args.json).await
                 }
-                DaemonAgentCommands::Get { id, config, json } => {
-                    commands::daemon::run_agent_get(&config, &id, json).await
+                DaemonAgentCommands::Get { id, args } => {
+                    commands::daemon::run_agent_get(&args.config.config, &id, args.json).await
                 }
-                DaemonAgentCommands::Status { id, config, json } => {
-                    commands::daemon::run_agent_status(&config, &id, json).await
+                DaemonAgentCommands::Status { id, args } => {
+                    commands::daemon::run_agent_status(&args.config.config, &id, args.json).await
                 }
-                DaemonAgentCommands::Issues { id, config, json } => {
-                    commands::daemon::run_agent_issues(&config, &id, json).await
+                DaemonAgentCommands::Issues { id, args } => {
+                    commands::daemon::run_agent_issues(&args.config.config, &id, args.json).await
                 }
-                DaemonAgentCommands::Reload { id, config, json } => {
-                    commands::daemon::run_agent_reload(&config, &id, json).await
+                DaemonAgentCommands::Reload { id, args } => {
+                    commands::daemon::run_agent_reload(&args.config.config, &id, args.json).await
                 }
                 DaemonAgentCommands::Create {
                     id,
@@ -768,11 +643,10 @@ async fn main() -> Result<()> {
                     system_prompt,
                     harness,
                     disabled,
-                    config,
-                    json,
+                    args,
                 } => {
                     commands::daemon::run_agent_create(
-                        &config,
+                        &args.config.config,
                         serde_json::json!({
                             "id": id,
                             "provider": provider,
@@ -781,49 +655,58 @@ async fn main() -> Result<()> {
                             "harness": harness,
                             "enabled": !disabled,
                         }),
-                        json,
+                        args.json,
                     )
                     .await
                 }
-                DaemonAgentCommands::Enable { id, config, json } => {
-                    commands::daemon::run_agent_enable(&config, &id, json).await
+                DaemonAgentCommands::Enable { id, args } => {
+                    commands::daemon::run_agent_enable(&args.config.config, &id, args.json).await
                 }
                 DaemonAgentCommands::Update {
                     id,
                     provider,
                     model,
                     system_prompt,
-                    config,
-                    json,
+                    args,
                 } => {
                     commands::daemon::run_agent_update(
-                        &config,
+                        &args.config.config,
                         serde_json::json!({
                             "id": id,
                             "provider": provider,
                             "model": model,
                             "system_prompt": system_prompt,
                         }),
-                        json,
+                        args.json,
                     )
                     .await
                 }
-                DaemonAgentCommands::Disable { id, config, json } => {
-                    commands::daemon::run_agent_disable(&config, &id, json).await
+                DaemonAgentCommands::Disable { id, args } => {
+                    commands::daemon::run_agent_disable(&args.config.config, &id, args.json).await
                 }
-                DaemonAgentCommands::Delete { id, config, json } => {
-                    commands::daemon::run_agent_delete(&config, &id, json).await
+                DaemonAgentCommands::Delete { id, args } => {
+                    commands::daemon::run_agent_delete(&args.config.config, &id, args.json).await
                 }
                 DaemonAgentCommands::BindHarness {
                     id,
                     harness_id,
-                    config,
-                    json,
+                    args,
                 } => {
-                    commands::daemon::run_agent_bind_harness(&config, &id, &harness_id, json).await
+                    commands::daemon::run_agent_bind_harness(
+                        &args.config.config,
+                        &id,
+                        &harness_id,
+                        args.json,
+                    )
+                    .await
                 }
-                DaemonAgentCommands::UseLocalHarness { id, config, json } => {
-                    commands::daemon::run_agent_use_local_harness(&config, &id, json).await
+                DaemonAgentCommands::UseLocalHarness { id, args } => {
+                    commands::daemon::run_agent_use_local_harness(
+                        &args.config.config,
+                        &id,
+                        args.json,
+                    )
+                    .await
                 }
             },
             DaemonCommands::Task { command } => match command {
@@ -832,79 +715,97 @@ async fn main() -> Result<()> {
                     prompt,
                     wait,
                     timeout_ms,
-                    config,
-                    json,
+                    args,
                 } => {
                     commands::daemon::run_task_submit(
-                        &config, &agent_id, &prompt, wait, timeout_ms, json,
+                        &args.config.config,
+                        &agent_id,
+                        &prompt,
+                        wait,
+                        timeout_ms,
+                        args.json,
                     )
                     .await
                 }
-                DaemonTaskCommands::Get {
-                    request_id,
-                    config,
-                    json,
-                } => commands::daemon::run_task_get(&config, &request_id, json).await,
+                DaemonTaskCommands::Get { request_id, args } => {
+                    commands::daemon::run_task_get(&args.config.config, &request_id, args.json)
+                        .await
+                }
                 DaemonTaskCommands::Wait {
                     request_id,
                     timeout_ms,
-                    config,
-                    json,
-                } => commands::daemon::run_task_wait(&config, &request_id, timeout_ms, json).await,
-                DaemonTaskCommands::Cancel {
-                    request_id,
-                    config,
-                    json,
-                } => commands::daemon::run_task_cancel(&config, &request_id, json).await,
-                DaemonTaskCommands::List { config, json } => {
-                    commands::daemon::run_task_list(&config, json).await
+                    args,
+                } => {
+                    commands::daemon::run_task_wait(
+                        &args.config.config,
+                        &request_id,
+                        timeout_ms,
+                        args.json,
+                    )
+                    .await
+                }
+                DaemonTaskCommands::Cancel { request_id, args } => {
+                    commands::daemon::run_task_cancel(&args.config.config, &request_id, args.json)
+                        .await
+                }
+                DaemonTaskCommands::List { args } => {
+                    commands::daemon::run_task_list(&args.config.config, args.json).await
                 }
             },
             DaemonCommands::Harness { command } => match command {
-                DaemonHarnessCommands::List { config, json } => {
-                    commands::daemon::run_harness_list(&config, json).await
+                DaemonHarnessCommands::List { args } => {
+                    commands::daemon::run_harness_list(&args.config.config, args.json).await
                 }
-                DaemonHarnessCommands::Create { id, config, json } => {
-                    commands::daemon::run_harness_create(&config, &id, json).await
+                DaemonHarnessCommands::Create { id, args } => {
+                    commands::daemon::run_harness_create(&args.config.config, &id, args.json).await
                 }
-                DaemonHarnessCommands::Get { id, config, json } => {
-                    commands::daemon::run_harness_get(&config, &id, json).await
+                DaemonHarnessCommands::Get { id, args } => {
+                    commands::daemon::run_harness_get(&args.config.config, &id, args.json).await
                 }
-                DaemonHarnessCommands::Issues { id, config, json } => {
-                    commands::daemon::run_harness_issues(&config, &id, json).await
+                DaemonHarnessCommands::Issues { id, args } => {
+                    commands::daemon::run_harness_issues(&args.config.config, &id, args.json).await
                 }
-                DaemonHarnessCommands::Reload { id, config, json } => {
-                    commands::daemon::run_harness_reload(&config, &id, json).await
+                DaemonHarnessCommands::Reload { id, args } => {
+                    commands::daemon::run_harness_reload(&args.config.config, &id, args.json).await
                 }
-                DaemonHarnessCommands::Validate { id, config, json } => {
-                    commands::daemon::run_harness_validate(&config, &id, json).await
+                DaemonHarnessCommands::Validate { id, args } => {
+                    commands::daemon::run_harness_validate(&args.config.config, &id, args.json)
+                        .await
                 }
-                DaemonHarnessCommands::Delete { id, config, json } => {
-                    commands::daemon::run_harness_delete(&config, &id, json).await
+                DaemonHarnessCommands::Delete { id, args } => {
+                    commands::daemon::run_harness_delete(&args.config.config, &id, args.json).await
                 }
             },
             DaemonCommands::Session { command } => match command {
                 DaemonSessionCommands::List {
-                    config,
                     limit,
                     offset,
-                    json,
-                } => commands::daemon::run_session_list(&config, limit, offset, json).await,
-                DaemonSessionCommands::Get {
-                    session_id,
-                    config,
-                    json,
-                } => commands::daemon::run_session_get(&config, &session_id, json).await,
-                DaemonSessionCommands::Cancel {
-                    session_id,
-                    config,
-                    json,
-                } => commands::daemon::run_session_cancel(&config, &session_id, json).await,
-                DaemonSessionCommands::Kill {
-                    session_id,
-                    config,
-                    json,
-                } => commands::daemon::run_session_kill(&config, &session_id, json).await,
+                    args,
+                } => {
+                    commands::daemon::run_session_list(
+                        &args.config.config,
+                        limit,
+                        offset,
+                        args.json,
+                    )
+                    .await
+                }
+                DaemonSessionCommands::Get { session_id, args } => {
+                    commands::daemon::run_session_get(&args.config.config, &session_id, args.json)
+                        .await
+                }
+                DaemonSessionCommands::Cancel { session_id, args } => {
+                    commands::daemon::run_session_cancel(
+                        &args.config.config,
+                        &session_id,
+                        args.json,
+                    )
+                    .await
+                }
+                DaemonSessionCommands::Kill { session_id, args } => {
+                    commands::daemon::run_session_kill(&args.config.config, &session_id, args.json)
+                        .await
+                }
             },
         },
     }
