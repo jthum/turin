@@ -232,6 +232,17 @@ enum DaemonAgentCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Show isolated daemon issues for one agent directory
+    Issues {
+        /// Agent ID
+        id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Create a daemon-managed agent directory
     Create {
         /// Agent ID / directory name
@@ -676,6 +687,9 @@ async fn main() -> Result<()> {
                 }
                 DaemonAgentCommands::Status { id, config, json } => {
                     commands::daemon::run_agent_status(&config, &id, json).await
+                }
+                DaemonAgentCommands::Issues { id, config, json } => {
+                    commands::daemon::run_agent_issues(&config, &id, json).await
                 }
                 DaemonAgentCommands::Create {
                     id,

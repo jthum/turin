@@ -5,8 +5,8 @@ use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 
 use crate::daemon::registry::{
-    AgentFileConfig, RegistryLoad, RegistrySnapshot, build_effective_config, read_agent_file,
-    scan_registry, snapshot, write_agent_file,
+    AgentFileConfig, RegistryIssue, RegistryLoad, RegistrySnapshot, build_effective_config,
+    read_agent_file, scan_registry, snapshot, write_agent_file,
 };
 use crate::kernel::Kernel;
 use crate::kernel::agent_manager::{AgentStatusSnapshot, TaskStatusSnapshot};
@@ -232,6 +232,24 @@ impl DaemonState {
 
     pub fn runtime_errors(&self) -> Vec<crate::daemon::registry::RegistryIssue> {
         self.registry_snapshot().issues
+    }
+
+    pub fn agent_issues(&self, agent_id: &str) -> Result<Option<Vec<RegistryIssue>>> {
+        if agent_id == self.bootstrap_config.agent.id {
+            return Ok(Some(Vec::new()));
+        }
+
+        let agent_dir = self.agent_dir(agent_id);
+        if !agent_dir.exists() {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.runtime_errors()
+                .into_iter()
+                .filter(|issue| issue_path_is_under(&issue.path, &agent_dir))
+                .collect(),
+        ))
     }
 
     pub async fn create_agent(&mut self, input: CreateAgentInput) -> Result<AgentDetail> {
@@ -796,6 +814,11 @@ fn parse_json_or_string(raw: &str) -> serde_json::Value {
     serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
 }
 
+fn issue_path_is_under(issue_path: &str, root: &Path) -> bool {
+    let issue_path = Path::new(issue_path);
+    issue_path == root || issue_path.starts_with(root)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1138,6 +1161,12 @@ type = "no_op"
         let errors = state.runtime_errors();
         assert_eq!(errors.len(), 1);
         assert!(errors[0].path.contains("broken"));
+
+        let agent_issues = state
+            .agent_issues("broken")?
+            .expect("broken agent should be addressable");
+        assert_eq!(agent_issues.len(), 1);
+        assert!(agent_issues[0].path.contains("broken"));
 
         Ok(())
     }

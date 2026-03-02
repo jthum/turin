@@ -395,6 +395,35 @@ async fn dispatch(
                 }
             }
         }
+        "agent.issues" => {
+            let params: AgentIdParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse agent.issues params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let guard = state.lock().await;
+            match guard.agent_issues(&params.id) {
+                Ok(Some(issues)) => ResponseEnvelope::ok(
+                    request.id,
+                    json!({ "agent_id": params.id, "issues": issues }),
+                ),
+                Ok(None) => ResponseEnvelope::err(
+                    request.id,
+                    "agent_not_found",
+                    format!("Agent '{}' not found", params.id),
+                    None,
+                ),
+                Err(err) => {
+                    ResponseEnvelope::err(request.id, "agent_issues_failed", err.to_string(), None)
+                }
+            }
+        }
         "agent.create" => {
             let params: CreateAgentParams = match serde_json::from_value(request.params) {
                 Ok(params) => params,
