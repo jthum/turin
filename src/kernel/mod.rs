@@ -7,7 +7,7 @@ mod execution_host;
 pub mod governance;
 mod harness_hooks;
 mod harness_manager;
-mod harness_runtime;
+pub(crate) mod harness_runtime;
 pub mod identity;
 mod init;
 mod mcp_runtime;

@@ -569,11 +569,9 @@ impl DaemonState {
     }
 
     pub fn harness_issues(&self, harness_id: &str) -> Result<Option<Vec<RegistryIssue>>> {
-        let Some(detail) = self.harness_detail(harness_id) else {
+        let Some(harness_dir) = self.resolve_harness_issue_root(harness_id) else {
             return Ok(None);
         };
-
-        let harness_dir = PathBuf::from(&detail.directory);
         Ok(Some(
             self.runtime_errors()
                 .into_iter()
@@ -686,6 +684,27 @@ impl DaemonState {
                 })
             })
             .collect()
+    }
+
+    fn resolve_harness_issue_root(&self, harness_id: &str) -> Option<PathBuf> {
+        if harness_id == "default" {
+            return Some(PathBuf::from(&self.bootstrap_config.harness.directory));
+        }
+
+        if let Some(agent_id) = harness_id.strip_prefix("agent::") {
+            let harness_dir = self.agent_dir(agent_id).join("harness");
+            if harness_dir.is_dir() {
+                return Some(harness_dir);
+            }
+        }
+
+        let shared_dir = self.watch_paths().harnesses_dir.join(harness_id);
+        if shared_dir.exists() {
+            return Some(shared_dir);
+        }
+
+        self.harness_detail(harness_id)
+            .map(|detail| PathBuf::from(detail.directory))
     }
 }
 
@@ -1181,6 +1200,28 @@ type = "no_op"
             .expect("broken agent should be addressable");
         assert_eq!(agent_issues.len(), 1);
         assert!(agent_issues[0].path.contains("broken"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn harness_issues_surface_broken_shared_harness_without_loaded_runtime() -> Result<()> {
+        let temp = tempdir()?;
+        let config_path = write_bootstrap(temp.path())?;
+        let mut state = DaemonState::load(&config_path).await?;
+
+        state.create_shared_harness("reviewer").await?;
+        let harness_dir = temp.path().join("harnesses").join("reviewer");
+        std::fs::write(harness_dir.join("broken.lua"), "function on_turn_prepare(")?;
+
+        let status = state.rescan().await?;
+        assert!(status.harnesses.iter().all(|h| h.harness_id != "reviewer"));
+
+        let harness_issues = state
+            .harness_issues("reviewer")?
+            .expect("broken harness should still expose issues");
+        assert_eq!(harness_issues.len(), 1);
+        assert!(harness_issues[0].path.contains("reviewer"));
 
         Ok(())
     }

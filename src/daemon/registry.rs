@@ -1,11 +1,17 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::kernel::agent_manager::AgentManager;
 use crate::kernel::config::{AgentConfig, AgentMode, HarnessConfig, ThinkingConfig, TurinConfig};
+use crate::kernel::governance::GovernanceManager;
+use crate::kernel::harness_runtime::{HarnessRuntime, HarnessRuntimeInitContext};
+use crate::kernel::policy::RuntimePolicyManager;
+use crate::persistence::manager::StoreManager;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RegistryIssue {
@@ -132,8 +138,20 @@ pub fn scan_registry(config: &TurinConfig, config_base: &Path) -> Result<Registr
     let agents_dir = config.resolve_daemon_agents_dir(config_base);
     let harnesses_dir = config.resolve_daemon_harnesses_dir(config_base);
 
-    let shared_harness_map = scan_shared_harnesses(&harnesses_dir)?;
     let mut issues = Vec::new();
+    let mut shared_harness_map = scan_shared_harnesses(&harnesses_dir)?;
+    shared_harness_map.retain(
+        |id, directory| match validate_harness_dir(config, id, directory) {
+            Ok(()) => true,
+            Err(err) => {
+                issues.push(RegistryIssue {
+                    path: directory.display().to_string(),
+                    message: err.to_string(),
+                });
+                false
+            }
+        },
+    );
     let mut agents = Vec::new();
 
     if agents_dir.exists() {
@@ -261,6 +279,12 @@ fn scan_agent_dir(
             Some(shared_dir.clone()),
         )
     } else if local_harness_exists {
+        validate_harness_dir(
+            bootstrap,
+            &format!("agent::{}", agent_id),
+            &local_harness_dir,
+        )
+        .with_context(|| format!("Failed to validate local harness for agent '{}'", agent_id))?;
         (
             format!("agent::{}", agent_id),
             HarnessKind::Local,
@@ -333,6 +357,42 @@ pub fn build_effective_config(bootstrap: &TurinConfig, load: &RegistryLoad) -> R
 
     effective.validate()?;
     Ok(effective)
+}
+
+fn validate_harness_dir(
+    bootstrap: &TurinConfig,
+    harness_id: &str,
+    harness_dir: &Path,
+) -> Result<()> {
+    let workspace_root = PathBuf::from(&bootstrap.kernel.workspace_root);
+    let fs_root = if bootstrap.harness.fs_root == "." {
+        workspace_root.clone()
+    } else {
+        PathBuf::from(&bootstrap.harness.fs_root)
+    };
+
+    let config = Arc::new(bootstrap.clone());
+    let store_manager = Arc::new(StoreManager::new(workspace_root.clone()));
+    let agent_manager = Arc::new(AgentManager::new(config.clone(), store_manager.clone()));
+    let runtime = HarnessRuntime::new(
+        harness_id.to_string(),
+        harness_dir.to_path_buf(),
+        fs_root,
+        workspace_root,
+        bootstrap.kernel.initial_spawn_depth,
+    );
+
+    runtime.validate(HarnessRuntimeInitContext {
+        config,
+        clients: HashMap::new(),
+        store_manager,
+        agent_manager,
+        policy_manager: Arc::new(RuntimePolicyManager::new()),
+        governance_manager: Arc::new(GovernanceManager::new(bootstrap.governance.clone())),
+        embedding_provider: None,
+    })?;
+
+    Ok(())
 }
 
 pub fn snapshot(load: &RegistryLoad) -> RegistrySnapshot {
@@ -438,6 +498,45 @@ provider = "mock"
         assert_eq!(load.agents.len(), 1);
         assert_eq!(load.agents[0].id, "good");
         assert_eq!(load.issues.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn isolates_invalid_local_harness() -> Result<()> {
+        let tmp = tempdir()?;
+        let root = tmp.path();
+        fs::create_dir_all(root.join("default-harness"))?;
+        fs::create_dir_all(root.join("agents/good/harness"))?;
+        fs::create_dir_all(root.join("agents/bad/harness"))?;
+        fs::write(
+            root.join("agents/good/agent.toml"),
+            r#"
+model = "mock-model"
+provider = "mock"
+"#,
+        )?;
+        fs::write(
+            root.join("agents/good/harness/main.lua"),
+            "function on_turn_prepare(ctx)\n  return ALLOW\nend\n",
+        )?;
+        fs::write(
+            root.join("agents/bad/agent.toml"),
+            r#"
+model = "mock-model"
+provider = "mock"
+"#,
+        )?;
+        fs::write(
+            root.join("agents/bad/harness/main.lua"),
+            "function on_turn_prepare(",
+        )?;
+
+        let bootstrap = bootstrap_config(root);
+        let load = scan_registry(&bootstrap, root)?;
+        assert_eq!(load.agents.len(), 1);
+        assert_eq!(load.agents[0].id, "good");
+        assert_eq!(load.issues.len(), 1);
+        assert!(load.issues[0].path.contains("agents/bad"));
         Ok(())
     }
 
