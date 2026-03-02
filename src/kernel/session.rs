@@ -82,7 +82,7 @@ pub struct SessionState {
     /// Reliable durability lane (separate from observer fanout).
     pub durability_tx: Option<mpsc::UnboundedSender<(Option<i64>, KernelEvent)>>,
     pub event_task: Option<Arc<Mutex<Option<JoinHandle<()>>>>>,
-    /// Token to cancel the background event persistence task.
+    /// Token to cooperatively cancel the currently running task/turn.
     pub cancel_token: CancellationToken,
     // Internal counters for task scheduling
     pub next_task_id: u32,

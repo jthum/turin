@@ -414,7 +414,7 @@ enum DaemonTaskCommands {
         #[arg(long)]
         json: bool,
     },
-    /// Cancel one queued daemon task by request ID
+    /// Cancel one daemon task by request ID
     Cancel {
         /// Request ID returned by task submission
         request_id: String,
@@ -534,6 +534,28 @@ enum DaemonSessionCommands {
     },
     /// Show one persisted session by session ID
     Get {
+        /// Session ID
+        session_id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Cooperatively cancel one active daemon session
+    Cancel {
+        /// Session ID
+        session_id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Force-kill one active daemon session
+    Kill {
         /// Session ID
         session_id: String,
         /// Path to turin.toml config file
@@ -873,6 +895,16 @@ async fn main() -> Result<()> {
                     config,
                     json,
                 } => commands::daemon::run_session_get(&config, &session_id, json).await,
+                DaemonSessionCommands::Cancel {
+                    session_id,
+                    config,
+                    json,
+                } => commands::daemon::run_session_cancel(&config, &session_id, json).await,
+                DaemonSessionCommands::Kill {
+                    session_id,
+                    config,
+                    json,
+                } => commands::daemon::run_session_kill(&config, &session_id, json).await,
             },
         },
     }

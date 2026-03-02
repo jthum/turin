@@ -827,7 +827,14 @@ async fn dispatch(
             match guard.cancel_task(&params.request_id).await {
                 Ok(task) => {
                     let value = json!(task);
-                    emit_event(&event_tx, "task.cancelled", value.clone());
+                    let event_name = if value.get("state").and_then(|state| state.as_str())
+                        == Some("cancelling")
+                    {
+                        "task.cancel_requested"
+                    } else {
+                        "task.cancelled"
+                    };
+                    emit_event(&event_tx, event_name, value.clone());
                     ResponseEnvelope::ok(request.id, value)
                 }
                 Err(err) => {
@@ -890,6 +897,55 @@ async fn dispatch(
                 ),
                 Err(err) => {
                     ResponseEnvelope::err(request.id, "session_get_failed", err.to_string(), None)
+                }
+            }
+        }
+        "session.cancel" => {
+            let params: SessionIdParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse session.cancel params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let guard = state.lock().await;
+            match guard.cancel_session(&params.session_id).await {
+                Ok(result) => {
+                    emit_event(&event_tx, "session.cancel_requested", result.clone());
+                    ResponseEnvelope::ok(request.id, result)
+                }
+                Err(err) => ResponseEnvelope::err(
+                    request.id,
+                    "session_cancel_failed",
+                    err.to_string(),
+                    None,
+                ),
+            }
+        }
+        "session.kill" => {
+            let params: SessionIdParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse session.kill params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let guard = state.lock().await;
+            match guard.kill_session(&params.session_id).await {
+                Ok(result) => {
+                    emit_event(&event_tx, "session.killed", result.clone());
+                    ResponseEnvelope::ok(request.id, result)
+                }
+                Err(err) => {
+                    ResponseEnvelope::err(request.id, "session_kill_failed", err.to_string(), None)
                 }
             }
         }

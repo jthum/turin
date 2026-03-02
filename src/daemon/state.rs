@@ -484,14 +484,14 @@ impl DaemonState {
         let Some(initial) = self.get_task(request_id).await else {
             anyhow::bail!("Task '{}' not found", request_id);
         };
-        if initial.state != "queued" && initial.state != "running" {
+        if !matches!(initial.state.as_str(), "queued" | "running" | "cancelling") {
             return Ok(initial);
         }
 
         let deadline = timeout_ms.map(|ms| tokio::time::Instant::now() + Duration::from_millis(ms));
         loop {
             if let Some(snapshot) = self.get_task(request_id).await {
-                if snapshot.state != "queued" && snapshot.state != "running" {
+                if !matches!(snapshot.state.as_str(), "queued" | "running" | "cancelling") {
                     return Ok(snapshot);
                 }
             } else {
@@ -571,6 +571,28 @@ impl DaemonState {
             events,
             messages,
             tool_executions,
+        }))
+    }
+
+    pub async fn cancel_session(&self, session_id: &str) -> Result<serde_json::Value> {
+        let (agent_id, session_id) = self
+            .kernel
+            .agent_manager()
+            .cancel_session(session_id)
+            .await?;
+        Ok(serde_json::json!({
+            "agent_id": agent_id,
+            "session_id": session_id,
+            "action": "cancel_requested",
+        }))
+    }
+
+    pub async fn kill_session(&self, session_id: &str) -> Result<serde_json::Value> {
+        let (agent_id, session_id) = self.kernel.agent_manager().kill_session(session_id).await?;
+        Ok(serde_json::json!({
+            "agent_id": agent_id,
+            "session_id": session_id,
+            "action": "killed",
         }))
     }
 

@@ -19,6 +19,14 @@ impl ExecutionHost {
         }
 
         while let Some((mut task, queue_depth_after_pop)) = self.dequeue_next_task(session).await {
+            if session.cancel_token.is_cancelled() {
+                self.complete_task(session, &task, TaskTerminalStatus::Cancelled, 0, None)
+                    .await?;
+                if session.stop_requested {
+                    break;
+                }
+                continue;
+            }
             if !self
                 .prepare_task_start(session, &mut task, queue_depth_after_pop)
                 .await?
@@ -60,7 +68,7 @@ impl ExecutionHost {
             )
             .await?;
 
-            if session.stop_requested {
+            if session.stop_requested || task_result.status == TaskTerminalStatus::Cancelled {
                 info!(
                     session_id = %session.identity.session_id(),
                     "Stopping run loop due to session stop request"

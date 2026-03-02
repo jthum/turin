@@ -22,6 +22,13 @@ impl ExecutionHost {
         let session_id = session.identity.session_id().to_string();
         let prompt = task.prompt.as_str();
 
+        if session.cancel_token.is_cancelled() {
+            return Ok(TaskExecutionResult {
+                status: TaskTerminalStatus::Cancelled,
+                task_turn_count: 0,
+            });
+        }
+
         self.append_task_user_message(session, prompt);
 
         let tool_ctx = ToolContext {
@@ -107,6 +114,9 @@ impl ExecutionHost {
         let max_task_turns = self.config.kernel.max_turns;
 
         let task_status_result: Result<TaskTerminalStatus> = loop {
+            if session.cancel_token.is_cancelled() {
+                break Ok(TaskTerminalStatus::Cancelled);
+            }
             if task_turn_count >= max_task_turns {
                 error!(
                     max_turns = max_task_turns,
@@ -160,6 +170,9 @@ impl ExecutionHost {
                     turn::TurnOutcome::Rejected => {
                         break Ok(TaskTerminalStatus::Rejected);
                     }
+                    turn::TurnOutcome::Cancelled => {
+                        break Ok(TaskTerminalStatus::Cancelled);
+                    }
                 }
             }
 
@@ -170,6 +183,9 @@ impl ExecutionHost {
                 }
                 turn::TurnOutcome::Rejected => {
                     break Ok(TaskTerminalStatus::Rejected);
+                }
+                turn::TurnOutcome::Cancelled => {
+                    break Ok(TaskTerminalStatus::Cancelled);
                 }
             }
         };

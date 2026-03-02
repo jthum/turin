@@ -1,6 +1,7 @@
 use anyhow::Result;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::harness::verdict::Verdict;
@@ -10,10 +11,11 @@ use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::QueuedTask;
 
-use super::{AgentManager, PeerAgentTaskEnvelope, PeerAgentTaskResult};
+use super::{AgentManager, PeerAgentTaskEnvelope, PeerAgentTaskResult, RuntimeControl};
 
 pub(super) struct PeerRuntime {
     manager: Arc<AgentManager>,
+    control: Arc<RuntimeControl>,
     host: ExecutionHost,
     session: crate::kernel::session::SessionState,
     agent_id: String,
@@ -28,7 +30,11 @@ pub(super) struct PeerRunOutcome {
 }
 
 impl PeerRuntime {
-    pub(super) async fn start(manager: Arc<AgentManager>, agent_id: &str) -> Result<Self> {
+    pub(super) async fn start(
+        manager: Arc<AgentManager>,
+        agent_id: &str,
+        control: Arc<RuntimeControl>,
+    ) -> Result<Self> {
         let mut host = fork_peer_kernel(&manager);
         if host.clients.is_empty() {
             host.init_clients()?;
@@ -36,16 +42,21 @@ impl PeerRuntime {
 
         let mut session = host.create_session_for_agent(agent_id).await;
         host.start_session(&mut session).await?;
+        control.set_current_session_id(Some(session.identity.session_id().to_string()));
 
         Ok(Self {
             manager,
+            control,
             host,
             session,
             agent_id: agent_id.to_string(),
         })
     }
 
-    pub(super) async fn handle_envelope(&mut self, envelope: PeerAgentTaskEnvelope) {
+    pub(super) async fn handle_envelope(&mut self, mut envelope: PeerAgentTaskEnvelope) {
+        let runtime_task_id = self.allocate_runtime_task_id(&mut envelope.task);
+        let request_id = envelope.request_id.clone();
+        self.prepare_task_execution(request_id.clone(), runtime_task_id);
         let result = self
             .run_queued_task(envelope.task, envelope.delegated_capabilities)
             .await;
@@ -79,12 +90,18 @@ impl PeerRuntime {
         } else if let Err(e) = result {
             error!(agent_id = %self.agent_id, error = %e, "Peer agent task failed");
         }
+        self.control.clear_active_task();
+        if let Err(err) = self.reset_session_if_requested().await {
+            error!(agent_id = %self.agent_id, error = %err, "Peer runtime failed to reset session");
+        }
     }
 
     pub(super) async fn shutdown(mut self) {
         if let Err(e) = self.host.end_session(&mut self.session).await {
             warn!(agent_id = %self.agent_id, error = %e, "Peer agent session end error");
         }
+        self.control.clear_active_task();
+        self.control.set_current_session_id(None);
         self.host.shutdown_mcp_clients().await;
         info!(agent_id = %self.agent_id, "Peer runtime shut down");
     }
@@ -287,6 +304,34 @@ impl PeerRuntime {
         if let Some(ref engine) = *harness {
             engine.set_active_capability_delegation(None);
         }
+    }
+
+    fn prepare_task_execution(&mut self, request_id: Option<String>, runtime_task_id: String) {
+        self.session.cancel_token = CancellationToken::new();
+        self.control.activate_task(
+            request_id,
+            runtime_task_id,
+            self.session.cancel_token.clone(),
+        );
+    }
+
+    pub(super) async fn reset_session_if_requested(&mut self) -> Result<bool> {
+        if !self.control.take_session_reset_requested() {
+            return Ok(false);
+        }
+
+        self.reset_session().await?;
+        Ok(true)
+    }
+
+    async fn reset_session(&mut self) -> Result<()> {
+        self.host.end_session(&mut self.session).await?;
+        let mut session = self.host.create_session_for_agent(&self.agent_id).await;
+        self.host.start_session(&mut session).await?;
+        self.control
+            .set_current_session_id(Some(session.identity.session_id().to_string()));
+        self.session = session;
+        Ok(())
     }
 }
 

@@ -17,6 +17,7 @@ pub(super) struct TurnStreamOutput {
     pub response_thinking_signature: Option<String>,
     pub response_text: String,
     pub pending_tool_calls: Vec<PendingToolCall>,
+    pub cancelled: bool,
 }
 
 impl ExecutionHost {
@@ -32,11 +33,23 @@ impl ExecutionHost {
             response_thinking_signature: None,
             response_text: String::with_capacity(4096),
             pending_tool_calls: Vec::new(),
+            cancelled: false,
         };
         let mut is_thinking = false;
         let ansi_stdout = display::stdout_ansi();
 
-        while let Some(event_result) = stream.next().await {
+        loop {
+            let next_event = tokio::select! {
+                _ = session.cancel_token.cancelled() => {
+                    output.cancelled = true;
+                    break;
+                }
+                event = stream.next() => event,
+            };
+
+            let Some(event_result) = next_event else {
+                break;
+            };
             let event = event_result.with_context(|| {
                 format!(
                     "inference stream event failure (provider='{}', model='{}')",

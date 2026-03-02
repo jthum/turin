@@ -476,6 +476,34 @@ pub async fn run_session_get(
     Ok(())
 }
 
+pub async fn run_session_cancel(
+    config_path: &std::path::Path,
+    session_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(
+        config_path,
+        "session.cancel",
+        json!({ "session_id": session_id }),
+    )
+    .await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_session_kill(
+    config_path: &std::path::Path,
+    session_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(
+        config_path,
+        "session.kill",
+        json!({ "session_id": session_id }),
+    )
+    .await?;
+    print_response(response, json_output)
+}
+
 pub async fn run_harness_list(config_path: &std::path::Path, json_output: bool) -> Result<()> {
     let response = send_request(config_path, "daemon.status", json!({})).await?;
     if json_output {

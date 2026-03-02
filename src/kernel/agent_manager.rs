@@ -7,7 +7,8 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::RwLock as StdRwLock;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
@@ -22,6 +23,7 @@ use crate::tools::registry::ToolRegistry;
 use anyhow::Result;
 use tokio::sync::{Notify, RwLock, oneshot};
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PeerAgentTaskResult {
@@ -59,6 +61,7 @@ pub struct TaskStatusSnapshot {
 enum PendingTaskState {
     Queued,
     Running,
+    Cancelling,
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +69,103 @@ struct PendingTaskRecord {
     agent_id: String,
     state: PendingTaskState,
     runtime_task_id: Option<String>,
+}
+
+#[derive(Default)]
+pub(crate) struct RuntimeControl {
+    current_session_id: StdRwLock<Option<String>>,
+    current_request_id: StdRwLock<Option<String>>,
+    current_runtime_task_id: StdRwLock<Option<String>>,
+    current_cancel_token: Mutex<Option<CancellationToken>>,
+    session_reset_requested: AtomicBool,
+}
+
+impl RuntimeControl {
+    fn set_current_session_id(&self, session_id: Option<String>) {
+        *self
+            .current_session_id
+            .write()
+            .expect("runtime control session lock poisoned") = session_id;
+    }
+
+    fn current_session_id(&self) -> Option<String> {
+        self.current_session_id
+            .read()
+            .expect("runtime control session lock poisoned")
+            .clone()
+    }
+
+    fn activate_task(
+        &self,
+        request_id: Option<String>,
+        runtime_task_id: String,
+        cancel_token: CancellationToken,
+    ) {
+        *self
+            .current_request_id
+            .write()
+            .expect("runtime control request lock poisoned") = request_id;
+        *self
+            .current_runtime_task_id
+            .write()
+            .expect("runtime control task id lock poisoned") = Some(runtime_task_id);
+        *self
+            .current_cancel_token
+            .lock()
+            .expect("runtime control cancel lock poisoned") = Some(cancel_token);
+    }
+
+    fn clear_active_task(&self) {
+        *self
+            .current_request_id
+            .write()
+            .expect("runtime control request lock poisoned") = None;
+        *self
+            .current_runtime_task_id
+            .write()
+            .expect("runtime control task id lock poisoned") = None;
+        *self
+            .current_cancel_token
+            .lock()
+            .expect("runtime control cancel lock poisoned") = None;
+    }
+
+    fn current_request_id(&self) -> Option<String> {
+        self.current_request_id
+            .read()
+            .expect("runtime control request lock poisoned")
+            .clone()
+    }
+
+    fn current_runtime_task_id(&self) -> Option<String> {
+        self.current_runtime_task_id
+            .read()
+            .expect("runtime control task id lock poisoned")
+            .clone()
+    }
+
+    fn request_task_cancel(&self) -> bool {
+        let token = self
+            .current_cancel_token
+            .lock()
+            .expect("runtime control cancel lock poisoned")
+            .clone();
+        if let Some(token) = token {
+            token.cancel();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn request_session_cancel(&self) -> bool {
+        self.session_reset_requested.store(true, Ordering::Relaxed);
+        self.request_task_cancel()
+    }
+
+    fn take_session_reset_requested(&self) -> bool {
+        self.session_reset_requested.swap(false, Ordering::Relaxed)
+    }
 }
 
 struct PeerAgentTaskEnvelope {
@@ -81,6 +181,8 @@ pub struct AgentRuntimeHandle {
     queue: Arc<Mutex<VecDeque<PeerAgentTaskEnvelope>>>,
     /// Notification used to wake the background runtime when new work arrives.
     notify: Arc<Notify>,
+    /// Shared execution/session control state for the runtime.
+    control: Arc<RuntimeControl>,
     /// The background task running the agent's event loop.
     task: Option<JoinHandle<()>>,
     /// Approximate number of tasks currently queued in the runtime channel.
@@ -372,6 +474,7 @@ impl AgentManager {
                 state: match pending.state {
                     PendingTaskState::Queued => "queued".to_string(),
                     PendingTaskState::Running => "running".to_string(),
+                    PendingTaskState::Cancelling => "cancelling".to_string(),
                 },
                 runtime_task_id: pending.runtime_task_id.clone(),
                 status: None,
@@ -478,11 +581,33 @@ impl AgentManager {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", request_id))?;
 
-        if pending.state == PendingTaskState::Running {
-            anyhow::bail!(
-                "Task '{}' is already running and cannot be cancelled",
-                request_id
-            );
+        if pending.state == PendingTaskState::Running
+            || pending.state == PendingTaskState::Cancelling
+        {
+            let handle = {
+                let runtimes = self.runtimes.read().await;
+                runtimes.get(&pending.agent_id).cloned().ok_or_else(|| {
+                    anyhow::anyhow!("Agent runtime '{}' is not available", pending.agent_id)
+                })?
+            };
+
+            let current_request_id = handle.control.current_request_id();
+            if current_request_id.as_deref() != Some(request_id) {
+                anyhow::bail!("Task '{}' is no longer the active running task", request_id);
+            }
+            if !handle.control.request_task_cancel() {
+                anyhow::bail!(
+                    "Task '{}' is running without a cancellable execution token",
+                    request_id
+                );
+            }
+            if let Some(pending) = self.pending_task_states.write().await.get_mut(request_id) {
+                pending.state = PendingTaskState::Cancelling;
+            }
+            let snapshot = self.get_task(request_id).await.ok_or_else(|| {
+                anyhow::anyhow!("Task '{}' disappeared after cancellation", request_id)
+            })?;
+            return Ok(snapshot);
         }
 
         let handle = {
@@ -538,6 +663,155 @@ impl AgentManager {
             output: completed.output,
             error: completed.error,
         })
+    }
+
+    pub async fn cancel_session(&self, session_id: &str) -> Result<(String, String)> {
+        let (agent_id, handle) =
+            self.find_runtime_by_session(session_id)
+                .await
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Session '{}' is not an active managed runtime session",
+                        session_id
+                    )
+                })?;
+
+        self.cancel_queued_requests_for_agent(&agent_id, "Session cancelled before execution")
+            .await;
+
+        if handle.control.current_request_id().is_none() {
+            handle.control.request_session_cancel();
+            handle.notify.notify_one();
+        } else if !handle.control.request_session_cancel() {
+            anyhow::bail!(
+                "Session '{}' has no cancellable active execution",
+                session_id
+            );
+        }
+
+        Ok((agent_id, session_id.to_string()))
+    }
+
+    pub async fn kill_session(&self, session_id: &str) -> Result<(String, String)> {
+        let (agent_id, handle) =
+            self.find_runtime_by_session(session_id)
+                .await
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Session '{}' is not an active managed runtime session",
+                        session_id
+                    )
+                })?;
+
+        self.kill_runtime_requests(&agent_id, &handle, "Session killed")
+            .await;
+
+        if let Some(task) = &handle.task {
+            task.abort();
+        }
+
+        self.runtimes.write().await.remove(&agent_id);
+
+        Ok((agent_id, session_id.to_string()))
+    }
+
+    async fn find_runtime_by_session(
+        &self,
+        session_id: &str,
+    ) -> Option<(String, Arc<AgentRuntimeHandle>)> {
+        let runtimes = self.runtimes.read().await;
+        runtimes.iter().find_map(|(agent_id, handle)| {
+            if handle.control.current_session_id().as_deref() == Some(session_id) {
+                Some((agent_id.clone(), Arc::clone(handle)))
+            } else {
+                None
+            }
+        })
+    }
+
+    async fn cancel_queued_requests_for_agent(&self, agent_id: &str, reason: &str) {
+        let Some(handle) = self.runtimes.read().await.get(agent_id).cloned() else {
+            return;
+        };
+
+        let drained: Vec<_> = {
+            let mut queue = handle
+                .queue
+                .lock()
+                .expect("agent runtime queue mutex poisoned");
+            queue.drain(..).collect()
+        };
+        if drained.is_empty() {
+            return;
+        }
+        handle.queued_tasks.store(0, Ordering::Relaxed);
+
+        for envelope in drained {
+            let request_id = envelope
+                .request_id
+                .unwrap_or_else(|| uuid::Uuid::now_v7().simple().to_string());
+            let completed = PeerAgentTaskResult {
+                request_id: request_id.clone(),
+                agent_id: agent_id.to_string(),
+                runtime_task_id: String::new(),
+                status: TaskTerminalStatus::Cancelled,
+                task_turn_count: 0,
+                output: None,
+                error: Some(reason.to_string()),
+            };
+            if let Some(tx_result) = envelope.result_tx {
+                let _ = tx_result.send(completed.clone());
+            }
+            self.record_completed_result(completed).await;
+        }
+    }
+
+    async fn kill_runtime_requests(
+        &self,
+        agent_id: &str,
+        handle: &Arc<AgentRuntimeHandle>,
+        reason: &str,
+    ) {
+        let drained: Vec<_> = {
+            let mut queue = handle
+                .queue
+                .lock()
+                .expect("agent runtime queue mutex poisoned");
+            queue.drain(..).collect()
+        };
+        handle.queued_tasks.store(0, Ordering::Relaxed);
+
+        for envelope in drained {
+            let request_id = envelope
+                .request_id
+                .unwrap_or_else(|| uuid::Uuid::now_v7().simple().to_string());
+            let completed = PeerAgentTaskResult {
+                request_id: request_id.clone(),
+                agent_id: agent_id.to_string(),
+                runtime_task_id: String::new(),
+                status: TaskTerminalStatus::Killed,
+                task_turn_count: 0,
+                output: None,
+                error: Some(reason.to_string()),
+            };
+            if let Some(tx_result) = envelope.result_tx {
+                let _ = tx_result.send(completed.clone());
+            }
+            self.record_completed_result(completed).await;
+        }
+
+        if let Some(request_id) = handle.control.current_request_id() {
+            let completed = PeerAgentTaskResult {
+                request_id: request_id.clone(),
+                agent_id: agent_id.to_string(),
+                runtime_task_id: handle.control.current_runtime_task_id().unwrap_or_default(),
+                status: TaskTerminalStatus::Killed,
+                task_turn_count: 0,
+                output: None,
+                error: Some(reason.to_string()),
+            };
+            self.record_completed_result(completed).await;
+        }
     }
 }
 
@@ -689,6 +963,7 @@ mod tests {
             Arc::new(AgentRuntimeHandle {
                 queue: Arc::new(Mutex::new(queue)),
                 notify: Arc::new(Notify::new()),
+                control: Arc::new(RuntimeControl::default()),
                 task: None,
                 queued_tasks: Arc::new(AtomicUsize::new(1)),
                 active_tasks: Arc::new(AtomicUsize::new(0)),
@@ -729,7 +1004,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancel_task_rejects_running_work() -> Result<()> {
+    async fn cancel_task_marks_running_work_cancelling() -> Result<()> {
         let tmp = tempdir()?;
         let harness_dir = tmp.path().join("harness");
         std::fs::create_dir_all(&harness_dir)?;
@@ -737,6 +1012,13 @@ mod tests {
         let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
         let manager = kernel.agent_manager();
         let request_id = "req_running".to_string();
+        let cancel_token = CancellationToken::new();
+        let control = Arc::new(RuntimeControl::default());
+        control.activate_task(
+            Some(request_id.clone()),
+            "t_1".to_string(),
+            cancel_token.clone(),
+        );
 
         manager.pending_task_states.write().await.insert(
             request_id.clone(),
@@ -747,11 +1029,173 @@ mod tests {
             },
         );
 
-        let err = manager
-            .cancel_task(&request_id)
+        manager.runtimes.write().await.insert(
+            "default".to_string(),
+            Arc::new(AgentRuntimeHandle {
+                queue: Arc::new(Mutex::new(VecDeque::new())),
+                notify: Arc::new(Notify::new()),
+                control,
+                task: None,
+                queued_tasks: Arc::new(AtomicUsize::new(0)),
+                active_tasks: Arc::new(AtomicUsize::new(1)),
+            }),
+        );
+
+        let snapshot = manager.cancel_task(&request_id).await?;
+        assert_eq!(snapshot.state, "cancelling");
+        assert!(snapshot.status.is_none());
+        assert!(cancel_token.is_cancelled());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancel_session_cancels_queued_work_and_requests_reset() -> Result<()> {
+        let tmp = tempdir()?;
+        let harness_dir = tmp.path().join("harness");
+        std::fs::create_dir_all(&harness_dir)?;
+
+        let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+        let manager = kernel.agent_manager();
+        let session_id = "s_cancel";
+        let request_id = "req_session_cancel".to_string();
+        let (tx_result, rx_result) = oneshot::channel();
+        let control = Arc::new(RuntimeControl::default());
+        control.set_current_session_id(Some(session_id.to_string()));
+
+        manager
+            .pending_results
+            .write()
             .await
-            .expect_err("running task");
-        assert!(err.to_string().contains("already running"));
+            .insert(request_id.clone(), rx_result);
+        manager.pending_task_states.write().await.insert(
+            request_id.clone(),
+            PendingTaskRecord {
+                agent_id: "default".to_string(),
+                state: PendingTaskState::Queued,
+                runtime_task_id: None,
+            },
+        );
+
+        let mut queue = VecDeque::new();
+        queue.push_back(PeerAgentTaskEnvelope {
+            task: QueuedTask::ad_hoc("queued".to_string()),
+            request_id: Some(request_id.clone()),
+            result_tx: Some(tx_result),
+            delegated_capabilities: None,
+        });
+
+        manager.runtimes.write().await.insert(
+            "default".to_string(),
+            Arc::new(AgentRuntimeHandle {
+                queue: Arc::new(Mutex::new(queue)),
+                notify: Arc::new(Notify::new()),
+                control: Arc::clone(&control),
+                task: None,
+                queued_tasks: Arc::new(AtomicUsize::new(1)),
+                active_tasks: Arc::new(AtomicUsize::new(0)),
+            }),
+        );
+
+        let (agent_id, returned_session_id) = manager.cancel_session(session_id).await?;
+        assert_eq!(agent_id, "default");
+        assert_eq!(returned_session_id, session_id);
+        assert!(control.take_session_reset_requested());
+
+        let completed = manager
+            .get_task(&request_id)
+            .await
+            .expect("cancelled queued task should be visible");
+        assert_eq!(completed.status, Some(TaskTerminalStatus::Cancelled));
+        assert_eq!(
+            completed.error.as_deref(),
+            Some("Session cancelled before execution")
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn kill_session_marks_running_and_queued_work_killed() -> Result<()> {
+        let tmp = tempdir()?;
+        let harness_dir = tmp.path().join("harness");
+        std::fs::create_dir_all(&harness_dir)?;
+
+        let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+        let manager = kernel.agent_manager();
+        let session_id = "s_kill";
+        let running_request_id = "req_running_kill".to_string();
+        let queued_request_id = "req_queued_kill".to_string();
+        let (tx_result, rx_result) = oneshot::channel();
+        let control = Arc::new(RuntimeControl::default());
+        control.set_current_session_id(Some(session_id.to_string()));
+        control.activate_task(
+            Some(running_request_id.clone()),
+            "t_running".to_string(),
+            CancellationToken::new(),
+        );
+
+        manager
+            .pending_results
+            .write()
+            .await
+            .insert(queued_request_id.clone(), rx_result);
+        manager.pending_task_states.write().await.insert(
+            running_request_id.clone(),
+            PendingTaskRecord {
+                agent_id: "default".to_string(),
+                state: PendingTaskState::Running,
+                runtime_task_id: Some("t_running".to_string()),
+            },
+        );
+        manager.pending_task_states.write().await.insert(
+            queued_request_id.clone(),
+            PendingTaskRecord {
+                agent_id: "default".to_string(),
+                state: PendingTaskState::Queued,
+                runtime_task_id: None,
+            },
+        );
+
+        let mut queue = VecDeque::new();
+        queue.push_back(PeerAgentTaskEnvelope {
+            task: QueuedTask::ad_hoc("queued".to_string()),
+            request_id: Some(queued_request_id.clone()),
+            result_tx: Some(tx_result),
+            delegated_capabilities: None,
+        });
+
+        manager.runtimes.write().await.insert(
+            "default".to_string(),
+            Arc::new(AgentRuntimeHandle {
+                queue: Arc::new(Mutex::new(queue)),
+                notify: Arc::new(Notify::new()),
+                control,
+                task: Some(tokio::spawn(async {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                })),
+                queued_tasks: Arc::new(AtomicUsize::new(1)),
+                active_tasks: Arc::new(AtomicUsize::new(1)),
+            }),
+        );
+
+        let (agent_id, returned_session_id) = manager.kill_session(session_id).await?;
+        assert_eq!(agent_id, "default");
+        assert_eq!(returned_session_id, session_id);
+        assert!(manager.runtimes.read().await.get("default").is_none());
+
+        let running = manager
+            .get_task(&running_request_id)
+            .await
+            .expect("killed running task should be visible");
+        assert_eq!(running.status, Some(TaskTerminalStatus::Killed));
+
+        let queued = manager
+            .get_task(&queued_request_id)
+            .await
+            .expect("killed queued task should be visible");
+        assert_eq!(queued.status, Some(TaskTerminalStatus::Killed));
+        assert_eq!(queued.error.as_deref(), Some("Session killed"));
 
         Ok(())
     }

@@ -39,11 +39,17 @@ impl ExecutionHost {
         tool_ctx: &ToolContext,
         pending_tool_calls: Vec<PendingToolCall>,
     ) -> Result<TurnOutcome> {
+        if session.cancel_token.is_cancelled() {
+            return Ok(TurnOutcome::Cancelled);
+        }
         let (immediate_records, validated_calls) =
             self.evaluate_pending_tool_calls(session, &pending_tool_calls);
         let final_by_id = self
             .execute_validated_tool_calls(session, tool_ctx, validated_calls, immediate_records)
             .await;
+        if session.cancel_token.is_cancelled() {
+            return Ok(TurnOutcome::Cancelled);
+        }
         self.finalize_tool_results(session, &pending_tool_calls, final_by_id)
             .await;
 
@@ -183,12 +189,17 @@ impl ExecutionHost {
             }
         });
 
-        let execution_results = join_all(futures).await;
-
         let mut final_by_id: HashMap<String, FinalToolRecord> = HashMap::new();
         for record in immediate_records {
             final_by_id.insert(record.id.clone(), record);
         }
+
+        let execution_results = tokio::select! {
+            _ = session.cancel_token.cancelled() => {
+                return final_by_id;
+            }
+            results = join_all(futures) => results,
+        };
 
         for (tc, final_args, verdict_str, duration_ms, effect, mut is_error) in execution_results {
             let content;

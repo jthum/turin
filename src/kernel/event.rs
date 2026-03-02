@@ -13,6 +13,7 @@ pub enum TaskTerminalStatus {
     MaxTurns,
     Error,
     Cancelled,
+    Killed,
 }
 
 /// Events related to the overall lifecycle of an agent session or turn.

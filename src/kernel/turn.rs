@@ -31,6 +31,7 @@ pub(crate) enum TurnOutcome {
     Continue,
     Complete,
     Rejected,
+    Cancelled,
 }
 
 fn merge_request_option_overrides(
@@ -80,6 +81,9 @@ impl ExecutionHost {
         let stream_output = self
             .collect_turn_stream_output(session, &provider_name, &model, stream)
             .await?;
+        if stream_output.cancelled {
+            return Ok(TurnOutcome::Cancelled);
+        }
         let response_thinking = stream_output.response_thinking;
         let response_thinking_signature = stream_output.response_thinking_signature;
         let response_text = stream_output.response_text;

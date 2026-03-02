@@ -7,7 +7,7 @@ use tokio::sync::Notify;
 use tracing::{debug, error, info};
 
 use super::peer_runtime::PeerRuntime;
-use super::{AgentManager, AgentRuntimeHandle, PeerAgentTaskEnvelope};
+use super::{AgentManager, AgentRuntimeHandle, PeerAgentTaskEnvelope, RuntimeControl};
 
 impl AgentManager {
     pub(super) async fn ensure_runtime(
@@ -43,6 +43,7 @@ impl AgentManager {
             VecDeque::<PeerAgentTaskEnvelope>::new(),
         ));
         let notify = Arc::new(Notify::new());
+        let control = Arc::new(RuntimeControl::default());
         let queued_tasks = Arc::new(AtomicUsize::new(0));
         let active_tasks = Arc::new(AtomicUsize::new(0));
         let agent_id_clone = agent_id.to_string();
@@ -53,10 +54,13 @@ impl AgentManager {
 
         let queued_tasks_bg = queued_tasks.clone();
         let active_tasks_bg = active_tasks.clone();
+        let control_bg = Arc::clone(&control);
         let join_handle = tokio::spawn(async move {
             debug!(agent_id = %agent_id_clone, "Peer agent loop initializing");
 
-            let mut runtime = match PeerRuntime::start(manager.clone(), &agent_id_clone).await {
+            let mut runtime = match PeerRuntime::start(manager.clone(), &agent_id_clone, control_bg)
+                .await
+            {
                 Ok(runtime) => runtime,
                 Err(e) => {
                     error!(agent_id = %agent_id_clone, error = %e, "Peer agent failed to start session");
@@ -72,6 +76,18 @@ impl AgentManager {
                     queue.pop_front()
                 };
                 let Some(mut envelope) = envelope else {
+                    match runtime.reset_session_if_requested().await {
+                        Ok(true) => continue,
+                        Ok(false) => {}
+                        Err(err) => {
+                            error!(
+                                agent_id = %agent_id_clone,
+                                error = %err,
+                                "Peer agent failed to reset session"
+                            );
+                            break;
+                        }
+                    }
                     if let Some(idle_secs) = idle_grace_secs {
                         let notified = tokio::time::timeout(
                             std::time::Duration::from_secs(idle_secs),
@@ -109,6 +125,7 @@ impl AgentManager {
         Ok(AgentRuntimeHandle {
             queue,
             notify,
+            control,
             task: Some(join_handle),
             queued_tasks,
             active_tasks,
