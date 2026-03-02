@@ -30,12 +30,12 @@ thiserror = "1.0"
 anyhow = "1.0"
 
 # Inference SDK family (unified provider layer)
-inference-sdk-core = { git = "https://github.com/jthum/inference-sdk-rust", branch = "main" }
-inference-sdk-registry = { git = "https://github.com/jthum/inference-sdk-rust", branch = "main" }
-openai-sdk = { git = "https://github.com/jthum/inference-sdk-rust", branch = "main" }
+inference-sdk-core = { git = "https://github.com/jthum/inference-sdk-rust", rev = "bd64dd2f9fd7a58e8c4e270c8b931d13de2971c6" }
+inference-sdk-registry = { git = "https://github.com/jthum/inference-sdk-rust", rev = "bd64dd2f9fd7a58e8c4e270c8b931d13de2971c6" }
+openai-sdk = { git = "https://github.com/jthum/inference-sdk-rust", rev = "bd64dd2f9fd7a58e8c4e270c8b931d13de2971c6" }
 
 # MCP SDK
-mcp-sdk = { git = "https://github.com/jthum/mcp-sdk-rust", branch = "main" }
+mcp-sdk = { git = "https://github.com/jthum/mcp-sdk-rust", rev = "3c5e0d3078f68d020d1617f3bac2b447bb9df478" }
 
 # Streaming
 futures = "0.3"
