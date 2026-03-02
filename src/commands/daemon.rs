@@ -39,6 +39,15 @@ pub async fn run_agent_get(
     print_response(response, json_output)
 }
 
+pub async fn run_agent_status(
+    config_path: &std::path::Path,
+    agent_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "agent.status", json!({ "id": agent_id })).await?;
+    print_response(response, json_output)
+}
+
 pub async fn run_agent_create(
     config_path: &std::path::Path,
     params: Value,

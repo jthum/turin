@@ -8,7 +8,7 @@ use crate::daemon::registry::{
     scan_registry, snapshot, write_agent_file,
 };
 use crate::kernel::Kernel;
-use crate::kernel::agent_manager::TaskStatusSnapshot;
+use crate::kernel::agent_manager::{AgentStatusSnapshot, TaskStatusSnapshot};
 use crate::kernel::config::{AgentMode, ThinkingConfig, TurinConfig};
 use crate::kernel::session::QueuedTask;
 
@@ -398,6 +398,50 @@ impl DaemonState {
             idle_grace_secs: file.idle_grace_secs,
             has_local_harness: agent_dir.join("harness").is_dir(),
         }))
+    }
+
+    pub async fn agent_runtime_status(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<AgentStatusSnapshot>> {
+        if agent_id == self.bootstrap_config.agent.id {
+            return Ok(Some(
+                self.kernel
+                    .agent_manager()
+                    .get_status(agent_id)
+                    .await
+                    .unwrap_or_else(|| AgentStatusSnapshot {
+                        agent_id: agent_id.to_string(),
+                        running: false,
+                        active_tasks: 0,
+                        queued_tasks: 0,
+                        awaiting_results: 0,
+                    }),
+            ));
+        }
+
+        let known = self
+            .registry_load
+            .agents
+            .iter()
+            .any(|agent| agent.id == agent_id);
+        if !known {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.kernel
+                .agent_manager()
+                .get_status(agent_id)
+                .await
+                .unwrap_or_else(|| AgentStatusSnapshot {
+                    agent_id: agent_id.to_string(),
+                    running: false,
+                    active_tasks: 0,
+                    queued_tasks: 0,
+                    awaiting_results: 0,
+                }),
+        ))
     }
 
     fn agent_dir(&self, agent_id: &str) -> PathBuf {
@@ -1084,6 +1128,67 @@ type = "no_op"
             .expect_err("non-scaffold local harness should block rebinding");
         assert!(err.to_string().contains("non-scaffold local harness"));
         assert!(local_main.exists());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn agent_runtime_status_reflects_live_runtime_state() -> Result<()> {
+        let temp = tempdir()?;
+        let config_path = write_bootstrap(temp.path())?;
+        let mut state = DaemonState::load(&config_path).await?;
+
+        let disabled = state
+            .create_agent(CreateAgentInput {
+                id: "disabled-reviewer".to_string(),
+                provider: "mock".to_string(),
+                model: "mock-model".to_string(),
+                system_prompt: None,
+                thinking: None,
+                mode: None,
+                harness: None,
+                idle_grace_secs: None,
+                enabled: false,
+            })
+            .await?;
+        assert!(!disabled.enabled);
+
+        let disabled_status = state
+            .agent_runtime_status("disabled-reviewer")
+            .await?
+            .expect("disabled agent status exists");
+        assert_eq!(disabled_status.agent_id, "disabled-reviewer");
+        assert!(!disabled_status.running);
+
+        let initial = state
+            .agent_runtime_status("default")
+            .await?
+            .expect("default agent status exists");
+        assert_eq!(initial.agent_id, "default");
+        assert!(!initial.running);
+
+        let task = state
+            .submit_task("default", "Hello status".to_string())
+            .await?;
+        assert_eq!(task.state, "pending");
+
+        let mut saw_running = false;
+        for _ in 0..50 {
+            let status = state
+                .agent_runtime_status("default")
+                .await?
+                .expect("default agent status exists");
+            if status.running {
+                saw_running = true;
+                break;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+
+        assert!(
+            saw_running,
+            "agent runtime status never transitioned to running"
+        );
 
         Ok(())
     }
