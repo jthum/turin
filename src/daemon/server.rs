@@ -316,6 +316,35 @@ async fn dispatch(
                 }
             }
         }
+        "runtime.reload" => {
+            match rescan_and_refresh_watcher(
+                state,
+                watcher_slot,
+                daemon_watcher_tx,
+                event_tx.clone(),
+            )
+            .await
+            {
+                Ok(status) => match serde_json::to_value(status) {
+                    Ok(value) => {
+                        emit_event(&event_tx, "runtime.reloaded", value.clone());
+                        ResponseEnvelope::ok(request.id, value)
+                    }
+                    Err(err) => ResponseEnvelope::err(
+                        request.id,
+                        "serialize_error",
+                        format!("Failed to serialize reload result: {}", err),
+                        None,
+                    ),
+                },
+                Err(err) => ResponseEnvelope::err(
+                    request.id,
+                    "runtime_reload_failed",
+                    err.to_string(),
+                    None,
+                ),
+            }
+        }
         "runtime.errors" => {
             let guard = state.lock().await;
             ResponseEnvelope::ok(request.id, json!({ "issues": guard.runtime_errors() }))
@@ -549,6 +578,37 @@ async fn dispatch(
                 },
                 Err(err) => {
                     ResponseEnvelope::err(request.id, "agent_update_failed", err.to_string(), None)
+                }
+            }
+        }
+        "agent.reload" => {
+            let params: AgentIdParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse agent.reload params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let mut guard = state.lock().await;
+            match guard.reload_agent(&params.id).await {
+                Ok(agent) => match serde_json::to_value(agent) {
+                    Ok(value) => {
+                        emit_event(&event_tx, "agent.reloaded", value.clone());
+                        ResponseEnvelope::ok(request.id, value)
+                    }
+                    Err(err) => ResponseEnvelope::err(
+                        request.id,
+                        "serialize_error",
+                        format!("Failed to serialize reloaded agent: {}", err),
+                        None,
+                    ),
+                },
+                Err(err) => {
+                    ResponseEnvelope::err(request.id, "agent_reload_failed", err.to_string(), None)
                 }
             }
         }

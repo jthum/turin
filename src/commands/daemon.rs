@@ -186,6 +186,11 @@ pub async fn run_rescan(config_path: &std::path::Path, json_output: bool) -> Res
     print_response(response, json_output)
 }
 
+pub async fn run_reload(config_path: &std::path::Path, json_output: bool) -> Result<()> {
+    let response = send_request(config_path, "runtime.reload", json!({})).await?;
+    print_response(response, json_output)
+}
+
 pub async fn run_agent_list(config_path: &std::path::Path, json_output: bool) -> Result<()> {
     let response = send_request(config_path, "daemon.status", json!({})).await?;
     if json_output {
@@ -275,6 +280,15 @@ pub async fn run_agent_update(
     json_output: bool,
 ) -> Result<()> {
     let response = send_request(config_path, "agent.update", params).await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_agent_reload(
+    config_path: &std::path::Path,
+    agent_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "agent.reload", json!({ "id": agent_id })).await?;
     print_response(response, json_output)
 }
 

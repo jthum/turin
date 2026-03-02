@@ -226,6 +226,10 @@ impl DaemonState {
         Ok(self.status().await)
     }
 
+    pub async fn reload_runtime(&mut self) -> Result<DaemonStatus> {
+        self.rescan().await
+    }
+
     pub fn registry_snapshot(&self) -> RegistrySnapshot {
         snapshot(&self.registry_load)
     }
@@ -329,6 +333,16 @@ impl DaemonState {
         }
 
         write_agent_file(&agent_dir, &file)?;
+        self.rescan().await?;
+        self.agent_detail(agent_id)?
+            .ok_or_else(|| anyhow!("Agent '{}' could not be reloaded", agent_id))
+    }
+
+    pub async fn reload_agent(&mut self, agent_id: &str) -> Result<AgentDetail> {
+        let agent_dir = self.agent_dir(agent_id);
+        if !agent_dir.exists() {
+            anyhow::bail!("Agent '{}' does not exist", agent_id);
+        }
         self.rescan().await?;
         self.agent_detail(agent_id)?
             .ok_or_else(|| anyhow!("Agent '{}' could not be reloaded", agent_id))

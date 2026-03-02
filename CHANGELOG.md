@@ -12,12 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added a Unix-socket NDJSON daemon server for local control-plane use.
   - Added filesystem-backed agent and harness registry scanning from `agents/` and `harnesses/`.
   - Added daemon event subscription via `runtime.events.subscribe`.
+  - Added explicit `runtime.reload` alongside `runtime.rescan` for clients that want an intentional reload operation over the same filesystem-authoritative state.
 - **Daemon Agent Management**
   - Added daemon APIs and CLI wrappers for:
     - `agent.list`
     - `agent.get`
     - `agent.status`
     - `agent.issues`
+    - `agent.reload`
     - `agent.create`
     - `agent.update`
     - `agent.enable`

@@ -150,6 +150,15 @@ enum DaemonCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Reload filesystem-backed daemon state
+    Reload {
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Show isolated runtime loading errors
     Errors {
         /// Path to turin.toml config file
@@ -234,6 +243,17 @@ enum DaemonAgentCommands {
     },
     /// Show isolated daemon issues for one agent directory
     Issues {
+        /// Agent ID
+        id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reload one daemon-managed agent from disk
+    Reload {
         /// Agent ID
         id: String,
         /// Path to turin.toml config file
@@ -691,6 +711,9 @@ async fn main() -> Result<()> {
             DaemonCommands::Rescan { config, json } => {
                 commands::daemon::run_rescan(&config, json).await
             }
+            DaemonCommands::Reload { config, json } => {
+                commands::daemon::run_reload(&config, json).await
+            }
             DaemonCommands::Errors { config, json } => {
                 commands::daemon::run_runtime_errors(&config, json).await
             }
@@ -712,6 +735,9 @@ async fn main() -> Result<()> {
                 }
                 DaemonAgentCommands::Issues { id, config, json } => {
                     commands::daemon::run_agent_issues(&config, &id, json).await
+                }
+                DaemonAgentCommands::Reload { id, config, json } => {
+                    commands::daemon::run_agent_reload(&config, &id, json).await
                 }
                 DaemonAgentCommands::Create {
                     id,

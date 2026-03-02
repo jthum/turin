@@ -123,6 +123,7 @@ Event stream example:
 turin daemon start
 turin daemon ping
 turin daemon status
+turin daemon reload
 turin daemon rescan
 turin daemon errors
 turin daemon stop
@@ -136,6 +137,7 @@ turin daemon agent list
 turin daemon agent get <id>
 turin daemon agent status <id>
 turin daemon agent issues <id>
+turin daemon agent reload <id>
 turin daemon agent create <id> --provider mock --model mock-model
 turin daemon agent update <id> --model new-model
 turin daemon agent enable <id>
