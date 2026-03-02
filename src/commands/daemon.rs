@@ -126,6 +126,8 @@ pub async fn run_task_submit(
     config_path: &std::path::Path,
     agent_id: &str,
     prompt: &str,
+    wait: bool,
+    timeout_ms: Option<u64>,
     json_output: bool,
 ) -> Result<()> {
     let response = send_request(
@@ -134,7 +136,22 @@ pub async fn run_task_submit(
         json!({ "agent_id": agent_id, "prompt": prompt }),
     )
     .await?;
-    print_response(response, json_output)
+    if !wait {
+        return print_response(response, json_output);
+    }
+
+    if !response.ok {
+        return print_response(response, json_output);
+    }
+
+    let request_id = response
+        .result
+        .as_ref()
+        .and_then(|result| result.get("request_id"))
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Daemon task.submit response did not include request_id"))?;
+
+    run_task_wait(config_path, request_id, timeout_ms, json_output).await
 }
 
 pub async fn run_task_get(

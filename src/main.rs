@@ -345,6 +345,12 @@ enum DaemonTaskCommands {
         agent_id: String,
         /// Prompt to submit
         prompt: String,
+        /// Wait for the task to complete and print the terminal result
+        #[arg(long)]
+        wait: bool,
+        /// Optional wait timeout in milliseconds (only meaningful with --wait)
+        #[arg(long)]
+        timeout_ms: Option<u64>,
         /// Path to turin.toml config file
         #[arg(long, default_value = "turin.toml")]
         config: PathBuf,
@@ -740,9 +746,16 @@ async fn main() -> Result<()> {
                 DaemonTaskCommands::Submit {
                     agent_id,
                     prompt,
+                    wait,
+                    timeout_ms,
                     config,
                     json,
-                } => commands::daemon::run_task_submit(&config, &agent_id, &prompt, json).await,
+                } => {
+                    commands::daemon::run_task_submit(
+                        &config, &agent_id, &prompt, wait, timeout_ms, json,
+                    )
+                    .await
+                }
                 DaemonTaskCommands::Get {
                     request_id,
                     config,
