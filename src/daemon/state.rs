@@ -1045,4 +1045,46 @@ type = "no_op"
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn bind_shared_harness_rejects_non_scaffold_local_harness() -> Result<()> {
+        let temp = tempdir()?;
+        let config_path = write_bootstrap(temp.path())?;
+        let mut state = DaemonState::load(&config_path).await?;
+
+        state.create_shared_harness("reviewer").await?;
+        state
+            .create_agent(CreateAgentInput {
+                id: "writer".to_string(),
+                provider: "mock".to_string(),
+                model: "mock-model".to_string(),
+                system_prompt: None,
+                thinking: None,
+                mode: None,
+                harness: None,
+                idle_grace_secs: None,
+                enabled: true,
+            })
+            .await?;
+
+        let local_main = temp
+            .path()
+            .join("agents")
+            .join("writer")
+            .join("harness")
+            .join("main.lua");
+        std::fs::write(
+            &local_main,
+            "function on_turn_prepare(ctx)\n  return ALLOW\nend\n",
+        )?;
+
+        let err = state
+            .bind_agent_shared_harness("writer", "reviewer")
+            .await
+            .expect_err("non-scaffold local harness should block rebinding");
+        assert!(err.to_string().contains("non-scaffold local harness"));
+        assert!(local_main.exists());
+
+        Ok(())
+    }
 }
