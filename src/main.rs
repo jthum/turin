@@ -363,6 +363,20 @@ enum DaemonTaskCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Wait for one daemon task to complete
+    Wait {
+        /// Request ID returned by task submission
+        request_id: String,
+        /// Optional timeout in milliseconds
+        #[arg(long)]
+        timeout_ms: Option<u64>,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// List daemon tasks
     List {
         /// Path to turin.toml config file
@@ -734,6 +748,12 @@ async fn main() -> Result<()> {
                     config,
                     json,
                 } => commands::daemon::run_task_get(&config, &request_id, json).await,
+                DaemonTaskCommands::Wait {
+                    request_id,
+                    timeout_ms,
+                    config,
+                    json,
+                } => commands::daemon::run_task_wait(&config, &request_id, timeout_ms, json).await,
                 DaemonTaskCommands::List { config, json } => {
                     commands::daemon::run_task_list(&config, json).await
                 }

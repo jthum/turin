@@ -74,6 +74,13 @@ struct TaskIdParams {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct WaitTaskParams {
+    request_id: String,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct SessionIdParams {
     session_id: String,
 }
@@ -690,6 +697,29 @@ async fn dispatch(
                     format!("Task '{}' not found", params.request_id),
                     None,
                 ),
+            }
+        }
+        "task.wait" => {
+            let params: WaitTaskParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse task.wait params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let guard = state.lock().await;
+            match guard
+                .wait_for_task(&params.request_id, params.timeout_ms)
+                .await
+            {
+                Ok(task) => ResponseEnvelope::ok(request.id, json!(task)),
+                Err(err) => {
+                    ResponseEnvelope::err(request.id, "task_wait_failed", err.to_string(), None)
+                }
             }
         }
         "task.list" => {

@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
@@ -437,6 +438,38 @@ impl DaemonState {
 
     pub async fn get_task(&self, request_id: &str) -> Option<TaskStatusSnapshot> {
         self.kernel.agent_manager().get_task(request_id).await
+    }
+
+    pub async fn wait_for_task(
+        &self,
+        request_id: &str,
+        timeout_ms: Option<u64>,
+    ) -> Result<TaskStatusSnapshot> {
+        let Some(initial) = self.get_task(request_id).await else {
+            anyhow::bail!("Task '{}' not found", request_id);
+        };
+        if initial.state != "pending" {
+            return Ok(initial);
+        }
+
+        let deadline = timeout_ms.map(|ms| tokio::time::Instant::now() + Duration::from_millis(ms));
+        loop {
+            if let Some(snapshot) = self.get_task(request_id).await {
+                if snapshot.state != "pending" {
+                    return Ok(snapshot);
+                }
+            } else {
+                anyhow::bail!("Task '{}' disappeared while waiting", request_id);
+            }
+
+            if let Some(deadline) = deadline
+                && tokio::time::Instant::now() >= deadline
+            {
+                anyhow::bail!("Timed out waiting for task '{}'", request_id);
+            }
+
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 
     pub async fn list_sessions(&self, limit: usize, offset: usize) -> Result<Vec<SessionSummary>> {
@@ -900,6 +933,23 @@ type = "no_op"
                 .any(|entry| entry.request_id == task.request_id)
         );
         assert!(state.rescan().await.is_ok());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn wait_for_task_returns_terminal_result() -> Result<()> {
+        let temp = tempdir()?;
+        let config_path = write_bootstrap(temp.path())?;
+        let state = DaemonState::load(&config_path).await?;
+
+        let task = state
+            .submit_task("default", "Hello wait".to_string())
+            .await?;
+        let completed = state.wait_for_task(&task.request_id, Some(2_000)).await?;
+        assert_eq!(completed.request_id, task.request_id);
+        assert_eq!(completed.state, "completed");
+        assert!(completed.status.is_some());
 
         Ok(())
     }

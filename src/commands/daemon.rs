@@ -147,6 +147,21 @@ pub async fn run_task_get(
     print_response(response, json_output)
 }
 
+pub async fn run_task_wait(
+    config_path: &std::path::Path,
+    request_id: &str,
+    timeout_ms: Option<u64>,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(
+        config_path,
+        "task.wait",
+        json!({ "request_id": request_id, "timeout_ms": timeout_ms }),
+    )
+    .await?;
+    print_response(response, json_output)
+}
+
 pub async fn run_task_list(config_path: &std::path::Path, json_output: bool) -> Result<()> {
     let response = send_request(config_path, "task.list", json!({})).await?;
     print_response(response, json_output)
