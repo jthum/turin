@@ -1,0 +1,176 @@
+mod helpers;
+mod registry_ops;
+mod runtime;
+#[cfg(test)]
+mod tests;
+mod types;
+
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
+use serde::Serialize;
+
+use crate::daemon::registry::{
+    RegistryLoad, RegistrySnapshot, build_effective_config, scan_registry, snapshot,
+};
+use crate::kernel::Kernel;
+use crate::kernel::config::{AgentMode, ThinkingConfig, TurinConfig};
+
+pub use types::{
+    AgentDetail, HarnessDetail, SessionDetail, SessionEventDetail, SessionMessageDetail,
+    SessionSummary, SessionToolExecutionDetail,
+};
+
+#[derive(Debug, Clone)]
+pub struct DaemonWatchPaths {
+    pub config_path: PathBuf,
+    pub agents_dir: PathBuf,
+    pub harnesses_dir: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DaemonStatus {
+    pub config_path: String,
+    pub workspace_root: String,
+    pub socket_path: String,
+    pub registry: RegistrySnapshot,
+    pub harnesses: Vec<crate::kernel::HarnessRuntimeSnapshot>,
+    pub agent_runtimes: Vec<crate::kernel::agent_manager::AgentStatusSnapshot>,
+}
+
+pub struct DaemonState {
+    pub(super) config_path: PathBuf,
+    pub(super) config_base: PathBuf,
+    pub(super) bootstrap_config: TurinConfig,
+    socket_path: PathBuf,
+    pub(super) registry_load: RegistryLoad,
+    pub(super) kernel: Kernel,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateAgentInput {
+    pub id: String,
+    pub provider: String,
+    pub model: String,
+    pub system_prompt: Option<String>,
+    pub thinking: Option<ThinkingConfig>,
+    pub mode: Option<AgentMode>,
+    pub harness: Option<String>,
+    pub idle_grace_secs: Option<u64>,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct UpdateAgentInput {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub system_prompt: Option<String>,
+    pub thinking: Option<ThinkingConfig>,
+    pub mode: Option<AgentMode>,
+    pub idle_grace_secs: Option<u64>,
+}
+
+impl DaemonState {
+    pub async fn load(config_path: &Path) -> Result<Self> {
+        let config_path = config_path.to_path_buf();
+        let config_base = config_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        let mut bootstrap_config = TurinConfig::from_file(&config_path)
+            .with_context(|| format!("Failed to load '{}'", config_path.display()))?;
+        helpers::normalize_bootstrap_paths(&mut bootstrap_config, &config_base);
+
+        let registry_load = scan_registry(&bootstrap_config, &config_base)?;
+        let effective_config = build_effective_config(&bootstrap_config, &registry_load)?;
+        let socket_path = bootstrap_config.resolve_daemon_socket_path(&config_base);
+
+        let mut kernel = Kernel::builder(effective_config).build()?;
+        kernel.init_state().await?;
+        kernel.init_clients()?;
+        kernel.init_harness().await?;
+        kernel.start_watcher()?;
+
+        Ok(Self {
+            config_path,
+            config_base,
+            bootstrap_config,
+            socket_path,
+            registry_load,
+            kernel,
+        })
+    }
+
+    pub fn socket_path(&self) -> &Path {
+        &self.socket_path
+    }
+
+    pub async fn status(&self) -> DaemonStatus {
+        DaemonStatus {
+            config_path: self.config_path.display().to_string(),
+            workspace_root: self.bootstrap_config.kernel.workspace_root.clone(),
+            socket_path: self.socket_path.display().to_string(),
+            registry: snapshot(&self.registry_load),
+            harnesses: self.kernel.harness_snapshots(),
+            agent_runtimes: self.list_agent_runtime_statuses().await,
+        }
+    }
+
+    pub fn watch_paths(&self) -> DaemonWatchPaths {
+        DaemonWatchPaths {
+            config_path: self.config_path.clone(),
+            agents_dir: self
+                .bootstrap_config
+                .resolve_daemon_agents_dir(&self.config_base),
+            harnesses_dir: self
+                .bootstrap_config
+                .resolve_daemon_harnesses_dir(&self.config_base),
+        }
+    }
+
+    pub async fn rescan(&mut self) -> Result<DaemonStatus> {
+        let active = self.kernel.agent_manager().list_statuses().await;
+        if active.iter().any(|status| {
+            status.active_tasks > 0 || status.queued_tasks > 0 || status.awaiting_results > 0
+        }) {
+            anyhow::bail!("Cannot rescan while agent runtimes have active or queued tasks");
+        }
+
+        let mut bootstrap_config = TurinConfig::from_file(&self.config_path)
+            .with_context(|| format!("Failed to load '{}'", self.config_path.display()))?;
+        helpers::normalize_bootstrap_paths(&mut bootstrap_config, &self.config_base);
+
+        let registry_load = scan_registry(&bootstrap_config, &self.config_base)?;
+        let effective_config = build_effective_config(&bootstrap_config, &registry_load)?;
+
+        let mut new_kernel = Kernel::builder(effective_config).build()?;
+        new_kernel.init_state().await?;
+        new_kernel.init_clients()?;
+        new_kernel.init_harness().await?;
+        new_kernel.start_watcher()?;
+
+        let old_kernel = std::mem::replace(&mut self.kernel, new_kernel);
+        self.bootstrap_config = bootstrap_config;
+        self.registry_load = registry_load;
+
+        tokio::spawn(async move {
+            let mut kernel = old_kernel;
+            kernel.shutdown_mcp_clients().await;
+        });
+
+        Ok(self.status().await)
+    }
+
+    pub async fn reload_runtime(&mut self) -> Result<DaemonStatus> {
+        self.rescan().await
+    }
+
+    pub fn registry_snapshot(&self) -> RegistrySnapshot {
+        snapshot(&self.registry_load)
+    }
+
+    pub fn runtime_errors(&self) -> Vec<crate::daemon::registry::RegistryIssue> {
+        self.registry_snapshot().issues
+    }
+}
