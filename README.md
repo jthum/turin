@@ -163,6 +163,30 @@ Global options:
 - `--log-level error|warn|info|debug|trace`
 - `--log-file PATH`
 
+## Daemon Mode
+
+Turin now has a local-first daemon mode for dynamic agent and harness management.
+
+The daemon uses:
+
+- `turin.toml` for bootstrap/global config
+- `agents/<id>/agent.toml` for daemon-managed agents
+- `agents/<id>/harness/` for local per-agent harnesses
+- optional `harnesses/<id>/` for shared harness programs
+
+Core commands:
+
+```bash
+turin daemon start
+turin daemon status
+turin daemon agent list
+turin daemon agent create docs-reviewer --provider mock --model mock-model
+turin daemon task submit docs-reviewer "Review the docs" --wait
+turin daemon events
+```
+
+See `docs/DAEMON.md` for the daemon filesystem model, runtime behavior, and command surface.
+
 ## Canonical Harness API (Overview)
 
 Turin’s harness surface is split between **canonical runtime APIs** and **ergonomic aliases**.

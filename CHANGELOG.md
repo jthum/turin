@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Filesystem-Backed Daemon Mode**
+  - Added a Unix-socket NDJSON daemon server for local control-plane use.
+  - Added filesystem-backed agent and harness registry scanning from `agents/` and `harnesses/`.
+  - Added daemon event subscription via `runtime.events.subscribe`.
+- **Daemon Agent Management**
+  - Added daemon APIs and CLI wrappers for:
+    - `agent.list`
+    - `agent.get`
+    - `agent.status`
+    - `agent.create`
+    - `agent.update`
+    - `agent.enable`
+    - `agent.disable`
+    - `agent.bind_harness`
+    - `agent.use_local_harness`
+    - `agent.delete`
+- **Daemon Task Management**
+  - Added daemon APIs and CLI wrappers for:
+    - `task.submit`
+    - `task.get`
+    - `task.wait`
+    - `task.list`
+  - Added `turin daemon task submit ... --wait` for the common “submit then block for result” workflow.
+- **Daemon Harness Management**
+  - Added daemon APIs and CLI wrappers for:
+    - `harness.list`
+    - `harness.create`
+    - `harness.get`
+    - `harness.reload`
+    - `harness.validate`
+    - `harness.delete`
+- **Daemon Session Inspection**
+  - Added daemon APIs and CLI wrappers for:
+    - `session.list`
+    - `session.get`
+  - Added persisted session detail inspection including events, messages, and tool executions.
+
+### Changed
+- **Daemon Status Surface**
+  - `daemon.status` now includes registry snapshot, harness runtime snapshots, and live agent runtime snapshots.
+  - Disabled agents now remain visible in daemon runtime status as non-running entries instead of disappearing from the live status surface.
+- **Filesystem-Authoritative Runtime Model**
+  - Agent directories are now treated as the authoritative persisted daemon state.
+  - Shared harness rebinding now preserves user code by only auto-removing default scaffold local harnesses.
+
+### Fixed
+- **Daemon Fault Isolation**
+  - Invalid `agent.toml` files now surface through isolated daemon runtime errors without poisoning unrelated agents.
+- **Rescan Safety**
+  - Daemon rescans now refuse to swap kernels while tasks are active or queued.
+
 ## [0.19.0] - 2026-03-01
 
 ### Changed

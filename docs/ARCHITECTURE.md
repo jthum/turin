@@ -54,6 +54,40 @@ Turin depends on normalized provider SDKs for:
 
 Turin maps normalized `InferenceEvent` values into `KernelEvent` stream events and remains provider-agnostic.
 
+## Daemon Layer
+
+Turin now also has a daemon/control layer built on top of the kernel.
+
+The daemon owns:
+
+- filesystem-backed registry scanning (`agents/`, `harnesses/`)
+- live kernel replacement on daemon-level rescan
+- Unix-socket NDJSON request/response handling
+- event subscription streaming
+- agent/harness/session/task control APIs
+
+Key modules:
+
+- `src/daemon/registry.rs`
+  - scans filesystem-backed daemon state
+  - synthesizes effective runtime config from bootstrap config plus daemon-managed agent/harness directories
+- `src/daemon/state.rs`
+  - owns live daemon state
+  - mediates filesystem mutations, rescans, and runtime-facing control operations
+- `src/daemon/server.rs`
+  - Unix-socket server
+  - NDJSON protocol dispatch
+  - daemon watcher and event broadcast stream
+- `src/daemon/protocol.rs`
+  - request/response/event wire envelopes
+
+Design rule:
+
+- the filesystem is the persisted source of truth
+- the daemon is the validated control surface over that filesystem state
+
+Advanced users can still edit files directly. The daemon is expected to tolerate that and isolate bad agents/harnesses locally.
+
 ## Core Runtime Flows
 
 ### Session / Task / Turn Lifecycle

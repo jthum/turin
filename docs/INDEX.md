@@ -7,6 +7,7 @@ This is the documentation landing page for Turin.
 - `README.md` — quickstart, feature overview, canonical API summary, live smoke commands
 - `docs/TURIN.md` — Turin philosophy and design framing (kernel vs harness vs inference)
 - `docs/ARCHITECTURE.md` — current implementation architecture and module layout
+- `docs/DAEMON.md` — daemon mode, filesystem-backed dynamic state, and control API surface
 
 ## Harness Authoring
 
@@ -38,10 +39,10 @@ This is the documentation landing page for Turin.
 ### For contributors
 
 1. `docs/ARCHITECTURE.md`
-2. `docs/HOOKS.md`
-3. `docs/PRIMITIVES.md`
-4. `docs/GOVERNANCE.md`
-5. `docs/TESTING.md`
+2. `docs/DAEMON.md`
+3. `docs/HOOKS.md`
+4. `docs/PRIMITIVES.md`
+5. `docs/GOVERNANCE.md`
 
 ### For governance-heavy deployments
 
