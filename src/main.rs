@@ -438,6 +438,17 @@ enum DaemonHarnessCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Show isolated daemon issues for one harness directory
+    Issues {
+        /// Harness ID
+        id: String,
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Reload one harness by ID
     Reload {
         /// Harness ID
@@ -794,6 +805,9 @@ async fn main() -> Result<()> {
                 }
                 DaemonHarnessCommands::Get { id, config, json } => {
                     commands::daemon::run_harness_get(&config, &id, json).await
+                }
+                DaemonHarnessCommands::Issues { id, config, json } => {
+                    commands::daemon::run_harness_issues(&config, &id, json).await
                 }
                 DaemonHarnessCommands::Reload { id, config, json } => {
                     commands::daemon::run_harness_reload(&config, &id, json).await

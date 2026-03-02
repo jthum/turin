@@ -883,6 +883,38 @@ async fn dispatch(
                 ),
             }
         }
+        "harness.issues" => {
+            let params: AgentIdParams = match serde_json::from_value(request.params) {
+                Ok(params) => params,
+                Err(err) => {
+                    return ResponseEnvelope::err(
+                        request.id,
+                        "invalid_params",
+                        format!("Failed to parse harness.issues params: {}", err),
+                        None,
+                    );
+                }
+            };
+            let guard = state.lock().await;
+            match guard.harness_issues(&params.id) {
+                Ok(Some(issues)) => ResponseEnvelope::ok(
+                    request.id,
+                    json!({ "harness_id": params.id, "issues": issues }),
+                ),
+                Ok(None) => ResponseEnvelope::err(
+                    request.id,
+                    "harness_not_found",
+                    format!("Harness '{}' not found", params.id),
+                    None,
+                ),
+                Err(err) => ResponseEnvelope::err(
+                    request.id,
+                    "harness_issues_failed",
+                    err.to_string(),
+                    None,
+                ),
+            }
+        }
         "harness.reload" => {
             let params: AgentIdParams = match serde_json::from_value(request.params) {
                 Ok(params) => params,

@@ -568,6 +568,20 @@ impl DaemonState {
             })
     }
 
+    pub fn harness_issues(&self, harness_id: &str) -> Result<Option<Vec<RegistryIssue>>> {
+        let Some(detail) = self.harness_detail(harness_id) else {
+            return Ok(None);
+        };
+
+        let harness_dir = PathBuf::from(&detail.directory);
+        Ok(Some(
+            self.runtime_errors()
+                .into_iter()
+                .filter(|issue| issue_path_is_under(&issue.path, &harness_dir))
+                .collect(),
+        ))
+    }
+
     pub async fn reload_harness(&mut self, harness_id: &str) -> Result<HarnessDetail> {
         self.kernel.reload_named_harness(harness_id).await?;
         self.harness_detail(harness_id)

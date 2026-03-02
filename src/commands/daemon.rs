@@ -68,6 +68,29 @@ struct IssueListView {
 }
 
 #[derive(Debug, Deserialize)]
+struct AgentDetailView {
+    id: String,
+    directory: String,
+    enabled: bool,
+    provider: String,
+    model: String,
+    system_prompt: Option<String>,
+    mode: Option<String>,
+    harness: Option<String>,
+    idle_grace_secs: Option<u64>,
+    has_local_harness: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct HarnessDetailView {
+    harness_id: String,
+    directory: String,
+    bound_agents: Vec<String>,
+    watched_roots: Vec<String>,
+    loaded_scripts: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct TaskStatusView {
     request_id: String,
     agent_id: String,
@@ -180,7 +203,13 @@ pub async fn run_agent_get(
     json_output: bool,
 ) -> Result<()> {
     let response = send_request(config_path, "agent.get", json!({ "id": agent_id })).await?;
-    print_response(response, json_output)
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let agent: AgentDetailView = decode_result(response)?;
+    print_agent_detail(agent);
+    Ok(())
 }
 
 pub async fn run_agent_status(
@@ -189,7 +218,13 @@ pub async fn run_agent_status(
     json_output: bool,
 ) -> Result<()> {
     let response = send_request(config_path, "agent.status", json!({ "id": agent_id })).await?;
-    print_response(response, json_output)
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let status: AgentRuntimeView = decode_result(response)?;
+    print_agent_runtime_status(status);
+    Ok(())
 }
 
 pub async fn run_agent_issues(
@@ -198,7 +233,13 @@ pub async fn run_agent_issues(
     json_output: bool,
 ) -> Result<()> {
     let response = send_request(config_path, "agent.issues", json!({ "id": agent_id })).await?;
-    print_response(response, json_output)
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let issues: IssueListView = decode_result(response)?;
+    print_issue_list(&format!("Agent '{}' issues", agent_id), &issues.issues);
+    Ok(())
 }
 
 pub async fn run_agent_create(
@@ -427,7 +468,28 @@ pub async fn run_harness_get(
     json_output: bool,
 ) -> Result<()> {
     let response = send_request(config_path, "harness.get", json!({ "id": harness_id })).await?;
-    print_response(response, json_output)
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let harness: HarnessDetailView = decode_result(response)?;
+    print_harness_detail(harness);
+    Ok(())
+}
+
+pub async fn run_harness_issues(
+    config_path: &std::path::Path,
+    harness_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "harness.issues", json!({ "id": harness_id })).await?;
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let issues: IssueListView = decode_result(response)?;
+    print_issue_list(&format!("Harness '{}' issues", harness_id), &issues.issues);
+    Ok(())
 }
 
 pub async fn run_harness_reload(
@@ -712,6 +774,40 @@ fn print_agent_list(status: DaemonStatusView) {
     print_table(&rows);
 }
 
+fn print_agent_detail(agent: AgentDetailView) {
+    println!("Agent");
+    println!("  id:                {}", agent.id);
+    println!("  enabled:           {}", yes_no(agent.enabled));
+    println!("  provider:          {}", agent.provider);
+    println!("  model:             {}", agent.model);
+    println!(
+        "  mode:              {}",
+        agent.mode.unwrap_or_else(|| "-".to_string())
+    );
+    println!(
+        "  harness:           {}",
+        agent.harness.unwrap_or_else(|| "local".to_string())
+    );
+    println!("  local_harness:     {}", yes_no(agent.has_local_harness));
+    println!("  directory:         {}", agent.directory);
+    if let Some(idle_grace_secs) = agent.idle_grace_secs {
+        println!("  idle_grace_secs:   {}", idle_grace_secs);
+    }
+    if let Some(system_prompt) = &agent.system_prompt {
+        println!("  system_prompt:");
+        print_indented(system_prompt);
+    }
+}
+
+fn print_agent_runtime_status(status: AgentRuntimeView) {
+    println!("Agent Runtime");
+    println!("  agent:           {}", status.agent_id);
+    println!("  running:         {}", yes_no(status.running));
+    println!("  active_tasks:    {}", status.active_tasks);
+    println!("  queued_tasks:    {}", status.queued_tasks);
+    println!("  awaiting_results: {}", status.awaiting_results);
+}
+
 fn print_harness_list(status: DaemonStatusView) {
     let shared_ids: std::collections::HashSet<_> = status
         .registry
@@ -747,6 +843,24 @@ fn print_harness_list(status: DaemonStatusView) {
     }
 
     print_table(&rows);
+}
+
+fn print_harness_detail(harness: HarnessDetailView) {
+    println!("Harness");
+    println!("  harness_id:   {}", harness.harness_id);
+    println!("  directory:    {}", harness.directory);
+    println!("  bound_agents: {}", harness.bound_agents.len());
+    if !harness.bound_agents.is_empty() {
+        println!("    {}", harness.bound_agents.join(", "));
+    }
+    println!("  watched_roots: {}", harness.watched_roots.len());
+    for root in harness.watched_roots {
+        println!("    {}", root);
+    }
+    println!("  loaded_scripts: {}", harness.loaded_scripts.len());
+    for script in harness.loaded_scripts {
+        println!("    {}", script);
+    }
 }
 
 fn print_task_status(title: &str, task: &TaskStatusView) {
