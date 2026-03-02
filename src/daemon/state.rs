@@ -26,6 +26,7 @@ pub struct DaemonStatus {
     pub socket_path: String,
     pub registry: RegistrySnapshot,
     pub harnesses: Vec<crate::kernel::HarnessRuntimeSnapshot>,
+    pub agent_runtimes: Vec<AgentStatusSnapshot>,
 }
 
 pub struct DaemonState {
@@ -168,13 +169,14 @@ impl DaemonState {
         &self.socket_path
     }
 
-    pub fn status(&self) -> DaemonStatus {
+    pub async fn status(&self) -> DaemonStatus {
         DaemonStatus {
             config_path: self.config_path.display().to_string(),
             workspace_root: self.bootstrap_config.kernel.workspace_root.clone(),
             socket_path: self.socket_path.display().to_string(),
             registry: snapshot(&self.registry_load),
             harnesses: self.kernel.harness_snapshots(),
+            agent_runtimes: self.list_agent_runtime_statuses().await,
         }
     }
 
@@ -220,7 +222,7 @@ impl DaemonState {
             kernel.shutdown_mcp_clients().await;
         });
 
-        Ok(self.status())
+        Ok(self.status().await)
     }
 
     pub fn registry_snapshot(&self) -> RegistrySnapshot {
@@ -404,44 +406,11 @@ impl DaemonState {
         &self,
         agent_id: &str,
     ) -> Result<Option<AgentStatusSnapshot>> {
-        if agent_id == self.bootstrap_config.agent.id {
-            return Ok(Some(
-                self.kernel
-                    .agent_manager()
-                    .get_status(agent_id)
-                    .await
-                    .unwrap_or_else(|| AgentStatusSnapshot {
-                        agent_id: agent_id.to_string(),
-                        running: false,
-                        active_tasks: 0,
-                        queued_tasks: 0,
-                        awaiting_results: 0,
-                    }),
-            ));
-        }
-
-        let known = self
-            .registry_load
-            .agents
-            .iter()
-            .any(|agent| agent.id == agent_id);
-        if !known {
-            return Ok(None);
-        }
-
-        Ok(Some(
-            self.kernel
-                .agent_manager()
-                .get_status(agent_id)
-                .await
-                .unwrap_or_else(|| AgentStatusSnapshot {
-                    agent_id: agent_id.to_string(),
-                    running: false,
-                    active_tasks: 0,
-                    queued_tasks: 0,
-                    awaiting_results: 0,
-                }),
-        ))
+        Ok(self
+            .list_agent_runtime_statuses()
+            .await
+            .into_iter()
+            .find(|status| status.agent_id == agent_id))
     }
 
     fn agent_dir(&self, agent_id: &str) -> PathBuf {
@@ -619,6 +588,39 @@ impl DaemonState {
             anyhow::bail!("Agent '{}' is disabled", agent_id);
         }
         Ok(())
+    }
+
+    async fn list_agent_runtime_statuses(&self) -> Vec<AgentStatusSnapshot> {
+        let mut live: std::collections::HashMap<_, _> = self
+            .kernel
+            .agent_manager()
+            .list_statuses()
+            .await
+            .into_iter()
+            .map(|status| (status.agent_id.clone(), status))
+            .collect();
+
+        let mut ids = vec![self.bootstrap_config.agent.id.clone()];
+        ids.extend(
+            self.registry_load
+                .agents
+                .iter()
+                .map(|agent| agent.id.clone()),
+        );
+        ids.sort();
+        ids.dedup();
+
+        ids.into_iter()
+            .map(|agent_id| {
+                live.remove(&agent_id).unwrap_or(AgentStatusSnapshot {
+                    agent_id,
+                    running: false,
+                    active_tasks: 0,
+                    queued_tasks: 0,
+                    awaiting_results: 0,
+                })
+            })
+            .collect()
     }
 }
 
@@ -1159,6 +1161,14 @@ type = "no_op"
             .expect("disabled agent status exists");
         assert_eq!(disabled_status.agent_id, "disabled-reviewer");
         assert!(!disabled_status.running);
+
+        let daemon_status = state.status().await;
+        assert!(
+            daemon_status
+                .agent_runtimes
+                .iter()
+                .any(|status| status.agent_id == "disabled-reviewer")
+        );
 
         let initial = state
             .agent_runtime_status("default")

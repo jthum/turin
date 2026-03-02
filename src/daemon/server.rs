@@ -282,7 +282,7 @@ async fn dispatch(
         ),
         "daemon.status" => {
             let guard = state.lock().await;
-            match serde_json::to_value(guard.status()) {
+            match serde_json::to_value(guard.status().await) {
                 Ok(value) => ResponseEnvelope::ok(request.id, value),
                 Err(err) => ResponseEnvelope::err(
                     request.id,
@@ -755,7 +755,7 @@ async fn dispatch(
             ResponseEnvelope::ok(
                 request.id,
                 json!({
-                    "harnesses": guard.status().harnesses
+                    "harnesses": guard.status().await.harnesses
                 }),
             )
         }
@@ -961,7 +961,7 @@ async fn stream_events(
 
     let snapshot = {
         let guard = state.lock().await;
-        serde_json::to_value(guard.status())?
+        serde_json::to_value(guard.status().await)?
     };
     let snapshot_event = EventEnvelope::new("runtime.snapshot", snapshot);
     writer
