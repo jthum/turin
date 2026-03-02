@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-03-02
+
 ### Added
 - **Filesystem-Backed Daemon Mode**
   - Added a Unix-socket NDJSON daemon server for local control-plane use.
