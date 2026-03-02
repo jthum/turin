@@ -721,6 +721,8 @@ impl DaemonState {
                     active_tasks: 0,
                     queued_tasks: 0,
                     awaiting_results: 0,
+                    current_session_id: None,
+                    current_request_id: None,
                 })
             })
             .collect()

@@ -175,6 +175,8 @@ turin daemon harness delete <id>
 ```bash
 turin daemon session list
 turin daemon session get <session_id>
+turin daemon session cancel <session_id>
+turin daemon session kill <session_id>
 ```
 
 ## Live Runtime Visibility
@@ -204,12 +206,24 @@ Task state semantics are intentionally explicit:
 
 - `queued`: accepted by the daemon and waiting in an agent runtime queue
 - `running`: currently executing inside an agent runtime
-- `completed`: reached a terminal status (`success`, `rejected`, `max_turns`, `error`, `cancelled`)
+- `cancelling`: cancellation has been requested for a running task and the runtime is draining toward a terminal result
+- `completed`: reached a terminal status (`success`, `rejected`, `max_turns`, `error`, `cancelled`, `killed`)
 
 `task.cancel` is truthful by design:
 
-- queued tasks can be cancelled
-- running tasks are not interrupted and return a structured failure instead
+- queued tasks cancel immediately and become terminal `cancelled`
+- running tasks transition to `cancelling` and stop cooperatively at real execution boundaries
+
+`session.cancel` is cooperative:
+
+- queued work for that runtime session is cancelled
+- the active task is asked to stop
+- the peer runtime rotates to a fresh session once the stop completes
+
+`session.kill` is forceful:
+
+- queued and running work for that runtime is marked `killed`
+- the peer runtime is aborted and recreated on demand later
 
 This makes the daemon usable as the control surface for future channels, desktop, and web clients without forcing those clients to scrape files directly.
 

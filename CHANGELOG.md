@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added daemon APIs and CLI wrappers for:
     - `session.list`
     - `session.get`
+    - `session.cancel`
+    - `session.kill`
   - Added persisted session detail inspection including events, messages, and tool executions.
 
 ### Changed
@@ -60,7 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Daemon CLI Readability**
   - Added human-readable default output for daemon task and session inspection commands instead of raw JSON-shaped blobs.
   - Added richer human-readable detail output for `agent.get`, `agent.status`, `agent.issues`, `harness.get`, and `harness.issues`.
+  - Live agent runtime status now includes the current runtime session and current request IDs for operator control workflows.
   - Daemon task surfaces now distinguish `queued`, `running`, and terminal task states instead of collapsing all in-flight work into `pending`.
+  - Running task cancellation now reports the honest intermediate `cancelling` state before terminal completion.
 - **Filesystem-Authoritative Runtime Model**
   - Agent directories are now treated as the authoritative persisted daemon state.
   - Shared harness rebinding now preserves user code by only auto-removing default scaffold local harnesses.
@@ -70,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Invalid `agent.toml` files now surface through isolated daemon runtime errors without poisoning unrelated agents.
 - **Rescan Safety**
   - Daemon rescans now refuse to swap kernels while tasks are active or queued.
+- **Cooperative and Forceful Runtime Stops**
+  - Running task cancellation now stops work at real execution boundaries instead of rejecting live cancellation outright.
+  - Added cooperative session cancellation with runtime session rotation after completion.
+  - Added forceful session kill for immediate peer runtime teardown with truthful `killed` task results.
 
 ## [0.19.0] - 2026-03-01
 

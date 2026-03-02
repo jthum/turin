@@ -54,6 +54,8 @@ struct AgentRuntimeView {
     active_tasks: usize,
     queued_tasks: usize,
     awaiting_results: usize,
+    current_session_id: Option<String>,
+    current_request_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -721,6 +723,7 @@ fn print_daemon_status(status: DaemonStatusView) {
             "ACTIVE".to_string(),
             "QUEUED".to_string(),
             "AWAIT".to_string(),
+            "SESSION".to_string(),
             "HARNESS".to_string(),
             "MODEL".to_string(),
         ]);
@@ -734,6 +737,8 @@ fn print_daemon_status(status: DaemonStatusView) {
                     active_tasks: 0,
                     queued_tasks: 0,
                     awaiting_results: 0,
+                    current_session_id: None,
+                    current_request_id: None,
                 });
             rows.push(vec![
                 agent.id.clone(),
@@ -742,6 +747,10 @@ fn print_daemon_status(status: DaemonStatusView) {
                 runtime.active_tasks.to_string(),
                 runtime.queued_tasks.to_string(),
                 runtime.awaiting_results.to_string(),
+                runtime
+                    .current_session_id
+                    .clone()
+                    .unwrap_or_else(|| "-".to_string()),
                 agent.harness_ref.clone(),
                 agent.model.clone(),
             ]);
@@ -755,6 +764,9 @@ fn print_daemon_status(status: DaemonStatusView) {
                 runtime.active_tasks.to_string(),
                 runtime.queued_tasks.to_string(),
                 runtime.awaiting_results.to_string(),
+                runtime
+                    .current_session_id
+                    .unwrap_or_else(|| "-".to_string()),
                 "default".to_string(),
                 "-".to_string(),
             ]);
@@ -813,6 +825,7 @@ fn print_agent_list(status: DaemonStatusView) {
         "ACTIVE".to_string(),
         "QUEUED".to_string(),
         "AWAIT".to_string(),
+        "SESSION".to_string(),
         "HARNESS".to_string(),
         "PROVIDER".to_string(),
         "MODEL".to_string(),
@@ -827,6 +840,9 @@ fn print_agent_list(status: DaemonStatusView) {
             runtime.map(|r| r.active_tasks).unwrap_or(0).to_string(),
             runtime.map(|r| r.queued_tasks).unwrap_or(0).to_string(),
             runtime.map(|r| r.awaiting_results).unwrap_or(0).to_string(),
+            runtime
+                .and_then(|r| r.current_session_id.clone())
+                .unwrap_or_else(|| "-".to_string()),
             agent.harness_ref,
             agent.provider,
             agent.model,
@@ -868,6 +884,14 @@ fn print_agent_runtime_status(status: AgentRuntimeView) {
     println!("  active_tasks:    {}", status.active_tasks);
     println!("  queued_tasks:    {}", status.queued_tasks);
     println!("  awaiting_results: {}", status.awaiting_results);
+    println!(
+        "  current_session: {}",
+        status.current_session_id.unwrap_or_else(|| "-".to_string())
+    );
+    println!(
+        "  current_request: {}",
+        status.current_request_id.unwrap_or_else(|| "-".to_string())
+    );
 }
 
 fn print_harness_list(status: DaemonStatusView) {

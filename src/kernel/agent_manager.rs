@@ -43,6 +43,8 @@ pub struct AgentStatusSnapshot {
     pub active_tasks: usize,
     pub queued_tasks: usize,
     pub awaiting_results: usize,
+    pub current_session_id: Option<String>,
+    pub current_request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -451,6 +453,8 @@ impl AgentManager {
                     active_tasks,
                     queued_tasks,
                     awaiting_results,
+                    current_session_id: handle.and_then(|h| h.control.current_session_id()),
+                    current_request_id: handle.and_then(|h| h.control.current_request_id()),
                 }
             })
             .collect()
