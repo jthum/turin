@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `harness.list`
     - `harness.create`
     - `harness.get`
+    - `harness.issues`
     - `harness.reload`
     - `harness.validate`
     - `harness.delete`
@@ -50,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Daemon Status Surface**
   - `daemon.status` now includes registry snapshot, harness runtime snapshots, and live agent runtime snapshots.
   - Disabled agents now remain visible in daemon runtime status as non-running entries instead of disappearing from the live status surface.
+- **Daemon CLI Readability**
+  - Added human-readable default output for daemon task and session inspection commands instead of raw JSON-shaped blobs.
+  - Added richer human-readable detail output for `agent.get`, `agent.status`, `agent.issues`, `harness.get`, and `harness.issues`.
 - **Filesystem-Authoritative Runtime Model**
   - Agent directories are now treated as the authoritative persisted daemon state.
   - Shared harness rebinding now preserves user code by only auto-removing default scaffold local harnesses.

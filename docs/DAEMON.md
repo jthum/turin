@@ -161,6 +161,7 @@ turin daemon task list
 turin daemon harness list
 turin daemon harness create <id>
 turin daemon harness get <id>
+turin daemon harness issues <id>
 turin daemon harness reload <id>
 turin daemon harness validate <id>
 turin daemon harness delete <id>
@@ -183,9 +184,17 @@ The daemon now exposes:
   - live agent runtime snapshots
 - per-agent live runtime status via `agent.status`
 - per-agent isolated registry/load issues via `agent.issues`
+- per-harness isolated registry/load issues via `harness.issues`
 - persisted session inspection
 - task submission/list/get/wait
 - runtime event subscription
+
+The CLI defaults are also intentionally human-readable:
+
+- `turin daemon status`, `agent list`, and `harness list` render tables
+- `turin daemon task *` renders compact task summaries by default
+- `turin daemon session *` renders readable session summaries and persisted detail tables by default
+- `--json` remains available everywhere when a machine-readable response is needed
 
 This makes the daemon usable as the control surface for future channels, desktop, and web clients without forcing those clients to scrape files directly.
 
