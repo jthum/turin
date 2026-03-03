@@ -7,7 +7,9 @@ use tokio::sync::Notify;
 use tracing::{debug, error, info};
 
 use super::peer_runtime::PeerRuntime;
-use super::{AgentManager, AgentRuntimeHandle, PeerAgentTaskEnvelope, RuntimeControl};
+use super::{
+    AgentManager, AgentRuntimeHandle, PeerAgentTaskEnvelope, RuntimeControl, RuntimeSlotKey,
+};
 
 impl AgentManager {
     pub(super) async fn ensure_runtime(
@@ -16,7 +18,7 @@ impl AgentManager {
     ) -> Result<Arc<AgentRuntimeHandle>> {
         {
             let runtimes = self.runtimes.read().await;
-            if let Some(handle) = runtimes.get(agent_id)
+            if let Some(handle) = runtimes.get(&RuntimeSlotKey::default_for(agent_id))
                 && handle.is_running()
             {
                 return Ok(Arc::clone(handle));
@@ -137,14 +139,14 @@ impl AgentManager {
         agent_id: &str,
     ) -> Result<Arc<AgentRuntimeHandle>> {
         let mut runtimes = self.runtimes.write().await;
-        if let Some(handle) = runtimes.get(agent_id)
+        if let Some(handle) = runtimes.get(&RuntimeSlotKey::default_for(agent_id))
             && handle.is_running()
         {
             return Ok(Arc::clone(handle));
         }
 
         let handle = Arc::new(self.start_agent(agent_id).await?);
-        runtimes.insert(agent_id.to_string(), Arc::clone(&handle));
+        runtimes.insert(RuntimeSlotKey::default_for(agent_id), Arc::clone(&handle));
         Ok(handle)
     }
 }

@@ -61,6 +61,23 @@ pub struct TaskStatusSnapshot {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RuntimeSlotKey {
+    agent_id: String,
+    slot_id: String,
+}
+
+impl RuntimeSlotKey {
+    const DEFAULT_SLOT_ID: &str = "default";
+
+    fn default_for(agent_id: &str) -> Self {
+        Self {
+            agent_id: agent_id.to_string(),
+            slot_id: Self::DEFAULT_SLOT_ID.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingTaskState {
     Queued,
@@ -70,7 +87,7 @@ enum PendingTaskState {
 
 #[derive(Debug, Clone)]
 struct PendingTaskRecord {
-    agent_id: String,
+    runtime_key: RuntimeSlotKey,
     trace_id: String,
     state: PendingTaskState,
     runtime_task_id: Option<String>,
@@ -249,8 +266,8 @@ pub struct AgentManager {
     config: Arc<TurinConfig>,
     /// Reference to the shared StoreManager for database operations.
     store_manager: Arc<StoreManager>,
-    /// The list of active, running agent handles, keyed by agent_id.
-    runtimes: RwLock<HashMap<String, Arc<AgentRuntimeHandle>>>,
+    /// The list of active, running agent handles, keyed by runtime slot.
+    runtimes: RwLock<HashMap<RuntimeSlotKey, Arc<AgentRuntimeHandle>>>,
     /// Task result receivers keyed by runtime request id (consumed by `await_result`).
     pending_results: RwLock<HashMap<String, oneshot::Receiver<PeerAgentTaskResult>>>,
     /// Mapping of request id -> current non-terminal task state for status accounting.
@@ -340,7 +357,7 @@ impl AgentManager {
             pending.insert(
                 request_id.clone(),
                 PendingTaskRecord {
-                    agent_id: agent_id.to_string(),
+                    runtime_key: RuntimeSlotKey::default_for(agent_id),
                     trace_id,
                     state: PendingTaskState::Queued,
                     runtime_task_id: None,
@@ -432,7 +449,7 @@ impl AgentManager {
         let mut awaiting_by_agent: HashMap<&str, usize> = HashMap::new();
         for pending in pending.values() {
             *awaiting_by_agent
-                .entry(pending.agent_id.as_str())
+                .entry(pending.runtime_key.agent_id.as_str())
                 .or_default() += 1;
         }
 
@@ -443,7 +460,7 @@ impl AgentManager {
 
         ids.into_iter()
             .map(|agent_id| {
-                let handle = runtimes.get(&agent_id);
+                let handle = runtimes.get(&RuntimeSlotKey::default_for(&agent_id));
                 let running = handle.map(|h| h.is_running()).unwrap_or(false);
                 let awaiting_results = *awaiting_by_agent.get(agent_id.as_str()).unwrap_or(&0);
                 let queued_tasks = handle
@@ -479,7 +496,7 @@ impl AgentManager {
             .iter()
             .map(|(request_id, pending)| TaskStatusSnapshot {
                 request_id: request_id.clone(),
-                agent_id: pending.agent_id.clone(),
+                agent_id: pending.runtime_key.agent_id.clone(),
                 trace_id: pending.trace_id.clone(),
                 state: match pending.state {
                     PendingTaskState::Queued => "queued".to_string(),
@@ -597,8 +614,12 @@ impl AgentManager {
         {
             let handle = {
                 let runtimes = self.runtimes.read().await;
-                runtimes.get(&pending.agent_id).cloned().ok_or_else(|| {
-                    anyhow::anyhow!("Agent runtime '{}' is not available", pending.agent_id)
+                runtimes.get(&pending.runtime_key).cloned().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Agent runtime '{}' [{}] is not available",
+                        pending.runtime_key.agent_id,
+                        pending.runtime_key.slot_id
+                    )
                 })?
             };
 
@@ -623,8 +644,12 @@ impl AgentManager {
 
         let handle = {
             let runtimes = self.runtimes.read().await;
-            runtimes.get(&pending.agent_id).cloned().ok_or_else(|| {
-                anyhow::anyhow!("Agent runtime '{}' is not available", pending.agent_id)
+            runtimes.get(&pending.runtime_key).cloned().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Agent runtime '{}' [{}] is not available",
+                    pending.runtime_key.agent_id,
+                    pending.runtime_key.slot_id
+                )
             })?
         };
 
@@ -650,7 +675,7 @@ impl AgentManager {
 
         let completed = PeerAgentTaskResult {
             request_id: request_id.to_string(),
-            agent_id: pending.agent_id.clone(),
+            agent_id: pending.runtime_key.agent_id.clone(),
             trace_id: pending.trace_id.clone(),
             runtime_task_id: String::new(),
             status: TaskTerminalStatus::Cancelled,
@@ -679,7 +704,7 @@ impl AgentManager {
     }
 
     pub async fn cancel_session(&self, session_id: &str) -> Result<(String, String)> {
-        let (agent_id, handle) =
+        let (runtime_key, handle) =
             self.find_runtime_by_session(session_id)
                 .await
                 .ok_or_else(|| {
@@ -689,7 +714,7 @@ impl AgentManager {
                     )
                 })?;
 
-        self.cancel_queued_requests_for_agent(&agent_id, "Session cancelled before execution")
+        self.cancel_queued_requests_for_runtime(&runtime_key, "Session cancelled before execution")
             .await;
 
         if handle.control.current_request_id().is_none() {
@@ -702,11 +727,11 @@ impl AgentManager {
             );
         }
 
-        Ok((agent_id, session_id.to_string()))
+        Ok((runtime_key.agent_id, session_id.to_string()))
     }
 
     pub async fn kill_session(&self, session_id: &str) -> Result<(String, String)> {
-        let (agent_id, handle) =
+        let (runtime_key, handle) =
             self.find_runtime_by_session(session_id)
                 .await
                 .ok_or_else(|| {
@@ -716,34 +741,34 @@ impl AgentManager {
                     )
                 })?;
 
-        self.kill_runtime_requests(&agent_id, &handle, "Session killed")
+        self.kill_runtime_requests(&runtime_key, &handle, "Session killed")
             .await;
 
         if let Some(task) = &handle.task {
             task.abort();
         }
 
-        self.runtimes.write().await.remove(&agent_id);
+        self.runtimes.write().await.remove(&runtime_key);
 
-        Ok((agent_id, session_id.to_string()))
+        Ok((runtime_key.agent_id, session_id.to_string()))
     }
 
     async fn find_runtime_by_session(
         &self,
         session_id: &str,
-    ) -> Option<(String, Arc<AgentRuntimeHandle>)> {
+    ) -> Option<(RuntimeSlotKey, Arc<AgentRuntimeHandle>)> {
         let runtimes = self.runtimes.read().await;
-        runtimes.iter().find_map(|(agent_id, handle)| {
+        runtimes.iter().find_map(|(runtime_key, handle)| {
             if handle.control.current_session_id().as_deref() == Some(session_id) {
-                Some((agent_id.clone(), Arc::clone(handle)))
+                Some((runtime_key.clone(), Arc::clone(handle)))
             } else {
                 None
             }
         })
     }
 
-    async fn cancel_queued_requests_for_agent(&self, agent_id: &str, reason: &str) {
-        let Some(handle) = self.runtimes.read().await.get(agent_id).cloned() else {
+    async fn cancel_queued_requests_for_runtime(&self, runtime_key: &RuntimeSlotKey, reason: &str) {
+        let Some(handle) = self.runtimes.read().await.get(runtime_key).cloned() else {
             return;
         };
 
@@ -765,7 +790,7 @@ impl AgentManager {
                 .unwrap_or_else(|| uuid::Uuid::now_v7().simple().to_string());
             let completed = PeerAgentTaskResult {
                 request_id: request_id.clone(),
-                agent_id: agent_id.to_string(),
+                agent_id: runtime_key.agent_id.clone(),
                 trace_id: envelope.task.trace_id.clone(),
                 runtime_task_id: String::new(),
                 status: TaskTerminalStatus::Cancelled,
@@ -782,7 +807,7 @@ impl AgentManager {
 
     async fn kill_runtime_requests(
         &self,
-        agent_id: &str,
+        runtime_key: &RuntimeSlotKey,
         handle: &Arc<AgentRuntimeHandle>,
         reason: &str,
     ) {
@@ -801,7 +826,7 @@ impl AgentManager {
                 .unwrap_or_else(|| uuid::Uuid::now_v7().simple().to_string());
             let completed = PeerAgentTaskResult {
                 request_id: request_id.clone(),
-                agent_id: agent_id.to_string(),
+                agent_id: runtime_key.agent_id.clone(),
                 trace_id: envelope.task.trace_id.clone(),
                 runtime_task_id: String::new(),
                 status: TaskTerminalStatus::Killed,
@@ -825,7 +850,7 @@ impl AgentManager {
                 .unwrap_or_default();
             let completed = PeerAgentTaskResult {
                 request_id: request_id.clone(),
-                agent_id: agent_id.to_string(),
+                agent_id: runtime_key.agent_id.clone(),
                 trace_id,
                 runtime_task_id: handle.control.current_runtime_task_id().unwrap_or_default(),
                 status: TaskTerminalStatus::Killed,
@@ -967,7 +992,7 @@ mod tests {
         manager.pending_task_states.write().await.insert(
             request_id.clone(),
             PendingTaskRecord {
-                agent_id: "default".to_string(),
+                runtime_key: RuntimeSlotKey::default_for("default"),
                 trace_id: "tr_cancelled".to_string(),
                 state: PendingTaskState::Queued,
                 runtime_task_id: None,
@@ -983,7 +1008,7 @@ mod tests {
         });
 
         manager.runtimes.write().await.insert(
-            "default".to_string(),
+            RuntimeSlotKey::default_for("default"),
             Arc::new(AgentRuntimeHandle {
                 queue: Arc::new(Mutex::new(queue)),
                 notify: Arc::new(Notify::new()),
@@ -1047,7 +1072,7 @@ mod tests {
         manager.pending_task_states.write().await.insert(
             request_id.clone(),
             PendingTaskRecord {
-                agent_id: "default".to_string(),
+                runtime_key: RuntimeSlotKey::default_for("default"),
                 trace_id: "tr_running".to_string(),
                 state: PendingTaskState::Running,
                 runtime_task_id: Some("t_1".to_string()),
@@ -1055,7 +1080,7 @@ mod tests {
         );
 
         manager.runtimes.write().await.insert(
-            "default".to_string(),
+            RuntimeSlotKey::default_for("default"),
             Arc::new(AgentRuntimeHandle {
                 queue: Arc::new(Mutex::new(VecDeque::new())),
                 notify: Arc::new(Notify::new()),
@@ -1096,7 +1121,7 @@ mod tests {
         manager.pending_task_states.write().await.insert(
             request_id.clone(),
             PendingTaskRecord {
-                agent_id: "default".to_string(),
+                runtime_key: RuntimeSlotKey::default_for("default"),
                 trace_id: "tr_session_cancel".to_string(),
                 state: PendingTaskState::Queued,
                 runtime_task_id: None,
@@ -1112,7 +1137,7 @@ mod tests {
         });
 
         manager.runtimes.write().await.insert(
-            "default".to_string(),
+            RuntimeSlotKey::default_for("default"),
             Arc::new(AgentRuntimeHandle {
                 queue: Arc::new(Mutex::new(queue)),
                 notify: Arc::new(Notify::new()),
@@ -1169,7 +1194,7 @@ mod tests {
         manager.pending_task_states.write().await.insert(
             running_request_id.clone(),
             PendingTaskRecord {
-                agent_id: "default".to_string(),
+                runtime_key: RuntimeSlotKey::default_for("default"),
                 trace_id: "tr_running_kill".to_string(),
                 state: PendingTaskState::Running,
                 runtime_task_id: Some("t_running".to_string()),
@@ -1178,7 +1203,7 @@ mod tests {
         manager.pending_task_states.write().await.insert(
             queued_request_id.clone(),
             PendingTaskRecord {
-                agent_id: "default".to_string(),
+                runtime_key: RuntimeSlotKey::default_for("default"),
                 trace_id: "tr_queued_kill".to_string(),
                 state: PendingTaskState::Queued,
                 runtime_task_id: None,
@@ -1194,7 +1219,7 @@ mod tests {
         });
 
         manager.runtimes.write().await.insert(
-            "default".to_string(),
+            RuntimeSlotKey::default_for("default"),
             Arc::new(AgentRuntimeHandle {
                 queue: Arc::new(Mutex::new(queue)),
                 notify: Arc::new(Notify::new()),
@@ -1210,7 +1235,14 @@ mod tests {
         let (agent_id, returned_session_id) = manager.kill_session(session_id).await?;
         assert_eq!(agent_id, "default");
         assert_eq!(returned_session_id, session_id);
-        assert!(manager.runtimes.read().await.get("default").is_none());
+        assert!(
+            manager
+                .runtimes
+                .read()
+                .await
+                .get(&RuntimeSlotKey::default_for("default"))
+                .is_none()
+        );
 
         let running = manager
             .get_task(&running_request_id)
