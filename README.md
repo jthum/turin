@@ -187,6 +187,10 @@ turin daemon events
 
 See `docs/DAEMON.md` for the daemon filesystem model, runtime behavior, and command surface.
 
+## Architecture Notes
+
+For the key design decisions behind the current runtime and daemon shape, see `docs/adr/README.md`.
+
 ## Canonical Harness API (Overview)
 
 Turin’s harness surface is split between **canonical runtime APIs** and **ergonomic aliases**.

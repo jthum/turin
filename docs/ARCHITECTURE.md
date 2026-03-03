@@ -2,6 +2,8 @@
 
 This document describes Turin’s current architecture after the canonical stdlib, multi-db/multi-agent runtime, and governance refactors.
 
+For the non-obvious decisions behind the current shape, see `docs/adr/README.md`.
+
 ## Design Principles
 
 1. **Kernel is execution physics, not policy.**
