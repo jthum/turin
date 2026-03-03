@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-03-03
+
+### Added
+- **Daemon Session Routing and Resume**
+  - Added live daemon session slots so one agent can host multiple concurrent live conversation threads.
+  - Added `session.open` and `session.list_live` to explicitly manage live daemon slots.
+  - Extended `task.submit` to target an existing live `session_id` in addition to the agent-targeted submission path.
+  - Added persisted `session.resume` across daemon restart, preserving the same session ID and reconstructing history/counters from persisted state.
+- **Stronger Daemon Control Semantics**
+  - Added cooperative `session.cancel` and forceful `session.kill` with truthful task/session state transitions.
+  - Added `agent.reload`, `runtime.reload`, and richer agent/harness issue inspection surfaces.
+- **Daemon Observability**
+  - Added typed daemon error taxonomy.
+  - Added trace fields/task trace correlation in runtime logs.
+  - Added ADRs documenting the key runtime and daemon architectural decisions.
+
+### Changed
+- **Daemon Protocol and Maintainability**
+  - Replaced the stringly daemon request surface with a typed protocol layer.
+  - Added socket-level daemon integration tests over the real Unix-socket NDJSON transport.
+  - Split daemon state, server, and dispatch logic into focused submodules.
+  - Flattened repeated daemon CLI args and improved the default human-readable output for daemon commands.
+- **Daemon Runtime Model**
+  - Agent runtimes are now keyed by runtime slot instead of raw agent ID, which removes the old one-live-session-per-agent assumption from the daemon runtime registry.
+  - Daemon state access now allows concurrent reads at the server boundary via `RwLock` rather than serializing all operations behind one exclusive mutex.
+- **Dependency Reproducibility**
+  - Pinned git dependencies to concrete revisions for reproducible builds.
+
+### Fixed
+- **Daemon Fault Isolation**
+  - Broken agent and harness files are now isolated more cleanly during registry scan and surfaced through classified issue events (`agent.load_failed`, `harness.load_failed`) instead of poisoning unrelated daemon state.
+- **Dispatch Maintainability Hotspot**
+  - Replaced the old large daemon dispatch file with request handlers grouped by API domain.
+
 ## [0.20.0] - 2026-03-02
 
 ### Added
