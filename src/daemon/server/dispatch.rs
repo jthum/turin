@@ -7,8 +7,8 @@ use tokio::sync::{RwLock, broadcast, watch};
 
 use crate::daemon::protocol::{
     BindHarnessParams, CreateAgentParams, DaemonRequest, EntityIdParams, ErrorCode, EventEnvelope,
-    RequestEnvelope, ResponseEnvelope, SessionIdParams, SessionListParams, SubmitTaskParams,
-    TaskIdParams, UpdateAgentParams, WaitTaskParams,
+    OpenSessionParams, RequestEnvelope, ResponseEnvelope, SessionIdParams, SessionListParams,
+    SubmitTaskParams, TaskIdParams, UpdateAgentParams, WaitTaskParams,
 };
 use crate::daemon::state::{CreateAgentInput, DaemonState, DaemonStatus, UpdateAgentInput};
 
@@ -269,9 +269,16 @@ pub(super) async fn dispatch(
                 Err(err) => validation_error(request.id, err),
             }
         }
-        DaemonRequest::TaskSubmit(SubmitTaskParams { agent_id, prompt }) => {
+        DaemonRequest::TaskSubmit(SubmitTaskParams {
+            agent_id,
+            session_id,
+            prompt,
+        }) => {
             let guard = state.read().await;
-            match guard.submit_task(&agent_id, prompt).await {
+            match guard
+                .submit_task(agent_id.as_deref(), session_id.as_deref(), prompt)
+                .await
+            {
                 Ok(task) => serialize_response_with_event(
                     request.id,
                     task,
@@ -330,6 +337,26 @@ pub(super) async fn dispatch(
             match guard.list_sessions(limit, offset).await {
                 Ok(sessions) => ResponseEnvelope::ok(request.id, json!({ "sessions": sessions })),
                 Err(err) => internal_error(request.id, err),
+            }
+        }
+        DaemonRequest::SessionListLive(_) => {
+            let guard = state.read().await;
+            ResponseEnvelope::ok(
+                request.id,
+                json!({ "sessions": guard.list_live_sessions().await }),
+            )
+        }
+        DaemonRequest::SessionOpen(OpenSessionParams { agent_id, slot_id }) => {
+            let guard = state.read().await;
+            match guard.open_session(&agent_id, slot_id.as_deref()).await {
+                Ok(session) => serialize_response_with_event(
+                    request.id,
+                    session,
+                    "opened session",
+                    &event_tx,
+                    "session.opened",
+                ),
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::SessionGet(SessionIdParams { session_id }) => {

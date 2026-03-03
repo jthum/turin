@@ -296,7 +296,11 @@ enum DaemonTaskCommands {
     /// Submit a task to a daemon-managed agent
     Submit {
         /// Agent ID
-        agent_id: String,
+        #[arg(required_unless_present = "session_id")]
+        agent_id: Option<String>,
+        /// Existing live session ID to submit into
+        #[arg(long)]
+        session_id: Option<String>,
         /// Prompt to submit
         prompt: String,
         /// Wait for the task to complete and print the terminal result
@@ -400,6 +404,21 @@ enum DaemonSessionCommands {
         /// Offset into the session list
         #[arg(long, default_value_t = 0)]
         offset: usize,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
+    /// List current live daemon-managed sessions
+    Live {
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
+    /// Open or reuse a live session slot for an agent
+    Open {
+        /// Agent ID
+        agent_id: String,
+        /// Optional custom slot ID
+        #[arg(long)]
+        slot_id: Option<String>,
         #[command(flatten)]
         args: DaemonOutputArgs,
     },
@@ -712,6 +731,7 @@ async fn main() -> Result<()> {
             DaemonCommands::Task { command } => match command {
                 DaemonTaskCommands::Submit {
                     agent_id,
+                    session_id,
                     prompt,
                     wait,
                     timeout_ms,
@@ -719,7 +739,8 @@ async fn main() -> Result<()> {
                 } => {
                     commands::daemon::run_task_submit(
                         &args.config.config,
-                        &agent_id,
+                        agent_id.as_deref(),
+                        session_id.as_deref(),
                         &prompt,
                         wait,
                         timeout_ms,
@@ -786,6 +807,22 @@ async fn main() -> Result<()> {
                         &args.config.config,
                         limit,
                         offset,
+                        args.json,
+                    )
+                    .await
+                }
+                DaemonSessionCommands::Live { args } => {
+                    commands::daemon::run_session_list_live(&args.config.config, args.json).await
+                }
+                DaemonSessionCommands::Open {
+                    agent_id,
+                    slot_id,
+                    args,
+                } => {
+                    commands::daemon::run_session_open(
+                        &args.config.config,
+                        &agent_id,
+                        slot_id.as_deref(),
                         args.json,
                     )
                     .await

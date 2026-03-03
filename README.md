@@ -181,6 +181,7 @@ turin daemon start
 turin daemon status
 turin daemon agent list
 turin daemon agent create docs-reviewer --provider mock --model mock-model
+turin daemon session open docs-reviewer
 turin daemon task submit docs-reviewer "Review the docs" --wait
 turin daemon events
 ```

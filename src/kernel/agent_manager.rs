@@ -29,6 +29,7 @@ use tokio_util::sync::CancellationToken;
 pub struct PeerAgentTaskResult {
     pub request_id: String,
     pub agent_id: String,
+    pub slot_id: String,
     pub trace_id: String,
     pub runtime_task_id: String,
     pub status: TaskTerminalStatus,
@@ -52,6 +53,7 @@ pub struct AgentStatusSnapshot {
 pub struct TaskStatusSnapshot {
     pub request_id: String,
     pub agent_id: String,
+    pub slot_id: String,
     pub trace_id: String,
     pub state: String,
     pub runtime_task_id: Option<String>,
@@ -59,6 +61,17 @@ pub struct TaskStatusSnapshot {
     pub task_turn_count: Option<u32>,
     pub output: Option<String>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LiveSessionSnapshot {
+    pub agent_id: String,
+    pub slot_id: String,
+    pub session_id: String,
+    pub running: bool,
+    pub active_tasks: usize,
+    pub queued_tasks: usize,
+    pub current_request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -345,6 +358,67 @@ impl AgentManager {
         task: QueuedTask,
         delegated_capabilities: Option<BTreeMap<String, bool>>,
     ) -> Result<String> {
+        self.submit_to_runtime(RuntimeSlotKey::default_for(agent_id), task, delegated_capabilities)
+            .await
+    }
+
+    pub async fn submit_to_session(
+        self: &Arc<Self>,
+        session_id: &str,
+        task: QueuedTask,
+        delegated_capabilities: Option<BTreeMap<String, bool>>,
+    ) -> Result<String> {
+        let (runtime_key, _) = self
+            .find_runtime_by_session(session_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("Session '{}' is not an active managed runtime session", session_id))?;
+        self.submit_to_runtime(runtime_key, task, delegated_capabilities)
+            .await
+    }
+
+    pub async fn open_session(
+        self: &Arc<Self>,
+        agent_id: &str,
+        slot_id: Option<&str>,
+    ) -> Result<LiveSessionSnapshot> {
+        let runtime_key = RuntimeSlotKey {
+            agent_id: agent_id.to_string(),
+            slot_id: slot_id
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("sl_{}", uuid::Uuid::now_v7().simple())),
+        };
+        let handle = self.ensure_runtime_slot(runtime_key.clone()).await?;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        let session_id = loop {
+            if let Some(session_id) = handle.control.current_session_id() {
+                break session_id;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "Agent runtime '{}' [{}] did not expose a live session",
+                    runtime_key.agent_id,
+                    runtime_key.slot_id
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        };
+        Ok(LiveSessionSnapshot {
+            agent_id: runtime_key.agent_id,
+            slot_id: runtime_key.slot_id,
+            session_id,
+            running: handle.is_running(),
+            active_tasks: handle.active_tasks.load(Ordering::Relaxed),
+            queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
+            current_request_id: handle.control.current_request_id(),
+        })
+    }
+
+    async fn submit_to_runtime(
+        self: &Arc<Self>,
+        runtime_key: RuntimeSlotKey,
+        task: QueuedTask,
+        delegated_capabilities: Option<BTreeMap<String, bool>>,
+    ) -> Result<String> {
         let trace_id = task.trace_id.clone();
         let request_id = uuid::Uuid::now_v7().simple().to_string();
         let (tx_result, rx_result) = oneshot::channel();
@@ -357,7 +431,7 @@ impl AgentManager {
             pending.insert(
                 request_id.clone(),
                 PendingTaskRecord {
-                    runtime_key: RuntimeSlotKey::default_for(agent_id),
+                    runtime_key: runtime_key.clone(),
                     trace_id,
                     state: PendingTaskState::Queued,
                     runtime_task_id: None,
@@ -365,7 +439,7 @@ impl AgentManager {
             );
         }
 
-        let handle = match self.ensure_runtime(agent_id).await {
+        let handle = match self.ensure_runtime_slot(runtime_key).await {
             Ok(handle) => handle,
             Err(e) => {
                 self.remove_pending_request(&request_id).await;
@@ -460,26 +534,69 @@ impl AgentManager {
 
         ids.into_iter()
             .map(|agent_id| {
-                let handle = runtimes.get(&RuntimeSlotKey::default_for(&agent_id));
-                let running = handle.map(|h| h.is_running()).unwrap_or(false);
+                let matching: Vec<_> = runtimes
+                    .iter()
+                    .filter(|(key, _)| key.agent_id == agent_id)
+                    .collect();
+                let running = matching.iter().any(|(_, h)| h.is_running());
                 let awaiting_results = *awaiting_by_agent.get(agent_id.as_str()).unwrap_or(&0);
-                let queued_tasks = handle
-                    .map(|h| h.queued_tasks.load(Ordering::Relaxed))
-                    .unwrap_or(0);
-                let active_tasks = handle
-                    .map(|h| h.active_tasks.load(Ordering::Relaxed))
-                    .unwrap_or(0);
+                let queued_tasks = matching
+                    .iter()
+                    .map(|(_, h)| h.queued_tasks.load(Ordering::Relaxed))
+                    .sum();
+                let active_tasks = matching
+                    .iter()
+                    .map(|(_, h)| h.active_tasks.load(Ordering::Relaxed))
+                    .sum();
+                let default_handle = runtimes.get(&RuntimeSlotKey::default_for(&agent_id));
+                let single_handle = if matching.len() == 1 {
+                    matching.first().map(|(_, h)| *h)
+                } else {
+                    None
+                };
+                let display_handle = default_handle.or(single_handle);
                 AgentStatusSnapshot {
                     agent_id,
                     running,
                     active_tasks,
                     queued_tasks,
                     awaiting_results,
-                    current_session_id: handle.and_then(|h| h.control.current_session_id()),
-                    current_request_id: handle.and_then(|h| h.control.current_request_id()),
+                    current_session_id: display_handle.and_then(|h| h.control.current_session_id()),
+                    current_request_id: display_handle.and_then(|h| h.control.current_request_id()),
                 }
             })
             .collect()
+    }
+
+    pub async fn list_live_sessions(
+        &self,
+        agent_id: Option<&str>,
+    ) -> Vec<LiveSessionSnapshot> {
+        let runtimes = self.runtimes.read().await;
+        let mut sessions: Vec<_> = runtimes
+            .iter()
+            .filter_map(|(runtime_key, handle)| {
+                if agent_id.is_some_and(|wanted| runtime_key.agent_id != wanted) {
+                    return None;
+                }
+                let session_id = handle.control.current_session_id()?;
+                Some(LiveSessionSnapshot {
+                    agent_id: runtime_key.agent_id.clone(),
+                    slot_id: runtime_key.slot_id.clone(),
+                    session_id,
+                    running: handle.is_running(),
+                    active_tasks: handle.active_tasks.load(Ordering::Relaxed),
+                    queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
+                    current_request_id: handle.control.current_request_id(),
+                })
+            })
+            .collect();
+        sessions.sort_by(|a, b| {
+            a.agent_id
+                .cmp(&b.agent_id)
+                .then_with(|| a.slot_id.cmp(&b.slot_id))
+        });
+        sessions
     }
 
     /// Get status for a single agent.
@@ -497,6 +614,7 @@ impl AgentManager {
             .map(|(request_id, pending)| TaskStatusSnapshot {
                 request_id: request_id.clone(),
                 agent_id: pending.runtime_key.agent_id.clone(),
+                slot_id: pending.runtime_key.slot_id.clone(),
                 trace_id: pending.trace_id.clone(),
                 state: match pending.state {
                     PendingTaskState::Queued => "queued".to_string(),
@@ -521,6 +639,7 @@ impl AgentManager {
                 .map(|result| TaskStatusSnapshot {
                     request_id: result.request_id,
                     agent_id: result.agent_id,
+                    slot_id: result.slot_id,
                     trace_id: result.trace_id,
                     state: "completed".to_string(),
                     runtime_task_id: Some(result.runtime_task_id),
@@ -676,6 +795,7 @@ impl AgentManager {
         let completed = PeerAgentTaskResult {
             request_id: request_id.to_string(),
             agent_id: pending.runtime_key.agent_id.clone(),
+            slot_id: pending.runtime_key.slot_id.clone(),
             trace_id: pending.trace_id.clone(),
             runtime_task_id: String::new(),
             status: TaskTerminalStatus::Cancelled,
@@ -693,6 +813,7 @@ impl AgentManager {
         Ok(TaskStatusSnapshot {
             request_id: completed.request_id,
             agent_id: completed.agent_id,
+            slot_id: completed.slot_id,
             trace_id: completed.trace_id,
             state: "completed".to_string(),
             runtime_task_id: Some(completed.runtime_task_id),
@@ -791,6 +912,7 @@ impl AgentManager {
             let completed = PeerAgentTaskResult {
                 request_id: request_id.clone(),
                 agent_id: runtime_key.agent_id.clone(),
+                slot_id: runtime_key.slot_id.clone(),
                 trace_id: envelope.task.trace_id.clone(),
                 runtime_task_id: String::new(),
                 status: TaskTerminalStatus::Cancelled,
@@ -827,6 +949,7 @@ impl AgentManager {
             let completed = PeerAgentTaskResult {
                 request_id: request_id.clone(),
                 agent_id: runtime_key.agent_id.clone(),
+                slot_id: runtime_key.slot_id.clone(),
                 trace_id: envelope.task.trace_id.clone(),
                 runtime_task_id: String::new(),
                 status: TaskTerminalStatus::Killed,
@@ -851,6 +974,7 @@ impl AgentManager {
             let completed = PeerAgentTaskResult {
                 request_id: request_id.clone(),
                 agent_id: runtime_key.agent_id.clone(),
+                slot_id: runtime_key.slot_id.clone(),
                 trace_id,
                 runtime_task_id: handle.control.current_runtime_task_id().unwrap_or_default(),
                 status: TaskTerminalStatus::Killed,

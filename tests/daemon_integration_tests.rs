@@ -283,11 +283,43 @@ async fn daemon_agent_crud_round_trip_over_socket() -> Result<()> {
 async fn daemon_task_wait_and_session_round_trip_over_socket() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
 
+    let live = result_value(
+        daemon
+            .request(DaemonRequest::SessionOpen(
+                turin::daemon::protocol::OpenSessionParams {
+                    agent_id: "default".to_string(),
+                    slot_id: Some("chat-thread-1".to_string()),
+                },
+            ))
+            .await?,
+    );
+    let live_session_id = live["session_id"]
+        .as_str()
+        .expect("live session id")
+        .to_string();
+    assert_eq!(live["slot_id"], "chat-thread-1");
+
+    let live_sessions = result_value(
+        daemon
+            .request(DaemonRequest::SessionListLive(
+                turin::daemon::protocol::NoParams::default(),
+            ))
+            .await?,
+    );
+    assert!(
+        live_sessions["sessions"]
+            .as_array()
+            .expect("live sessions array")
+            .iter()
+            .any(|session| session["session_id"] == live_session_id)
+    );
+
     let submitted = result_value(
         daemon
             .request(DaemonRequest::TaskSubmit(
                 turin::daemon::protocol::SubmitTaskParams {
-                    agent_id: "default".to_string(),
+                    agent_id: None,
+                    session_id: Some(live_session_id.clone()),
                     prompt: "Say pong".to_string(),
                 },
             ))
@@ -309,6 +341,7 @@ async fn daemon_task_wait_and_session_round_trip_over_socket() -> Result<()> {
             .await?,
     );
     assert_eq!(completed["state"], "completed");
+    assert_eq!(completed["slot_id"], "chat-thread-1");
     assert_eq!(completed["output"], "PONG");
 
     let sessions = result_value(

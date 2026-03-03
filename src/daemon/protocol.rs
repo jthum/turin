@@ -56,8 +56,18 @@ pub struct BindHarnessParams {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SubmitTaskParams {
-    pub agent_id: String,
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub prompt: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct OpenSessionParams {
+    pub agent_id: String,
+    #[serde(default)]
+    pub slot_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -138,6 +148,10 @@ pub enum DaemonRequest {
     TaskList(NoParams),
     #[serde(rename = "session.list")]
     SessionList(SessionListParams),
+    #[serde(rename = "session.list_live")]
+    SessionListLive(NoParams),
+    #[serde(rename = "session.open")]
+    SessionOpen(OpenSessionParams),
     #[serde(rename = "session.get")]
     SessionGet(SessionIdParams),
     #[serde(rename = "session.cancel")]
@@ -291,7 +305,8 @@ mod tests {
         let request = RequestEnvelope::new(
             Some("req_1".to_string()),
             DaemonRequest::TaskSubmit(SubmitTaskParams {
-                agent_id: "writer".to_string(),
+                agent_id: Some("writer".to_string()),
+                session_id: None,
                 prompt: "review this".to_string(),
             }),
         );
@@ -305,7 +320,8 @@ mod tests {
         let decoded: RequestEnvelope = serde_json::from_value(value).expect("deserialize request");
         match decoded.request {
             DaemonRequest::TaskSubmit(params) => {
-                assert_eq!(params.agent_id, "writer");
+                assert_eq!(params.agent_id.as_deref(), Some("writer"));
+                assert!(params.session_id.is_none());
                 assert_eq!(params.prompt, "review this");
             }
             other => panic!("unexpected request variant: {other:?}"),

@@ -16,21 +16,37 @@ impl AgentManager {
         self: &Arc<Self>,
         agent_id: &str,
     ) -> Result<Arc<AgentRuntimeHandle>> {
+        self.ensure_runtime_slot(RuntimeSlotKey::default_for(agent_id))
+            .await
+    }
+
+    pub(super) async fn ensure_runtime_slot(
+        self: &Arc<Self>,
+        runtime_key: RuntimeSlotKey,
+    ) -> Result<Arc<AgentRuntimeHandle>> {
         {
             let runtimes = self.runtimes.read().await;
-            if let Some(handle) = runtimes.get(&RuntimeSlotKey::default_for(agent_id))
+            if let Some(handle) = runtimes.get(&runtime_key)
                 && handle.is_running()
             {
                 return Ok(Arc::clone(handle));
             }
         }
 
-        self.ensure_runtime_with_write_lock(agent_id).await
+        self.ensure_runtime_with_write_lock(runtime_key).await
     }
 
     /// Internal method to boot a background peer runtime for a specific agent profile.
-    async fn start_agent(self: &Arc<Self>, agent_id: &str) -> Result<AgentRuntimeHandle> {
-        info!(agent_id = %agent_id, "Starting background peer agent runtime");
+    async fn start_agent(
+        self: &Arc<Self>,
+        runtime_key: &RuntimeSlotKey,
+    ) -> Result<AgentRuntimeHandle> {
+        let agent_id = runtime_key.agent_id.as_str();
+        info!(
+            agent_id = %agent_id,
+            slot_id = %runtime_key.slot_id,
+            "Starting background peer agent runtime"
+        );
 
         let agent_profile = if agent_id == self.config.agent.id {
             &self.config.agent
@@ -49,6 +65,7 @@ impl AgentManager {
         let queued_tasks = Arc::new(AtomicUsize::new(0));
         let active_tasks = Arc::new(AtomicUsize::new(0));
         let agent_id_clone = agent_id.to_string();
+        let slot_id_clone = runtime_key.slot_id.clone();
         let idle_grace_secs = agent_profile.idle_grace_secs;
         let manager = Arc::clone(self);
         let queue_bg = Arc::clone(&queue);
@@ -58,19 +75,24 @@ impl AgentManager {
         let active_tasks_bg = active_tasks.clone();
         let control_bg = Arc::clone(&control);
         let join_handle = tokio::spawn(async move {
-            debug!(agent_id = %agent_id_clone, "Peer agent loop initializing");
+            debug!(agent_id = %agent_id_clone, slot_id = %slot_id_clone, "Peer agent loop initializing");
 
-            let mut runtime = match PeerRuntime::start(manager.clone(), &agent_id_clone, control_bg)
-                .await
+            let mut runtime = match PeerRuntime::start(
+                manager.clone(),
+                &agent_id_clone,
+                &slot_id_clone,
+                control_bg,
+            )
+            .await
             {
                 Ok(runtime) => runtime,
                 Err(e) => {
-                    error!(agent_id = %agent_id_clone, error = %e, "Peer agent failed to start session");
+                    error!(agent_id = %agent_id_clone, slot_id = %slot_id_clone, error = %e, "Peer agent failed to start session");
                     return;
                 }
             };
 
-            info!(agent_id = %agent_id_clone, "Peer agent loop ready for tasks");
+            info!(agent_id = %agent_id_clone, slot_id = %slot_id_clone, "Peer agent loop ready for tasks");
 
             loop {
                 let envelope = {
@@ -84,6 +106,7 @@ impl AgentManager {
                         Err(err) => {
                             error!(
                                 agent_id = %agent_id_clone,
+                                slot_id = %slot_id_clone,
                                 error = %err,
                                 "Peer agent failed to reset session"
                             );
@@ -99,6 +122,7 @@ impl AgentManager {
                         if notified.is_err() {
                             info!(
                                 agent_id = %agent_id_clone,
+                                slot_id = %slot_id_clone,
                                 idle_grace_secs = idle_secs,
                                 "Peer agent idle timeout reached; shutting down runtime"
                             );
@@ -119,7 +143,7 @@ impl AgentManager {
                 active_tasks_bg.fetch_sub(1, Ordering::Relaxed);
             }
 
-            info!(agent_id = %agent_id_clone, "Peer agent loop terminating runtime");
+            info!(agent_id = %agent_id_clone, slot_id = %slot_id_clone, "Peer agent loop terminating runtime");
 
             runtime.shutdown().await;
         });
@@ -136,17 +160,17 @@ impl AgentManager {
 
     async fn ensure_runtime_with_write_lock(
         self: &Arc<Self>,
-        agent_id: &str,
+        runtime_key: RuntimeSlotKey,
     ) -> Result<Arc<AgentRuntimeHandle>> {
         let mut runtimes = self.runtimes.write().await;
-        if let Some(handle) = runtimes.get(&RuntimeSlotKey::default_for(agent_id))
+        if let Some(handle) = runtimes.get(&runtime_key)
             && handle.is_running()
         {
             return Ok(Arc::clone(handle));
         }
 
-        let handle = Arc::new(self.start_agent(agent_id).await?);
-        runtimes.insert(RuntimeSlotKey::default_for(agent_id), Arc::clone(&handle));
+        let handle = Arc::new(self.start_agent(&runtime_key).await?);
+        runtimes.insert(runtime_key, Arc::clone(&handle));
         Ok(handle)
     }
 }

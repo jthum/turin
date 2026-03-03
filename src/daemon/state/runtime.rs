@@ -22,13 +22,26 @@ impl DaemonState {
             .find(|status| status.agent_id == agent_id))
     }
 
-    pub async fn submit_task(&self, agent_id: &str, prompt: String) -> Result<TaskStatusSnapshot> {
-        self.ensure_enabled_agent(agent_id)?;
-        let request_id = self
-            .kernel
-            .agent_manager()
-            .submit(agent_id, QueuedTask::ad_hoc(prompt), None)
-            .await?;
+    pub async fn submit_task(
+        &self,
+        agent_id: Option<&str>,
+        session_id: Option<&str>,
+        prompt: String,
+    ) -> Result<TaskStatusSnapshot> {
+        let request_id = if let Some(session_id) = session_id {
+            self.kernel
+                .agent_manager()
+                .submit_to_session(session_id, QueuedTask::ad_hoc(prompt), None)
+                .await?
+        } else {
+            let agent_id =
+                agent_id.ok_or_else(|| anyhow!("task.submit requires agent_id or session_id"))?;
+            self.ensure_enabled_agent(agent_id)?;
+            self.kernel
+                .agent_manager()
+                .submit(agent_id, QueuedTask::ad_hoc(prompt), None)
+                .await?
+        };
         self.kernel
             .agent_manager()
             .get_task(&request_id)
@@ -87,6 +100,19 @@ impl DaemonState {
             .iter()
             .map(super::helpers::session_summary_from_row)
             .collect())
+    }
+
+    pub async fn list_live_sessions(&self) -> Vec<crate::kernel::agent_manager::LiveSessionSnapshot> {
+        self.kernel.agent_manager().list_live_sessions(None).await
+    }
+
+    pub async fn open_session(
+        &self,
+        agent_id: &str,
+        slot_id: Option<&str>,
+    ) -> Result<crate::kernel::agent_manager::LiveSessionSnapshot> {
+        self.ensure_enabled_agent(agent_id)?;
+        self.kernel.agent_manager().open_session(agent_id, slot_id).await
     }
 
     pub async fn get_session(&self, session_id: &str) -> Result<Option<SessionDetail>> {

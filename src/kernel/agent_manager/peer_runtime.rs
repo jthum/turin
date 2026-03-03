@@ -19,6 +19,7 @@ pub(super) struct PeerRuntime {
     host: ExecutionHost,
     session: crate::kernel::session::SessionState,
     agent_id: String,
+    slot_id: String,
 }
 
 #[derive(Debug)]
@@ -33,6 +34,7 @@ impl PeerRuntime {
     pub(super) async fn start(
         manager: Arc<AgentManager>,
         agent_id: &str,
+        slot_id: &str,
         control: Arc<RuntimeControl>,
     ) -> Result<Self> {
         let mut host = fork_peer_kernel(&manager);
@@ -50,6 +52,7 @@ impl PeerRuntime {
             host,
             session,
             agent_id: agent_id.to_string(),
+            slot_id: slot_id.to_string(),
         })
     }
 
@@ -70,6 +73,7 @@ impl PeerRuntime {
                 Ok(ok) => PeerAgentTaskResult {
                     request_id,
                     agent_id: self.agent_id.clone(),
+                    slot_id: self.slot_id.clone(),
                     trace_id,
                     runtime_task_id: ok.runtime_task_id,
                     status: ok.status,
@@ -80,6 +84,7 @@ impl PeerRuntime {
                 Err(e) => PeerAgentTaskResult {
                     request_id,
                     agent_id: self.agent_id.clone(),
+                    slot_id: self.slot_id.clone(),
                     trace_id,
                     runtime_task_id: String::new(),
                     status: TaskTerminalStatus::Error,

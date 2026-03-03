@@ -99,6 +99,7 @@ struct HarnessDetailView {
 struct TaskStatusView {
     request_id: String,
     agent_id: String,
+    slot_id: String,
     trace_id: String,
     state: String,
     runtime_task_id: Option<String>,
@@ -125,6 +126,22 @@ struct SessionSummaryView {
 #[derive(Debug, Deserialize)]
 struct SessionListView {
     sessions: Vec<SessionSummaryView>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiveSessionView {
+    agent_id: String,
+    slot_id: String,
+    session_id: String,
+    running: bool,
+    active_tasks: usize,
+    queued_tasks: usize,
+    current_request_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiveSessionListView {
+    sessions: Vec<LiveSessionView>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -338,7 +355,8 @@ pub async fn run_agent_delete(
 
 pub async fn run_task_submit(
     config_path: &std::path::Path,
-    agent_id: &str,
+    agent_id: Option<&str>,
+    session_id: Option<&str>,
     prompt: &str,
     wait: bool,
     timeout_ms: Option<u64>,
@@ -347,7 +365,7 @@ pub async fn run_task_submit(
     let response = send_request(
         config_path,
         "task.submit",
-        json!({ "agent_id": agent_id, "prompt": prompt }),
+        json!({ "agent_id": agent_id, "session_id": session_id, "prompt": prompt }),
     )
     .await?;
     if !wait {
@@ -371,6 +389,38 @@ pub async fn run_task_submit(
         .ok_or_else(|| anyhow::anyhow!("Daemon task.submit response did not include request_id"))?;
 
     run_task_wait(config_path, request_id, timeout_ms, json_output).await
+}
+
+pub async fn run_session_open(
+    config_path: &std::path::Path,
+    agent_id: &str,
+    slot_id: Option<&str>,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(
+        config_path,
+        "session.open",
+        json!({ "agent_id": agent_id, "slot_id": slot_id }),
+    )
+    .await?;
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let session: LiveSessionView = decode_result(response)?;
+    print_live_session("Opened live session", &session);
+    Ok(())
+}
+
+pub async fn run_session_list_live(config_path: &std::path::Path, json_output: bool) -> Result<()> {
+    let response = send_request(config_path, "session.list_live", json!({})).await?;
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let sessions: LiveSessionListView = decode_result(response)?;
+    print_live_session_list(sessions);
+    Ok(())
 }
 
 pub async fn run_task_get(
@@ -957,6 +1007,7 @@ fn print_task_status(title: &str, task: &TaskStatusView) {
     println!("  request_id:      {}", task.request_id);
     println!("  trace_id:        {}", task.trace_id);
     println!("  agent:           {}", task.agent_id);
+    println!("  slot_id:         {}", task.slot_id);
     println!("  state:           {}", task.state);
     if let Some(runtime_task_id) = &task.runtime_task_id {
         println!("  runtime_task_id: {}", runtime_task_id);
@@ -983,6 +1034,7 @@ fn print_task_list(tasks: TaskListView) {
         "REQUEST".to_string(),
         "TRACE".to_string(),
         "AGENT".to_string(),
+        "SLOT".to_string(),
         "STATE".to_string(),
         "STATUS".to_string(),
         "TURNS".to_string(),
@@ -995,6 +1047,7 @@ fn print_task_list(tasks: TaskListView) {
             task.request_id,
             task.trace_id,
             task.agent_id,
+            task.slot_id,
             task.state,
             task.status.unwrap_or_else(|| "-".to_string()),
             task.task_turn_count
@@ -1002,6 +1055,50 @@ fn print_task_list(tasks: TaskListView) {
                 .unwrap_or_else(|| "-".to_string()),
             yes_no(task.output.is_some()),
             yes_no(task.error.is_some()),
+        ]);
+    }
+
+    print_table(&rows);
+}
+
+fn print_live_session(title: &str, session: &LiveSessionView) {
+    println!("{}", title);
+    println!("  agent:           {}", session.agent_id);
+    println!("  slot_id:         {}", session.slot_id);
+    println!("  session_id:      {}", session.session_id);
+    println!("  running:         {}", yes_no(session.running));
+    println!("  active_tasks:    {}", session.active_tasks);
+    println!("  queued_tasks:    {}", session.queued_tasks);
+    println!(
+        "  current_request: {}",
+        session
+            .current_request_id
+            .clone()
+            .unwrap_or_else(|| "-".to_string())
+    );
+}
+
+fn print_live_session_list(sessions: LiveSessionListView) {
+    let mut rows = Vec::new();
+    rows.push(vec![
+        "AGENT".to_string(),
+        "SLOT".to_string(),
+        "SESSION".to_string(),
+        "RUNNING".to_string(),
+        "ACTIVE".to_string(),
+        "QUEUED".to_string(),
+        "REQUEST".to_string(),
+    ]);
+
+    for session in sessions.sessions {
+        rows.push(vec![
+            session.agent_id,
+            session.slot_id,
+            session.session_id,
+            yes_no(session.running),
+            session.active_tasks.to_string(),
+            session.queued_tasks.to_string(),
+            session.current_request_id.unwrap_or_else(|| "-".to_string()),
         ]);
     }
 
