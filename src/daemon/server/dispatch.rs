@@ -6,7 +6,7 @@ use serde_json::json;
 use tokio::sync::{RwLock, broadcast, watch};
 
 use crate::daemon::protocol::{
-    BindHarnessParams, CreateAgentParams, DaemonRequest, EntityIdParams, EventEnvelope,
+    BindHarnessParams, CreateAgentParams, DaemonRequest, EntityIdParams, ErrorCode, EventEnvelope,
     RequestEnvelope, ResponseEnvelope, SessionIdParams, SessionListParams, SubmitTaskParams,
     TaskIdParams, UpdateAgentParams, WaitTaskParams,
 };
@@ -38,9 +38,7 @@ pub(super) async fn dispatch(
             match rescan_and_refresh_watcher(state, watcher_slot, daemon_watcher_tx, event_tx).await
             {
                 Ok(status) => serialize_response(request.id, status, "rescan result"),
-                Err(err) => {
-                    ResponseEnvelope::err(request.id, "rescan_failed", err.to_string(), None)
-                }
+                Err(err) => resource_busy_error(request.id, err),
             }
         }
         DaemonRequest::RuntimeReload(_) => {
@@ -59,12 +57,7 @@ pub(super) async fn dispatch(
                     &event_tx,
                     "runtime.reloaded",
                 ),
-                Err(err) => ResponseEnvelope::err(
-                    request.id,
-                    "runtime_reload_failed",
-                    err.to_string(),
-                    None,
-                ),
+                Err(err) => resource_busy_error(request.id, err),
             }
         }
         DaemonRequest::RuntimeErrors(_) => {
@@ -82,30 +75,24 @@ pub(super) async fn dispatch(
             let guard = state.read().await;
             match guard.agent_detail(&id) {
                 Ok(Some(agent)) => serialize_response(request.id, agent, "agent detail"),
-                Ok(None) => ResponseEnvelope::err(
+                Ok(None) => not_found_error(
                     request.id,
-                    "agent_not_found",
+                    ErrorCode::AgentNotFound,
                     format!("Agent '{}' not found", id),
-                    None,
                 ),
-                Err(err) => {
-                    ResponseEnvelope::err(request.id, "agent_get_failed", err.to_string(), None)
-                }
+                Err(err) => internal_error(request.id, err),
             }
         }
         DaemonRequest::AgentStatus(EntityIdParams { id }) => {
             let guard = state.read().await;
             match guard.agent_runtime_status(&id).await {
                 Ok(Some(status)) => serialize_response(request.id, status, "agent status"),
-                Ok(None) => ResponseEnvelope::err(
+                Ok(None) => not_found_error(
                     request.id,
-                    "agent_not_found",
+                    ErrorCode::AgentNotFound,
                     format!("Agent '{}' not found", id),
-                    None,
                 ),
-                Err(err) => {
-                    ResponseEnvelope::err(request.id, "agent_status_failed", err.to_string(), None)
-                }
+                Err(err) => internal_error(request.id, err),
             }
         }
         DaemonRequest::AgentIssues(EntityIdParams { id }) => {
@@ -114,15 +101,12 @@ pub(super) async fn dispatch(
                 Ok(Some(issues)) => {
                     ResponseEnvelope::ok(request.id, json!({ "agent_id": id, "issues": issues }))
                 }
-                Ok(None) => ResponseEnvelope::err(
+                Ok(None) => not_found_error(
                     request.id,
-                    "agent_not_found",
+                    ErrorCode::AgentNotFound,
                     format!("Agent '{}' not found", id),
-                    None,
                 ),
-                Err(err) => {
-                    ResponseEnvelope::err(request.id, "agent_issues_failed", err.to_string(), None)
-                }
+                Err(err) => internal_error(request.id, err),
             }
         }
         DaemonRequest::AgentCreate(CreateAgentParams {
@@ -158,9 +142,7 @@ pub(super) async fn dispatch(
                     &event_tx,
                     "agent.created",
                 ),
-                Err(err) => {
-                    ResponseEnvelope::err(request.id, "agent_create_failed", err.to_string(), None)
-                }
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::AgentEnable(EntityIdParams { id }) => {
@@ -173,9 +155,7 @@ pub(super) async fn dispatch(
                     &event_tx,
                     "agent.enabled",
                 ),
-                Err(err) => {
-                    ResponseEnvelope::err(request.id, "agent_toggle_failed", err.to_string(), None)
-                }
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::AgentDisable(EntityIdParams { id }) => {
@@ -188,9 +168,7 @@ pub(super) async fn dispatch(
                     &event_tx,
                     "agent.disabled",
                 ),
-                Err(err) => {
-                    ResponseEnvelope::err(request.id, "agent_toggle_failed", err.to_string(), None)
-                }
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::AgentUpdate(UpdateAgentParams {
@@ -224,9 +202,7 @@ pub(super) async fn dispatch(
                     &event_tx,
                     "agent.updated",
                 ),
-                Err(err) => {
-                    ResponseEnvelope::err(request.id, "agent_update_failed", err.to_string(), None)
-                }
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::AgentReload(EntityIdParams { id }) => {
@@ -239,9 +215,7 @@ pub(super) async fn dispatch(
                     &event_tx,
                     "agent.reloaded",
                 ),
-                Err(err) => {
-                    ResponseEnvelope::err(request.id, "agent_reload_failed", err.to_string(), None)
-                }
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::AgentBindHarness(BindHarnessParams { id, harness_id }) => {
@@ -259,12 +233,7 @@ pub(super) async fn dispatch(
                     }
                     Err(response) => *response,
                 },
-                Err(err) => ResponseEnvelope::err(
-                    request.id,
-                    "agent_bind_harness_failed",
-                    err.to_string(),
-                    None,
-                ),
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::AgentUseLocalHarness(EntityIdParams { id }) => {
@@ -282,12 +251,7 @@ pub(super) async fn dispatch(
                     }
                     Err(response) => *response,
                 },
-                Err(err) => ResponseEnvelope::err(
-                    request.id,
-                    "agent_use_local_harness_failed",
-                    err.to_string(),
-                    None,
-                ),
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::AgentDelete(EntityIdParams { id }) => {
@@ -302,9 +266,7 @@ pub(super) async fn dispatch(
                     }
                     Err(response) => *response,
                 },
-                Err(err) => {
-                    ResponseEnvelope::err(request.id, "agent_delete_failed", err.to_string(), None)
-                }
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::TaskSubmit(SubmitTaskParams { agent_id, prompt }) => {
@@ -317,20 +279,17 @@ pub(super) async fn dispatch(
                     &event_tx,
                     "task.submitted",
                 ),
-                Err(err) => {
-                    ResponseEnvelope::err(request.id, "task_submit_failed", err.to_string(), None)
-                }
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::TaskGet(TaskIdParams { request_id }) => {
             let guard = state.read().await;
             match guard.get_task(&request_id).await {
                 Some(task) => serialize_response(request.id, task, "task"),
-                None => ResponseEnvelope::err(
+                None => not_found_error(
                     request.id,
-                    "task_not_found",
+                    ErrorCode::TaskNotFound,
                     format!("Task '{}' not found", request_id),
-                    None,
                 ),
             }
         }
@@ -341,9 +300,7 @@ pub(super) async fn dispatch(
             let guard = state.read().await;
             match guard.wait_for_task(&request_id, timeout_ms).await {
                 Ok(task) => ResponseEnvelope::ok(request.id, json!(task)),
-                Err(err) => {
-                    ResponseEnvelope::err(request.id, "task_wait_failed", err.to_string(), None)
-                }
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::TaskCancel(TaskIdParams { request_id }) => {
@@ -361,9 +318,7 @@ pub(super) async fn dispatch(
                     emit_event(&event_tx, event_name, value.clone());
                     ResponseEnvelope::ok(request.id, value)
                 }
-                Err(err) => {
-                    ResponseEnvelope::err(request.id, "task_cancel_failed", err.to_string(), None)
-                }
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::TaskList(_) => {
@@ -374,24 +329,19 @@ pub(super) async fn dispatch(
             let guard = state.read().await;
             match guard.list_sessions(limit, offset).await {
                 Ok(sessions) => ResponseEnvelope::ok(request.id, json!({ "sessions": sessions })),
-                Err(err) => {
-                    ResponseEnvelope::err(request.id, "session_list_failed", err.to_string(), None)
-                }
+                Err(err) => internal_error(request.id, err),
             }
         }
         DaemonRequest::SessionGet(SessionIdParams { session_id }) => {
             let guard = state.read().await;
             match guard.get_session(&session_id).await {
                 Ok(Some(session)) => serialize_response(request.id, session, "session detail"),
-                Ok(None) => ResponseEnvelope::err(
+                Ok(None) => not_found_error(
                     request.id,
-                    "session_not_found",
+                    ErrorCode::SessionNotFound,
                     format!("Session '{}' not found", session_id),
-                    None,
                 ),
-                Err(err) => {
-                    ResponseEnvelope::err(request.id, "session_get_failed", err.to_string(), None)
-                }
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::SessionCancel(SessionIdParams { session_id }) => {
@@ -401,12 +351,7 @@ pub(super) async fn dispatch(
                     emit_event(&event_tx, "session.cancel_requested", result.clone());
                     ResponseEnvelope::ok(request.id, result)
                 }
-                Err(err) => ResponseEnvelope::err(
-                    request.id,
-                    "session_cancel_failed",
-                    err.to_string(),
-                    None,
-                ),
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::SessionKill(SessionIdParams { session_id }) => {
@@ -416,9 +361,7 @@ pub(super) async fn dispatch(
                     emit_event(&event_tx, "session.killed", result.clone());
                     ResponseEnvelope::ok(request.id, result)
                 }
-                Err(err) => {
-                    ResponseEnvelope::err(request.id, "session_kill_failed", err.to_string(), None)
-                }
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::HarnessList(_) => {
@@ -440,23 +383,17 @@ pub(super) async fn dispatch(
                     &event_tx,
                     "harness.created",
                 ),
-                Err(err) => ResponseEnvelope::err(
-                    request.id,
-                    "harness_create_failed",
-                    err.to_string(),
-                    None,
-                ),
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::HarnessGet(EntityIdParams { id }) => {
             let guard = state.read().await;
             match guard.harness_detail(&id) {
                 Some(harness) => serialize_response(request.id, harness, "harness detail"),
-                None => ResponseEnvelope::err(
+                None => not_found_error(
                     request.id,
-                    "harness_not_found",
+                    ErrorCode::HarnessNotFound,
                     format!("Harness '{}' not found", id),
-                    None,
                 ),
             }
         }
@@ -466,18 +403,12 @@ pub(super) async fn dispatch(
                 Ok(Some(issues)) => {
                     ResponseEnvelope::ok(request.id, json!({ "harness_id": id, "issues": issues }))
                 }
-                Ok(None) => ResponseEnvelope::err(
+                Ok(None) => not_found_error(
                     request.id,
-                    "harness_not_found",
+                    ErrorCode::HarnessNotFound,
                     format!("Harness '{}' not found", id),
-                    None,
                 ),
-                Err(err) => ResponseEnvelope::err(
-                    request.id,
-                    "harness_issues_failed",
-                    err.to_string(),
-                    None,
-                ),
+                Err(err) => internal_error(request.id, err),
             }
         }
         DaemonRequest::HarnessReload(EntityIdParams { id }) => {
@@ -490,12 +421,7 @@ pub(super) async fn dispatch(
                     &event_tx,
                     "harness.reloaded",
                 ),
-                Err(err) => ResponseEnvelope::err(
-                    request.id,
-                    "harness_reload_failed",
-                    err.to_string(),
-                    None,
-                ),
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::HarnessValidate(EntityIdParams { id }) => {
@@ -505,12 +431,7 @@ pub(super) async fn dispatch(
                     emit_event(&event_tx, "harness.validated", result.clone());
                     ResponseEnvelope::ok(request.id, result)
                 }
-                Err(err) => ResponseEnvelope::err(
-                    request.id,
-                    "harness_validate_failed",
-                    err.to_string(),
-                    None,
-                ),
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::HarnessDelete(EntityIdParams { id }) => {
@@ -527,17 +448,12 @@ pub(super) async fn dispatch(
                         Err(response) => *response,
                     }
                 }
-                Err(err) => ResponseEnvelope::err(
-                    request.id,
-                    "harness_delete_failed",
-                    err.to_string(),
-                    None,
-                ),
+                Err(err) => validation_error(request.id, err),
             }
         }
         DaemonRequest::RuntimeEventsSubscribe(_) => ResponseEnvelope::err(
             request.id,
-            "invalid_operation_context",
+            ErrorCode::UnsupportedOperation,
             "runtime.events.subscribe must be handled by the event stream path",
             None,
         ),
@@ -584,11 +500,31 @@ fn serialize_value<T: Serialize>(
     serde_json::to_value(value).map_err(|err| {
         Box::new(ResponseEnvelope::err(
             id.clone(),
-            "serialize_error",
+            ErrorCode::InternalError,
             format!("Failed to serialize {}: {}", context, err),
             None,
         ))
     })
+}
+
+fn not_found_error(
+    id: Option<String>,
+    code: ErrorCode,
+    message: impl Into<String>,
+) -> ResponseEnvelope {
+    ResponseEnvelope::err(id, code, message, None)
+}
+
+fn validation_error(id: Option<String>, err: impl std::fmt::Display) -> ResponseEnvelope {
+    ResponseEnvelope::err(id, ErrorCode::ValidationFailed, err.to_string(), None)
+}
+
+fn resource_busy_error(id: Option<String>, err: impl std::fmt::Display) -> ResponseEnvelope {
+    ResponseEnvelope::err(id, ErrorCode::ResourceBusy, err.to_string(), None)
+}
+
+fn internal_error(id: Option<String>, err: impl std::fmt::Display) -> ResponseEnvelope {
+    ResponseEnvelope::err(id, ErrorCode::InternalError, err.to_string(), None)
 }
 
 pub(super) fn emit_event(

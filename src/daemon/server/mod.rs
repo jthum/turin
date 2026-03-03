@@ -13,7 +13,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{RwLock, broadcast, watch as watch_channel};
 use tracing::{error, info, warn};
 
-use crate::daemon::protocol::{DaemonRequest, RequestEnvelope, ResponseEnvelope};
+use crate::daemon::protocol::{DaemonRequest, ErrorCode, RequestEnvelope, ResponseEnvelope};
 use crate::daemon::state::DaemonState;
 
 pub async fn serve(config_path: &Path) -> Result<()> {
@@ -144,7 +144,7 @@ async fn handle_client(
             Err(err) => {
                 let response = ResponseEnvelope::err(
                     None,
-                    "invalid_request",
+                    ErrorCode::InvalidRequest,
                     format!("Failed to parse request: {}", err),
                     None,
                 );

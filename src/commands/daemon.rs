@@ -6,7 +6,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use turin::daemon::protocol::{
-    DaemonRequest, ErrorEnvelope, EventEnvelope, NoParams, RequestEnvelope, ResponseEnvelope,
+    DaemonRequest, ErrorCode, ErrorEnvelope, EventEnvelope, NoParams, RequestEnvelope,
+    ResponseEnvelope,
 };
 use turin::kernel::config::TurinConfig;
 
@@ -98,6 +99,7 @@ struct HarnessDetailView {
 struct TaskStatusView {
     request_id: String,
     agent_id: String,
+    trace_id: String,
     state: String,
     runtime_task_id: Option<String>,
     status: Option<String>,
@@ -614,7 +616,7 @@ pub async fn run_events(config_path: &std::path::Path, json_output: bool) -> Res
         serde_json::from_str(&line).with_context(|| "Failed to parse daemon subscription ack")?;
     if !response.ok {
         let error = response.error.unwrap_or(ErrorEnvelope {
-            code: "unknown_error".to_string(),
+            code: ErrorCode::InternalError,
             message: "Unknown daemon error".to_string(),
             details: None,
         });
@@ -673,7 +675,7 @@ fn print_response(response: ResponseEnvelope, json_output: bool) -> Result<()> {
         Ok(())
     } else {
         let error = response.error.unwrap_or(ErrorEnvelope {
-            code: "unknown_error".to_string(),
+            code: ErrorCode::InternalError,
             message: "Unknown daemon error".to_string(),
             details: None,
         });
@@ -689,7 +691,7 @@ fn decode_result<T: serde::de::DeserializeOwned>(response: ResponseEnvelope) -> 
         Ok(serde_json::from_value(value)?)
     } else {
         let error = response.error.unwrap_or(ErrorEnvelope {
-            code: "unknown_error".to_string(),
+            code: ErrorCode::InternalError,
             message: "Unknown daemon error".to_string(),
             details: None,
         });
@@ -953,6 +955,7 @@ fn print_harness_detail(harness: HarnessDetailView) {
 fn print_task_status(title: &str, task: &TaskStatusView) {
     println!("{}", title);
     println!("  request_id:      {}", task.request_id);
+    println!("  trace_id:        {}", task.trace_id);
     println!("  agent:           {}", task.agent_id);
     println!("  state:           {}", task.state);
     if let Some(runtime_task_id) = &task.runtime_task_id {
@@ -978,6 +981,7 @@ fn print_task_list(tasks: TaskListView) {
     let mut rows = Vec::new();
     rows.push(vec![
         "REQUEST".to_string(),
+        "TRACE".to_string(),
         "AGENT".to_string(),
         "STATE".to_string(),
         "STATUS".to_string(),
@@ -989,6 +993,7 @@ fn print_task_list(tasks: TaskListView) {
     for task in tasks.tasks {
         rows.push(vec![
             task.request_id,
+            task.trace_id,
             task.agent_id,
             task.state,
             task.status.unwrap_or_else(|| "-".to_string()),

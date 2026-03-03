@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::fmt;
 
 use crate::kernel::config::{AgentMode, ThinkingConfig};
 
@@ -168,8 +169,43 @@ pub struct RequestEnvelope {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    InvalidRequest,
+    InvalidParams,
+    AgentNotFound,
+    TaskNotFound,
+    SessionNotFound,
+    HarnessNotFound,
+    ValidationFailed,
+    Conflict,
+    ResourceBusy,
+    UnsupportedOperation,
+    InternalError,
+}
+
+impl fmt::Display for ErrorCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            ErrorCode::InvalidRequest => "invalid_request",
+            ErrorCode::InvalidParams => "invalid_params",
+            ErrorCode::AgentNotFound => "agent_not_found",
+            ErrorCode::TaskNotFound => "task_not_found",
+            ErrorCode::SessionNotFound => "session_not_found",
+            ErrorCode::HarnessNotFound => "harness_not_found",
+            ErrorCode::ValidationFailed => "validation_failed",
+            ErrorCode::Conflict => "conflict",
+            ErrorCode::ResourceBusy => "resource_busy",
+            ErrorCode::UnsupportedOperation => "unsupported_operation",
+            ErrorCode::InternalError => "internal_error",
+        };
+        f.write_str(name)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ErrorEnvelope {
-    pub code: String,
+    pub code: ErrorCode,
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<Value>,
@@ -205,7 +241,7 @@ impl ResponseEnvelope {
 
     pub fn err(
         id: Option<String>,
-        code: impl Into<String>,
+        code: ErrorCode,
         message: impl Into<String>,
         details: Option<Value>,
     ) -> Self {
@@ -214,7 +250,7 @@ impl ResponseEnvelope {
             ok: false,
             result: None,
             error: Some(ErrorEnvelope {
-                code: code.into(),
+                code,
                 message: message.into(),
                 details,
             }),
@@ -291,5 +327,18 @@ mod tests {
             }
             other => panic!("unexpected request variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn error_code_serializes_as_snake_case() {
+        let response = ResponseEnvelope::err(
+            Some("req_2".to_string()),
+            ErrorCode::AgentNotFound,
+            "missing",
+            None,
+        );
+
+        let value = serde_json::to_value(&response).expect("serialize response");
+        assert_eq!(value["error"]["code"], "agent_not_found");
     }
 }
