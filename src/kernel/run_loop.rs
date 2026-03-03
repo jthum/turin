@@ -34,12 +34,12 @@ impl ExecutionHost {
                 continue;
             }
 
-            info!(task_id = %task.task_id, prompt = %task.prompt, "Running task");
+            info!(task_id = %task.task_id, trace_id = %task.trace_id, prompt = %task.prompt, "Running task");
 
             let task_result = match self.run_task(session, &task).await {
                 Ok(result) => result,
                 Err(e) => {
-                    error!(task_id = %task.task_id, error = %e, "Task failed with runtime error");
+                    error!(task_id = %task.task_id, trace_id = %task.trace_id, error = %e, "Task failed with runtime error");
                     let error_message = e.to_string();
                     let recovered = self
                         .handle_inference_error(session, &task, &error_message)
@@ -202,6 +202,7 @@ impl ExecutionHost {
             Verdict::Reject(reason) => {
                 warn!(
                     task_id = %task.task_id,
+                    trace_id = %task.trace_id,
                     reason = %reason,
                     "Task rejected by on_task_start"
                 );
@@ -223,6 +224,7 @@ impl ExecutionHost {
             Verdict::Escalate(reason) => {
                 warn!(
                     task_id = %task.task_id,
+                    trace_id = %task.trace_id,
                     reason = %reason,
                     "Task escalated at on_task_start; treating as rejected"
                 );

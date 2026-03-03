@@ -65,10 +65,10 @@ impl ExecutionHost {
                     }
                 }
                 Ok(Verdict::Reject(reason)) => {
-                    warn!(task_id = %task.task_id, reason = %reason, "on_task_complete rejected");
+                    warn!(task_id = %task.task_id, trace_id = %task.trace_id, reason = %reason, "on_task_complete rejected");
                 }
                 Ok(Verdict::Escalate(reason)) => {
-                    warn!(task_id = %task.task_id, reason = %reason, "on_task_complete escalated");
+                    warn!(task_id = %task.task_id, trace_id = %task.trace_id, reason = %reason, "on_task_complete escalated");
                 }
                 Ok(Verdict::Allow) => {}
                 Err(e) => {
@@ -188,16 +188,17 @@ impl ExecutionHost {
                         }
                         info!(
                             task_id = %task.task_id,
+                            trace_id = %task.trace_id,
                             "on_inference_error queued additional tasks via MODIFY"
                         );
                         return Ok(true);
                     }
                 }
                 Ok(Verdict::Reject(reason)) => {
-                    warn!(task_id = %task.task_id, reason = %reason, "on_inference_error rejected");
+                    warn!(task_id = %task.task_id, trace_id = %task.trace_id, reason = %reason, "on_inference_error rejected");
                 }
                 Ok(Verdict::Escalate(reason)) => {
-                    warn!(task_id = %task.task_id, reason = %reason, "on_inference_error escalated");
+                    warn!(task_id = %task.task_id, trace_id = %task.trace_id, reason = %reason, "on_inference_error escalated");
                 }
                 Ok(Verdict::Allow) => {}
                 Err(e) => {

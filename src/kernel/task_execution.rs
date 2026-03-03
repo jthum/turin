@@ -13,7 +13,7 @@ use crate::tools::ToolContext;
 
 impl ExecutionHost {
     /// Execute a single task (one specific prompt) within the persistent session.
-    #[instrument(skip(self, session, task), fields(task_id = %task.task_id))]
+    #[instrument(skip(self, session, task), fields(task_id = %task.task_id, trace_id = %task.trace_id))]
     pub(super) async fn run_task(
         &mut self,
         session: &mut SessionState,
@@ -148,6 +148,7 @@ impl ExecutionHost {
                 TokenUsageHookAction::RejectTask { reason } => {
                     warn!(
                         task_id = %task.task_id,
+                        trace_id = %task.trace_id,
                         reason = %reason,
                         "Task rejected by token usage policy"
                     );
@@ -156,6 +157,7 @@ impl ExecutionHost {
                 TokenUsageHookAction::RejectSession { reason } => {
                     warn!(
                         task_id = %task.task_id,
+                        trace_id = %task.trace_id,
                         reason = %reason,
                         "Session stop requested by token usage policy"
                     );

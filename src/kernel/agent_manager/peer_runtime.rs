@@ -171,6 +171,7 @@ impl PeerRuntime {
                 Verdict::Reject(reason) => {
                     warn!(
                         task_id = %task.task_id,
+                        trace_id = %task.trace_id,
                         reason = %reason,
                         "Peer task rejected by on_task_start"
                     );
@@ -203,6 +204,7 @@ impl PeerRuntime {
                 Verdict::Escalate(reason) => {
                     warn!(
                         task_id = %task.task_id,
+                        trace_id = %task.trace_id,
                         reason = %reason,
                         "Peer task escalated at on_task_start; treating as rejected"
                     );
@@ -225,7 +227,7 @@ impl PeerRuntime {
                 Verdict::Allow => {}
             }
 
-            info!(task_id = %task.task_id, prompt = %task.prompt, "Running peer task");
+            info!(task_id = %task.task_id, trace_id = %task.trace_id, prompt = %task.prompt, "Running peer task");
 
             let run_result: TaskExecutionResult =
                 match self.host.run_task(&mut self.session, &task).await {
@@ -242,7 +244,7 @@ impl PeerRuntime {
                         result
                     }
                     Err(e) => {
-                        error!(task_id = %task.task_id, error = %e, "Peer task failed with runtime error");
+                        error!(task_id = %task.task_id, trace_id = %task.trace_id, error = %e, "Peer task failed with runtime error");
                         let error_message = e.to_string();
                         let recovered = self
                             .host
