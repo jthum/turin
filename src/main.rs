@@ -422,6 +422,16 @@ enum DaemonSessionCommands {
         #[command(flatten)]
         args: DaemonOutputArgs,
     },
+    /// Resume a persisted session into a live daemon session slot
+    Resume {
+        /// Persisted session ID
+        session_id: String,
+        /// Optional custom slot ID
+        #[arg(long)]
+        slot_id: Option<String>,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
     /// Show one persisted session by session ID
     Get {
         /// Session ID
@@ -822,6 +832,19 @@ async fn main() -> Result<()> {
                     commands::daemon::run_session_open(
                         &args.config.config,
                         &agent_id,
+                        slot_id.as_deref(),
+                        args.json,
+                    )
+                    .await
+                }
+                DaemonSessionCommands::Resume {
+                    session_id,
+                    slot_id,
+                    args,
+                } => {
+                    commands::daemon::run_session_resume(
+                        &args.config.config,
+                        &session_id,
                         slot_id.as_deref(),
                         args.json,
                     )

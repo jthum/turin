@@ -71,6 +71,13 @@ pub struct OpenSessionParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ResumeSessionParams {
+    pub session_id: String,
+    #[serde(default)]
+    pub slot_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskIdParams {
     pub request_id: String,
 }
@@ -152,6 +159,8 @@ pub enum DaemonRequest {
     SessionListLive(NoParams),
     #[serde(rename = "session.open")]
     SessionOpen(OpenSessionParams),
+    #[serde(rename = "session.resume")]
+    SessionResume(ResumeSessionParams),
     #[serde(rename = "session.get")]
     SessionGet(SessionIdParams),
     #[serde(rename = "session.cancel")]

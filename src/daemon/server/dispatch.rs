@@ -7,8 +7,8 @@ use tokio::sync::{RwLock, broadcast, watch};
 
 use crate::daemon::protocol::{
     BindHarnessParams, CreateAgentParams, DaemonRequest, EntityIdParams, ErrorCode, EventEnvelope,
-    OpenSessionParams, RequestEnvelope, ResponseEnvelope, SessionIdParams, SessionListParams,
-    SubmitTaskParams, TaskIdParams, UpdateAgentParams, WaitTaskParams,
+    OpenSessionParams, RequestEnvelope, ResponseEnvelope, ResumeSessionParams, SessionIdParams,
+    SessionListParams, SubmitTaskParams, TaskIdParams, UpdateAgentParams, WaitTaskParams,
 };
 use crate::daemon::state::{CreateAgentInput, DaemonState, DaemonStatus, UpdateAgentInput};
 
@@ -355,6 +355,22 @@ pub(super) async fn dispatch(
                     "opened session",
                     &event_tx,
                     "session.opened",
+                ),
+                Err(err) => validation_error(request.id, err),
+            }
+        }
+        DaemonRequest::SessionResume(ResumeSessionParams {
+            session_id,
+            slot_id,
+        }) => {
+            let guard = state.read().await;
+            match guard.resume_session(&session_id, slot_id.as_deref()).await {
+                Ok(session) => serialize_response_with_event(
+                    request.id,
+                    session,
+                    "resumed session",
+                    &event_tx,
+                    "session.resumed",
                 ),
                 Err(err) => validation_error(request.id, err),
             }

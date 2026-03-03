@@ -50,10 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Daemon Session Inspection**
   - Added daemon APIs and CLI wrappers for:
     - `session.list`
+    - `session.resume`
     - `session.get`
     - `session.cancel`
     - `session.kill`
   - Added persisted session detail inspection including events, messages, and tool executions.
+  - Added persisted-session resume into a live daemon slot, preserving the same session ID and rehydrating history and counters from the store across daemon restart.
 
 ### Changed
 - **Daemon Status Surface**

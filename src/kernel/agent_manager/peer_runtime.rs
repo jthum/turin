@@ -36,13 +36,18 @@ impl PeerRuntime {
         agent_id: &str,
         slot_id: &str,
         control: Arc<RuntimeControl>,
+        initial_session_id: Option<&str>,
     ) -> Result<Self> {
         let mut host = fork_peer_kernel(&manager);
         if host.clients.is_empty() {
             host.init_clients()?;
         }
 
-        let mut session = host.create_session_for_agent(agent_id).await;
+        let mut session = if let Some(session_id) = initial_session_id {
+            host.resume_session_for_agent(agent_id, session_id).await?
+        } else {
+            host.create_session_for_agent(agent_id).await
+        };
         host.start_session(&mut session).await?;
         control.set_current_session_id(Some(session.identity.session_id().to_string()));
 
@@ -328,17 +333,35 @@ impl PeerRuntime {
     }
 
     pub(super) async fn reset_session_if_requested(&mut self) -> Result<bool> {
-        if !self.control.take_session_reset_requested() {
+        let Some(request) = self.control.take_session_reset_request() else {
             return Ok(false);
-        }
+        };
 
-        self.reset_session().await?;
+        match request {
+            super::SessionResetRequest::Fresh => self.reset_session().await?,
+            super::SessionResetRequest::Resume(session_id) => {
+                self.restore_session(&session_id).await?
+            }
+        }
         Ok(true)
     }
 
     async fn reset_session(&mut self) -> Result<()> {
         self.host.end_session(&mut self.session).await?;
         let mut session = self.host.create_session_for_agent(&self.agent_id).await;
+        self.host.start_session(&mut session).await?;
+        self.control
+            .set_current_session_id(Some(session.identity.session_id().to_string()));
+        self.session = session;
+        Ok(())
+    }
+
+    async fn restore_session(&mut self, session_id: &str) -> Result<()> {
+        self.host.end_session(&mut self.session).await?;
+        let mut session = self
+            .host
+            .resume_session_for_agent(&self.agent_id, session_id)
+            .await?;
         self.host.start_session(&mut session).await?;
         self.control
             .set_current_session_id(Some(session.identity.session_id().to_string()));

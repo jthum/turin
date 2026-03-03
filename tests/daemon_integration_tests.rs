@@ -12,7 +12,7 @@ use tokio::time::{Instant, sleep, timeout};
 use turin::daemon::protocol::{DaemonRequest, EventEnvelope, RequestEnvelope, ResponseEnvelope};
 
 struct DaemonHarness {
-    _tempdir: TempDir,
+    tempdir: std::sync::Arc<TempDir>,
     socket_path: PathBuf,
     join: JoinHandle<Result<()>>,
 }
@@ -24,7 +24,11 @@ struct EventSubscription {
 
 impl DaemonHarness {
     async fn start() -> Result<Self> {
-        let tempdir = tempfile::tempdir()?;
+        let tempdir = std::sync::Arc::new(tempfile::tempdir()?);
+        Self::start_in(tempdir).await
+    }
+
+    async fn start_in(tempdir: std::sync::Arc<TempDir>) -> Result<Self> {
         let workspace_root = tempdir.path().join("workspace");
         let harness_dir = workspace_root.join(".turin/harnesses");
         let agents_dir = workspace_root.join("agents");
@@ -95,10 +99,16 @@ base_url = "PONG"
         }
 
         Ok(Self {
-            _tempdir: tempdir,
+            tempdir,
             socket_path,
             join,
         })
+    }
+
+    async fn restart(self) -> Result<Self> {
+        let tempdir = std::sync::Arc::clone(&self.tempdir);
+        self.stop().await?;
+        Self::start_in(tempdir).await
     }
 
     async fn request(&self, request: DaemonRequest) -> Result<ResponseEnvelope> {
@@ -373,6 +383,118 @@ async fn daemon_task_wait_and_session_round_trip_over_socket() -> Result<()> {
             .expect("messages array")
             .iter()
             .any(|message| message["role"] == "assistant")
+    );
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+
+    let opened = result_value(
+        daemon
+            .request(DaemonRequest::SessionOpen(
+                turin::daemon::protocol::OpenSessionParams {
+                    agent_id: "default".to_string(),
+                    slot_id: Some("restart-thread".to_string()),
+                },
+            ))
+            .await?,
+    );
+    let session_id = opened["session_id"]
+        .as_str()
+        .context("session.open should return session_id")?
+        .to_string();
+
+    let submitted = result_value(
+        daemon
+            .request(DaemonRequest::TaskSubmit(
+                turin::daemon::protocol::SubmitTaskParams {
+                    agent_id: None,
+                    session_id: Some(session_id.clone()),
+                    prompt: "resume me".to_string(),
+                },
+            ))
+            .await?,
+    );
+    let request_id = submitted["request_id"]
+        .as_str()
+        .context("task.submit should return request_id")?
+        .to_string();
+    let waited = result_value(
+        daemon
+            .request(DaemonRequest::TaskWait(
+                turin::daemon::protocol::WaitTaskParams {
+                    request_id,
+                    timeout_ms: Some(5_000),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(waited["status"], "success");
+
+    let daemon = daemon.restart().await?;
+
+    let resumed = result_value(
+        daemon
+            .request(DaemonRequest::SessionResume(
+                turin::daemon::protocol::ResumeSessionParams {
+                    session_id: session_id.clone(),
+                    slot_id: Some("restart-thread".to_string()),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(resumed["session_id"], session_id);
+    assert_eq!(resumed["slot_id"], "restart-thread");
+
+    let resubmitted = result_value(
+        daemon
+            .request(DaemonRequest::TaskSubmit(
+                turin::daemon::protocol::SubmitTaskParams {
+                    agent_id: None,
+                    session_id: Some(session_id.clone()),
+                    prompt: "resume me again".to_string(),
+                },
+            ))
+            .await?,
+    );
+    let request_id = resubmitted["request_id"]
+        .as_str()
+        .context("resumed task.submit should return request_id")?
+        .to_string();
+    let waited = result_value(
+        daemon
+            .request(DaemonRequest::TaskWait(
+                turin::daemon::protocol::WaitTaskParams {
+                    request_id,
+                    timeout_ms: Some(5_000),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(waited["status"], "success");
+
+    let detail = result_value(
+        daemon
+            .request(DaemonRequest::SessionGet(
+                turin::daemon::protocol::SessionIdParams {
+                    session_id: session_id.clone(),
+                },
+            ))
+            .await?,
+    );
+    let messages = detail["messages"]
+        .as_array()
+        .context("session detail should include messages")?;
+    let user_count = messages
+        .iter()
+        .filter(|message| message["role"] == "user")
+        .count();
+    assert!(
+        user_count >= 2,
+        "expected resumed session to preserve earlier history and append new messages"
     );
 
     daemon.stop().await

@@ -412,6 +412,27 @@ pub async fn run_session_open(
     Ok(())
 }
 
+pub async fn run_session_resume(
+    config_path: &std::path::Path,
+    session_id: &str,
+    slot_id: Option<&str>,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(
+        config_path,
+        "session.resume",
+        json!({ "session_id": session_id, "slot_id": slot_id }),
+    )
+    .await?;
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let session: LiveSessionView = decode_result(response)?;
+    print_live_session("Resumed live session", &session);
+    Ok(())
+}
+
 pub async fn run_session_list_live(config_path: &std::path::Path, json_output: bool) -> Result<()> {
     let response = send_request(config_path, "session.list_live", json!({})).await?;
     if json_output {
@@ -1098,7 +1119,9 @@ fn print_live_session_list(sessions: LiveSessionListView) {
             yes_no(session.running),
             session.active_tasks.to_string(),
             session.queued_tasks.to_string(),
-            session.current_request_id.unwrap_or_else(|| "-".to_string()),
+            session
+                .current_request_id
+                .unwrap_or_else(|| "-".to_string()),
         ]);
     }
 

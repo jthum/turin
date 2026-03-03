@@ -22,6 +22,8 @@ pub enum TaskTerminalStatus {
 pub enum LifecycleEvent {
     /// Session begins
     SessionStart { identity: RuntimeIdentity },
+    /// Persisted session is resumed into a live runtime
+    SessionResume { identity: RuntimeIdentity },
     /// Session completes
     SessionEnd {
         identity: RuntimeIdentity,
@@ -170,6 +172,7 @@ impl KernelEvent {
         match self {
             KernelEvent::Lifecycle(e) => match e {
                 LifecycleEvent::SessionStart { .. } => "session_start",
+                LifecycleEvent::SessionResume { .. } => "session_resume",
                 LifecycleEvent::SessionEnd { .. } => "session_end",
                 LifecycleEvent::TaskStart { .. } => "task_start",
                 LifecycleEvent::TaskComplete { .. } => "task_complete",
@@ -224,6 +227,13 @@ mod tests {
             })
             .event_type(),
             "session_start"
+        );
+        assert_eq!(
+            KernelEvent::Lifecycle(LifecycleEvent::SessionResume {
+                identity: RuntimeIdentity::new("x", "default")
+            })
+            .event_type(),
+            "session_resume"
         );
         assert_eq!(
             KernelEvent::Audit(AuditEvent::HarnessRejection {

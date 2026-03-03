@@ -1,12 +1,17 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result, anyhow};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{info, warn};
 
 use crate::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::{SessionState, SessionStatus};
+use crate::persistence::schema::{EventRow, MessageRow};
+use crate::{
+    inference::provider::{InferenceContent, InferenceMessage, InferenceRole},
+    kernel::identity::RuntimeIdentity,
+};
 
 impl ExecutionHost {
     /// Create a new session.
@@ -18,11 +23,61 @@ impl ExecutionHost {
     pub async fn create_session_for_agent(&self, agent_id: &str) -> SessionState {
         let mut session = SessionState::new();
         session.identity.set_agent_id(agent_id.to_string());
+        self.attach_session_persistence(&mut session, true).await;
+        session
+    }
 
-        // Spawn background persistence if state is available.
+    /// Resume an existing persisted session into a live runtime.
+    pub async fn resume_session_for_agent(
+        &self,
+        agent_id: &str,
+        session_id: &str,
+    ) -> Result<SessionState> {
+        let public_id = uuid::Uuid::parse_str(session_id)
+            .with_context(|| format!("Invalid session id '{}'", session_id))?;
+        let store = self
+            .store_manager
+            .get_default()
+            .await
+            .context("Session resume requires a configured persistent state store")?;
+        let row = store
+            .get_session_row_by_public_id(public_id)
+            .await?
+            .ok_or_else(|| anyhow!("Session '{}' not found", session_id))?;
+        if row.agent_id != agent_id {
+            anyhow::bail!(
+                "Session '{}' belongs to agent '{}' not '{}'",
+                session_id,
+                row.agent_id,
+                agent_id
+            );
+        }
+
+        let messages = store.get_messages(row.id).await?;
+        let events = store.get_events(row.id).await?;
+        let (history, turn_index) = rebuild_history(&messages)?;
+        let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
+            rebuild_session_counters(&events);
+
+        let mut session = SessionState::new();
+        session.identity = RuntimeIdentity::new(session_id.to_string(), agent_id);
+        session.internal_id = Some(row.id);
+        session.history = history;
+        session.turn_index = turn_index;
+        session.total_input_tokens = total_input_tokens;
+        session.total_output_tokens = total_output_tokens;
+        session.next_task_id = next_task_id;
+        session.next_plan_id = next_plan_id;
+        session.restored_from_persistence = true;
+        self.attach_session_persistence(&mut session, false).await;
+        Ok(session)
+    }
+
+    async fn attach_session_persistence(&self, session: &mut SessionState, create_row: bool) {
         if let Ok(store) = self.store_manager.get_default().await {
-            // Create the session row eagerly so we have an internal_id for later persistence.
-            if let Ok(public_id) = uuid::Uuid::parse_str(session.identity.session_id()) {
+            if create_row
+                && let Ok(public_id) = uuid::Uuid::parse_str(session.identity.session_id())
+            {
                 match store
                     .create_session(public_id, session.identity.agent_id(), None)
                     .await
@@ -51,8 +106,6 @@ impl ExecutionHost {
             });
             session.event_task = Some(Arc::new(AsyncMutex::new(Some(handle))));
         }
-
-        session
     }
 
     /// Start a new session.
@@ -66,8 +119,14 @@ impl ExecutionHost {
 
         self.persist_event(
             session,
-            &KernelEvent::Lifecycle(LifecycleEvent::SessionStart {
-                identity: session.identity.clone(),
+            &KernelEvent::Lifecycle(if session.restored_from_persistence {
+                LifecycleEvent::SessionResume {
+                    identity: session.identity.clone(),
+                }
+            } else {
+                LifecycleEvent::SessionStart {
+                    identity: session.identity.clone(),
+                }
             }),
         );
         let governance_snapshot = self
@@ -152,4 +211,159 @@ impl ExecutionHost {
         session.status = SessionStatus::Inactive;
         Ok(())
     }
+}
+
+fn rebuild_history(messages: &[MessageRow]) -> Result<(Vec<InferenceMessage>, u32)> {
+    let mut history = Vec::new();
+    let mut max_turn_index = None;
+
+    for message in messages {
+        max_turn_index =
+            Some(max_turn_index.map_or(message.turn_index, |max: u32| max.max(message.turn_index)));
+        let content_json: serde_json::Value = serde_json::from_str(&message.content)
+            .with_context(|| format!("Failed to parse persisted message {}", message.id))?;
+        let content = decode_persisted_content(&message.role, content_json)
+            .with_context(|| format!("Failed to rebuild persisted message {}", message.id))?;
+        history.push(InferenceMessage {
+            role: decode_role(&message.role)?,
+            content,
+            tool_call_id: None,
+        });
+    }
+
+    Ok((history, max_turn_index.map_or(0, |idx| idx + 1)))
+}
+
+fn decode_role(role: &str) -> Result<InferenceRole> {
+    match role {
+        "user" => Ok(InferenceRole::User),
+        "assistant" => Ok(InferenceRole::Assistant),
+        "tool_result" => Ok(InferenceRole::Tool),
+        other => anyhow::bail!("Unsupported persisted role '{}'", other),
+    }
+}
+
+fn decode_persisted_content(role: &str, value: serde_json::Value) -> Result<Vec<InferenceContent>> {
+    let parts = value
+        .as_array()
+        .ok_or_else(|| anyhow!("Persisted message content for '{}' is not an array", role))?;
+    let mut content = Vec::with_capacity(parts.len());
+    for part in parts {
+        let part_type = part
+            .get("type")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow!("Persisted message content missing type"))?;
+        let item = match part_type {
+            "text" => InferenceContent::Text {
+                text: part
+                    .get("text")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+            },
+            "tool_use" => InferenceContent::ToolUse {
+                id: part
+                    .get("id")
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| anyhow!("tool_use content missing id"))?
+                    .to_string(),
+                name: part
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| anyhow!("tool_use content missing name"))?
+                    .to_string(),
+                input: part
+                    .get("input")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({})),
+            },
+            "tool_result" => InferenceContent::ToolResult {
+                tool_use_id: part
+                    .get("tool_use_id")
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| anyhow!("tool_result content missing tool_use_id"))?
+                    .to_string(),
+                content: part
+                    .get("content")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                is_error: part
+                    .get("is_error")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false),
+            },
+            "thinking" => InferenceContent::Thinking {
+                content: part
+                    .get("content")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                signature: part
+                    .get("signature")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+            },
+            other => anyhow::bail!("Unsupported persisted content type '{}'", other),
+        };
+        content.push(item);
+    }
+    Ok(content)
+}
+
+fn rebuild_session_counters(events: &[EventRow]) -> (u32, u32, u64, u64) {
+    let mut next_task_id = 1;
+    let mut next_plan_id = 1;
+    let mut total_input_tokens = 0;
+    let mut total_output_tokens = 0;
+
+    for event in events {
+        let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.payload) else {
+            continue;
+        };
+        if let Some(task_id) = payload.get("task_id").and_then(|value| value.as_str()) {
+            next_task_id = next_task_id.max(next_numeric_suffix(task_id, "t_"));
+        }
+        if let Some(plan_id) = payload.get("plan_id").and_then(|value| value.as_str()) {
+            next_plan_id = next_plan_id.max(next_numeric_suffix(plan_id, "p_"));
+        }
+        match event.event_type.as_str() {
+            "message_end" => {
+                total_input_tokens += payload
+                    .get("input_tokens")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0);
+                total_output_tokens += payload
+                    .get("output_tokens")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0);
+            }
+            "session_end" => {
+                total_input_tokens = payload
+                    .get("total_input_tokens")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(total_input_tokens);
+                total_output_tokens = payload
+                    .get("total_output_tokens")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(total_output_tokens);
+            }
+            _ => {}
+        }
+    }
+
+    (
+        next_task_id,
+        next_plan_id,
+        total_input_tokens,
+        total_output_tokens,
+    )
+}
+
+fn next_numeric_suffix(value: &str, prefix: &str) -> u32 {
+    value
+        .strip_prefix(prefix)
+        .and_then(|suffix| suffix.parse::<u32>().ok())
+        .map(|value| value + 1)
+        .unwrap_or(1)
 }

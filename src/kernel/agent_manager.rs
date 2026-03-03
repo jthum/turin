@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::RwLock as StdRwLock;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
@@ -20,7 +20,7 @@ use crate::kernel::policy::RuntimePolicyManager;
 use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreManager;
 use crate::tools::registry::ToolRegistry;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tokio::sync::{Notify, RwLock, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -112,7 +112,13 @@ pub(crate) struct RuntimeControl {
     current_request_id: StdRwLock<Option<String>>,
     current_runtime_task_id: StdRwLock<Option<String>>,
     current_cancel_token: Mutex<Option<CancellationToken>>,
-    session_reset_requested: AtomicBool,
+    session_reset_request: Mutex<Option<SessionResetRequest>>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum SessionResetRequest {
+    Fresh,
+    Resume(String),
 }
 
 impl RuntimeControl {
@@ -194,12 +200,27 @@ impl RuntimeControl {
     }
 
     fn request_session_cancel(&self) -> bool {
-        self.session_reset_requested.store(true, Ordering::Relaxed);
+        *self
+            .session_reset_request
+            .lock()
+            .expect("runtime control session reset lock poisoned") =
+            Some(SessionResetRequest::Fresh);
         self.request_task_cancel()
     }
 
-    fn take_session_reset_requested(&self) -> bool {
-        self.session_reset_requested.swap(false, Ordering::Relaxed)
+    fn request_session_resume(&self, session_id: String) {
+        *self
+            .session_reset_request
+            .lock()
+            .expect("runtime control session reset lock poisoned") =
+            Some(SessionResetRequest::Resume(session_id));
+    }
+
+    fn take_session_reset_request(&self) -> Option<SessionResetRequest> {
+        self.session_reset_request
+            .lock()
+            .expect("runtime control session reset lock poisoned")
+            .take()
     }
 }
 
@@ -358,8 +379,12 @@ impl AgentManager {
         task: QueuedTask,
         delegated_capabilities: Option<BTreeMap<String, bool>>,
     ) -> Result<String> {
-        self.submit_to_runtime(RuntimeSlotKey::default_for(agent_id), task, delegated_capabilities)
-            .await
+        self.submit_to_runtime(
+            RuntimeSlotKey::default_for(agent_id),
+            task,
+            delegated_capabilities,
+        )
+        .await
     }
 
     pub async fn submit_to_session(
@@ -371,7 +396,12 @@ impl AgentManager {
         let (runtime_key, _) = self
             .find_runtime_by_session(session_id)
             .await
-            .ok_or_else(|| anyhow::anyhow!("Session '{}' is not an active managed runtime session", session_id))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Session '{}' is not an active managed runtime session",
+                    session_id
+                )
+            })?;
         self.submit_to_runtime(runtime_key, task, delegated_capabilities)
             .await
     }
@@ -406,6 +436,98 @@ impl AgentManager {
             agent_id: runtime_key.agent_id,
             slot_id: runtime_key.slot_id,
             session_id,
+            running: handle.is_running(),
+            active_tasks: handle.active_tasks.load(Ordering::Relaxed),
+            queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
+            current_request_id: handle.control.current_request_id(),
+        })
+    }
+
+    pub async fn resume_session(
+        self: &Arc<Self>,
+        session_id: &str,
+        slot_id: Option<&str>,
+    ) -> Result<LiveSessionSnapshot> {
+        if let Some((runtime_key, handle)) = self.find_runtime_by_session(session_id).await {
+            return Ok(LiveSessionSnapshot {
+                agent_id: runtime_key.agent_id,
+                slot_id: runtime_key.slot_id,
+                session_id: session_id.to_string(),
+                running: handle.is_running(),
+                active_tasks: handle.active_tasks.load(Ordering::Relaxed),
+                queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
+                current_request_id: handle.control.current_request_id(),
+            });
+        }
+
+        let store = self.store_manager.get_default().await?;
+        let public_id = uuid::Uuid::parse_str(session_id)
+            .with_context(|| format!("Invalid session id '{}'", session_id))?;
+        let row = store
+            .get_session_row_by_public_id(public_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
+        let agent_id = row.agent_id.clone();
+
+        let runtime_key = RuntimeSlotKey {
+            agent_id: agent_id.clone(),
+            slot_id: slot_id
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("sl_{}", uuid::Uuid::now_v7().simple())),
+        };
+
+        if agent_id != self.config.agent.id {
+            self.config
+                .agents
+                .get(&agent_id)
+                .ok_or_else(|| anyhow::anyhow!("Unknown agent profile '{}'", agent_id))?;
+        }
+
+        let existing = {
+            let runtimes = self.runtimes.read().await;
+            runtimes.get(&runtime_key).cloned()
+        };
+
+        let handle = if let Some(handle) = existing {
+            if handle.active_tasks.load(Ordering::Relaxed) > 0
+                || handle.queued_tasks.load(Ordering::Relaxed) > 0
+            {
+                anyhow::bail!(
+                    "Runtime slot '{}' for agent '{}' is busy",
+                    runtime_key.slot_id,
+                    runtime_key.agent_id
+                );
+            }
+            handle
+                .control
+                .request_session_resume(session_id.to_string());
+            handle.notify.notify_one();
+            handle
+        } else {
+            self.ensure_runtime_slot_resumed(runtime_key.clone(), session_id.to_string())
+                .await?
+        };
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            if handle.control.current_session_id().as_deref() == Some(session_id) {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "Agent runtime '{}' [{}] did not resume session '{}'",
+                    runtime_key.agent_id,
+                    runtime_key.slot_id,
+                    session_id
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        Ok(LiveSessionSnapshot {
+            agent_id: runtime_key.agent_id,
+            slot_id: runtime_key.slot_id,
+            session_id: session_id.to_string(),
             running: handle.is_running(),
             active_tasks: handle.active_tasks.load(Ordering::Relaxed),
             queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
@@ -568,10 +690,7 @@ impl AgentManager {
             .collect()
     }
 
-    pub async fn list_live_sessions(
-        &self,
-        agent_id: Option<&str>,
-    ) -> Vec<LiveSessionSnapshot> {
+    pub async fn list_live_sessions(&self, agent_id: Option<&str>) -> Vec<LiveSessionSnapshot> {
         let runtimes = self.runtimes.read().await;
         let mut sessions: Vec<_> = runtimes
             .iter()
@@ -1275,7 +1394,10 @@ mod tests {
         let (agent_id, returned_session_id) = manager.cancel_session(session_id).await?;
         assert_eq!(agent_id, "default");
         assert_eq!(returned_session_id, session_id);
-        assert!(control.take_session_reset_requested());
+        assert!(matches!(
+            control.take_session_reset_request(),
+            Some(SessionResetRequest::Fresh)
+        ));
 
         let completed = manager
             .get_task(&request_id)

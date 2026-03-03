@@ -178,6 +178,8 @@ turin daemon session list
 turin daemon session live
 turin daemon session open <agent_id>
 turin daemon session open <agent_id> --slot-id thread-123
+turin daemon session resume <session_id>
+turin daemon session resume <session_id> --slot-id thread-123
 turin daemon session get <session_id>
 turin daemon session cancel <session_id>
 turin daemon session kill <session_id>
@@ -195,6 +197,7 @@ The daemon now exposes:
 - per-agent isolated registry/load issues via `agent.issues`
 - per-harness isolated registry/load issues via `harness.issues`
 - live session opening and listing for multi-threaded clients
+- persisted-session resume into a live runtime slot after daemon restart
 - persisted session inspection
 - task submission/list/get/wait
 - task submission into an explicit live session

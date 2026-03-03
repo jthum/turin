@@ -103,6 +103,7 @@ pub struct SessionState {
     pub status: SessionStatus,
     pub mode: crate::kernel::config::AgentMode,
     pub stop_requested: bool,
+    pub restored_from_persistence: bool,
 }
 
 impl Default for SessionState {
@@ -133,6 +134,7 @@ impl SessionState {
             status: SessionStatus::Inactive,
             mode: crate::kernel::config::AgentMode::Auto,
             stop_requested: false,
+            restored_from_persistence: false,
         }
     }
 }

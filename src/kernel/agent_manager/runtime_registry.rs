@@ -36,10 +36,31 @@ impl AgentManager {
         self.ensure_runtime_with_write_lock(runtime_key).await
     }
 
+    pub(super) async fn ensure_runtime_slot_resumed(
+        self: &Arc<Self>,
+        runtime_key: RuntimeSlotKey,
+        session_id: String,
+    ) -> Result<Arc<AgentRuntimeHandle>> {
+        {
+            let runtimes = self.runtimes.read().await;
+            if let Some(handle) = runtimes.get(&runtime_key)
+                && handle.is_running()
+            {
+                handle.control.request_session_resume(session_id);
+                handle.notify.notify_one();
+                return Ok(Arc::clone(handle));
+            }
+        }
+
+        self.ensure_runtime_with_write_lock_and_resume(runtime_key, Some(session_id))
+            .await
+    }
+
     /// Internal method to boot a background peer runtime for a specific agent profile.
     async fn start_agent(
         self: &Arc<Self>,
         runtime_key: &RuntimeSlotKey,
+        initial_session_id: Option<&str>,
     ) -> Result<AgentRuntimeHandle> {
         let agent_id = runtime_key.agent_id.as_str();
         info!(
@@ -66,6 +87,7 @@ impl AgentManager {
         let active_tasks = Arc::new(AtomicUsize::new(0));
         let agent_id_clone = agent_id.to_string();
         let slot_id_clone = runtime_key.slot_id.clone();
+        let initial_session_id = initial_session_id.map(str::to_string);
         let idle_grace_secs = agent_profile.idle_grace_secs;
         let manager = Arc::clone(self);
         let queue_bg = Arc::clone(&queue);
@@ -82,6 +104,7 @@ impl AgentManager {
                 &agent_id_clone,
                 &slot_id_clone,
                 control_bg,
+                initial_session_id.as_deref(),
             )
             .await
             {
@@ -169,7 +192,31 @@ impl AgentManager {
             return Ok(Arc::clone(handle));
         }
 
-        let handle = Arc::new(self.start_agent(&runtime_key).await?);
+        let handle = Arc::new(self.start_agent(&runtime_key, None).await?);
+        runtimes.insert(runtime_key, Arc::clone(&handle));
+        Ok(handle)
+    }
+
+    async fn ensure_runtime_with_write_lock_and_resume(
+        self: &Arc<Self>,
+        runtime_key: RuntimeSlotKey,
+        initial_session_id: Option<String>,
+    ) -> Result<Arc<AgentRuntimeHandle>> {
+        let mut runtimes = self.runtimes.write().await;
+        if let Some(handle) = runtimes.get(&runtime_key)
+            && handle.is_running()
+        {
+            if let Some(session_id) = initial_session_id {
+                handle.control.request_session_resume(session_id);
+                handle.notify.notify_one();
+            }
+            return Ok(Arc::clone(handle));
+        }
+
+        let handle = Arc::new(
+            self.start_agent(&runtime_key, initial_session_id.as_deref())
+                .await?,
+        );
         runtimes.insert(runtime_key, Arc::clone(&handle));
         Ok(handle)
     }

@@ -102,7 +102,9 @@ impl DaemonState {
             .collect())
     }
 
-    pub async fn list_live_sessions(&self) -> Vec<crate::kernel::agent_manager::LiveSessionSnapshot> {
+    pub async fn list_live_sessions(
+        &self,
+    ) -> Vec<crate::kernel::agent_manager::LiveSessionSnapshot> {
         self.kernel.agent_manager().list_live_sessions(None).await
     }
 
@@ -112,7 +114,21 @@ impl DaemonState {
         slot_id: Option<&str>,
     ) -> Result<crate::kernel::agent_manager::LiveSessionSnapshot> {
         self.ensure_enabled_agent(agent_id)?;
-        self.kernel.agent_manager().open_session(agent_id, slot_id).await
+        self.kernel
+            .agent_manager()
+            .open_session(agent_id, slot_id)
+            .await
+    }
+
+    pub async fn resume_session(
+        &self,
+        session_id: &str,
+        slot_id: Option<&str>,
+    ) -> Result<crate::kernel::agent_manager::LiveSessionSnapshot> {
+        self.kernel
+            .agent_manager()
+            .resume_session(session_id, slot_id)
+            .await
     }
 
     pub async fn get_session(&self, session_id: &str) -> Result<Option<SessionDetail>> {
