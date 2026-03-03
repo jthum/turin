@@ -166,7 +166,7 @@ impl ExecutionHost {
         };
 
         if let Some(Verdict::Modify(new_tasks_val)) = verdict {
-            let new_tasks = ExecutionHost::parse_task_list(&new_tasks_val, None, None);
+            let new_tasks = ExecutionHost::parse_task_list(&new_tasks_val, None, None, None);
             if !new_tasks.is_empty() {
                 let mut q = session.queue.lock().await;
                 for task in new_tasks {
@@ -190,6 +190,7 @@ impl ExecutionHost {
             &KernelEvent::Lifecycle(LifecycleEvent::TaskStart {
                 identity: session.identity.clone(),
                 task_id: task.task_id.clone(),
+                trace_id: task.trace_id.clone(),
                 plan_id: task.plan_id.clone(),
                 title: task.title.clone(),
                 prompt: task.prompt.clone(),
@@ -248,6 +249,7 @@ impl ExecutionHost {
                     "identity": session.identity.clone(),
                     "session_id": session.identity.session_id(),
                     "task_id": task.task_id.clone(),
+                    "trace_id": task.trace_id.clone(),
                     "plan_id": task.plan_id.clone(),
                     "title": task.title.clone(),
                     "prompt": task.prompt.clone(),

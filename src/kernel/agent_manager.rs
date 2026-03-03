@@ -29,6 +29,7 @@ use tokio_util::sync::CancellationToken;
 pub struct PeerAgentTaskResult {
     pub request_id: String,
     pub agent_id: String,
+    pub trace_id: String,
     pub runtime_task_id: String,
     pub status: TaskTerminalStatus,
     pub task_turn_count: u32,
@@ -51,6 +52,7 @@ pub struct AgentStatusSnapshot {
 pub struct TaskStatusSnapshot {
     pub request_id: String,
     pub agent_id: String,
+    pub trace_id: String,
     pub state: String,
     pub runtime_task_id: Option<String>,
     pub status: Option<TaskTerminalStatus>,
@@ -69,6 +71,7 @@ enum PendingTaskState {
 #[derive(Debug, Clone)]
 struct PendingTaskRecord {
     agent_id: String,
+    trace_id: String,
     state: PendingTaskState,
     runtime_task_id: Option<String>,
 }
@@ -325,6 +328,7 @@ impl AgentManager {
         task: QueuedTask,
         delegated_capabilities: Option<BTreeMap<String, bool>>,
     ) -> Result<String> {
+        let trace_id = task.trace_id.clone();
         let request_id = uuid::Uuid::now_v7().simple().to_string();
         let (tx_result, rx_result) = oneshot::channel();
         {
@@ -337,6 +341,7 @@ impl AgentManager {
                 request_id.clone(),
                 PendingTaskRecord {
                     agent_id: agent_id.to_string(),
+                    trace_id,
                     state: PendingTaskState::Queued,
                     runtime_task_id: None,
                 },
@@ -475,6 +480,7 @@ impl AgentManager {
             .map(|(request_id, pending)| TaskStatusSnapshot {
                 request_id: request_id.clone(),
                 agent_id: pending.agent_id.clone(),
+                trace_id: pending.trace_id.clone(),
                 state: match pending.state {
                     PendingTaskState::Queued => "queued".to_string(),
                     PendingTaskState::Running => "running".to_string(),
@@ -498,6 +504,7 @@ impl AgentManager {
                 .map(|result| TaskStatusSnapshot {
                     request_id: result.request_id,
                     agent_id: result.agent_id,
+                    trace_id: result.trace_id,
                     state: "completed".to_string(),
                     runtime_task_id: Some(result.runtime_task_id),
                     status: Some(result.status),
@@ -644,6 +651,7 @@ impl AgentManager {
         let completed = PeerAgentTaskResult {
             request_id: request_id.to_string(),
             agent_id: pending.agent_id.clone(),
+            trace_id: pending.trace_id.clone(),
             runtime_task_id: String::new(),
             status: TaskTerminalStatus::Cancelled,
             task_turn_count: 0,
@@ -660,6 +668,7 @@ impl AgentManager {
         Ok(TaskStatusSnapshot {
             request_id: completed.request_id,
             agent_id: completed.agent_id,
+            trace_id: completed.trace_id,
             state: "completed".to_string(),
             runtime_task_id: Some(completed.runtime_task_id),
             status: Some(completed.status),
@@ -757,6 +766,7 @@ impl AgentManager {
             let completed = PeerAgentTaskResult {
                 request_id: request_id.clone(),
                 agent_id: agent_id.to_string(),
+                trace_id: envelope.task.trace_id.clone(),
                 runtime_task_id: String::new(),
                 status: TaskTerminalStatus::Cancelled,
                 task_turn_count: 0,
@@ -792,6 +802,7 @@ impl AgentManager {
             let completed = PeerAgentTaskResult {
                 request_id: request_id.clone(),
                 agent_id: agent_id.to_string(),
+                trace_id: envelope.task.trace_id.clone(),
                 runtime_task_id: String::new(),
                 status: TaskTerminalStatus::Killed,
                 task_turn_count: 0,
@@ -805,9 +816,17 @@ impl AgentManager {
         }
 
         if let Some(request_id) = handle.control.current_request_id() {
+            let trace_id = self
+                .pending_task_states
+                .read()
+                .await
+                .get(&request_id)
+                .map(|pending| pending.trace_id.clone())
+                .unwrap_or_default();
             let completed = PeerAgentTaskResult {
                 request_id: request_id.clone(),
                 agent_id: agent_id.to_string(),
+                trace_id,
                 runtime_task_id: handle.control.current_runtime_task_id().unwrap_or_default(),
                 status: TaskTerminalStatus::Killed,
                 task_turn_count: 0,
@@ -949,6 +968,7 @@ mod tests {
             request_id.clone(),
             PendingTaskRecord {
                 agent_id: "default".to_string(),
+                trace_id: "tr_cancelled".to_string(),
                 state: PendingTaskState::Queued,
                 runtime_task_id: None,
             },
@@ -1028,6 +1048,7 @@ mod tests {
             request_id.clone(),
             PendingTaskRecord {
                 agent_id: "default".to_string(),
+                trace_id: "tr_running".to_string(),
                 state: PendingTaskState::Running,
                 runtime_task_id: Some("t_1".to_string()),
             },
@@ -1076,6 +1097,7 @@ mod tests {
             request_id.clone(),
             PendingTaskRecord {
                 agent_id: "default".to_string(),
+                trace_id: "tr_session_cancel".to_string(),
                 state: PendingTaskState::Queued,
                 runtime_task_id: None,
             },
@@ -1148,6 +1170,7 @@ mod tests {
             running_request_id.clone(),
             PendingTaskRecord {
                 agent_id: "default".to_string(),
+                trace_id: "tr_running_kill".to_string(),
                 state: PendingTaskState::Running,
                 runtime_task_id: Some("t_running".to_string()),
             },
@@ -1156,6 +1179,7 @@ mod tests {
             queued_request_id.clone(),
             PendingTaskRecord {
                 agent_id: "default".to_string(),
+                trace_id: "tr_queued_kill".to_string(),
                 state: PendingTaskState::Queued,
                 runtime_task_id: None,
             },

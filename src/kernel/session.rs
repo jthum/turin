@@ -15,6 +15,8 @@ pub struct QueuedTask {
     pub plan_id: Option<String>,
     pub title: Option<String>,
     pub prompt: String,
+    #[serde(default = "new_trace_id")]
+    pub trace_id: String,
 }
 
 impl QueuedTask {
@@ -24,6 +26,7 @@ impl QueuedTask {
             plan_id: None,
             title: None,
             prompt: prompt.into(),
+            trace_id: new_trace_id(),
         }
     }
 
@@ -37,7 +40,17 @@ impl QueuedTask {
             plan_id: Some(plan_id.into()),
             title,
             prompt: prompt.into(),
+            trace_id: new_trace_id(),
         }
+    }
+
+    pub fn with_inherited_trace(mut self, trace_id: Option<&str>) -> Self {
+        if let Some(trace_id) = trace_id
+            && !trace_id.is_empty()
+        {
+            self.trace_id = trace_id.to_string();
+        }
+        self
     }
 }
 
@@ -122,4 +135,8 @@ impl SessionState {
             stop_requested: false,
         }
     }
+}
+
+fn new_trace_id() -> String {
+    format!("tr_{}", uuid::Uuid::now_v7().simple())
 }

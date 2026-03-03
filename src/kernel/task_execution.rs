@@ -37,7 +37,7 @@ impl ExecutionHost {
         };
 
         self.persist_task_user_message(session, prompt).await;
-        self.set_task_active_session(session);
+        self.set_task_active_session(session, task);
 
         let task_status_result = self.run_task_turn_loop(session, task, &tool_ctx).await;
 
@@ -78,7 +78,7 @@ impl ExecutionHost {
         }
     }
 
-    fn set_task_active_session(&self, session: &SessionState) {
+    fn set_task_active_session(&self, session: &SessionState, task: &QueuedTask) {
         let runtime = self.runtime_for_session(session);
         let harness = runtime.lock_engine();
         if let Some(ref engine) = *harness {
@@ -86,6 +86,7 @@ impl ExecutionHost {
                 Some(session.identity.session_id()),
                 Some(session.mode.clone()),
             );
+            engine.set_active_trace_id(Some(&task.trace_id));
             engine.set_active_event_context(Some(crate::harness::globals::HarnessEventContext {
                 json: self.json,
                 internal_id: session.internal_id,
@@ -100,6 +101,7 @@ impl ExecutionHost {
         let harness = runtime.lock_engine();
         if let Some(ref engine) = *harness {
             engine.set_active_session(None, None);
+            engine.set_active_trace_id(None);
             engine.set_active_event_context(None);
         }
     }
@@ -127,6 +129,7 @@ impl ExecutionHost {
 
             let turn_ctx = turn::TurnContext {
                 task_id: task.task_id.clone(),
+                trace_id: task.trace_id.clone(),
                 plan_id: task.plan_id.clone(),
                 task_turn_index: task_turn_count,
             };

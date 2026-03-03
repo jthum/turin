@@ -20,6 +20,7 @@ impl ExecutionHost {
             &KernelEvent::Lifecycle(LifecycleEvent::TaskComplete {
                 identity: session.identity.clone(),
                 task_id: task.task_id.clone(),
+                trace_id: task.trace_id.clone(),
                 plan_id: task.plan_id.clone(),
                 status,
                 task_turn_count,
@@ -37,6 +38,7 @@ impl ExecutionHost {
                         "identity": session.identity.clone(),
                         "session_id": session.identity.session_id(),
                         "task_id": task.task_id.clone(),
+                        "trace_id": task.trace_id.clone(),
                         "plan_id": task.plan_id.clone(),
                         "status": status,
                         "task_turn_count": task_turn_count,
@@ -52,7 +54,8 @@ impl ExecutionHost {
         if let Some(result) = verdict_result {
             match result {
                 Ok(Verdict::Modify(new_tasks_val)) => {
-                    let new_tasks = Self::parse_task_list(&new_tasks_val, None, None);
+                    let new_tasks =
+                        Self::parse_task_list(&new_tasks_val, None, None, Some(&task.trace_id));
                     if !new_tasks.is_empty() {
                         let mut q = session.queue.lock().await;
                         for queued in new_tasks {
@@ -139,6 +142,7 @@ impl ExecutionHost {
                     Some(session.identity.session_id()),
                     Some(session.mode.clone()),
                 );
+                engine.set_active_trace_id(Some(&task.trace_id));
                 engine.set_active_event_context(Some(
                     crate::harness::globals::HarnessEventContext {
                         json: self.json,
@@ -153,12 +157,14 @@ impl ExecutionHost {
                         "identity": session.identity.clone(),
                         "session_id": session.identity.session_id(),
                         "task_id": task.task_id.clone(),
+                        "trace_id": task.trace_id.clone(),
                         "plan_id": task.plan_id.clone(),
                         "turn_count": session.turn_index,
                         "error": error,
                     }),
                 );
                 engine.set_active_session(None, None);
+                engine.set_active_trace_id(None);
                 engine.set_active_event_context(None);
                 Some(result)
             } else {
@@ -173,6 +179,7 @@ impl ExecutionHost {
                         &new_tasks_val,
                         task.plan_id.as_deref(),
                         task.title.as_deref(),
+                        Some(&task.trace_id),
                     );
                     if !new_tasks.is_empty() {
                         let mut q = session.queue.lock().await;

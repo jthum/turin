@@ -494,6 +494,26 @@ impl HarnessEngine {
         }
     }
 
+    pub fn set_active_trace_id(&self, trace_id: Option<&str>) {
+        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
+            && let Ok(mut lock) = app_data.execution_ctx.lock()
+        {
+            lock.trace_id = trace_id.map(|s| s.to_string());
+        }
+    }
+
+    pub fn get_active_trace_id(&self) -> Option<String> {
+        self.lua
+            .app_data_ref::<HarnessAppData>()
+            .and_then(|app_data| {
+                app_data
+                    .execution_ctx
+                    .lock()
+                    .ok()
+                    .and_then(|lock| lock.trace_id.clone())
+            })
+    }
+
     pub fn set_active_queue(&self, queue: Option<crate::harness::globals::SessionQueue>) {
         if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
             && let Ok(mut lock) = app_data.execution_ctx.lock()

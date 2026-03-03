@@ -50,13 +50,14 @@ impl ExecutionHost {
                         should_clear_existing = new_clear;
                     }
                     if let Some(new_tasks_val) = obj.get("tasks") {
-                        plan_tasks = ExecutionHost::parse_task_list(new_tasks_val, None, None)
-                            .into_iter()
-                            .map(|t| t.prompt)
-                            .collect();
+                        plan_tasks =
+                            ExecutionHost::parse_task_list(new_tasks_val, None, None, None)
+                                .into_iter()
+                                .map(|t| t.prompt)
+                                .collect();
                     }
                 } else if new_val.is_array() {
-                    plan_tasks = ExecutionHost::parse_task_list(&new_val, None, None)
+                    plan_tasks = ExecutionHost::parse_task_list(&new_val, None, None, None)
                         .into_iter()
                         .map(|t| t.prompt)
                         .collect();

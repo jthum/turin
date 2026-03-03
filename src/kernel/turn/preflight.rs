@@ -83,6 +83,7 @@ impl ExecutionHost {
                 identity: session.identity.clone(),
                 turn_index: session.turn_index,
                 task_id: turn_ctx.task_id.clone(),
+                trace_id: turn_ctx.trace_id.clone(),
                 task_turn_index: turn_ctx.task_turn_index,
             }),
         );
@@ -96,6 +97,7 @@ impl ExecutionHost {
                     "identity": session.identity.clone(),
                     "session_id": session.identity.session_id(),
                     "task_id": turn_ctx.task_id.clone(),
+                    "trace_id": turn_ctx.trace_id.clone(),
                     "plan_id": turn_ctx.plan_id.clone(),
                     "turn_index": session.turn_index,
                     "task_turn_index": turn_ctx.task_turn_index,
@@ -131,6 +133,7 @@ impl ExecutionHost {
                 identity: session.identity.clone(),
                 turn_index: session.turn_index,
                 task_id: turn_ctx.task_id.clone(),
+                trace_id: turn_ctx.trace_id.clone(),
                 task_turn_index: turn_ctx.task_turn_index,
             }),
         );

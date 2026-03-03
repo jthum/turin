@@ -29,6 +29,7 @@ impl ExecutionHost {
         tasks_val: &serde_json::Value,
         default_plan_id: Option<&str>,
         default_title: Option<&str>,
+        default_trace_id: Option<&str>,
     ) -> Vec<QueuedTask> {
         let Some(items) = tasks_val.as_array() else {
             return Vec::new();
@@ -39,13 +40,19 @@ impl ExecutionHost {
             .filter_map(|item| {
                 if let Some(prompt) = item.as_str() {
                     if let Some(plan_id) = default_plan_id {
-                        return Some(QueuedTask::with_plan(
-                            prompt.to_string(),
-                            plan_id.to_string(),
-                            default_title.map(ToString::to_string),
-                        ));
+                        return Some(
+                            QueuedTask::with_plan(
+                                prompt.to_string(),
+                                plan_id.to_string(),
+                                default_title.map(ToString::to_string),
+                            )
+                            .with_inherited_trace(default_trace_id),
+                        );
                     }
-                    return Some(QueuedTask::ad_hoc(prompt.to_string()));
+                    return Some(
+                        QueuedTask::ad_hoc(prompt.to_string())
+                            .with_inherited_trace(default_trace_id),
+                    );
                 }
 
                 let obj = item.as_object()?;
@@ -61,10 +68,14 @@ impl ExecutionHost {
                     .map(ToString::to_string)
                     .or_else(|| default_title.map(ToString::to_string));
                 match plan_id {
-                    Some(plan_id) => {
-                        Some(QueuedTask::with_plan(prompt.to_string(), plan_id, title))
-                    }
-                    None => Some(QueuedTask::ad_hoc(prompt.to_string())),
+                    Some(plan_id) => Some(
+                        QueuedTask::with_plan(prompt.to_string(), plan_id, title)
+                            .with_inherited_trace(default_trace_id),
+                    ),
+                    None => Some(
+                        QueuedTask::ad_hoc(prompt.to_string())
+                            .with_inherited_trace(default_trace_id),
+                    ),
                 }
             })
             .collect()

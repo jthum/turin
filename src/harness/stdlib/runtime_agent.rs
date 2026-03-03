@@ -12,14 +12,26 @@ use crate::harness::stdlib::governance_support::{
 use crate::harness::stdlib::policy_support::{policy_bool, runtime_policy_snapshot};
 use crate::kernel::session::QueuedTask;
 
-fn parse_submit_task(task_val: Value) -> LuaResult<QueuedTask> {
+fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
+    app_data
+        .execution_ctx
+        .lock()
+        .ok()
+        .and_then(|ctx| ctx.trace_id.clone())
+}
+
+fn parse_submit_task(task_val: Value, app_data: &HarnessAppData) -> LuaResult<QueuedTask> {
+    let trace_id = active_trace_id(app_data);
     match task_val {
-        Value::String(s) => Ok(QueuedTask::ad_hoc(s.to_str()?.to_string())),
+        Value::String(s) => {
+            Ok(QueuedTask::ad_hoc(s.to_str()?.to_string())
+                .with_inherited_trace(trace_id.as_deref()))
+        }
         Value::Table(t) => {
             let prompt = t.get::<String>("prompt").map_err(|_| {
                 mlua::Error::runtime("runtime.agent.submit task table requires prompt")
             })?;
-            let mut task = QueuedTask::ad_hoc(prompt);
+            let mut task = QueuedTask::ad_hoc(prompt).with_inherited_trace(trace_id.as_deref());
             if let Ok(title) = t.get::<String>("title") {
                 task.title = Some(title);
             }
@@ -105,7 +117,9 @@ pub fn register_runtime_agent_namespace(
                     }
 
                     let task = match task_val {
-                        v @ Value::String(_) | v @ Value::Table(_) => parse_submit_task(v)?,
+                        v @ Value::String(_) | v @ Value::Table(_) => {
+                            parse_submit_task(v, &app_data_snapshot)?
+                        }
                         _ => {
                             return nil_err(lua, "invalid task; expected string or {prompt=...}");
                         }
@@ -186,7 +200,8 @@ pub fn register_runtime_agent_namespace(
                         return nil_err(lua, "Policy denial: spawn.enabled=false");
                     }
 
-                    let mut task = QueuedTask::ad_hoc(prompt);
+                    let mut task = QueuedTask::ad_hoc(prompt)
+                        .with_inherited_trace(active_trace_id(&app_data_snapshot).as_deref());
                     task.title = title_from_opts(opts.as_ref());
                     let timeout_ms = timeout_ms_from_opts(opts.as_ref());
                     let delegated_capabilities = parse_delegated_capabilities(

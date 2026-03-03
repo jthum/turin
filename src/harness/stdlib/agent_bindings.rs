@@ -16,6 +16,14 @@ use crate::harness::stdlib::identity_support::{
 use crate::harness::stdlib::policy_support::{policy_bool, policy_u64, runtime_policy_snapshot};
 use crate::kernel::session::QueuedTask;
 
+fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
+    app_data
+        .execution_ctx
+        .lock()
+        .ok()
+        .and_then(|ctx| ctx.trace_id.clone())
+}
+
 fn queue_max(snapshot: &std::collections::HashMap<String, serde_json::Value>) -> usize {
     policy_u64(snapshot, "queue.max_depth", 1024) as usize
 }
@@ -99,10 +107,11 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             }
             let spawn_q = spawn_q.clone();
             let queue_max = queue_max(&snapshot);
+            let trace_id = active_trace_id(&spawn_policy_snapshot);
             let enqueue_res = bridge_async_result(async move {
                 queue_push_one(
                     &spawn_q,
-                    QueuedTask::ad_hoc(prompt.clone()),
+                    QueuedTask::ad_hoc(prompt.clone()).with_inherited_trace(trace_id.as_deref()),
                     queue_max,
                     false,
                 )
@@ -162,13 +171,14 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     "agent.complete",
                 )?;
                 let timeout_ms = opts.as_ref().and_then(|t| t.get::<u64>("timeout_ms").ok());
+                let trace_id = active_trace_id(&complete_policy_snapshot);
 
                 let manager_submit = manager.clone();
                 let request_id = bridge_async_display_err(async move {
                     manager_submit
                         .submit(
                             &target_agent,
-                            QueuedTask::ad_hoc(prompt),
+                            QueuedTask::ad_hoc(prompt).with_inherited_trace(trace_id.as_deref()),
                             delegated_capabilities,
                         )
                         .await
@@ -220,8 +230,15 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             let snapshot =
                 runtime_policy_snapshot(&queue_policy_snapshot).map_err(mlua::Error::runtime)?;
             let queue_max = queue_max(&snapshot);
+            let trace_id = active_trace_id(&queue_policy_snapshot);
             let res = bridge_async_result(async move {
-                queue_push_one(&aq, QueuedTask::ad_hoc(cmd), queue_max, false).await
+                queue_push_one(
+                    &aq,
+                    QueuedTask::ad_hoc(cmd).with_inherited_trace(trace_id.as_deref()),
+                    queue_max,
+                    false,
+                )
+                .await
             });
             match res {
                 Ok(()) => Ok(ok_bool()),
@@ -240,8 +257,15 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             let snapshot = runtime_policy_snapshot(&queue_next_policy_snapshot)
                 .map_err(mlua::Error::runtime)?;
             let queue_max = queue_max(&snapshot);
+            let trace_id = active_trace_id(&queue_next_policy_snapshot);
             let res = bridge_async_result(async move {
-                queue_push_one(&aq, QueuedTask::ad_hoc(cmd), queue_max, true).await
+                queue_push_one(
+                    &aq,
+                    QueuedTask::ad_hoc(cmd).with_inherited_trace(trace_id.as_deref()),
+                    queue_max,
+                    true,
+                )
+                .await
             });
             match res {
                 Ok(()) => Ok(ok_bool()),
@@ -264,9 +288,10 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 .map_err(mlua::Error::runtime)?;
             let queue_max = queue_max(&snapshot);
             let aq = aq3.clone();
+            let trace_id = active_trace_id(&queue_all_policy_snapshot);
             let tasks = items
                 .into_iter()
-                .map(QueuedTask::ad_hoc)
+                .map(|cmd| QueuedTask::ad_hoc(cmd).with_inherited_trace(trace_id.as_deref()))
                 .collect::<Vec<_>>();
             let res =
                 bridge_async_result(async move { queue_push_many(&aq, tasks, queue_max).await });

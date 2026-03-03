@@ -33,6 +33,7 @@ pub enum LifecycleEvent {
     TaskStart {
         identity: RuntimeIdentity,
         task_id: String,
+        trace_id: String,
         plan_id: Option<String>,
         title: Option<String>,
         prompt: String,
@@ -42,6 +43,7 @@ pub enum LifecycleEvent {
     TaskComplete {
         identity: RuntimeIdentity,
         task_id: String,
+        trace_id: String,
         plan_id: Option<String>,
         status: TaskTerminalStatus,
         task_turn_count: u32,
@@ -63,6 +65,7 @@ pub enum LifecycleEvent {
         identity: RuntimeIdentity,
         turn_index: u32,
         task_id: String,
+        trace_id: String,
         task_turn_index: u32,
     },
     /// Context assembled and mutable just before provider call
@@ -70,6 +73,7 @@ pub enum LifecycleEvent {
         identity: RuntimeIdentity,
         turn_index: u32,
         task_id: String,
+        trace_id: String,
         task_turn_index: u32,
     },
     /// LLM call completes
@@ -77,6 +81,7 @@ pub enum LifecycleEvent {
         identity: RuntimeIdentity,
         turn_index: u32,
         task_id: String,
+        trace_id: String,
         task_turn_index: u32,
         has_tool_calls: bool,
     },

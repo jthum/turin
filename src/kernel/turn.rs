@@ -22,6 +22,7 @@ use preflight::TurnPreflight;
 #[derive(Debug, Clone)]
 pub(crate) struct TurnContext {
     pub task_id: String,
+    pub trace_id: String,
     pub plan_id: Option<String>,
     pub task_turn_index: u32,
 }

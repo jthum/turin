@@ -56,6 +56,7 @@ impl PeerRuntime {
     pub(super) async fn handle_envelope(&mut self, mut envelope: PeerAgentTaskEnvelope) {
         let runtime_task_id = self.allocate_runtime_task_id(&mut envelope.task);
         let request_id = envelope.request_id.clone();
+        let trace_id = envelope.task.trace_id.clone();
         self.prepare_task_execution(request_id.clone(), runtime_task_id);
         let result = self
             .run_queued_task(envelope.task, envelope.delegated_capabilities)
@@ -69,6 +70,7 @@ impl PeerRuntime {
                 Ok(ok) => PeerAgentTaskResult {
                     request_id,
                     agent_id: self.agent_id.clone(),
+                    trace_id,
                     runtime_task_id: ok.runtime_task_id,
                     status: ok.status,
                     task_turn_count: ok.task_turn_count,
@@ -78,6 +80,7 @@ impl PeerRuntime {
                 Err(e) => PeerAgentTaskResult {
                     request_id,
                     agent_id: self.agent_id.clone(),
+                    trace_id,
                     runtime_task_id: String::new(),
                     status: TaskTerminalStatus::Error,
                     task_turn_count: 0,
@@ -128,6 +131,7 @@ impl PeerRuntime {
                 &KernelEvent::Lifecycle(LifecycleEvent::TaskStart {
                     identity: self.session.identity.clone(),
                     task_id: task.task_id.clone(),
+                    trace_id: task.trace_id.clone(),
                     plan_id: task.plan_id.clone(),
                     title: task.title.clone(),
                     prompt: task.prompt.clone(),
@@ -145,6 +149,7 @@ impl PeerRuntime {
                             "identity": self.session.identity.clone(),
                             "session_id": self.session.identity.session_id(),
                             "task_id": task.task_id.clone(),
+                            "trace_id": task.trace_id.clone(),
                             "plan_id": task.plan_id.clone(),
                             "title": task.title.clone(),
                             "prompt": task.prompt.clone(),
