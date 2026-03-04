@@ -5,6 +5,7 @@ use serde::Serialize;
 use serde_json::json;
 use tokio::sync::{RwLock, broadcast, watch};
 
+use crate::daemon::channels::ChannelRuntimeManager;
 use crate::daemon::protocol::{
     DaemonRequest, ErrorCode, EventEnvelope, RequestEnvelope, ResponseEnvelope,
 };
@@ -23,6 +24,7 @@ pub(super) struct DispatchContext {
     pub(super) watcher_slot: Arc<std::sync::Mutex<Option<notify::RecommendedWatcher>>>,
     pub(super) daemon_watcher_tx: tokio::sync::mpsc::Sender<Vec<PathBuf>>,
     pub(super) event_tx: broadcast::Sender<EventEnvelope>,
+    pub(super) channel_runtimes: Arc<ChannelRuntimeManager>,
     pub(super) shutdown_tx: watch::Sender<bool>,
 }
 
@@ -32,6 +34,7 @@ pub(super) async fn dispatch(
     watcher_slot: Arc<std::sync::Mutex<Option<notify::RecommendedWatcher>>>,
     daemon_watcher_tx: tokio::sync::mpsc::Sender<Vec<PathBuf>>,
     event_tx: broadcast::Sender<EventEnvelope>,
+    channel_runtimes: Arc<ChannelRuntimeManager>,
     shutdown_tx: watch::Sender<bool>,
 ) -> ResponseEnvelope {
     let RequestEnvelope { id, request } = request;
@@ -40,6 +43,7 @@ pub(super) async fn dispatch(
         watcher_slot,
         daemon_watcher_tx,
         event_tx,
+        channel_runtimes,
         shutdown_tx,
     };
 
@@ -92,6 +96,7 @@ pub(super) async fn dispatch(
         DaemonRequest::ChannelList(params) => channel::list(id, params, &context).await,
         DaemonRequest::ChannelCreate(params) => channel::create(id, params, &context).await,
         DaemonRequest::ChannelGet(params) => channel::get(id, params, &context).await,
+        DaemonRequest::ChannelStatus(params) => channel::status(id, params, &context).await,
         DaemonRequest::ChannelIssues(params) => channel::issues(id, params, &context).await,
         DaemonRequest::ChannelEnable(params) => channel::enable(id, params, &context).await,
         DaemonRequest::ChannelDisable(params) => channel::disable(id, params, &context).await,
@@ -188,6 +193,17 @@ pub(super) fn emit_registry_issue_events(
             emit_event(tx, event_name, data);
         }
     }
+}
+
+pub(super) async fn sync_channel_runtimes(ctx: &DispatchContext) -> Result<(), anyhow::Error> {
+    let (workspace_root, channels) = {
+        let guard = ctx.state.read().await;
+        (
+            PathBuf::from(&guard.bootstrap_config.kernel.workspace_root),
+            guard.registry_load.channels.clone(),
+        )
+    };
+    ctx.channel_runtimes.sync(workspace_root, channels).await
 }
 
 pub(super) fn classify_registry_issue(

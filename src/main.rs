@@ -435,6 +435,13 @@ enum DaemonChannelCommands {
         #[command(flatten)]
         args: DaemonOutputArgs,
     },
+    /// Show one live daemon channel runtime status
+    Status {
+        /// Channel ID
+        id: String,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
     /// Show isolated daemon issues for one channel directory
     Issues {
         /// Channel ID
@@ -926,6 +933,9 @@ async fn main() -> Result<()> {
                 }
                 DaemonChannelCommands::Get { id, args } => {
                     commands::daemon::run_channel_get(&args.config.config, &id, args.json).await
+                }
+                DaemonChannelCommands::Status { id, args } => {
+                    commands::daemon::run_channel_status(&args.config.config, &id, args.json).await
                 }
                 DaemonChannelCommands::Issues { id, args } => {
                     commands::daemon::run_channel_issues(&args.config.config, &id, args.json).await

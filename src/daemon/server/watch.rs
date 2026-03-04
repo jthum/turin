@@ -6,6 +6,7 @@ use notify::Event;
 use tokio::sync::{RwLock, broadcast};
 use tracing::{error, info, warn};
 
+use crate::daemon::channels::ChannelRuntimeManager;
 use crate::daemon::protocol::EventEnvelope;
 use crate::daemon::state::{DaemonState, DaemonStatus, DaemonWatchPaths};
 
@@ -14,6 +15,7 @@ use super::dispatch::{emit_event, emit_registry_issue_events};
 pub(super) async fn start_daemon_watcher(
     state: Arc<RwLock<DaemonState>>,
     watcher_slot: Arc<std::sync::Mutex<Option<notify::RecommendedWatcher>>>,
+    channel_runtimes: Arc<ChannelRuntimeManager>,
     event_tx: broadcast::Sender<EventEnvelope>,
 ) -> Result<tokio::sync::mpsc::Sender<Vec<PathBuf>>> {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<PathBuf>>(32);
@@ -47,6 +49,7 @@ pub(super) async fn start_daemon_watcher(
                 Arc::clone(&state_for_task),
                 Arc::clone(&watcher_slot_for_task),
                 task_watcher_tx.clone(),
+                Arc::clone(&channel_runtimes),
                 event_tx.clone(),
             )
             .await
@@ -73,14 +76,19 @@ pub(super) async fn rescan_and_refresh_watcher(
     state: Arc<RwLock<DaemonState>>,
     watcher_slot: Arc<std::sync::Mutex<Option<notify::RecommendedWatcher>>>,
     tx: tokio::sync::mpsc::Sender<Vec<PathBuf>>,
+    channel_runtimes: Arc<ChannelRuntimeManager>,
     event_tx: broadcast::Sender<EventEnvelope>,
 ) -> Result<DaemonStatus> {
-    let (status, watch_paths) = {
+    let (status, watch_paths, workspace_root, channels) = {
         let mut guard = state.write().await;
         let status = guard.rescan().await?;
         let watch_paths = guard.watch_paths();
-        (status, watch_paths)
+        let workspace_root = PathBuf::from(&guard.bootstrap_config.kernel.workspace_root);
+        let channels = guard.registry_load.channels.clone();
+        (status, watch_paths, workspace_root, channels)
     };
+
+    channel_runtimes.sync(workspace_root, channels).await?;
 
     let watcher = build_daemon_watcher(&watch_paths, tx)?;
     let mut slot = watcher_slot

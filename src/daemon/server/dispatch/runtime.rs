@@ -14,6 +14,7 @@ pub(super) async fn rescan(
         ctx.state.clone(),
         ctx.watcher_slot.clone(),
         ctx.daemon_watcher_tx.clone(),
+        ctx.channel_runtimes.clone(),
         ctx.event_tx.clone(),
     )
     .await
@@ -32,6 +33,7 @@ pub(super) async fn reload(
         ctx.state.clone(),
         ctx.watcher_slot.clone(),
         ctx.daemon_watcher_tx.clone(),
+        ctx.channel_runtimes.clone(),
         ctx.event_tx.clone(),
     )
     .await

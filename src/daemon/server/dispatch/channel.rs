@@ -8,7 +8,8 @@ use crate::daemon::state::{CreateChannelInput, UpdateChannelInput};
 
 use super::{
     DispatchContext, emit_event, emit_registry_issue_events, internal_error, not_found_error,
-    serialize_response, serialize_response_with_event, serialize_value, validation_error,
+    serialize_response, serialize_response_with_event, serialize_value, sync_channel_runtimes,
+    validation_error,
 };
 
 pub(super) async fn list(
@@ -31,6 +32,21 @@ pub(super) async fn get(
     let guard = ctx.state.read().await;
     match guard.channel_detail(&params.id) {
         Some(channel) => serialize_response(id, channel, "channel detail"),
+        None => not_found_error(
+            id,
+            ErrorCode::ChannelNotFound,
+            format!("Channel '{}' not found", params.id),
+        ),
+    }
+}
+
+pub(super) async fn status(
+    id: Option<String>,
+    params: EntityIdParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    match ctx.channel_runtimes.get(&params.id).await {
+        Some(status) => serialize_response(id, status, "channel status"),
         None => not_found_error(
             id,
             ErrorCode::ChannelNotFound,
@@ -64,7 +80,7 @@ pub(super) async fn create(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let mut guard = ctx.state.write().await;
-    match guard
+    let response = match guard
         .create_channel(CreateChannelInput {
             id: params.id,
             kind: params.kind,
@@ -83,7 +99,14 @@ pub(super) async fn create(
             "channel.created",
         ),
         Err(err) => validation_error(id, err),
+    };
+    drop(guard);
+    if response.ok
+        && let Err(err) = sync_channel_runtimes(ctx).await
+    {
+        return internal_error(response.id, err);
     }
+    response
 }
 
 pub(super) async fn enable(
@@ -109,7 +132,7 @@ async fn set_enabled(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let mut guard = ctx.state.write().await;
-    match guard.set_channel_enabled(&channel_id, enabled).await {
+    let response = match guard.set_channel_enabled(&channel_id, enabled).await {
         Ok(channel) => serialize_response_with_event(
             id,
             channel,
@@ -122,7 +145,14 @@ async fn set_enabled(
             },
         ),
         Err(err) => validation_error(id, err),
+    };
+    drop(guard);
+    if response.ok
+        && let Err(err) = sync_channel_runtimes(ctx).await
+    {
+        return internal_error(response.id, err);
     }
+    response
 }
 
 pub(super) async fn update(
@@ -131,7 +161,7 @@ pub(super) async fn update(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let mut guard = ctx.state.write().await;
-    match guard
+    let response = match guard
         .update_channel(
             &params.id,
             UpdateChannelInput {
@@ -151,7 +181,14 @@ pub(super) async fn update(
             "channel.updated",
         ),
         Err(err) => validation_error(id, err),
+    };
+    drop(guard);
+    if response.ok
+        && let Err(err) = sync_channel_runtimes(ctx).await
+    {
+        return internal_error(response.id, err);
     }
+    response
 }
 
 pub(super) async fn delete(
@@ -160,7 +197,7 @@ pub(super) async fn delete(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let mut guard = ctx.state.write().await;
-    match guard.delete_channel(&params.id).await {
+    let response = match guard.delete_channel(&params.id).await {
         Ok(status) => match serialize_value(&id, &status, "delete status") {
             Ok(value) => {
                 emit_event(&ctx.event_tx, "channel.deleted", json!({ "id": params.id }));
@@ -171,5 +208,12 @@ pub(super) async fn delete(
             Err(response) => *response,
         },
         Err(err) => validation_error(id, err),
+    };
+    drop(guard);
+    if response.ok
+        && let Err(err) = sync_channel_runtimes(ctx).await
+    {
+        return internal_error(response.id, err);
     }
+    response
 }

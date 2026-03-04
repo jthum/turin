@@ -7,7 +7,8 @@ use crate::daemon::state::{CreateAgentInput, UpdateAgentInput};
 
 use super::{
     DispatchContext, emit_event, emit_registry_issue_events, internal_error, not_found_error,
-    serialize_response, serialize_response_with_event, serialize_value, validation_error,
+    serialize_response, serialize_response_with_event, serialize_value, sync_channel_runtimes,
+    validation_error,
 };
 use crate::daemon::protocol::ErrorCode;
 
@@ -79,7 +80,7 @@ pub(super) async fn create(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let mut guard = ctx.state.write().await;
-    match guard
+    let response = match guard
         .create_agent(CreateAgentInput {
             id: params.id,
             provider: params.provider,
@@ -101,7 +102,14 @@ pub(super) async fn create(
             "agent.created",
         ),
         Err(err) => validation_error(id, err),
+    };
+    drop(guard);
+    if response.ok
+        && let Err(err) = sync_channel_runtimes(ctx).await
+    {
+        return internal_error(response.id, err);
     }
+    response
 }
 
 pub(super) async fn enable(
@@ -127,7 +135,7 @@ async fn set_enabled(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let mut guard = ctx.state.write().await;
-    match guard.set_agent_enabled(&agent_id, enabled).await {
+    let response = match guard.set_agent_enabled(&agent_id, enabled).await {
         Ok(agent) => serialize_response_with_event(
             id,
             agent,
@@ -140,7 +148,14 @@ async fn set_enabled(
             },
         ),
         Err(err) => validation_error(id, err),
+    };
+    drop(guard);
+    if response.ok
+        && let Err(err) = sync_channel_runtimes(ctx).await
+    {
+        return internal_error(response.id, err);
     }
+    response
 }
 
 pub(super) async fn update(
@@ -149,7 +164,7 @@ pub(super) async fn update(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let mut guard = ctx.state.write().await;
-    match guard
+    let response = match guard
         .update_agent(
             &params.id,
             UpdateAgentInput {
@@ -171,7 +186,14 @@ pub(super) async fn update(
             "agent.updated",
         ),
         Err(err) => validation_error(id, err),
+    };
+    drop(guard);
+    if response.ok
+        && let Err(err) = sync_channel_runtimes(ctx).await
+    {
+        return internal_error(response.id, err);
     }
+    response
 }
 
 pub(super) async fn reload(
@@ -180,7 +202,7 @@ pub(super) async fn reload(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let mut guard = ctx.state.write().await;
-    match guard.reload_agent(&params.id).await {
+    let response = match guard.reload_agent(&params.id).await {
         Ok(agent) => serialize_response_with_event(
             id,
             agent,
@@ -189,7 +211,14 @@ pub(super) async fn reload(
             "agent.reloaded",
         ),
         Err(err) => validation_error(id, err),
+    };
+    drop(guard);
+    if response.ok
+        && let Err(err) = sync_channel_runtimes(ctx).await
+    {
+        return internal_error(response.id, err);
     }
+    response
 }
 
 pub(super) async fn bind_harness(
@@ -198,7 +227,7 @@ pub(super) async fn bind_harness(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let mut guard = ctx.state.write().await;
-    match guard
+    let response = match guard
         .bind_agent_shared_harness(&params.id, &params.harness_id)
         .await
     {
@@ -215,7 +244,14 @@ pub(super) async fn bind_harness(
             Err(response) => *response,
         },
         Err(err) => validation_error(id, err),
+    };
+    drop(guard);
+    if response.ok
+        && let Err(err) = sync_channel_runtimes(ctx).await
+    {
+        return internal_error(response.id, err);
     }
+    response
 }
 
 pub(super) async fn use_local_harness(
@@ -224,7 +260,7 @@ pub(super) async fn use_local_harness(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let mut guard = ctx.state.write().await;
-    match guard.use_local_agent_harness(&params.id).await {
+    let response = match guard.use_local_agent_harness(&params.id).await {
         Ok(agent) => match serialize_value(&id, agent, "local-harness agent") {
             Ok(value) => {
                 emit_event(&ctx.event_tx, "agent.updated", value.clone());
@@ -238,7 +274,14 @@ pub(super) async fn use_local_harness(
             Err(response) => *response,
         },
         Err(err) => validation_error(id, err),
+    };
+    drop(guard);
+    if response.ok
+        && let Err(err) = sync_channel_runtimes(ctx).await
+    {
+        return internal_error(response.id, err);
     }
+    response
 }
 
 pub(super) async fn delete(
@@ -247,7 +290,7 @@ pub(super) async fn delete(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let mut guard = ctx.state.write().await;
-    match guard.delete_agent(&params.id).await {
+    let response = match guard.delete_agent(&params.id).await {
         Ok(status) => match serialize_value(&id, &status, "delete status") {
             Ok(value) => {
                 emit_event(&ctx.event_tx, "agent.deleted", json!({ "id": params.id }));
@@ -258,5 +301,12 @@ pub(super) async fn delete(
             Err(response) => *response,
         },
         Err(err) => validation_error(id, err),
+    };
+    drop(guard);
+    if response.ok
+        && let Err(err) = sync_channel_runtimes(ctx).await
+    {
+        return internal_error(response.id, err);
     }
+    response
 }

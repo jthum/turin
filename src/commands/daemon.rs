@@ -116,6 +116,16 @@ struct ChannelDetailView {
 }
 
 #[derive(Debug, Deserialize)]
+struct ChannelRuntimeView {
+    id: String,
+    kind: String,
+    agent_id: String,
+    directory: String,
+    state: String,
+    last_error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct TaskStatusView {
     request_id: String,
     agent_id: String,
@@ -715,6 +725,21 @@ pub async fn run_channel_get(
     Ok(())
 }
 
+pub async fn run_channel_status(
+    config_path: &std::path::Path,
+    channel_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "channel.status", json!({ "id": channel_id })).await?;
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let channel: ChannelRuntimeView = decode_result(response)?;
+    print_channel_runtime(channel);
+    Ok(())
+}
+
 pub async fn run_channel_issues(
     config_path: &std::path::Path,
     channel_id: &str,
@@ -1171,6 +1196,18 @@ fn print_channel_detail(channel: ChannelDetailView) {
     {
         println!("  settings:");
         print_indented(&serde_json::to_string_pretty(&channel.settings).unwrap_or_default());
+    }
+}
+
+fn print_channel_runtime(channel: ChannelRuntimeView) {
+    println!("Channel Runtime:");
+    println!("  id:            {}", channel.id);
+    println!("  kind:          {}", channel.kind);
+    println!("  agent_id:      {}", channel.agent_id);
+    println!("  directory:     {}", channel.directory);
+    println!("  state:         {}", channel.state);
+    if let Some(error) = channel.last_error {
+        println!("  last_error:    {}", error);
     }
 }
 

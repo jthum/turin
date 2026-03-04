@@ -220,6 +220,8 @@ pub enum DaemonRequest {
     ChannelCreate(CreateChannelParams),
     #[serde(rename = "channel.get")]
     ChannelGet(EntityIdParams),
+    #[serde(rename = "channel.status")]
+    ChannelStatus(EntityIdParams),
     #[serde(rename = "channel.issues")]
     ChannelIssues(EntityIdParams),
     #[serde(rename = "channel.enable")]

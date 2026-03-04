@@ -13,8 +13,20 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{RwLock, broadcast, watch as watch_channel};
 use tracing::{error, info, warn};
 
+use crate::daemon::channels::ChannelRuntimeManager;
 use crate::daemon::protocol::{DaemonRequest, ErrorCode, RequestEnvelope, ResponseEnvelope};
 use crate::daemon::state::DaemonState;
+
+#[derive(Clone)]
+struct ClientContext {
+    state: Arc<RwLock<DaemonState>>,
+    watcher_slot: Arc<std::sync::Mutex<Option<notify::RecommendedWatcher>>>,
+    daemon_watcher_tx: tokio::sync::mpsc::Sender<Vec<PathBuf>>,
+    event_tx: broadcast::Sender<crate::daemon::protocol::EventEnvelope>,
+    channel_runtimes: Arc<ChannelRuntimeManager>,
+    shutdown_tx: watch_channel::Sender<bool>,
+    shutdown_rx: watch_channel::Receiver<bool>,
+}
 
 pub async fn serve(config_path: &Path) -> Result<()> {
     let state = Arc::new(RwLock::new(DaemonState::load(config_path).await?));
@@ -38,13 +50,30 @@ pub async fn serve(config_path: &Path) -> Result<()> {
     let (shutdown_tx, mut shutdown_rx) = watch_channel::channel(false);
     let (event_tx, _) = broadcast::channel(512);
     let watcher_slot = Arc::new(std::sync::Mutex::new(None));
+    let channel_runtimes = Arc::new(ChannelRuntimeManager::new(socket_path.clone()));
+    {
+        let guard = state.read().await;
+        let workspace_root = PathBuf::from(&guard.bootstrap_config.kernel.workspace_root);
+        let channels = guard.registry_load.channels.clone();
+        channel_runtimes.sync(workspace_root, channels).await?;
+    }
     let daemon_watcher_tx = watch::start_daemon_watcher(
         Arc::clone(&state),
         Arc::clone(&watcher_slot),
+        Arc::clone(&channel_runtimes),
         event_tx.clone(),
     )
     .await?;
     events::start_task_event_poller(Arc::clone(&state), event_tx.clone(), shutdown_rx.clone());
+    let client_ctx = ClientContext {
+        state: Arc::clone(&state),
+        watcher_slot: Arc::clone(&watcher_slot),
+        daemon_watcher_tx: daemon_watcher_tx.clone(),
+        event_tx: event_tx.clone(),
+        channel_runtimes: Arc::clone(&channel_runtimes),
+        shutdown_tx: shutdown_tx.clone(),
+        shutdown_rx: shutdown_rx.clone(),
+    };
 
     loop {
         tokio::select! {
@@ -61,25 +90,9 @@ pub async fn serve(config_path: &Path) -> Result<()> {
             accept_res = listener.accept() => {
                 match accept_res {
                     Ok((stream, _)) => {
-                        let state = Arc::clone(&state);
-                        let watcher_slot = Arc::clone(&watcher_slot);
-                        let daemon_watcher_tx = daemon_watcher_tx.clone();
-                        let event_tx = event_tx.clone();
-                        let shutdown_tx = shutdown_tx.clone();
-                        let shutdown_rx = shutdown_rx.clone();
+                        let client_ctx = client_ctx.clone();
                         tokio::spawn(async move {
-                            if let Err(err) =
-                                handle_client(
-                                    stream,
-                                    state,
-                                    watcher_slot,
-                                    daemon_watcher_tx,
-                                    event_tx,
-                                    shutdown_tx,
-                                    shutdown_rx,
-                                )
-                                .await
-                            {
+                            if let Err(err) = handle_client(stream, client_ctx).await {
                                 error!(error = %err, "Daemon client handler failed");
                             }
                         });
@@ -98,6 +111,7 @@ pub async fn serve(config_path: &Path) -> Result<()> {
             .expect("daemon watcher mutex poisoned during shutdown");
         *slot = None;
     }
+    channel_runtimes.shutdown().await;
     tokio::fs::remove_file(&socket_path).await.ok();
     Ok(())
 }
@@ -122,15 +136,7 @@ async fn cleanup_stale_socket(socket_path: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn handle_client(
-    stream: UnixStream,
-    state: Arc<RwLock<DaemonState>>,
-    watcher_slot: Arc<std::sync::Mutex<Option<notify::RecommendedWatcher>>>,
-    daemon_watcher_tx: tokio::sync::mpsc::Sender<Vec<PathBuf>>,
-    event_tx: broadcast::Sender<crate::daemon::protocol::EventEnvelope>,
-    shutdown_tx: watch_channel::Sender<bool>,
-    shutdown_rx: watch_channel::Receiver<bool>,
-) -> Result<()> {
+async fn handle_client(stream: UnixStream, ctx: ClientContext) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
 
@@ -159,9 +165,9 @@ async fn handle_client(
         if matches!(request.request, DaemonRequest::RuntimeEventsSubscribe(_)) {
             events::stream_events(
                 request,
-                Arc::clone(&state),
-                event_tx.subscribe(),
-                shutdown_rx,
+                Arc::clone(&ctx.state),
+                ctx.event_tx.subscribe(),
+                ctx.shutdown_rx.clone(),
                 &mut writer,
             )
             .await?;
@@ -170,11 +176,12 @@ async fn handle_client(
 
         let response = dispatch::dispatch(
             request,
-            Arc::clone(&state),
-            Arc::clone(&watcher_slot),
-            daemon_watcher_tx.clone(),
-            event_tx.clone(),
-            shutdown_tx.clone(),
+            Arc::clone(&ctx.state),
+            Arc::clone(&ctx.watcher_slot),
+            ctx.daemon_watcher_tx.clone(),
+            ctx.event_tx.clone(),
+            Arc::clone(&ctx.channel_runtimes),
+            ctx.shutdown_tx.clone(),
         )
         .await;
         writer

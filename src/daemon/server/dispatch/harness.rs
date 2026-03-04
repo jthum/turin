@@ -5,7 +5,8 @@ use crate::daemon::protocol::{EntityIdParams, NoParams, ResponseEnvelope};
 
 use super::{
     DispatchContext, emit_event, emit_registry_issue_events, internal_error, not_found_error,
-    serialize_response, serialize_response_with_event, serialize_value, validation_error,
+    serialize_response, serialize_response_with_event, serialize_value, sync_channel_runtimes,
+    validation_error,
 };
 
 pub(super) async fn list(
@@ -23,7 +24,7 @@ pub(super) async fn create(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let mut guard = ctx.state.write().await;
-    match guard.create_shared_harness(&params.id).await {
+    let response = match guard.create_shared_harness(&params.id).await {
         Ok(harness) => serialize_response_with_event(
             id,
             harness,
@@ -32,7 +33,14 @@ pub(super) async fn create(
             "harness.created",
         ),
         Err(err) => validation_error(id, err),
+    };
+    drop(guard);
+    if response.ok
+        && let Err(err) = sync_channel_runtimes(ctx).await
+    {
+        return internal_error(response.id, err);
     }
+    response
 }
 
 pub(super) async fn get(
@@ -76,7 +84,7 @@ pub(super) async fn reload(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let mut guard = ctx.state.write().await;
-    match guard.reload_harness(&params.id).await {
+    let response = match guard.reload_harness(&params.id).await {
         Ok(harness) => serialize_response_with_event(
             id,
             harness,
@@ -85,7 +93,14 @@ pub(super) async fn reload(
             "harness.reloaded",
         ),
         Err(err) => validation_error(id, err),
+    };
+    drop(guard);
+    if response.ok
+        && let Err(err) = sync_channel_runtimes(ctx).await
+    {
+        return internal_error(response.id, err);
     }
+    response
 }
 
 pub(super) async fn validate(
@@ -109,7 +124,7 @@ pub(super) async fn delete(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let mut guard = ctx.state.write().await;
-    match guard.delete_shared_harness(&params.id).await {
+    let response = match guard.delete_shared_harness(&params.id).await {
         Ok(status) => match serialize_value(&id, &status, "harness delete result") {
             Ok(value) => {
                 emit_event(&ctx.event_tx, "harness.deleted", json!({ "id": params.id }));
@@ -120,5 +135,12 @@ pub(super) async fn delete(
             Err(response) => *response,
         },
         Err(err) => validation_error(id, err),
+    };
+    drop(guard);
+    if response.ok
+        && let Err(err) = sync_channel_runtimes(ctx).await
+    {
+        return internal_error(response.id, err);
     }
+    response
 }

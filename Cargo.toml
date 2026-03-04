@@ -41,6 +41,9 @@ thiserror = "1.0"
 anyhow = "1.0"
 turin-types = { path = "crates/turin-types" }
 turin-daemon-protocol = { path = "crates/turin-daemon-protocol" }
+turin-daemon-client = { path = "crates/turin-daemon-client" }
+turin-channel-runner = { path = "crates/turin-channel-runner" }
+turin-channel-fs = { path = "crates/turin-channel-fs" }
 
 # Inference SDK family (unified provider layer)
 inference-sdk-core = { git = "https://github.com/jthum/inference-sdk-rust", rev = "bd64dd2f9fd7a58e8c4e270c8b931d13de2971c6" }
