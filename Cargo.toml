@@ -75,6 +75,10 @@ tracing-appender = "0.2.4"
 [dev-dependencies]
 tempfile = "3.10"
 proptest = "1.4"
+turin-daemon-client = { path = "crates/turin-daemon-client" }
+turin-daemon-protocol = { path = "crates/turin-daemon-protocol" }
+turin-channel-core = { path = "crates/turin-channel-core" }
+turin-channel-runner = { path = "crates/turin-channel-runner" }
 [profile.release]
 opt-level = "z"     # Optimize for size
 lto = true          # Enable Link Time Optimization

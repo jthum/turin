@@ -59,7 +59,7 @@ impl DaemonClient {
             .next_line()
             .await?
             .ok_or_else(|| anyhow!("Daemon closed connection before response"))?;
-        Ok(serde_json::from_str(&line).context("Failed to decode daemon response")?)
+        serde_json::from_str(&line).context("Failed to decode daemon response")
     }
 
     pub async fn request(
@@ -129,7 +129,7 @@ pub fn decode_ok<T: DeserializeOwned>(response: ResponseEnvelope) -> Result<T> {
     let result = response
         .result
         .ok_or_else(|| anyhow!("Daemon response missing result payload"))?;
-    Ok(serde_json::from_value(result).context("Failed to decode daemon result payload")?)
+    serde_json::from_value(result).context("Failed to decode daemon result payload")
 }
 
 pub fn encode_params<T: Serialize>(value: T) -> Value {

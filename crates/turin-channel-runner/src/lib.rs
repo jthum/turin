@@ -1,10 +1,12 @@
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 use turin_channel_core::{
-    ChannelConversationKey, ConversationBinding, InboundEvent, RoutingDecision, decide_routing,
+    ChannelCapabilities, ChannelConversationKey, ChannelKind, ConversationBinding, InboundEvent,
+    OutboundMessage, RoutingDecision, decide_routing,
 };
 use turin_daemon_client::DaemonClient;
 use turin_daemon_protocol::{
@@ -71,6 +73,25 @@ impl FileBindingStore {
     }
 }
 
+#[async_trait]
+pub trait ChannelDriver {
+    fn kind(&self) -> ChannelKind;
+
+    fn capabilities(&self) -> ChannelCapabilities {
+        ChannelCapabilities::default()
+    }
+
+    async fn next_event(&mut self) -> Result<Option<InboundEvent>>;
+
+    async fn send(
+        &mut self,
+        conversation: &ChannelConversationKey,
+        message: OutboundMessage,
+    ) -> Result<()>;
+
+    async fn shutdown(&mut self) -> Result<()>;
+}
+
 pub struct ChannelRunner {
     daemon: DaemonClient,
     bindings: FileBindingStore,
@@ -119,6 +140,19 @@ impl ChannelRunner {
                     .await?
             }
             RoutingDecision::StartFresh { slot_id } => {
+                if let Some(binding) = current {
+                    let _ = self
+                        .daemon
+                        .request_ok::<serde_json::Value>(
+                            None,
+                            turin_daemon_protocol::DaemonRequest::SessionKill(
+                                turin_daemon_protocol::SessionIdParams {
+                                    session_id: binding.session_id.clone(),
+                                },
+                            ),
+                        )
+                        .await;
+                }
                 self.daemon
                     .request_ok(
                         None,
@@ -182,6 +216,50 @@ impl ChannelRunner {
             .await
     }
 
+    pub async fn handle_event(
+        &self,
+        agent_id: &str,
+        event: &InboundEvent,
+        reset_requested: bool,
+        timeout_ms: Option<u64>,
+    ) -> Result<OutboundMessage> {
+        let task = self
+            .submit_and_wait(agent_id, event, reset_requested, timeout_ms)
+            .await?;
+        Ok(task_to_outbound(&task))
+    }
+
+    pub async fn run_driver<D: ChannelDriver + Send>(
+        &self,
+        agent_id: &str,
+        driver: &mut D,
+        timeout_ms: Option<u64>,
+    ) -> Result<()> {
+        let run_result = async {
+            while let Some(event) = driver.next_event().await? {
+                let reset_requested = event
+                    .metadata
+                    .get("reset_session")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+                let outbound = match self
+                    .handle_event(agent_id, &event, reset_requested, timeout_ms)
+                    .await
+                {
+                    Ok(message) => message,
+                    Err(err) => OutboundMessage::text(format!("Turin error: {}", err)),
+                };
+                driver.send(&event.conversation, outbound).await?;
+            }
+            Result::<()>::Ok(())
+        }
+        .await;
+
+        let shutdown_result = driver.shutdown().await;
+        run_result?;
+        shutdown_result
+    }
+
     pub async fn clear_binding(&self, key: &ChannelConversationKey) -> Result<()> {
         let mut bindings = self.bindings.load().await?;
         bindings.remove(&serialize_binding_key(key)?);
@@ -203,11 +281,21 @@ fn serialize_binding_key(key: &ChannelConversationKey) -> Result<String> {
     Ok(serde_json::to_string(key)?)
 }
 
+fn task_to_outbound(task: &TaskSnapshot) -> OutboundMessage {
+    if let Some(output) = task.output.as_ref() {
+        OutboundMessage::text(output.clone())
+    } else if let Some(error) = task.error.as_ref() {
+        OutboundMessage::text(format!("Turin error: {}", error))
+    } else {
+        OutboundMessage::text(format!("Task {} finished without output", task.request_id))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
-    use turin_channel_core::{ChannelKind, ChannelMessageRef, ChannelUser};
+    use turin_channel_core::{ChannelKind, ChannelMessageRef, ChannelUser, MessageBlock};
 
     fn sample_key() -> ChannelConversationKey {
         ChannelConversationKey {
@@ -253,5 +341,27 @@ mod tests {
             metadata: Default::default(),
         };
         assert_eq!(event.text, "hello");
+    }
+
+    #[test]
+    fn task_to_outbound_prefers_output() {
+        let outbound = task_to_outbound(&TaskSnapshot {
+            request_id: "req-1".into(),
+            agent_id: "writer".into(),
+            slot_id: "slot-1".into(),
+            trace_id: "trace-1".into(),
+            state: "completed".into(),
+            runtime_task_id: None,
+            status: Some("completed".into()),
+            task_turn_count: Some(1),
+            output: Some("hello".into()),
+            error: Some("bad".into()),
+        });
+        assert_eq!(
+            outbound.blocks,
+            vec![MessageBlock::Text {
+                text: "hello".into(),
+            }]
+        );
     }
 }
