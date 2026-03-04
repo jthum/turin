@@ -130,6 +130,8 @@ pub struct DaemonConfig {
     pub agents_dir: String,
     #[serde(default = "default_daemon_harnesses_dir")]
     pub harnesses_dir: String,
+    #[serde(default = "default_daemon_channels_dir")]
+    pub channels_dir: String,
     #[serde(default = "default_daemon_socket_path")]
     pub socket_path: String,
 }
@@ -139,6 +141,7 @@ impl Default for DaemonConfig {
         Self {
             agents_dir: default_daemon_agents_dir(),
             harnesses_dir: default_daemon_harnesses_dir(),
+            channels_dir: default_daemon_channels_dir(),
             socket_path: default_daemon_socket_path(),
         }
     }
@@ -318,6 +321,10 @@ fn default_daemon_harnesses_dir() -> String {
     "harnesses".to_string()
 }
 
+fn default_daemon_channels_dir() -> String {
+    "channels".to_string()
+}
+
 fn default_daemon_socket_path() -> String {
     ".turin/daemon.sock".to_string()
 }
@@ -373,6 +380,10 @@ impl TurinConfig {
         anyhow::ensure!(
             !self.daemon.harnesses_dir.trim().is_empty(),
             "daemon.harnesses_dir must not be empty"
+        );
+        anyhow::ensure!(
+            !self.daemon.channels_dir.trim().is_empty(),
+            "daemon.channels_dir must not be empty"
         );
         anyhow::ensure!(
             !self.daemon.socket_path.trim().is_empty(),
@@ -529,6 +540,10 @@ impl TurinConfig {
             &self.kernel.workspace_root,
             &self.daemon.harnesses_dir,
         )
+    }
+
+    pub fn resolve_daemon_channels_dir(&self, base: &Path) -> PathBuf {
+        resolve_under_workspace(base, &self.kernel.workspace_root, &self.daemon.channels_dir)
     }
 
     pub fn resolve_daemon_socket_path(&self, base: &Path) -> PathBuf {

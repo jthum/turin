@@ -24,6 +24,17 @@ pub struct HarnessDetail {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ChannelDetail {
+    pub id: String,
+    pub directory: String,
+    pub enabled: bool,
+    pub kind: String,
+    pub agent_id: String,
+    pub idle_ttl_secs: Option<u64>,
+    pub settings: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SessionSummary {
     pub internal_id: i64,
     pub session_id: String,

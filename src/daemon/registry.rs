@@ -26,6 +26,16 @@ pub struct SharedHarnessSummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ChannelSummary {
+    pub id: String,
+    pub directory: String,
+    pub enabled: bool,
+    pub kind: String,
+    pub agent_id: String,
+    pub idle_ttl_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct AgentSummary {
     pub id: String,
     pub directory: String,
@@ -41,8 +51,10 @@ pub struct AgentSummary {
 pub struct RegistrySnapshot {
     pub agents_dir: String,
     pub harnesses_dir: String,
+    pub channels_dir: String,
     pub agents: Vec<AgentSummary>,
     pub shared_harnesses: Vec<SharedHarnessSummary>,
+    pub channels: Vec<ChannelSummary>,
     pub issues: Vec<RegistryIssue>,
 }
 
@@ -70,11 +82,24 @@ pub struct SharedHarness {
 }
 
 #[derive(Debug, Clone)]
+pub struct DiscoveredChannel {
+    pub id: String,
+    pub directory: PathBuf,
+    pub enabled: bool,
+    pub kind: String,
+    pub agent_id: String,
+    pub idle_ttl_secs: Option<u64>,
+    pub extra: toml::Table,
+}
+
+#[derive(Debug, Clone)]
 pub struct RegistryLoad {
     pub agents_dir: PathBuf,
     pub harnesses_dir: PathBuf,
+    pub channels_dir: PathBuf,
     pub agents: Vec<DiscoveredAgent>,
     pub shared_harnesses: Vec<SharedHarness>,
+    pub channels: Vec<DiscoveredChannel>,
     pub issues: Vec<RegistryIssue>,
 }
 
@@ -98,6 +123,20 @@ pub(crate) struct AgentFileConfig {
     pub idle_grace_secs: Option<u64>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct ChannelFileConfig {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    pub kind: String,
+    pub agent_id: String,
+    #[serde(default)]
+    pub idle_ttl_secs: Option<u64>,
+    #[serde(flatten)]
+    pub extra: toml::Table,
+}
+
 fn default_enabled() -> bool {
     true
 }
@@ -112,6 +151,19 @@ pub(crate) fn read_agent_file(agent_dir: &Path) -> Result<Option<AgentFileConfig
         .with_context(|| format!("Failed to read '{}'", agent_toml.display()))?;
     let parsed: AgentFileConfig = toml::from_str(&raw)
         .with_context(|| format!("Failed to parse '{}'", agent_toml.display()))?;
+    Ok(Some(parsed))
+}
+
+pub(crate) fn read_channel_file(channel_dir: &Path) -> Result<Option<ChannelFileConfig>> {
+    let channel_toml = channel_dir.join("channel.toml");
+    if !channel_toml.exists() {
+        return Ok(None);
+    }
+
+    let raw = fs::read_to_string(&channel_toml)
+        .with_context(|| format!("Failed to read '{}'", channel_toml.display()))?;
+    let parsed: ChannelFileConfig = toml::from_str(&raw)
+        .with_context(|| format!("Failed to parse '{}'", channel_toml.display()))?;
     Ok(Some(parsed))
 }
 
@@ -137,6 +189,7 @@ pub(crate) fn write_agent_file(agent_dir: &Path, config: &AgentFileConfig) -> Re
 pub fn scan_registry(config: &TurinConfig, config_base: &Path) -> Result<RegistryLoad> {
     let agents_dir = config.resolve_daemon_agents_dir(config_base);
     let harnesses_dir = config.resolve_daemon_harnesses_dir(config_base);
+    let channels_dir = config.resolve_daemon_channels_dir(config_base);
 
     let mut issues = Vec::new();
     let mut shared_harness_map = scan_shared_harnesses(&harnesses_dir)?;
@@ -189,17 +242,65 @@ pub fn scan_registry(config: &TurinConfig, config_base: &Path) -> Result<Registr
         .into_iter()
         .map(|(id, directory)| SharedHarness { id, directory })
         .collect();
+    let mut channels = scan_channels(config, &channels_dir, &agents, &mut issues)?;
     shared_harnesses.sort_by(|a, b| a.id.cmp(&b.id));
     agents.sort_by(|a, b| a.id.cmp(&b.id));
+    channels.sort_by(|a, b| a.id.cmp(&b.id));
     issues.sort_by(|a, b| a.path.cmp(&b.path));
 
     Ok(RegistryLoad {
         agents_dir,
         harnesses_dir,
+        channels_dir,
         agents,
         shared_harnesses,
+        channels,
         issues,
     })
+}
+
+fn scan_channels(
+    bootstrap: &TurinConfig,
+    channels_dir: &Path,
+    agents: &[DiscoveredAgent],
+    issues: &mut Vec<RegistryIssue>,
+) -> Result<Vec<DiscoveredChannel>> {
+    let mut channels = Vec::new();
+
+    if !channels_dir.exists() {
+        return Ok(channels);
+    }
+
+    for entry in fs::read_dir(channels_dir)
+        .with_context(|| format!("Failed to read channels dir '{}'", channels_dir.display()))?
+    {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => {
+                issues.push(RegistryIssue {
+                    path: channels_dir.display().to_string(),
+                    message: format!("Failed to read channel directory entry: {}", err),
+                });
+                continue;
+            }
+        };
+
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        match scan_channel_dir(bootstrap, &path, agents) {
+            Ok(Some(channel)) => channels.push(channel),
+            Ok(None) => {}
+            Err(err) => issues.push(RegistryIssue {
+                path: path.display().to_string(),
+                message: err.to_string(),
+            }),
+        }
+    }
+
+    Ok(channels)
 }
 
 fn scan_shared_harnesses(harnesses_dir: &Path) -> Result<HashMap<String, PathBuf>> {
@@ -320,6 +421,55 @@ fn scan_agent_dir(
     }))
 }
 
+fn scan_channel_dir(
+    bootstrap: &TurinConfig,
+    channel_dir: &Path,
+    agents: &[DiscoveredAgent],
+) -> Result<Option<DiscoveredChannel>> {
+    let channel_id = channel_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| anyhow::anyhow!("Channel directory name is not valid UTF-8"))?
+        .to_string();
+
+    let Some(parsed) = read_channel_file(channel_dir)? else {
+        return Ok(None);
+    };
+
+    if let Some(explicit_id) = &parsed.id
+        && explicit_id != &channel_id
+    {
+        anyhow::bail!(
+            "channel.toml id '{}' does not match directory name '{}'",
+            explicit_id,
+            channel_id
+        );
+    }
+
+    anyhow::ensure!(
+        !parsed.kind.trim().is_empty(),
+        "channel kind must not be empty"
+    );
+
+    let known_agent = parsed.agent_id == bootstrap.agent.id
+        || agents.iter().any(|agent| agent.id == parsed.agent_id);
+    anyhow::ensure!(
+        known_agent,
+        "channel references unknown agent '{}'",
+        parsed.agent_id
+    );
+
+    Ok(Some(DiscoveredChannel {
+        id: channel_id,
+        directory: channel_dir.to_path_buf(),
+        enabled: parsed.enabled,
+        kind: parsed.kind,
+        agent_id: parsed.agent_id,
+        idle_ttl_secs: parsed.idle_ttl_secs,
+        extra: parsed.extra,
+    }))
+}
+
 pub fn build_effective_config(bootstrap: &TurinConfig, load: &RegistryLoad) -> Result<TurinConfig> {
     let mut effective = bootstrap.clone();
     effective.agents.clear();
@@ -399,6 +549,7 @@ pub fn snapshot(load: &RegistryLoad) -> RegistrySnapshot {
     RegistrySnapshot {
         agents_dir: load.agents_dir.display().to_string(),
         harnesses_dir: load.harnesses_dir.display().to_string(),
+        channels_dir: load.channels_dir.display().to_string(),
         agents: load
             .agents
             .iter()
@@ -422,6 +573,18 @@ pub fn snapshot(load: &RegistryLoad) -> RegistrySnapshot {
             .map(|harness| SharedHarnessSummary {
                 id: harness.id.clone(),
                 directory: harness.directory.display().to_string(),
+            })
+            .collect(),
+        channels: load
+            .channels
+            .iter()
+            .map(|channel| ChannelSummary {
+                id: channel.id.clone(),
+                directory: channel.directory.display().to_string(),
+                enabled: channel.enabled,
+                kind: channel.kind.clone(),
+                agent_id: channel.agent_id.clone(),
+                idle_ttl_secs: channel.idle_ttl_secs,
             })
             .collect(),
         issues: load.issues.clone(),

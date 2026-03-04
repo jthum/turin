@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, anyhow};
 
 use super::{
-    AgentDetail, CreateAgentInput, DaemonState, DaemonStatus, HarnessDetail, UpdateAgentInput,
+    AgentDetail, ChannelDetail, CreateAgentInput, DaemonState, DaemonStatus, HarnessDetail,
+    UpdateAgentInput,
 };
 use crate::daemon::registry::{AgentFileConfig, RegistryIssue, read_agent_file, write_agent_file};
 
@@ -308,5 +309,35 @@ impl DaemonState {
 
         self.harness_detail(harness_id)
             .map(|detail| PathBuf::from(detail.directory))
+    }
+
+    pub fn channel_detail(&self, channel_id: &str) -> Option<ChannelDetail> {
+        self.registry_load
+            .channels
+            .iter()
+            .find(|channel| channel.id == channel_id)
+            .map(|channel| ChannelDetail {
+                id: channel.id.clone(),
+                directory: channel.directory.display().to_string(),
+                enabled: channel.enabled,
+                kind: channel.kind.clone(),
+                agent_id: channel.agent_id.clone(),
+                idle_ttl_secs: channel.idle_ttl_secs,
+                settings: serde_json::to_value(&channel.extra).unwrap_or_default(),
+            })
+    }
+
+    pub fn channel_issues(&self, channel_id: &str) -> Result<Option<Vec<RegistryIssue>>> {
+        let channel_dir = self.watch_paths().channels_dir.join(channel_id);
+        if !channel_dir.exists() {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.runtime_errors()
+                .into_iter()
+                .filter(|issue| super::helpers::issue_path_is_under(&issue.path, &channel_dir))
+                .collect(),
+        ))
     }
 }

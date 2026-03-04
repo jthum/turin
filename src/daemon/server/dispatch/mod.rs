@@ -11,6 +11,7 @@ use crate::daemon::protocol::{
 use crate::daemon::state::{DaemonState, DaemonStatus};
 
 mod agent;
+mod channel;
 mod daemon;
 mod harness;
 mod runtime;
@@ -88,6 +89,9 @@ pub(super) async fn dispatch(
         DaemonRequest::HarnessReload(params) => harness::reload(id, params, &context).await,
         DaemonRequest::HarnessValidate(params) => harness::validate(id, params, &context).await,
         DaemonRequest::HarnessDelete(params) => harness::delete(id, params, &context).await,
+        DaemonRequest::ChannelList(params) => channel::list(id, params, &context).await,
+        DaemonRequest::ChannelGet(params) => channel::get(id, params, &context).await,
+        DaemonRequest::ChannelIssues(params) => channel::issues(id, params, &context).await,
     }
 }
 
@@ -208,6 +212,20 @@ pub(super) fn classify_registry_issue(
             "harness.load_failed",
             json!({
                 "harness_id": harness_id.as_os_str().to_string_lossy(),
+                "path": issue.path,
+                "message": issue.message,
+            }),
+        ));
+    }
+
+    let channels_dir = Path::new(&status.registry.channels_dir);
+    if let Ok(relative) = issue_path.strip_prefix(channels_dir)
+        && let Some(channel_id) = relative.components().next()
+    {
+        return Some((
+            "channel.load_failed",
+            json!({
+                "channel_id": channel_id.as_os_str().to_string_lossy(),
                 "path": issue.path,
                 "message": issue.message,
             }),

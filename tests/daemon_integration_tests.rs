@@ -632,3 +632,53 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
 
     daemon.stop().await
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_channel_registry_round_trip_over_socket() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+    let channels_dir = daemon.tempdir.path().join("workspace/channels/discord");
+    std::fs::create_dir_all(&channels_dir)?;
+    std::fs::write(
+        channels_dir.join("channel.toml"),
+        r#"
+kind = "discord"
+agent_id = "default"
+enabled = true
+idle_ttl_secs = 600
+token_env = "DISCORD_TOKEN"
+"#,
+    )?;
+
+    let _ = daemon
+        .request(DaemonRequest::RuntimeRescan(
+            turin::daemon::protocol::NoParams::default(),
+        ))
+        .await?;
+
+    let listed = result_value(
+        daemon
+            .request(DaemonRequest::ChannelList(
+                turin::daemon::protocol::NoParams::default(),
+            ))
+            .await?,
+    );
+    let channels = listed["channels"]
+        .as_array()
+        .context("channel list should be an array")?;
+    assert!(channels.iter().any(|channel| channel["id"] == "discord"));
+
+    let detail = result_value(
+        daemon
+            .request(DaemonRequest::ChannelGet(
+                turin::daemon::protocol::EntityIdParams {
+                    id: "discord".to_string(),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(detail["kind"], "discord");
+    assert_eq!(detail["agent_id"], "default");
+    assert_eq!(detail["settings"]["token_env"], "DISCORD_TOKEN");
+
+    daemon.stop().await
+}

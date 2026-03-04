@@ -148,9 +148,12 @@ pub(super) fn should_rescan_daemon(
             || is_agent_toml(path, &watch_paths.agents_dir)
             || is_direct_child(path, &watch_paths.agents_dir)
             || is_direct_child(path, &watch_paths.harnesses_dir)
+            || is_channel_toml(path, &watch_paths.channels_dir)
+            || is_direct_child(path, &watch_paths.channels_dir)
             || is_agent_harness_dir(path, &watch_paths.agents_dir)
             || path == &watch_paths.agents_dir
             || path == &watch_paths.harnesses_dir
+            || path == &watch_paths.channels_dir
     })
 }
 
@@ -186,11 +189,22 @@ fn collect_daemon_watch_roots(watch_paths: &DaemonWatchPaths) -> Vec<DaemonWatch
             .unwrap_or_else(|| Path::new(".")),
         false,
     );
+    push_watch_root(
+        &mut roots,
+        watch_paths
+            .channels_dir
+            .parent()
+            .unwrap_or_else(|| Path::new(".")),
+        false,
+    );
     if watch_paths.agents_dir.exists() {
         push_watch_root(&mut roots, &watch_paths.agents_dir, true);
     }
     if watch_paths.harnesses_dir.exists() {
         push_watch_root(&mut roots, &watch_paths.harnesses_dir, true);
+    }
+    if watch_paths.channels_dir.exists() {
+        push_watch_root(&mut roots, &watch_paths.channels_dir, true);
     }
     roots
 }
@@ -220,4 +234,9 @@ fn is_agent_harness_dir(path: &Path, agents_dir: &Path) -> bool {
             .parent()
             .and_then(Path::parent)
             .is_some_and(|grandparent| grandparent == agents_dir)
+}
+
+fn is_channel_toml(path: &Path, channels_dir: &Path) -> bool {
+    path.file_name().and_then(|name| name.to_str()) == Some("channel.toml")
+        && path.starts_with(channels_dir)
 }

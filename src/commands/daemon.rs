@@ -25,6 +25,7 @@ struct DaemonStatusView {
 struct RegistrySnapshotView {
     agents: Vec<AgentSummaryView>,
     shared_harnesses: Vec<SharedHarnessView>,
+    channels: Vec<ChannelSummaryView>,
     issues: Vec<IssueView>,
 }
 
@@ -40,6 +41,14 @@ struct AgentSummaryView {
 #[derive(Debug, Deserialize)]
 struct SharedHarnessView {
     id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelSummaryView {
+    id: String,
+    enabled: bool,
+    kind: String,
+    agent_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -93,6 +102,17 @@ struct HarnessDetailView {
     bound_agents: Vec<String>,
     watched_roots: Vec<String>,
     loaded_scripts: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelDetailView {
+    id: String,
+    directory: String,
+    enabled: bool,
+    kind: String,
+    agent_id: String,
+    idle_ttl_secs: Option<u64>,
+    settings: Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -659,6 +679,48 @@ pub async fn run_harness_delete(
     print_response(response, json_output)
 }
 
+pub async fn run_channel_list(config_path: &std::path::Path, json_output: bool) -> Result<()> {
+    let response = send_request(config_path, "daemon.status", json!({})).await?;
+    if json_output {
+        let response = send_request(config_path, "channel.list", json!({})).await?;
+        return print_response(response, true);
+    }
+
+    let status: DaemonStatusView = decode_result(response)?;
+    print_channel_list(status);
+    Ok(())
+}
+
+pub async fn run_channel_get(
+    config_path: &std::path::Path,
+    channel_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "channel.get", json!({ "id": channel_id })).await?;
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let channel: ChannelDetailView = decode_result(response)?;
+    print_channel_detail(channel);
+    Ok(())
+}
+
+pub async fn run_channel_issues(
+    config_path: &std::path::Path,
+    channel_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "channel.issues", json!({ "id": channel_id })).await?;
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let issues: IssueListView = decode_result(response)?;
+    print_issue_list(&format!("Channel '{}' issues", channel_id), &issues.issues);
+    Ok(())
+}
+
 pub async fn run_events(config_path: &std::path::Path, json_output: bool) -> Result<()> {
     let socket_path = resolve_socket_path(config_path)?;
     let stream = UnixStream::connect(&socket_path).await.with_context(|| {
@@ -775,9 +837,10 @@ fn print_daemon_status(status: DaemonStatusView) {
     println!("Workspace: {}", status.workspace_root);
     println!("Socket:    {}", status.socket_path);
     println!(
-        "Agents:    {} daemon-managed, {} shared harnesses, {} issues",
+        "Agents:    {} daemon-managed, {} shared harnesses, {} channels, {} issues",
         status.registry.agents.len(),
         status.registry.shared_harnesses.len(),
+        status.registry.channels.len(),
         status.registry.issues.len()
     );
 
@@ -1020,6 +1083,48 @@ fn print_harness_detail(harness: HarnessDetailView) {
     println!("  loaded_scripts: {}", harness.loaded_scripts.len());
     for script in harness.loaded_scripts {
         println!("    {}", script);
+    }
+}
+
+fn print_channel_list(status: DaemonStatusView) {
+    let mut rows = Vec::new();
+    rows.push(vec![
+        "CHANNEL".to_string(),
+        "ENABLED".to_string(),
+        "KIND".to_string(),
+        "AGENT".to_string(),
+    ]);
+
+    for channel in status.registry.channels {
+        rows.push(vec![
+            channel.id,
+            yes_no(channel.enabled),
+            channel.kind,
+            channel.agent_id,
+        ]);
+    }
+
+    print_table(&rows);
+}
+
+fn print_channel_detail(channel: ChannelDetailView) {
+    println!("Channel");
+    println!("  id:            {}", channel.id);
+    println!("  kind:          {}", channel.kind);
+    println!("  agent:         {}", channel.agent_id);
+    println!("  enabled:       {}", yes_no(channel.enabled));
+    println!("  directory:     {}", channel.directory);
+    if let Some(idle_ttl_secs) = channel.idle_ttl_secs {
+        println!("  idle_ttl_secs: {}", idle_ttl_secs);
+    }
+    if channel.settings.is_object()
+        && !channel
+            .settings
+            .as_object()
+            .is_some_and(|map| map.is_empty())
+    {
+        println!("  settings:");
+        print_indented(&serde_json::to_string_pretty(&channel.settings).unwrap_or_default());
     }
 }
 

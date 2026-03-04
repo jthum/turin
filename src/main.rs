@@ -172,6 +172,11 @@ enum DaemonCommands {
         #[command(subcommand)]
         command: DaemonHarnessCommands,
     },
+    /// Inspect daemon-managed channels
+    Channel {
+        #[command(subcommand)]
+        command: DaemonChannelCommands,
+    },
     /// Inspect persisted daemon sessions
     Session {
         #[command(subcommand)]
@@ -388,6 +393,29 @@ enum DaemonHarnessCommands {
     /// Delete a shared harness directory
     Delete {
         /// Harness ID
+        id: String,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum DaemonChannelCommands {
+    /// List daemon-managed channels
+    List {
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
+    /// Show one daemon-managed channel
+    Get {
+        /// Channel ID
+        id: String,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
+    /// Show isolated daemon issues for one channel directory
+    Issues {
+        /// Channel ID
         id: String,
         #[command(flatten)]
         args: DaemonOutputArgs,
@@ -805,6 +833,17 @@ async fn main() -> Result<()> {
                 }
                 DaemonHarnessCommands::Delete { id, args } => {
                     commands::daemon::run_harness_delete(&args.config.config, &id, args.json).await
+                }
+            },
+            DaemonCommands::Channel { command } => match command {
+                DaemonChannelCommands::List { args } => {
+                    commands::daemon::run_channel_list(&args.config.config, args.json).await
+                }
+                DaemonChannelCommands::Get { id, args } => {
+                    commands::daemon::run_channel_get(&args.config.config, &id, args.json).await
+                }
+                DaemonChannelCommands::Issues { id, args } => {
+                    commands::daemon::run_channel_issues(&args.config.config, &id, args.json).await
                 }
             },
             DaemonCommands::Session { command } => match command {

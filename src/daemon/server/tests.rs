@@ -12,6 +12,7 @@ fn rescan_filter_ignores_harness_script_edits_but_tracks_registry_changes() {
         config_path: PathBuf::from("/tmp/turin/turin.toml"),
         agents_dir: PathBuf::from("/tmp/turin/agents"),
         harnesses_dir: PathBuf::from("/tmp/turin/harnesses"),
+        channels_dir: PathBuf::from("/tmp/turin/channels"),
     };
 
     assert!(should_rescan_daemon(
@@ -34,6 +35,14 @@ fn rescan_filter_ignores_harness_script_edits_but_tracks_registry_changes() {
         &watch_paths,
         &[PathBuf::from("/tmp/turin/harnesses/reviewer")]
     ));
+    assert!(should_rescan_daemon(
+        &watch_paths,
+        &[PathBuf::from("/tmp/turin/channels/discord")]
+    ));
+    assert!(should_rescan_daemon(
+        &watch_paths,
+        &[PathBuf::from("/tmp/turin/channels/discord/channel.toml")]
+    ));
 
     assert!(!should_rescan_daemon(
         &watch_paths,
@@ -54,8 +63,10 @@ fn classify_registry_issue_recognizes_agent_and_harness_paths() {
         registry: RegistrySnapshot {
             agents_dir: "/tmp/work/agents".to_string(),
             harnesses_dir: "/tmp/work/harnesses".to_string(),
+            channels_dir: "/tmp/work/channels".to_string(),
             agents: Vec::new(),
             shared_harnesses: Vec::new(),
+            channels: Vec::new(),
             issues: Vec::new(),
         },
         harnesses: Vec::new(),
@@ -70,6 +81,10 @@ fn classify_registry_issue_recognizes_agent_and_harness_paths() {
         path: "/tmp/work/harnesses/reviewer/main.lua".to_string(),
         message: "bad lua".to_string(),
     };
+    let channel_issue = RegistryIssue {
+        path: "/tmp/work/channels/discord/channel.toml".to_string(),
+        message: "bad toml".to_string(),
+    };
 
     let (agent_event, agent_data) =
         classify_registry_issue(&status, &agent_issue).expect("agent issue classified");
@@ -80,4 +95,9 @@ fn classify_registry_issue_recognizes_agent_and_harness_paths() {
         classify_registry_issue(&status, &harness_issue).expect("harness issue classified");
     assert_eq!(harness_event, "harness.load_failed");
     assert_eq!(harness_data["harness_id"], "reviewer");
+
+    let (channel_event, channel_data) =
+        classify_registry_issue(&status, &channel_issue).expect("channel issue classified");
+    assert_eq!(channel_event, "channel.load_failed");
+    assert_eq!(channel_data["channel_id"], "discord");
 }

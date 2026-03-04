@@ -17,8 +17,8 @@ use crate::kernel::Kernel;
 use crate::kernel::config::{AgentMode, ThinkingConfig, TurinConfig};
 
 pub use types::{
-    AgentDetail, HarnessDetail, SessionDetail, SessionEventDetail, SessionMessageDetail,
-    SessionSummary, SessionToolExecutionDetail,
+    AgentDetail, ChannelDetail, HarnessDetail, SessionDetail, SessionEventDetail,
+    SessionMessageDetail, SessionSummary, SessionToolExecutionDetail,
 };
 
 #[derive(Debug, Clone)]
@@ -26,6 +26,7 @@ pub struct DaemonWatchPaths {
     pub config_path: PathBuf,
     pub agents_dir: PathBuf,
     pub harnesses_dir: PathBuf,
+    pub channels_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -126,6 +127,9 @@ impl DaemonState {
             harnesses_dir: self
                 .bootstrap_config
                 .resolve_daemon_harnesses_dir(&self.config_base),
+            channels_dir: self
+                .bootstrap_config
+                .resolve_daemon_channels_dir(&self.config_base),
         }
     }
 

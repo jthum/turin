@@ -188,6 +188,12 @@ pub enum DaemonRequest {
     HarnessValidate(EntityIdParams),
     #[serde(rename = "harness.delete")]
     HarnessDelete(EntityIdParams),
+    #[serde(rename = "channel.list")]
+    ChannelList(NoParams),
+    #[serde(rename = "channel.get")]
+    ChannelGet(EntityIdParams),
+    #[serde(rename = "channel.issues")]
+    ChannelIssues(EntityIdParams),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
