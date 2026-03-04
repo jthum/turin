@@ -191,18 +191,25 @@ turin daemon harness delete <id>
 
 ```bash
 turin daemon channel list
-turin daemon channel create discord --kind discord --agent default --setting token_env=DISCORD_TOKEN
-turin daemon channel get discord
-turin daemon channel issues discord
-turin daemon channel enable discord
-turin daemon channel disable discord
-turin daemon channel update discord --idle-ttl-secs 900 --setting token_env=NEW_TOKEN
-turin daemon channel delete discord
+turin daemon channel create fs-local --kind fs --agent default --setting inbox_dir=inbox --setting outbox_dir=outbox
+turin daemon channel get fs-local
+turin daemon channel issues fs-local
+turin daemon channel enable fs-local
+turin daemon channel disable fs-local
+turin daemon channel update fs-local --idle-ttl-secs 900 --setting poll_interval_ms=50
+turin daemon channel delete fs-local
 ```
 
 Channel settings are intentionally adapter-specific. The daemon accepts repeated
 `--setting key=value` entries and persists them into `channel.toml`. Values are
 parsed as JSON when possible, otherwise they are stored as strings.
+
+`kind = "fs"` is currently available as the first built-in adapter:
+
+- inbound messages are read from `<channel-dir>/inbox/*.json`
+- outbound messages are written to `<channel-dir>/outbox/*.json`
+- processed inbound files are moved to `<channel-dir>/processed/`
+- invalid inbound files are moved to `<channel-dir>/failed/`
 
 ### Sessions
 

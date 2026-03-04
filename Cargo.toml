@@ -5,6 +5,7 @@ members = [
     "crates/turin-daemon-client",
     "crates/turin-channel-core",
     "crates/turin-channel-runner",
+    "crates/turin-channel-fs",
 ]
 resolver = "2"
 
@@ -79,6 +80,7 @@ turin-daemon-client = { path = "crates/turin-daemon-client" }
 turin-daemon-protocol = { path = "crates/turin-daemon-protocol" }
 turin-channel-core = { path = "crates/turin-channel-core" }
 turin-channel-runner = { path = "crates/turin-channel-runner" }
+turin-channel-fs = { path = "crates/turin-channel-fs" }
 [profile.release]
 opt-level = "z"     # Optimize for size
 lto = true          # Enable Link Time Optimization
