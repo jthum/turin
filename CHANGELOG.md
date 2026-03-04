@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `channel.delete`
   - Channel settings are now daemon-managed filesystem state under `channels/<id>/channel.toml`.
   - Added socket-level integration coverage for channel CRUD over the daemon NDJSON protocol.
+- **Daemon-Owned Channel Runtime Lifecycle**
+  - Added daemon-managed channel runtime execution and reconciliation (start/stop/restart on registry and runtime changes).
+  - Added `channel.status` for live per-channel runtime status.
+  - `daemon.status` now includes `channel_runtimes` snapshots for control-plane visibility.
+  - Added integration coverage for daemon-owned `kind = "fs"` runtime processing and runtime-status reporting.
 - **First Channel Adapter**
   - Added `turin-channel-fs`, a filesystem-backed channel adapter crate.
   - `kind = "fs"` reads inbound messages from `inbox/*.json` and writes outbound messages to `outbox/*.json`.

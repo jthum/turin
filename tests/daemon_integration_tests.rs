@@ -220,6 +220,46 @@ fn result_value(response: ResponseEnvelope) -> Value {
     response.result.expect("daemon response missing result")
 }
 
+async fn wait_for_channel_state(
+    daemon: &DaemonHarness,
+    channel_id: &str,
+    expected: &str,
+    timeout_secs: u64,
+) -> Result<Value> {
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    let mut last_state = None;
+    loop {
+        let response = daemon
+            .request(DaemonRequest::ChannelStatus(
+                turin::daemon::protocol::EntityIdParams {
+                    id: channel_id.to_string(),
+                },
+            ))
+            .await?;
+        if response.ok {
+            let result = response.result.context("channel.status missing result")?;
+            let state = result
+                .get("state")
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown");
+            last_state = Some(state.to_string());
+            if state == expected {
+                return Ok(result);
+            }
+        }
+
+        if Instant::now() >= deadline {
+            return Err(anyhow!(
+                "Timed out waiting for channel '{}' to reach state '{}' (last state: {:?})",
+                channel_id,
+                expected,
+                last_state
+            ));
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn daemon_agent_crud_round_trip_over_socket() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
@@ -769,6 +809,124 @@ async fn daemon_channel_management_round_trip_over_socket() -> Result<()> {
             .join("workspace/channels/discord")
             .exists()
     );
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_fs_channel_runtime_processes_inbox_and_reports_runtime_status() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+
+    let created = result_value(
+        daemon
+            .request(DaemonRequest::ChannelCreate(
+                turin::daemon::protocol::CreateChannelParams {
+                    id: "fs-local".to_string(),
+                    kind: "fs".to_string(),
+                    agent_id: "default".to_string(),
+                    idle_ttl_secs: Some(600),
+                    enabled: true,
+                    settings: Some(serde_json::json!({
+                        "inbox_dir": "inbox",
+                        "outbox_dir": "outbox",
+                        "processed_dir": "processed",
+                        "failed_dir": "failed",
+                        "poll_interval_ms": 25,
+                    })),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(created["id"], "fs-local");
+
+    let runtime = wait_for_channel_state(&daemon, "fs-local", "running", 10).await?;
+    assert_eq!(runtime["kind"], "fs");
+    assert_eq!(runtime["agent_id"], "default");
+
+    let daemon_status = result_value(
+        daemon
+            .request(DaemonRequest::DaemonStatus(
+                turin::daemon::protocol::NoParams::default(),
+            ))
+            .await?,
+    );
+    let runtime_list = daemon_status["channel_runtimes"]
+        .as_array()
+        .context("daemon.status channel_runtimes should be an array")?;
+    assert!(
+        runtime_list
+            .iter()
+            .any(|entry| entry["id"] == "fs-local" && entry["state"] == "running")
+    );
+
+    let channel_dir = daemon.tempdir.path().join("workspace/channels/fs-local");
+    tokio::fs::create_dir_all(channel_dir.join("inbox")).await?;
+    let inbound = serde_json::json!({
+        "conversation": {
+            "channel": { "other": "fs" },
+            "workspace_id": "workspace",
+            "room_id": "room",
+            "thread_id": "thread-1",
+            "user_id": "user-1"
+        },
+        "message_id": "m-1",
+        "user": {
+            "id": "user-1",
+            "display_name": "User One",
+            "username": "user1"
+        },
+        "text": "Say pong"
+    });
+    tokio::fs::write(
+        channel_dir.join("inbox/in-1.json"),
+        serde_json::to_string_pretty(&inbound)?,
+    )
+    .await?;
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut outbound_body = None;
+    while Instant::now() < deadline {
+        let outbox_dir = channel_dir.join("outbox");
+        if outbox_dir.exists() {
+            let mut entries = tokio::fs::read_dir(&outbox_dir).await?;
+            if let Some(entry) = entries.next_entry().await? {
+                outbound_body = Some(tokio::fs::read_to_string(entry.path()).await?);
+                break;
+            }
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
+
+    let outbound = outbound_body.context("fs-local channel did not produce outbound response")?;
+    assert!(outbound.contains("PONG"), "outbound payload: {}", outbound);
+    assert!(channel_dir.join("processed/in-1.json").exists());
+
+    let disabled = result_value(
+        daemon
+            .request(DaemonRequest::ChannelDisable(
+                turin::daemon::protocol::EntityIdParams {
+                    id: "fs-local".to_string(),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(disabled["enabled"], false);
+
+    let status_after_disable = daemon
+        .request(DaemonRequest::ChannelStatus(
+            turin::daemon::protocol::EntityIdParams {
+                id: "fs-local".to_string(),
+            },
+        ))
+        .await?;
+    assert!(
+        !status_after_disable.ok,
+        "disabled channel should not be running"
+    );
+    assert!(matches!(
+        status_after_disable.error.as_ref().map(|error| &error.code),
+        Some(turin::daemon::protocol::ErrorCode::ChannelNotFound)
+    ));
 
     daemon.stop().await
 }

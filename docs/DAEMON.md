@@ -193,6 +193,7 @@ turin daemon harness delete <id>
 turin daemon channel list
 turin daemon channel create fs-local --kind fs --agent default --setting inbox_dir=inbox --setting outbox_dir=outbox
 turin daemon channel get fs-local
+turin daemon channel status fs-local
 turin daemon channel issues fs-local
 turin daemon channel enable fs-local
 turin daemon channel disable fs-local
@@ -210,6 +211,11 @@ parsed as JSON when possible, otherwise they are stored as strings.
 - outbound messages are written to `<channel-dir>/outbox/*.json`
 - processed inbound files are moved to `<channel-dir>/processed/`
 - invalid inbound files are moved to `<channel-dir>/failed/`
+
+When a channel is `enabled`, the daemon owns the runtime lifecycle:
+- `channel.status <id>` reports live runtime status (`starting`, `running`, `stopped`, `failed`, `unsupported`)
+- `daemon.status` includes a `channel_runtimes` snapshot for control-plane visibility
+- channel runtime state updates automatically after channel/agent/harness/runtime changes and watcher rescans
 
 ### Sessions
 
@@ -237,6 +243,7 @@ The daemon now exposes:
 - per-agent isolated registry/load issues via `agent.issues`
 - per-harness isolated registry/load issues via `harness.issues`
 - channel registry inspection and isolated issues via `channel.get` / `channel.issues`
+- channel live runtime inspection via `channel.status` and `daemon.status.channel_runtimes`
 - live session opening and listing for multi-threaded clients
 - persisted-session resume into a live runtime slot after daemon restart
 - persisted session inspection
