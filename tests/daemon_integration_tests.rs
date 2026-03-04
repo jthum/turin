@@ -682,3 +682,93 @@ token_env = "DISCORD_TOKEN"
 
     daemon.stop().await
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_channel_management_round_trip_over_socket() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+
+    let created = result_value(
+        daemon
+            .request(DaemonRequest::ChannelCreate(
+                turin::daemon::protocol::CreateChannelParams {
+                    id: "discord".to_string(),
+                    kind: "discord".to_string(),
+                    agent_id: "default".to_string(),
+                    idle_ttl_secs: Some(600),
+                    enabled: true,
+                    settings: Some(serde_json::json!({
+                        "token_env": "DISCORD_TOKEN",
+                        "allow_dm": true,
+                    })),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(created["id"], "discord");
+    assert_eq!(created["settings"]["token_env"], "DISCORD_TOKEN");
+
+    let updated = result_value(
+        daemon
+            .request(DaemonRequest::ChannelUpdate(
+                turin::daemon::protocol::UpdateChannelParams {
+                    id: "discord".to_string(),
+                    kind: None,
+                    agent_id: None,
+                    idle_ttl_secs: Some(900),
+                    settings: Some(serde_json::json!({
+                        "token_env": "NEW_DISCORD_TOKEN",
+                        "guild_id": "12345",
+                    })),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(updated["idle_ttl_secs"], 900);
+    assert_eq!(updated["settings"]["token_env"], "NEW_DISCORD_TOKEN");
+    assert_eq!(updated["settings"]["guild_id"], "12345");
+
+    let disabled = result_value(
+        daemon
+            .request(DaemonRequest::ChannelDisable(
+                turin::daemon::protocol::EntityIdParams {
+                    id: "discord".to_string(),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(disabled["enabled"], false);
+
+    let enabled = result_value(
+        daemon
+            .request(DaemonRequest::ChannelEnable(
+                turin::daemon::protocol::EntityIdParams {
+                    id: "discord".to_string(),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(enabled["enabled"], true);
+
+    let delete_result = result_value(
+        daemon
+            .request(DaemonRequest::ChannelDelete(
+                turin::daemon::protocol::EntityIdParams {
+                    id: "discord".to_string(),
+                },
+            ))
+            .await?,
+    );
+    let channels = delete_result["registry"]["channels"]
+        .as_array()
+        .context("registry channels array")?;
+    assert!(channels.iter().all(|channel| channel["id"] != "discord"));
+    assert!(
+        !daemon
+            .tempdir
+            .path()
+            .join("workspace/channels/discord")
+            .exists()
+    );
+
+    daemon.stop().await
+}

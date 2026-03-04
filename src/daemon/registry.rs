@@ -186,6 +186,32 @@ pub(crate) fn write_agent_file(agent_dir: &Path, config: &AgentFileConfig) -> Re
     Ok(())
 }
 
+pub(crate) fn write_channel_file(channel_dir: &Path, config: &ChannelFileConfig) -> Result<()> {
+    fs::create_dir_all(channel_dir).with_context(|| {
+        format!(
+            "Failed to create channel directory '{}'",
+            channel_dir.display()
+        )
+    })?;
+    let channel_toml = channel_dir.join("channel.toml");
+    let tmp_path = channel_dir.join(format!(
+        ".channel.toml.{}.tmp",
+        uuid::Uuid::now_v7().simple()
+    ));
+    let body = toml::to_string_pretty(config)
+        .with_context(|| format!("Failed to serialize '{}'", channel_toml.display()))?;
+    fs::write(&tmp_path, body)
+        .with_context(|| format!("Failed to write '{}'", tmp_path.display()))?;
+    fs::rename(&tmp_path, &channel_toml).with_context(|| {
+        format!(
+            "Failed to atomically replace '{}' from '{}'",
+            channel_toml.display(),
+            tmp_path.display()
+        )
+    })?;
+    Ok(())
+}
+
 pub fn scan_registry(config: &TurinConfig, config_base: &Path) -> Result<RegistryLoad> {
     let agents_dir = config.resolve_daemon_agents_dir(config_base);
     let harnesses_dir = config.resolve_daemon_harnesses_dir(config_base);

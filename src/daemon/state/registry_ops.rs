@@ -3,10 +3,13 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, anyhow};
 
 use super::{
-    AgentDetail, ChannelDetail, CreateAgentInput, DaemonState, DaemonStatus, HarnessDetail,
-    UpdateAgentInput,
+    AgentDetail, ChannelDetail, CreateAgentInput, CreateChannelInput, DaemonState, DaemonStatus,
+    HarnessDetail, UpdateAgentInput, UpdateChannelInput,
 };
-use crate::daemon::registry::{AgentFileConfig, RegistryIssue, read_agent_file, write_agent_file};
+use crate::daemon::registry::{
+    AgentFileConfig, ChannelFileConfig, RegistryIssue, read_agent_file, read_channel_file,
+    write_agent_file, write_channel_file,
+};
 
 impl DaemonState {
     pub fn agent_issues(&self, agent_id: &str) -> Result<Option<Vec<RegistryIssue>>> {
@@ -339,5 +342,104 @@ impl DaemonState {
                 .filter(|issue| super::helpers::issue_path_is_under(&issue.path, &channel_dir))
                 .collect(),
         ))
+    }
+
+    pub async fn create_channel(&mut self, input: CreateChannelInput) -> Result<ChannelDetail> {
+        super::helpers::validate_channel_id(&input.id)?;
+        if input.kind.trim().is_empty() {
+            anyhow::bail!("Channel kind cannot be empty");
+        }
+        self.ensure_channel_agent_exists(&input.agent_id)?;
+
+        let channel_dir = self.watch_paths().channels_dir.join(&input.id);
+        if channel_dir.exists() {
+            anyhow::bail!("Channel '{}' already exists", input.id);
+        }
+
+        let file = ChannelFileConfig {
+            id: None,
+            enabled: input.enabled,
+            kind: input.kind,
+            agent_id: input.agent_id,
+            idle_ttl_secs: input.idle_ttl_secs,
+            extra: super::helpers::json_object_to_toml_table(input.settings)?,
+        };
+
+        write_channel_file(&channel_dir, &file)?;
+        self.rescan().await?;
+        self.channel_detail(&input.id)
+            .ok_or_else(|| anyhow!("Channel '{}' was created but not loaded", input.id))
+    }
+
+    pub async fn set_channel_enabled(
+        &mut self,
+        channel_id: &str,
+        enabled: bool,
+    ) -> Result<ChannelDetail> {
+        let channel_dir = self.watch_paths().channels_dir.join(channel_id);
+        let mut file = read_channel_file(&channel_dir)?
+            .ok_or_else(|| anyhow!("Channel '{}' does not exist", channel_id))?;
+        file.enabled = enabled;
+        write_channel_file(&channel_dir, &file)?;
+        self.rescan().await?;
+        self.channel_detail(channel_id)
+            .ok_or_else(|| anyhow!("Channel '{}' could not be reloaded", channel_id))
+    }
+
+    pub async fn update_channel(
+        &mut self,
+        channel_id: &str,
+        input: UpdateChannelInput,
+    ) -> Result<ChannelDetail> {
+        let channel_dir = self.watch_paths().channels_dir.join(channel_id);
+        let mut file = read_channel_file(&channel_dir)?
+            .ok_or_else(|| anyhow!("Channel '{}' does not exist", channel_id))?;
+
+        if let Some(kind) = input.kind {
+            if kind.trim().is_empty() {
+                anyhow::bail!("Channel kind cannot be empty");
+            }
+            file.kind = kind;
+        }
+        if let Some(agent_id) = input.agent_id {
+            self.ensure_channel_agent_exists(&agent_id)?;
+            file.agent_id = agent_id;
+        }
+        if let Some(idle_ttl_secs) = input.idle_ttl_secs {
+            file.idle_ttl_secs = Some(idle_ttl_secs);
+        }
+        if let Some(settings) = input.settings {
+            file.extra = super::helpers::json_object_to_toml_table(settings)?;
+        }
+
+        write_channel_file(&channel_dir, &file)?;
+        self.rescan().await?;
+        self.channel_detail(channel_id)
+            .ok_or_else(|| anyhow!("Channel '{}' could not be reloaded", channel_id))
+    }
+
+    pub async fn delete_channel(&mut self, channel_id: &str) -> Result<DaemonStatus> {
+        let channel_dir = self.watch_paths().channels_dir.join(channel_id);
+        if !channel_dir.is_dir() {
+            anyhow::bail!("Channel '{}' does not exist", channel_id);
+        }
+        std::fs::remove_dir_all(&channel_dir)
+            .with_context(|| format!("Failed to remove '{}'", channel_dir.display()))?;
+        self.rescan().await
+    }
+
+    fn ensure_channel_agent_exists(&self, agent_id: &str) -> Result<()> {
+        if agent_id == self.bootstrap_config.agent.id {
+            return Ok(());
+        }
+        if self
+            .registry_load
+            .agents
+            .iter()
+            .any(|agent| agent.id == agent_id)
+        {
+            return Ok(());
+        }
+        anyhow::bail!("Channel agent '{}' does not exist", agent_id)
     }
 }

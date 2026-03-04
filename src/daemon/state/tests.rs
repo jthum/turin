@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::json;
 use tempfile::tempdir;
 use tokio::time::{Duration, sleep};
 
@@ -273,6 +274,63 @@ async fn shared_harness_create_and_delete_are_filesystem_backed() -> Result<()> 
             .iter()
             .all(|harness| harness.harness_id != "reviewer")
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn channel_create_disable_update_and_delete_are_filesystem_backed() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let mut state = DaemonState::load(&config_path).await?;
+
+    let created = state
+        .create_channel(CreateChannelInput {
+            id: "discord".to_string(),
+            kind: "discord".to_string(),
+            agent_id: "default".to_string(),
+            idle_ttl_secs: Some(600),
+            enabled: true,
+            settings: json!({
+                "token_env": "DISCORD_TOKEN",
+                "allow_dm": true,
+            }),
+        })
+        .await?;
+    assert_eq!(created.id, "discord");
+    assert_eq!(created.kind, "discord");
+    assert_eq!(created.agent_id, "default");
+    assert_eq!(created.settings["token_env"], "DISCORD_TOKEN");
+
+    let disabled = state.set_channel_enabled("discord", false).await?;
+    assert!(!disabled.enabled);
+
+    let updated = state
+        .update_channel(
+            "discord",
+            UpdateChannelInput {
+                idle_ttl_secs: Some(900),
+                settings: Some(json!({
+                    "token_env": "NEW_TOKEN",
+                    "guild_id": "123",
+                })),
+                ..UpdateChannelInput::default()
+            },
+        )
+        .await?;
+    assert_eq!(updated.idle_ttl_secs, Some(900));
+    assert_eq!(updated.settings["token_env"], "NEW_TOKEN");
+    assert_eq!(updated.settings["guild_id"], "123");
+
+    let status = state.delete_channel("discord").await?;
+    assert!(
+        status
+            .registry
+            .channels
+            .iter()
+            .all(|channel| channel.id != "discord")
+    );
+    assert!(!temp.path().join("channels").join("discord").exists());
 
     Ok(())
 }

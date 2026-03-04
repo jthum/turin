@@ -406,6 +406,28 @@ enum DaemonChannelCommands {
         #[command(flatten)]
         args: DaemonOutputArgs,
     },
+    /// Create a daemon-managed channel directory
+    Create {
+        /// Channel ID / directory name
+        id: String,
+        /// Channel kind
+        #[arg(long)]
+        kind: String,
+        /// Bound agent ID
+        #[arg(long)]
+        agent: String,
+        /// Optional idle session TTL in seconds
+        #[arg(long)]
+        idle_ttl_secs: Option<u64>,
+        /// Create the channel disabled
+        #[arg(long)]
+        disabled: bool,
+        /// Channel-specific setting in key=value form; value is parsed as JSON when possible
+        #[arg(long = "setting", value_name = "KEY=VALUE")]
+        settings: Vec<String>,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
     /// Show one daemon-managed channel
     Get {
         /// Channel ID
@@ -415,6 +437,46 @@ enum DaemonChannelCommands {
     },
     /// Show isolated daemon issues for one channel directory
     Issues {
+        /// Channel ID
+        id: String,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
+    /// Enable one daemon-managed channel
+    Enable {
+        /// Channel ID
+        id: String,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
+    /// Disable one daemon-managed channel
+    Disable {
+        /// Channel ID
+        id: String,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
+    /// Update one daemon-managed channel
+    Update {
+        /// Channel ID
+        id: String,
+        /// Optional replacement channel kind
+        #[arg(long)]
+        kind: Option<String>,
+        /// Optional replacement bound agent ID
+        #[arg(long)]
+        agent: Option<String>,
+        /// Optional replacement idle TTL in seconds
+        #[arg(long)]
+        idle_ttl_secs: Option<u64>,
+        /// Replace channel-specific settings with the provided key=value entries
+        #[arg(long = "setting", value_name = "KEY=VALUE")]
+        settings: Vec<String>,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
+    /// Delete one daemon-managed channel directory
+    Delete {
         /// Channel ID
         id: String,
         #[command(flatten)]
@@ -839,11 +901,69 @@ async fn main() -> Result<()> {
                 DaemonChannelCommands::List { args } => {
                     commands::daemon::run_channel_list(&args.config.config, args.json).await
                 }
+                DaemonChannelCommands::Create {
+                    id,
+                    kind,
+                    agent,
+                    idle_ttl_secs,
+                    disabled,
+                    settings,
+                    args,
+                } => {
+                    commands::daemon::run_channel_create(
+                        &args.config.config,
+                        serde_json::json!({
+                            "id": id,
+                            "kind": kind,
+                            "agent_id": agent,
+                            "idle_ttl_secs": idle_ttl_secs,
+                            "enabled": !disabled,
+                            "settings": parse_cli_settings(&settings)?,
+                        }),
+                        args.json,
+                    )
+                    .await
+                }
                 DaemonChannelCommands::Get { id, args } => {
                     commands::daemon::run_channel_get(&args.config.config, &id, args.json).await
                 }
                 DaemonChannelCommands::Issues { id, args } => {
                     commands::daemon::run_channel_issues(&args.config.config, &id, args.json).await
+                }
+                DaemonChannelCommands::Enable { id, args } => {
+                    commands::daemon::run_channel_enable(&args.config.config, &id, args.json).await
+                }
+                DaemonChannelCommands::Disable { id, args } => {
+                    commands::daemon::run_channel_disable(&args.config.config, &id, args.json).await
+                }
+                DaemonChannelCommands::Update {
+                    id,
+                    kind,
+                    agent,
+                    idle_ttl_secs,
+                    settings,
+                    args,
+                } => {
+                    let settings = if settings.is_empty() {
+                        None
+                    } else {
+                        Some(parse_cli_settings(&settings)?)
+                    };
+                    commands::daemon::run_channel_update(
+                        &args.config.config,
+                        serde_json::json!({
+                            "id": id,
+                            "kind": kind,
+                            "agent_id": agent,
+                            "idle_ttl_secs": idle_ttl_secs,
+                            "settings": settings,
+                        }),
+                        args.json,
+                    )
+                    .await
+                }
+                DaemonChannelCommands::Delete { id, args } => {
+                    commands::daemon::run_channel_delete(&args.config.config, &id, args.json).await
                 }
             },
             DaemonCommands::Session { command } => match command {
@@ -908,4 +1028,20 @@ async fn main() -> Result<()> {
             },
         },
     }
+}
+
+fn parse_cli_settings(entries: &[String]) -> Result<serde_json::Value> {
+    let mut settings = serde_json::Map::new();
+    for entry in entries {
+        let (key, raw_value) = entry
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("Invalid setting '{}'; expected key=value", entry))?;
+        if key.trim().is_empty() {
+            anyhow::bail!("Invalid setting '{}'; key cannot be empty", entry);
+        }
+        let value = serde_json::from_str(raw_value)
+            .unwrap_or_else(|_| serde_json::Value::String(raw_value.to_string()));
+        settings.insert(key.to_string(), value);
+    }
+    Ok(serde_json::Value::Object(settings))
 }

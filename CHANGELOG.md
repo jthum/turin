@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Daemon Channel Management**
+  - Added daemon APIs and CLI wrappers for:
+    - `channel.create`
+    - `channel.update`
+    - `channel.enable`
+    - `channel.disable`
+    - `channel.delete`
+  - Channel settings are now daemon-managed filesystem state under `channels/<id>/channel.toml`.
+  - Added socket-level integration coverage for channel CRUD over the daemon NDJSON protocol.
+
 ## [0.21.0] - 2026-03-03
 
 ### Added

@@ -22,6 +22,9 @@ agents/
 harnesses/
   reviewer/
     main.lua
+channels/
+  discord/
+    channel.toml
 ```
 
 Default dynamic shape:
@@ -50,6 +53,16 @@ socket_path = ".turin/daemon.sock"
 
 These values define where the daemon reads and watches filesystem-backed state.
 
+Channel-related bootstrap settings also live under `[daemon]`:
+
+```toml
+[daemon]
+channels_dir = "channels"
+```
+
+Each channel directory is authoritative the same way an agent directory is.
+If `channels/<id>/channel.toml` exists and is valid, that channel exists.
+
 ## Runtime Model
 
 The daemon owns a live `Kernel` plus a filesystem-backed registry scan.
@@ -57,6 +70,7 @@ The daemon owns a live `Kernel` plus a filesystem-backed registry scan.
 It:
 
 - scans `agents/` and `harnesses/`
+- scans `channels/`
 - synthesizes effective runtime config
 - rebuilds the live kernel on daemon-level rescan
 - watches the daemon registry roots for changes
@@ -65,6 +79,7 @@ It:
 Important distinction:
 
 - editing `agents/<id>/agent.toml` or creating/removing agent directories is a **daemon registry** change
+- editing `channels/<id>/channel.toml` or creating/removing channel directories is a **daemon registry** change
 - editing `agents/<id>/harness/*.lua` or `harnesses/<id>/*.lua` is a **harness runtime** change
 
 ## Fault Isolation
@@ -75,6 +90,7 @@ Current behavior:
 
 - invalid `agent.toml` becomes a daemon runtime issue
 - invalid harness config/load only affects that harness
+- invalid `channel.toml` only affects that channel
 - unrelated agents and harnesses keep running
 
 Use:
@@ -171,6 +187,23 @@ turin daemon harness validate <id>
 turin daemon harness delete <id>
 ```
 
+### Channels
+
+```bash
+turin daemon channel list
+turin daemon channel create discord --kind discord --agent default --setting token_env=DISCORD_TOKEN
+turin daemon channel get discord
+turin daemon channel issues discord
+turin daemon channel enable discord
+turin daemon channel disable discord
+turin daemon channel update discord --idle-ttl-secs 900 --setting token_env=NEW_TOKEN
+turin daemon channel delete discord
+```
+
+Channel settings are intentionally adapter-specific. The daemon accepts repeated
+`--setting key=value` entries and persists them into `channel.toml`. Values are
+parsed as JSON when possible, otherwise they are stored as strings.
+
 ### Sessions
 
 ```bash
@@ -196,6 +229,7 @@ The daemon now exposes:
 - per-agent live runtime status via `agent.status`
 - per-agent isolated registry/load issues via `agent.issues`
 - per-harness isolated registry/load issues via `harness.issues`
+- channel registry inspection and isolated issues via `channel.get` / `channel.issues`
 - live session opening and listing for multi-threaded clients
 - persisted-session resume into a live runtime slot after daemon restart
 - persisted session inspection

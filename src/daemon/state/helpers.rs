@@ -56,6 +56,26 @@ pub(super) fn validate_harness_id(harness_id: &str) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn validate_channel_id(channel_id: &str) -> Result<()> {
+    if channel_id.trim().is_empty() {
+        anyhow::bail!("Channel ID cannot be empty");
+    }
+    if channel_id.contains('/') || channel_id.contains('\\') || channel_id.contains("..") {
+        anyhow::bail!(
+            "Channel ID '{}' contains invalid path characters",
+            channel_id
+        );
+    }
+    Ok(())
+}
+
+pub(super) fn json_object_to_toml_table(value: serde_json::Value) -> Result<toml::Table> {
+    match json_to_toml_value(value)? {
+        toml::Value::Table(table) => Ok(table),
+        _ => anyhow::bail!("Channel settings must be a JSON object"),
+    }
+}
+
 pub(super) fn scaffold_local_harness(agent_dir: &Path) -> Result<()> {
     let harness_dir = agent_dir.join("harness");
     std::fs::create_dir_all(&harness_dir)
@@ -149,4 +169,34 @@ pub(super) fn parse_json_or_string(raw: &str) -> serde_json::Value {
 pub(super) fn issue_path_is_under(issue_path: &str, root: &Path) -> bool {
     let issue_path = Path::new(issue_path);
     issue_path == root || issue_path.starts_with(root)
+}
+
+fn json_to_toml_value(value: serde_json::Value) -> Result<toml::Value> {
+    Ok(match value {
+        serde_json::Value::Null => {
+            anyhow::bail!("Null values are not supported in channel settings")
+        }
+        serde_json::Value::Bool(v) => toml::Value::Boolean(v),
+        serde_json::Value::Number(v) => {
+            if let Some(i) = v.as_i64() {
+                toml::Value::Integer(i)
+            } else if let Some(f) = v.as_f64() {
+                toml::Value::Float(f)
+            } else {
+                anyhow::bail!("Unsupported numeric value in channel settings")
+            }
+        }
+        serde_json::Value::String(v) => toml::Value::String(v),
+        serde_json::Value::Array(values) => toml::Value::Array(
+            values
+                .into_iter()
+                .map(json_to_toml_value)
+                .collect::<Result<Vec<_>>>()?,
+        ),
+        serde_json::Value::Object(map) => toml::Value::Table(
+            map.into_iter()
+                .map(|(key, value)| Ok((key, json_to_toml_value(value)?)))
+                .collect::<Result<toml::Table>>()?,
+        ),
+    })
 }

@@ -56,6 +56,32 @@ pub struct UpdateAgentParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CreateChannelParams {
+    pub id: String,
+    pub kind: String,
+    pub agent_id: String,
+    #[serde(default)]
+    pub idle_ttl_secs: Option<u64>,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub settings: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UpdateChannelParams {
+    pub id: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub idle_ttl_secs: Option<u64>,
+    #[serde(default)]
+    pub settings: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BindHarnessParams {
     pub id: String,
     pub harness_id: String,
@@ -190,10 +216,20 @@ pub enum DaemonRequest {
     HarnessDelete(EntityIdParams),
     #[serde(rename = "channel.list")]
     ChannelList(NoParams),
+    #[serde(rename = "channel.create")]
+    ChannelCreate(CreateChannelParams),
     #[serde(rename = "channel.get")]
     ChannelGet(EntityIdParams),
     #[serde(rename = "channel.issues")]
     ChannelIssues(EntityIdParams),
+    #[serde(rename = "channel.enable")]
+    ChannelEnable(EntityIdParams),
+    #[serde(rename = "channel.disable")]
+    ChannelDisable(EntityIdParams),
+    #[serde(rename = "channel.update")]
+    ChannelUpdate(UpdateChannelParams),
+    #[serde(rename = "channel.delete")]
+    ChannelDelete(EntityIdParams),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -213,6 +249,7 @@ pub enum ErrorCode {
     TaskNotFound,
     SessionNotFound,
     HarnessNotFound,
+    ChannelNotFound,
     ValidationFailed,
     Conflict,
     ResourceBusy,
@@ -229,6 +266,7 @@ impl fmt::Display for ErrorCode {
             ErrorCode::TaskNotFound => "task_not_found",
             ErrorCode::SessionNotFound => "session_not_found",
             ErrorCode::HarnessNotFound => "harness_not_found",
+            ErrorCode::ChannelNotFound => "channel_not_found",
             ErrorCode::ValidationFailed => "validation_failed",
             ErrorCode::Conflict => "conflict",
             ErrorCode::ResourceBusy => "resource_busy",

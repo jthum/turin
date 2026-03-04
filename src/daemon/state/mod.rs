@@ -71,6 +71,24 @@ pub struct UpdateAgentInput {
     pub idle_grace_secs: Option<u64>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CreateChannelInput {
+    pub id: String,
+    pub kind: String,
+    pub agent_id: String,
+    pub idle_ttl_secs: Option<u64>,
+    pub enabled: bool,
+    pub settings: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct UpdateChannelInput {
+    pub kind: Option<String>,
+    pub agent_id: Option<String>,
+    pub idle_ttl_secs: Option<u64>,
+    pub settings: Option<serde_json::Value>,
+}
+
 impl DaemonState {
     pub async fn load(config_path: &Path) -> Result<Self> {
         let config_path = config_path.to_path_buf();

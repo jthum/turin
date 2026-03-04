@@ -90,8 +90,13 @@ pub(super) async fn dispatch(
         DaemonRequest::HarnessValidate(params) => harness::validate(id, params, &context).await,
         DaemonRequest::HarnessDelete(params) => harness::delete(id, params, &context).await,
         DaemonRequest::ChannelList(params) => channel::list(id, params, &context).await,
+        DaemonRequest::ChannelCreate(params) => channel::create(id, params, &context).await,
         DaemonRequest::ChannelGet(params) => channel::get(id, params, &context).await,
         DaemonRequest::ChannelIssues(params) => channel::issues(id, params, &context).await,
+        DaemonRequest::ChannelEnable(params) => channel::enable(id, params, &context).await,
+        DaemonRequest::ChannelDisable(params) => channel::disable(id, params, &context).await,
+        DaemonRequest::ChannelUpdate(params) => channel::update(id, params, &context).await,
+        DaemonRequest::ChannelDelete(params) => channel::delete(id, params, &context).await,
     }
 }
 
