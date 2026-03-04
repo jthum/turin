@@ -4,6 +4,7 @@ members = [
     "crates/turin-daemon-protocol",
     "crates/turin-daemon-client",
     "crates/turin-channel-core",
+    "crates/turin-channel-runner",
 ]
 resolver = "2"
 

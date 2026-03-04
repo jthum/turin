@@ -8,10 +8,18 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::unix::OwnedWriteHalf;
 use tokio::sync::{RwLock, broadcast, watch};
 
-use crate::daemon::protocol::{EventEnvelope, RequestEnvelope, ResponseEnvelope};
+use crate::daemon::protocol::{
+    DaemonRequest, EventEnvelope, RequestEnvelope, ResponseEnvelope, RuntimeEventsSubscribeParams,
+};
 use crate::daemon::state::{DaemonState, DaemonStatus};
 
 use super::dispatch::{classify_registry_issue, emit_event};
+
+#[derive(Debug, Clone, Default)]
+struct EventFilter {
+    agent_id: Option<String>,
+    session_id: Option<String>,
+}
 
 pub(super) async fn stream_events(
     request: RequestEnvelope,
@@ -20,6 +28,7 @@ pub(super) async fn stream_events(
     mut shutdown_rx: watch::Receiver<bool>,
     writer: &mut OwnedWriteHalf,
 ) -> Result<()> {
+    let filter = EventFilter::from_request(&request);
     let ack = ResponseEnvelope::ok(request.id, json!({ "subscribed": true }));
     writer
         .write_all(serde_json::to_string(&ack)?.as_bytes())
@@ -43,10 +52,12 @@ pub(super) async fn stream_events(
     for issue in &status.registry.issues {
         if let Some((event_name, data)) = classify_registry_issue(&status, issue) {
             let event = EventEnvelope::new(event_name, data);
-            writer
-                .write_all(serde_json::to_string(&event)?.as_bytes())
-                .await?;
-            writer.write_all(b"\n").await?;
+            if filter.matches(&event) {
+                writer
+                    .write_all(serde_json::to_string(&event)?.as_bytes())
+                    .await?;
+                writer.write_all(b"\n").await?;
+            }
         }
     }
 
@@ -60,10 +71,12 @@ pub(super) async fn stream_events(
             event = event_rx.recv() => {
                 match event {
                     Ok(event) => {
-                        writer
-                            .write_all(serde_json::to_string(&event)?.as_bytes())
-                            .await?;
-                        writer.write_all(b"\n").await?;
+                        if filter.matches(&event) {
+                            writer
+                                .write_all(serde_json::to_string(&event)?.as_bytes())
+                                .await?;
+                            writer.write_all(b"\n").await?;
+                        }
                     }
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
                         let lagged = EventEnvelope::new("runtime.events_lagged", json!({ "skipped": skipped }));
@@ -79,6 +92,50 @@ pub(super) async fn stream_events(
     }
 
     Ok(())
+}
+
+impl EventFilter {
+    fn from_request(request: &RequestEnvelope) -> Self {
+        match &request.request {
+            DaemonRequest::RuntimeEventsSubscribe(RuntimeEventsSubscribeParams {
+                agent_id,
+                session_id,
+            }) => Self {
+                agent_id: agent_id.clone(),
+                session_id: session_id.clone(),
+            },
+            _ => Self::default(),
+        }
+    }
+
+    fn matches(&self, event: &EventEnvelope) -> bool {
+        self.matches_agent(event) && self.matches_session(event)
+    }
+
+    fn matches_agent(&self, event: &EventEnvelope) -> bool {
+        let Some(expected) = self.agent_id.as_deref() else {
+            return true;
+        };
+
+        event
+            .data
+            .get("agent_id")
+            .and_then(|value| value.as_str())
+            .or_else(|| event.data.get("id").and_then(|value| value.as_str()))
+            == Some(expected)
+    }
+
+    fn matches_session(&self, event: &EventEnvelope) -> bool {
+        let Some(expected) = self.session_id.as_deref() else {
+            return true;
+        };
+
+        event
+            .data
+            .get("session_id")
+            .and_then(|value| value.as_str())
+            == Some(expected)
+    }
 }
 
 pub(super) fn start_task_event_poller(

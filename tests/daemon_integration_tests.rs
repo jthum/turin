@@ -134,12 +134,15 @@ base_url = "PONG"
         Ok(serde_json::from_str(&line)?)
     }
 
-    async fn subscribe(&self) -> Result<(ResponseEnvelope, EventEnvelope, EventSubscription)> {
+    async fn subscribe(
+        &self,
+        params: turin::daemon::protocol::RuntimeEventsSubscribeParams,
+    ) -> Result<(ResponseEnvelope, EventEnvelope, EventSubscription)> {
         let stream = UnixStream::connect(&self.socket_path).await?;
         let (reader, mut writer) = stream.into_split();
         let request = RequestEnvelope::new(
             Some(format!("req-{}", uuid::Uuid::new_v4())),
-            DaemonRequest::RuntimeEventsSubscribe(Default::default()),
+            DaemonRequest::RuntimeEventsSubscribe(params),
         );
         writer
             .write_all(serde_json::to_string(&request)?.as_bytes())
@@ -200,6 +203,14 @@ impl EventSubscription {
             if event.event == event_name {
                 return Ok(event);
             }
+        }
+    }
+
+    async fn expect_no_event(&mut self, timeout_ms: u64) -> Result<()> {
+        match timeout(Duration::from_millis(timeout_ms), self.next_event()).await {
+            Ok(Ok(event)) => Err(anyhow!("unexpected event: {}", event.event)),
+            Ok(Err(err)) => Err(err),
+            Err(_) => Ok(()),
         }
     }
 }
@@ -503,7 +514,7 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn daemon_event_subscription_receives_snapshot_and_mutation() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
-    let (ack, snapshot, mut subscription) = daemon.subscribe().await?;
+    let (ack, snapshot, mut subscription) = daemon.subscribe(Default::default()).await?;
 
     assert!(ack.ok, "subscription ack failed: {:?}", ack.error);
     assert_eq!(snapshot.event, "runtime.snapshot");
@@ -526,6 +537,98 @@ async fn daemon_event_subscription_receives_snapshot_and_mutation() -> Result<()
 
     let created = subscription.wait_for("agent.created").await?;
     assert_eq!(created.data["id"], "writer");
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+
+    let (_ack, _snapshot, mut agent_subscription) = daemon
+        .subscribe(turin::daemon::protocol::RuntimeEventsSubscribeParams {
+            agent_id: Some("writer".to_string()),
+            session_id: None,
+        })
+        .await?;
+
+    let _ = daemon
+        .request(DaemonRequest::AgentCreate(
+            turin::daemon::protocol::CreateAgentParams {
+                id: "other".to_string(),
+                provider: "mock".to_string(),
+                model: "mock-model".to_string(),
+                system_prompt: Some("Other".to_string()),
+                thinking: None,
+                mode: None,
+                harness: None,
+                idle_grace_secs: None,
+                enabled: true,
+            },
+        ))
+        .await?;
+    agent_subscription.expect_no_event(250).await?;
+
+    let _ = daemon
+        .request(DaemonRequest::AgentCreate(
+            turin::daemon::protocol::CreateAgentParams {
+                id: "writer".to_string(),
+                provider: "mock".to_string(),
+                model: "mock-model".to_string(),
+                system_prompt: Some("Write".to_string()),
+                thinking: None,
+                mode: None,
+                harness: None,
+                idle_grace_secs: None,
+                enabled: true,
+            },
+        ))
+        .await?;
+    let created = agent_subscription.wait_for("agent.created").await?;
+    assert_eq!(created.data["id"], "writer");
+
+    let opened = result_value(
+        daemon
+            .request(DaemonRequest::SessionOpen(
+                turin::daemon::protocol::OpenSessionParams {
+                    agent_id: "default".to_string(),
+                    slot_id: Some("filter-session".to_string()),
+                },
+            ))
+            .await?,
+    );
+    let session_id = opened["session_id"]
+        .as_str()
+        .context("session.open should return session_id")?
+        .to_string();
+
+    let (_ack, _snapshot, mut session_subscription) = daemon
+        .subscribe(turin::daemon::protocol::RuntimeEventsSubscribeParams {
+            agent_id: None,
+            session_id: Some(session_id.clone()),
+        })
+        .await?;
+
+    let _ = daemon
+        .request(DaemonRequest::SessionOpen(
+            turin::daemon::protocol::OpenSessionParams {
+                agent_id: "default".to_string(),
+                slot_id: Some("other-session".to_string()),
+            },
+        ))
+        .await?;
+    session_subscription.expect_no_event(250).await?;
+
+    let _ = daemon
+        .request(DaemonRequest::SessionResume(
+            turin::daemon::protocol::ResumeSessionParams {
+                session_id: session_id.clone(),
+                slot_id: Some("filter-session".to_string()),
+            },
+        ))
+        .await?;
+    let resumed = session_subscription.wait_for("session.resumed").await?;
+    assert_eq!(resumed.data["session_id"], session_id);
 
     daemon.stop().await
 }
