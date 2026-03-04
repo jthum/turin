@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+pub use turin_types::{AgentMode, ThinkingConfig};
+
 /// Top-level Turin configuration, parsed from `turin.toml`.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct TurinConfig {
@@ -34,15 +36,6 @@ pub enum EmbeddingConfig {
     NoOp,
 }
 
-#[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentMode {
-    #[default]
-    Auto,
-    Stateful,
-    Stateless,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentConfig {
     /// The identity string for the agent instance (e.g. "default", "coder", "reviewer")
@@ -67,12 +60,6 @@ pub struct AgentConfig {
     /// Optional idle shutdown grace period for peer runtimes.
     #[serde(default)]
     pub idle_grace_secs: Option<u64>,
-}
-
-#[derive(Debug, Clone, Deserialize, serde::Serialize)]
-pub struct ThinkingConfig {
-    pub enabled: bool,
-    pub budget_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

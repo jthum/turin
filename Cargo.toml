@@ -1,3 +1,12 @@
+[workspace]
+members = [
+    "crates/turin-types",
+    "crates/turin-daemon-protocol",
+    "crates/turin-daemon-client",
+    "crates/turin-channel-core",
+]
+resolver = "2"
+
 [package]
 name = "turin"
 version = "0.21.0"
@@ -28,6 +37,8 @@ tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 # Error handling
 thiserror = "1.0"
 anyhow = "1.0"
+turin-types = { path = "crates/turin-types" }
+turin-daemon-protocol = { path = "crates/turin-daemon-protocol" }
 
 # Inference SDK family (unified provider layer)
 inference-sdk-core = { git = "https://github.com/jthum/inference-sdk-rust", rev = "bd64dd2f9fd7a58e8c4e270c8b931d13de2971c6" }

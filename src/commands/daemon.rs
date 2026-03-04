@@ -6,8 +6,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use turin::daemon::protocol::{
-    DaemonRequest, ErrorCode, ErrorEnvelope, EventEnvelope, NoParams, RequestEnvelope,
-    ResponseEnvelope,
+    DaemonRequest, ErrorCode, ErrorEnvelope, EventEnvelope, RequestEnvelope, ResponseEnvelope,
+    RuntimeEventsSubscribeParams,
 };
 use turin::kernel::config::TurinConfig;
 
@@ -671,7 +671,7 @@ pub async fn run_events(config_path: &std::path::Path, json_output: bool) -> Res
     let (reader, mut writer) = stream.into_split();
     let request = RequestEnvelope::new(
         Some(format!("req-{}", uuid::Uuid::new_v4())),
-        DaemonRequest::RuntimeEventsSubscribe(NoParams::default()),
+        DaemonRequest::RuntimeEventsSubscribe(RuntimeEventsSubscribeParams::default()),
     );
 
     writer

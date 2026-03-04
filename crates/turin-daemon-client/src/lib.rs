@@ -1,0 +1,175 @@
+use anyhow::{Context, Result, anyhow};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
+use std::path::{Path, PathBuf};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::UnixStream;
+use turin_daemon_protocol::{
+    DaemonRequest, EventEnvelope, RequestEnvelope, ResponseEnvelope, RuntimeEventsSubscribeParams,
+};
+
+#[derive(Debug, Clone)]
+pub struct DaemonClient {
+    socket_path: PathBuf,
+}
+
+impl DaemonClient {
+    pub fn new(socket_path: impl Into<PathBuf>) -> Self {
+        Self {
+            socket_path: socket_path.into(),
+        }
+    }
+
+    pub async fn from_config(config_path: impl AsRef<Path>) -> Result<Self> {
+        let raw = tokio::fs::read_to_string(config_path.as_ref())
+            .await
+            .with_context(|| format!("Failed to read '{}'", config_path.as_ref().display()))?;
+        let value: toml::Value = toml::from_str(&raw)
+            .with_context(|| format!("Failed to parse '{}'", config_path.as_ref().display()))?;
+        let socket_path = value
+            .get("daemon")
+            .and_then(|d| d.get("socket_path"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(".turin/daemon.sock");
+        Ok(Self::new(
+            config_path
+                .as_ref()
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join(socket_path),
+        ))
+    }
+
+    pub fn socket_path(&self) -> &Path {
+        &self.socket_path
+    }
+
+    pub async fn send(&self, request: RequestEnvelope) -> Result<ResponseEnvelope> {
+        let mut stream = UnixStream::connect(&self.socket_path)
+            .await
+            .with_context(|| format!("Failed to connect to '{}'", self.socket_path.display()))?;
+        let body = serde_json::to_string(&request)?;
+        stream.write_all(body.as_bytes()).await?;
+        stream.write_all(b"\n").await?;
+
+        let (reader, _) = stream.into_split();
+        let mut lines = BufReader::new(reader).lines();
+        let line = lines
+            .next_line()
+            .await?
+            .ok_or_else(|| anyhow!("Daemon closed connection before response"))?;
+        Ok(serde_json::from_str(&line).context("Failed to decode daemon response")?)
+    }
+
+    pub async fn request(
+        &self,
+        id: Option<String>,
+        request: DaemonRequest,
+    ) -> Result<ResponseEnvelope> {
+        self.send(RequestEnvelope::new(id, request)).await
+    }
+
+    pub async fn request_ok<T: DeserializeOwned>(
+        &self,
+        id: Option<String>,
+        request: DaemonRequest,
+    ) -> Result<T> {
+        let response = self.request(id, request).await?;
+        decode_ok(response)
+    }
+
+    pub async fn subscribe(
+        &self,
+        id: Option<String>,
+        filter: RuntimeEventsSubscribeParams,
+    ) -> Result<EventStream> {
+        let mut stream = UnixStream::connect(&self.socket_path)
+            .await
+            .with_context(|| format!("Failed to connect to '{}'", self.socket_path.display()))?;
+        let request = RequestEnvelope::new(id, DaemonRequest::RuntimeEventsSubscribe(filter));
+        let body = serde_json::to_string(&request)?;
+        stream.write_all(body.as_bytes()).await?;
+        stream.write_all(b"\n").await?;
+
+        let (reader, _) = stream.into_split();
+        let mut lines = BufReader::new(reader).lines();
+        let ack_line = lines
+            .next_line()
+            .await?
+            .ok_or_else(|| anyhow!("Daemon closed connection before subscription ack"))?;
+        let ack: ResponseEnvelope =
+            serde_json::from_str(&ack_line).context("Failed to decode subscription ack")?;
+        if !ack.ok {
+            return Err(anyhow!(format_error(&ack)));
+        }
+        Ok(EventStream { lines })
+    }
+}
+
+pub struct EventStream {
+    lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+}
+
+impl EventStream {
+    pub async fn next(&mut self) -> Result<Option<EventEnvelope>> {
+        match self.lines.next_line().await? {
+            Some(line) => Ok(Some(
+                serde_json::from_str(&line).context("Failed to decode daemon event")?,
+            )),
+            None => Ok(None),
+        }
+    }
+}
+
+pub fn decode_ok<T: DeserializeOwned>(response: ResponseEnvelope) -> Result<T> {
+    if !response.ok {
+        return Err(anyhow!(format_error(&response)));
+    }
+    let result = response
+        .result
+        .ok_or_else(|| anyhow!("Daemon response missing result payload"))?;
+    Ok(serde_json::from_value(result).context("Failed to decode daemon result payload")?)
+}
+
+pub fn encode_params<T: Serialize>(value: T) -> Value {
+    serde_json::to_value(value).expect("daemon params must serialize")
+}
+
+fn format_error(response: &ResponseEnvelope) -> String {
+    match &response.error {
+        Some(err) => match &err.details {
+            Some(details) => format!("{}: {} ({})", err.code, err.message, details),
+            None => format!("{}: {}", err.code, err.message),
+        },
+        None => "daemon request failed without error envelope".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use turin_daemon_protocol::{DaemonRequest, NoParams, ResponseEnvelope};
+
+    #[test]
+    fn decode_ok_rejects_error_response() {
+        let response = ResponseEnvelope::err(
+            None,
+            turin_daemon_protocol::ErrorCode::ValidationFailed,
+            "bad",
+            None,
+        );
+        let err = decode_ok::<serde_json::Value>(response).expect_err("error response rejected");
+        assert!(err.to_string().contains("validation_failed"));
+    }
+
+    #[test]
+    fn encode_params_round_trips_json() {
+        let value = encode_params(NoParams::default());
+        assert!(value.is_object());
+        let request = DaemonRequest::DaemonPing(NoParams::default());
+        let envelope = RequestEnvelope::new(Some("x".into()), request);
+        let encoded = serde_json::to_value(envelope).expect("serialize");
+        assert_eq!(encoded["op"], "daemon.ping");
+    }
+}
