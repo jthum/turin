@@ -215,18 +215,21 @@ parsed as JSON when possible, otherwise they are stored as strings.
 
 `kind = "discord"` is also available as a daemon-owned adapter:
 
-- polls Discord channel messages over HTTP for inbound events
+- uses Discord Gateway (WebSocket) by default for low-latency inbound events
 - posts outbound responses back to Discord messages API
 - requires:
   - `token_env` (environment variable containing a Discord bot token)
   - `channel_id` (Discord channel/thread ID to poll and respond in)
 - optional settings:
+  - `transport` (`gateway` default, or `polling` fallback mode)
   - `poll_interval_ms`
   - `max_messages_per_poll`
   - `workspace_id`
   - `room_id`
   - `start_from_latest`
   - `ignore_bot_messages`
+  - `gateway_url`
+  - `gateway_intents`
   - `base_url`
 
 When a channel is `enabled`, the daemon owns the runtime lifecycle:

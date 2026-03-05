@@ -1,10 +1,13 @@
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
+use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::collections::VecDeque;
 use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::sleep;
+use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use turin_channel_core::{
     ChannelAttachment, ChannelCapabilities, ChannelConversationKey, ChannelKind, ChannelMessageRef,
     ChannelUser, InboundEvent, MessageBlock, OutboundMessage,
@@ -12,10 +15,21 @@ use turin_channel_core::{
 use turin_channel_runner::ChannelDriver;
 
 const DEFAULT_BASE_URL: &str = "https://discord.com/api/v10";
+const DEFAULT_GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=10&encoding=json";
+const DEFAULT_GATEWAY_INTENTS: u64 = (1 << 9) | (1 << 12) | (1 << 15);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiscordTransportMode {
+    Gateway,
+    Polling,
+}
 
 #[derive(Debug, Clone)]
 pub struct DiscordChannelDriverConfig {
     pub base_url: String,
+    pub gateway_url: String,
+    pub transport_mode: DiscordTransportMode,
+    pub gateway_intents: u64,
     pub workspace_id: String,
     pub room_id: Option<String>,
     pub channel_id: String,
@@ -62,6 +76,13 @@ impl DiscordChannelDriverConfig {
             .unwrap_or(25)
             .clamp(1, 100) as u16;
 
+        let transport_mode = parse_transport_mode(
+            settings
+                .get("transport")
+                .and_then(|value| value.as_str())
+                .or(Some("gateway")),
+        )?;
+
         Ok(Self {
             base_url: settings
                 .get("base_url")
@@ -69,6 +90,16 @@ impl DiscordChannelDriverConfig {
                 .unwrap_or(DEFAULT_BASE_URL)
                 .trim_end_matches('/')
                 .to_string(),
+            gateway_url: settings
+                .get("gateway_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or(DEFAULT_GATEWAY_URL)
+                .to_string(),
+            transport_mode,
+            gateway_intents: settings
+                .get("gateway_intents")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(DEFAULT_GATEWAY_INTENTS),
             workspace_id: settings
                 .get("workspace_id")
                 .and_then(|v| v.as_str())
@@ -94,6 +125,21 @@ impl DiscordChannelDriverConfig {
     }
 }
 
+type DiscordWsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
+struct GatewayConnection {
+    stream: DiscordWsStream,
+    heartbeat_interval: Duration,
+    next_heartbeat_at: tokio::time::Instant,
+    seq: Option<u64>,
+}
+
+enum GatewayProcessResult {
+    Event(Box<InboundEvent>),
+    Continue,
+    Reconnect,
+}
+
 pub struct DiscordChannelDriver {
     channel_runtime_id: String,
     config: DiscordChannelDriverConfig,
@@ -102,6 +148,7 @@ pub struct DiscordChannelDriver {
     backlog: VecDeque<InboundEvent>,
     last_seen_message_id: Option<String>,
     initialized: bool,
+    gateway: Option<GatewayConnection>,
 }
 
 impl DiscordChannelDriver {
@@ -124,7 +171,90 @@ impl DiscordChannelDriver {
             backlog: VecDeque::new(),
             last_seen_message_id: None,
             initialized: false,
+            gateway: None,
         })
+    }
+
+    async fn next_poll_event(&mut self) -> Result<Option<InboundEvent>> {
+        loop {
+            if let Some(event) = self.backlog.pop_front() {
+                return Ok(Some(event));
+            }
+            if *self.shutdown_rx.borrow() {
+                return Ok(None);
+            }
+
+            self.poll_once().await?;
+            if let Some(event) = self.backlog.pop_front() {
+                return Ok(Some(event));
+            }
+
+            tokio::select! {
+                changed = self.shutdown_rx.changed() => {
+                    if changed.is_ok() && *self.shutdown_rx.borrow() {
+                        return Ok(None);
+                    }
+                }
+                _ = sleep(self.config.poll_interval) => {}
+            }
+        }
+    }
+
+    async fn next_gateway_event(&mut self) -> Result<Option<InboundEvent>> {
+        loop {
+            if let Some(event) = self.backlog.pop_front() {
+                return Ok(Some(event));
+            }
+            if *self.shutdown_rx.borrow() {
+                return Ok(None);
+            }
+
+            self.ensure_gateway_connected().await?;
+            let mut connection = match self.gateway.take() {
+                Some(connection) => connection,
+                None => continue,
+            };
+
+            let mut reconnect = false;
+            let mut emitted_event = None;
+
+            let heartbeat_at = connection.next_heartbeat_at;
+            let heartbeat_sleep = tokio::time::sleep_until(heartbeat_at);
+            tokio::pin!(heartbeat_sleep);
+
+            tokio::select! {
+                _ = &mut heartbeat_sleep => {
+                    self.send_gateway_heartbeat(&mut connection).await?;
+                }
+                changed = self.shutdown_rx.changed() => {
+                    if changed.is_ok() && *self.shutdown_rx.borrow() {
+                        return Ok(None);
+                    }
+                }
+                maybe_msg = connection.stream.next() => {
+                    let Some(msg_result) = maybe_msg else {
+                        self.gateway = None;
+                        continue;
+                    };
+                    let msg = msg_result.context("Discord gateway stream read failed")?;
+                    match self.process_gateway_message(&mut connection, msg).await? {
+                        GatewayProcessResult::Event(event) => emitted_event = Some(*event),
+                        GatewayProcessResult::Reconnect => reconnect = true,
+                        GatewayProcessResult::Continue => {}
+                    }
+                }
+            }
+
+            if reconnect {
+                self.gateway = None;
+                continue;
+            }
+
+            self.gateway = Some(connection);
+            if let Some(event) = emitted_event {
+                return Ok(Some(event));
+            }
+        }
     }
 
     async fn poll_once(&mut self) -> Result<()> {
@@ -161,6 +291,136 @@ impl DiscordChannelDriver {
         }
         self.last_seen_message_id = newest_id;
         Ok(())
+    }
+
+    async fn ensure_gateway_connected(&mut self) -> Result<()> {
+        if self.gateway.is_some() {
+            return Ok(());
+        }
+        self.gateway = Some(self.connect_gateway().await?);
+        Ok(())
+    }
+
+    async fn connect_gateway(&self) -> Result<GatewayConnection> {
+        let (mut stream, _) = connect_async(&self.config.gateway_url)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to connect to Discord gateway '{}'",
+                    self.config.gateway_url
+                )
+            })?;
+
+        let hello_payload = loop {
+            let Some(msg) = stream.next().await else {
+                anyhow::bail!("Discord gateway closed before HELLO");
+            };
+            if let Some(payload) = decode_gateway_payload(msg?)? {
+                break payload;
+            }
+        };
+
+        if hello_payload.op != 10 {
+            anyhow::bail!(
+                "Discord gateway expected HELLO (op=10), got op={} instead",
+                hello_payload.op
+            );
+        }
+
+        let hello: GatewayHello = serde_json::from_value(hello_payload.d)
+            .context("Failed to decode Discord HELLO payload")?;
+        let heartbeat_interval = Duration::from_millis(hello.heartbeat_interval.max(100));
+
+        let identify = serde_json::json!({
+            "op": 2,
+            "d": {
+                "token": self.config.token,
+                "intents": self.config.gateway_intents,
+                "properties": {
+                    "os": "linux",
+                    "browser": "turin",
+                    "device": "turin"
+                }
+            }
+        });
+        stream
+            .send(WsMessage::Text(identify.to_string()))
+            .await
+            .context("Failed to send Discord IDENTIFY payload")?;
+
+        Ok(GatewayConnection {
+            stream,
+            heartbeat_interval,
+            next_heartbeat_at: tokio::time::Instant::now() + heartbeat_interval,
+            seq: hello_payload.s,
+        })
+    }
+
+    async fn send_gateway_heartbeat(&self, connection: &mut GatewayConnection) -> Result<()> {
+        let heartbeat = serde_json::json!({
+            "op": 1,
+            "d": connection.seq,
+        });
+        connection
+            .stream
+            .send(WsMessage::Text(heartbeat.to_string()))
+            .await
+            .context("Failed to send Discord heartbeat")?;
+        connection.next_heartbeat_at = tokio::time::Instant::now() + connection.heartbeat_interval;
+        Ok(())
+    }
+
+    async fn process_gateway_message(
+        &self,
+        connection: &mut GatewayConnection,
+        message: WsMessage,
+    ) -> Result<GatewayProcessResult> {
+        let Some(payload) = decode_gateway_payload(message)? else {
+            return Ok(GatewayProcessResult::Continue);
+        };
+
+        if let Some(seq) = payload.s {
+            connection.seq = Some(seq);
+        }
+
+        match payload.op {
+            0 => self.process_gateway_dispatch(payload.t.as_deref(), payload.d),
+            1 => {
+                self.send_gateway_heartbeat(connection).await?;
+                Ok(GatewayProcessResult::Continue)
+            }
+            7 | 9 => Ok(GatewayProcessResult::Reconnect),
+            10 => {
+                let hello: GatewayHello = serde_json::from_value(payload.d)
+                    .context("Failed to decode Discord HELLO payload during reconnect")?;
+                connection.heartbeat_interval =
+                    Duration::from_millis(hello.heartbeat_interval.max(100));
+                connection.next_heartbeat_at =
+                    tokio::time::Instant::now() + connection.heartbeat_interval;
+                Ok(GatewayProcessResult::Continue)
+            }
+            11 => Ok(GatewayProcessResult::Continue),
+            _ => Ok(GatewayProcessResult::Continue),
+        }
+    }
+
+    fn process_gateway_dispatch(
+        &self,
+        event_name: Option<&str>,
+        data: serde_json::Value,
+    ) -> Result<GatewayProcessResult> {
+        if event_name == Some("MESSAGE_CREATE") {
+            let message: DiscordMessage =
+                serde_json::from_value(data).context("Failed to decode Discord MESSAGE_CREATE")?;
+            if message.channel_id != self.config.channel_id {
+                return Ok(GatewayProcessResult::Continue);
+            }
+            if let Some(event) = self.normalize_message(message) {
+                return Ok(GatewayProcessResult::Event(Box::new(event)));
+            }
+        }
+
+        Ok(GatewayProcessResult::Continue)
     }
 
     fn normalize_message(&self, message: DiscordMessage) -> Option<InboundEvent> {
@@ -341,27 +601,9 @@ impl ChannelDriver for DiscordChannelDriver {
     }
 
     async fn next_event(&mut self) -> Result<Option<InboundEvent>> {
-        loop {
-            if let Some(event) = self.backlog.pop_front() {
-                return Ok(Some(event));
-            }
-            if *self.shutdown_rx.borrow() {
-                return Ok(None);
-            }
-
-            self.poll_once().await?;
-            if let Some(event) = self.backlog.pop_front() {
-                return Ok(Some(event));
-            }
-
-            tokio::select! {
-                changed = self.shutdown_rx.changed() => {
-                    if changed.is_ok() && *self.shutdown_rx.borrow() {
-                        return Ok(None);
-                    }
-                }
-                _ = sleep(self.config.poll_interval) => {}
-            }
+        match self.config.transport_mode {
+            DiscordTransportMode::Gateway => self.next_gateway_event().await,
+            DiscordTransportMode::Polling => self.next_poll_event().await,
         }
     }
 
@@ -380,6 +622,9 @@ impl ChannelDriver for DiscordChannelDriver {
     }
 
     async fn shutdown(&mut self) -> Result<()> {
+        if let Some(mut connection) = self.gateway.take() {
+            let _ = connection.stream.close(None).await;
+        }
         Ok(())
     }
 }
@@ -418,6 +663,51 @@ struct DiscordAttachment {
 #[derive(Debug, Clone, Deserialize)]
 struct DiscordRateLimit {
     retry_after: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GatewayPayload {
+    op: u8,
+    #[serde(default)]
+    d: serde_json::Value,
+    #[serde(default)]
+    s: Option<u64>,
+    #[serde(default)]
+    t: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GatewayHello {
+    heartbeat_interval: u64,
+}
+
+fn parse_transport_mode(raw: Option<&str>) -> Result<DiscordTransportMode> {
+    match raw.unwrap_or("gateway") {
+        "gateway" => Ok(DiscordTransportMode::Gateway),
+        "polling" => Ok(DiscordTransportMode::Polling),
+        other => anyhow::bail!(
+            "Invalid Discord transport '{}'; expected 'gateway' or 'polling'",
+            other
+        ),
+    }
+}
+
+fn decode_gateway_payload(message: WsMessage) -> Result<Option<GatewayPayload>> {
+    match message {
+        WsMessage::Text(text) => {
+            let payload = serde_json::from_str::<GatewayPayload>(&text)
+                .context("Invalid Discord text payload")?;
+            Ok(Some(payload))
+        }
+        WsMessage::Binary(binary) => {
+            let payload = serde_json::from_slice::<GatewayPayload>(&binary)
+                .context("Invalid Discord binary payload")?;
+            Ok(Some(payload))
+        }
+        WsMessage::Ping(_) | WsMessage::Pong(_) | WsMessage::Close(_) | WsMessage::Frame(_) => {
+            Ok(None)
+        }
+    }
 }
 
 fn parse_snowflake(value: &str) -> Option<u64> {
@@ -470,6 +760,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parse_transport_mode_defaults_to_gateway() {
+        assert_eq!(
+            parse_transport_mode(None).expect("default transport should parse"),
+            DiscordTransportMode::Gateway
+        );
+    }
+
+    #[test]
+    fn parse_transport_mode_accepts_polling() {
+        assert_eq!(
+            parse_transport_mode(Some("polling")).expect("polling transport should parse"),
+            DiscordTransportMode::Polling
+        );
+    }
+
+    #[test]
+    fn parse_transport_mode_rejects_invalid_value() {
+        let error = parse_transport_mode(Some("unknown")).expect_err("transport should fail");
+        assert!(error.to_string().contains("Invalid Discord transport"));
+    }
+
+    #[test]
     fn render_outbound_preserves_code_blocks() {
         let output = render_outbound_message(&OutboundMessage {
             blocks: vec![
@@ -491,6 +803,9 @@ mod tests {
     fn normalize_ignores_bot_messages() {
         let config = DiscordChannelDriverConfig {
             base_url: DEFAULT_BASE_URL.to_string(),
+            gateway_url: DEFAULT_GATEWAY_URL.to_string(),
+            transport_mode: DiscordTransportMode::Gateway,
+            gateway_intents: DEFAULT_GATEWAY_INTENTS,
             workspace_id: "discord".to_string(),
             room_id: None,
             channel_id: "123".to_string(),
@@ -509,10 +824,11 @@ mod tests {
             backlog: VecDeque::new(),
             last_seen_message_id: None,
             initialized: false,
+            gateway: None,
         };
         let message = DiscordMessage {
             id: "1".to_string(),
-            channel_id: "chan".to_string(),
+            channel_id: "123".to_string(),
             guild_id: Some("guild".to_string()),
             content: "hello".to_string(),
             author: DiscordAuthor {

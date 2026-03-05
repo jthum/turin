@@ -29,7 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added end-to-end integration coverage for `fs` adapter + `turin-channel-runner` + live daemon.
 - **Discord Channel Adapter**
   - Added `turin-channel-discord`, a concrete Discord adapter crate.
-  - `kind = "discord"` is now daemon-runnable with HTTP polling + outbound message posting.
+  - `kind = "discord"` is now daemon-runnable with Gateway-first inbound handling and outbound message posting.
+  - Added explicit `transport` mode (`gateway` default, `polling` fallback) for Discord channels.
   - Added channel-neutral normalization and structured outbound rendering for Discord text/code-block responses.
 
 ## [0.21.0] - 2026-03-03
