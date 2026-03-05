@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added daemon-managed channel runtime execution and reconciliation (start/stop/restart on registry and runtime changes).
   - Added `channel.status` for live per-channel runtime status.
   - `daemon.status` now includes `channel_runtimes` snapshots for control-plane visibility.
+  - Channel runtime `last_error` now preserves full error-chain context for debugging adapter startup and run failures.
   - Added integration coverage for daemon-owned `kind = "fs"` runtime processing and runtime-status reporting.
 - **First Channel Adapter**
   - Added `turin-channel-fs`, a filesystem-backed channel adapter crate.

@@ -930,3 +930,56 @@ async fn daemon_fs_channel_runtime_processes_inbox_and_reports_runtime_status() 
 
     daemon.stop().await
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_discord_channel_reports_failed_runtime_when_token_is_missing() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+
+    let created = result_value(
+        daemon
+            .request(DaemonRequest::ChannelCreate(
+                turin::daemon::protocol::CreateChannelParams {
+                    id: "discord-local".to_string(),
+                    kind: "discord".to_string(),
+                    agent_id: "default".to_string(),
+                    idle_ttl_secs: Some(600),
+                    enabled: true,
+                    settings: Some(serde_json::json!({
+                        "token_env": "DISCORD_TOKEN_MISSING_FOR_TEST",
+                        "channel_id": "1234567890",
+                        "poll_interval_ms": 250,
+                    })),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(created["id"], "discord-local");
+
+    let failed = wait_for_channel_state(&daemon, "discord-local", "failed", 10).await?;
+    let error = failed["last_error"]
+        .as_str()
+        .context("discord-local failed state should include last_error")?;
+    assert!(
+        error.contains("DISCORD_TOKEN_MISSING_FOR_TEST"),
+        "unexpected discord runtime error: {}",
+        error
+    );
+
+    let daemon_status = result_value(
+        daemon
+            .request(DaemonRequest::DaemonStatus(
+                turin::daemon::protocol::NoParams::default(),
+            ))
+            .await?,
+    );
+    let runtime_list = daemon_status["channel_runtimes"]
+        .as_array()
+        .context("daemon.status channel_runtimes should be an array")?;
+    assert!(
+        runtime_list
+            .iter()
+            .any(|entry| entry["id"] == "discord-local" && entry["state"] == "failed")
+    );
+
+    daemon.stop().await
+}

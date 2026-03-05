@@ -260,7 +260,7 @@ impl ChannelRuntimeManager {
                     }
                     Err(err) => {
                         status.state = "failed".to_string();
-                        status.last_error = Some(err.to_string());
+                        status.last_error = Some(format!("{:#}", err));
                     }
                 }
             }
@@ -336,7 +336,7 @@ impl ChannelRuntimeManager {
                     }
                     Err(err) => {
                         status.state = "failed".to_string();
-                        status.last_error = Some(err.to_string());
+                        status.last_error = Some(format!("{:#}", err));
                     }
                 }
             }
