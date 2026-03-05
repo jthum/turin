@@ -713,6 +713,33 @@ async fn daemon_event_subscription_receives_channel_runtime_events() -> Result<(
     }
     assert!(saw_update, "expected channel.runtime.updated for fs-events");
 
+    let _deleted = result_value(
+        daemon
+            .request(DaemonRequest::ChannelDelete(
+                turin::daemon::protocol::EntityIdParams {
+                    id: "fs-events".to_string(),
+                },
+            ))
+            .await?,
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut saw_removed = false;
+    while Instant::now() < deadline {
+        let event = timeout(Duration::from_millis(750), subscription.next_event()).await;
+        let Ok(Ok(event)) = event else {
+            continue;
+        };
+        if event.event == "channel.runtime.removed" && event.data["id"] == "fs-events" {
+            saw_removed = true;
+            break;
+        }
+    }
+    assert!(
+        saw_removed,
+        "expected channel.runtime.removed for fs-events"
+    );
+
     daemon.stop().await
 }
 
