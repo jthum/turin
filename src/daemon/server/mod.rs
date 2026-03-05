@@ -50,7 +50,10 @@ pub async fn serve(config_path: &Path) -> Result<()> {
     let (shutdown_tx, mut shutdown_rx) = watch_channel::channel(false);
     let (event_tx, _) = broadcast::channel(512);
     let watcher_slot = Arc::new(std::sync::Mutex::new(None));
-    let channel_runtimes = Arc::new(ChannelRuntimeManager::new(socket_path.clone()));
+    let channel_runtimes = Arc::new(ChannelRuntimeManager::new(
+        socket_path.clone(),
+        event_tx.clone(),
+    ));
     {
         let guard = state.read().await;
         let workspace_root = PathBuf::from(&guard.bootstrap_config.kernel.workspace_root);

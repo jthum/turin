@@ -32,6 +32,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `kind = "discord"` is now daemon-runnable with Gateway-first inbound handling and outbound message posting.
   - Added explicit `transport` mode (`gateway` default, `polling` fallback) for Discord channels.
   - Added channel-neutral normalization and structured outbound rendering for Discord text/code-block responses.
+- **Channel Runtime Events**
+  - Added daemon runtime events for channel lifecycle updates:
+    - `channel.runtime.updated`
+    - `channel.runtime.removed`
+  - Added integration coverage for channel runtime event streaming over `runtime.events.subscribe`.
+
+### Changed
+- **Channel Configuration Semantics**
+  - `channel.create` and `channel.update` now perform known-kind settings validation (`fs`, `discord`) before write/rescan.
+  - `channel.update --setting ...` now merges into existing channel settings instead of replacing the entire settings table.
+- **Discord Runtime Stability**
+  - Discord gateway reconnect now uses bounded exponential backoff to avoid tight reconnect loops on transient failures.
 
 ## [0.21.0] - 2026-03-03
 

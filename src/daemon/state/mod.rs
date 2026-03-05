@@ -1,3 +1,4 @@
+mod channel_validation;
 mod helpers;
 mod registry_ops;
 mod runtime;

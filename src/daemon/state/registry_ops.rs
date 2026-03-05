@@ -350,6 +350,7 @@ impl DaemonState {
             anyhow::bail!("Channel kind cannot be empty");
         }
         self.ensure_channel_agent_exists(&input.agent_id)?;
+        super::channel_validation::validate_channel_settings(&input.kind, &input.settings)?;
 
         let channel_dir = self.watch_paths().channels_dir.join(&input.id);
         if channel_dir.exists() {
@@ -409,8 +410,11 @@ impl DaemonState {
             file.idle_ttl_secs = Some(idle_ttl_secs);
         }
         if let Some(settings) = input.settings {
-            file.extra = super::helpers::json_object_to_toml_table(settings)?;
+            super::helpers::merge_json_object_into_toml_table(&mut file.extra, settings)?;
         }
+        let settings_value = serde_json::to_value(file.extra.clone())
+            .context("Failed to serialize channel settings for validation")?;
+        super::channel_validation::validate_channel_settings(&file.kind, &settings_value)?;
 
         write_channel_file(&channel_dir, &file)?;
         self.rescan().await?;

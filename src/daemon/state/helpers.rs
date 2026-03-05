@@ -76,6 +76,17 @@ pub(super) fn json_object_to_toml_table(value: serde_json::Value) -> Result<toml
     }
 }
 
+pub(super) fn merge_json_object_into_toml_table(
+    table: &mut toml::Table,
+    value: serde_json::Value,
+) -> Result<()> {
+    let updates = json_object_to_toml_table(value)?;
+    for (key, value) in updates {
+        table.insert(key, value);
+    }
+    Ok(())
+}
+
 pub(super) fn scaffold_local_harness(agent_dir: &Path) -> Result<()> {
     let harness_dir = agent_dir.join("harness");
     std::fs::create_dir_all(&harness_dir)

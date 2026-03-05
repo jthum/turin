@@ -293,6 +293,7 @@ async fn channel_create_disable_update_and_delete_are_filesystem_backed() -> Res
             enabled: true,
             settings: json!({
                 "token_env": "DISCORD_TOKEN",
+                "channel_id": "1234567890",
                 "allow_dm": true,
             }),
         })
@@ -321,6 +322,7 @@ async fn channel_create_disable_update_and_delete_are_filesystem_backed() -> Res
     assert_eq!(updated.idle_ttl_secs, Some(900));
     assert_eq!(updated.settings["token_env"], "NEW_TOKEN");
     assert_eq!(updated.settings["guild_id"], "123");
+    assert_eq!(updated.settings["channel_id"], "1234567890");
 
     let status = state.delete_channel("discord").await?;
     assert!(
@@ -331,6 +333,67 @@ async fn channel_create_disable_update_and_delete_are_filesystem_backed() -> Res
             .all(|channel| channel.id != "discord")
     );
     assert!(!temp.path().join("channels").join("discord").exists());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn channel_create_rejects_invalid_discord_settings() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let mut state = DaemonState::load(&config_path).await?;
+
+    let error = state
+        .create_channel(CreateChannelInput {
+            id: "discord".to_string(),
+            kind: "discord".to_string(),
+            agent_id: "default".to_string(),
+            idle_ttl_secs: Some(600),
+            enabled: true,
+            settings: json!({
+                "channel_id": "1234567890"
+            }),
+        })
+        .await
+        .expect_err("discord settings without token_env should fail");
+    assert!(error.to_string().contains("token_env"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn channel_update_rejects_invalid_fs_poll_interval() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let mut state = DaemonState::load(&config_path).await?;
+
+    state
+        .create_channel(CreateChannelInput {
+            id: "fs-local".to_string(),
+            kind: "fs".to_string(),
+            agent_id: "default".to_string(),
+            idle_ttl_secs: Some(600),
+            enabled: true,
+            settings: json!({
+                "inbox_dir": "inbox",
+                "outbox_dir": "outbox"
+            }),
+        })
+        .await?;
+
+    let error = state
+        .update_channel(
+            "fs-local",
+            UpdateChannelInput {
+                settings: Some(json!({
+                    "poll_interval_ms": 0
+                })),
+                ..UpdateChannelInput::default()
+            },
+        )
+        .await
+        .expect_err("invalid fs poll interval should fail");
+    assert!(error.to_string().contains("poll_interval_ms"));
 
     Ok(())
 }

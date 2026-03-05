@@ -206,6 +206,12 @@ Channel settings are intentionally adapter-specific. The daemon accepts repeated
 `--setting key=value` entries and persists them into `channel.toml`. Values are
 parsed as JSON when possible, otherwise they are stored as strings.
 
+For known channel kinds (`fs`, `discord`), settings are validated on
+`channel.create` and `channel.update` before write/rescan.
+
+`channel.update --setting ...` performs a partial merge into existing settings
+rather than replacing the whole settings table.
+
 `kind = "fs"` is currently available as the first built-in adapter:
 
 - inbound messages are read from `<channel-dir>/inbox/*.json`
@@ -236,6 +242,10 @@ When a channel is `enabled`, the daemon owns the runtime lifecycle:
 - `channel.status <id>` reports live runtime status (`starting`, `running`, `stopped`, `failed`, `unsupported`)
 - `daemon.status` includes a `channel_runtimes` snapshot for control-plane visibility
 - channel runtime state updates automatically after channel/agent/harness/runtime changes and watcher rescans
+
+Channel runtime events are also streamed via `runtime.events.subscribe`:
+- `channel.runtime.updated` for state transitions and error updates
+- `channel.runtime.removed` when a runtime disappears from the active set
 
 ### Sessions
 

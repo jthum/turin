@@ -5,11 +5,12 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, broadcast};
 
+use crate::daemon::protocol::EventEnvelope;
 use crate::daemon::registry::DiscoveredChannel;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ChannelRuntimeSnapshot {
     pub id: String,
     pub kind: String,
@@ -57,13 +58,15 @@ struct Inner {
 
 pub struct ChannelRuntimeManager {
     socket_path: PathBuf,
+    event_tx: broadcast::Sender<EventEnvelope>,
     inner: Arc<Mutex<Inner>>,
 }
 
 impl ChannelRuntimeManager {
-    pub fn new(socket_path: PathBuf) -> Self {
+    pub fn new(socket_path: PathBuf, event_tx: broadcast::Sender<EventEnvelope>) -> Self {
         Self {
             socket_path,
+            event_tx,
             inner: Arc::new(Mutex::new(Inner {
                 by_id: HashMap::new(),
                 handles: HashMap::new(),
@@ -94,6 +97,8 @@ impl ChannelRuntimeManager {
 
         let mut stops = Vec::new();
         let mut starts = Vec::new();
+        let mut removed = Vec::new();
+        let mut updates = Vec::new();
 
         {
             let mut inner = self.inner.lock().await;
@@ -105,6 +110,7 @@ impl ChannelRuntimeManager {
                         stops.push(handle);
                     }
                     inner.by_id.remove(&channel_id);
+                    removed.push(channel_id);
                 }
             }
 
@@ -126,8 +132,8 @@ impl ChannelRuntimeManager {
                     if let Some(handle) = inner.handles.remove(&channel.id) {
                         stops.push(handle);
                     }
-                    inner.by_id.insert(
-                        channel.id.clone(),
+                    upsert_snapshot(
+                        &mut inner,
                         ChannelRuntimeSnapshot {
                             id: channel.id.clone(),
                             kind: channel.kind.clone(),
@@ -139,13 +145,14 @@ impl ChannelRuntimeManager {
                                 channel.kind,
                             )),
                         },
+                        &mut updates,
                     );
                     continue;
                 }
 
                 if needs_start || needs_restart {
-                    inner.by_id.insert(
-                        channel.id.clone(),
+                    upsert_snapshot(
+                        &mut inner,
                         ChannelRuntimeSnapshot {
                             id: channel.id.clone(),
                             kind: channel.kind.clone(),
@@ -154,11 +161,14 @@ impl ChannelRuntimeManager {
                             state: "starting".to_string(),
                             last_error: None,
                         },
+                        &mut updates,
                     );
                     starts.push(channel.clone());
                 }
             }
         }
+        self.emit_runtime_removed(removed);
+        self.emit_runtime_updates(updates);
 
         for handle in stops {
             let _ = handle.shutdown_tx.send(true);
@@ -187,6 +197,7 @@ impl ChannelRuntimeManager {
 
     pub async fn shutdown(&self) {
         let mut handles = Vec::new();
+        let mut updates = Vec::new();
         {
             let mut inner = self.inner.lock().await;
             for (_, handle) in inner.handles.drain() {
@@ -194,8 +205,10 @@ impl ChannelRuntimeManager {
             }
             for status in inner.by_id.values_mut() {
                 status.state = "stopped".to_string();
+                updates.push(status.clone());
             }
         }
+        self.emit_runtime_updates(updates);
 
         for handle in handles {
             let _ = handle.shutdown_tx.send(true);
@@ -205,6 +218,7 @@ impl ChannelRuntimeManager {
 
     async fn start_fs_channel(&self, workspace_root: PathBuf, channel: DesiredChannel) {
         let socket_path = self.socket_path.clone();
+        let event_tx = self.event_tx.clone();
         let inner = Arc::clone(&self.inner);
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -241,6 +255,7 @@ impl ChannelRuntimeManager {
                     if let Some(status) = guard.by_id.get_mut(&channel.id) {
                         status.state = "running".to_string();
                         status.last_error = None;
+                        emit_runtime_update(&event_tx, status);
                     }
                 }
 
@@ -257,10 +272,12 @@ impl ChannelRuntimeManager {
                     Ok(()) => {
                         status.state = "stopped".to_string();
                         status.last_error = None;
+                        emit_runtime_update(&event_tx, status);
                     }
                     Err(err) => {
                         status.state = "failed".to_string();
                         status.last_error = Some(format!("{:#}", err));
+                        emit_runtime_update(&event_tx, status);
                     }
                 }
             }
@@ -279,6 +296,7 @@ impl ChannelRuntimeManager {
 
     async fn start_discord_channel(&self, workspace_root: PathBuf, channel: DesiredChannel) {
         let socket_path = self.socket_path.clone();
+        let event_tx = self.event_tx.clone();
         let inner = Arc::clone(&self.inner);
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -317,6 +335,7 @@ impl ChannelRuntimeManager {
                     if let Some(status) = guard.by_id.get_mut(&channel.id) {
                         status.state = "running".to_string();
                         status.last_error = None;
+                        emit_runtime_update(&event_tx, status);
                     }
                 }
 
@@ -333,10 +352,12 @@ impl ChannelRuntimeManager {
                     Ok(()) => {
                         status.state = "stopped".to_string();
                         status.last_error = None;
+                        emit_runtime_update(&event_tx, status);
                     }
                     Err(err) => {
                         status.state = "failed".to_string();
                         status.last_error = Some(format!("{:#}", err));
+                        emit_runtime_update(&event_tx, status);
                     }
                 }
             }
@@ -384,8 +405,48 @@ impl ChannelRuntimeManager {
         let mut inner = self.inner.lock().await;
         Self::prune_finished_inner(&mut inner);
     }
+
+    fn emit_runtime_updates(&self, updates: Vec<ChannelRuntimeSnapshot>) {
+        for snapshot in updates {
+            let _ = self.event_tx.send(EventEnvelope::new(
+                "channel.runtime.updated",
+                serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::json!({})),
+            ));
+        }
+    }
+
+    fn emit_runtime_removed(&self, removed: Vec<String>) {
+        for channel_id in removed {
+            let _ = self.event_tx.send(EventEnvelope::new(
+                "channel.runtime.removed",
+                serde_json::json!({ "id": channel_id }),
+            ));
+        }
+    }
 }
 
 fn is_supported_kind(kind: &str) -> bool {
     matches!(kind, "fs" | "discord")
+}
+
+fn emit_runtime_update(
+    event_tx: &broadcast::Sender<EventEnvelope>,
+    snapshot: &ChannelRuntimeSnapshot,
+) {
+    let _ = event_tx.send(EventEnvelope::new(
+        "channel.runtime.updated",
+        serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::json!({})),
+    ));
+}
+
+fn upsert_snapshot(
+    inner: &mut Inner,
+    snapshot: ChannelRuntimeSnapshot,
+    updates: &mut Vec<ChannelRuntimeSnapshot>,
+) {
+    let changed = inner.by_id.get(&snapshot.id) != Some(&snapshot);
+    if changed {
+        updates.push(snapshot.clone());
+    }
+    inner.by_id.insert(snapshot.id.clone(), snapshot);
 }

@@ -674,6 +674,49 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn daemon_event_subscription_receives_channel_runtime_events() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+    let (_ack, _snapshot, mut subscription) = daemon.subscribe(Default::default()).await?;
+
+    let _created = result_value(
+        daemon
+            .request(DaemonRequest::ChannelCreate(
+                turin::daemon::protocol::CreateChannelParams {
+                    id: "fs-events".to_string(),
+                    kind: "fs".to_string(),
+                    agent_id: "default".to_string(),
+                    idle_ttl_secs: Some(600),
+                    enabled: true,
+                    settings: Some(serde_json::json!({
+                        "inbox_dir": "inbox",
+                        "outbox_dir": "outbox",
+                        "processed_dir": "processed",
+                        "failed_dir": "failed",
+                        "poll_interval_ms": 25,
+                    })),
+                },
+            ))
+            .await?,
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut saw_update = false;
+    while Instant::now() < deadline {
+        let event = timeout(Duration::from_millis(750), subscription.next_event()).await;
+        let Ok(Ok(event)) = event else {
+            continue;
+        };
+        if event.event == "channel.runtime.updated" && event.data["id"] == "fs-events" {
+            saw_update = true;
+            break;
+        }
+    }
+    assert!(saw_update, "expected channel.runtime.updated for fs-events");
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn daemon_channel_registry_round_trip_over_socket() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
     let channels_dir = daemon.tempdir.path().join("workspace/channels/discord");
@@ -686,6 +729,7 @@ agent_id = "default"
 enabled = true
 idle_ttl_secs = 600
 token_env = "DISCORD_TOKEN"
+channel_id = "1234567890"
 "#,
     )?;
 
@@ -738,6 +782,7 @@ async fn daemon_channel_management_round_trip_over_socket() -> Result<()> {
                     enabled: true,
                     settings: Some(serde_json::json!({
                         "token_env": "DISCORD_TOKEN",
+                        "channel_id": "1234567890",
                         "allow_dm": true,
                     })),
                 },
@@ -766,6 +811,7 @@ async fn daemon_channel_management_round_trip_over_socket() -> Result<()> {
     assert_eq!(updated["idle_ttl_secs"], 900);
     assert_eq!(updated["settings"]["token_env"], "NEW_DISCORD_TOKEN");
     assert_eq!(updated["settings"]["guild_id"], "12345");
+    assert_eq!(updated["settings"]["channel_id"], "1234567890");
 
     let disabled = result_value(
         daemon
@@ -808,6 +854,40 @@ async fn daemon_channel_management_round_trip_over_socket() -> Result<()> {
             .path()
             .join("workspace/channels/discord")
             .exists()
+    );
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_channel_create_rejects_invalid_known_kind_settings() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+
+    let response = daemon
+        .request(DaemonRequest::ChannelCreate(
+            turin::daemon::protocol::CreateChannelParams {
+                id: "discord-bad".to_string(),
+                kind: "discord".to_string(),
+                agent_id: "default".to_string(),
+                idle_ttl_secs: Some(600),
+                enabled: true,
+                settings: Some(serde_json::json!({
+                    "token_env": "DISCORD_TOKEN_ONLY"
+                })),
+            },
+        ))
+        .await?;
+
+    assert!(!response.ok, "invalid settings should be rejected");
+    let error_message = response
+        .error
+        .as_ref()
+        .map(|error| error.message.clone())
+        .unwrap_or_default();
+    assert!(
+        error_message.contains("channel_id"),
+        "unexpected validation error: {}",
+        error_message
     );
 
     daemon.stop().await

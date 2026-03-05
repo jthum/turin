@@ -149,6 +149,7 @@ pub struct DiscordChannelDriver {
     last_seen_message_id: Option<String>,
     initialized: bool,
     gateway: Option<GatewayConnection>,
+    reconnect_attempts: u32,
 }
 
 impl DiscordChannelDriver {
@@ -172,6 +173,7 @@ impl DiscordChannelDriver {
             last_seen_message_id: None,
             initialized: false,
             gateway: None,
+            reconnect_attempts: 0,
         })
     }
 
@@ -209,7 +211,13 @@ impl DiscordChannelDriver {
                 return Ok(None);
             }
 
-            self.ensure_gateway_connected().await?;
+            if let Err(_err) = self.ensure_gateway_connected().await {
+                let backoff = self.next_reconnect_delay();
+                if self.sleep_or_shutdown(backoff).await {
+                    return Ok(None);
+                }
+                continue;
+            }
             let mut connection = match self.gateway.take() {
                 Some(connection) => connection,
                 None => continue,
@@ -247,6 +255,10 @@ impl DiscordChannelDriver {
 
             if reconnect {
                 self.gateway = None;
+                let backoff = self.next_reconnect_delay();
+                if self.sleep_or_shutdown(backoff).await {
+                    return Ok(None);
+                }
                 continue;
             }
 
@@ -298,6 +310,7 @@ impl DiscordChannelDriver {
             return Ok(());
         }
         self.gateway = Some(self.connect_gateway().await?);
+        self.reconnect_attempts = 0;
         Ok(())
     }
 
@@ -583,6 +596,22 @@ impl DiscordChannelDriver {
             return Ok(response);
         }
     }
+
+    fn next_reconnect_delay(&mut self) -> Duration {
+        self.reconnect_attempts = self.reconnect_attempts.saturating_add(1);
+        let exponent = self.reconnect_attempts.min(6);
+        let base_ms = 250u64.saturating_mul(2u64.saturating_pow(exponent));
+        Duration::from_millis(base_ms.min(8_000))
+    }
+
+    async fn sleep_or_shutdown(&mut self, duration: Duration) -> bool {
+        tokio::select! {
+            changed = self.shutdown_rx.changed() => {
+                changed.is_ok() && *self.shutdown_rx.borrow()
+            }
+            _ = sleep(duration) => false
+        }
+    }
 }
 
 #[async_trait]
@@ -825,6 +854,7 @@ mod tests {
             last_seen_message_id: None,
             initialized: false,
             gateway: None,
+            reconnect_attempts: 0,
         };
         let message = DiscordMessage {
             id: "1".to_string(),
