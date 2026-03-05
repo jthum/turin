@@ -170,7 +170,7 @@ impl DiscordChannelDriver {
     ) -> Result<Self> {
         let config = DiscordChannelDriverConfig::from_settings(settings)?;
         let client = reqwest::Client::builder()
-            .user_agent("turin-channel-discord/0.21.0")
+            .user_agent("turin-channel-discord/0.22.0")
             .build()
             .context(
                 "[discord_http_client_init_failed] Failed to build Discord adapter HTTP client",
