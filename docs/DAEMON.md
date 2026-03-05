@@ -192,6 +192,7 @@ turin daemon harness delete <id>
 ```bash
 turin daemon channel list
 turin daemon channel create fs-local --kind fs --agent default --setting inbox_dir=inbox --setting outbox_dir=outbox
+turin daemon channel create discord-dev --kind discord --agent default --setting token_env=DISCORD_TOKEN --setting channel_id=1234567890
 turin daemon channel get fs-local
 turin daemon channel status fs-local
 turin daemon channel issues fs-local
@@ -211,6 +212,22 @@ parsed as JSON when possible, otherwise they are stored as strings.
 - outbound messages are written to `<channel-dir>/outbox/*.json`
 - processed inbound files are moved to `<channel-dir>/processed/`
 - invalid inbound files are moved to `<channel-dir>/failed/`
+
+`kind = "discord"` is also available as a daemon-owned adapter:
+
+- polls Discord channel messages over HTTP for inbound events
+- posts outbound responses back to Discord messages API
+- requires:
+  - `token_env` (environment variable containing a Discord bot token)
+  - `channel_id` (Discord channel/thread ID to poll and respond in)
+- optional settings:
+  - `poll_interval_ms`
+  - `max_messages_per_poll`
+  - `workspace_id`
+  - `room_id`
+  - `start_from_latest`
+  - `ignore_bot_messages`
+  - `base_url`
 
 When a channel is `enabled`, the daemon owns the runtime lifecycle:
 - `channel.status <id>` reports live runtime status (`starting`, `running`, `stopped`, `failed`, `unsupported`)

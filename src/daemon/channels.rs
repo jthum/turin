@@ -122,7 +122,7 @@ impl ChannelRuntimeManager {
                     stops.push(handle);
                 }
 
-                if channel.kind != "fs" {
+                if !is_supported_kind(&channel.kind) {
                     if let Some(handle) = inner.handles.remove(&channel.id) {
                         stops.push(handle);
                     }
@@ -135,8 +135,8 @@ impl ChannelRuntimeManager {
                             directory: channel.directory.display().to_string(),
                             state: "unsupported".to_string(),
                             last_error: Some(format!(
-                                "No daemon-owned runner available for channel kind '{}'",
-                                channel.kind
+                                "No daemon-owned runner available for channel kind '{}' (supported: fs, discord)",
+                                channel.kind,
                             )),
                         },
                     );
@@ -166,7 +166,7 @@ impl ChannelRuntimeManager {
         }
 
         for channel in starts {
-            self.start_fs_channel(workspace_root.clone(), channel).await;
+            self.start_channel(workspace_root.clone(), channel).await;
         }
 
         self.prune_finished().await;
@@ -277,6 +277,90 @@ impl ChannelRuntimeManager {
         );
     }
 
+    async fn start_discord_channel(&self, workspace_root: PathBuf, channel: DesiredChannel) {
+        let socket_path = self.socket_path.clone();
+        let inner = Arc::clone(&self.inner);
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let channel_id = channel.id.clone();
+        let signature = channel.signature();
+
+        let join = tokio::spawn(async move {
+            let run_result = async {
+                let daemon = turin_daemon_client::DaemonClient::new(&socket_path);
+                let binding_state = workspace_root
+                    .join(".turin/channels")
+                    .join(format!("{}-bindings.json", channel.id));
+                let runner = turin_channel_runner::ChannelRunner::new(
+                    daemon,
+                    turin_channel_runner::RunnerConfig {
+                        state_path: binding_state,
+                        idle_ttl: channel.idle_ttl_secs.map(Duration::from_secs),
+                    },
+                );
+
+                let mut driver = turin_channel_discord::DiscordChannelDriver::from_settings(
+                    &channel.id,
+                    &channel.settings,
+                    shutdown_rx,
+                )
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to initialize discord channel driver '{}'",
+                        channel.id
+                    )
+                })?;
+
+                {
+                    let mut guard = inner.lock().await;
+                    if let Some(status) = guard.by_id.get_mut(&channel.id) {
+                        status.state = "running".to_string();
+                        status.last_error = None;
+                    }
+                }
+
+                runner
+                    .run_driver(&channel.agent_id, &mut driver, Some(120_000))
+                    .await
+                    .with_context(|| format!("Channel '{}' runner failed", channel.id))
+            }
+            .await;
+
+            let mut guard = inner.lock().await;
+            if let Some(status) = guard.by_id.get_mut(&channel.id) {
+                match run_result {
+                    Ok(()) => {
+                        status.state = "stopped".to_string();
+                        status.last_error = None;
+                    }
+                    Err(err) => {
+                        status.state = "failed".to_string();
+                        status.last_error = Some(err.to_string());
+                    }
+                }
+            }
+        });
+
+        let mut guard = self.inner.lock().await;
+        guard.handles.insert(
+            channel_id,
+            RuntimeHandle {
+                signature,
+                shutdown_tx,
+                join,
+            },
+        );
+    }
+
+    async fn start_channel(&self, workspace_root: PathBuf, channel: DesiredChannel) {
+        match channel.kind.as_str() {
+            "fs" => self.start_fs_channel(workspace_root, channel).await,
+            "discord" => self.start_discord_channel(workspace_root, channel).await,
+            _ => {}
+        }
+    }
+
     fn prune_finished_inner(inner: &mut Inner) {
         let finished: Vec<String> = inner
             .handles
@@ -300,4 +384,8 @@ impl ChannelRuntimeManager {
         let mut inner = self.inner.lock().await;
         Self::prune_finished_inner(&mut inner);
     }
+}
+
+fn is_supported_kind(kind: &str) -> bool {
+    matches!(kind, "fs" | "discord")
 }

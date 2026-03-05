@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `turin-channel-fs`, a filesystem-backed channel adapter crate.
   - `kind = "fs"` reads inbound messages from `inbox/*.json` and writes outbound messages to `outbox/*.json`.
   - Added end-to-end integration coverage for `fs` adapter + `turin-channel-runner` + live daemon.
+- **Discord Channel Adapter**
+  - Added `turin-channel-discord`, a concrete Discord adapter crate.
+  - `kind = "discord"` is now daemon-runnable with HTTP polling + outbound message posting.
+  - Added channel-neutral normalization and structured outbound rendering for Discord text/code-block responses.
 
 ## [0.21.0] - 2026-03-03
 

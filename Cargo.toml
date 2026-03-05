@@ -6,6 +6,7 @@ members = [
     "crates/turin-channel-core",
     "crates/turin-channel-runner",
     "crates/turin-channel-fs",
+    "crates/turin-channel-discord",
 ]
 resolver = "2"
 
@@ -44,6 +45,7 @@ turin-daemon-protocol = { path = "crates/turin-daemon-protocol" }
 turin-daemon-client = { path = "crates/turin-daemon-client" }
 turin-channel-runner = { path = "crates/turin-channel-runner" }
 turin-channel-fs = { path = "crates/turin-channel-fs" }
+turin-channel-discord = { path = "crates/turin-channel-discord" }
 
 # Inference SDK family (unified provider layer)
 inference-sdk-core = { git = "https://github.com/jthum/inference-sdk-rust", rev = "bd64dd2f9fd7a58e8c4e270c8b931d13de2971c6" }
@@ -84,6 +86,7 @@ turin-daemon-protocol = { path = "crates/turin-daemon-protocol" }
 turin-channel-core = { path = "crates/turin-channel-core" }
 turin-channel-runner = { path = "crates/turin-channel-runner" }
 turin-channel-fs = { path = "crates/turin-channel-fs" }
+turin-channel-discord = { path = "crates/turin-channel-discord" }
 [profile.release]
 opt-level = "z"     # Optimize for size
 lto = true          # Enable Link Time Optimization
