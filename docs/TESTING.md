@@ -18,6 +18,7 @@ These should be your default validation loop.
 ### 2. Live endpoint validation (manual / opt-in)
 
 - `scripts/live_minimax_smoke.sh`
+- `scripts/live_discord_channel_smoke.sh`
 - project-specific real-harness runs using your provider credentials
 
 Live tests are never run automatically by Turin’s standard cargo commands.
@@ -156,6 +157,20 @@ scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core --
 ```
 
 See `docs/LIVE_PROVIDER_TESTING.md` for environment setup and troubleshooting.
+
+## Discord Channel Live Validation (Manual / Opt-In)
+
+When validating daemon-owned channel runtimes against real Discord:
+
+```bash
+scripts/live_discord_channel_smoke.sh \
+  --channel-id "$DISCORD_CHANNEL_ID" \
+  --token-env-name DISCORD_BOT_TOKEN \
+  --transport gateway
+```
+
+This script provisions a temporary workspace, starts the daemon, creates a
+`kind=discord` channel, and verifies that runtime reaches `running`.
 
 ## Suggested Validation Workflow for Major Changes
 

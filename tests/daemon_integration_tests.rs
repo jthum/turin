@@ -949,6 +949,10 @@ async fn daemon_fs_channel_runtime_processes_inbox_and_reports_runtime_status() 
     let runtime = wait_for_channel_state(&daemon, "fs-local", "running", 10).await?;
     assert_eq!(runtime["kind"], "fs");
     assert_eq!(runtime["agent_id"], "default");
+    assert!(
+        runtime["start_count"].as_u64().unwrap_or_default() >= 1,
+        "fs runtime should record at least one start"
+    );
 
     let daemon_status = result_value(
         daemon
@@ -1066,6 +1070,15 @@ async fn daemon_discord_channel_reports_failed_runtime_when_token_is_missing() -
     let error = failed["last_error"]
         .as_str()
         .context("discord-local failed state should include last_error")?;
+    let error_code = failed["last_error_code"]
+        .as_str()
+        .context("discord-local failed state should include last_error_code")?;
+    assert!(
+        error_code.contains("discord_auth_missing_token")
+            || error_code.contains("auth_missing_token"),
+        "unexpected discord runtime error code: {}",
+        error_code
+    );
     assert!(
         error.contains("DISCORD_TOKEN_MISSING_FOR_TEST"),
         "unexpected discord runtime error: {}",

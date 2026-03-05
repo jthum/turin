@@ -2,7 +2,8 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::sleep;
@@ -17,6 +18,10 @@ use turin_channel_runner::ChannelDriver;
 const DEFAULT_BASE_URL: &str = "https://discord.com/api/v10";
 const DEFAULT_GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=10&encoding=json";
 const DEFAULT_GATEWAY_INTENTS: u64 = (1 << 9) | (1 << 12) | (1 << 15);
+const DISCORD_CONTENT_MAX_LEN: usize = 2_000;
+const DISCORD_EMBEDS_MAX: usize = 10;
+const DISCORD_FILES_MAX: usize = 10;
+const SEEN_MESSAGE_IDS_LIMIT: usize = 1_024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscordTransportMode {
@@ -50,10 +55,10 @@ impl DiscordChannelDriverConfig {
             .get("token_env")
             .and_then(|v| v.as_str())
             .filter(|v| !v.trim().is_empty())
-            .ok_or_else(|| anyhow!("Discord channel setting 'token_env' is required"))?;
-        let token = std::env::var(token_env).with_context(|| {
-            format!(
-                "Discord bot token env var '{}' is not set for channel adapter",
+            .ok_or_else(|| anyhow!("[discord_config_missing_token_env] Discord channel setting 'token_env' is required"))?;
+        let token = std::env::var(token_env).map_err(|_| {
+            anyhow!(
+                "[discord_auth_missing_token] Discord bot token env var '{}' is not set for channel adapter",
                 token_env
             )
         })?;
@@ -62,7 +67,7 @@ impl DiscordChannelDriverConfig {
             .get("channel_id")
             .and_then(|v| v.as_str())
             .filter(|v| !v.trim().is_empty())
-            .ok_or_else(|| anyhow!("Discord channel setting 'channel_id' is required"))?
+            .ok_or_else(|| anyhow!("[discord_config_missing_channel_id] Discord channel setting 'channel_id' is required"))?
             .to_string();
 
         let poll_interval_ms = settings
@@ -149,6 +154,11 @@ pub struct DiscordChannelDriver {
     last_seen_message_id: Option<String>,
     initialized: bool,
     gateway: Option<GatewayConnection>,
+    last_gateway_seq: Option<u64>,
+    gateway_session_id: Option<String>,
+    resume_gateway_url: Option<String>,
+    seen_message_ids: VecDeque<String>,
+    seen_message_set: HashSet<String>,
     reconnect_attempts: u32,
 }
 
@@ -162,7 +172,9 @@ impl DiscordChannelDriver {
         let client = reqwest::Client::builder()
             .user_agent("turin-channel-discord/0.21.0")
             .build()
-            .context("Failed to build Discord adapter HTTP client")?;
+            .context(
+                "[discord_http_client_init_failed] Failed to build Discord adapter HTTP client",
+            )?;
 
         Ok(Self {
             channel_runtime_id: channel_runtime_id.into(),
@@ -173,6 +185,11 @@ impl DiscordChannelDriver {
             last_seen_message_id: None,
             initialized: false,
             gateway: None,
+            last_gateway_seq: None,
+            gateway_session_id: None,
+            resume_gateway_url: None,
+            seen_message_ids: VecDeque::new(),
+            seen_message_set: HashSet::new(),
             reconnect_attempts: 0,
         })
     }
@@ -314,19 +331,23 @@ impl DiscordChannelDriver {
         Ok(())
     }
 
-    async fn connect_gateway(&self) -> Result<GatewayConnection> {
-        let (mut stream, _) = connect_async(&self.config.gateway_url)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to connect to Discord gateway '{}'",
-                    self.config.gateway_url
-                )
-            })?;
+    async fn connect_gateway(&mut self) -> Result<GatewayConnection> {
+        let gateway_url = self
+            .resume_gateway_url
+            .as_deref()
+            .unwrap_or(&self.config.gateway_url);
+        let (mut stream, _) = connect_async(gateway_url).await.with_context(|| {
+            format!(
+                "[discord_gateway_connect_failed] Failed to connect to Discord gateway '{}'",
+                gateway_url
+            )
+        })?;
 
         let hello_payload = loop {
             let Some(msg) = stream.next().await else {
-                anyhow::bail!("Discord gateway closed before HELLO");
+                anyhow::bail!(
+                    "[discord_gateway_closed_before_hello] Discord gateway closed before HELLO"
+                );
             };
             if let Some(payload) = decode_gateway_payload(msg?)? {
                 break payload;
@@ -335,37 +356,33 @@ impl DiscordChannelDriver {
 
         if hello_payload.op != 10 {
             anyhow::bail!(
-                "Discord gateway expected HELLO (op=10), got op={} instead",
+                "[discord_gateway_unexpected_hello] Discord gateway expected HELLO (op=10), got op={} instead",
                 hello_payload.op
             );
         }
 
-        let hello: GatewayHello = serde_json::from_value(hello_payload.d)
-            .context("Failed to decode Discord HELLO payload")?;
+        let hello: GatewayHello = serde_json::from_value(hello_payload.d).context(
+            "[discord_gateway_decode_hello_failed] Failed to decode Discord HELLO payload",
+        )?;
         let heartbeat_interval = Duration::from_millis(hello.heartbeat_interval.max(100));
 
-        let identify = serde_json::json!({
-            "op": 2,
-            "d": {
-                "token": self.config.token,
-                "intents": self.config.gateway_intents,
-                "properties": {
-                    "os": "linux",
-                    "browser": "turin",
-                    "device": "turin"
-                }
-            }
-        });
+        let payload = if let Some(resume) = self.resume_payload() {
+            resume
+        } else {
+            self.identify_payload()
+        };
         stream
-            .send(WsMessage::Text(identify.to_string()))
+            .send(WsMessage::Text(payload.to_string()))
             .await
-            .context("Failed to send Discord IDENTIFY payload")?;
+            .context(
+                "[discord_gateway_auth_payload_failed] Failed to send Discord gateway auth payload",
+            )?;
 
         Ok(GatewayConnection {
             stream,
             heartbeat_interval,
             next_heartbeat_at: tokio::time::Instant::now() + heartbeat_interval,
-            seq: hello_payload.s,
+            seq: self.last_gateway_seq.or(hello_payload.s),
         })
     }
 
@@ -378,22 +395,51 @@ impl DiscordChannelDriver {
             .stream
             .send(WsMessage::Text(heartbeat.to_string()))
             .await
-            .context("Failed to send Discord heartbeat")?;
+            .context("[discord_gateway_heartbeat_send_failed] Failed to send Discord heartbeat")?;
         connection.next_heartbeat_at = tokio::time::Instant::now() + connection.heartbeat_interval;
         Ok(())
     }
 
     async fn process_gateway_message(
-        &self,
+        &mut self,
         connection: &mut GatewayConnection,
         message: WsMessage,
     ) -> Result<GatewayProcessResult> {
+        match message {
+            WsMessage::Ping(payload) => {
+                connection
+                    .stream
+                    .send(WsMessage::Pong(payload))
+                    .await
+                    .context(
+                        "[discord_gateway_pong_send_failed] Failed to respond to Discord ping",
+                    )?;
+                return Ok(GatewayProcessResult::Continue);
+            }
+            WsMessage::Close(frame) => {
+                let close_code = frame.as_ref().map(|f| f.code.into()).unwrap_or(0u16);
+                if is_fatal_gateway_close_code(close_code) {
+                    anyhow::bail!(
+                        "[discord_gateway_close_fatal_{}] Discord gateway closed with fatal close code {}",
+                        close_code,
+                        close_code
+                    );
+                }
+                return Ok(GatewayProcessResult::Reconnect);
+            }
+            WsMessage::Pong(_) | WsMessage::Frame(_) => {
+                return Ok(GatewayProcessResult::Continue);
+            }
+            _ => {}
+        }
+
         let Some(payload) = decode_gateway_payload(message)? else {
             return Ok(GatewayProcessResult::Continue);
         };
 
         if let Some(seq) = payload.s {
             connection.seq = Some(seq);
+            self.last_gateway_seq = Some(seq);
         }
 
         match payload.op {
@@ -402,10 +448,17 @@ impl DiscordChannelDriver {
                 self.send_gateway_heartbeat(connection).await?;
                 Ok(GatewayProcessResult::Continue)
             }
-            7 | 9 => Ok(GatewayProcessResult::Reconnect),
+            7 => Ok(GatewayProcessResult::Reconnect),
+            9 => {
+                let can_resume = payload.d.as_bool().unwrap_or(false);
+                if !can_resume {
+                    self.clear_gateway_resume_state();
+                }
+                Ok(GatewayProcessResult::Reconnect)
+            }
             10 => {
                 let hello: GatewayHello = serde_json::from_value(payload.d)
-                    .context("Failed to decode Discord HELLO payload during reconnect")?;
+                    .context("[discord_gateway_decode_reconnect_hello_failed] Failed to decode Discord HELLO payload during reconnect")?;
                 connection.heartbeat_interval =
                     Duration::from_millis(hello.heartbeat_interval.max(100));
                 connection.next_heartbeat_at =
@@ -418,13 +471,26 @@ impl DiscordChannelDriver {
     }
 
     fn process_gateway_dispatch(
-        &self,
+        &mut self,
         event_name: Option<&str>,
         data: serde_json::Value,
     ) -> Result<GatewayProcessResult> {
+        if event_name == Some("READY") {
+            let ready: GatewayReady = serde_json::from_value(data).context(
+                "[discord_gateway_decode_ready_failed] Failed to decode Discord READY payload",
+            )?;
+            self.gateway_session_id = Some(ready.session_id);
+            self.resume_gateway_url = Some(ready.resume_gateway_url);
+            return Ok(GatewayProcessResult::Continue);
+        }
+
+        if event_name == Some("RESUMED") {
+            return Ok(GatewayProcessResult::Continue);
+        }
+
         if event_name == Some("MESSAGE_CREATE") {
             let message: DiscordMessage =
-                serde_json::from_value(data).context("Failed to decode Discord MESSAGE_CREATE")?;
+                serde_json::from_value(data).context("[discord_gateway_decode_message_create_failed] Failed to decode Discord MESSAGE_CREATE")?;
             if message.channel_id != self.config.channel_id {
                 return Ok(GatewayProcessResult::Continue);
             }
@@ -436,7 +502,10 @@ impl DiscordChannelDriver {
         Ok(GatewayProcessResult::Continue)
     }
 
-    fn normalize_message(&self, message: DiscordMessage) -> Option<InboundEvent> {
+    fn normalize_message(&mut self, message: DiscordMessage) -> Option<InboundEvent> {
+        if !self.track_seen_message(&message.id) {
+            return None;
+        }
         if self.config.ignore_bot_messages && message.author.bot.unwrap_or(false) {
             return None;
         }
@@ -503,6 +572,54 @@ impl DiscordChannelDriver {
         })
     }
 
+    fn identify_payload(&self) -> serde_json::Value {
+        serde_json::json!({
+            "op": 2,
+            "d": {
+                "token": self.config.token,
+                "intents": self.config.gateway_intents,
+                "properties": {
+                    "os": "linux",
+                    "browser": "turin",
+                    "device": "turin"
+                }
+            }
+        })
+    }
+
+    fn resume_payload(&self) -> Option<serde_json::Value> {
+        let session_id = self.gateway_session_id.as_deref()?;
+        let seq = self.last_gateway_seq?;
+        Some(serde_json::json!({
+            "op": 6,
+            "d": {
+                "token": self.config.token,
+                "session_id": session_id,
+                "seq": seq
+            }
+        }))
+    }
+
+    fn clear_gateway_resume_state(&mut self) {
+        self.gateway_session_id = None;
+        self.resume_gateway_url = None;
+        self.last_gateway_seq = None;
+    }
+
+    fn track_seen_message(&mut self, message_id: &str) -> bool {
+        if self.seen_message_set.contains(message_id) {
+            return false;
+        }
+        self.seen_message_set.insert(message_id.to_string());
+        self.seen_message_ids.push_back(message_id.to_string());
+        while self.seen_message_ids.len() > SEEN_MESSAGE_IDS_LIMIT {
+            if let Some(old) = self.seen_message_ids.pop_front() {
+                self.seen_message_set.remove(&old);
+            }
+        }
+        true
+    }
+
     async fn fetch_latest_message_id(&self) -> Result<Option<String>> {
         let mut messages = self.fetch_messages(None, 1).await?;
         Ok(messages.pop().map(|msg| msg.id))
@@ -525,39 +642,65 @@ impl DiscordChannelDriver {
                     .header("Authorization", format!("Bot {}", self.config.token))
                     .query(&params)
                     .build()
-                    .context("Failed to build Discord messages request")
+                    .context("[discord_http_build_messages_request_failed] Failed to build Discord messages request")
             })
             .await?;
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             anyhow::bail!(
-                "Discord messages request failed with {}: {}",
+                "[discord_http_messages_failed] Discord messages request failed with {}: {}",
                 status.as_u16(),
                 body
             );
         }
 
-        response
-            .json::<Vec<DiscordMessage>>()
-            .await
-            .context("Failed to decode Discord messages response")
+        response.json::<Vec<DiscordMessage>>().await.context(
+            "[discord_http_decode_messages_failed] Failed to decode Discord messages response",
+        )
     }
 
-    async fn post_message(&self, channel_id: &str, content: String) -> Result<()> {
+    async fn post_message(&self, channel_id: &str, message: DiscordSendMessage) -> Result<()> {
         let url = format!("{}/channels/{}/messages", self.config.base_url, channel_id);
-        let payload = serde_json::json!({ "content": content });
+        let payload = discord_payload_from_message(&message);
 
-        let response = self
-            .request_with_retry(|| {
+        let response = if message.files.is_empty() {
+            self.request_with_retry(|| {
                 self.client
                     .post(&url)
                     .header("Authorization", format!("Bot {}", self.config.token))
                     .json(&payload)
                     .build()
-                    .context("Failed to build Discord send request")
+                    .context("[discord_http_build_send_request_failed] Failed to build Discord send request")
             })
-            .await?;
+            .await?
+        } else {
+            let prepared = prepare_local_files(&message.files).await?;
+            self.request_with_retry(|| {
+                let payload_json = serde_json::to_string(&payload)
+                    .context("Failed to encode Discord multipart payload")?;
+                let mut form = reqwest::multipart::Form::new().text("payload_json", payload_json);
+                for (index, file) in prepared.iter().enumerate() {
+                    let mut part = reqwest::multipart::Part::bytes(file.bytes.clone())
+                        .file_name(file.name.clone());
+                    if let Some(content_type) = &file.content_type {
+                        part = part.mime_str(content_type).with_context(|| {
+                            format!("Invalid content type '{}' for '{}'", content_type, file.name)
+                        })?;
+                    }
+                    form = form.part(format!("files[{index}]"), part);
+                }
+
+                self.client
+                    .post(&url)
+                    .header("Authorization", format!("Bot {}", self.config.token))
+                    .multipart(form)
+                    .build()
+                    .context("[discord_http_build_multipart_send_request_failed] Failed to build Discord multipart send request")
+            })
+            .await?
+        };
+
         let status = response.status();
         if status == reqwest::StatusCode::OK || status == reqwest::StatusCode::CREATED {
             return Ok(());
@@ -565,7 +708,7 @@ impl DiscordChannelDriver {
 
         let body = response.text().await.unwrap_or_default();
         anyhow::bail!(
-            "Discord send request failed with {}: {}",
+            "[discord_send_failed] Discord send request failed with {}: {}",
             status.as_u16(),
             body
         );
@@ -579,18 +722,28 @@ impl DiscordChannelDriver {
         loop {
             attempts += 1;
             let request = request_builder()?;
-            let response = self
-                .client
-                .execute(request)
-                .await
-                .context("Discord request failed")?;
+            let response = match self.client.execute(request).await {
+                Ok(response) => response,
+                Err(error) => {
+                    if attempts < 5 {
+                        sleep(retry_backoff(attempts)).await;
+                        continue;
+                    }
+                    return Err(error)
+                        .context("[discord_http_request_failed] Discord request failed");
+                }
+            };
 
-            if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && attempts < 5 {
-                let body = response
-                    .json::<DiscordRateLimit>()
+            if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && attempts < 6 {
+                let delay = parse_rate_limit_delay(response)
                     .await
-                    .unwrap_or(DiscordRateLimit { retry_after: 1.0 });
-                sleep(Duration::from_secs_f64(body.retry_after.max(0.1))).await;
+                    .unwrap_or_else(|| retry_backoff(attempts));
+                sleep(delay).await;
+                continue;
+            }
+
+            if response.status().is_server_error() && attempts < 5 {
+                sleep(retry_backoff(attempts)).await;
                 continue;
             }
             return Ok(response);
@@ -646,8 +799,11 @@ impl ChannelDriver for DiscordChannelDriver {
         } else {
             conversation.thread_id.clone()
         };
-        let content = render_outbound_message(&message);
-        self.post_message(&channel_id, content).await
+        let outbound_messages = render_outbound_messages(message);
+        for outbound in outbound_messages {
+            self.post_message(&channel_id, outbound).await?;
+        }
+        Ok(())
     }
 
     async fn shutdown(&mut self) -> Result<()> {
@@ -710,12 +866,40 @@ struct GatewayHello {
     heartbeat_interval: u64,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct GatewayReady {
+    session_id: String,
+    resume_gateway_url: String,
+}
+
+#[derive(Debug, Clone)]
+struct LocalAttachmentRef {
+    name: String,
+    path: PathBuf,
+    content_type: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedLocalFile {
+    name: String,
+    content_type: Option<String>,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+struct DiscordSendMessage {
+    content: Option<String>,
+    embeds: Vec<serde_json::Value>,
+    components: Vec<serde_json::Value>,
+    files: Vec<LocalAttachmentRef>,
+}
+
 fn parse_transport_mode(raw: Option<&str>) -> Result<DiscordTransportMode> {
     match raw.unwrap_or("gateway") {
         "gateway" => Ok(DiscordTransportMode::Gateway),
         "polling" => Ok(DiscordTransportMode::Polling),
         other => anyhow::bail!(
-            "Invalid Discord transport '{}'; expected 'gateway' or 'polling'",
+            "[discord_config_invalid_transport] Invalid Discord transport '{}'; expected 'gateway' or 'polling'",
             other
         ),
     }
@@ -725,12 +909,13 @@ fn decode_gateway_payload(message: WsMessage) -> Result<Option<GatewayPayload>> 
     match message {
         WsMessage::Text(text) => {
             let payload = serde_json::from_str::<GatewayPayload>(&text)
-                .context("Invalid Discord text payload")?;
+                .context("[discord_gateway_invalid_text_payload] Invalid Discord text payload")?;
             Ok(Some(payload))
         }
         WsMessage::Binary(binary) => {
-            let payload = serde_json::from_slice::<GatewayPayload>(&binary)
-                .context("Invalid Discord binary payload")?;
+            let payload = serde_json::from_slice::<GatewayPayload>(&binary).context(
+                "[discord_gateway_invalid_binary_payload] Invalid Discord binary payload",
+            )?;
             Ok(Some(payload))
         }
         WsMessage::Ping(_) | WsMessage::Pong(_) | WsMessage::Close(_) | WsMessage::Frame(_) => {
@@ -750,9 +935,101 @@ fn is_newer_snowflake(candidate: &str, current: &str) -> bool {
     }
 }
 
-fn render_outbound_message(message: &OutboundMessage) -> String {
+fn render_outbound_messages(message: OutboundMessage) -> Vec<DiscordSendMessage> {
+    let mut text_chunks = split_for_discord_content(render_text_blocks(&message.blocks));
+    let mut embeds = message.embeds;
+    if embeds.is_empty() {
+        embeds = extract_embeds_from_metadata(&message.metadata);
+    }
+    let mut components = extract_components_from_metadata(&message.metadata);
+    if components.is_empty() {
+        components = message.components;
+    }
+
+    let mut local_files = Vec::new();
+    let mut remote_attachment_urls = Vec::new();
+    for attachment in message.attachments {
+        if let Some(local_path) = attachment.local_path {
+            local_files.push(LocalAttachmentRef {
+                name: attachment.name,
+                path: PathBuf::from(local_path),
+                content_type: attachment.content_type,
+            });
+            continue;
+        }
+        if let Some(url) = attachment.url {
+            remote_attachment_urls.push(url);
+        }
+    }
+    if !remote_attachment_urls.is_empty() {
+        let urls = remote_attachment_urls.join("\n");
+        if !urls.trim().is_empty() {
+            text_chunks.extend(split_for_discord_content(urls));
+        }
+    }
+
+    let mut embed_queue: VecDeque<serde_json::Value> = embeds.into_iter().collect();
+    let mut file_queue: VecDeque<LocalAttachmentRef> = local_files.into_iter().collect();
+    let mut text_queue: VecDeque<String> = text_chunks.into_iter().collect();
+    let mut output = Vec::new();
+    let mut first = true;
+
+    while !text_queue.is_empty() || !embed_queue.is_empty() || !file_queue.is_empty() || first {
+        let content = text_queue.pop_front();
+        let mut embeds_for_message = Vec::new();
+        while embeds_for_message.len() < DISCORD_EMBEDS_MAX {
+            let Some(embed) = embed_queue.pop_front() else {
+                break;
+            };
+            embeds_for_message.push(embed);
+        }
+
+        let mut files_for_message = Vec::new();
+        while files_for_message.len() < DISCORD_FILES_MAX {
+            let Some(file) = file_queue.pop_front() else {
+                break;
+            };
+            files_for_message.push(file);
+        }
+
+        let components_for_message = if first {
+            components.clone()
+        } else {
+            Vec::new()
+        };
+
+        if content.is_none()
+            && embeds_for_message.is_empty()
+            && files_for_message.is_empty()
+            && components_for_message.is_empty()
+        {
+            break;
+        }
+
+        output.push(DiscordSendMessage {
+            content,
+            embeds: embeds_for_message,
+            components: components_for_message,
+            files: files_for_message,
+        });
+        first = false;
+    }
+
+    if output.is_empty() {
+        output.push(DiscordSendMessage {
+            content: Some("(no output)".to_string()),
+            embeds: Vec::new(),
+            components: Vec::new(),
+            files: Vec::new(),
+        });
+    }
+
+    output
+}
+
+fn render_text_blocks(blocks: &[MessageBlock]) -> String {
     let mut chunks = Vec::new();
-    for block in &message.blocks {
+    for block in blocks {
         match block {
             MessageBlock::Text { text } => {
                 if !text.trim().is_empty() {
@@ -765,23 +1042,171 @@ fn render_outbound_message(message: &OutboundMessage) -> String {
             }
         }
     }
+    chunks.join("\n\n")
+}
 
-    if chunks.is_empty() && !message.attachments.is_empty() {
-        chunks.push(
-            message
-                .attachments
+fn split_for_discord_content(content: String) -> Vec<String> {
+    let mut out = Vec::new();
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return out;
+    }
+
+    let mut current = String::new();
+    for line in trimmed.lines() {
+        if line.chars().count() > DISCORD_CONTENT_MAX_LEN {
+            if !current.is_empty() {
+                out.push(current.clone());
+                current.clear();
+            }
+            let mut segment = String::new();
+            for ch in line.chars() {
+                segment.push(ch);
+                if segment.chars().count() >= DISCORD_CONTENT_MAX_LEN {
+                    out.push(segment.clone());
+                    segment.clear();
+                }
+            }
+            if !segment.is_empty() {
+                out.push(segment);
+            }
+            continue;
+        }
+
+        let tentative = if current.is_empty() {
+            line.to_string()
+        } else {
+            format!("{current}\n{line}")
+        };
+        if tentative.chars().count() > DISCORD_CONTENT_MAX_LEN {
+            if !current.is_empty() {
+                out.push(current.clone());
+            }
+            current = line.to_string();
+        } else {
+            current = tentative;
+        }
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
+}
+
+fn extract_embeds_from_metadata(
+    metadata: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<serde_json::Value> {
+    metadata
+        .get("discord_embeds")
+        .or_else(|| metadata.get("embeds"))
+        .and_then(|value| value.as_array())
+        .map(|entries| {
+            entries
                 .iter()
-                .map(|attachment| attachment.name.clone())
-                .collect::<Vec<_>>()
-                .join(", "),
+                .filter(|entry| entry.is_object())
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn extract_components_from_metadata(
+    metadata: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<serde_json::Value> {
+    metadata
+        .get("discord_components")
+        .or_else(|| metadata.get("components"))
+        .and_then(|value| value.as_array())
+        .map(|entries| {
+            entries
+                .iter()
+                .filter(|entry| entry.is_object())
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn discord_payload_from_message(message: &DiscordSendMessage) -> serde_json::Value {
+    let mut payload = serde_json::Map::new();
+    if let Some(content) = &message.content {
+        payload.insert(
+            "content".to_string(),
+            serde_json::Value::String(content.clone()),
         );
     }
-
-    if chunks.is_empty() {
-        "(no output)".to_string()
-    } else {
-        chunks.join("\n\n")
+    if !message.embeds.is_empty() {
+        payload.insert(
+            "embeds".to_string(),
+            serde_json::Value::Array(message.embeds.clone()),
+        );
     }
+    if !message.components.is_empty() {
+        payload.insert(
+            "components".to_string(),
+            serde_json::Value::Array(message.components.clone()),
+        );
+    }
+    serde_json::Value::Object(payload)
+}
+
+async fn prepare_local_files(files: &[LocalAttachmentRef]) -> Result<Vec<PreparedLocalFile>> {
+    let mut prepared = Vec::new();
+    for file in files {
+        let bytes = tokio::fs::read(&file.path).await.with_context(|| {
+            format!("Failed to read local attachment '{}'", file.path.display())
+        })?;
+        prepared.push(PreparedLocalFile {
+            name: file.name.clone(),
+            content_type: file.content_type.clone(),
+            bytes,
+        });
+    }
+    Ok(prepared)
+}
+
+async fn parse_rate_limit_delay(response: reqwest::Response) -> Option<Duration> {
+    let header_delay = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|raw| raw.parse::<f64>().ok())
+        .map(Duration::from_secs_f64);
+    if header_delay.is_some() {
+        return header_delay;
+    }
+
+    let reset_after = response
+        .headers()
+        .get("x-ratelimit-reset-after")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|raw| raw.parse::<f64>().ok())
+        .map(Duration::from_secs_f64);
+    if reset_after.is_some() {
+        return reset_after;
+    }
+
+    let body_delay = response
+        .text()
+        .await
+        .ok()
+        .and_then(|raw| serde_json::from_str::<DiscordRateLimit>(&raw).ok())
+        .map(|rate| Duration::from_secs_f64(rate.retry_after.max(0.1)));
+    if body_delay.is_some() {
+        return body_delay;
+    }
+
+    None
+}
+
+fn retry_backoff(attempt: u32) -> Duration {
+    let exponent = attempt.min(5);
+    let millis = 200u64.saturating_mul(2u64.saturating_pow(exponent));
+    Duration::from_millis(millis.min(6_000))
+}
+
+fn is_fatal_gateway_close_code(code: u16) -> bool {
+    matches!(code, 4004 | 4010 | 4011 | 4012 | 4013 | 4014)
 }
 
 #[cfg(test)]
@@ -812,7 +1237,7 @@ mod tests {
 
     #[test]
     fn render_outbound_preserves_code_blocks() {
-        let output = render_outbound_message(&OutboundMessage {
+        let batch = render_outbound_messages(OutboundMessage {
             blocks: vec![
                 MessageBlock::Text {
                     text: "summary".to_string(),
@@ -824,8 +1249,49 @@ mod tests {
             ],
             ..OutboundMessage::default()
         });
+        assert_eq!(batch.len(), 1);
+        let output = batch[0]
+            .content
+            .as_ref()
+            .expect("first message should contain content");
         assert!(output.contains("summary"));
         assert!(output.contains("```rust"));
+    }
+
+    #[test]
+    fn render_outbound_includes_embeds_and_components() {
+        let batch = render_outbound_messages(OutboundMessage {
+            blocks: vec![MessageBlock::Text {
+                text: "summary".to_string(),
+            }],
+            embeds: vec![serde_json::json!({ "title": "Build Summary" })],
+            components: vec![serde_json::json!({ "type": 1, "components": [] })],
+            ..OutboundMessage::default()
+        });
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].embeds.len(), 1);
+        assert_eq!(batch[0].components.len(), 1);
+    }
+
+    #[test]
+    fn render_outbound_splits_long_content() {
+        let long_text = "a".repeat(DISCORD_CONTENT_MAX_LEN + 200);
+        let batch = render_outbound_messages(OutboundMessage {
+            blocks: vec![MessageBlock::Text { text: long_text }],
+            ..OutboundMessage::default()
+        });
+        assert!(
+            batch.len() >= 2,
+            "long payload should be split into multiple outbound messages"
+        );
+        assert!(batch.iter().all(|entry| {
+            entry
+                .content
+                .as_ref()
+                .map(|text| text.chars().count())
+                .unwrap_or(0)
+                <= DISCORD_CONTENT_MAX_LEN
+        }));
     }
 
     #[test]
@@ -845,7 +1311,7 @@ mod tests {
             ignore_bot_messages: true,
         };
         let (_tx, rx) = watch::channel(false);
-        let driver = DiscordChannelDriver {
+        let mut driver = DiscordChannelDriver {
             channel_runtime_id: "discord-runtime".to_string(),
             config,
             client: reqwest::Client::new(),
@@ -854,6 +1320,11 @@ mod tests {
             last_seen_message_id: None,
             initialized: false,
             gateway: None,
+            last_gateway_seq: None,
+            gateway_session_id: None,
+            resume_gateway_url: None,
+            seen_message_ids: VecDeque::new(),
+            seen_message_set: HashSet::new(),
             reconnect_attempts: 0,
         };
         let message = DiscordMessage {
@@ -869,6 +1340,57 @@ mod tests {
             },
             attachments: Vec::new(),
         };
+        assert!(driver.normalize_message(message).is_none());
+    }
+
+    #[test]
+    fn normalize_dedupes_message_ids() {
+        let config = DiscordChannelDriverConfig {
+            base_url: DEFAULT_BASE_URL.to_string(),
+            gateway_url: DEFAULT_GATEWAY_URL.to_string(),
+            transport_mode: DiscordTransportMode::Gateway,
+            gateway_intents: DEFAULT_GATEWAY_INTENTS,
+            workspace_id: "discord".to_string(),
+            room_id: None,
+            channel_id: "123".to_string(),
+            token: "token".to_string(),
+            poll_interval: Duration::from_millis(250),
+            max_messages_per_poll: 10,
+            start_from_latest: true,
+            ignore_bot_messages: false,
+        };
+        let (_tx, rx) = watch::channel(false);
+        let mut driver = DiscordChannelDriver {
+            channel_runtime_id: "discord-runtime".to_string(),
+            config,
+            client: reqwest::Client::new(),
+            shutdown_rx: rx,
+            backlog: VecDeque::new(),
+            last_seen_message_id: None,
+            initialized: false,
+            gateway: None,
+            last_gateway_seq: None,
+            gateway_session_id: None,
+            resume_gateway_url: None,
+            seen_message_ids: VecDeque::new(),
+            seen_message_set: HashSet::new(),
+            reconnect_attempts: 0,
+        };
+        let message = DiscordMessage {
+            id: "dup".to_string(),
+            channel_id: "123".to_string(),
+            guild_id: Some("guild".to_string()),
+            content: "hello".to_string(),
+            author: DiscordAuthor {
+                id: "user".to_string(),
+                username: "user".to_string(),
+                global_name: None,
+                bot: Some(false),
+            },
+            attachments: Vec::new(),
+        };
+
+        assert!(driver.normalize_message(message.clone()).is_some());
         assert!(driver.normalize_message(message).is_none());
     }
 }

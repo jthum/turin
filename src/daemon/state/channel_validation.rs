@@ -101,10 +101,13 @@ fn validate_discord_settings(map: &serde_json::Map<String, serde_json::Value>) -
         }
     }
 
-    if let Some(value) = map.get("gateway_intents")
-        && value.as_u64().is_none()
-    {
-        anyhow::bail!("discord channel setting 'gateway_intents' must be a positive integer");
+    if let Some(value) = map.get("gateway_intents") {
+        let Some(intents) = value.as_u64() else {
+            anyhow::bail!("discord channel setting 'gateway_intents' must be a positive integer");
+        };
+        if intents == 0 {
+            anyhow::bail!("discord channel setting 'gateway_intents' must be > 0");
+        }
     }
 
     Ok(())
@@ -141,5 +144,19 @@ mod tests {
         let error = validate_channel_settings("fs", &json!({ "poll_interval_ms": 0 }))
             .expect_err("too-small poll interval should fail");
         assert!(error.to_string().contains("poll_interval_ms"));
+    }
+
+    #[test]
+    fn discord_gateway_intents_must_be_positive() {
+        let error = validate_channel_settings(
+            "discord",
+            &json!({
+                "token_env": "DISCORD_TOKEN",
+                "channel_id": "123",
+                "gateway_intents": 0
+            }),
+        )
+        .expect_err("zero gateway intents should fail");
+        assert!(error.to_string().contains("gateway_intents"));
     }
 }

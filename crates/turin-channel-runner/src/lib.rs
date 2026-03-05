@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
@@ -283,12 +284,62 @@ fn serialize_binding_key(key: &ChannelConversationKey) -> Result<String> {
 
 fn task_to_outbound(task: &TaskSnapshot) -> OutboundMessage {
     if let Some(output) = task.output.as_ref() {
-        OutboundMessage::text(output.clone())
+        if let Some(structured) = try_parse_structured_outbound(output) {
+            structured
+        } else {
+            OutboundMessage::text(output.clone())
+        }
     } else if let Some(error) = task.error.as_ref() {
         OutboundMessage::text(format!("Turin error: {}", error))
     } else {
         OutboundMessage::text(format!("Task {} finished without output", task.request_id))
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct StructuredOutbound {
+    #[serde(default)]
+    _turin_channel_outbound: bool,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    blocks: Vec<turin_channel_core::MessageBlock>,
+    #[serde(default)]
+    attachments: Vec<turin_channel_core::ChannelAttachment>,
+    #[serde(default)]
+    embeds: Vec<Value>,
+    #[serde(default)]
+    components: Vec<Value>,
+    #[serde(default)]
+    metadata: Map<String, Value>,
+}
+
+fn try_parse_structured_outbound(raw: &str) -> Option<OutboundMessage> {
+    let trimmed = raw.trim();
+    if !trimmed.starts_with('{') {
+        return None;
+    }
+
+    let parsed: StructuredOutbound = serde_json::from_str(trimmed).ok()?;
+    if !parsed._turin_channel_outbound {
+        return None;
+    }
+
+    let mut blocks = parsed.blocks;
+    if blocks.is_empty()
+        && let Some(content) = parsed.content
+        && !content.trim().is_empty()
+    {
+        blocks.push(turin_channel_core::MessageBlock::Text { text: content });
+    }
+
+    Some(OutboundMessage {
+        blocks,
+        attachments: parsed.attachments,
+        embeds: parsed.embeds,
+        components: parsed.components,
+        metadata: parsed.metadata,
+    })
 }
 
 #[cfg(test)]
@@ -363,5 +414,34 @@ mod tests {
                 text: "hello".into(),
             }]
         );
+    }
+
+    #[test]
+    fn task_to_outbound_parses_structured_payload() {
+        let outbound = task_to_outbound(&TaskSnapshot {
+            request_id: "req-1".into(),
+            agent_id: "writer".into(),
+            slot_id: "slot-1".into(),
+            trace_id: "trace-1".into(),
+            state: "completed".into(),
+            runtime_task_id: None,
+            status: Some("completed".into()),
+            task_turn_count: Some(1),
+            output: Some(
+                serde_json::json!({
+                    "_turin_channel_outbound": true,
+                    "content": "overview",
+                    "embeds": [{ "title": "Build result" }],
+                    "components": [{ "type": 1, "components": [] }],
+                    "metadata": { "priority": "high" }
+                })
+                .to_string(),
+            ),
+            error: None,
+        });
+        assert_eq!(outbound.blocks.len(), 1);
+        assert_eq!(outbound.embeds.len(), 1);
+        assert_eq!(outbound.components.len(), 1);
+        assert_eq!(outbound.metadata["priority"], "high");
     }
 }

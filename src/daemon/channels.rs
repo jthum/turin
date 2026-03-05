@@ -18,6 +18,13 @@ pub struct ChannelRuntimeSnapshot {
     pub directory: String,
     pub state: String,
     pub last_error: Option<String>,
+    pub last_error_code: Option<String>,
+    pub start_count: u64,
+    pub restart_count: u64,
+    pub failure_count: u64,
+    pub last_transition_unix_ms: u64,
+    pub last_started_unix_ms: Option<u64>,
+    pub last_stopped_unix_ms: Option<u64>,
 }
 
 struct RuntimeHandle {
@@ -132,37 +139,76 @@ impl ChannelRuntimeManager {
                     if let Some(handle) = inner.handles.remove(&channel.id) {
                         stops.push(handle);
                     }
-                    upsert_snapshot(
-                        &mut inner,
-                        ChannelRuntimeSnapshot {
-                            id: channel.id.clone(),
-                            kind: channel.kind.clone(),
-                            agent_id: channel.agent_id.clone(),
-                            directory: channel.directory.display().to_string(),
-                            state: "unsupported".to_string(),
-                            last_error: Some(format!(
-                                "No daemon-owned runner available for channel kind '{}' (supported: fs, discord)",
-                                channel.kind,
-                            )),
-                        },
-                        &mut updates,
-                    );
+                    let now = now_unix_ms();
+                    let mut snapshot =
+                        inner
+                            .by_id
+                            .get(&channel.id)
+                            .cloned()
+                            .unwrap_or(ChannelRuntimeSnapshot {
+                                id: channel.id.clone(),
+                                kind: channel.kind.clone(),
+                                agent_id: channel.agent_id.clone(),
+                                directory: channel.directory.display().to_string(),
+                                state: "unsupported".to_string(),
+                                last_error: None,
+                                last_error_code: None,
+                                start_count: 0,
+                                restart_count: 0,
+                                failure_count: 0,
+                                last_transition_unix_ms: now,
+                                last_started_unix_ms: None,
+                                last_stopped_unix_ms: Some(now),
+                            });
+                    snapshot.kind = channel.kind.clone();
+                    snapshot.agent_id = channel.agent_id.clone();
+                    snapshot.directory = channel.directory.display().to_string();
+                    snapshot.state = "unsupported".to_string();
+                    snapshot.last_error = Some(format!(
+                        "No daemon-owned runner available for channel kind '{}' (supported: fs, discord)",
+                        channel.kind,
+                    ));
+                    snapshot.last_error_code = Some("channel_kind_unsupported".to_string());
+                    snapshot.last_transition_unix_ms = now;
+                    snapshot.last_stopped_unix_ms = Some(now);
+                    upsert_snapshot(&mut inner, snapshot, &mut updates);
                     continue;
                 }
 
                 if needs_start || needs_restart {
-                    upsert_snapshot(
-                        &mut inner,
-                        ChannelRuntimeSnapshot {
-                            id: channel.id.clone(),
-                            kind: channel.kind.clone(),
-                            agent_id: channel.agent_id.clone(),
-                            directory: channel.directory.display().to_string(),
-                            state: "starting".to_string(),
-                            last_error: None,
-                        },
-                        &mut updates,
-                    );
+                    let now = now_unix_ms();
+                    let mut snapshot =
+                        inner
+                            .by_id
+                            .get(&channel.id)
+                            .cloned()
+                            .unwrap_or(ChannelRuntimeSnapshot {
+                                id: channel.id.clone(),
+                                kind: channel.kind.clone(),
+                                agent_id: channel.agent_id.clone(),
+                                directory: channel.directory.display().to_string(),
+                                state: "starting".to_string(),
+                                last_error: None,
+                                last_error_code: None,
+                                start_count: 0,
+                                restart_count: 0,
+                                failure_count: 0,
+                                last_transition_unix_ms: now,
+                                last_started_unix_ms: None,
+                                last_stopped_unix_ms: Some(now),
+                            });
+                    snapshot.kind = channel.kind.clone();
+                    snapshot.agent_id = channel.agent_id.clone();
+                    snapshot.directory = channel.directory.display().to_string();
+                    snapshot.state = "starting".to_string();
+                    snapshot.last_error = None;
+                    snapshot.last_error_code = None;
+                    snapshot.start_count = snapshot.start_count.saturating_add(1);
+                    if needs_restart {
+                        snapshot.restart_count = snapshot.restart_count.saturating_add(1);
+                    }
+                    snapshot.last_transition_unix_ms = now;
+                    upsert_snapshot(&mut inner, snapshot, &mut updates);
                     starts.push(channel.clone());
                 }
             }
@@ -205,6 +251,8 @@ impl ChannelRuntimeManager {
             }
             for status in inner.by_id.values_mut() {
                 status.state = "stopped".to_string();
+                status.last_transition_unix_ms = now_unix_ms();
+                status.last_stopped_unix_ms = Some(status.last_transition_unix_ms);
                 updates.push(status.clone());
             }
         }
@@ -255,6 +303,9 @@ impl ChannelRuntimeManager {
                     if let Some(status) = guard.by_id.get_mut(&channel.id) {
                         status.state = "running".to_string();
                         status.last_error = None;
+                        status.last_error_code = None;
+                        status.last_transition_unix_ms = now_unix_ms();
+                        status.last_started_unix_ms = Some(status.last_transition_unix_ms);
                         emit_runtime_update(&event_tx, status);
                     }
                 }
@@ -272,11 +323,20 @@ impl ChannelRuntimeManager {
                     Ok(()) => {
                         status.state = "stopped".to_string();
                         status.last_error = None;
+                        status.last_error_code = None;
+                        status.last_transition_unix_ms = now_unix_ms();
+                        status.last_stopped_unix_ms = Some(status.last_transition_unix_ms);
                         emit_runtime_update(&event_tx, status);
                     }
                     Err(err) => {
                         status.state = "failed".to_string();
-                        status.last_error = Some(format!("{:#}", err));
+                        let error_text = format!("{:#}", err);
+                        status.last_error = Some(error_text.clone());
+                        status.last_error_code =
+                            Some(classify_runtime_error_code(&channel.kind, &error_text));
+                        status.failure_count = status.failure_count.saturating_add(1);
+                        status.last_transition_unix_ms = now_unix_ms();
+                        status.last_stopped_unix_ms = Some(status.last_transition_unix_ms);
                         emit_runtime_update(&event_tx, status);
                     }
                 }
@@ -335,6 +395,9 @@ impl ChannelRuntimeManager {
                     if let Some(status) = guard.by_id.get_mut(&channel.id) {
                         status.state = "running".to_string();
                         status.last_error = None;
+                        status.last_error_code = None;
+                        status.last_transition_unix_ms = now_unix_ms();
+                        status.last_started_unix_ms = Some(status.last_transition_unix_ms);
                         emit_runtime_update(&event_tx, status);
                     }
                 }
@@ -352,11 +415,20 @@ impl ChannelRuntimeManager {
                     Ok(()) => {
                         status.state = "stopped".to_string();
                         status.last_error = None;
+                        status.last_error_code = None;
+                        status.last_transition_unix_ms = now_unix_ms();
+                        status.last_stopped_unix_ms = Some(status.last_transition_unix_ms);
                         emit_runtime_update(&event_tx, status);
                     }
                     Err(err) => {
                         status.state = "failed".to_string();
-                        status.last_error = Some(format!("{:#}", err));
+                        let error_text = format!("{:#}", err);
+                        status.last_error = Some(error_text.clone());
+                        status.last_error_code =
+                            Some(classify_runtime_error_code(&channel.kind, &error_text));
+                        status.failure_count = status.failure_count.saturating_add(1);
+                        status.last_transition_unix_ms = now_unix_ms();
+                        status.last_stopped_unix_ms = Some(status.last_transition_unix_ms);
                         emit_runtime_update(&event_tx, status);
                     }
                 }
@@ -397,6 +469,8 @@ impl ChannelRuntimeManager {
                 && status.state == "running"
             {
                 status.state = "stopped".to_string();
+                status.last_transition_unix_ms = now_unix_ms();
+                status.last_stopped_unix_ms = Some(status.last_transition_unix_ms);
             }
         }
     }
@@ -449,4 +523,44 @@ fn upsert_snapshot(
         updates.push(snapshot.clone());
     }
     inner.by_id.insert(snapshot.id.clone(), snapshot);
+}
+
+fn now_unix_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn classify_runtime_error_code(kind: &str, error: &str) -> String {
+    if let Some(code) = extract_bracketed_error_code(error) {
+        return code;
+    }
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("token") && lower.contains("not set") {
+        return format!("{kind}_auth_missing_token");
+    }
+    if lower.contains("rate") && lower.contains("limit") {
+        return format!("{kind}_rate_limited");
+    }
+    if lower.contains("connect") || lower.contains("dns") {
+        return format!("{kind}_transport_connect_failed");
+    }
+    if lower.contains("decode") || lower.contains("parse") {
+        return format!("{kind}_payload_decode_failed");
+    }
+    format!("{kind}_runtime_error")
+}
+
+fn extract_bracketed_error_code(error: &str) -> Option<String> {
+    let start = error.find('[')?;
+    let end = error[start + 1..].find(']')?;
+    let code = &error[start + 1..start + 1 + end];
+    if code.is_empty() {
+        None
+    } else {
+        Some(code.to_string())
+    }
 }

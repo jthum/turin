@@ -69,6 +69,10 @@ pub struct OutboundMessage {
     #[serde(default)]
     pub attachments: Vec<ChannelAttachment>,
     #[serde(default)]
+    pub embeds: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub components: Vec<serde_json::Value>,
+    #[serde(default)]
     pub metadata: serde_json::Map<String, serde_json::Value>,
 }
 

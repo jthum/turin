@@ -123,6 +123,13 @@ struct ChannelRuntimeView {
     directory: String,
     state: String,
     last_error: Option<String>,
+    last_error_code: Option<String>,
+    start_count: u64,
+    restart_count: u64,
+    failure_count: u64,
+    last_transition_unix_ms: u64,
+    last_started_unix_ms: Option<u64>,
+    last_stopped_unix_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1206,6 +1213,19 @@ fn print_channel_runtime(channel: ChannelRuntimeView) {
     println!("  agent_id:      {}", channel.agent_id);
     println!("  directory:     {}", channel.directory);
     println!("  state:         {}", channel.state);
+    println!("  start_count:   {}", channel.start_count);
+    println!("  restart_count: {}", channel.restart_count);
+    println!("  failure_count: {}", channel.failure_count);
+    println!("  transitioned:  {}", channel.last_transition_unix_ms);
+    if let Some(last_started) = channel.last_started_unix_ms {
+        println!("  last_started:  {}", last_started);
+    }
+    if let Some(last_stopped) = channel.last_stopped_unix_ms {
+        println!("  last_stopped:  {}", last_stopped);
+    }
+    if let Some(code) = channel.last_error_code {
+        println!("  error_code:    {}", code);
+    }
     if let Some(error) = channel.last_error {
         println!("  last_error:    {}", error);
     }

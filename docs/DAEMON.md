@@ -247,6 +247,36 @@ Channel runtime events are also streamed via `runtime.events.subscribe`:
 - `channel.runtime.updated` for state transitions and error updates
 - `channel.runtime.removed` when a runtime disappears from the active set
 
+`channel.status` and `daemon.status.channel_runtimes` now include lifecycle metrics:
+- `start_count`
+- `restart_count`
+- `failure_count`
+- `last_transition_unix_ms`
+- `last_started_unix_ms`
+- `last_stopped_unix_ms`
+- `last_error_code` (normalized runtime failure code)
+
+Discord runtime behavior notes:
+- Gateway reconnect now uses bounded exponential backoff.
+- Gateway session resume is attempted automatically when session/sequence state is available.
+- Duplicate inbound message IDs are suppressed across reconnect/replay windows.
+- Outbound responses support rich payloads (`content`, `embeds`, `components`, and local file attachments) with Discord-safe content chunking.
+
+To emit rich outbound payloads from task output, return a JSON envelope with
+`_turin_channel_outbound = true`, for example:
+
+```json
+{
+  "_turin_channel_outbound": true,
+  "content": "Build summary",
+  "embeds": [{ "title": "CI", "description": "All checks passed" }],
+  "components": [{ "type": 1, "components": [] }],
+  "attachments": [
+    { "name": "report.txt", "local_path": "/abs/path/report.txt", "content_type": "text/plain" }
+  ]
+}
+```
+
 ### Sessions
 
 ```bash

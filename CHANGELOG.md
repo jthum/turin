@@ -37,6 +37,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `channel.runtime.updated`
     - `channel.runtime.removed`
   - Added integration coverage for channel runtime event streaming over `runtime.events.subscribe`.
+- **Channel Runtime Observability Metrics**
+  - Added lifecycle metrics to channel runtime snapshots (`channel.status` and `daemon.status.channel_runtimes`):
+    - `start_count`
+    - `restart_count`
+    - `failure_count`
+    - `last_transition_unix_ms`
+    - `last_started_unix_ms`
+    - `last_stopped_unix_ms`
+    - `last_error_code`
+- **Structured Outbound Channel Payloads**
+  - Added structured outbound parsing in channel runner via `_turin_channel_outbound` JSON envelopes.
+  - Added rich outbound support in Discord adapter for:
+    - `content`
+    - `embeds`
+    - `components`
+    - local file attachments (`multipart/form-data`)
+  - Added Discord-safe message chunking for long outbound content.
 
 ### Changed
 - **Channel Configuration Semantics**
@@ -44,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `channel.update --setting ...` now merges into existing channel settings instead of replacing the entire settings table.
 - **Discord Runtime Stability**
   - Discord gateway reconnect now uses bounded exponential backoff to avoid tight reconnect loops on transient failures.
+  - Discord gateway now attempts session resume with sequence replay state after reconnect.
+  - Discord inbound handling now deduplicates message IDs across reconnect/replay windows.
+  - Discord HTTP retry handling now covers 429 + server errors with delay extraction from headers/body.
 
 ## [0.21.0] - 2026-03-03
 

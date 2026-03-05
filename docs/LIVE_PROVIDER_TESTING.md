@@ -4,6 +4,22 @@ Turin does not run live endpoint tests during `cargo test` or `cargo build`.
 
 This document covers how to validate Turin against real providers manually, including MiniMax via either its Anthropic-compatible or OpenAI-compatible endpoints.
 
+## Discord Channel Runtime Live Validation (Manual / Opt-In)
+
+Turin also includes an opt-in live script for daemon-owned Discord runtime checks:
+
+```bash
+scripts/live_discord_channel_smoke.sh \
+  --channel-id "$DISCORD_CHANNEL_ID" \
+  --token-env-name DISCORD_BOT_TOKEN \
+  --transport gateway
+```
+
+Notes:
+- Requires a real Discord bot token in the specified env var.
+- Requires a real Discord channel/thread ID.
+- Uses a temporary workspace and a minimal mock-provider harness to validate channel runtime lifecycle only.
+
 ## Why Live Tests Are Separate
 
 Live tests are valuable, but they are not deterministic:
