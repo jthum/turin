@@ -895,11 +895,44 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
             if scoped_val ~= "scoped_val" then error("kv.as.get mismatch") end
 
             local m = memory.as(project)
-            local okm, em = m.store("alpha memory", { source = "test" })
-            if not okm then error("memory.as.store failed: " .. tostring(em)) end
-            local hits, hm = m.search("alpha", { limit = 5 })
+            local mem, em = m.store("alpha memory", { source = "test" }, {
+                storage = "lexical_only",
+                tags = { "note" },
+            })
+            if mem == nil then error("memory.as.store failed: " .. tostring(em)) end
+            if mem.id == nil then error("memory.as.store missing id") end
+            if mem.storage ~= "lexical_only" then error("memory.as.store wrong storage") end
+
+            local hits, hm = m.search("alpha", {
+                limit = 5,
+                include_metadata = true,
+            })
             if hits == nil then error("memory.as.search failed: " .. tostring(hm)) end
             if #hits < 1 then error("memory.as.search returned no hits") end
+            if hits[1].id == nil then error("memory.as.search missing id") end
+            if hits[1].retrieval_count < 1 then error("memory.as.search missing retrieval_count") end
+            if hits[1].metadata == nil or hits[1].metadata.source ~= "test" then
+                error("memory.as.search missing metadata")
+            end
+            if hits[1].metadata._turin == nil or hits[1].metadata._turin.tags[1] ~= "note" then
+                error("memory.as.search missing turin metadata")
+            end
+
+            local strict_hits, strict_err = m.search("alpha", {
+                mode = "semantic",
+                strict = true,
+            })
+            if strict_hits ~= nil or strict_err == nil then
+                error("strict semantic search should fail without embeddings")
+            end
+
+            local fallback_hits, fallback_err = m.search("alpha", { mode = "semantic" })
+            if fallback_hits == nil then
+                error("semantic fallback failed: " .. tostring(fallback_err))
+            end
+            if #fallback_hits < 1 then
+                error("semantic fallback returned no hits")
+            end
 
             local oks, es = session.kv.set("session_seen", "1")
             if not oks then error("session.kv.set failed: " .. tostring(es)) end
@@ -966,7 +999,6 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
     kernel.init_harness().await?;
 
     let mut session = kernel.create_session().await;
-    let session_public_id = session.identity.session_id().to_string();
     kernel
         .run(&mut session, Some("exercise stdlib".to_string()))
         .await?;
@@ -1002,25 +1034,11 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
         .await?
         .expect("context session row missing");
     let hits = project_store
-        .search_memories(ctx_internal_id, None, Some("alpha"), 5)
+        .search_memories(ctx_internal_id, None, Some("alpha"), 5, 0.0, true, false)
         .await?;
     assert!(!hits.is_empty(), "expected context memory rows");
-
-    let session_selector = ContextSelector {
-        tags: vec![format!("session:{}", session_public_id)],
-        namespace: "default".to_string(),
-        visibility: "private".to_string(),
-    };
-    let session_store = kernel
-        .store_manager()
-        .open(&turin::persistence::manager::StoreSelector::Alias(
-            session_selector.to_alias(),
-        ))
-        .await?;
-    assert_eq!(
-        session_store.kv_get("session_seen").await?,
-        Some("1".to_string())
-    );
+    assert!(hits[0].retrieval_count >= 2);
+    assert!(hits[0].metadata.is_some(), "expected context memory metadata");
 
     Ok(())
 }

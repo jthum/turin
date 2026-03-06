@@ -81,6 +81,22 @@ impl StateStore {
     async fn init_schema(&self) -> Result<()> {
         let conn = self.connect().await?;
 
+        match self.schema_version(&conn).await? {
+            Some(version) if version != SCHEMA_VERSION.to_string() => {
+                anyhow::bail!(
+                    "State DB schema version {} is incompatible with runtime schema version {}. Delete and recreate the DB; no migration path is provided.",
+                    version,
+                    SCHEMA_VERSION
+                );
+            }
+            None if self.has_user_schema(&conn).await? => {
+                anyhow::bail!(
+                    "State DB has an unversioned or legacy schema. Delete and recreate the DB; no migration path is provided."
+                );
+            }
+            _ => {}
+        }
+
         // 1. Init Core Schema
         conn.execute("PRAGMA journal_mode = WAL;", ()).await.ok();
 
@@ -101,6 +117,32 @@ impl StateStore {
         .await?;
 
         Ok(())
+    }
+
+    async fn schema_version(&self, conn: &Connection) -> Result<Option<String>> {
+        let mut rows = match conn
+            .query("SELECT value FROM schema_info WHERE key = 'version'", ())
+            .await
+        {
+            Ok(rows) => rows,
+            Err(_) => return Ok(None),
+        };
+
+        if let Some(row) = rows.next().await? {
+            Ok(Some(row.get::<String>(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn has_user_schema(&self, conn: &Connection) -> Result<bool> {
+        let mut rows = conn
+            .query(
+                "SELECT name FROM sqlite_master WHERE type IN ('table', 'index', 'trigger') AND name NOT LIKE 'sqlite_%' LIMIT 1",
+                (),
+            )
+            .await?;
+        Ok(rows.next().await?.is_some())
     }
     // ─── Sessions ────────────────────────────────────────────────
 
@@ -693,23 +735,25 @@ mod tests {
 
         // Test 1: Vector Search
         let results = store
-            .search_memories(session, Some(&[1.0, 0.0]), None, 10)
+            .search_memories(session, Some(&[1.0, 0.0]), None, 10, 0.0, false, false)
             .await
             .unwrap();
         assert_eq!(results.len(), 2);
         assert!(results[0].content.contains("secret code"));
+        assert!(results[0].semantic_score.is_some());
 
         // Test 2: Lexical Search
         let results = store
-            .search_memories(session, None, Some("12345"), 10)
+            .search_memories(session, None, Some("12345"), 10, 0.0, false, false)
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].content.contains("secret code"));
+        assert!(results[0].lexical_score.is_some());
 
         // Test 3: Hybrid Search
         let results = store
-            .search_memories(session, Some(&[0.0, 1.0]), Some("12345"), 10)
+            .search_memories(session, Some(&[0.0, 1.0]), Some("12345"), 10, 0.0, false, false)
             .await
             .unwrap();
         assert_eq!(results.len(), 2);
@@ -732,17 +776,52 @@ mod tests {
             .unwrap();
 
         let results = store
-            .search_memories(session, None, Some("12345"), 10)
+            .search_memories(session, None, Some("12345"), 10, 0.0, false, false)
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].content.contains("secret code"));
 
         let hybrid_results = store
-            .search_memories(session, Some(&[1.0, 0.0]), Some("12345"), 10)
+            .search_memories(session, Some(&[1.0, 0.0]), Some("12345"), 10, 0.0, false, false)
             .await
             .unwrap();
         assert_eq!(hybrid_results.len(), 1);
         assert!(hybrid_results[0].content.contains("secret code"));
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_returns_public_id_and_updates_retrieval_metadata() {
+        let store = StateStore::open_memory()
+            .await
+            .expect("Failed to open state store");
+        let session = 1;
+
+        let stored = store
+            .insert_memory(
+                session,
+                "alpha memory",
+                None,
+                &json!({ "kind": "note", "source": "test" }),
+            )
+            .await
+            .expect("memory insert should succeed");
+
+        assert_eq!(stored.public_id.len(), 16);
+        assert_eq!(stored.storage.as_str(), "lexical_only");
+        assert!(stored.stored_at.contains('T'));
+
+        let rows = store
+            .search_memories(session, None, Some("alpha"), 5, 0.0, true, false)
+            .await
+            .expect("memory search should succeed");
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].public_id, stored.public_id);
+        assert_eq!(rows[0].retrieval_count, 1);
+        assert!(rows[0].last_retrieved_at.is_some());
+        let metadata = rows[0].metadata.as_deref().expect("metadata should be present");
+        assert!(metadata.contains("\"kind\":\"note\""));
+        assert!(metadata.contains("\"source\":\"test\""));
     }
 }

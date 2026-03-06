@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 4;
+pub(crate) const SCHEMA_VERSION: u32 = 5;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -73,12 +73,19 @@ CREATE INDEX IF NOT EXISTS idx_tool_executions_session ON tool_executions(sessio
 -- Cognitive Memory
 CREATE TABLE IF NOT EXISTS memories (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_id   BLOB(16) UNIQUE NOT NULL,
     session_id  INTEGER NOT NULL REFERENCES sessions(id),
     content     TEXT NOT NULL,
     embedding   F32_BLOB(1536),
     metadata    TEXT,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    weight      REAL NOT NULL DEFAULT 1.0,
+    retrieval_count INTEGER NOT NULL DEFAULT 0,
+    last_retrieved_at TEXT,
+    superseded_at TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
 "#;
 
 /// Native Turso FTS schema
@@ -140,9 +147,38 @@ pub struct ToolExecutionRow {
 #[derive(Debug, Clone)]
 pub struct MemoryRow {
     pub id: i64,
+    pub public_id: Vec<u8>,
     pub session_id: i64,
     pub content: String,
-    pub metadata: String,
+    pub metadata: Option<String>,
     pub created_at: String,
     pub score: f64,
+    pub lexical_score: Option<f64>,
+    pub semantic_score: Option<f64>,
+    pub weight: f64,
+    pub retrieval_count: u64,
+    pub last_retrieved_at: Option<String>,
+    pub superseded_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryStorageKind {
+    LexicalOnly,
+    Embedded,
+}
+
+impl MemoryStorageKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::LexicalOnly => "lexical_only",
+            Self::Embedded => "embedded",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredMemoryRow {
+    pub public_id: Vec<u8>,
+    pub stored_at: String,
+    pub storage: MemoryStorageKind,
 }

@@ -2,14 +2,14 @@ use mlua::{Lua, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{ActiveHarnessExecutionContext, HarnessAppData};
 use crate::harness::stdlib::binding_common::{
-    bool_err, bridge_async_result, memory_rows_to_lua_table, metadata_json_or_empty, nil_err,
-    nil_ok, ok_bool, ok_value, string_ok,
+    bool_err, bridge_async_result, memory_rows_to_lua_table, memory_search_request_from_opt,
+    memory_store_request_from_opts, memory_store_row_to_lua_value, metadata_json_or_empty,
+    nil_err, nil_ok, ok_bool, ok_value, string_ok,
 };
-use crate::harness::stdlib::context_selectors::{
-    normalize_selector, search_limit_from_opt, table_to_selector,
-};
+use crate::harness::stdlib::context_selectors::{normalize_selector, table_to_selector};
 use crate::harness::stdlib::scoped_data_backend::{
-    kv_delete_backend, kv_get_backend, kv_set_backend, memory_search_backend, memory_store_backend,
+    kv_delete_backend, kv_get_backend, kv_set_backend, memory_search_backend_with_request,
+    memory_store_backend_with_request, MemorySearchRequest, MemoryStoreRequest,
 };
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::kernel::identity::ContextSelector;
@@ -38,10 +38,10 @@ fn memory_search_result(
     embedding: Option<Arc<dyn EmbeddingProvider>>,
     selector: ContextSelector,
     query: String,
-    limit: usize,
+    request: MemorySearchRequest,
 ) -> LuaResult<(Value, Value)> {
     let result = bridge_async_result(async move {
-        memory_search_backend(&manager, embedding.as_ref(), &selector, &query, limit)
+        memory_search_backend_with_request(&manager, embedding.as_ref(), &selector, &query, &request)
             .await
             .map_err(|e| e.to_string())
     });
@@ -58,21 +58,23 @@ fn memory_store_result(
     selector: ContextSelector,
     content: String,
     metadata_json: serde_json::Value,
+    request: MemoryStoreRequest,
 ) -> LuaResult<(Value, Value)> {
     let result = bridge_async_result(async move {
-        memory_store_backend(
+        memory_store_backend_with_request(
             &manager,
             embedding.as_ref(),
             &selector,
             &content,
             &metadata_json,
+            &request,
         )
         .await
         .map_err(|e| e.to_string())
     });
     match result {
-        Ok(_) => Ok(ok_bool()),
-        Err(err) => bool_err(lua, &err),
+        Ok(row) => Ok(ok_value(memory_store_row_to_lua_value(lua, row)?)),
+        Err(err) => nil_err(lua, &err),
     }
 }
 
@@ -141,7 +143,7 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
         memory_table.set(
             "search",
             lua.create_function(move |lua, (query, opts): (String, Option<Value>)| {
-                let limit = search_limit_from_opt(opts)?;
+                let request = memory_search_request_from_opt(lua, opts)?;
                 let selector = default_agent_selector(&app_data_snapshot)?;
                 if !has_active_session(&execution_ctx) {
                     return nil_err(lua, "No active session context");
@@ -152,7 +154,7 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
                     embedding.clone(),
                     selector,
                     query,
-                    limit,
+                    request,
                 )
             })?,
         )?;
@@ -167,12 +169,13 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
         memory_table.set(
             "store",
             lua.create_function(
-                move |lua, (content, metadata, _opts): (String, Option<Table>, Option<Table>)| {
+                move |lua, (content, metadata, opts): (String, Option<Table>, Option<Table>)| {
                     let selector = default_agent_selector(&app_data_snapshot)?;
                     if !has_active_session(&execution_ctx) {
-                        return bool_err(lua, "No active session context");
+                        return nil_err(lua, "No active session context");
                     }
                     let metadata_json = metadata_json_or_empty(lua, metadata)?;
+                    let request = memory_store_request_from_opts(lua, opts)?;
                     memory_store_result(
                         lua,
                         manager.clone(),
@@ -180,6 +183,7 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
                         selector,
                         content,
                         metadata_json,
+                        request,
                     )
                 },
             )?,
@@ -202,14 +206,14 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
                 proxy.set(
                     "search",
                     lua.create_function(move |lua, (query, opts): (String, Option<Value>)| {
-                        let limit = search_limit_from_opt(opts)?;
+                        let request = memory_search_request_from_opt(lua, opts)?;
                         memory_search_result(
                             lua,
                             m_search.clone(),
                             e_search.clone(),
                             sel_search.clone(),
                             query,
-                            limit,
+                            request,
                         )
                     })?,
                 )?;
@@ -220,13 +224,9 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
                 proxy.set(
                     "store",
                     lua.create_function(
-                        move |lua,
-                              (content, metadata, _opts): (
-                            String,
-                            Option<Table>,
-                            Option<Table>,
-                        )| {
+                        move |lua, (content, metadata, opts): (String, Option<Table>, Option<Table>)| {
                             let metadata_json = metadata_json_or_empty(lua, metadata)?;
+                            let request = memory_store_request_from_opts(lua, opts)?;
                             memory_store_result(
                                 lua,
                                 m_store.clone(),
@@ -234,6 +234,7 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
                                 sel_store.clone(),
                                 content,
                                 metadata_json,
+                                request,
                             )
                         },
                     )?,

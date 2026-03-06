@@ -161,18 +161,3 @@ pub(crate) fn selector_from_active_scope_lua(
 ) -> LuaResult<ContextSelector> {
     selector_from_active_scope(app_data, scope).map_err(|e| mlua::Error::runtime(e.to_string()))
 }
-
-pub(crate) fn search_limit_from_opt(arg: Option<Value>) -> LuaResult<usize> {
-    match arg {
-        None | Some(Value::Nil) => Ok(5),
-        Some(Value::Integer(i)) => Ok(i.max(0) as usize),
-        Some(Value::Number(n)) => Ok(n.max(0.0) as usize),
-        Some(Value::Table(t)) => {
-            let limit = t.get::<usize>("limit").unwrap_or(5);
-            Ok(limit)
-        }
-        Some(_) => Err(mlua::Error::runtime(
-            "invalid opts; expected number limit or options table",
-        )),
-    }
-}

@@ -2,14 +2,14 @@ use mlua::{Lua, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{
-    bool_err, bridge_async_result, memory_rows_to_lua_table, metadata_json_or_empty, nil_err,
-    nil_ok, ok_bool, ok_value, string_ok,
+    bool_err, bridge_async_result, memory_rows_to_lua_table, memory_search_request_from_opt,
+    memory_store_request_from_opts, memory_store_row_to_lua_value, metadata_json_or_empty,
+    nil_err, nil_ok, ok_bool, ok_value, string_ok,
 };
-use crate::harness::stdlib::context_selectors::{
-    search_limit_from_opt, selector_from_active_scope_lua,
-};
+use crate::harness::stdlib::context_selectors::selector_from_active_scope_lua;
 use crate::harness::stdlib::scoped_data_backend::{
-    kv_delete_backend, kv_get_backend, kv_set_backend, memory_search_backend, memory_store_backend,
+    kv_delete_backend, kv_get_backend, kv_set_backend, memory_search_backend_with_request,
+    memory_store_backend_with_request,
 };
 
 pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
@@ -27,17 +27,17 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
             mem.set(
                 "search",
                 lua.create_function(move |lua, (query, opts): (String, Option<Value>)| {
-                    let limit = search_limit_from_opt(opts)?;
+                    let request = memory_search_request_from_opt(lua, opts)?;
                     let selector = selector_from_active_scope_lua(&selector_app, scope)?;
                     let manager = manager.clone();
                     let embedding = embedding.clone();
                     let result = bridge_async_result(async move {
-                        memory_search_backend(
+                        memory_search_backend_with_request(
                             &manager,
                             embedding.as_ref(),
                             &selector,
                             &query,
-                            limit,
+                            &request,
                         )
                         .await
                         .map_err(|e| e.to_string())
@@ -58,25 +58,27 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
             mem.set(
                 "store",
                 lua.create_function(
-                    move |lua, (content, metadata, _opts): (String, Option<Table>, Option<Table>)| {
+                    move |lua, (content, metadata, opts): (String, Option<Table>, Option<Table>)| {
                         let selector = selector_from_active_scope_lua(&selector_app, scope)?;
                         let metadata_json = metadata_json_or_empty(lua, metadata)?;
+                        let request = memory_store_request_from_opts(lua, opts)?;
                         let manager = manager.clone();
                         let embedding = embedding.clone();
                         let result = bridge_async_result(async move {
-                            memory_store_backend(
+                            memory_store_backend_with_request(
                                 &manager,
                                 embedding.as_ref(),
                                 &selector,
                                 &content,
                                 &metadata_json,
+                                &request,
                             )
                             .await
                             .map_err(|e| e.to_string())
                         });
                         match result {
-                            Ok(_) => Ok(ok_bool()),
-                            Err(err) => bool_err(lua, &err),
+                            Ok(row) => Ok(ok_value(memory_store_row_to_lua_value(lua, row)?)),
+                            Err(err) => nil_err(lua, &err),
                         }
                     },
                 )?,

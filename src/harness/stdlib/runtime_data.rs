@@ -2,12 +2,14 @@ use mlua::{Lua, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{
-    bool_err, bridge_async_result, memory_rows_to_lua_table, metadata_json_or_empty, nil_err,
-    nil_ok, ok_bool, ok_value, string_ok,
+    bool_err, bridge_async_result, memory_rows_to_lua_table, memory_search_request_from_opt,
+    memory_store_request_from_opts, memory_store_row_to_lua_value, metadata_json_or_empty,
+    nil_err, nil_ok, ok_bool, ok_value, string_ok,
 };
-use crate::harness::stdlib::context_selectors::{search_limit_from_opt, table_to_selector};
+use crate::harness::stdlib::context_selectors::table_to_selector;
 use crate::harness::stdlib::scoped_data_backend::{
-    kv_delete_backend, kv_get_backend, kv_set_backend, memory_search_backend, memory_store_backend,
+    kv_delete_backend, kv_get_backend, kv_set_backend, memory_search_backend_with_request,
+    memory_store_backend_with_request,
 };
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::kernel::identity::ContextSelector;
@@ -20,10 +22,10 @@ fn memory_search_result(
     embedding: Option<Arc<dyn EmbeddingProvider>>,
     selector: ContextSelector,
     query: String,
-    limit: usize,
+    request: crate::harness::stdlib::scoped_data_backend::MemorySearchRequest,
 ) -> LuaResult<(Value, Value)> {
     let result = bridge_async_result(async move {
-        memory_search_backend(&manager, embedding.as_ref(), &selector, &query, limit)
+        memory_search_backend_with_request(&manager, embedding.as_ref(), &selector, &query, &request)
             .await
             .map_err(|e| e.to_string())
     });
@@ -40,21 +42,23 @@ fn memory_store_result(
     selector: ContextSelector,
     content: String,
     metadata_json: serde_json::Value,
+    request: crate::harness::stdlib::scoped_data_backend::MemoryStoreRequest,
 ) -> LuaResult<(Value, Value)> {
     let result = bridge_async_result(async move {
-        memory_store_backend(
+        memory_store_backend_with_request(
             &manager,
             embedding.as_ref(),
             &selector,
             &content,
             &metadata_json,
+            &request,
         )
         .await
         .map_err(|e| e.to_string())
     });
     match result {
-        Ok(_) => Ok(ok_bool()),
-        Err(err) => bool_err(lua, &err),
+        Ok(row) => Ok(ok_value(memory_store_row_to_lua_value(lua, row)?)),
+        Err(err) => nil_err(lua, &err),
     }
 }
 
@@ -126,14 +130,14 @@ pub fn register_runtime_data_namespaces(
             lua.create_function(
                 move |lua, (query, ctx, opts): (String, Table, Option<Value>)| {
                     let selector = table_to_selector(ctx)?;
-                    let limit = search_limit_from_opt(opts)?;
+                    let request = memory_search_request_from_opt(lua, opts)?;
                     memory_search_result(
                         lua,
                         manager.clone(),
                         embedding.clone(),
                         selector,
                         query,
-                        limit,
+                        request,
                     )
                 },
             )?,
@@ -146,7 +150,7 @@ pub fn register_runtime_data_namespaces(
             "store",
             lua.create_function(
                 move |lua,
-                      (content, ctx, metadata, _opts): (
+                      (content, ctx, metadata, opts): (
                     String,
                     Table,
                     Option<Table>,
@@ -154,6 +158,7 @@ pub fn register_runtime_data_namespaces(
                 )| {
                     let selector = table_to_selector(ctx)?;
                     let metadata_json = metadata_json_or_empty(lua, metadata)?;
+                    let request = memory_store_request_from_opts(lua, opts)?;
                     memory_store_result(
                         lua,
                         manager.clone(),
@@ -161,6 +166,7 @@ pub fn register_runtime_data_namespaces(
                         selector,
                         content,
                         metadata_json,
+                        request,
                     )
                 },
             )?,
