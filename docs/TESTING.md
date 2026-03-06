@@ -198,12 +198,6 @@ This keeps provider-specific logic out of Turin and speeds debugging.
 
 ## Common Warnings and How to Interpret Them
 
-### `FTS5 extension not available. Hybrid search will be degraded.`
-
-- Meaning: FTS5 search acceleration is unavailable in the current SQLite/libSQL build
-- Impact: memory search degrades gracefully
-- Relevance to provider testing: none (not a provider/network issue)
-
 ### `Event broadcast skipped — no active receivers` (debug)
 
 - Meaning: no in-memory subscribers were attached to the broadcast channel

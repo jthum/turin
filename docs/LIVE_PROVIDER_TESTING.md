@@ -365,11 +365,6 @@ This is an environment/network resolution issue, not a Turin/provider-wire-forma
 
 The live suite script retries `turin run` automatically for transient transport failures, but persistent DNS failures will still fail the case after retries.
 
-### Benign warning: `FTS5 extension not available`
-
-This warning affects hybrid search quality/fallback behavior, not provider compatibility.
-It does not block live inference/tool roundtrips.
-
 ## Security Notes
 
 - Do not paste API keys into chat or commit them to the repo.

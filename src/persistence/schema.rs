@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 3;
+pub(crate) const SCHEMA_VERSION: u32 = 4;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -75,30 +75,15 @@ CREATE TABLE IF NOT EXISTS memories (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id  INTEGER NOT NULL REFERENCES sessions(id),
     content     TEXT NOT NULL,
-    embedding   F32_BLOB(1536), 
+    embedding   F32_BLOB(1536),
     metadata    TEXT,
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 "#;
 
-/// FTS5 specific schema
+/// Native Turso FTS schema
 pub(crate) const INIT_SCHEMA_FTS: &str = r#"
--- FTS5 Virtual Table for Keyword Search
-CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, metadata, content='memories', content_rowid='id');
-
--- Triggers to keep FTS index in sync with main table
-CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-  INSERT INTO memories_fts(rowid, content, metadata) VALUES (new.id, new.content, new.metadata);
-END;
-
-CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-  INSERT INTO memories_fts(memories_fts, rowid, content, metadata) VALUES('delete', old.id, old.content, old.metadata);
-END;
-
-CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-  INSERT INTO memories_fts(memories_fts, rowid, content, metadata) VALUES('delete', old.id, old.content, old.metadata);
-  INSERT INTO memories_fts(rowid, content, metadata) VALUES (new.id, new.content, new.metadata);
-END;
+CREATE INDEX IF NOT EXISTS idx_memories_fts ON memories USING fts (content);
 "#;
 
 // ─── Row Types ───────────────────────────────────────────────

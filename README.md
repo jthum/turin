@@ -52,7 +52,7 @@ Simple things should be simple. Powerful things should be possible.
   - `memory`, `kv`, `session`, `user`, `agent`
 - **Multi-provider support** through normalized `InferenceProvider` clients (`anthropic`, `openai`, `mock`, compatible proxies)
 - **Persistent state** for sessions, messages, events, tool executions, KV, and memory records
-- **Hybrid memory search** with vector + FTS5 fallback/degradation paths
+- **Hybrid memory search** with native lexical/vector/hybrid retrieval
 - **Peer-agent orchestration** with status inspection and async submit/await result handling
 - **Opt-in governance** with profiles/capabilities/import scoping/agent ceilings/grants
 - **Live provider smoke tooling** (manual/opt-in) for real endpoint validation
@@ -125,6 +125,8 @@ api_key_env = "ANTHROPIC_API_KEY"
 # For Anthropic-compatible proxies, include the version segment (usually /v1)
 # base_url = "https://api.minimax.io/anthropic/v1"
 ```
+
+Current persistence note: the Turso 0.5 memory/search baseline is a breaking reset. Delete and recreate existing Turin DBs when moving to this baseline; no schema migration path is provided.
 
 ### 3. Add a harness script
 

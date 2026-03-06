@@ -96,11 +96,13 @@ pub(crate) async fn memory_store_backend(
     let store = open_selector_store(manager, selector).await?;
     let session_id = ensure_context_memory_session(&store, selector).await?;
 
-    let provider =
-        embedding_provider.ok_or_else(|| anyhow::anyhow!("No embedding provider configured"))?;
-    let emb = provider.embed(content).await?;
+    let vector = if let Some(provider) = embedding_provider {
+        Some(provider.embed(content).await?.vector)
+    } else {
+        None
+    };
     store
-        .insert_memory(session_id, content, &emb.vector, metadata)
+        .insert_memory(session_id, content, vector.as_deref(), metadata)
         .await
 }
 
@@ -123,4 +125,46 @@ pub(crate) async fn memory_search_backend(
     store
         .search_memories(session_id, vector.as_deref(), Some(query), limit)
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use tempfile::tempdir;
+
+    use super::{memory_search_backend, memory_store_backend};
+    use crate::kernel::identity::ContextSelector;
+    use crate::persistence::manager::StoreManager;
+
+    fn test_selector() -> ContextSelector {
+        ContextSelector {
+            tags: vec!["agent:test".to_string()],
+            namespace: "default".to_string(),
+            visibility: "private".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_backend_works_without_embedding_provider() {
+        let tmp = tempdir().expect("tempdir");
+        let manager = StoreManager::new(tmp.path());
+        let selector = test_selector();
+
+        memory_store_backend(
+            &manager,
+            None,
+            &selector,
+            "alpha beta lexical memory",
+            &json!({ "kind": "note" }),
+        )
+        .await
+        .expect("lexical-only memory store should succeed");
+
+        let rows = memory_search_backend(&manager, None, &selector, "alpha", 5)
+            .await
+            .expect("lexical-only memory search should succeed");
+
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].content.contains("alpha beta lexical memory"));
+    }
 }

@@ -69,7 +69,7 @@ impl ExecutionHost {
 
         // Initialize embedding provider
         let embedding_provider = if let Some(ref config) = self.config.embeddings {
-            match config {
+            let provider = match config {
                 crate::kernel::config::EmbeddingConfig::OpenAI => {
                     // Find a provider with type="openai"
                     let openai_config = self
@@ -100,15 +100,14 @@ impl ExecutionHost {
                         &crate::inference::embeddings::EmbeddingConfig::NoOp,
                     )
                 }
-            }
+            };
+            Some(Arc::from(provider))
         } else {
-            // No embeddings configured — use NoOp (no hidden fallback to OpenAI)
-            crate::inference::embeddings::create_embedding_provider(
-                &crate::inference::embeddings::EmbeddingConfig::NoOp,
-            )
+            // No embeddings configured means lexical-only memory behavior.
+            None
         };
 
-        self.embedding_provider = Some(Arc::from(embedding_provider));
+        self.embedding_provider = embedding_provider;
         self.agent_manager
             .bind_inference_state(self.clients.clone(), self.embedding_provider.clone());
 

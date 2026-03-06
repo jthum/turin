@@ -11,7 +11,6 @@
 
 use anyhow::{Context, Result};
 use std::sync::Arc;
-use tracing::warn;
 use turso::{Connection, Database};
 
 use super::schema::*;
@@ -53,6 +52,7 @@ impl StateStore {
         }
 
         let db = turso::Builder::new_local(db_path)
+            .experimental_index_method(true)
             .build()
             .await
             .with_context(|| format!("Failed to open database: {}", db_path))?;
@@ -66,6 +66,7 @@ impl StateStore {
     /// Open an in-memory state store (useful for testing).
     pub async fn open_memory() -> Result<Self> {
         let db = turso::Builder::new_local(":memory:")
+            .experimental_index_method(true)
             .build()
             .await
             .with_context(|| "Failed to open in-memory database")?;
@@ -87,41 +88,10 @@ impl StateStore {
             .await
             .with_context(|| "Failed to initialize database core schema")?;
 
-        // 2. Init FTS Schema (may fail if extension missing)
-        if let Err(e) = conn.execute_batch(INIT_SCHEMA_FTS).await {
-            let err_str = e.to_string();
-            if err_str.contains("no such module: fts5") {
-                warn!("FTS5 extension not available. Hybrid search will be degraded.");
-            } else {
-                return Err(anyhow::anyhow!("Failed to initialize FTS schema: {}", e));
-            }
-        }
-
-        // Check current version
-        let version: u32 = self.get_schema_version(&conn).await?.unwrap_or(0);
-
-        if version < 2 {
-            // Migration v1 -> v2: Add FTS5 and backfill
-            let table_exists = conn
-                .query(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts'",
-                    (),
-                )
-                .await?
-                .next()
-                .await?
-                .is_some();
-
-            if table_exists {
-                conn.execute_batch(
-                    r#"
-                    INSERT INTO memories_fts(memories_fts) VALUES('rebuild');
-                "#,
-                )
-                .await
-                .context("Failed to rebuild FTS index during migration")?;
-            }
-        }
+        // 2. Init native Turso FTS schema. This is part of the required baseline now.
+        conn.execute_batch(INIT_SCHEMA_FTS)
+            .await
+            .with_context(|| "Failed to initialize database FTS schema")?;
 
         // Record schema version
         conn.execute(
@@ -132,19 +102,6 @@ impl StateStore {
 
         Ok(())
     }
-
-    async fn get_schema_version(&self, conn: &Connection) -> Result<Option<u32>> {
-        let mut rows = conn
-            .query("SELECT value FROM schema_info WHERE key = 'version'", ())
-            .await?;
-        if let Some(row) = rows.next().await? {
-            let v_str: String = row.get(0)?;
-            Ok(v_str.parse().ok())
-        } else {
-            Ok(None)
-        }
-    }
-
     // ─── Sessions ────────────────────────────────────────────────
 
     /// Create a new session in the database, returning its internal ID.
@@ -721,34 +678,16 @@ mod tests {
             .await
             .expect("Failed to open state store");
 
-        // Check if FTS5 table was created
-        let conn = store.get_connection().await.unwrap();
-        let fts_available = conn
-            .query(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts'",
-                (),
-            )
-            .await
-            .unwrap()
-            .next()
-            .await
-            .unwrap()
-            .is_some();
-
-        if !fts_available {
-            eprintln!("Skipping FTS portions of Hybrid Search test: FTS5 module not available.");
-        }
-
         let session = 1;
 
         // Insert memories
         store
-            .insert_memory(session, "The secret code is 12345", &[1.0, 0.0], &json!({}))
+            .insert_memory(session, "The secret code is 12345", Some(&[1.0, 0.0]), &json!({}))
             .await
             .unwrap();
 
         store
-            .insert_memory(session, "Apples are red", &[0.0, 1.0], &json!({}))
+            .insert_memory(session, "Apples are red", Some(&[0.0, 1.0]), &json!({}))
             .await
             .unwrap();
 
@@ -760,54 +699,50 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert!(results[0].content.contains("secret code"));
 
-        // Test 2: FTS Search
-        if fts_available {
-            let results = store
-                .search_memories(session, None, Some("12345"), 10)
-                .await
-                .unwrap();
-            assert_eq!(results.len(), 1);
-            assert!(results[0].content.contains("secret code"));
-        }
+        // Test 2: Lexical Search
+        let results = store
+            .search_memories(session, None, Some("12345"), 10)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].content.contains("secret code"));
 
         // Test 3: Hybrid Search
-        let content_query = if fts_available { Some("12345") } else { None };
         let results = store
-            .search_memories(session, Some(&[0.0, 1.0]), content_query, 10)
+            .search_memories(session, Some(&[0.0, 1.0]), Some("12345"), 10)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 2);
+        let found_secret = results.iter().any(|r| r.content.contains("secret code"));
+        let found_apples = results.iter().any(|r| r.content.contains("Apples"));
+        assert!(found_secret, "Hybrid search missing lexical result");
+        assert!(found_apples, "Hybrid search missing vector result");
+    }
+
+    #[tokio::test]
+    async fn test_lexical_search_without_embeddings() {
+        let store = StateStore::open_memory()
+            .await
+            .expect("Failed to open state store");
+        let session = 1;
+
+        store
+            .insert_memory(session, "The secret code is 12345", None, &json!({}))
             .await
             .unwrap();
 
-        if fts_available {
-            assert_eq!(results.len(), 2);
-            let found_secret = results.iter().any(|r| r.content.contains("secret code"));
-            let found_apples = results.iter().any(|r| r.content.contains("Apples"));
-            assert!(found_secret, "Hybrid search missing FTS result");
-            assert!(found_apples, "Hybrid search missing Vector result");
-        } else {
-            let found_apples = results.iter().any(|r| r.content.contains("Apples"));
-            assert!(found_apples);
-        }
-
-        // Test 4: LIKE Fallback
-        let results_fallback = store
-            .search_memories(session, None, Some("code"), 10)
+        let results = store
+            .search_memories(session, None, Some("12345"), 10)
             .await
             .unwrap();
-        assert!(
-            !results_fallback.is_empty(),
-            "Fallback/FTS search failed to find 'code'"
-        );
-        assert!(results_fallback[0].content.contains("secret code"));
+        assert_eq!(results.len(), 1);
+        assert!(results[0].content.contains("secret code"));
 
-        // Test 4b: Multi-term LIKE
-        let results_multi = store
-            .search_memories(session, None, Some("secret 12345"), 10)
+        let hybrid_results = store
+            .search_memories(session, Some(&[1.0, 0.0]), Some("12345"), 10)
             .await
             .unwrap();
-        assert!(
-            !results_multi.is_empty(),
-            "Fallback/FTS multi-term search failed"
-        );
-        assert!(results_multi[0].content.contains("secret code"));
+        assert_eq!(hybrid_results.len(), 1);
+        assert!(hybrid_results[0].content.contains("secret code"));
     }
 }
