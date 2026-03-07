@@ -7,7 +7,8 @@ use uuid::Uuid;
 
 use crate::harness::globals::block_on_current;
 use crate::harness::stdlib::scoped_data_backend::{
-    MemorySearchMode, MemorySearchRequest, MemoryStoreMode, MemoryStoreRequest,
+    MemoryFeedbackRequest, MemoryFeedbackSignal, MemoryPurgeRequest, MemorySearchMode,
+    MemorySearchRequest, MemoryStoreMode, MemoryStoreRequest,
 };
 
 pub fn bridge_async<F>(fut: F) -> F::Output
@@ -105,6 +106,32 @@ struct LuaMemoryStoreOpts {
     trace: Option<bool>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct LuaMemoryFeedbackOpts {
+    reason: Option<String>,
+    task_id: Option<String>,
+    step: Option<f64>,
+    clamp: Option<LuaMemoryFeedbackClamp>,
+    trace: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct LuaMemoryFeedbackClamp {
+    min: Option<f64>,
+    max: Option<f64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct LuaMemoryPurgeOpts {
+    older_than_days: Option<u64>,
+    min_weight: Option<f64>,
+    max_retrieval_count: Option<u64>,
+    only_superseded: Option<bool>,
+    all: Option<bool>,
+    dry_run: Option<bool>,
+    trace: Option<bool>,
+}
+
 pub(crate) fn memory_search_request_from_opt(
     lua: &Lua,
     arg: Option<Value>,
@@ -167,6 +194,111 @@ pub(crate) fn memory_store_row_to_lua_value(
     tbl.set("id", public_id_to_simple_string(&row.public_id)?)?;
     tbl.set("stored_at", row.stored_at)?;
     tbl.set("storage", row.storage.as_str())?;
+    Ok(Value::Table(tbl))
+}
+
+pub(crate) fn memory_feedback_signal_from_value(signal: Value) -> LuaResult<MemoryFeedbackSignal> {
+    match signal {
+        Value::String(s) => match s.to_str()?.as_ref() {
+            "up" => Ok(MemoryFeedbackSignal::Up),
+            "down" => Ok(MemoryFeedbackSignal::Down),
+            other => Err(mlua::Error::runtime(format!(
+                "invalid memory feedback signal: {}",
+                other
+            ))),
+        },
+        Value::Integer(i) => Ok(MemoryFeedbackSignal::Delta(i as f64)),
+        Value::Number(n) => Ok(MemoryFeedbackSignal::Delta(n)),
+        _ => Err(mlua::Error::runtime(
+            "invalid memory feedback signal; expected \"up\", \"down\", or numeric delta",
+        )),
+    }
+}
+
+pub(crate) fn memory_feedback_request_from_opts(
+    lua: &Lua,
+    opts: Option<Table>,
+) -> LuaResult<MemoryFeedbackRequest> {
+    match opts {
+        None => Ok(MemoryFeedbackRequest::default()),
+        Some(t) => {
+            let parsed = lua
+                .from_value::<LuaMemoryFeedbackOpts>(Value::Table(t))
+                .map_err(|e| {
+                    mlua::Error::runtime(format!("invalid memory feedback opts: {}", e))
+                })?;
+            let _ = parsed.trace;
+            let clamp = parsed.clamp.unwrap_or_default();
+            Ok(MemoryFeedbackRequest {
+                reason: parsed.reason,
+                task_id: parsed.task_id,
+                step: parsed.step.unwrap_or(0.1),
+                clamp_min: clamp.min.unwrap_or(0.1),
+                clamp_max: clamp.max.unwrap_or(5.0),
+            })
+        }
+    }
+}
+
+pub(crate) fn memory_feedback_state_to_lua_value(
+    lua: &Lua,
+    state: crate::persistence::schema::MemoryFeedbackState,
+) -> LuaResult<Value> {
+    let tbl = lua.create_table()?;
+    tbl.set("id", public_id_to_simple_string(&state.public_id)?)?;
+    tbl.set("weight", state.weight)?;
+    tbl.set("updated_at", state.updated_at)?;
+    Ok(Value::Table(tbl))
+}
+
+pub(crate) fn memory_correction_row_to_lua_value(
+    lua: &Lua,
+    row: crate::persistence::schema::MemoryCorrectionRow,
+) -> LuaResult<Value> {
+    let tbl = lua.create_table()?;
+    tbl.set(
+        "superseded_id",
+        public_id_to_simple_string(&row.superseded_public_id)?,
+    )?;
+    tbl.set(
+        "replacement_id",
+        public_id_to_simple_string(&row.replacement_public_id)?,
+    )?;
+    tbl.set("corrected_at", row.corrected_at)?;
+    Ok(Value::Table(tbl))
+}
+
+pub(crate) fn memory_purge_request_from_opts(
+    lua: &Lua,
+    opts: Option<Table>,
+) -> LuaResult<MemoryPurgeRequest> {
+    match opts {
+        None => Ok(MemoryPurgeRequest::default()),
+        Some(t) => {
+            let parsed = lua
+                .from_value::<LuaMemoryPurgeOpts>(Value::Table(t))
+                .map_err(|e| mlua::Error::runtime(format!("invalid memory purge opts: {}", e)))?;
+            let _ = parsed.trace;
+            Ok(MemoryPurgeRequest {
+                older_than_days: parsed.older_than_days,
+                min_weight: parsed.min_weight,
+                max_retrieval_count: parsed.max_retrieval_count,
+                only_superseded: parsed.only_superseded.unwrap_or(false),
+                all: parsed.all.unwrap_or(false),
+                dry_run: parsed.dry_run.unwrap_or(true),
+            })
+        }
+    }
+}
+
+pub(crate) fn memory_purge_report_to_lua_value(
+    lua: &Lua,
+    report: crate::persistence::schema::MemoryPurgeReport,
+) -> LuaResult<Value> {
+    let tbl = lua.create_table()?;
+    tbl.set("matched", report.matched)?;
+    tbl.set("deleted", report.deleted)?;
+    tbl.set("dry_run", report.dry_run)?;
     Ok(Value::Table(tbl))
 }
 

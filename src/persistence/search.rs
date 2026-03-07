@@ -4,7 +4,10 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use super::schema::{MemoryRow, MemoryStorageKind, StoredMemoryRow};
+use super::schema::{
+    MemoryCorrectionRow, MemoryFeedbackState, MemoryPurgeReport, MemoryRow, MemoryStorageKind,
+    StoredMemoryRow,
+};
 use super::state::StateStore;
 
 impl StateStore {
@@ -277,6 +280,181 @@ impl StateStore {
 
         Ok(results)
     }
+
+    pub async fn apply_memory_feedback(
+        &self,
+        session_id: i64,
+        public_id: Uuid,
+        delta: f64,
+        clamp_min: f64,
+        clamp_max: f64,
+        reason: Option<&str>,
+        task_id: Option<&str>,
+    ) -> Result<MemoryFeedbackState> {
+        if clamp_min > clamp_max {
+            anyhow::bail!("invalid feedback clamp: min cannot exceed max");
+        }
+
+        let conn = self.connect().await?;
+        let public_id_bytes = public_id.into_bytes().to_vec();
+        let (row_id, current_weight) =
+            resolve_memory_feedback_target(&conn, session_id, &public_id_bytes).await?;
+        let updated_weight = (current_weight + delta).clamp(clamp_min, clamp_max);
+        let updated_at = current_utc_timestamp(&conn).await?;
+
+        conn.execute(
+            "UPDATE memories SET weight = ?2 WHERE id = ?1",
+            turso::params![row_id, updated_weight],
+        )
+        .await
+        .with_context(|| format!("Failed to update weight for memory {}", row_id))?;
+        conn.execute(
+            "INSERT INTO memory_feedback_events (memory_id, delta, reason, task_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            turso::params![row_id, delta, reason, task_id, updated_at.clone()],
+        )
+        .await
+        .with_context(|| format!("Failed to insert feedback event for memory {}", row_id))?;
+
+        Ok(MemoryFeedbackState {
+            public_id: public_id_bytes,
+            weight: updated_weight,
+            updated_at,
+        })
+    }
+
+    pub async fn correct_memory(
+        &self,
+        session_id: i64,
+        public_id: Uuid,
+        content: &str,
+        vector: Option<&[f32]>,
+        metadata: &serde_json::Value,
+    ) -> Result<MemoryCorrectionRow> {
+        let conn = self.connect().await?;
+        let public_id_bytes = public_id.into_bytes().to_vec();
+        let (old_row_id, already_superseded) =
+            resolve_memory_correction_target(&conn, session_id, &public_id_bytes).await?;
+        if already_superseded {
+            anyhow::bail!("runtime.memory.correct: memory is already superseded");
+        }
+
+        let inserted = self
+            .insert_memory(session_id, content, vector, metadata)
+            .await
+            .context("Failed to store corrected memory")?;
+        let replacement_row_id = resolve_memory_row_id(&conn, &inserted.public_id)
+            .await?
+            .context("Corrected memory row missing after insert")?;
+        let corrected_at = current_utc_timestamp(&conn).await?;
+
+        conn.execute(
+            "UPDATE memories SET superseded_at = ?2, superseded_by_memory_id = ?3 WHERE id = ?1",
+            turso::params![old_row_id, corrected_at.clone(), replacement_row_id],
+        )
+        .await
+        .with_context(|| format!("Failed to mark memory {} as superseded", old_row_id))?;
+
+        Ok(MemoryCorrectionRow {
+            superseded_public_id: public_id_bytes,
+            replacement_public_id: inserted.public_id,
+            corrected_at,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn purge_memories(
+        &self,
+        session_id: i64,
+        older_than_days: Option<u64>,
+        min_weight: Option<f64>,
+        max_retrieval_count: Option<u64>,
+        only_superseded: bool,
+        all: bool,
+        dry_run: bool,
+    ) -> Result<MemoryPurgeReport> {
+        let conn = self.connect().await?;
+        let mut rows = conn
+            .query(
+                "SELECT id,
+                        CAST((julianday('now') - julianday(created_at)) AS REAL) AS age_days,
+                        weight,
+                        retrieval_count,
+                        superseded_at
+                 FROM memories
+                 WHERE session_id = ?1",
+                turso::params![session_id],
+            )
+            .await
+            .context("Failed to enumerate memories for purge")?;
+
+        let has_filters =
+            all || older_than_days.is_some() || min_weight.is_some() || max_retrieval_count.is_some() || only_superseded;
+        if !has_filters {
+            return Ok(MemoryPurgeReport {
+                matched: 0,
+                deleted: 0,
+                dry_run,
+            });
+        }
+
+        let mut matched_ids = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let row_id: i64 = row.get(0)?;
+            let age_days = row.get::<Option<f64>>(1)?.unwrap_or(0.0);
+            let weight: f64 = row.get(2)?;
+            let retrieval_count = row.get::<i64>(3)? as u64;
+            let is_superseded = row.get::<Option<String>>(4)?.is_some();
+
+            let matches = if all {
+                !only_superseded || is_superseded
+            } else {
+                let mut matched = true;
+                if let Some(days) = older_than_days {
+                    matched &= age_days >= days as f64;
+                }
+                if let Some(weight_ceiling) = min_weight {
+                    matched &= weight <= weight_ceiling;
+                }
+                if let Some(retrieval_ceiling) = max_retrieval_count {
+                    matched &= retrieval_count <= retrieval_ceiling;
+                }
+                if only_superseded {
+                    matched &= is_superseded;
+                }
+                matched
+            };
+
+            if matches {
+                matched_ids.push(row_id);
+            }
+        }
+
+        if dry_run || matched_ids.is_empty() {
+            return Ok(MemoryPurgeReport {
+                matched: matched_ids.len(),
+                deleted: 0,
+                dry_run,
+            });
+        }
+
+        for row_id in &matched_ids {
+            conn.execute(
+                "DELETE FROM memory_feedback_events WHERE memory_id = ?1",
+                turso::params![row_id],
+            )
+            .await
+            .with_context(|| format!("Failed to delete feedback events for memory {}", row_id))?;
+            conn.execute("DELETE FROM memories WHERE id = ?1", turso::params![row_id])
+                .await
+                .with_context(|| format!("Failed to delete memory {}", row_id))?;
+        }
+
+        Ok(MemoryPurgeReport {
+            matched: matched_ids.len(),
+            deleted: matched_ids.len(),
+            dry_run,
+        })
+    }
 }
 
 fn recency_boost(age_seconds: f64) -> f64 {
@@ -294,4 +472,57 @@ async fn current_utc_timestamp(conn: &turso::Connection) -> Result<String> {
         .map(|row| row.get::<String>(0))
         .transpose()?
         .context("Timestamp query returned no row")
+}
+
+async fn resolve_memory_feedback_target(
+    conn: &turso::Connection,
+    session_id: i64,
+    public_id: &[u8],
+) -> Result<(i64, f64)> {
+    let mut rows = conn
+        .query(
+            "SELECT id, weight FROM memories WHERE session_id = ?1 AND public_id = ?2",
+            turso::params![session_id, public_id.to_vec()],
+        )
+        .await
+        .context("Failed to look up memory for feedback")?;
+    if let Some(row) = rows.next().await? {
+        Ok((row.get(0)?, row.get(1)?))
+    } else {
+        anyhow::bail!("runtime.memory.feedback: memory not found")
+    }
+}
+
+async fn resolve_memory_correction_target(
+    conn: &turso::Connection,
+    session_id: i64,
+    public_id: &[u8],
+) -> Result<(i64, bool)> {
+    let mut rows = conn
+        .query(
+            "SELECT id, superseded_at FROM memories WHERE session_id = ?1 AND public_id = ?2",
+            turso::params![session_id, public_id.to_vec()],
+        )
+        .await
+        .context("Failed to look up memory for correction")?;
+    if let Some(row) = rows.next().await? {
+        Ok((row.get(0)?, row.get::<Option<String>>(1)?.is_some()))
+    } else {
+        anyhow::bail!("runtime.memory.correct: memory not found")
+    }
+}
+
+async fn resolve_memory_row_id(conn: &turso::Connection, public_id: &[u8]) -> Result<Option<i64>> {
+    let mut rows = conn
+        .query(
+            "SELECT id FROM memories WHERE public_id = ?1",
+            turso::params![public_id.to_vec()],
+        )
+        .await
+        .context("Failed to look up inserted memory id")?;
+    if let Some(row) = rows.next().await? {
+        Ok(Some(row.get(0)?))
+    } else {
+        Ok(None)
+    }
 }

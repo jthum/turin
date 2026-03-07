@@ -155,7 +155,7 @@ async fn test_harness_rejection() -> Result<()> {
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: None,
         governance: turin::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
     };
@@ -277,7 +277,7 @@ async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Resul
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: None,
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Governed,
             enforcement_enabled: true,
@@ -449,7 +449,7 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
             },
         )]),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: None,
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Balanced,
             enforcement_enabled: true,
@@ -838,7 +838,7 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: None,
         governance: turin::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
     };
@@ -918,6 +918,10 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
                 error("memory.as.search missing turin metadata")
             end
 
+            local feedback, fe = m.feedback(mem.id, "up", { step = 0.2 })
+            if feedback == nil then error("memory.as.feedback failed: " .. tostring(fe)) end
+            if feedback.weight <= 1.0 then error("memory.as.feedback did not increase weight") end
+
             local strict_hits, strict_err = m.search("alpha", {
                 mode = "semantic",
                 strict = true,
@@ -933,6 +937,58 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
             if #fallback_hits < 1 then
                 error("semantic fallback returned no hits")
             end
+
+            local correction, ce = m.correct(
+                mem.id,
+                "fresh beta memory",
+                { source = "corrected" },
+                { storage = "lexical_only" }
+            )
+            if correction == nil then error("memory.as.correct failed: " .. tostring(ce)) end
+            if correction.replacement_id == nil then error("memory.as.correct missing replacement id") end
+
+            local corrected_hits, che = m.search("fresh", {
+                limit = 5,
+                include_metadata = true,
+            })
+            if corrected_hits == nil or #corrected_hits < 1 then
+                error("corrected memory not searchable: " .. tostring(che))
+            end
+            if corrected_hits[1].id ~= correction.replacement_id then
+                error("corrected memory id mismatch")
+            end
+
+            local hidden_old, hoe = m.search("alpha", { limit = 5 })
+            if hidden_old == nil then error("hidden-old search failed: " .. tostring(hoe)) end
+            if #hidden_old ~= 0 then error("superseded memory should be hidden by default") end
+
+            local old_visible, ove = m.search("alpha", {
+                limit = 5,
+                include_superseded = true,
+            })
+            if old_visible == nil or #old_visible < 1 then
+                error("superseded memory should be visible when requested: " .. tostring(ove))
+            end
+
+            local dry_run, dre = m.purge({ only_superseded = true })
+            if dry_run == nil then error("memory.as.purge dry-run failed: " .. tostring(dre)) end
+            if dry_run.matched < 1 or dry_run.deleted ~= 0 or dry_run.dry_run ~= true then
+                error("memory.as.purge dry-run report mismatch")
+            end
+
+            local purge, pe = m.purge({
+                only_superseded = true,
+                dry_run = false,
+            })
+            if purge == nil then error("memory.as.purge failed: " .. tostring(pe)) end
+            if purge.deleted < 1 then error("memory.as.purge deleted nothing") end
+
+            local after_purge, ape = m.search("alpha", {
+                limit = 5,
+                include_superseded = true,
+            })
+            if after_purge == nil then error("post-purge search failed: " .. tostring(ape)) end
+            if #after_purge ~= 0 then error("purged memory should be gone") end
 
             local oks, es = session.kv.set("session_seen", "1")
             if not oks then error("session.kv.set failed: " .. tostring(es)) end
@@ -988,7 +1044,7 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: None,
         governance: turin::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
     };
@@ -1034,10 +1090,10 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
         .await?
         .expect("context session row missing");
     let hits = project_store
-        .search_memories(ctx_internal_id, None, Some("alpha"), 5, 0.0, true, false)
+        .search_memories(ctx_internal_id, None, Some("fresh"), 5, 0.0, true, false)
         .await?;
     assert!(!hits.is_empty(), "expected context memory rows");
-    assert!(hits[0].retrieval_count >= 2);
+    assert!(hits[0].retrieval_count >= 1);
     assert!(hits[0].metadata.is_some(), "expected context memory metadata");
 
     Ok(())

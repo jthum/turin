@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 5;
+pub(crate) const SCHEMA_VERSION: u32 = 6;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -82,10 +82,22 @@ CREATE TABLE IF NOT EXISTS memories (
     retrieval_count INTEGER NOT NULL DEFAULT 0,
     last_retrieved_at TEXT,
     superseded_at TEXT,
+    superseded_by_memory_id INTEGER REFERENCES memories(id),
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
+
+CREATE TABLE IF NOT EXISTS memory_feedback_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id   INTEGER NOT NULL REFERENCES memories(id),
+    delta       REAL NOT NULL,
+    reason      TEXT,
+    task_id     TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_feedback_events_memory ON memory_feedback_events(memory_id);
 "#;
 
 /// Native Turso FTS schema
@@ -181,4 +193,25 @@ pub struct StoredMemoryRow {
     pub public_id: Vec<u8>,
     pub stored_at: String,
     pub storage: MemoryStorageKind,
+}
+
+#[derive(Debug, Clone)]
+pub struct MemoryFeedbackState {
+    pub public_id: Vec<u8>,
+    pub weight: f64,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct MemoryCorrectionRow {
+    pub superseded_public_id: Vec<u8>,
+    pub replacement_public_id: Vec<u8>,
+    pub corrected_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct MemoryPurgeReport {
+    pub matched: usize,
+    pub deleted: usize,
+    pub dry_run: bool,
 }

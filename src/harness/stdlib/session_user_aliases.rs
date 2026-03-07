@@ -2,14 +2,18 @@ use mlua::{Lua, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{
-    bool_err, bridge_async_result, memory_rows_to_lua_table, memory_search_request_from_opt,
+    bool_err, bridge_async_result, memory_correction_row_to_lua_value,
+    memory_feedback_request_from_opts, memory_feedback_signal_from_value,
+    memory_feedback_state_to_lua_value, memory_purge_report_to_lua_value,
+    memory_purge_request_from_opts, memory_rows_to_lua_table, memory_search_request_from_opt,
     memory_store_request_from_opts, memory_store_row_to_lua_value, metadata_json_or_empty,
     nil_err, nil_ok, ok_bool, ok_value, string_ok,
 };
 use crate::harness::stdlib::context_selectors::selector_from_active_scope_lua;
 use crate::harness::stdlib::scoped_data_backend::{
-    kv_delete_backend, kv_get_backend, kv_set_backend, memory_search_backend_with_request,
-    memory_store_backend_with_request,
+    kv_delete_backend, kv_get_backend, kv_set_backend, memory_correct_backend_with_request,
+    memory_feedback_backend_with_request, memory_purge_backend_with_request,
+    memory_search_backend_with_request, memory_store_backend_with_request,
 };
 
 pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
@@ -82,6 +86,99 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                         }
                     },
                 )?,
+                )?;
+        }
+        {
+            let manager = app_data.store_manager.clone();
+            let selector_app = app_data.clone();
+            mem.set(
+                "feedback",
+                lua.create_function(
+                    move |lua, (memory_id, signal, opts): (String, Value, Option<Table>)| {
+                        let selector = selector_from_active_scope_lua(&selector_app, scope)?;
+                        let signal = memory_feedback_signal_from_value(signal)?;
+                        let request = memory_feedback_request_from_opts(lua, opts)?;
+                        let manager = manager.clone();
+                        let result = bridge_async_result(async move {
+                            memory_feedback_backend_with_request(
+                                &manager,
+                                &selector,
+                                &memory_id,
+                                signal,
+                                &request,
+                            )
+                            .await
+                            .map_err(|e| e.to_string())
+                        });
+                        match result {
+                            Ok(state) => {
+                                Ok(ok_value(memory_feedback_state_to_lua_value(lua, state)?))
+                            }
+                            Err(err) => nil_err(lua, &err),
+                        }
+                    },
+                )?,
+            )?;
+        }
+        {
+            let manager = app_data.store_manager.clone();
+            let embedding = app_data.embedding_provider.clone();
+            let selector_app = app_data.clone();
+            mem.set(
+                "correct",
+                lua.create_function(
+                    move |lua,
+                          (memory_id, content, metadata, opts): (
+                        String,
+                        String,
+                        Option<Table>,
+                        Option<Table>,
+                    )| {
+                        let selector = selector_from_active_scope_lua(&selector_app, scope)?;
+                        let metadata_json = metadata_json_or_empty(lua, metadata)?;
+                        let request = memory_store_request_from_opts(lua, opts)?;
+                        let manager = manager.clone();
+                        let embedding = embedding.clone();
+                        let result = bridge_async_result(async move {
+                            memory_correct_backend_with_request(
+                                &manager,
+                                embedding.as_ref(),
+                                &selector,
+                                &memory_id,
+                                &content,
+                                &metadata_json,
+                                &request,
+                            )
+                            .await
+                            .map_err(|e| e.to_string())
+                        });
+                        match result {
+                            Ok(row) => Ok(ok_value(memory_correction_row_to_lua_value(lua, row)?)),
+                            Err(err) => nil_err(lua, &err),
+                        }
+                    },
+                )?,
+            )?;
+        }
+        {
+            let manager = app_data.store_manager.clone();
+            let selector_app = app_data.clone();
+            mem.set(
+                "purge",
+                lua.create_function(move |lua, opts: Option<Table>| {
+                    let selector = selector_from_active_scope_lua(&selector_app, scope)?;
+                    let request = memory_purge_request_from_opts(lua, opts)?;
+                    let manager = manager.clone();
+                    let result = bridge_async_result(async move {
+                        memory_purge_backend_with_request(&manager, &selector, &request)
+                            .await
+                            .map_err(|e| e.to_string())
+                    });
+                    match result {
+                        Ok(report) => Ok(ok_value(memory_purge_report_to_lua_value(lua, report)?)),
+                        Err(err) => nil_err(lua, &err),
+                    }
+                })?,
             )?;
         }
         t.set("memory", mem)?;

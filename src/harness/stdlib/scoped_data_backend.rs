@@ -3,7 +3,9 @@ use std::sync::Arc;
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::kernel::identity::ContextSelector;
 use crate::persistence::manager::{StoreManager, StoreSelector};
-use crate::persistence::schema::{MemoryRow, StoredMemoryRow};
+use crate::persistence::schema::{
+    MemoryCorrectionRow, MemoryFeedbackState, MemoryPurgeReport, MemoryRow, StoredMemoryRow,
+};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) enum MemoryStoreMode {
@@ -52,6 +54,57 @@ impl Default for MemorySearchRequest {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) enum MemoryFeedbackSignal {
+    Up,
+    Down,
+    Delta(f64),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct MemoryFeedbackRequest {
+    pub reason: Option<String>,
+    pub task_id: Option<String>,
+    pub step: f64,
+    pub clamp_min: f64,
+    pub clamp_max: f64,
+}
+
+impl Default for MemoryFeedbackRequest {
+    fn default() -> Self {
+        Self {
+            reason: None,
+            task_id: None,
+            step: 0.1,
+            clamp_min: 0.1,
+            clamp_max: 5.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct MemoryPurgeRequest {
+    pub older_than_days: Option<u64>,
+    pub min_weight: Option<f64>,
+    pub max_retrieval_count: Option<u64>,
+    pub only_superseded: bool,
+    pub all: bool,
+    pub dry_run: bool,
+}
+
+impl Default for MemoryPurgeRequest {
+    fn default() -> Self {
+        Self {
+            older_than_days: None,
+            min_weight: None,
+            max_retrieval_count: None,
+            only_superseded: false,
+            all: false,
+            dry_run: true,
+        }
+    }
+}
+
 fn visibility_allowed(selector: &ContextSelector) -> anyhow::Result<()> {
     match selector.visibility.as_str() {
         "private" => Ok(()),
@@ -76,23 +129,27 @@ async fn open_selector_store(
         .map_err(|e| anyhow::anyhow!(e.to_string()))
 }
 
-async fn ensure_context_memory_session(
+async fn resolve_context_memory_session(
     store: &crate::persistence::state::StateStore,
     selector: &ContextSelector,
-) -> anyhow::Result<i64> {
+) -> anyhow::Result<Option<i64>> {
     const KEY: &str = "__turin_context_session_public_id";
 
     let public_id = if let Some(existing) = store.kv_get(KEY).await? {
-        uuid::Uuid::parse_str(&existing)
+        Some(
+            uuid::Uuid::parse_str(&existing)
             .map_err(|e| anyhow::anyhow!("Invalid stored context session UUID: {}", e))?
+        )
     } else {
-        let new_id = uuid::Uuid::now_v7();
-        store.kv_set(KEY, &new_id.simple().to_string()).await?;
-        new_id
+        None
+    };
+
+    let Some(public_id) = public_id else {
+        return Ok(None);
     };
 
     if let Some(id) = store.get_session_by_public_id(public_id).await? {
-        return Ok(id);
+        return Ok(Some(id));
     }
 
     let agent_id = selector
@@ -103,6 +160,28 @@ async fn ensure_context_memory_session(
     let metadata = serde_json::to_string(selector).ok();
     store
         .create_session(public_id, &agent_id, metadata.as_deref())
+        .await
+        .map(Some)
+}
+
+async fn ensure_context_memory_session(
+    store: &crate::persistence::state::StateStore,
+    selector: &ContextSelector,
+) -> anyhow::Result<i64> {
+    if let Some(id) = resolve_context_memory_session(store, selector).await? {
+        return Ok(id);
+    }
+
+    let new_id = uuid::Uuid::now_v7();
+    store.kv_set("__turin_context_session_public_id", &new_id.simple().to_string()).await?;
+    let agent_id = selector
+        .tags
+        .iter()
+        .find_map(|t| t.strip_prefix("agent:").map(ToOwned::to_owned))
+        .unwrap_or_else(|| "context".to_string());
+    let metadata = serde_json::to_string(selector).ok();
+    store
+        .create_session(new_id, &agent_id, metadata.as_deref())
         .await
 }
 
@@ -273,6 +352,102 @@ pub(crate) async fn memory_search_backend_with_request(
         .await
 }
 
+pub(crate) async fn memory_feedback_backend_with_request(
+    manager: &StoreManager,
+    selector: &ContextSelector,
+    memory_id: &str,
+    signal: MemoryFeedbackSignal,
+    request: &MemoryFeedbackRequest,
+) -> anyhow::Result<MemoryFeedbackState> {
+    let store = open_selector_store(manager, selector).await?;
+    let session_id = resolve_context_memory_session(&store, selector)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("runtime.memory.feedback: no memory session exists"))?;
+    let public_id = uuid::Uuid::parse_str(memory_id)
+        .map_err(|e| anyhow::anyhow!("runtime.memory.feedback: invalid memory id: {}", e))?;
+    let delta = match signal {
+        MemoryFeedbackSignal::Up => request.step,
+        MemoryFeedbackSignal::Down => -request.step,
+        MemoryFeedbackSignal::Delta(delta) => delta,
+    };
+    store
+        .apply_memory_feedback(
+            session_id,
+            public_id,
+            delta,
+            request.clamp_min,
+            request.clamp_max,
+            request.reason.as_deref(),
+            request.task_id.as_deref(),
+        )
+        .await
+}
+
+pub(crate) async fn memory_correct_backend_with_request(
+    manager: &StoreManager,
+    embedding_provider: Option<&Arc<dyn EmbeddingProvider>>,
+    selector: &ContextSelector,
+    memory_id: &str,
+    content: &str,
+    metadata: &serde_json::Value,
+    request: &MemoryStoreRequest,
+) -> anyhow::Result<MemoryCorrectionRow> {
+    let store = open_selector_store(manager, selector).await?;
+    let session_id = resolve_context_memory_session(&store, selector)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("runtime.memory.correct: no memory session exists"))?;
+    let public_id = uuid::Uuid::parse_str(memory_id)
+        .map_err(|e| anyhow::anyhow!("runtime.memory.correct: invalid memory id: {}", e))?;
+    let vector = match request.storage {
+        MemoryStoreMode::Auto => {
+            if let Some(provider) = embedding_provider {
+                Some(provider.embed(content).await?.vector)
+            } else {
+                None
+            }
+        }
+        MemoryStoreMode::LexicalOnly => None,
+        MemoryStoreMode::Embedded => {
+            let provider = embedding_provider.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "runtime.memory.correct: storage='embedded' requires an embedding provider"
+                )
+            })?;
+            Some(provider.embed(content).await?.vector)
+        }
+    };
+    let metadata = augment_memory_metadata(metadata, request);
+    store
+        .correct_memory(session_id, public_id, content, vector.as_deref(), &metadata)
+        .await
+}
+
+pub(crate) async fn memory_purge_backend_with_request(
+    manager: &StoreManager,
+    selector: &ContextSelector,
+    request: &MemoryPurgeRequest,
+) -> anyhow::Result<MemoryPurgeReport> {
+    let store = open_selector_store(manager, selector).await?;
+    let Some(session_id) = resolve_context_memory_session(&store, selector).await? else {
+        return Ok(MemoryPurgeReport {
+            matched: 0,
+            deleted: 0,
+            dry_run: request.dry_run,
+        });
+    };
+    store
+        .purge_memories(
+            session_id,
+            request.older_than_days,
+            request.min_weight,
+            request.max_retrieval_count,
+            request.only_superseded,
+            request.all,
+            request.dry_run,
+        )
+        .await
+}
+
 fn augment_memory_metadata(
     metadata: &serde_json::Value,
     request: &MemoryStoreRequest,
@@ -319,10 +494,13 @@ fn augment_memory_metadata(
 mod tests {
     use serde_json::json;
     use tempfile::tempdir;
+    use uuid::Uuid;
 
     use super::{
-        memory_search_backend, memory_search_backend_with_request, memory_store_backend,
-        memory_store_backend_with_request, MemorySearchMode, MemorySearchRequest,
+        memory_correct_backend_with_request, memory_feedback_backend_with_request,
+        memory_purge_backend_with_request, memory_search_backend, memory_search_backend_with_request,
+        memory_store_backend, memory_store_backend_with_request, MemoryFeedbackRequest,
+        MemoryFeedbackSignal, MemoryPurgeRequest, MemorySearchMode, MemorySearchRequest,
         MemoryStoreMode, MemoryStoreRequest,
     };
     use crate::kernel::identity::ContextSelector;
@@ -431,5 +609,145 @@ mod tests {
         assert!(err
             .to_string()
             .contains("semantic mode requires an embedding provider"));
+    }
+
+    #[tokio::test]
+    async fn memory_lifecycle_feedback_correct_and_purge_work() {
+        let tmp = tempdir().expect("tempdir");
+        let manager = StoreManager::new(tmp.path());
+        let selector = test_selector();
+
+        let stored = memory_store_backend(
+            &manager,
+            None,
+            &selector,
+            "stale alpha memory",
+            &json!({ "kind": "note", "source": "initial" }),
+        )
+        .await
+        .expect("initial memory store should succeed");
+        let memory_id = Uuid::from_slice(&stored.public_id)
+            .expect("uuid bytes")
+            .simple()
+            .to_string();
+
+        let feedback = memory_feedback_backend_with_request(
+            &manager,
+            &selector,
+            &memory_id,
+            MemoryFeedbackSignal::Up,
+            &MemoryFeedbackRequest {
+                step: 0.25,
+                ..MemoryFeedbackRequest::default()
+            },
+        )
+        .await
+        .expect("feedback should succeed");
+        assert!(feedback.weight > 1.0);
+
+        let correction = memory_correct_backend_with_request(
+            &manager,
+            None,
+            &selector,
+            &memory_id,
+            "fresh beta memory",
+            &json!({ "kind": "note", "source": "corrected" }),
+            &MemoryStoreRequest {
+                storage: MemoryStoreMode::LexicalOnly,
+                ..MemoryStoreRequest::default()
+            },
+        )
+        .await
+        .expect("correction should succeed");
+
+        let visible = memory_search_backend_with_request(
+            &manager,
+            None,
+            &selector,
+            "fresh",
+            &MemorySearchRequest {
+                include_metadata: true,
+                ..MemorySearchRequest::default()
+            },
+        )
+        .await
+        .expect("corrected memory should be searchable");
+        assert_eq!(visible.len(), 1);
+        assert_eq!(
+            Uuid::from_slice(&visible[0].public_id)
+                .expect("uuid bytes")
+                .simple()
+                .to_string(),
+            Uuid::from_slice(&correction.replacement_public_id)
+                .expect("uuid bytes")
+                .simple()
+                .to_string()
+        );
+
+        let hidden_old = memory_search_backend_with_request(
+            &manager,
+            None,
+            &selector,
+            "stale",
+            &MemorySearchRequest::default(),
+        )
+        .await
+        .expect("superseded search should succeed");
+        assert!(hidden_old.is_empty(), "superseded memory should be hidden by default");
+
+        let old_visible = memory_search_backend_with_request(
+            &manager,
+            None,
+            &selector,
+            "stale",
+            &MemorySearchRequest {
+                include_superseded: true,
+                ..MemorySearchRequest::default()
+            },
+        )
+        .await
+        .expect("superseded-inclusive search should succeed");
+        assert_eq!(old_visible.len(), 1);
+
+        let dry_run = memory_purge_backend_with_request(
+            &manager,
+            &selector,
+            &MemoryPurgeRequest {
+                only_superseded: true,
+                ..MemoryPurgeRequest::default()
+            },
+        )
+        .await
+        .expect("purge dry-run should succeed");
+        assert_eq!(dry_run.matched, 1);
+        assert_eq!(dry_run.deleted, 0);
+        assert!(dry_run.dry_run);
+
+        let purge = memory_purge_backend_with_request(
+            &manager,
+            &selector,
+            &MemoryPurgeRequest {
+                only_superseded: true,
+                dry_run: false,
+                ..MemoryPurgeRequest::default()
+            },
+        )
+        .await
+        .expect("purge should succeed");
+        assert_eq!(purge.deleted, 1);
+
+        let after_purge = memory_search_backend_with_request(
+            &manager,
+            None,
+            &selector,
+            "stale",
+            &MemorySearchRequest {
+                include_superseded: true,
+                ..MemorySearchRequest::default()
+            },
+        )
+        .await
+        .expect("post-purge search should succeed");
+        assert!(after_purge.is_empty(), "purged memory should be gone");
     }
 }
