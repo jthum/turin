@@ -20,6 +20,10 @@ description = "A single-binary, event-driven LLM execution runtime with composab
 name = "turin"
 path = "src/main.rs"
 
+[[bin]]
+name = "turin-map"
+path = "src/bin/turin-map.rs"
+
 [lib]
 name = "turin"
 path = "src/lib.rs"

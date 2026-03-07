@@ -343,26 +343,53 @@ fn build_search_sql(
     request: &CodeSearchRequest,
     has_search_text: bool,
 ) -> (String, Vec<Value>) {
-    let mut sql = format!(
-        "SELECT chunk_key, path, language, kind, name, signature, snippet, start_line, end_line, score, lexical_score, semantic_score FROM {view_name}"
-    );
-    let mut clauses = Vec::new();
-    let mut params = Vec::new();
     let like_value = escape_like_pattern(query);
+    let mut params = vec![
+        Value::Text(like_value.clone()),
+        Value::Text(query.to_string()),
+    ];
+    let pattern_slot = "?1";
+    let exact_slot = "?2";
 
-    params.push(Value::Text(like_value.clone()));
-    let pattern_slot = format!("?{}", params.len());
-    if has_search_text {
-        clauses.push(format!("search_text LIKE {pattern_slot} ESCAPE '\\'"));
+    let lexical_score_expr = if view_name == CodeSearchMode::Lexical.view_name() {
+        Some(format!(
+            "CASE \
+                WHEN LOWER(name) = LOWER({exact_slot}) THEN 120.0 \
+                WHEN LOWER(COALESCE(signature, '')) = LOWER({exact_slot}) THEN 90.0 \
+                WHEN LOWER(name) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 70.0 \
+                WHEN LOWER(COALESCE(signature, '')) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 45.0 \
+                WHEN LOWER(snippet) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 20.0 \
+                WHEN LOWER(path) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 10.0 \
+                ELSE 0.0 \
+            END"
+        ))
     } else {
-        clauses.push(format!(
-            "(path LIKE {pattern_slot} ESCAPE '\\' OR name LIKE {pattern_slot} ESCAPE '\\' OR COALESCE(signature, '') LIKE {pattern_slot} ESCAPE '\\' OR snippet LIKE {pattern_slot} ESCAPE '\\')"
-        ));
-    }
+        None
+    };
+
+    let (mut sql, mut clauses) = if let Some(lexical_score) = lexical_score_expr.as_deref() {
+        (
+            format!(
+                "SELECT chunk_key, path, language, kind, name, signature, snippet, start_line, end_line, {lexical_score} AS score, {lexical_score} AS lexical_score, NULL AS semantic_score FROM {view_name}"
+            ),
+            vec![lexical_match_clause(pattern_slot, has_search_text)],
+        )
+    } else {
+        (
+            format!(
+                "SELECT chunk_key, path, language, kind, name, signature, snippet, start_line, end_line, score, lexical_score, semantic_score FROM {view_name}"
+            ),
+            vec![lexical_match_clause(pattern_slot, has_search_text)],
+        )
+    };
 
     if request.min_score > 0.0 {
         params.push(Value::Real(request.min_score));
-        clauses.push(format!("score >= ?{}", params.len()));
+        if let Some(lexical_score) = lexical_score_expr.as_deref() {
+            clauses.push(format!("({lexical_score}) >= ?{}", params.len()));
+        } else {
+            clauses.push(format!("score >= ?{}", params.len()));
+        }
     }
 
     if !request.languages.is_empty() {
@@ -385,6 +412,16 @@ fn build_search_sql(
     params.push(Value::Integer(limit as i64));
     sql.push_str(&format!(" LIMIT ?{}", params.len()));
     (sql, params)
+}
+
+fn lexical_match_clause(pattern_slot: &str, has_search_text: bool) -> String {
+    if has_search_text {
+        format!("search_text LIKE {pattern_slot} ESCAPE '\\'")
+    } else {
+        format!(
+            "(path LIKE {pattern_slot} ESCAPE '\\' OR name LIKE {pattern_slot} ESCAPE '\\' OR COALESCE(signature, '') LIKE {pattern_slot} ESCAPE '\\' OR snippet LIKE {pattern_slot} ESCAPE '\\')"
+        )
+    }
 }
 
 fn push_in_params(params: &mut Vec<Value>, values: &[String]) -> Vec<String> {
