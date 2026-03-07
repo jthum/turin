@@ -54,6 +54,14 @@ struct CodeChunkRecord {
 }
 
 #[derive(Debug, Clone)]
+struct DiscoveredSymbol {
+    start_line: usize,
+    kind: String,
+    name: String,
+    signature: String,
+}
+
+#[derive(Debug, Clone)]
 struct IndexedFileState {
     content_hash: String,
     language: String,
@@ -475,35 +483,44 @@ fn build_chunks(relative_path: &str, language: &str, content: &str) -> Vec<CodeC
         return Vec::new();
     }
 
-    let step = CHUNK_LINES.saturating_sub(CHUNK_OVERLAP).max(1);
-    let mut start = 0_usize;
+    let symbols = discover_symbols(language, &lines);
+    if symbols.is_empty() {
+        return build_chunk_segment(
+            relative_path,
+            language,
+            &lines,
+            0,
+            fallback_symbol(relative_path, 1),
+        );
+    }
+
     let mut out = Vec::new();
-    while start < lines.len() {
-        let end = (start + CHUNK_LINES).min(lines.len());
-        let chunk_lines = &lines[start..end];
-        let snippet = truncate_chars(&chunk_lines.join("\n"), MAX_SNIPPET_CHARS);
-        let (kind, name, signature) = infer_symbol(language, chunk_lines)
-            .unwrap_or_else(|| fallback_symbol(relative_path, start + 1));
-        let search_text = match &signature {
-            Some(signature) => format!("{relative_path}\n{name}\n{signature}\n{snippet}"),
-            None => format!("{relative_path}\n{name}\n{snippet}"),
-        };
-        out.push(CodeChunkRecord {
-            chunk_key: format!("{relative_path}:{}", start + 1),
-            path: relative_path.to_string(),
-            language: language.to_string(),
-            kind,
-            name,
-            signature,
-            snippet,
-            search_text,
-            start_line: (start + 1) as i64,
-            end_line: end as i64,
-        });
-        if end == lines.len() {
-            break;
-        }
-        start += step;
+    if symbols[0].start_line > 0 {
+        out.extend(build_chunk_segment(
+            relative_path,
+            language,
+            &lines[..symbols[0].start_line],
+            0,
+            fallback_symbol(relative_path, 1),
+        ));
+    }
+
+    for (index, symbol) in symbols.iter().enumerate() {
+        let segment_end = symbols
+            .get(index + 1)
+            .map(|next| next.start_line)
+            .unwrap_or(lines.len());
+        out.extend(build_chunk_segment(
+            relative_path,
+            language,
+            &lines[symbol.start_line..segment_end],
+            symbol.start_line,
+            (
+                symbol.kind.clone(),
+                symbol.name.clone(),
+                Some(symbol.signature.clone()),
+            ),
+        ));
     }
     out
 }
@@ -516,17 +533,66 @@ fn fallback_symbol(relative_path: &str, start_line: usize) -> (String, String, O
     )
 }
 
-fn infer_symbol(language: &str, lines: &[&str]) -> Option<(String, String, Option<String>)> {
-    for line in lines {
+fn discover_symbols(language: &str, lines: &[&str]) -> Vec<DiscoveredSymbol> {
+    let mut out = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
         if trimmed.is_empty() || is_comment_line(language, trimmed) {
             continue;
         }
         if let Some((kind, name)) = parse_signature(language, trimmed) {
-            return Some((kind.to_string(), name, Some(trimmed.to_string())));
+            out.push(DiscoveredSymbol {
+                start_line: index,
+                kind: kind.to_string(),
+                name,
+                signature: trimmed.to_string(),
+            });
         }
     }
-    None
+    out
+}
+
+fn build_chunk_segment(
+    relative_path: &str,
+    language: &str,
+    lines: &[&str],
+    base_start: usize,
+    metadata: (String, String, Option<String>),
+) -> Vec<CodeChunkRecord> {
+    if lines.is_empty() {
+        return Vec::new();
+    }
+
+    let step = CHUNK_LINES.saturating_sub(CHUNK_OVERLAP).max(1);
+    let mut start = 0_usize;
+    let mut out = Vec::new();
+    while start < lines.len() {
+        let end = (start + CHUNK_LINES).min(lines.len());
+        let chunk_lines = &lines[start..end];
+        let snippet = truncate_chars(&chunk_lines.join("\n"), MAX_SNIPPET_CHARS);
+        let (kind, name, signature) = metadata.clone();
+        let search_text = match &signature {
+            Some(signature) => format!("{relative_path}\n{name}\n{signature}\n{snippet}"),
+            None => format!("{relative_path}\n{name}\n{snippet}"),
+        };
+        out.push(CodeChunkRecord {
+            chunk_key: format!("{relative_path}:{}", base_start + start + 1),
+            path: relative_path.to_string(),
+            language: language.to_string(),
+            kind,
+            name,
+            signature,
+            snippet,
+            search_text,
+            start_line: (base_start + start + 1) as i64,
+            end_line: (base_start + end) as i64,
+        });
+        if end == lines.len() {
+            break;
+        }
+        start += step;
+    }
+    out
 }
 
 fn is_comment_line(language: &str, line: &str) -> bool {
@@ -912,6 +978,53 @@ end
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn build_chunks_anchor_chunks_to_symbol_boundaries() {
+        let chunks = build_chunks(
+            "src/lib.rs",
+            "rust",
+            "use std::fmt;\n\npub fn alpha() {}\n\npub fn beta() {}\n",
+        );
+
+        assert!(chunks.iter().any(|chunk| {
+            chunk.name == "alpha"
+                && chunk.signature.as_deref() == Some("pub fn alpha() {}")
+                && chunk.start_line == 3
+        }));
+        assert!(chunks.iter().any(|chunk| {
+            chunk.name == "beta"
+                && chunk.signature.as_deref() == Some("pub fn beta() {}")
+                && chunk.start_line == 5
+        }));
+    }
+
+    #[test]
+    fn build_chunks_split_large_symbols_without_losing_symbol_identity() {
+        let mut content = String::from("pub fn oversized() {\n");
+        for _ in 0..96 {
+            content.push_str("    println!(\"x\");\n");
+        }
+        content.push_str("}\n");
+
+        let symbol_chunks = build_chunks("src/lib.rs", "rust", &content)
+            .into_iter()
+            .filter(|chunk| chunk.name == "oversized")
+            .collect::<Vec<_>>();
+
+        assert!(symbol_chunks.len() >= 2);
+        assert!(
+            symbol_chunks
+                .iter()
+                .all(|chunk| chunk.signature.as_deref() == Some("pub fn oversized() {"))
+        );
+        assert_eq!(symbol_chunks[0].start_line, 1);
+        assert!(
+            symbol_chunks
+                .last()
+                .is_some_and(|chunk| chunk.end_line > CHUNK_LINES as i64)
+        );
     }
 
     async fn lexical_search(
