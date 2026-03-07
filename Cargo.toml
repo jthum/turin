@@ -88,6 +88,15 @@ turin-channel-core = { path = "crates/turin-channel-core" }
 turin-channel-runner = { path = "crates/turin-channel-runner" }
 turin-channel-fs = { path = "crates/turin-channel-fs" }
 turin-channel-discord = { path = "crates/turin-channel-discord" }
+
+[profile.dev]
+debug = 0         # Lower compile memory and artifact size during normal iteration
+incremental = true
+
+[profile.test]
+debug = 0         # Tests do not need full debuginfo by default
+incremental = true
+
 [profile.release]
 opt-level = "z"     # Optimize for size
 lto = true          # Enable Link Time Optimization

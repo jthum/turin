@@ -1,0 +1,13 @@
+[build]
+# Keep peak rustc memory predictable during editor-driven development.
+# Override locally with CARGO_BUILD_JOBS if a larger machine can handle more.
+jobs = 1
+
+[patch."https://github.com/jthum/inference-sdk-rust"]
+inference-sdk-core = { path = "../inference-sdk-rust/core" }
+anthropic-sdk = { path = "../inference-sdk-rust/anthropic" }
+openai-sdk = { path = "../inference-sdk-rust/openai" }
+inference-sdk-registry = { path = "../inference-sdk-rust/registry" }
+
+[patch."https://github.com/jthum/mcp-sdk-rust"]
+mcp-sdk = { path = "../mcp-sdk-rust" }
