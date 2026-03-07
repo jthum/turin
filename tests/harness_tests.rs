@@ -1217,6 +1217,149 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_runtime_cache_api_round_trip() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_runtime_cache.db");
+    let harness_dir = tmp.path().join("harnesses");
+    let cache_dir = tmp.path().join("cache");
+    std::fs::create_dir(&harness_dir)?;
+    std::fs::create_dir(&cache_dir)?;
+    std::fs::write(cache_dir.join("sample.txt"), "alpha\nbeta\n")?;
+
+    let harness_code = r#"
+        function on_turn_prepare(ctx)
+            local fresh, fe = runtime.cache.read("cache/sample.txt")
+            if fresh == nil then error("fresh cache read failed: " .. tostring(fe)) end
+            if fresh.status ~= "fresh" then error("fresh status mismatch") end
+            if fresh.content == nil then error("fresh content missing") end
+
+            local unchanged, ue = runtime.cache.read("cache/sample.txt")
+            if unchanged == nil then error("unchanged cache read failed: " .. tostring(ue)) end
+            if unchanged.status ~= "unchanged" then error("unchanged status mismatch") end
+            if unchanged.content ~= nil then error("unchanged should omit content by default") end
+            if unchanged.estimated_tokens_saved < 1 then error("unchanged token estimate missing") end
+
+            local okw, we = fs.write("cache/sample.txt", "alpha\ngamma\n")
+            if not okw then error("fs.write failed: " .. tostring(we)) end
+
+            local changed, ce = runtime.cache.read("cache/sample.txt", {
+                include_previous = true,
+            })
+            if changed == nil then error("changed cache read failed: " .. tostring(ce)) end
+            if changed.status ~= "changed" then error("changed status mismatch") end
+            if changed.previous_hash == nil then error("changed previous_hash missing") end
+            if changed.previous_content == nil then error("changed previous_content missing") end
+            if changed.diff == nil then error("changed diff missing") end
+
+            local stats, se = runtime.cache.stats({ scope = "both" })
+            if stats == nil then error("cache stats failed: " .. tostring(se)) end
+            if stats.global == nil or stats.global.cached_versions < 2 then
+                error("cache global stats mismatch")
+            end
+            if stats.session == nil or stats.session.files_seen ~= 1 then
+                error("cache session stats mismatch")
+            end
+
+            local invalidated, ie = runtime.cache.invalidate("cache/sample.txt")
+            if invalidated ~= true then error("cache invalidate failed: " .. tostring(ie)) end
+
+            local fresh_again, fae = runtime.cache.read("cache/sample.txt")
+            if fresh_again == nil then error("fresh-again read failed: " .. tostring(fae)) end
+            if fresh_again.status ~= "fresh" then error("fresh-again status mismatch") end
+
+            local dry_run, dre = runtime.cache.reset({ scope = "session" })
+            if dry_run == nil then error("session cache dry-run reset failed: " .. tostring(dre)) end
+            if dry_run.dry_run ~= true or dry_run.removed_reads < 1 then
+                error("session cache dry-run reset report mismatch")
+            end
+
+            local reset, re = runtime.cache.reset({
+                scope = "session",
+                dry_run = false,
+            })
+            if reset == nil then error("session cache reset failed: " .. tostring(re)) end
+            if reset.removed_reads < 1 then error("session cache reset removed nothing") end
+
+            return ALLOW
+        end
+    "#;
+    std::fs::write(harness_dir.join("runtime_cache.lua"), harness_code)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Runtime cache test".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: None,
+        governance: turin::kernel::config::GovernanceConfig::default(),
+        daemon: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    let session_uuid = uuid::Uuid::parse_str(session.identity.session_id())?;
+    kernel
+        .run(&mut session, Some("exercise runtime cache".to_string()))
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    let store = kernel.store_manager().get_default().await?;
+    let internal_session_id = store
+        .get_session_by_public_id(session_uuid)
+        .await?
+        .expect("main session row missing");
+    let cache_stats = store.cache_stats(Some(internal_session_id), true, true).await?;
+    assert_eq!(
+        cache_stats.session.expect("session cache stats").files_seen,
+        0,
+        "session reset should clear session cache reads"
+    );
+    assert!(
+        cache_stats.global.expect("global cache stats").cached_versions >= 2,
+        "global cache versions should persist after session reset"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_runtime_governance_observability_api() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_runtime_governance.db");

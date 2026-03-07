@@ -782,11 +782,11 @@ fn delegated_capability_allowed_by_parent(
     best.map(|(_, allowed)| allowed).unwrap_or(false)
 }
 
-fn resolve_safe_path(root: &Path, path_str: &str) -> Option<PathBuf> {
+pub(crate) fn resolve_safe_path(root: &Path, path_str: &str) -> Option<PathBuf> {
     crate::tools::is_safe_path(root, Path::new(path_str)).ok()
 }
 
-fn require_capability_for_lua(lua: &Lua, capability: &str) -> LuaResult<()> {
+pub(crate) fn require_capability_for_lua(lua: &Lua, capability: &str) -> LuaResult<()> {
     if let Some(app_data) = lua.app_data_ref::<crate::harness::globals::HarnessAppData>() {
         require_governance_capability(&app_data, capability).map_err(mlua::Error::runtime)?;
     }

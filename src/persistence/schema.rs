@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 6;
+pub(crate) const SCHEMA_VERSION: u32 = 7;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -98,6 +98,29 @@ CREATE TABLE IF NOT EXISTS memory_feedback_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_memory_feedback_events_memory ON memory_feedback_events(memory_id);
+
+CREATE TABLE IF NOT EXISTS file_cache_versions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    path         TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    content      TEXT NOT NULL,
+    content_bytes INTEGER NOT NULL,
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE(path, content_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_cache_versions_path ON file_cache_versions(path);
+
+CREATE TABLE IF NOT EXISTS file_cache_reads (
+    session_id   INTEGER NOT NULL REFERENCES sessions(id),
+    path         TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    tokens_saved INTEGER NOT NULL DEFAULT 0,
+    last_read_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (session_id, path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_cache_reads_path ON file_cache_reads(path);
 "#;
 
 /// Native Turso FTS schema
@@ -213,5 +236,65 @@ pub struct MemoryCorrectionRow {
 pub struct MemoryPurgeReport {
     pub matched: usize,
     pub deleted: usize,
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheReadStatus {
+    Fresh,
+    Unchanged,
+    Changed,
+}
+
+impl CacheReadStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Fresh => "fresh",
+            Self::Unchanged => "unchanged",
+            Self::Changed => "changed",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CacheReadResult {
+    pub status: CacheReadStatus,
+    pub path: String,
+    pub hash: String,
+    pub previous_hash: Option<String>,
+    pub content: Option<String>,
+    pub previous_content: Option<String>,
+    pub diff: Option<String>,
+    pub diff_truncated: bool,
+    pub estimated_tokens_saved: u64,
+    pub read_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CacheGlobalStats {
+    pub cached_files: u64,
+    pub cached_versions: u64,
+    pub tokens_saved: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CacheSessionStats {
+    pub public_id: Vec<u8>,
+    pub files_seen: u64,
+    pub tokens_saved: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CacheStatsReport {
+    pub global: Option<CacheGlobalStats>,
+    pub session: Option<CacheSessionStats>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CacheResetReport {
+    pub scope: String,
+    pub removed_versions: u64,
+    pub removed_reads: u64,
+    pub reset_stats: bool,
     pub dry_run: bool,
 }
