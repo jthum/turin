@@ -7,6 +7,8 @@ members = [
     "crates/turin-channel-runner",
     "crates/turin-channel-fs",
     "crates/turin-channel-discord",
+    "crates/turin-code-index",
+    "crates/turin-map",
 ]
 resolver = "2"
 
@@ -19,10 +21,6 @@ description = "A single-binary, event-driven LLM execution runtime with composab
 [[bin]]
 name = "turin"
 path = "src/main.rs"
-
-[[bin]]
-name = "turin-map"
-path = "src/bin/turin-map.rs"
 
 [lib]
 name = "turin"
@@ -50,6 +48,7 @@ turin-daemon-client = { path = "crates/turin-daemon-client" }
 turin-channel-runner = { path = "crates/turin-channel-runner" }
 turin-channel-fs = { path = "crates/turin-channel-fs" }
 turin-channel-discord = { path = "crates/turin-channel-discord" }
+turin-code-index = { path = "crates/turin-code-index" }
 
 # Inference SDK family (unified provider layer)
 inference-sdk-core = { git = "https://github.com/jthum/inference-sdk-rust", rev = "bd64dd2f9fd7a58e8c4e270c8b931d13de2971c6" }
@@ -61,7 +60,6 @@ mcp-sdk = { git = "https://github.com/jthum/mcp-sdk-rust", rev = "3c5e0d3078f68d
 
 # Streaming
 futures = "0.3"
-ignore = "0.4"
 similar = "2.7"
 sha2 = "0.10"
 

@@ -2,8 +2,8 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
-use turin::code_index_reader::{CodebaseSelector, status as read_status};
-use turin::code_index_writer::{build_index, rebuild_index, remove_file};
+use turin_code_index::code_index_reader::{CodebaseSelector, status as read_status};
+use turin_code_index::code_index_writer::{build_index, rebuild_index, remove_file};
 
 #[derive(Parser, Debug)]
 #[command(
