@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use turso::{Connection, Database, Value};
 
-const CODE_INDEX_SCHEMA_REVISION: i64 = 20260305;
+const CODE_INDEX_SCHEMA_REVISION: i64 = 20260307;
 const DEFAULT_LIMIT: usize = 10;
 
 #[derive(Debug, Clone)]

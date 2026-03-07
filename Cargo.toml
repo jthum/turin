@@ -61,6 +61,7 @@ mcp-sdk = { git = "https://github.com/jthum/mcp-sdk-rust", rev = "3c5e0d3078f68d
 
 # Streaming
 futures = "0.3"
+ignore = "0.4"
 similar = "2.7"
 sha2 = "0.10"
 

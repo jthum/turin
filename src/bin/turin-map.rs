@@ -3,7 +3,7 @@ use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 use turin::code_index_reader::{CodebaseSelector, status as read_status};
-use turin::code_index_writer::{build_index, remove_file};
+use turin::code_index_writer::{build_index, rebuild_index, remove_file};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -65,8 +65,12 @@ struct StatusArgs {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Index(args) | Command::Rebuild(args) => {
+        Command::Index(args) => {
             let report = build_index(&args.root.root, args.root.index_path.as_deref()).await?;
+            print_value(args.root.json, &report)?;
+        }
+        Command::Rebuild(args) => {
+            let report = rebuild_index(&args.root.root, args.root.index_path.as_deref()).await?;
             print_value(args.root.json, &report)?;
         }
         Command::Remove(args) => {
