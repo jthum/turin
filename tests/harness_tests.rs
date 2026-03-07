@@ -1359,6 +1359,285 @@ async fn test_runtime_cache_api_round_trip() -> Result<()> {
     Ok(())
 }
 
+async fn create_synthetic_code_index(
+    root: &std::path::Path,
+    semantic: bool,
+    hybrid: bool,
+) -> Result<()> {
+    let index_dir = root.join(".turin");
+    std::fs::create_dir_all(&index_dir)?;
+    let index_path = index_dir.join("codebase.db");
+    let db = turso::Builder::new_local(index_path.to_str().unwrap())
+        .experimental_index_method(true)
+        .build()
+        .await?;
+    let conn = db.connect()?;
+    let root_path = std::fs::canonicalize(root)?;
+    let capabilities = serde_json::json!({
+        "lexical": true,
+        "semantic": semantic,
+        "hybrid": hybrid,
+        "languages": ["rust", "lua"],
+    })
+    .to_string();
+    conn.execute_batch(
+        r#"
+CREATE TABLE index_meta (
+    schema_revision INTEGER NOT NULL,
+    root_path TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    capabilities TEXT NOT NULL,
+    codebase_id TEXT
+);
+CREATE TABLE code_chunks (
+    chunk_key TEXT PRIMARY KEY,
+    path TEXT NOT NULL,
+    language TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    signature TEXT,
+    snippet TEXT NOT NULL,
+    start_line INTEGER NOT NULL,
+    end_line INTEGER NOT NULL,
+    lexical_score REAL NOT NULL,
+    semantic_score REAL
+);
+"#,
+    )
+    .await?;
+    conn.execute(
+        "INSERT INTO index_meta (schema_revision, root_path, updated_at, capabilities, codebase_id) VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?3, ?4)",
+        turso::params![20260305_i64, root_path.to_string_lossy().to_string(), capabilities, "repo-main"],
+    )
+    .await?;
+    conn.execute(
+        "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, start_line, end_line, lexical_score, semantic_score) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        turso::params![
+            "chunk_rust",
+            "src/kernel/governance.rs",
+            "rust",
+            "function",
+            "capability_decision",
+            "fn capability_decision(...)",
+            "pub fn capability_decision(capability: &str) -> CapabilityDecision",
+            101_i64,
+            132_i64,
+            0.91_f64,
+            0.82_f64
+        ],
+    )
+    .await?;
+    conn.execute(
+        "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, start_line, end_line, lexical_score, semantic_score) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        turso::params![
+            "chunk_lua",
+            "harnesses/runtime_cache.lua",
+            "lua",
+            "function",
+            "on_turn_prepare",
+            "function on_turn_prepare(ctx)",
+            "function on_turn_prepare(ctx) local rows = runtime.cache.stats() end",
+            1_i64,
+            18_i64,
+            0.67_f64,
+            0.48_f64
+        ],
+    )
+    .await?;
+    conn.execute_batch(
+        r#"
+CREATE VIEW v_code_lexical AS
+SELECT
+    chunk_key,
+    path,
+    language,
+    kind,
+    name,
+    signature,
+    snippet,
+    start_line,
+    end_line,
+    lexical_score AS score,
+    lexical_score,
+    NULL AS semantic_score
+FROM code_chunks;
+"#,
+    )
+    .await?;
+    if semantic {
+        conn.execute_batch(
+            r#"
+CREATE VIEW v_code_semantic AS
+SELECT
+    chunk_key,
+    path,
+    language,
+    kind,
+    name,
+    signature,
+    snippet,
+    start_line,
+    end_line,
+    semantic_score AS score,
+    NULL AS lexical_score,
+    semantic_score
+FROM code_chunks
+WHERE semantic_score IS NOT NULL;
+"#,
+        )
+        .await?;
+    }
+    if hybrid {
+        conn.execute_batch(
+            r#"
+CREATE VIEW v_code_hybrid AS
+SELECT
+    chunk_key,
+    path,
+    language,
+    kind,
+    name,
+    signature,
+    snippet,
+    start_line,
+    end_line,
+    ((lexical_score * 0.5) + (COALESCE(semantic_score, 0.0) * 0.5)) AS score,
+    lexical_score,
+    semantic_score
+FROM code_chunks;
+"#,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_runtime_code_search_api_round_trip() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_runtime_code_search.db");
+    let harness_dir = tmp.path().join("harnesses");
+    let repo_root = tmp.path().join("repo");
+    let lexical_only_root = tmp.path().join("repo_lexical_only");
+    std::fs::create_dir(&harness_dir)?;
+    std::fs::create_dir(&repo_root)?;
+    std::fs::create_dir(&lexical_only_root)?;
+    create_synthetic_code_index(&repo_root, true, true).await?;
+    create_synthetic_code_index(&lexical_only_root, false, false).await?;
+
+    let harness_code = r#"
+        function on_turn_prepare(ctx)
+            local status, se = runtime.code.search.status("repo")
+            if status == nil then error("code search status failed: " .. tostring(se)) end
+            if status.root == nil or status.index_path == nil then
+                error("status root/index_path missing")
+            end
+            if status.schema_revision ~= 20260305 then error("schema revision mismatch") end
+            if status.capabilities == nil or status.capabilities.lexical ~= true then
+                error("status capabilities mismatch")
+            end
+
+            local rows, le = runtime.code.search.lexical("repo", "capability", {
+                limit = 5,
+                languages = { "rust" },
+                kinds = { "function" },
+                min_score = 0.1,
+            })
+            if rows == nil then error("lexical search failed: " .. tostring(le)) end
+            if #rows ~= 1 then error("lexical row count mismatch") end
+            if rows[1].name ~= "capability_decision" then error("lexical row mismatch") end
+            if rows[1].rank ~= 1 then error("lexical rank mismatch") end
+
+            local hybrid_rows, he = runtime.code.search.hybrid("repo", "capability")
+            if hybrid_rows == nil then error("hybrid search failed: " .. tostring(he)) end
+            if hybrid_rows[1].lexical_score == nil or hybrid_rows[1].semantic_score == nil then
+                error("hybrid scores missing")
+            end
+
+            local fallback_rows, fe = runtime.code.search.semantic("repo_lexical_only", "cache")
+            if fallback_rows == nil then error("semantic fallback failed: " .. tostring(fe)) end
+            if fallback_rows[1].name ~= "on_turn_prepare" then
+                error("semantic fallback row mismatch")
+            end
+            if fallback_rows[1].semantic_score ~= nil then
+                error("semantic fallback should return lexical rows")
+            end
+
+            local strict_rows, strict_err = runtime.code.search.semantic(
+                "repo_lexical_only",
+                "cache",
+                { strict = true }
+            )
+            if strict_rows ~= nil then error("strict semantic call should fail") end
+            if string.find(tostring(strict_err), "semantic capability not available", 1, true) == nil then
+                error("strict semantic error mismatch")
+            end
+
+            return ALLOW
+        end
+    "#;
+    std::fs::write(harness_dir.join("runtime_code.lua"), harness_code)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Runtime code search test".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: Some(EmbeddingConfig::NoOp),
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise runtime code search".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_runtime_governance_observability_api() -> Result<()> {
     let tmp = tempdir()?;

@@ -621,6 +621,11 @@ fn preset_capabilities_for_profile(
         GovernanceProfile::Open => {
             caps.insert("runtime.db.*".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.*".into(), serde_json::Value::Bool(true));
+            caps.insert("runtime.cache.*".into(), serde_json::Value::Bool(true));
+            caps.insert(
+                "runtime.code.search.*".into(),
+                serde_json::Value::Bool(true),
+            );
             caps.insert("runtime.policy.set".into(), serde_json::Value::Bool(true));
             caps.insert(
                 "runtime.governance.grant.*".into(),
@@ -639,6 +644,11 @@ fn preset_capabilities_for_profile(
             caps.insert("runtime.agent.await".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.status".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.spawn".into(), serde_json::Value::Bool(true));
+            caps.insert("runtime.cache.*".into(), serde_json::Value::Bool(true));
+            caps.insert(
+                "runtime.code.search.*".into(),
+                serde_json::Value::Bool(true),
+            );
             caps.insert("runtime.policy.set".into(), serde_json::Value::Bool(true));
             caps.insert(
                 "runtime.governance.grant.*".into(),
@@ -665,6 +675,11 @@ fn preset_capabilities_for_profile(
             caps.insert("runtime.agent.await".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.status".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.spawn".into(), serde_json::Value::Bool(false));
+            caps.insert("runtime.cache.*".into(), serde_json::Value::Bool(true));
+            caps.insert(
+                "runtime.code.search.*".into(),
+                serde_json::Value::Bool(true),
+            );
             caps.insert("runtime.policy.set".into(), serde_json::Value::Bool(false));
             caps.insert(
                 "runtime.governance.grant.*".into(),

@@ -1,3 +1,4 @@
+pub(crate) mod code_index_reader;
 pub mod daemon;
 pub mod display;
 pub mod harness;

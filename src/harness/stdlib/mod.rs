@@ -9,6 +9,7 @@ pub mod policy_support;
 pub mod runtime_agent;
 pub mod runtime_bindings;
 pub mod runtime_cache;
+pub mod runtime_code;
 pub mod runtime_context;
 pub mod runtime_data;
 pub mod runtime_db;
