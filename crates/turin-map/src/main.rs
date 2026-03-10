@@ -3,7 +3,13 @@ use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 use turin_code_index::code_index_reader::{CodebaseSelector, status as read_status};
-use turin_code_index::code_index_writer::{build_index, rebuild_index, remove_file};
+use turin_code_index::code_index_writer::{
+    build_index_with_options, rebuild_index_with_options, remove_file,
+};
+
+mod embedding;
+
+use embedding::{EmbeddingArgs, build_options};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -44,6 +50,9 @@ struct RootArgs {
 struct IndexArgs {
     #[command(flatten)]
     root: RootArgs,
+
+    #[command(flatten)]
+    embedding: EmbeddingArgs,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -66,11 +75,21 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Index(args) => {
-            let report = build_index(&args.root.root, args.root.index_path.as_deref()).await?;
+            let report = build_index_with_options(
+                &args.root.root,
+                args.root.index_path.as_deref(),
+                build_options(&args.embedding)?,
+            )
+            .await?;
             print_value(args.root.json, &report)?;
         }
         Command::Rebuild(args) => {
-            let report = rebuild_index(&args.root.root, args.root.index_path.as_deref()).await?;
+            let report = rebuild_index_with_options(
+                &args.root.root,
+                args.root.index_path.as_deref(),
+                build_options(&args.embedding)?,
+            )
+            .await?;
             print_value(args.root.json, &report)?;
         }
         Command::Remove(args) => {

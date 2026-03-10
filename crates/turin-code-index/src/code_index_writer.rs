@@ -2,7 +2,9 @@ use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use crate::embeddings::CodeEmbeddingProvider;
 use crate::shared::{CODE_INDEX_SCHEMA_REVISION, open_index_connection};
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -43,6 +45,7 @@ struct CodeChunkRecord {
     signature: Option<String>,
     snippet: String,
     search_text: String,
+    embedding: Option<Vec<f32>>,
     start_line: i64,
     end_line: i64,
 }
@@ -51,6 +54,7 @@ struct CodeChunkRecord {
 struct IndexedFileState {
     content_hash: String,
     language: String,
+    embedding_key: String,
     chunk_count: u64,
 }
 
@@ -69,6 +73,11 @@ struct CodeIndexSummary {
     chunks_indexed: u64,
 }
 
+#[derive(Clone, Default)]
+pub struct CodeIndexBuildOptions {
+    pub embedding_provider: Option<Arc<dyn CodeEmbeddingProvider>>,
+}
+
 mod chunking;
 mod fs;
 mod store;
@@ -81,17 +90,34 @@ use store::{
 };
 
 pub async fn build_index(root: &Path, index_path: Option<&Path>) -> Result<CodeIndexBuildReport> {
-    build_index_internal(root, index_path, false).await
+    build_index_with_options(root, index_path, CodeIndexBuildOptions::default()).await
+}
+
+pub async fn build_index_with_options(
+    root: &Path,
+    index_path: Option<&Path>,
+    options: CodeIndexBuildOptions,
+) -> Result<CodeIndexBuildReport> {
+    build_index_internal(root, index_path, false, &options).await
 }
 
 pub async fn rebuild_index(root: &Path, index_path: Option<&Path>) -> Result<CodeIndexBuildReport> {
-    build_index_internal(root, index_path, true).await
+    rebuild_index_with_options(root, index_path, CodeIndexBuildOptions::default()).await
+}
+
+pub async fn rebuild_index_with_options(
+    root: &Path,
+    index_path: Option<&Path>,
+    options: CodeIndexBuildOptions,
+) -> Result<CodeIndexBuildReport> {
+    build_index_internal(root, index_path, true, &options).await
 }
 
 async fn build_index_internal(
     root: &Path,
     index_path: Option<&Path>,
     force_rebuild: bool,
+    options: &CodeIndexBuildOptions,
 ) -> Result<CodeIndexBuildReport> {
     let root = std::fs::canonicalize(root)
         .with_context(|| format!("root '{}' does not exist", root.display()))?;
@@ -110,6 +136,11 @@ async fn build_index_internal(
 
     let run_updated_at = current_timestamp(&conn).await?;
     let existing_files = load_indexed_files(&conn).await?;
+    let embedding_key = options
+        .embedding_provider
+        .as_ref()
+        .map(|provider| provider.config_key())
+        .unwrap_or_else(|| "none".to_string());
     let mut seen_paths = HashSet::new();
 
     for file in collect_indexable_files(&root)? {
@@ -124,6 +155,7 @@ async fn build_index_internal(
         let unchanged = existing_files.get(&source.path).is_some_and(|existing| {
             existing.content_hash == source.content_hash
                 && existing.language == source.language
+                && existing.embedding_key == embedding_key
                 && existing.chunk_count > 0
         });
         if unchanged {
@@ -131,13 +163,42 @@ async fn build_index_internal(
         }
 
         delete_indexed_file(&conn, &source.path).await?;
-        let chunks = build_chunks(&source.path, &source.language, &source.content);
+        let mut chunks = build_chunks(&source.path, &source.language, &source.content);
         if chunks.is_empty() {
             continue;
         }
 
+        if let Some(provider) = &options.embedding_provider {
+            let embedding_inputs = chunks
+                .iter()
+                .map(|chunk| chunk.search_text.clone())
+                .collect::<Vec<_>>();
+            let embeddings = provider
+                .embed_batch(&embedding_inputs)
+                .await
+                .with_context(|| format!("failed to generate embeddings for '{}'", source.path))?;
+            if embeddings.len() != chunks.len() {
+                bail!(
+                    "embedding provider returned {} vectors for {} chunks in '{}'",
+                    embeddings.len(),
+                    chunks.len(),
+                    source.path
+                );
+            }
+            for (chunk, embedding) in chunks.iter_mut().zip(embeddings) {
+                chunk.embedding = Some(embedding);
+            }
+        }
+
         insert_chunks(&conn, &chunks).await?;
-        upsert_indexed_file(&conn, &source, chunks.len() as u64, &run_updated_at).await?;
+        upsert_indexed_file(
+            &conn,
+            &source,
+            chunks.len() as u64,
+            &embedding_key,
+            &run_updated_at,
+        )
+        .await?;
     }
 
     for stale_path in existing_files.keys() {
@@ -209,8 +270,30 @@ mod tests {
     use super::*;
     use crate::code_index_reader::{CodeSearchMode, CodeSearchRequest, CodebaseSelector};
     use crate::code_index_writer::chunking::{CHUNK_LINES, build_chunks};
+    use crate::embeddings::{CODE_INDEX_VECTOR_DIM, CodeEmbeddingProvider};
+    use async_trait::async_trait;
+    use std::sync::Arc;
     use std::time::Duration;
     use tempfile::tempdir;
+
+    struct TestEmbeddingProvider;
+
+    #[async_trait]
+    impl CodeEmbeddingProvider for TestEmbeddingProvider {
+        fn config_key(&self) -> String {
+            "test:deterministic".to_string()
+        }
+
+        async fn embed(&self, text: &str) -> Result<Vec<f32>> {
+            let mut vector = vec![0.0; CODE_INDEX_VECTOR_DIM];
+            vector[0] = if text.contains("capability") {
+                1.0
+            } else {
+                0.1
+            };
+            Ok(vector)
+        }
+    }
 
     #[tokio::test]
     async fn build_index_generates_runtime_searchable_db() -> Result<()> {
@@ -252,6 +335,54 @@ end
         let rows_after_remove = lexical_search(tmp.path(), "capability_decision").await?;
         assert!(rows_after_remove.is_empty());
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn build_index_with_embeddings_enables_semantic_capabilities() -> Result<()> {
+        let tmp = tempdir()?;
+        let root = tmp.path().join("repo");
+        let src = root.join("src");
+        std::fs::create_dir_all(&src)?;
+        std::fs::write(
+            src.join("governance.rs"),
+            r#"
+pub fn capability_decision(capability: &str) -> bool {
+    capability == "runtime.code.search.semantic"
+}
+"#,
+        )?;
+
+        let report = build_index_with_options(
+            &root,
+            None,
+            CodeIndexBuildOptions {
+                embedding_provider: Some(Arc::new(TestEmbeddingProvider)),
+            },
+        )
+        .await?;
+
+        assert!(report.capabilities.lexical);
+        assert!(report.capabilities.semantic);
+        assert!(report.capabilities.hybrid);
+
+        let rows = crate::code_index_reader::search(
+            tmp.path(),
+            CodebaseSelector {
+                root: "repo".to_string(),
+                index_path: None,
+            },
+            CodeSearchMode::Semantic,
+            "capability_decision",
+            &CodeSearchRequest {
+                limit: 5,
+                ..CodeSearchRequest::default()
+            },
+            Some(&vec![1.0_f32; CODE_INDEX_VECTOR_DIM]),
+        )
+        .await?;
+        assert!(!rows.is_empty());
+        assert!(rows[0].semantic_score.is_some());
         Ok(())
     }
 
@@ -429,6 +560,7 @@ end
                 limit: 5,
                 ..CodeSearchRequest::default()
             },
+            None,
         )
         .await
     }

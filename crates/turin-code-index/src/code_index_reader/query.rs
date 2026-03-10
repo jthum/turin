@@ -28,11 +28,12 @@ pub(super) fn negotiated_search_mode(
     }
 }
 
-pub(super) fn build_search_sql(
+pub(super) fn build_lexical_search_sql(
     view_name: &str,
     query: &str,
     request: &CodeSearchRequest,
     has_search_text: bool,
+    limit: usize,
 ) -> (String, Vec<Value>) {
     let like_value = escape_like_pattern(query);
     let mut params = vec![
@@ -99,10 +100,52 @@ pub(super) fn build_search_sql(
     }
 
     sql.push_str(" ORDER BY score DESC, path ASC, start_line ASC");
-    let limit = request.limit.max(1);
     params.push(Value::Integer(limit as i64));
     sql.push_str(&format!(" LIMIT ?{}", params.len()));
     (sql, params)
+}
+
+pub(super) fn build_semantic_search_sql(
+    view_name: &str,
+    request: &CodeSearchRequest,
+    limit: usize,
+) -> (String, Vec<Value>) {
+    let mut params = vec![Value::Blob(Vec::new())];
+    let semantic_score_expr = "1.0 - vector_distance_cos(embedding, ?1)";
+    let mut clauses = vec!["embedding IS NOT NULL".to_string()];
+
+    if request.min_score > 0.0 {
+        params.push(Value::Real(request.min_score));
+        clauses.push(format!("({semantic_score_expr}) >= ?{}", params.len()));
+    }
+
+    if !request.languages.is_empty() {
+        let slots = push_in_params(&mut params, &request.languages);
+        clauses.push(format!("language IN ({})", slots.join(", ")));
+    }
+
+    if !request.kinds.is_empty() {
+        let slots = push_in_params(&mut params, &request.kinds);
+        clauses.push(format!("kind IN ({})", slots.join(", ")));
+    }
+
+    let mut sql = format!(
+        "SELECT chunk_key, path, language, kind, name, signature, snippet, start_line, end_line, {semantic_score_expr} AS score, NULL AS lexical_score, {semantic_score_expr} AS semantic_score FROM {view_name}"
+    );
+    sql.push_str(" WHERE ");
+    sql.push_str(&clauses.join(" AND "));
+    sql.push_str(" ORDER BY score DESC, path ASC, start_line ASC");
+    params.push(Value::Integer(limit.max(1) as i64));
+    sql.push_str(&format!(" LIMIT ?{}", params.len()));
+    (sql, params)
+}
+
+pub(super) fn hybrid_candidate_limit(limit: usize) -> usize {
+    (limit.max(1) * 5).max(20)
+}
+
+pub(super) fn reciprocal_rank(rank: usize) -> f64 {
+    100.0 / (60.0 + rank as f64)
 }
 
 fn lexical_match_clause(pattern_slot: &str, has_search_text: bool) -> String {

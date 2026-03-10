@@ -123,6 +123,7 @@ fn build_chunk_segment(
             signature,
             snippet,
             search_text,
+            embedding: None,
             start_line: (base_start + start + 1) as i64,
             end_line: (base_start + end) as i64,
         });

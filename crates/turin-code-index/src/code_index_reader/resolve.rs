@@ -60,9 +60,15 @@ pub(super) async fn validate_index(
     validate_view_contract(&conn, "v_code_lexical").await?;
     if capabilities.semantic {
         validate_view_contract(&conn, "v_code_semantic").await?;
+        if !has_optional_column(&conn, "v_code_semantic", "embedding").await {
+            bail!("missing required semantic embedding column in 'v_code_semantic'");
+        }
     }
     if capabilities.hybrid {
         validate_view_contract(&conn, "v_code_hybrid").await?;
+        if !has_optional_column(&conn, "v_code_hybrid", "embedding").await {
+            bail!("missing required semantic embedding column in 'v_code_hybrid'");
+        }
     }
 
     Ok(ValidatedIndex {

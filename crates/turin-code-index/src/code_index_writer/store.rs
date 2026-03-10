@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
-use crate::shared::open_index_connection;
+use crate::shared::{encode_vector_blob, open_index_connection};
 
 use super::{
     CODE_INDEX_SCHEMA_REVISION, CodeChunkRecord, CodeIndexSummary, CodeIndexWriteCapabilities,
@@ -45,7 +45,7 @@ pub(super) async fn load_indexed_files(
 ) -> Result<HashMap<String, IndexedFileState>> {
     let mut rows = conn
         .query(
-            "SELECT path, content_hash, language, chunk_count FROM indexed_files",
+            "SELECT path, content_hash, language, embedding_key, chunk_count FROM indexed_files",
             (),
         )
         .await?;
@@ -57,7 +57,8 @@ pub(super) async fn load_indexed_files(
             IndexedFileState {
                 content_hash: row.get::<String>(1)?,
                 language: row.get::<String>(2)?,
-                chunk_count: row.get::<i64>(3)? as u64,
+                embedding_key: row.get::<String>(3)?,
+                chunk_count: row.get::<i64>(4)? as u64,
             },
         );
     }
@@ -69,8 +70,13 @@ pub(super) async fn insert_chunks(
     chunks: &[CodeChunkRecord],
 ) -> Result<()> {
     for chunk in chunks {
+        let embedding = chunk
+            .embedding
+            .as_deref()
+            .map(|vector| encode_vector_blob(vector, "code chunk embedding"))
+            .transpose()?;
         conn.execute(
-            "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, search_text, start_line, end_line) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, search_text, embedding, start_line, end_line) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             turso::params![
                 chunk.chunk_key.clone(),
                 chunk.path.clone(),
@@ -80,6 +86,7 @@ pub(super) async fn insert_chunks(
                 chunk.signature.clone(),
                 chunk.snippet.clone(),
                 chunk.search_text.clone(),
+                embedding,
                 chunk.start_line,
                 chunk.end_line
             ],
@@ -93,20 +100,23 @@ pub(super) async fn upsert_indexed_file(
     conn: &turso::Connection,
     source: &IndexableFileContent,
     chunk_count: u64,
+    embedding_key: &str,
     updated_at: &str,
 ) -> Result<()> {
     conn.execute(
-        "INSERT INTO indexed_files (path, content_hash, language, chunk_count, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)
+        "INSERT INTO indexed_files (path, content_hash, language, embedding_key, chunk_count, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(path) DO UPDATE SET
            content_hash = excluded.content_hash,
            language = excluded.language,
+           embedding_key = excluded.embedding_key,
            chunk_count = excluded.chunk_count,
            updated_at = excluded.updated_at",
         turso::params![
             source.path.clone(),
             source.content_hash.clone(),
             source.language.clone(),
+            embedding_key.to_string(),
             chunk_count as i64,
             updated_at.to_string()
         ],
@@ -147,6 +157,18 @@ pub(super) async fn load_index_summary(conn: &turso::Connection) -> Result<CodeI
     let files_indexed = row.get::<i64>(0)? as u64;
     let chunks_indexed = row.get::<i64>(1)? as u64;
 
+    let mut semantic_rows = conn
+        .query(
+            "SELECT COUNT(*) FROM code_chunks WHERE embedding IS NOT NULL",
+            (),
+        )
+        .await?;
+    let semantic_row = semantic_rows
+        .next()
+        .await?
+        .context("semantic summary query returned no row")?;
+    let embedded_chunks = semantic_row.get::<i64>(0)? as u64;
+
     let mut language_rows = conn
         .query(
             "SELECT DISTINCT language FROM indexed_files ORDER BY language ASC",
@@ -161,8 +183,8 @@ pub(super) async fn load_index_summary(conn: &turso::Connection) -> Result<CodeI
     Ok(CodeIndexSummary {
         capabilities: CodeIndexWriteCapabilities {
             lexical: true,
-            semantic: false,
-            hybrid: false,
+            semantic: embedded_chunks > 0,
+            hybrid: embedded_chunks > 0,
             languages: languages.into_iter().collect(),
         },
         files_indexed,
@@ -228,6 +250,7 @@ CREATE TABLE IF NOT EXISTS indexed_files (
     path TEXT PRIMARY KEY,
     content_hash TEXT NOT NULL,
     language TEXT NOT NULL,
+    embedding_key TEXT NOT NULL,
     chunk_count INTEGER NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -241,6 +264,7 @@ CREATE TABLE IF NOT EXISTS code_chunks (
     signature TEXT,
     snippet TEXT NOT NULL,
     search_text TEXT NOT NULL,
+    embedding F32_BLOB(1536),
     start_line INTEGER NOT NULL,
     end_line INTEGER NOT NULL
 );
@@ -266,4 +290,43 @@ SELECT
     NULL AS semantic_score,
     search_text
 FROM code_chunks;
+
+DROP VIEW IF EXISTS v_code_semantic;
+CREATE VIEW v_code_semantic AS
+SELECT
+    chunk_key,
+    path,
+    language,
+    kind,
+    name,
+    signature,
+    snippet,
+    start_line,
+    end_line,
+    0.0 AS score,
+    NULL AS lexical_score,
+    0.0 AS semantic_score,
+    embedding
+FROM code_chunks
+WHERE embedding IS NOT NULL;
+
+DROP VIEW IF EXISTS v_code_hybrid;
+CREATE VIEW v_code_hybrid AS
+SELECT
+    chunk_key,
+    path,
+    language,
+    kind,
+    name,
+    signature,
+    snippet,
+    start_line,
+    end_line,
+    0.0 AS score,
+    0.0 AS lexical_score,
+    0.0 AS semantic_score,
+    search_text,
+    embedding
+FROM code_chunks
+WHERE embedding IS NOT NULL;
 "#;

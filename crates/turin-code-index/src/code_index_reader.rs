@@ -1,13 +1,17 @@
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 
-use crate::shared::open_index_connection;
+use crate::shared::{encode_vector_blob, open_index_connection};
 
 mod query;
 mod resolve;
 
-use query::{build_search_sql, negotiated_search_mode};
+use query::{
+    build_lexical_search_sql, build_semantic_search_sql, hybrid_candidate_limit,
+    negotiated_search_mode, reciprocal_rank,
+};
 use resolve::{has_optional_column, validate_index};
 
 const DEFAULT_LIMIT: usize = 10;
@@ -90,6 +94,7 @@ pub async fn search(
     requested_mode: CodeSearchMode,
     query: &str,
     request: &CodeSearchRequest,
+    query_vector: Option<&[f32]>,
 ) -> Result<Vec<CodeSearchRow>> {
     let validated = validate_index(workspace_root, selector).await?;
     let query = query.trim();
@@ -103,11 +108,68 @@ pub async fn search(
         &validated.root,
         request.strict,
     )?;
-    let view_name = negotiated_mode.view_name();
     let (_db, conn) = open_index_connection(&validated.index_path).await?;
-    let has_search_text = has_optional_column(&conn, view_name, "search_text").await;
-    let (sql, params) = build_search_sql(view_name, query, request, has_search_text);
-    let mut stmt = conn.prepare(&sql).await?;
+    match negotiated_mode {
+        CodeSearchMode::Lexical => {
+            lexical_search_rows(
+                &conn,
+                negotiated_mode.view_name(),
+                query,
+                request,
+                request.limit,
+            )
+            .await
+        }
+        CodeSearchMode::Semantic => {
+            let query_vector =
+                query_vector.context("semantic search requires an embedding query vector")?;
+            semantic_search_rows(
+                &conn,
+                negotiated_mode.view_name(),
+                request,
+                query_vector,
+                request.limit,
+            )
+            .await
+        }
+        CodeSearchMode::Hybrid => {
+            let query_vector =
+                query_vector.context("hybrid search requires an embedding query vector")?;
+            hybrid_search_rows(&conn, query, request, query_vector).await
+        }
+    }
+}
+
+async fn lexical_search_rows(
+    conn: &turso::Connection,
+    view_name: &str,
+    query: &str,
+    request: &CodeSearchRequest,
+    limit: usize,
+) -> Result<Vec<CodeSearchRow>> {
+    let has_search_text = has_optional_column(conn, view_name, "search_text").await;
+    let (sql, params) = build_lexical_search_sql(view_name, query, request, has_search_text, limit);
+    query_rows(conn, &sql, params).await
+}
+
+async fn semantic_search_rows(
+    conn: &turso::Connection,
+    view_name: &str,
+    request: &CodeSearchRequest,
+    query_vector: &[f32],
+    limit: usize,
+) -> Result<Vec<CodeSearchRow>> {
+    let (sql, mut params) = build_semantic_search_sql(view_name, request, limit);
+    params[0] = turso::Value::Blob(encode_vector_blob(query_vector, "semantic query vector")?);
+    query_rows(conn, &sql, params).await
+}
+
+async fn query_rows(
+    conn: &turso::Connection,
+    sql: &str,
+    params: Vec<turso::Value>,
+) -> Result<Vec<CodeSearchRow>> {
+    let mut stmt = conn.prepare(sql).await?;
     let mut rows = stmt.query(params).await?;
 
     let mut out = Vec::new();
@@ -130,8 +192,95 @@ pub async fn search(
         });
         rank += 1;
     }
-
     Ok(out)
+}
+
+async fn hybrid_search_rows(
+    conn: &turso::Connection,
+    query: &str,
+    request: &CodeSearchRequest,
+    query_vector: &[f32],
+) -> Result<Vec<CodeSearchRow>> {
+    let candidate_limit = hybrid_candidate_limit(request.limit);
+    let candidate_request = CodeSearchRequest {
+        limit: candidate_limit,
+        min_score: 0.0,
+        ..request.clone()
+    };
+    let lexical_rows = lexical_search_rows(
+        conn,
+        CodeSearchMode::Lexical.view_name(),
+        query,
+        &candidate_request,
+        candidate_limit,
+    )
+    .await?;
+    let semantic_rows = semantic_search_rows(
+        conn,
+        CodeSearchMode::Semantic.view_name(),
+        &candidate_request,
+        query_vector,
+        candidate_limit,
+    )
+    .await?;
+
+    let mut fused = HashMap::<String, CodeSearchRow>::new();
+    for (index, row) in lexical_rows.iter().enumerate() {
+        let key = row.chunk_key.clone();
+        let entry = fused.entry(key).or_insert_with(|| CodeSearchRow {
+            chunk_key: row.chunk_key.clone(),
+            path: row.path.clone(),
+            language: row.language.clone(),
+            kind: row.kind.clone(),
+            name: row.name.clone(),
+            signature: row.signature.clone(),
+            snippet: row.snippet.clone(),
+            start_line: row.start_line,
+            end_line: row.end_line,
+            score: 0.0,
+            lexical_score: row.lexical_score.or(Some(row.score)),
+            semantic_score: None,
+            rank: 0,
+        });
+        entry.score += reciprocal_rank(index + 1);
+        entry.lexical_score = row.lexical_score.or(Some(row.score));
+    }
+
+    for (index, row) in semantic_rows.iter().enumerate() {
+        let key = row.chunk_key.clone();
+        let entry = fused.entry(key).or_insert_with(|| CodeSearchRow {
+            chunk_key: row.chunk_key.clone(),
+            path: row.path.clone(),
+            language: row.language.clone(),
+            kind: row.kind.clone(),
+            name: row.name.clone(),
+            signature: row.signature.clone(),
+            snippet: row.snippet.clone(),
+            start_line: row.start_line,
+            end_line: row.end_line,
+            score: 0.0,
+            lexical_score: None,
+            semantic_score: row.semantic_score.or(Some(row.score)),
+            rank: 0,
+        });
+        entry.score += reciprocal_rank(index + 1);
+        entry.semantic_score = row.semantic_score.or(Some(row.score));
+    }
+
+    let mut rows = fused.into_values().collect::<Vec<_>>();
+    rows.retain(|row| row.score >= request.min_score);
+    rows.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.path.cmp(&b.path))
+            .then_with(|| a.start_line.cmp(&b.start_line))
+    });
+    rows.truncate(request.limit.max(1));
+    for (index, row) in rows.iter_mut().enumerate() {
+        row.rank = (index + 1) as i64;
+    }
+    Ok(rows)
 }
 
 impl CodeSearchMode {
@@ -159,8 +308,26 @@ impl Default for CodeSearchRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::embeddings::CODE_INDEX_VECTOR_DIM;
     use crate::shared::CODE_INDEX_SCHEMA_REVISION;
     use tempfile::tempdir;
+
+    fn vector_blob(fill: f32) -> Vec<u8> {
+        let mut blob = Vec::with_capacity(CODE_INDEX_VECTOR_DIM * std::mem::size_of::<f32>());
+        for _ in 0..CODE_INDEX_VECTOR_DIM {
+            blob.extend_from_slice(&fill.to_le_bytes());
+        }
+        blob
+    }
+
+    fn sparse_vector_blob() -> Vec<u8> {
+        let mut blob = Vec::with_capacity(CODE_INDEX_VECTOR_DIM * std::mem::size_of::<f32>());
+        blob.extend_from_slice(&1.0_f32.to_le_bytes());
+        for _ in 1..CODE_INDEX_VECTOR_DIM {
+            blob.extend_from_slice(&0.0_f32.to_le_bytes());
+        }
+        blob
+    }
 
     async fn create_synthetic_code_index(
         root: &Path,
@@ -200,6 +367,8 @@ CREATE TABLE code_chunks (
     name TEXT NOT NULL,
     signature TEXT,
     snippet TEXT NOT NULL,
+    search_text TEXT NOT NULL,
+    embedding F32_BLOB(1536),
     start_line INTEGER NOT NULL,
     end_line INTEGER NOT NULL,
     lexical_score REAL NOT NULL,
@@ -214,7 +383,7 @@ CREATE TABLE code_chunks (
         )
         .await?;
         conn.execute(
-            "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, start_line, end_line, lexical_score, semantic_score) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, search_text, embedding, start_line, end_line, lexical_score, semantic_score) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             turso::params![
                 "chunk_rust",
                 "src/kernel/governance.rs",
@@ -223,6 +392,8 @@ CREATE TABLE code_chunks (
                 "capability_decision",
                 "fn capability_decision(...)",
                 "pub fn capability_decision(capability: &str) -> CapabilityDecision",
+                "src/kernel/governance.rs\ncapability_decision\nfn capability_decision(...)\npub fn capability_decision(capability: &str) -> CapabilityDecision",
+                vector_blob(0.001_f32),
                 101_i64,
                 132_i64,
                 0.91_f64,
@@ -231,7 +402,7 @@ CREATE TABLE code_chunks (
         )
         .await?;
         conn.execute(
-            "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, start_line, end_line, lexical_score, semantic_score) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, search_text, embedding, start_line, end_line, lexical_score, semantic_score) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             turso::params![
                 "chunk_lua",
                 "harnesses/runtime_cache.lua",
@@ -240,6 +411,8 @@ CREATE TABLE code_chunks (
                 "on_turn_prepare",
                 "function on_turn_prepare(ctx)",
                 "function on_turn_prepare(ctx) local rows = runtime.cache.stats() end",
+                "harnesses/runtime_cache.lua\non_turn_prepare\nfunction on_turn_prepare(ctx)\nfunction on_turn_prepare(ctx) local rows = runtime.cache.stats() end",
+                sparse_vector_blob(),
                 1_i64,
                 18_i64,
                 0.67_f64,
@@ -262,7 +435,8 @@ SELECT
     end_line,
     lexical_score AS score,
     lexical_score,
-    NULL AS semantic_score
+    NULL AS semantic_score,
+    search_text
 FROM code_chunks;
 "#,
         )
@@ -283,7 +457,8 @@ SELECT
     end_line,
     semantic_score AS score,
     NULL AS lexical_score,
-    semantic_score
+    semantic_score,
+    embedding
 FROM code_chunks
 WHERE semantic_score IS NOT NULL;
 "#,
@@ -306,7 +481,9 @@ SELECT
     end_line,
     ((lexical_score * 0.5) + (COALESCE(semantic_score, 0.0) * 0.5)) AS score,
     lexical_score,
-    semantic_score
+    semantic_score,
+    search_text,
+    embedding
 FROM code_chunks;
 "#,
             )
@@ -349,6 +526,7 @@ FROM code_chunks;
                 min_score: 0.1,
                 strict: false,
             },
+            Some(&vec![0.001_f32; CODE_INDEX_VECTOR_DIM]),
         )
         .await?;
         assert_eq!(rows.len(), 1);
@@ -373,6 +551,7 @@ FROM code_chunks;
                 strict: false,
                 ..CodeSearchRequest::default()
             },
+            None,
         )
         .await?;
         assert_eq!(fallback_rows.len(), 1);
@@ -392,6 +571,7 @@ FROM code_chunks;
                 strict: true,
                 ..CodeSearchRequest::default()
             },
+            None,
         )
         .await
         .unwrap_err();

@@ -1,5 +1,6 @@
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 use serde::Deserialize;
+use std::sync::Arc;
 
 use crate::code_index_reader::{
     CodeSearchMode, CodeSearchRequest, CodebaseSelector, search as code_search,
@@ -8,6 +9,7 @@ use crate::code_index_reader::{
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{bridge_async_result, nil_err, ok_value};
 use crate::harness::stdlib::governance_support::require_capability as require_governance_capability;
+use crate::inference::embeddings::EmbeddingProvider;
 
 #[derive(Debug, Default, Deserialize)]
 struct LuaCodeSearchOpts {
@@ -62,6 +64,7 @@ pub fn register_runtime_code_namespace(
 
     {
         let workspace_root = app_data.workspace_root.clone();
+        let embedding = app_data.embedding_provider.clone();
         let app_data_snapshot = app_data.clone();
         runtime_search.set(
             "lexical",
@@ -79,6 +82,7 @@ pub fn register_runtime_code_namespace(
                         codebase,
                         query,
                         opts,
+                        embedding.clone(),
                         CodeSearchMode::Lexical,
                         "runtime.code.search.lexical",
                     )
@@ -89,6 +93,7 @@ pub fn register_runtime_code_namespace(
 
     {
         let workspace_root = app_data.workspace_root.clone();
+        let embedding = app_data.embedding_provider.clone();
         let app_data_snapshot = app_data.clone();
         runtime_search.set(
             "semantic",
@@ -106,6 +111,7 @@ pub fn register_runtime_code_namespace(
                         codebase,
                         query,
                         opts,
+                        embedding.clone(),
                         CodeSearchMode::Semantic,
                         "runtime.code.search.semantic",
                     )
@@ -116,6 +122,7 @@ pub fn register_runtime_code_namespace(
 
     {
         let workspace_root = app_data.workspace_root.clone();
+        let embedding = app_data.embedding_provider.clone();
         let app_data_snapshot = app_data.clone();
         runtime_search.set(
             "hybrid",
@@ -133,6 +140,7 @@ pub fn register_runtime_code_namespace(
                         codebase,
                         query,
                         opts,
+                        embedding.clone(),
                         CodeSearchMode::Hybrid,
                         "runtime.code.search.hybrid",
                     )
@@ -152,6 +160,7 @@ fn run_code_search(
     codebase: Value,
     query: String,
     opts: Option<Table>,
+    embedding: Option<Arc<dyn EmbeddingProvider>>,
     mode: CodeSearchMode,
     label: &str,
 ) -> LuaResult<(Value, Value)> {
@@ -159,9 +168,42 @@ fn run_code_search(
     let request = code_search_request_from_opts(lua, opts)?;
     let workspace_root = workspace_root.to_path_buf();
     let result = bridge_async_result(async move {
-        code_search(&workspace_root, selector, mode, &query, &request)
-            .await
-            .map_err(|e| e.to_string())
+        let mut effective_mode = mode;
+        let query_vector = match mode {
+            CodeSearchMode::Lexical => None,
+            CodeSearchMode::Semantic | CodeSearchMode::Hybrid => {
+                if let Some(provider) = embedding {
+                    Some(
+                        provider
+                            .embed(&query)
+                            .await
+                            .map_err(|e| e.to_string())?
+                            .vector,
+                    )
+                } else if request.strict {
+                    let mode_name = match mode {
+                        CodeSearchMode::Semantic => "semantic",
+                        CodeSearchMode::Hybrid => "hybrid",
+                        CodeSearchMode::Lexical => unreachable!(),
+                    };
+                    return Err(format!("{mode_name} search requires an embedding provider"));
+                } else {
+                    effective_mode = CodeSearchMode::Lexical;
+                    None
+                }
+            }
+        };
+
+        code_search(
+            &workspace_root,
+            selector,
+            effective_mode,
+            &query,
+            &request,
+            query_vector.as_deref(),
+        )
+        .await
+        .map_err(|e| e.to_string())
     });
     match result {
         Ok(rows) => Ok(ok_value(lua.to_value(&rows)?)),

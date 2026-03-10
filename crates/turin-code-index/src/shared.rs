@@ -2,7 +2,9 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use turso::{Connection, Database};
 
-pub(crate) const CODE_INDEX_SCHEMA_REVISION: i64 = 20260307;
+use crate::embeddings::CODE_INDEX_VECTOR_DIM;
+
+pub(crate) const CODE_INDEX_SCHEMA_REVISION: i64 = 20260310;
 
 pub(crate) async fn open_index_connection(index_path: &Path) -> Result<(Database, Connection)> {
     let index_path = index_path.to_string_lossy().to_string();
@@ -14,4 +16,20 @@ pub(crate) async fn open_index_connection(index_path: &Path) -> Result<(Database
     let conn = db.connect()?;
     conn.execute("PRAGMA busy_timeout = 5000;", ()).await.ok();
     Ok((db, conn))
+}
+
+pub(crate) fn encode_vector_blob(vector: &[f32], context: &str) -> Result<Vec<u8>> {
+    if vector.len() != CODE_INDEX_VECTOR_DIM {
+        anyhow::bail!(
+            "{context} must have {} dimensions, got {}",
+            CODE_INDEX_VECTOR_DIM,
+            vector.len()
+        );
+    }
+
+    let mut blob = Vec::with_capacity(vector.len() * std::mem::size_of::<f32>());
+    for value in vector {
+        blob.extend_from_slice(&value.to_le_bytes());
+    }
+    Ok(blob)
 }
