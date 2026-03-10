@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
-use crate::metadata::CodeIndexSemanticStatus;
+use crate::metadata::{CodeIndexSemanticStatus, CodeIndexVectorFormat};
 use crate::shared::{encode_vector_blob, open_index_connection};
 
 use super::{
@@ -209,7 +209,7 @@ pub(super) async fn write_index_meta(
 ) -> Result<()> {
     conn.execute("DELETE FROM index_meta", ()).await?;
     conn.execute(
-        "INSERT INTO index_meta (schema_revision, root_path, updated_at, capabilities, codebase_id, embedding_key, embedding_dimensions, embedded_chunks) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO index_meta (schema_revision, root_path, updated_at, capabilities, codebase_id, embedding_key, embedding_dimensions, embedding_vector_format, embedded_chunks) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         turso::params![
             CODE_INDEX_SCHEMA_REVISION,
             root.to_string_lossy().to_string(),
@@ -218,6 +218,7 @@ pub(super) async fn write_index_meta(
             codebase_id.clone(),
             summary.semantic.embedding_key.clone(),
             summary.semantic.embedding_dimensions.map(|value| value as i64),
+            summary.semantic.vector_format.as_ref().map(|value| value.as_str().to_string()),
             summary.semantic.embedded_chunks as i64
         ],
     )
@@ -250,6 +251,7 @@ async fn load_semantic_status(
         embedded_chunks,
         embedding_key,
         load_embedding_dimensions(conn).await?,
+        CodeIndexVectorFormat::Float8,
     ))
 }
 
@@ -299,6 +301,7 @@ CREATE TABLE IF NOT EXISTS index_meta (
     codebase_id TEXT,
     embedding_key TEXT,
     embedding_dimensions INTEGER,
+    embedding_vector_format TEXT,
     embedded_chunks INTEGER NOT NULL DEFAULT 0
 );
 

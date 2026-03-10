@@ -406,6 +406,10 @@ pub fn capability_decision(capability: &str) -> bool {
             Some(CODE_INDEX_VECTOR_DIM)
         );
         assert_eq!(
+            report.semantic.vector_format,
+            Some(crate::metadata::CodeIndexVectorFormat::Float8)
+        );
+        assert_eq!(
             report.semantic.embedding_key.as_deref(),
             Some("test:deterministic")
         );

@@ -83,6 +83,10 @@ async fn real_repo_smoke_runtime_harness_index() -> Result<()> {
         report.semantic.embedding_key.as_deref(),
         Some("test:keyword")
     );
+    assert_eq!(
+        report.semantic.vector_format,
+        Some(turin_code_index::metadata::CodeIndexVectorFormat::Float8)
+    );
 
     let selector = CodebaseSelector {
         root: "src/harness".to_string(),
@@ -101,6 +105,10 @@ async fn real_repo_smoke_runtime_harness_index() -> Result<()> {
     assert_eq!(
         index_status.semantic.embedding_key.as_deref(),
         Some("test:keyword")
+    );
+    assert_eq!(
+        index_status.semantic.vector_format,
+        Some(turin_code_index::metadata::CodeIndexVectorFormat::Float8)
     );
     assert_eq!(
         Path::new(&index_status.root).canonicalize()?,

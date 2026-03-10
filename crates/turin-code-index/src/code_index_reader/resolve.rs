@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use std::path::{Path, PathBuf};
 use turso::Connection;
 
-use crate::metadata::CodeIndexSemanticStatus;
+use crate::metadata::{CodeIndexSemanticStatus, CodeIndexVectorFormat};
 use crate::shared::{CODE_INDEX_SCHEMA_REVISION, open_index_connection};
 
 use super::{CodeIndexCapabilities, CodebaseSelector};
@@ -151,7 +151,7 @@ async fn load_index_meta(
 )> {
     let mut rows = conn
         .query(
-            "SELECT schema_revision, root_path, updated_at, codebase_id, capabilities, embedding_key, embedding_dimensions, embedded_chunks FROM index_meta LIMIT 1",
+            "SELECT schema_revision, root_path, updated_at, codebase_id, capabilities, embedding_key, embedding_dimensions, embedding_vector_format, embedded_chunks FROM index_meta LIMIT 1",
             (),
         )
         .await
@@ -168,7 +168,7 @@ async fn load_index_meta(
     let capabilities_json = row.get::<String>(4)?;
     let capabilities = serde_json::from_str::<CodeIndexCapabilities>(&capabilities_json)
         .with_context(|| "index_meta.capabilities must be valid JSON")?;
-    let embedded_chunks = row.get::<Option<i64>>(7)?.unwrap_or(0).max(0) as u64;
+    let embedded_chunks = row.get::<Option<i64>>(8)?.unwrap_or(0).max(0) as u64;
     let semantic = if embedded_chunks == 0 {
         CodeIndexSemanticStatus::disabled()
     } else {
@@ -176,6 +176,10 @@ async fn load_index_meta(
             embedded_chunks,
             embedding_key: row.get::<Option<String>>(5)?,
             embedding_dimensions: row.get::<Option<i64>>(6)?.map(|value| value as usize),
+            vector_format: row
+                .get::<Option<String>>(7)?
+                .map(|value| CodeIndexVectorFormat::from_db(&value))
+                .transpose()?,
         }
     };
 

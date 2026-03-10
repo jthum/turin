@@ -424,6 +424,7 @@ Notes:
 - build the index first with `turin-map index --root .`
 - add semantic chunks with `turin-map index --root . --embedding-provider openai --embedding-model text-embedding-3-small --embedding-dimensions 1536`
 - local OpenAI-compatible embedding servers work via `--embedding-base-url ...`; use the same model and dimensions you configure under `[embeddings]`
+- `runtime.code.search.status(...)` returns fact-level semantic metadata including `codebase_id`, `embedded_chunks`, `embedding_key`, `embedding_dimensions`, and `vector_format`
 - semantic and hybrid queries require both semantic index capability and a query-time embedding provider
 - semantic and hybrid queries also require the query-time embedding profile to match the index profile; `strict=false` falls back to lexical, `strict=true` errors
 - when `strict=false`, missing semantic capability or missing embedding provider falls back to the best available lexical path

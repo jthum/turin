@@ -371,6 +371,7 @@ CREATE TABLE index_meta (
     codebase_id TEXT,
     embedding_key TEXT,
     embedding_dimensions INTEGER,
+    embedding_vector_format TEXT,
     embedded_chunks INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE code_chunks (
@@ -393,7 +394,7 @@ CREATE INDEX idx_code_chunks_search_fts ON code_chunks USING fts(search_text);
         )
         .await?;
         conn.execute(
-            "INSERT INTO index_meta (schema_revision, root_path, updated_at, capabilities, codebase_id, embedding_key, embedding_dimensions, embedded_chunks) VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO index_meta (schema_revision, root_path, updated_at, capabilities, codebase_id, embedding_key, embedding_dimensions, embedding_vector_format, embedded_chunks) VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?3, ?4, ?5, ?6, ?7, ?8)",
             turso::params![
                 CODE_INDEX_SCHEMA_REVISION,
                 root_path.to_string_lossy().to_string(),
@@ -401,6 +402,7 @@ CREATE INDEX idx_code_chunks_search_fts ON code_chunks USING fts(search_text);
                 "repo-main",
                 if semantic { Some("test:synthetic".to_string()) } else { None },
                 if semantic { Some(CODE_INDEX_VECTOR_DIM as i64) } else { None },
+                if semantic { Some("float8".to_string()) } else { None },
                 if semantic { 2_i64 } else { 0_i64 }
             ],
         )
@@ -544,6 +546,10 @@ FROM code_chunks;
         assert_eq!(
             status.semantic.embedding_key.as_deref(),
             Some("test:synthetic")
+        );
+        assert_eq!(
+            status.semantic.vector_format,
+            Some(crate::metadata::CodeIndexVectorFormat::Float8)
         );
 
         let rows = search(

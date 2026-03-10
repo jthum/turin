@@ -490,6 +490,9 @@ if not cached then error(cerr) end
 
 local status, serr = runtime.code.search.status(".")
 if not status then error(serr) end
+if status.semantic and status.semantic.vector_format then
+  log("semantic vectors: " .. status.semantic.vector_format)
+end
 
 local rows, rerr = runtime.code.search.hybrid(".", "capability decision", {
   languages = { "rust" },

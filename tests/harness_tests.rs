@@ -1423,7 +1423,11 @@ CREATE TABLE index_meta (
     root_path TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     capabilities TEXT NOT NULL,
-    codebase_id TEXT
+    codebase_id TEXT,
+    embedding_key TEXT,
+    embedding_dimensions INTEGER,
+    embedding_vector_format TEXT,
+    embedded_chunks INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE code_chunks (
     chunk_key TEXT PRIMARY KEY,
@@ -1434,22 +1438,33 @@ CREATE TABLE code_chunks (
     signature TEXT,
     snippet TEXT NOT NULL,
     search_text TEXT NOT NULL,
-    embedding F32_BLOB(1536),
+    embedding BLOB,
     start_line INTEGER NOT NULL,
     end_line INTEGER NOT NULL,
     lexical_score REAL NOT NULL,
     semantic_score REAL
 );
+CREATE INDEX idx_code_chunks_search_fts ON code_chunks USING fts(search_text);
 "#,
     )
     .await?;
     conn.execute(
-        "INSERT INTO index_meta (schema_revision, root_path, updated_at, capabilities, codebase_id) VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?3, ?4)",
-        turso::params![20260310_i64, root_path.to_string_lossy().to_string(), capabilities, "repo-main"],
+        "INSERT INTO index_meta (schema_revision, root_path, updated_at, capabilities, codebase_id, embedding_key, embedding_dimensions, embedding_vector_format, embedded_chunks) VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?3, ?4, ?5, ?6, ?7, ?8)",
+        turso::params![
+            2026031004_i64,
+            root_path.to_string_lossy().to_string(),
+            capabilities,
+            "repo-main",
+            if semantic { Some("test:synthetic".to_string()) } else { None },
+            if semantic { Some(1536_i64) } else { None },
+            if semantic { Some("float8".to_string()) } else { None },
+            if semantic { 2_i64 } else { 0_i64 }
+        ],
     )
     .await?;
     conn.execute(
-        "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, search_text, embedding, start_line, end_line, lexical_score, semantic_score) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, search_text, embedding, start_line, end_line, lexical_score, semantic_score)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, vector8(?9), ?10, ?11, ?12, ?13)",
         turso::params![
             "chunk_rust",
             "src/kernel/governance.rs",
@@ -1468,7 +1483,8 @@ CREATE TABLE code_chunks (
     )
     .await?;
     conn.execute(
-        "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, search_text, embedding, start_line, end_line, lexical_score, semantic_score) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, search_text, embedding, start_line, end_line, lexical_score, semantic_score)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, vector8(?9), ?10, ?11, ?12, ?13)",
         turso::params![
             "chunk_lua",
             "harnesses/runtime_cache.lua",
@@ -1578,9 +1594,13 @@ async fn test_runtime_code_search_api_round_trip() -> Result<()> {
             if status.root == nil or status.index_path == nil then
                 error("status root/index_path missing")
             end
-            if status.schema_revision ~= 20260310 then error("schema revision mismatch") end
+            if status.schema_revision ~= 2026031004 then error("schema revision mismatch") end
             if status.capabilities == nil or status.capabilities.lexical ~= true then
                 error("status capabilities mismatch")
+            end
+            if status.codebase_id ~= "repo-main" then error("status codebase_id mismatch") end
+            if status.semantic == nil or status.semantic.vector_format ~= "float8" then
+                error("status semantic vector format mismatch")
             end
 
             local rows, le = runtime.code.search.lexical("repo", "capability", {
