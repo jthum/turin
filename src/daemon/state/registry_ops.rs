@@ -423,13 +423,35 @@ impl DaemonState {
     }
 
     pub async fn delete_channel(&mut self, channel_id: &str) -> Result<DaemonStatus> {
-        let channel_dir = self.watch_paths().channels_dir.join(channel_id);
+        let channels_dir = self.watch_paths().channels_dir.clone();
+        let channel_dir = channels_dir.join(channel_id);
         if !channel_dir.is_dir() {
             anyhow::bail!("Channel '{}' does not exist", channel_id);
         }
-        std::fs::remove_dir_all(&channel_dir)
-            .with_context(|| format!("Failed to remove '{}'", channel_dir.display()))?;
-        self.rescan().await
+        let tombstone = channels_dir.join(format!(
+            ".deleted-{}-{}",
+            channel_id,
+            uuid::Uuid::now_v7().simple()
+        ));
+        std::fs::rename(&channel_dir, &tombstone).with_context(|| {
+            format!(
+                "Failed to move '{}' to '{}'",
+                channel_dir.display(),
+                tombstone.display()
+            )
+        })?;
+
+        let status = match self.rescan().await {
+            Ok(status) => status,
+            Err(err) => {
+                let _ = std::fs::rename(&tombstone, &channel_dir);
+                return Err(err);
+            }
+        };
+
+        std::fs::remove_dir_all(&tombstone)
+            .with_context(|| format!("Failed to remove '{}'", tombstone.display()))?;
+        Ok(status)
     }
 
     fn ensure_channel_agent_exists(&self, agent_id: &str) -> Result<()> {
