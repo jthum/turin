@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-03-10
+
+### Added
+- **Memory v2 Primitives**
+  - Added the full `runtime.memory` lifecycle surface:
+    - `store`
+    - `search`
+    - `feedback`
+    - `correct`
+    - `purge`
+  - Added opaque public memory IDs, storage modes (`auto`, `lexical_only`, `embedded`), and supersession-aware correction behavior.
+- **Content Cache Primitives**
+  - Added `runtime.cache.read`, `runtime.cache.invalidate`, `runtime.cache.stats`, and `runtime.cache.reset`.
+  - Added session-aware file caching with unchanged detection, diff support, and token-savings reporting.
+- **Code Search Primitives**
+  - Added `runtime.code.search.status`, `lexical`, `semantic`, and `hybrid`.
+  - Added the external `turin-map` indexing binary and the shared `turin-code-index` crate.
+  - Added incremental indexing, `.gitignore` support, generated/vendor directory skipping, symbol-aware chunking, and real-repo code-search smoke coverage.
+- **Shared Embedding Substrate**
+  - Unified Turin runtime and `turin-map` embedding generation on the provider-agnostic `inference-sdk-rust` path.
+  - Added OpenAI-compatible embedding endpoint support with configurable `base_url`, enabling local embedding servers.
+- **Delightful DX Wrappers**
+  - Added `remember(...)`, `recall(...)`, `cache.file(...)`, and `code.find(...)` helpers on top of the canonical runtime APIs.
+- **Search Diagnostics**
+  - Added code-search trace metadata so hybrid ranking decisions, fallback reasons, and candidate ranks are observable.
+
+### Changed
+- **Turso-Native Search Baseline**
+  - Switched memory and code-search lexical retrieval onto the Turso 0.5 native FTS/Tantivy path.
+  - Old fallback semantics, compatibility shims, and migration support remain intentionally removed.
+- **Code Index Architecture**
+  - Split `turin-map` into its own workspace crate and moved shared reader/writer logic into `turin-code-index`.
+  - Code-search discovery remains root-path-first, with `codebase_id` exposed only as optional metadata.
+- **Semantic Storage**
+  - Code-index embeddings now store compact float8 vectors by default and report semantic storage facts such as `vector_format`.
+
+### Fixed
+- **Lexical Ranking Quality**
+  - Improved identifier, phrase, and path-oriented lexical ranking for code search.
+  - Tightened hybrid fusion transparency and fallback behavior for degraded semantic searches.
+
 ## [0.22.0] - 2026-03-05
 
 ### Added

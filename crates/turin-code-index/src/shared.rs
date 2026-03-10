@@ -21,7 +21,7 @@ pub(crate) fn encode_vector_blob(vector: &[f32], context: &str) -> Result<Vec<u8
         anyhow::bail!("{context} must not be empty");
     }
 
-    let mut blob = Vec::with_capacity(vector.len() * std::mem::size_of::<f32>());
+    let mut blob = Vec::with_capacity(std::mem::size_of_val(vector));
     for value in vector {
         blob.extend_from_slice(&value.to_le_bytes());
     }

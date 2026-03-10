@@ -146,7 +146,7 @@ pub(super) async fn delete_indexed_file(
         turso::params![relative_path.to_string()],
     )
     .await?;
-    Ok(removed_chunks as u64)
+    Ok(removed_chunks)
 }
 
 pub(super) async fn load_index_summary(conn: &turso::Connection) -> Result<CodeIndexSummary> {

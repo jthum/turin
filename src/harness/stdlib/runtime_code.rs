@@ -154,6 +154,7 @@ pub fn register_runtime_code_namespace(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_code_search(
     lua: &Lua,
     workspace_root: &std::path::Path,

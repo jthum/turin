@@ -96,6 +96,7 @@ impl StateStore {
     /// Uses Reciprocal Rank Fusion (RRF) to combine results.
     /// - `vector`: Optional embedding for semantic search.
     /// - `content_query`: Optional keyword string for lexical search. If `None`, relies only on vector.
+    #[allow(clippy::too_many_arguments)]
     pub async fn search_memories(
         &self,
         session_id: i64,
@@ -319,6 +320,7 @@ impl StateStore {
         Ok(results)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn apply_memory_feedback(
         &self,
         session_id: i64,
@@ -360,6 +362,7 @@ impl StateStore {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn correct_memory(
         &self,
         session_id: i64,

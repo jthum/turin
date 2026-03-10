@@ -85,6 +85,7 @@ fn memory_feedback_result(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn memory_correct_result(
     lua: &Lua,
     manager: Arc<StoreManager>,

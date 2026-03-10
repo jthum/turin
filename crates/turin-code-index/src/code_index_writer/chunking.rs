@@ -211,9 +211,7 @@ fn extract_identifier(input: &str) -> Option<String> {
     for ch in input.chars() {
         if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | ':') {
             identifier.push(ch);
-        } else if !identifier.is_empty() {
-            break;
-        } else if ch == '(' {
+        } else if !identifier.is_empty() || ch == '(' {
             break;
         } else if ch.is_whitespace() {
             if identifier.is_empty() {

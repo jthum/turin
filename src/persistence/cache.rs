@@ -11,6 +11,7 @@ use super::schema::{
 use super::state::StateStore;
 
 impl StateStore {
+    #[allow(clippy::too_many_arguments)]
     pub async fn cache_read_file(
         &self,
         session_id: i64,

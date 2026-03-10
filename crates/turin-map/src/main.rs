@@ -117,11 +117,8 @@ async fn main() -> Result<()> {
 }
 
 fn print_value(value_as_json: bool, value: &impl serde::Serialize) -> Result<()> {
-    if value_as_json {
-        println!("{}", serde_json::to_string_pretty(value)?);
-    } else {
-        println!("{}", serde_json::to_string_pretty(value)?);
-    }
+    let _ = value_as_json;
+    println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
 }
 

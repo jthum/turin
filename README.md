@@ -12,13 +12,16 @@ Turin is intentionally unopinionated about workflow and personality. It provides
 Turin now ships a coherent, canonical runtime with:
 
 - **Canonical Harness API** (`runtime.*`) plus ergonomic aliases (`memory.*`, `kv.*`, `agent.*`, `session.*`, `user.*`)
-- **First-party Harness DX layer** (`verdict.*`, `allowed`, `needs`, callable `runtime.db(...)`, callable `runtime.agent(...)`, grant/time/json helpers)
+- **First-party Harness DX layer** (`verdict.*`, `allowed`, `needs`, callable `runtime.db(...)`, callable `runtime.agent(...)`, `remember`, `recall`, `cache.file`, `code.find`, grant/time/json helpers)
 - **Multi-DB runtime** with dynamic DB handles (`runtime.db.open/query/exec/list/close`)
 - **Multi-agent runtime** with peer agent submit/await/status orchestration (`runtime.agent.*`)
+- **Memory v2 primitives** with lifecycle controls (`feedback`, `correct`, `purge`) and lexical/semantic/hybrid recall
+- **Content cache primitives** for session-aware file reuse and token savings (`runtime.cache.*`)
+- **Code search primitives** backed by an optional `turin-map` indexing companion and direct runtime reads (`runtime.code.search.*`)
 - **Stable hook model** with explicit lifecycle hooks and typed event payloads
 - **Opt-in governance model** with profiles, capabilities, import scoping, agent ceilings, and temporary grants
 - **Harness Library** with reusable `blocks/` and ready-to-run `workflows/`
-- **Provider-agnostic core** (provider quirks belong in `inference-sdk-rust`, not Turin)
+- **Provider-agnostic inference and embeddings path** (provider quirks belong in `inference-sdk-rust`, not Turin)
 - **Composable harness scripts** with `import(...)`, `import_scoped(...)`, `use(...)`, and explicit `watch(...)`
 - **Named harness programs** so different configured agents can bind to different harness directories in one runtime
 - **Durable event persistence** and optional immutable audit behavior
@@ -41,18 +44,21 @@ Simple things should be simple. Powerful things should be possible.
 
 ## Core Features
 
-- **Single binary** (`turin`) with no service dependencies beyond your configured provider and local SQLite/libSQL database
+- **Self-contained runtime binary** (`turin`) with no service dependencies beyond your configured provider and local SQLite/libSQL database
+- **Optional indexing companion** (`turin-map`) for code-search indexing without bloating the runtime execution path
 - **Harness scripting in Luau** for governance, workflows, context engineering, memory policies, and orchestration
 - **Canonical stdlib API**:
-  - `runtime.context`, `runtime.memory`, `runtime.kv`, `runtime.db`, `runtime.agent`, `runtime.policy`, `runtime.governance`
+  - `runtime.context`, `runtime.memory`, `runtime.cache`, `runtime.code.search`, `runtime.kv`, `runtime.db`, `runtime.agent`, `runtime.policy`, `runtime.governance`
 - **First-party DX layer**:
-  - `verdict`, `allowed`, `needs`, `session`, `user`, callable `runtime.db(...)`, callable `runtime.agent(...)`
+  - `verdict`, `allowed`, `needs`, `session`, `user`, `remember`, `recall`, `cache.file`, `code.find`, callable `runtime.db(...)`, callable `runtime.agent(...)`
 - **Top-level ergonomic aliases**:
   - `fs`, `json`, `time`, `log`, `import`, `import_scoped`, `use`, `use_scoped`, `watch`
   - `memory`, `kv`, `session`, `user`, `agent`
 - **Multi-provider support** through normalized `InferenceProvider` clients (`anthropic`, `openai`, `mock`, compatible proxies)
+- **Provider-agnostic embeddings** with OpenAI-compatible local endpoint support
 - **Persistent state** for sessions, messages, events, tool executions, KV, and memory records
 - **Hybrid memory search** with native lexical/vector/hybrid retrieval
+- **Hybrid code search** with lexical, semantic, hybrid, and traceable fallback behavior
 - **Peer-agent orchestration** with status inspection and async submit/await result handling
 - **Opt-in governance** with profiles/capabilities/import scoping/agent ceilings/grants
 - **Live provider smoke tooling** (manual/opt-in) for real endpoint validation
@@ -80,6 +86,9 @@ See `docs/HARNESS_LIBRARY.md` for the current catalog and validation approach.
 
 ```bash
 cargo build --release
+
+# Optional: build the code-indexing companion if you want runtime code search setup
+cargo build --release -p turin-map
 ```
 
 ### 2. Create `turin.toml`
@@ -144,7 +153,7 @@ dimensions = 384                # set this to the model's actual output size
 Then build code indexes with the same embedding profile:
 
 ```bash
-turin-map index --root . \
+target/release/turin-map index --root . \
   --embedding-provider openai \
   --embedding-base-url http://127.0.0.1:11434/v1 \
   --embedding-model your-small-embedding-model \
@@ -230,8 +239,11 @@ Turin’s harness surface is split between **canonical runtime APIs** and **ergo
   - callable selector builder (`runtime.context(...)`)
   - alias discovery (`runtime.context.glob(pattern)`)
 - `runtime.memory`
-  - `search(query, ctx, opts?)`
-  - `store(content, ctx, metadata?, opts?)`
+  - `search`, `store`, `feedback`, `correct`, `purge`
+- `runtime.cache`
+  - `read`, `invalidate`, `stats`, `reset`
+- `runtime.code.search`
+  - `status`, `lexical`, `semantic`, `hybrid`
 - `runtime.kv`
   - `get(key, ctx)` / `set(key, value, ctx)` / `delete(key, ctx)`
 - `runtime.db`
@@ -248,6 +260,7 @@ Turin’s harness surface is split between **canonical runtime APIs** and **ergo
 
 - `memory.*` / `kv.*` for default agent-scoped data
 - `memory.as(ctx)` / `kv.as(ctx)` for scoped proxies
+- `remember`, `recall`, `cache.file`, `code.find`
 - `session.memory/kv.*`, `user.memory/kv.*`
 - `agent.spawn`, `agent.complete`, `agent.send`, `agent.session.*`, `agent.mode.*`
 - `fs`, `json`, `time`, `log`, `import`, `import_scoped`, `use`, `use_scoped`, `watch`
