@@ -221,6 +221,8 @@ This keeps provider-specific logic out of Turin and speeds debugging.
   - `cargo test -p turin-map -- --nocapture`
   - `cargo test test_runtime_code_search_ --test harness_tests -- --nocapture`
   - `cargo test test_dx_fixture_code_cache_shortcuts --test dx_harness_examples -- --nocapture`
+  - `cargo test test_dx_fixture_code_search_fallback --test dx_harness_examples -- --nocapture`
+  - `cargo test test_dx_fixture_workspace_review_assistant --test dx_harness_examples -- --nocapture`
   - `cargo test test_lexical_only_hybrid_fallback_prefers_best_text_match --lib`
 
 ## Phase 4 Closeout Commands

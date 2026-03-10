@@ -26,6 +26,25 @@ fn copy_fixture_tree(name: &str, dest_dir: impl AsRef<Path>) -> Result<()> {
     copy_tree(fixture_path(name), dest_dir)
 }
 
+fn seed_code_review_workspace(root: &Path) -> Result<()> {
+    let src_dir = root.join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        src_dir.join("governance.rs"),
+        r#"
+pub fn capability_decision(capability: &str) -> bool {
+    capability == "runtime.code.search.hybrid"
+}
+"#,
+    )?;
+    fs::write(
+        root.join("README.md"),
+        "# DX review fixture\nThis workspace exercises cache.file and code.find.\n",
+    )?;
+    fs::write(root.join("notes.txt"), "cached text")?;
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_dx_fixture_session_memory_assistant() -> Result<()> {
     let tmp = tempdir()?;
@@ -54,22 +73,12 @@ async fn test_dx_fixture_session_memory_assistant() -> Result<()> {
 async fn test_dx_fixture_code_cache_shortcuts() -> Result<()> {
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harnesses");
-    let src_dir = tmp.path().join("src");
     fs::create_dir(&harness_dir)?;
-    fs::create_dir(&src_dir)?;
     copy_fixture(
         "code_cache_shortcuts.lua",
         harness_dir.join("code_cache_shortcuts.lua"),
     )?;
-    fs::write(
-        src_dir.join("governance.rs"),
-        r#"
-pub fn capability_decision(capability: &str) -> bool {
-    capability == "runtime.code.search.hybrid"
-}
-"#,
-    )?;
-    fs::write(tmp.path().join("notes.txt"), "cached text")?;
+    seed_code_review_workspace(tmp.path())?;
     build_index(tmp.path(), None).await?;
 
     let mut providers = HashMap::new();
@@ -80,6 +89,56 @@ pub fn capability_decision(capability: &str) -> bool {
     let mut session = kernel.create_session().await;
     kernel
         .run(&mut session, Some("Use DX shortcuts".to_string()))
+        .await?;
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_dx_fixture_code_search_fallback() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    fs::create_dir(&harness_dir)?;
+    copy_fixture(
+        "code_search_fallback.lua",
+        harness_dir.join("code_search_fallback.lua"),
+    )?;
+    seed_code_review_workspace(tmp.path())?;
+    build_index(tmp.path(), None).await?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider("FALLBACK_OK"));
+    let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
+
+    let mut kernel = build_kernel(config).await?;
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Use lexical fallback".to_string()))
+        .await?;
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_dx_fixture_workspace_review_assistant() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    fs::create_dir(&harness_dir)?;
+    copy_fixture(
+        "workspace_review_assistant.lua",
+        harness_dir.join("workspace_review_assistant.lua"),
+    )?;
+    seed_code_review_workspace(tmp.path())?;
+    build_index(tmp.path(), None).await?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider("REVIEW_OK"));
+    let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
+
+    let mut kernel = build_kernel(config).await?;
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Review the workspace".to_string()))
         .await?;
     kernel.end_session(&mut session).await?;
     Ok(())
