@@ -4,6 +4,7 @@ use crate::harness::globals::HarnessAppData;
 
 mod access;
 mod agent;
+mod code_cache;
 mod common;
 mod data;
 mod db;
@@ -16,6 +17,7 @@ pub fn register_dx_globals(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()
     verdict::register_verdict_globals(lua)?;
     access::register_access_globals(lua, app_data)?;
     data::register_data_globals(lua)?;
+    code_cache::register_code_cache_dx(lua)?;
     db::register_db_dx(lua)?;
     agent::register_agent_dx(lua)?;
     governance::register_governance_dx(lua)?;

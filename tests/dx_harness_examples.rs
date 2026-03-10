@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::tempdir;
+use turin::code_index_writer::build_index;
 use turin::kernel::config::{
     AgentConfig, GovernanceConfig, GovernanceGrantsConfig, GovernanceProfile,
 };
@@ -45,6 +46,41 @@ async fn test_dx_fixture_session_memory_assistant() -> Result<()> {
         .run(&mut session, Some("Recall memory".to_string()))
         .await?;
     assert!(session.turn_index > 0);
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_dx_fixture_code_cache_shortcuts() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    let src_dir = tmp.path().join("src");
+    fs::create_dir(&harness_dir)?;
+    fs::create_dir(&src_dir)?;
+    copy_fixture(
+        "code_cache_shortcuts.lua",
+        harness_dir.join("code_cache_shortcuts.lua"),
+    )?;
+    fs::write(
+        src_dir.join("governance.rs"),
+        r#"
+pub fn capability_decision(capability: &str) -> bool {
+    capability == "runtime.code.search.hybrid"
+}
+"#,
+    )?;
+    fs::write(tmp.path().join("notes.txt"), "cached text")?;
+    build_index(tmp.path(), None).await?;
+
+    let mut providers = HashMap::new();
+    providers.insert("mock_main".to_string(), mock_provider("DX_OK"));
+    let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
+
+    let mut kernel = build_kernel(config).await?;
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Use DX shortcuts".to_string()))
+        .await?;
     kernel.end_session(&mut session).await?;
     Ok(())
 }

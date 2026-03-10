@@ -128,6 +128,33 @@ fn register_scope_helpers(lua: &Lua, scope: &str) -> LuaResult<()> {
 }
 
 pub fn register_data_globals(lua: &Lua) -> LuaResult<()> {
+    let globals = lua.globals();
+    let memory: Table = globals.get("memory")?;
+    let memory_store: Function = memory.get("store")?;
+    let memory_search: Function = memory.get("search")?;
+
+    {
+        let memory_store = memory_store.clone();
+        globals.set(
+            "remember",
+            lua.create_function(
+                move |lua, (content, metadata, opts): (String, Option<Table>, Option<Table>)| {
+                    call_and_raise_on_err(lua, &memory_store, (content, metadata, opts), "remember")
+                },
+            )?,
+        )?;
+    }
+
+    {
+        let memory_search = memory_search.clone();
+        globals.set(
+            "recall",
+            lua.create_function(move |lua, (query, opts): (String, Option<Value>)| {
+                call_and_raise_on_err(lua, &memory_search, (query, opts), "recall")
+            })?,
+        )?;
+    }
+
     register_scope_helpers(lua, "session")?;
     register_scope_helpers(lua, "user")?;
     Ok(())
