@@ -103,6 +103,28 @@ These are layered on top of the existing scoped aliases.
 - malformed stored values raise
 - overflow raises
 
+### Top-level DX shortcuts
+
+- `remember(content, metadata?, opts?)`
+- `recall(query, opts?)`
+- `cache.file(path, opts?)`
+- `code.find(query, opts?)`
+
+Notes:
+
+- `remember(...)` / `recall(...)` use the same default agent-scoped memory as `memory.*`
+- `cache.file(...)` is a thin wrapper over `runtime.cache.read(...)`
+- `code.find(...)` is a thin wrapper over `runtime.code.search.hybrid(...)`
+- `code.find(...)` defaults to the Turin workspace root and accepts `opts.root` / `opts.index_path` overrides
+
+Example:
+
+```lua
+remember("Compiler errors should stay concise")
+local file = cache.file("SPEC.md", { include_content = true })
+local rows = code.find("capability decision")
+```
+
 ### DX `runtime.db(...)`
 
 `runtime.db` is callable in the DX layer:
@@ -331,11 +353,25 @@ Canonical memory API with explicit selector.
 
 - `runtime.memory.search(query, ctx, opts?)`
 - `runtime.memory.store(content, ctx, metadata?, opts?)`
+- `runtime.memory.feedback(memory_id, signal, ctx, opts?)`
+- `runtime.memory.correct(memory_id, content, ctx, metadata?, opts?)`
+- `runtime.memory.purge(ctx, opts?)`
 
 `opts` for `search`:
 
 - number (limit shorthand), or
-- `{ limit = N }`
+- `{ limit = N, mode = "auto"|"lexical"|"semantic"|"hybrid", min_score = 0.0, include_metadata = false, include_superseded = false, strict = false }`
+
+`opts` for `store` / `correct`:
+
+- `{ storage = "auto"|"lexical_only"|"embedded", source_task = "...", tags = { ... } }`
+
+Notes:
+
+- `storage="auto"` embeds when a provider is configured and otherwise stores lexical-only
+- `storage="embedded"` requires an embedding provider
+- `correct(...)` supersedes the referenced memory and stores a replacement row
+- `purge(...)` defaults to `dry_run = true`
 
 Returns rows like:
 
@@ -353,6 +389,43 @@ Canonical KV API with explicit selector.
 - `runtime.kv.get(key, ctx) -> string|nil, err?`
 - `runtime.kv.set(key, value, ctx) -> bool, err?`
 - `runtime.kv.delete(key, ctx) -> bool, err?`
+
+## `runtime.cache`
+
+Session-aware content cache API.
+
+- `runtime.cache.read(path, opts?) -> cache_row|nil, err?`
+- `runtime.cache.invalidate(path, opts?) -> bool, err?`
+- `runtime.cache.stats(opts?) -> stats|nil, err?`
+- `runtime.cache.reset(opts?) -> report|nil, err?`
+
+Notes:
+
+- `runtime.cache.read(...)` inherits the same `fs.read` capability and safe-path rules as `fs.read(...)`
+- `opts` for `read` include `session_id`, `include_content`, `include_previous`, `max_diff_lines`, and `token_estimate`
+- `invalidate`, `stats`, and `reset` are governed separately under `runtime.cache.*`
+
+## `runtime.code`
+
+Root-path-first code search API backed by `turin-map` indexes.
+
+- `runtime.code.search.status(codebase, opts?) -> status|nil, err?`
+- `runtime.code.search.lexical(codebase, query, opts?) -> rows|nil, err?`
+- `runtime.code.search.semantic(codebase, query, opts?) -> rows|nil, err?`
+- `runtime.code.search.hybrid(codebase, query, opts?) -> rows|nil, err?`
+
+`codebase` can be:
+
+- a string root like `"."` or `"repo"`
+- `{ root = "...", index_path = "..." }`
+
+Notes:
+
+- build the index first with `turin-map index --root .`
+- add semantic chunks with `turin-map index --root . --embedding-provider openai`
+- semantic and hybrid queries require both semantic index capability and a query-time embedding provider
+- when `strict=false`, missing semantic capability or missing embedding provider falls back to the best available lexical path
+- when `strict=true`, those same cases return an error instead of falling back
 
 ## `runtime.db`
 
@@ -546,8 +619,16 @@ Requires an active session context.
 
 - `memory.search(query, opts?)`
 - `memory.store(content, metadata?, opts?)`
+- `memory.feedback(memory_id, signal, opts?)`
+- `memory.correct(memory_id, content, metadata?, opts?)`
+- `memory.purge(opts?)`
 - `memory.as(ctx) -> proxy`
-  - proxy methods: `search`, `store`
+  - proxy methods: `search`, `store`, `feedback`, `correct`, `purge`
+
+Top-level shortcuts:
+
+- `remember(content, metadata?, opts?)`
+- `recall(query, opts?)`
 
 ## `kv` (default agent-scoped KV)
 
@@ -559,6 +640,18 @@ Requires an active session context.
 - `kv.delete(key)`
 - `kv.as(ctx) -> proxy`
   - proxy methods: `get`, `set`, `delete`
+
+## `cache`
+
+- `cache.file(path, opts?)`
+
+Thin wrapper over `runtime.cache.read(...)`.
+
+## `code`
+
+- `code.find(query, opts?)`
+
+Thin wrapper over `runtime.code.search.hybrid(...)` with workspace-root defaulting.
 
 ## `session` and `user` aliases
 

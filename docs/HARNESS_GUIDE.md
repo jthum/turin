@@ -136,6 +136,29 @@ function on_session_start(ev)
 end
 ```
 
+### Top-level shortcuts
+
+```lua
+function on_turn_prepare(ctx)
+  remember("Build failures should stay concise")
+
+  local spec = cache.file("SPEC.md", { include_content = true })
+  local rows = code.find("capability decision")
+
+  if spec and rows and #rows > 0 then
+    session.set("last_code_hit", rows[1].path)
+  end
+
+  return ALLOW
+end
+```
+
+Notes:
+
+- `remember(...)` / `recall(...)` are intent wrappers over default agent memory
+- `cache.file(...)` follows the same path and capability rules as `fs.read(...)`
+- `code.find(...)` defaults to the workspace root and delegates to hybrid code search
+
 ### Fluent DB access
 
 ```lua
@@ -426,6 +449,34 @@ end
 local ok, kerr = runtime.kv.set("last_error", "E0425", ctx)
 ```
 
+### Cache and code search
+
+Build the index before querying it:
+
+```bash
+turin-map index --root .
+turin-map index --root . --embedding-provider openai
+```
+
+Then query it from the harness:
+
+```lua
+local cached, cerr = runtime.cache.read("SPEC.md", { include_content = true })
+if not cached then error(cerr) end
+
+local status, serr = runtime.code.search.status(".")
+if not status then error(serr) end
+
+local rows, rerr = runtime.code.search.hybrid(".", "capability decision", {
+  languages = { "rust" },
+  strict = false,
+})
+if not rows then error(rerr) end
+```
+
+Semantic/hybrid queries need both a semantic index and a configured embedding provider at query time.
+With `strict = false`, Turin falls back to lexical results when that path is unavailable.
+
 ### Multi-DB access
 
 ```lua
@@ -479,6 +530,9 @@ Turin keeps ergonomic aliases for common workflows.
 ```lua
 local ok, err = kv.set("task_state", "working")
 local rows, merr = memory.search("build failure")
+local file = cache.file("README.md")
+local hits = code.find("grant validation")
+remember("Release notes should stay terse")
 ```
 
 ### Session/User scoped aliases

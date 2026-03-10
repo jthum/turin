@@ -15,6 +15,9 @@ Turin validation is layered on purpose.
 
 These should be your default validation loop.
 
+Prefer `cargo check` plus targeted tests during normal iteration.
+Reserve `cargo build --release` for checkpointing binary size or release-quality sanity.
+
 ### 2. Live endpoint validation (manual / opt-in)
 
 - `scripts/live_minimax_smoke.sh`
@@ -88,10 +91,12 @@ Turin’s test suite includes dedicated coverage for:
 - hook lifecycle behavior
 - harness verdict composition
 - canonical stdlib APIs (`runtime.*`)
+- cache and code-search primitives (`runtime.cache.*`, `runtime.code.search.*`)
 - governance profiles/capabilities/import scoping
 - temporary grants and immutable audit semantics
 - peer-agent orchestration
 - path traversal/security checks
+- DX wrappers such as `remember`, `cache.file`, and `code.find`
 - harness library entries under `library/`
 
 Most behavior should be validated there before spending provider quota.
@@ -210,6 +215,10 @@ This keeps provider-specific logic out of Turin and speeds debugging.
   - `cargo test --test agent_loop_tests`
   - `cargo test --test dx_harness_examples`
   - `cargo test --test example_harness_examples`
+- Focused commands for recent code-search and DX work:
+  - `cargo test -p turin-code-index -- --nocapture`
+  - `cargo test test_runtime_code_search_ --test harness_tests -- --nocapture`
+  - `cargo test test_dx_fixture_code_cache_shortcuts --test dx_harness_examples -- --nocapture`
 - Run full `cargo test` before committing
 - Reserve live tests for behavior that depends on real provider responses
 
