@@ -7,9 +7,13 @@ use turin_code_index::code_index_writer::{
     build_index_with_options, rebuild_index_with_options, remove_file,
 };
 
+mod config;
 mod embedding;
+mod output;
 
+use config::load_turin_map_config;
 use embedding::{EmbeddingArgs, build_options};
+use output::{print_build_report, print_remove_report, print_status};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -36,7 +40,7 @@ enum Command {
 
 #[derive(Args, Debug, Clone)]
 struct RootArgs {
-    #[arg(long)]
+    #[arg(long, default_value = ".")]
     root: PathBuf,
 
     #[arg(long)]
@@ -50,6 +54,9 @@ struct RootArgs {
 struct IndexArgs {
     #[command(flatten)]
     root: RootArgs,
+
+    #[arg(long)]
+    config: Option<PathBuf>,
 
     #[command(flatten)]
     embedding: EmbeddingArgs,
@@ -73,32 +80,34 @@ struct StatusArgs {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let cwd = std::env::current_dir()?;
     match cli.command {
         Command::Index(args) => {
+            let config = load_turin_map_config(&cwd, args.config.as_deref())?;
             let report = build_index_with_options(
                 &args.root.root,
                 args.root.index_path.as_deref(),
-                build_options(&args.embedding)?,
+                build_options(&args.embedding, config.as_ref())?,
             )
             .await?;
-            print_value(args.root.json, &report)?;
+            print_build_report(args.root.json, &report)?;
         }
         Command::Rebuild(args) => {
+            let config = load_turin_map_config(&cwd, args.config.as_deref())?;
             let report = rebuild_index_with_options(
                 &args.root.root,
                 args.root.index_path.as_deref(),
-                build_options(&args.embedding)?,
+                build_options(&args.embedding, config.as_ref())?,
             )
             .await?;
-            print_value(args.root.json, &report)?;
+            print_build_report(args.root.json, &report)?;
         }
         Command::Remove(args) => {
             let report =
                 remove_file(&args.root.root, args.root.index_path.as_deref(), &args.path).await?;
-            print_value(args.root.json, &report)?;
+            print_remove_report(args.root.json, &report)?;
         }
         Command::Status(args) => {
-            let cwd = std::env::current_dir()?;
             let selector = CodebaseSelector {
                 root: absolute_or_self(&cwd, &args.root.root)
                     .to_string_lossy()
@@ -110,15 +119,9 @@ async fn main() -> Result<()> {
                     .map(|path| absolute_or_self(&cwd, path).to_string_lossy().to_string()),
             };
             let status = read_status(&cwd, selector).await?;
-            print_value(args.root.json, &status)?;
+            print_status(args.root.json, &status)?;
         }
     }
-    Ok(())
-}
-
-fn print_value(value_as_json: bool, value: &impl serde::Serialize) -> Result<()> {
-    let _ = value_as_json;
-    println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
 }
 

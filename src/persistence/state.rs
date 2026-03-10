@@ -910,4 +910,58 @@ mod tests {
         assert!(metadata.contains("\"kind\":\"note\""));
         assert!(metadata.contains("\"source\":\"test\""));
     }
+
+    #[tokio::test]
+    async fn test_lexical_only_hybrid_fallback_prefers_best_text_match() {
+        let store = StateStore::open_memory()
+            .await
+            .expect("Failed to open state store");
+        let session = 1;
+
+        store
+            .insert_memory(
+                session,
+                "Compiler errors should stay concise and actionable",
+                None,
+                None,
+                None,
+                &json!({ "kind": "preference" }),
+            )
+            .await
+            .unwrap();
+        store
+            .insert_memory(
+                session,
+                "Cache invalidation should be explicit and session aware",
+                None,
+                None,
+                None,
+                &json!({ "kind": "note" }),
+            )
+            .await
+            .unwrap();
+
+        let rows = store
+            .search_memories(
+                session,
+                Some(&[1.0, 0.0]),
+                Some("test:semantic:2"),
+                Some(2),
+                Some("compiler concise"),
+                5,
+                0.0,
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+
+        assert!(!rows.is_empty());
+        assert_eq!(
+            rows[0].content,
+            "Compiler errors should stay concise and actionable"
+        );
+        assert!(rows[0].lexical_score.is_some());
+        assert!(rows[0].semantic_score.is_none());
+    }
 }

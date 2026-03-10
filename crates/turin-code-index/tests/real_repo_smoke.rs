@@ -190,6 +190,52 @@ async fn real_repo_smoke_runtime_harness_index() -> Result<()> {
         Some("lexical")
     );
 
+    let dx_path_rows = search(
+        &repo_root,
+        selector.clone(),
+        CodeSearchMode::Lexical,
+        "dx/code_cache.rs",
+        &CodeSearchRequest {
+            limit: 5,
+            languages: vec!["rust".to_string()],
+            ..CodeSearchRequest::default()
+        },
+        None,
+    )
+    .await?;
+    assert!(!dx_path_rows.is_empty());
+    assert!(
+        dx_path_rows[0].path.ends_with("dx/code_cache.rs"),
+        "expected path-oriented query to prioritize dx/code_cache.rs, got {}",
+        dx_path_rows[0].path
+    );
+
+    let dx_phrase_rows = search(
+        &repo_root,
+        selector.clone(),
+        CodeSearchMode::Lexical,
+        "remember recall helpers",
+        &CodeSearchRequest {
+            limit: 5,
+            languages: vec!["rust".to_string()],
+            ..CodeSearchRequest::default()
+        },
+        None,
+    )
+    .await?;
+    assert!(
+        dx_phrase_rows
+            .iter()
+            .take(3)
+            .any(|row| row.name == "register_data_globals" || row.name == "register_scope_helpers"),
+        "expected remember/recall helpers in top lexical hits, got {:?}",
+        dx_phrase_rows
+            .iter()
+            .take(3)
+            .map(|row| row.name.as_str())
+            .collect::<Vec<_>>()
+    );
+
     let hybrid_query = "runtime code search namespace";
     let hybrid_vector = provider.embed(hybrid_query).await?;
     let hybrid_rows = search(
