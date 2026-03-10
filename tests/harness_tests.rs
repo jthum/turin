@@ -601,7 +601,7 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
             },
         )]),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Balanced,
             enforcement_enabled: true,
@@ -750,7 +750,7 @@ async fn test_agent_complete_applies_delegated_capability_ceiling() -> Result<()
             },
         )]),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Balanced,
             enforcement_enabled: true,
@@ -1090,7 +1090,17 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
         .await?
         .expect("context session row missing");
     let hits = project_store
-        .search_memories(ctx_internal_id, None, Some("fresh"), 5, 0.0, true, false)
+        .search_memories(
+            ctx_internal_id,
+            None,
+            None,
+            None,
+            Some("fresh"),
+            5,
+            0.0,
+            true,
+            false,
+        )
         .await?;
     assert!(!hits.is_empty(), "expected context memory rows");
     assert!(hits[0].retrieval_count >= 1);
@@ -1179,7 +1189,7 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
     };
@@ -1652,7 +1662,7 @@ async fn test_runtime_code_search_api_round_trip() -> Result<()> {
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: GovernanceConfig::default(),
         daemon: Default::default(),
     };
@@ -1896,7 +1906,7 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Balanced,
             enforcement_enabled: false,
@@ -2047,7 +2057,7 @@ async fn test_import_scoped_tracks_imported_module_subject_and_root() -> Result<
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Balanced,
             enforcement_enabled: false,
@@ -2155,7 +2165,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_import() -> Result<()>
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Governed,
             enforcement_enabled: true,
@@ -2275,7 +2285,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_use() -> Result<()> {
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Balanced,
             enforcement_enabled: true,
@@ -2376,7 +2386,7 @@ async fn test_use_scoped_root_mismatch_fails_harness_init() -> Result<()> {
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Balanced,
             enforcement_enabled: false,
@@ -2488,7 +2498,7 @@ async fn test_root_max_capabilities_applies_to_top_level_hooks() -> Result<()> {
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Balanced,
             enforcement_enabled: true,
@@ -2600,7 +2610,7 @@ async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Balanced,
             enforcement_enabled: true,
@@ -2782,7 +2792,7 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
             },
         )]),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Balanced,
             enforcement_enabled: true,
@@ -2966,7 +2976,7 @@ async fn test_runtime_governance_temporary_grants_issue_use_revoke() -> Result<(
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Balanced,
             enforcement_enabled: true,
@@ -3130,7 +3140,7 @@ async fn test_temporary_grant_ceiling_propagates_to_peer_submit() -> Result<()> 
             },
         )]),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Balanced,
             enforcement_enabled: true,
@@ -3273,7 +3283,7 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Balanced,
             enforcement_enabled: true,
@@ -3417,7 +3427,7 @@ async fn test_use_scoped_capability_delegation_is_downward_only() -> Result<()> 
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Balanced,
             enforcement_enabled: true,
@@ -3561,7 +3571,7 @@ async fn test_nested_import_cannot_widen_import_delegation() -> Result<()> {
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Balanced,
             enforcement_enabled: true,
@@ -3677,7 +3687,7 @@ async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> 
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
             profile: turin::kernel::config::GovernanceProfile::Governed,
             enforcement_enabled: true,
@@ -3812,7 +3822,7 @@ async fn test_runtime_db_api_and_context_glob() -> Result<()> {
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
     };
@@ -3953,7 +3963,7 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
             },
         )]),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
     };
@@ -4130,7 +4140,7 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
             },
         )]),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: GovernanceConfig {
             profile: GovernanceProfile::Balanced,
             enforcement_enabled: true,
@@ -4388,7 +4398,7 @@ async fn test_runtime_agent_complete_preserves_nested_grant_context() -> Result<
             },
         )]),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: GovernanceConfig {
             profile: GovernanceProfile::Balanced,
             enforcement_enabled: true,

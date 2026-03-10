@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
-use crate::embeddings::CODE_INDEX_VECTOR_DIM;
 use crate::metadata::CodeIndexSemanticStatus;
 use crate::shared::{encode_vector_blob, open_index_connection};
 
@@ -47,7 +46,7 @@ pub(super) async fn load_indexed_files(
 ) -> Result<HashMap<String, IndexedFileState>> {
     let mut rows = conn
         .query(
-            "SELECT path, content_hash, language, embedding_key, chunk_count FROM indexed_files",
+            "SELECT path, content_hash, language, embedding_key, embedding_dimensions, chunk_count FROM indexed_files",
             (),
         )
         .await?;
@@ -60,7 +59,8 @@ pub(super) async fn load_indexed_files(
                 content_hash: row.get::<String>(1)?,
                 language: row.get::<String>(2)?,
                 embedding_key: row.get::<String>(3)?,
-                chunk_count: row.get::<i64>(4)? as u64,
+                embedding_dimensions: row.get::<i64>(4)?.max(0) as usize,
+                chunk_count: row.get::<i64>(5)? as u64,
             },
         );
     }
@@ -103,15 +103,17 @@ pub(super) async fn upsert_indexed_file(
     source: &IndexableFileContent,
     chunk_count: u64,
     embedding_key: &str,
+    embedding_dimensions: usize,
     updated_at: &str,
 ) -> Result<()> {
     conn.execute(
-        "INSERT INTO indexed_files (path, content_hash, language, embedding_key, chunk_count, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO indexed_files (path, content_hash, language, embedding_key, embedding_dimensions, chunk_count, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(path) DO UPDATE SET
            content_hash = excluded.content_hash,
            language = excluded.language,
            embedding_key = excluded.embedding_key,
+           embedding_dimensions = excluded.embedding_dimensions,
            chunk_count = excluded.chunk_count,
            updated_at = excluded.updated_at",
         turso::params![
@@ -119,6 +121,7 @@ pub(super) async fn upsert_indexed_file(
             source.content_hash.clone(),
             source.language.clone(),
             embedding_key.to_string(),
+            embedding_dimensions as i64,
             chunk_count as i64,
             updated_at.to_string()
         ],
@@ -245,8 +248,25 @@ async fn load_semantic_status(
     Ok(CodeIndexSemanticStatus::enabled(
         embedded_chunks,
         embedding_key,
-        CODE_INDEX_VECTOR_DIM,
+        load_embedding_dimensions(conn).await?,
     ))
+}
+
+async fn load_embedding_dimensions(conn: &turso::Connection) -> Result<usize> {
+    let mut rows = conn
+        .query(
+            "SELECT embedding_dimensions FROM indexed_files WHERE embedding_key <> 'none' LIMIT 1",
+            (),
+        )
+        .await?;
+    let dimensions = rows
+        .next()
+        .await?
+        .map(|row| row.get::<i64>(0))
+        .transpose()?
+        .unwrap_or(0)
+        .max(0) as usize;
+    Ok(dimensions)
 }
 
 async fn table_exists(conn: &turso::Connection, table: &str) -> Result<bool> {
@@ -286,6 +306,7 @@ CREATE TABLE IF NOT EXISTS indexed_files (
     content_hash TEXT NOT NULL,
     language TEXT NOT NULL,
     embedding_key TEXT NOT NULL,
+    embedding_dimensions INTEGER NOT NULL DEFAULT 0,
     chunk_count INTEGER NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -299,7 +320,7 @@ CREATE TABLE IF NOT EXISTS code_chunks (
     signature TEXT,
     snippet TEXT NOT NULL,
     search_text TEXT NOT NULL,
-    embedding F32_BLOB(1536),
+    embedding BLOB,
     start_line INTEGER NOT NULL,
     end_line INTEGER NOT NULL
 );

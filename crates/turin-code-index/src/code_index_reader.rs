@@ -382,7 +382,7 @@ CREATE TABLE code_chunks (
     signature TEXT,
     snippet TEXT NOT NULL,
     search_text TEXT NOT NULL,
-    embedding F32_BLOB(1536),
+    embedding BLOB,
     start_line INTEGER NOT NULL,
     end_line INTEGER NOT NULL,
     lexical_score REAL NOT NULL,

@@ -19,6 +19,8 @@ impl StateStore {
         session_id: i64,
         content: &str,
         vector: Option<&[f32]>,
+        embedding_key: Option<&str>,
+        embedding_dimensions: Option<usize>,
         metadata: &serde_json::Value,
     ) -> Result<StoredMemoryRow> {
         let metadata_str = serde_json::to_string(metadata)?;
@@ -33,14 +35,26 @@ impl StateStore {
         let conn = self.connect().await?;
         match vector {
             Some(vector) => {
+                let embedding_key =
+                    embedding_key.context("Missing embedding key for embedded memory")?;
+                let embedding_dimensions = embedding_dimensions
+                    .context("Missing embedding dimensions for embedded memory")?;
                 let mut vector_bytes = Vec::with_capacity(vector.len() * 4);
                 for &val in vector {
                     vector_bytes.extend_from_slice(&val.to_le_bytes());
                 }
 
                 conn.execute(
-                    "INSERT INTO memories (public_id, session_id, content, embedding, metadata) VALUES (?1, ?2, ?3, ?4, ?5)",
-                    turso::params![public_id_bytes.clone(), session_id, content, vector_bytes, metadata_str],
+                    "INSERT INTO memories (public_id, session_id, content, embedding, embedding_key, embedding_dimensions, metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    turso::params![
+                        public_id_bytes.clone(),
+                        session_id,
+                        content,
+                        vector_bytes,
+                        embedding_key.to_string(),
+                        embedding_dimensions as i64,
+                        metadata_str
+                    ],
                 )
                 .await
                 .with_context(|| format!("Failed to insert memory for session: {}", session_id))?;
@@ -86,6 +100,8 @@ impl StateStore {
         &self,
         session_id: i64,
         vector: Option<&[f32]>,
+        query_embedding_key: Option<&str>,
+        query_embedding_dimensions: Option<usize>,
         content_query: Option<&str>,
         limit: usize,
         min_score: f64,
@@ -102,6 +118,10 @@ impl StateStore {
 
         // 1. Vector Search
         if let Some(vec) = vector {
+            let query_embedding_key =
+                query_embedding_key.context("Missing embedding key for semantic memory search")?;
+            let query_embedding_dimensions = query_embedding_dimensions
+                .context("Missing embedding dimensions for semantic memory search")?;
             // Convert to bytes
             let mut vector_bytes = Vec::with_capacity(vec.len() * 4);
             for &val in vec {
@@ -114,10 +134,16 @@ impl StateStore {
                             CAST((julianday('now') - julianday(created_at)) * 86400.0 AS REAL) AS age_seconds,
                             vector_distance_cos(embedding, ?1) AS distance
                      FROM memories
-                     WHERE session_id = ?2 AND embedding IS NOT NULL
+                     WHERE session_id = ?2 AND embedding IS NOT NULL AND embedding_key = ?3 AND embedding_dimensions = ?4
                      ORDER BY distance ASC
-                     LIMIT ?3",
-                    turso::params![vector_bytes, session_id, limit as i64],
+                     LIMIT ?5",
+                    turso::params![
+                        vector_bytes,
+                        session_id,
+                        query_embedding_key.to_string(),
+                        query_embedding_dimensions as i64,
+                        limit as i64
+                    ],
                 )
             } else {
                 (
@@ -125,10 +151,16 @@ impl StateStore {
                             CAST((julianday('now') - julianday(created_at)) * 86400.0 AS REAL) AS age_seconds,
                             vector_distance_cos(embedding, ?1) AS distance
                      FROM memories
-                     WHERE session_id = ?2 AND embedding IS NOT NULL AND superseded_at IS NULL
+                     WHERE session_id = ?2 AND embedding IS NOT NULL AND embedding_key = ?3 AND embedding_dimensions = ?4 AND superseded_at IS NULL
                      ORDER BY distance ASC
-                     LIMIT ?3",
-                    turso::params![vector_bytes, session_id, limit as i64],
+                     LIMIT ?5",
+                    turso::params![
+                        vector_bytes,
+                        session_id,
+                        query_embedding_key.to_string(),
+                        query_embedding_dimensions as i64,
+                        limit as i64
+                    ],
                 )
             };
             let mut rows = conn
@@ -149,7 +181,10 @@ impl StateStore {
                         public_id: row.get(1)?,
                         session_id: row.get(2)?,
                         content: row.get(3)?,
-                        metadata: include_metadata.then(|| row.get::<Option<String>>(4)).transpose()?.flatten(),
+                        metadata: include_metadata
+                            .then(|| row.get::<Option<String>>(4))
+                            .transpose()?
+                            .flatten(),
                         created_at: row.get(5)?,
                         score: 0.0,
                         lexical_score: None,
@@ -219,7 +254,10 @@ impl StateStore {
                             public_id: row.get(1)?,
                             session_id: row.get(2)?,
                             content: row.get(3)?,
-                            metadata: include_metadata.then(|| row.get::<Option<String>>(4)).transpose()?.flatten(),
+                            metadata: include_metadata
+                                .then(|| row.get::<Option<String>>(4))
+                                .transpose()?
+                                .flatten(),
                             created_at: row.get(5)?,
                             score: 0.0,
                             lexical_score: Some(lexical_score),
@@ -328,6 +366,8 @@ impl StateStore {
         public_id: Uuid,
         content: &str,
         vector: Option<&[f32]>,
+        embedding_key: Option<&str>,
+        embedding_dimensions: Option<usize>,
         metadata: &serde_json::Value,
     ) -> Result<MemoryCorrectionRow> {
         let conn = self.connect().await?;
@@ -339,7 +379,14 @@ impl StateStore {
         }
 
         let inserted = self
-            .insert_memory(session_id, content, vector, metadata)
+            .insert_memory(
+                session_id,
+                content,
+                vector,
+                embedding_key,
+                embedding_dimensions,
+                metadata,
+            )
             .await
             .context("Failed to store corrected memory")?;
         let replacement_row_id = resolve_memory_row_id(&conn, &inserted.public_id)
@@ -387,8 +434,11 @@ impl StateStore {
             .await
             .context("Failed to enumerate memories for purge")?;
 
-        let has_filters =
-            all || older_than_days.is_some() || min_weight.is_some() || max_retrieval_count.is_some() || only_superseded;
+        let has_filters = all
+            || older_than_days.is_some()
+            || min_weight.is_some()
+            || max_retrieval_count.is_some()
+            || only_superseded;
         if !has_filters {
             return Ok(MemoryPurgeReport {
                 matched: 0,

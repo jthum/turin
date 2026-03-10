@@ -173,13 +173,42 @@ fn run_code_search(
             CodeSearchMode::Lexical => None,
             CodeSearchMode::Semantic | CodeSearchMode::Hybrid => {
                 if let Some(provider) = embedding {
-                    Some(
-                        provider
-                            .embed(&query)
-                            .await
-                            .map_err(|e| e.to_string())?
-                            .vector,
-                    )
+                    let status = code_status(&workspace_root, selector.clone())
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    let provider_key = provider.config_key();
+                    let provider_dimensions = provider.dimensions();
+                    let key_mismatch = status
+                        .semantic
+                        .embedding_key
+                        .as_deref()
+                        .is_some_and(|key| key != provider_key.as_str());
+                    let dimension_mismatch = status
+                        .semantic
+                        .embedding_dimensions
+                        .is_some_and(|dimensions| dimensions != provider_dimensions);
+
+                    if key_mismatch || dimension_mismatch {
+                        if request.strict {
+                            return Err(format!(
+                                "embedding configuration does not match code index (index_key={:?}, index_dimensions={:?}, provider_key={}, provider_dimensions={})",
+                                status.semantic.embedding_key,
+                                status.semantic.embedding_dimensions,
+                                provider_key,
+                                provider_dimensions
+                            ));
+                        }
+                        effective_mode = CodeSearchMode::Lexical;
+                        None
+                    } else {
+                        Some(
+                            provider
+                                .embed(&query)
+                                .await
+                                .map_err(|e| e.to_string())?
+                                .vector,
+                        )
+                    }
                 } else if request.strict {
                     let mode_name = match mode {
                         CodeSearchMode::Semantic => "semantic",

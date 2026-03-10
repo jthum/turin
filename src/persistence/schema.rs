@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 7;
+pub(crate) const SCHEMA_VERSION: u32 = 8;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -76,7 +76,9 @@ CREATE TABLE IF NOT EXISTS memories (
     public_id   BLOB(16) UNIQUE NOT NULL,
     session_id  INTEGER NOT NULL REFERENCES sessions(id),
     content     TEXT NOT NULL,
-    embedding   F32_BLOB(1536),
+    embedding   BLOB,
+    embedding_key TEXT,
+    embedding_dimensions INTEGER,
     metadata    TEXT,
     weight      REAL NOT NULL DEFAULT 1.0,
     retrieval_count INTEGER NOT NULL DEFAULT 0,
@@ -87,6 +89,7 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 
 CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
+CREATE INDEX IF NOT EXISTS idx_memories_embedding_profile ON memories(session_id, embedding_key, embedding_dimensions);
 
 CREATE TABLE IF NOT EXISTS memory_feedback_events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

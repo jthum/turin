@@ -58,6 +58,7 @@ struct IndexedFileState {
     content_hash: String,
     language: String,
     embedding_key: String,
+    embedding_dimensions: usize,
     chunk_count: u64,
 }
 
@@ -145,6 +146,11 @@ async fn build_index_internal(
         .as_ref()
         .map(|provider| provider.config_key())
         .unwrap_or_else(|| "none".to_string());
+    let embedding_dimensions = options
+        .embedding_provider
+        .as_ref()
+        .map(|provider| provider.dimensions())
+        .unwrap_or(0);
     let mut seen_paths = HashSet::new();
 
     for file in collect_indexable_files(&root)? {
@@ -160,6 +166,7 @@ async fn build_index_internal(
             existing.content_hash == source.content_hash
                 && existing.language == source.language
                 && existing.embedding_key == embedding_key
+                && existing.embedding_dimensions == embedding_dimensions
                 && existing.chunk_count > 0
         });
         if unchanged {
@@ -200,6 +207,7 @@ async fn build_index_internal(
             &source,
             chunks.len() as u64,
             &embedding_key,
+            embedding_dimensions,
             &run_updated_at,
         )
         .await?;
@@ -296,6 +304,10 @@ mod tests {
     impl CodeEmbeddingProvider for TestEmbeddingProvider {
         fn config_key(&self) -> String {
             "test:deterministic".to_string()
+        }
+
+        fn dimensions(&self) -> usize {
+            CODE_INDEX_VECTOR_DIM
         }
 
         async fn embed(&self, text: &str) -> Result<Vec<f32>> {

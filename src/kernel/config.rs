@@ -30,10 +30,22 @@ pub struct TurinConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum EmbeddingConfig {
-    OpenAI,
-    NoOp,
+pub struct EmbeddingConfig {
+    pub provider: String,
+    #[serde(default = "default_embedding_model")]
+    pub model: String,
+    #[serde(default = "default_embedding_dimensions")]
+    pub dimensions: usize,
+}
+
+impl EmbeddingConfig {
+    pub fn noop() -> Self {
+        Self {
+            provider: "noop".to_string(),
+            model: default_embedding_model(),
+            dimensions: default_embedding_dimensions(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -311,6 +323,14 @@ fn default_harness_directory() -> String {
 
 fn default_harness_fs_root() -> String {
     ".".to_string()
+}
+
+fn default_embedding_model() -> String {
+    "text-embedding-3-small".to_string()
+}
+
+fn default_embedding_dimensions() -> usize {
+    1536
 }
 
 fn default_daemon_agents_dir() -> String {

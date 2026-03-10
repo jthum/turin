@@ -69,39 +69,10 @@ impl ExecutionHost {
 
         // Initialize embedding provider
         let embedding_provider = if let Some(ref config) = self.config.embeddings {
-            let provider = match config {
-                crate::kernel::config::EmbeddingConfig::OpenAI => {
-                    // Find a provider with type="openai"
-                    let openai_config = self
-                        .config
-                        .providers
-                        .values()
-                        .find(|p| p.kind == "openai")
-                        .with_context(
-                            || "OpenAI embeddings selected but no OpenAI provider configured",
-                        )?;
-
-                    let api_key_env = openai_config.api_key_env.as_ref().ok_or_else(|| {
-                        anyhow::anyhow!("OpenAI provider missing 'api_key_env' configuration")
-                    })?;
-                    let api_key = std::env::var(api_key_env).with_context(|| {
-                        format!("Environment variable '{}' not set", api_key_env)
-                    })?;
-
-                    crate::inference::embeddings::create_embedding_provider(
-                        &crate::inference::embeddings::EmbeddingConfig::OpenAI {
-                            api_key,
-                            model: "text-embedding-3-small".to_string(),
-                        },
-                    )
-                }
-                crate::kernel::config::EmbeddingConfig::NoOp => {
-                    crate::inference::embeddings::create_embedding_provider(
-                        &crate::inference::embeddings::EmbeddingConfig::NoOp,
-                    )
-                }
-            };
-            Some(Arc::from(provider))
+            Some(crate::inference::embeddings::create_embedding_provider(
+                config,
+                &self.config.providers,
+            )?)
         } else {
             // No embeddings configured means lexical-only memory behavior.
             None

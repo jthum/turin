@@ -17,6 +17,10 @@ impl CodeEmbeddingProvider for KeywordEmbeddingProvider {
         "test:keyword".to_string()
     }
 
+    fn dimensions(&self) -> usize {
+        CODE_INDEX_VECTOR_DIM
+    }
+
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         let text = text.to_ascii_lowercase();
         let mut vector = vec![0.0; CODE_INDEX_VECTOR_DIM];

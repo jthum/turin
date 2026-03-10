@@ -1,6 +1,10 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use clap::{Args, ValueEnum};
+use inference_sdk_core::{
+    EmbeddingProvider as SdkEmbeddingProvider, EmbeddingRequest as SdkEmbeddingRequest,
+};
+use inference_sdk_registry::{ProviderInit, create_embedding_provider as create_sdk_provider};
 use std::sync::Arc;
 use turin_code_index::code_index_writer::CodeIndexBuildOptions;
 use turin_code_index::embeddings::{CODE_INDEX_VECTOR_DIM, CodeEmbeddingProvider};
@@ -22,6 +26,12 @@ pub(crate) struct EmbeddingArgs {
     #[arg(long, default_value = DEFAULT_OPENAI_MODEL)]
     pub embedding_model: String,
 
+    #[arg(long, default_value_t = CODE_INDEX_VECTOR_DIM)]
+    pub embedding_dimensions: usize,
+
+    #[arg(long)]
+    pub embedding_base_url: Option<String>,
+
     #[arg(long, default_value = DEFAULT_OPENAI_API_KEY_ENV)]
     pub embedding_api_key_env: String,
 }
@@ -31,6 +41,8 @@ impl Default for EmbeddingArgs {
         Self {
             embedding_provider: None,
             embedding_model: DEFAULT_OPENAI_MODEL.to_string(),
+            embedding_dimensions: CODE_INDEX_VECTOR_DIM,
+            embedding_base_url: None,
             embedding_api_key_env: DEFAULT_OPENAI_API_KEY_ENV.to_string(),
         }
     }
@@ -39,22 +51,12 @@ impl Default for EmbeddingArgs {
 pub(crate) fn build_embedding_provider(
     args: &EmbeddingArgs,
 ) -> Result<Option<Arc<dyn CodeEmbeddingProvider>>> {
-    let provider = match args.embedding_provider {
-        None => None,
-        Some(EmbeddingProviderKind::Noop) => {
-            Some(Arc::new(NoOpCodeEmbeddingProvider) as Arc<dyn CodeEmbeddingProvider>)
-        }
-        Some(EmbeddingProviderKind::Openai) => {
-            let api_key = std::env::var(&args.embedding_api_key_env).with_context(|| {
-                format!(
-                    "embedding provider openai requires env var '{}'",
-                    args.embedding_api_key_env
-                )
-            })?;
-            let provider = OpenAIEmbeddingProvider::new(api_key, args.embedding_model.clone())?;
-            Some(Arc::new(provider) as Arc<dyn CodeEmbeddingProvider>)
-        }
-    };
+    let provider =
+        match args.embedding_provider {
+            None => None,
+            Some(kind) => Some(Arc::new(SdkCodeEmbeddingProvider::new(kind, args)?)
+                as Arc<dyn CodeEmbeddingProvider>),
+        };
     Ok(provider)
 }
 
@@ -64,59 +66,91 @@ pub(crate) fn build_options(args: &EmbeddingArgs) -> Result<CodeIndexBuildOption
     })
 }
 
-struct OpenAIEmbeddingProvider {
-    client: openai_sdk::Client,
+struct SdkCodeEmbeddingProvider {
+    provider: Arc<dyn SdkEmbeddingProvider>,
+    config_key: String,
     model: String,
+    dimensions: usize,
 }
 
-impl OpenAIEmbeddingProvider {
-    fn new(api_key: String, model: String) -> Result<Self> {
+impl SdkCodeEmbeddingProvider {
+    fn new(kind: EmbeddingProviderKind, args: &EmbeddingArgs) -> Result<Self> {
+        let driver = match kind {
+            EmbeddingProviderKind::Openai => "openai",
+            EmbeddingProviderKind::Noop => "noop",
+        };
+        let api_key = match kind {
+            EmbeddingProviderKind::Noop => String::new(),
+            EmbeddingProviderKind::Openai => match std::env::var(&args.embedding_api_key_env) {
+                Ok(value) => value,
+                Err(_) if args.embedding_base_url.is_some() => String::new(),
+                Err(_) => {
+                    anyhow::bail!(
+                        "embedding provider openai requires env var '{}' unless --embedding-base-url is set for a local OpenAI-compatible endpoint",
+                        args.embedding_api_key_env
+                    );
+                }
+            },
+        };
+
+        let mut init = ProviderInit::new(api_key);
+        if let Some(base_url) = &args.embedding_base_url {
+            init = init.with_base_url(base_url.clone());
+        }
+        let provider = create_sdk_provider(driver, &init)
+            .with_context(|| format!("failed to initialize embedding provider '{}'", driver))?;
+
         Ok(Self {
-            client: openai_sdk::Client::new(api_key)?,
-            model,
+            provider,
+            config_key: format!(
+                "{}:{}:{}:{}",
+                driver,
+                args.embedding_base_url.as_deref().unwrap_or("default"),
+                args.embedding_model,
+                args.embedding_dimensions
+            ),
+            model: args.embedding_model.clone(),
+            dimensions: args.embedding_dimensions,
         })
     }
 }
 
 #[async_trait]
-impl CodeEmbeddingProvider for OpenAIEmbeddingProvider {
+impl CodeEmbeddingProvider for SdkCodeEmbeddingProvider {
     fn config_key(&self) -> String {
-        format!("openai:{}", self.model)
+        self.config_key.clone()
+    }
+
+    fn dimensions(&self) -> usize {
+        self.dimensions
     }
 
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        let request = openai_sdk::EmbeddingRequest::builder()
-            .input(text.to_string())
-            .model(self.model.clone())
-            .build();
+        let response = self
+            .provider
+            .embed(
+                SdkEmbeddingRequest::builder()
+                    .input(vec![text.to_string()])
+                    .model(self.model.clone())
+                    .dimensions(self.dimensions as u32)
+                    .build(),
+                None,
+            )
+            .await?;
 
-        let response = self.client.embeddings().create(request).await?;
-        let embedding = response
+        let vector = response
             .data
             .first()
             .map(|row| row.embedding.clone())
-            .context("no embedding data returned from OpenAI")?;
-        if embedding.len() != CODE_INDEX_VECTOR_DIM {
+            .context("no embedding data returned from provider")?;
+        if vector.len() != self.dimensions {
             anyhow::bail!(
-                "openai embedding model '{}' returned {} dimensions; expected {}",
+                "embedding model '{}' returned {} dimensions; expected {}",
                 self.model,
-                embedding.len(),
-                CODE_INDEX_VECTOR_DIM
+                vector.len(),
+                self.dimensions
             );
         }
-        Ok(embedding)
-    }
-}
-
-struct NoOpCodeEmbeddingProvider;
-
-#[async_trait]
-impl CodeEmbeddingProvider for NoOpCodeEmbeddingProvider {
-    fn config_key(&self) -> String {
-        "noop:1536".to_string()
-    }
-
-    async fn embed(&self, _text: &str) -> Result<Vec<f32>> {
-        Ok(vec![0.001; CODE_INDEX_VECTOR_DIM])
+        Ok(vector)
     }
 }

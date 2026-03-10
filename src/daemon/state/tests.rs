@@ -32,7 +32,7 @@ fs_root = "."
 type = "mock"
 
 [embeddings]
-type = "no_op"
+provider = "noop"
 "#,
     )?;
     Ok(config_path)

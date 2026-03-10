@@ -51,7 +51,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
         },
         harnesses: std::collections::HashMap::new(),
         providers,
-        embeddings: Some(EmbeddingConfig::NoOp),
+        embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
     };

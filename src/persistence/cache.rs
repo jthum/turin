@@ -45,10 +45,7 @@ impl StateStore {
             .with_context(|| format!("Failed to look up cache read state for '{}'", path))?;
 
         let previous = if let Some(row) = previous_rows.next().await? {
-            Some((
-                row.get::<String>(0)?,
-                row.get::<Option<String>>(1)?,
-            ))
+            Some((row.get::<String>(0)?, row.get::<Option<String>>(1)?))
         } else {
             None
         };
@@ -62,20 +59,21 @@ impl StateStore {
             Some(_) => CacheReadStatus::Changed,
         };
 
-        let should_include_content = include_content || !matches!(status, CacheReadStatus::Unchanged);
+        let should_include_content =
+            include_content || !matches!(status, CacheReadStatus::Unchanged);
         let estimated_tokens_saved = if token_estimate && !should_include_content {
             estimate_tokens(content)
         } else {
             0
         };
 
-        let (diff, diff_truncated) = if matches!(status, CacheReadStatus::Changed) && max_diff_lines > 0
-        {
-            let old_content = previous_content.as_deref().unwrap_or("");
-            build_unified_diff(path, old_content, content, max_diff_lines)
-        } else {
-            (None, false)
-        };
+        let (diff, diff_truncated) =
+            if matches!(status, CacheReadStatus::Changed) && max_diff_lines > 0 {
+                let old_content = previous_content.as_deref().unwrap_or("");
+                build_unified_diff(path, old_content, content, max_diff_lines)
+            } else {
+                (None, false)
+            };
 
         let read_at = cache_timestamp(&conn).await?;
         conn.execute(
@@ -223,13 +221,11 @@ impl StateStore {
             }
             (removed_reads, removed_versions, "global".to_string())
         } else {
-            let session_id = session_id.context("session-scoped cache reset requires a session id")?;
-            let removed_reads = count_table_rows(
-                &conn,
-                "file_cache_reads",
-                Some(("session_id", session_id)),
-            )
-            .await?;
+            let session_id =
+                session_id.context("session-scoped cache reset requires a session id")?;
+            let removed_reads =
+                count_table_rows(&conn, "file_cache_reads", Some(("session_id", session_id)))
+                    .await?;
             if !dry_run {
                 conn.execute(
                     "DELETE FROM file_cache_reads WHERE session_id = ?1",
@@ -320,10 +316,7 @@ async fn count_table_rows(
             .await
             .with_context(|| format!("Failed to count rows in '{table}'"))?
     };
-    let row = rows
-        .next()
-        .await?
-        .context("Count query returned no row")?;
+    let row = rows.next().await?.context("Count query returned no row")?;
     Ok(row.get::<i64>(0)? as u64)
 }
 
@@ -342,7 +335,15 @@ mod tests {
             .expect("session row");
 
         let fresh = store
-            .cache_read_file(session_id, "notes.txt", "alpha\nbeta\n", false, false, 200, true)
+            .cache_read_file(
+                session_id,
+                "notes.txt",
+                "alpha\nbeta\n",
+                false,
+                false,
+                200,
+                true,
+            )
             .await
             .expect("fresh cache read");
         assert_eq!(fresh.status, CacheReadStatus::Fresh);
@@ -350,7 +351,15 @@ mod tests {
         assert_eq!(fresh.estimated_tokens_saved, 0);
 
         let unchanged = store
-            .cache_read_file(session_id, "notes.txt", "alpha\nbeta\n", false, false, 200, true)
+            .cache_read_file(
+                session_id,
+                "notes.txt",
+                "alpha\nbeta\n",
+                false,
+                false,
+                200,
+                true,
+            )
             .await
             .expect("unchanged cache read");
         assert_eq!(unchanged.status, CacheReadStatus::Unchanged);
@@ -373,7 +382,12 @@ mod tests {
         assert_eq!(changed.content.as_deref(), Some("alpha\ngamma\n"));
         assert_eq!(changed.previous_content.as_deref(), Some("alpha\nbeta\n"));
         assert!(changed.previous_hash.is_some());
-        assert!(changed.diff.as_deref().is_some_and(|diff| diff.contains("@@")));
+        assert!(
+            changed
+                .diff
+                .as_deref()
+                .is_some_and(|diff| diff.contains("@@"))
+        );
 
         let stats = store
             .cache_stats(Some(session_id), true, true)
@@ -391,7 +405,15 @@ mod tests {
         assert!(invalidated);
 
         let fresh_again = store
-            .cache_read_file(session_id, "notes.txt", "alpha\ngamma\n", false, false, 200, true)
+            .cache_read_file(
+                session_id,
+                "notes.txt",
+                "alpha\ngamma\n",
+                false,
+                false,
+                200,
+                true,
+            )
             .await
             .expect("fresh again");
         assert_eq!(fresh_again.status, CacheReadStatus::Fresh);
@@ -434,7 +456,14 @@ mod tests {
         assert_eq!(empty_stats.session.expect("session stats").files_seen, 0);
 
         let still_searches = store
-            .insert_memory(session_id, "cache reset should not affect memories", None, &json!({}))
+            .insert_memory(
+                session_id,
+                "cache reset should not affect memories",
+                None,
+                None,
+                None,
+                &json!({}),
+            )
             .await
             .expect("memory insert");
         assert!(!still_searches.public_id.is_empty());

@@ -138,7 +138,7 @@ async fn resolve_context_memory_session(
     let public_id = if let Some(existing) = store.kv_get(KEY).await? {
         Some(
             uuid::Uuid::parse_str(&existing)
-            .map_err(|e| anyhow::anyhow!("Invalid stored context session UUID: {}", e))?
+                .map_err(|e| anyhow::anyhow!("Invalid stored context session UUID: {}", e))?,
         )
     } else {
         None
@@ -173,7 +173,12 @@ async fn ensure_context_memory_session(
     }
 
     let new_id = uuid::Uuid::now_v7();
-    store.kv_set("__turin_context_session_public_id", &new_id.simple().to_string()).await?;
+    store
+        .kv_set(
+            "__turin_context_session_public_id",
+            &new_id.simple().to_string(),
+        )
+        .await?;
     let agent_id = selector
         .tags
         .iter()
@@ -261,9 +266,22 @@ pub(crate) async fn memory_store_backend_with_request(
             Some(provider.embed(content).await?.vector)
         }
     };
+    let embedding_key = vector
+        .as_ref()
+        .and_then(|_| embedding_provider.map(|provider| provider.config_key()));
+    let embedding_dimensions = vector
+        .as_ref()
+        .and_then(|_| embedding_provider.map(|provider| provider.dimensions()));
     let metadata = augment_memory_metadata(metadata, request);
     store
-        .insert_memory(session_id, content, vector.as_deref(), &metadata)
+        .insert_memory(
+            session_id,
+            content,
+            vector.as_deref(),
+            embedding_key.as_deref(),
+            embedding_dimensions,
+            &metadata,
+        )
         .await
 }
 
@@ -309,7 +327,9 @@ pub(crate) async fn memory_search_backend_with_request(
             if embedding_provider.is_some() {
                 MemorySearchMode::Semantic
             } else if request.strict {
-                anyhow::bail!("runtime.memory.search: semantic mode requires an embedding provider");
+                anyhow::bail!(
+                    "runtime.memory.search: semantic mode requires an embedding provider"
+                );
             } else {
                 MemorySearchMode::Lexical
             }
@@ -328,14 +348,24 @@ pub(crate) async fn memory_search_backend_with_request(
     let vector = match effective_mode {
         MemorySearchMode::Semantic | MemorySearchMode::Hybrid => {
             let provider = embedding_provider.ok_or_else(|| {
-                anyhow::anyhow!("runtime.memory.search: semantic mode requires an embedding provider")
+                anyhow::anyhow!(
+                    "runtime.memory.search: semantic mode requires an embedding provider"
+                )
             })?;
             Some(provider.embed(query).await?.vector)
         }
         MemorySearchMode::Auto | MemorySearchMode::Lexical => None,
     };
+    let query_embedding_key = vector
+        .as_ref()
+        .and_then(|_| embedding_provider.map(|provider| provider.config_key()));
+    let query_embedding_dimensions = vector
+        .as_ref()
+        .and_then(|_| embedding_provider.map(|provider| provider.dimensions()));
     let lexical_query = match effective_mode {
-        MemorySearchMode::Lexical | MemorySearchMode::Hybrid | MemorySearchMode::Auto => Some(query),
+        MemorySearchMode::Lexical | MemorySearchMode::Hybrid | MemorySearchMode::Auto => {
+            Some(query)
+        }
         MemorySearchMode::Semantic => None,
     };
 
@@ -343,6 +373,8 @@ pub(crate) async fn memory_search_backend_with_request(
         .search_memories(
             session_id,
             vector.as_deref(),
+            query_embedding_key.as_deref(),
+            query_embedding_dimensions,
             lexical_query,
             request.limit,
             request.min_score,
@@ -416,9 +448,23 @@ pub(crate) async fn memory_correct_backend_with_request(
             Some(provider.embed(content).await?.vector)
         }
     };
+    let embedding_key = vector
+        .as_ref()
+        .and_then(|_| embedding_provider.map(|provider| provider.config_key()));
+    let embedding_dimensions = vector
+        .as_ref()
+        .and_then(|_| embedding_provider.map(|provider| provider.dimensions()));
     let metadata = augment_memory_metadata(metadata, request);
     store
-        .correct_memory(session_id, public_id, content, vector.as_deref(), &metadata)
+        .correct_memory(
+            session_id,
+            public_id,
+            content,
+            vector.as_deref(),
+            embedding_key.as_deref(),
+            embedding_dimensions,
+            &metadata,
+        )
         .await
 }
 
@@ -497,11 +543,12 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
+        MemoryFeedbackRequest, MemoryFeedbackSignal, MemoryPurgeRequest, MemorySearchMode,
+        MemorySearchRequest, MemoryStoreMode, MemoryStoreRequest,
         memory_correct_backend_with_request, memory_feedback_backend_with_request,
-        memory_purge_backend_with_request, memory_search_backend, memory_search_backend_with_request,
-        memory_store_backend, memory_store_backend_with_request, MemoryFeedbackRequest,
-        MemoryFeedbackSignal, MemoryPurgeRequest, MemorySearchMode, MemorySearchRequest,
-        MemoryStoreMode, MemoryStoreRequest,
+        memory_purge_backend_with_request, memory_search_backend,
+        memory_search_backend_with_request, memory_store_backend,
+        memory_store_backend_with_request,
     };
     use crate::kernel::identity::ContextSelector;
     use crate::persistence::manager::StoreManager;
@@ -558,9 +605,10 @@ mod tests {
         .await
         .expect_err("embedded-only store should fail without provider");
 
-        assert!(err
-            .to_string()
-            .contains("storage='embedded' requires an embedding provider"));
+        assert!(
+            err.to_string()
+                .contains("storage='embedded' requires an embedding provider")
+        );
     }
 
     #[tokio::test]
@@ -606,9 +654,10 @@ mod tests {
         )
         .await
         .expect_err("strict semantic search should fail without embeddings");
-        assert!(err
-            .to_string()
-            .contains("semantic mode requires an embedding provider"));
+        assert!(
+            err.to_string()
+                .contains("semantic mode requires an embedding provider")
+        );
     }
 
     #[tokio::test]
@@ -693,7 +742,10 @@ mod tests {
         )
         .await
         .expect("superseded search should succeed");
-        assert!(hidden_old.is_empty(), "superseded memory should be hidden by default");
+        assert!(
+            hidden_old.is_empty(),
+            "superseded memory should be hidden by default"
+        );
 
         let old_visible = memory_search_backend_with_request(
             &manager,

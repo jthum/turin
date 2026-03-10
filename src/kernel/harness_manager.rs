@@ -201,7 +201,7 @@ mod tests {
                 },
             )]),
             providers,
-            embeddings: Some(EmbeddingConfig::NoOp),
+            embeddings: Some(EmbeddingConfig::noop()),
             governance: crate::kernel::config::GovernanceConfig::default(),
             daemon: Default::default(),
         };

@@ -724,18 +724,42 @@ mod tests {
 
         // Insert memories
         store
-            .insert_memory(session, "The secret code is 12345", Some(&[1.0, 0.0]), &json!({}))
+            .insert_memory(
+                session,
+                "The secret code is 12345",
+                Some(&[1.0, 0.0]),
+                Some("test:semantic:2"),
+                Some(2),
+                &json!({}),
+            )
             .await
             .unwrap();
 
         store
-            .insert_memory(session, "Apples are red", Some(&[0.0, 1.0]), &json!({}))
+            .insert_memory(
+                session,
+                "Apples are red",
+                Some(&[0.0, 1.0]),
+                Some("test:semantic:2"),
+                Some(2),
+                &json!({}),
+            )
             .await
             .unwrap();
 
         // Test 1: Vector Search
         let results = store
-            .search_memories(session, Some(&[1.0, 0.0]), None, 10, 0.0, false, false)
+            .search_memories(
+                session,
+                Some(&[1.0, 0.0]),
+                Some("test:semantic:2"),
+                Some(2),
+                None,
+                10,
+                0.0,
+                false,
+                false,
+            )
             .await
             .unwrap();
         assert_eq!(results.len(), 2);
@@ -744,7 +768,17 @@ mod tests {
 
         // Test 2: Lexical Search
         let results = store
-            .search_memories(session, None, Some("12345"), 10, 0.0, false, false)
+            .search_memories(
+                session,
+                None,
+                None,
+                None,
+                Some("12345"),
+                10,
+                0.0,
+                false,
+                false,
+            )
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
@@ -753,7 +787,17 @@ mod tests {
 
         // Test 3: Hybrid Search
         let results = store
-            .search_memories(session, Some(&[0.0, 1.0]), Some("12345"), 10, 0.0, false, false)
+            .search_memories(
+                session,
+                Some(&[0.0, 1.0]),
+                Some("test:semantic:2"),
+                Some(2),
+                Some("12345"),
+                10,
+                0.0,
+                false,
+                false,
+            )
             .await
             .unwrap();
         assert_eq!(results.len(), 2);
@@ -771,19 +815,46 @@ mod tests {
         let session = 1;
 
         store
-            .insert_memory(session, "The secret code is 12345", None, &json!({}))
+            .insert_memory(
+                session,
+                "The secret code is 12345",
+                None,
+                None,
+                None,
+                &json!({}),
+            )
             .await
             .unwrap();
 
         let results = store
-            .search_memories(session, None, Some("12345"), 10, 0.0, false, false)
+            .search_memories(
+                session,
+                None,
+                None,
+                None,
+                Some("12345"),
+                10,
+                0.0,
+                false,
+                false,
+            )
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].content.contains("secret code"));
 
         let hybrid_results = store
-            .search_memories(session, Some(&[1.0, 0.0]), Some("12345"), 10, 0.0, false, false)
+            .search_memories(
+                session,
+                Some(&[1.0, 0.0]),
+                Some("test:semantic:2"),
+                Some(2),
+                Some("12345"),
+                10,
+                0.0,
+                false,
+                false,
+            )
             .await
             .unwrap();
         assert_eq!(hybrid_results.len(), 1);
@@ -802,6 +873,8 @@ mod tests {
                 session,
                 "alpha memory",
                 None,
+                None,
+                None,
                 &json!({ "kind": "note", "source": "test" }),
             )
             .await
@@ -812,7 +885,17 @@ mod tests {
         assert!(stored.stored_at.contains('T'));
 
         let rows = store
-            .search_memories(session, None, Some("alpha"), 5, 0.0, true, false)
+            .search_memories(
+                session,
+                None,
+                None,
+                None,
+                Some("alpha"),
+                5,
+                0.0,
+                true,
+                false,
+            )
             .await
             .expect("memory search should succeed");
 
@@ -820,7 +903,10 @@ mod tests {
         assert_eq!(rows[0].public_id, stored.public_id);
         assert_eq!(rows[0].retrieval_count, 1);
         assert!(rows[0].last_retrieved_at.is_some());
-        let metadata = rows[0].metadata.as_deref().expect("metadata should be present");
+        let metadata = rows[0]
+            .metadata
+            .as_deref()
+            .expect("metadata should be present");
         assert!(metadata.contains("\"kind\":\"note\""));
         assert!(metadata.contains("\"source\":\"test\""));
     }

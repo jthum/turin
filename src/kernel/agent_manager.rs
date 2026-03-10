@@ -1189,7 +1189,7 @@ mod tests {
             },
             harnesses: HashMap::new(),
             providers,
-            embeddings: Some(EmbeddingConfig::NoOp),
+            embeddings: Some(EmbeddingConfig::noop()),
             governance: GovernanceConfig::default(),
             daemon: Default::default(),
         }

@@ -2,9 +2,7 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use turso::{Connection, Database};
 
-use crate::embeddings::CODE_INDEX_VECTOR_DIM;
-
-pub(crate) const CODE_INDEX_SCHEMA_REVISION: i64 = 2026031001;
+pub(crate) const CODE_INDEX_SCHEMA_REVISION: i64 = 2026031002;
 
 pub(crate) async fn open_index_connection(index_path: &Path) -> Result<(Database, Connection)> {
     let index_path = index_path.to_string_lossy().to_string();
@@ -19,12 +17,8 @@ pub(crate) async fn open_index_connection(index_path: &Path) -> Result<(Database
 }
 
 pub(crate) fn encode_vector_blob(vector: &[f32], context: &str) -> Result<Vec<u8>> {
-    if vector.len() != CODE_INDEX_VECTOR_DIM {
-        anyhow::bail!(
-            "{context} must have {} dimensions, got {}",
-            CODE_INDEX_VECTOR_DIM,
-            vector.len()
-        );
+    if vector.is_empty() {
+        anyhow::bail!("{context} must not be empty");
     }
 
     let mut blob = Vec::with_capacity(vector.len() * std::mem::size_of::<f32>());
