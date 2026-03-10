@@ -53,6 +53,7 @@ pub(super) fn build_lexical_search_sql(
     ];
     let pattern_slot = "?1";
     let exact_slot = "?2";
+    let path_bonus_expr = build_path_bonus_expr(&mut params, query, exact_slot, pattern_slot);
     let use_token_match = has_search_text && query.chars().any(char::is_whitespace);
     let token_query = if use_token_match {
         build_token_query(&mut params, query)
@@ -72,9 +73,8 @@ pub(super) fn build_lexical_search_sql(
                 WHEN LOWER(name) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 70.0 \
                 WHEN LOWER(COALESCE(signature, '')) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 45.0 \
                 WHEN LOWER(snippet) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 20.0 \
-                WHEN LOWER(path) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 10.0 \
                 ELSE 0.0 \
-            END + \
+            END + {path_bonus_expr} + \
             {token_bonus_expr})"
         ))
     } else {
@@ -154,6 +154,7 @@ fn build_fts_lexical_search_sql(
     let fts_slot = "?1";
     let exact_slot = "?2";
     let pattern_slot = "?3";
+    let path_bonus_expr = build_path_bonus_expr(&mut params, query, exact_slot, pattern_slot);
     let token_query = if query.chars().any(char::is_whitespace) {
         build_token_query(&mut params, query)
     } else {
@@ -182,9 +183,8 @@ fn build_fts_lexical_search_sql(
                 WHEN LOWER(name) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 70.0 \
                 WHEN LOWER(COALESCE(signature, '')) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 45.0 \
                 WHEN LOWER(snippet) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 20.0 \
-                WHEN LOWER(path) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 10.0 \
                 ELSE 0.0 \
-              END + \
+              END + {path_bonus_expr} + \
               {token_bonus_expr})"
         ))
     } else {
@@ -300,6 +300,35 @@ struct TokenQuery {
     match_clause: String,
 }
 
+fn build_path_bonus_expr(
+    params: &mut Vec<Value>,
+    query: &str,
+    exact_slot: &str,
+    pattern_slot: &str,
+) -> String {
+    if looks_like_path_query(query) {
+        let basename = basename_query(query);
+        params.push(Value::Text(escape_like_pattern(&basename)));
+        let basename_slot = format!("?{}", params.len());
+        format!(
+            "CASE \
+                WHEN LOWER(path) = LOWER({exact_slot}) THEN 220.0 \
+                WHEN LOWER(path) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 150.0 \
+                WHEN LOWER(path) LIKE LOWER({basename_slot}) ESCAPE '\\' THEN 110.0 \
+                ELSE 0.0 \
+            END"
+        )
+    } else {
+        format!(
+            "CASE \
+                WHEN LOWER(path) = LOWER({exact_slot}) THEN 35.0 \
+                WHEN LOWER(path) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 10.0 \
+                ELSE 0.0 \
+            END"
+        )
+    }
+}
+
 fn build_token_query(params: &mut Vec<Value>, query: &str) -> Option<TokenQuery> {
     let mut parts = Vec::new();
     let mut matches = Vec::new();
@@ -354,6 +383,20 @@ fn build_fts_query(query: &str) -> String {
 fn should_use_fts_lexical(query: &str) -> bool {
     let tokens = lexical_tokens(query);
     query.chars().any(char::is_whitespace) || tokens.len() > 1
+}
+
+fn looks_like_path_query(query: &str) -> bool {
+    let query = query.trim();
+    query.contains('/') || query.contains('\\') || query.contains('.') || query.contains("::")
+}
+
+fn basename_query(query: &str) -> String {
+    query
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(query)
+        .trim()
+        .to_string()
 }
 
 fn escape_fts_term(value: &str) -> String {

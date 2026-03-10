@@ -791,6 +791,21 @@ FROM code_chunks;
         assert_eq!(lexical_path_rows.len(), 1);
         assert_eq!(lexical_path_rows[0].name, "capability_decision");
 
+        let lexical_file_rows = search(
+            tmp.path(),
+            CodebaseSelector {
+                root: "repo_lexical_only".to_string(),
+                index_path: None,
+            },
+            CodeSearchMode::Lexical,
+            "runtime_cache.lua",
+            &CodeSearchRequest::default(),
+            None,
+        )
+        .await?;
+        assert_eq!(lexical_file_rows.len(), 1);
+        assert_eq!(lexical_file_rows[0].path, "harnesses/runtime_cache.lua");
+
         let strict_err = search(
             tmp.path(),
             CodebaseSelector {

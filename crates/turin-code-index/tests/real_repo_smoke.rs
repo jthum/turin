@@ -162,6 +162,34 @@ async fn real_repo_smoke_runtime_harness_index() -> Result<()> {
             .collect::<Vec<_>>()
     );
 
+    let path_rows = search(
+        &repo_root,
+        selector.clone(),
+        CodeSearchMode::Lexical,
+        "stdlib/runtime_code.rs",
+        &CodeSearchRequest {
+            limit: 5,
+            languages: vec!["rust".to_string()],
+            trace: true,
+            ..CodeSearchRequest::default()
+        },
+        None,
+    )
+    .await?;
+    assert!(!path_rows.is_empty());
+    assert!(
+        path_rows[0].path.ends_with("stdlib/runtime_code.rs"),
+        "expected path-oriented query to prioritize runtime_code.rs, got {}",
+        path_rows[0].path
+    );
+    assert_eq!(
+        path_rows[0]
+            .trace
+            .as_ref()
+            .and_then(|trace| trace.requested_mode.as_deref()),
+        Some("lexical")
+    );
+
     let hybrid_query = "runtime code search namespace";
     let hybrid_vector = provider.embed(hybrid_query).await?;
     let hybrid_rows = search(
