@@ -72,9 +72,16 @@ api_key_env = "OPENAI_API_KEY"
 type = "mock"
 # base_url = "Optional custom mock response"
 
-# Optional embeddings (for semantic memory)
+# Optional embeddings (for semantic memory and code search)
+# Reuse an existing provider alias or point at a local OpenAI-compatible endpoint.
+# [providers.local_embeddings]
+# type = "openai"
+# base_url = "http://127.0.0.1:11434/v1"
+#
 # [embeddings]
-# type = "openai"    # or "no_op"
+# provider = "openai"          # or "local_embeddings" / "noop"
+# model = "text-embedding-3-small"
+# dimensions = 1536            # set this to the model's actual output size
 
 # -----------------------------------------------------------------------------
 # Governance (opt-in, flexibility-first)

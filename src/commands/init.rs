@@ -47,6 +47,17 @@ api_key_env = "ANTHROPIC_API_KEY"
 [providers.openai]
 type = "openai"
 api_key_env = "OPENAI_API_KEY"
+
+# Optional embeddings for semantic memory and code search.
+# Reuse an existing provider alias or point at a local OpenAI-compatible endpoint.
+# [providers.local_embeddings]
+# type = "openai"
+# base_url = "http://127.0.0.1:11434/v1"
+#
+# [embeddings]
+# provider = "openai"          # or "local_embeddings" / "noop"
+# model = "text-embedding-3-small"
+# dimensions = 1536
 "#;
     fs::write("turin.toml", turin_toml)?;
     println!("{} Created turin.toml", display::ok_mark(ansi));

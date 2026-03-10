@@ -422,8 +422,10 @@ Root-path-first code search API backed by `turin-map` indexes.
 Notes:
 
 - build the index first with `turin-map index --root .`
-- add semantic chunks with `turin-map index --root . --embedding-provider openai`
+- add semantic chunks with `turin-map index --root . --embedding-provider openai --embedding-model text-embedding-3-small --embedding-dimensions 1536`
+- local OpenAI-compatible embedding servers work via `--embedding-base-url ...`; use the same model and dimensions you configure under `[embeddings]`
 - semantic and hybrid queries require both semantic index capability and a query-time embedding provider
+- semantic and hybrid queries also require the query-time embedding profile to match the index profile; `strict=false` falls back to lexical, `strict=true` errors
 - when `strict=false`, missing semantic capability or missing embedding provider falls back to the best available lexical path
 - when `strict=true`, those same cases return an error instead of falling back
 

@@ -455,7 +455,31 @@ Build the index before querying it:
 
 ```bash
 turin-map index --root .
-turin-map index --root . --embedding-provider openai
+turin-map index --root . \
+  --embedding-provider openai \
+  --embedding-model text-embedding-3-small \
+  --embedding-dimensions 1536
+```
+
+For a small local embedding model behind an OpenAI-compatible endpoint:
+
+```toml
+[providers.local_embeddings]
+type = "openai"
+base_url = "http://127.0.0.1:11434/v1"
+
+[embeddings]
+provider = "local_embeddings"
+model = "your-small-embedding-model"
+dimensions = 384
+```
+
+```bash
+turin-map index --root . \
+  --embedding-provider openai \
+  --embedding-base-url http://127.0.0.1:11434/v1 \
+  --embedding-model your-small-embedding-model \
+  --embedding-dimensions 384
 ```
 
 Then query it from the harness:
@@ -475,6 +499,7 @@ if not rows then error(rerr) end
 ```
 
 Semantic/hybrid queries need both a semantic index and a configured embedding provider at query time.
+The runtime embedding profile and index embedding profile must match on driver, base URL, model, and dimensions.
 With `strict = false`, Turin falls back to lexical results when that path is unavailable.
 
 ### Multi-DB access

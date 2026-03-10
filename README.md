@@ -128,6 +128,31 @@ api_key_env = "ANTHROPIC_API_KEY"
 
 Current persistence note: the Turso 0.5 memory/search baseline is a breaking reset. Delete and recreate existing Turin DBs when moving to this baseline; no schema migration path is provided.
 
+Optional semantic memory and code search:
+
+```toml
+[providers.local_embeddings]
+type = "openai"
+base_url = "http://127.0.0.1:11434/v1"
+
+[embeddings]
+provider = "local_embeddings"   # or "openai" to reuse providers.openai
+model = "your-small-embedding-model"
+dimensions = 384                # set this to the model's actual output size
+```
+
+Then build code indexes with the same embedding profile:
+
+```bash
+turin-map index --root . \
+  --embedding-provider openai \
+  --embedding-base-url http://127.0.0.1:11434/v1 \
+  --embedding-model your-small-embedding-model \
+  --embedding-dimensions 384
+```
+
+Turin matches semantic/hybrid queries against the index embedding profile. If the runtime provider and index disagree on driver, base URL, model, or dimensions, `strict = false` falls back to lexical search and `strict = true` returns an error.
+
 ### 3. Add a harness script
 
 ```bash
