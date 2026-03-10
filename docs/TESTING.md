@@ -217,6 +217,7 @@ This keeps provider-specific logic out of Turin and speeds debugging.
   - `cargo test --test example_harness_examples`
 - Focused commands for recent code-search and DX work:
   - `cargo test -p turin-code-index -- --nocapture`
+  - `cargo test -p turin-code-index real_repo_smoke -- --ignored --nocapture`
   - `cargo test test_runtime_code_search_ --test harness_tests -- --nocapture`
   - `cargo test test_dx_fixture_code_cache_shortcuts --test dx_harness_examples -- --nocapture`
 - Run full `cargo test` before committing
