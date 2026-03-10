@@ -471,7 +471,17 @@ Row shape:
   score = 0.0,
   lexical_score = 0.0 | nil,
   semantic_score = 0.0 | nil,
-  rank = 1
+  rank = 1,
+  trace = {
+    requested_mode = "lexical" | "semantic" | "hybrid" | nil,
+    effective_mode = "lexical" | "semantic" | "hybrid",
+    fallback_reason = "capability_fallback" | "missing_embedding_provider" | "embedding_profile_mismatch" | nil,
+    lexical_rank = 1 | nil,
+    semantic_rank = 1 | nil,
+    lexical_rrf = 0.0 | nil,
+    semantic_rrf = 0.0 | nil,
+    fusion = "rrf" | nil
+  } | nil
 }
 ```
 

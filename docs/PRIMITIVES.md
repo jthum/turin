@@ -427,6 +427,7 @@ Notes:
 - `runtime.code.search.status(...)` returns fact-level semantic metadata including `codebase_id`, `embedded_chunks`, `embedding_key`, `embedding_dimensions`, and `vector_format`
 - semantic and hybrid queries require both semantic index capability and a query-time embedding provider
 - semantic and hybrid queries also require the query-time embedding profile to match the index profile; `strict=false` falls back to lexical, `strict=true` errors
+- `trace = true` adds per-row ranking metadata such as effective mode, fallback reason, candidate ranks, and RRF contributions
 - when `strict=false`, missing semantic capability or missing embedding provider falls back to the best available lexical path
 - when `strict=true`, those same cases return an error instead of falling back
 

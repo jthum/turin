@@ -37,6 +37,7 @@ pub struct CodeSearchRequest {
     pub kinds: Vec<String>,
     pub min_score: f64,
     pub strict: bool,
+    pub trace: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -63,6 +64,25 @@ pub struct CodeIndexStatus {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct CodeSearchTrace {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_mode: Option<String>,
+    pub effective_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lexical_rank: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic_rank: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lexical_rrf: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic_rrf: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fusion: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct CodeSearchRow {
     pub chunk_key: String,
     pub path: String,
@@ -77,6 +97,8 @@ pub struct CodeSearchRow {
     pub lexical_score: Option<f64>,
     pub semantic_score: Option<f64>,
     pub rank: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace: Option<CodeSearchTrace>,
 }
 
 pub async fn status(workspace_root: &Path, selector: CodebaseSelector) -> Result<CodeIndexStatus> {
@@ -114,7 +136,7 @@ pub async fn search(
         request.strict,
     )?;
     let (_db, conn) = open_index_connection(&validated.index_path).await?;
-    match negotiated_mode {
+    let mut rows = match negotiated_mode {
         CodeSearchMode::Lexical => {
             lexical_search_rows(
                 &conn,
@@ -142,7 +164,16 @@ pub async fn search(
                 query_vector.context("hybrid search requires an embedding query vector")?;
             hybrid_search_rows(&conn, query, request, query_vector).await
         }
+    }?;
+    if request.trace {
+        annotate_request_trace(
+            &mut rows,
+            requested_mode,
+            negotiated_mode,
+            (requested_mode != negotiated_mode).then_some("capability_fallback"),
+        );
     }
+    Ok(rows)
 }
 
 async fn lexical_search_rows(
@@ -160,7 +191,22 @@ async fn lexical_search_rows(
     };
     let (sql, params) =
         build_lexical_search_sql(source_name, true, query, request, has_search_text, limit);
-    query_rows(conn, &sql, params).await
+    let mut rows = query_rows(conn, &sql, params).await?;
+    if request.trace {
+        for row in &mut rows {
+            row.trace = Some(CodeSearchTrace {
+                requested_mode: None,
+                effective_mode: CodeSearchMode::Lexical.as_str().to_string(),
+                fallback_reason: None,
+                lexical_rank: Some(row.rank),
+                semantic_rank: None,
+                lexical_rrf: None,
+                semantic_rrf: None,
+                fusion: None,
+            });
+        }
+    }
+    Ok(rows)
 }
 
 async fn semantic_search_rows(
@@ -172,7 +218,22 @@ async fn semantic_search_rows(
 ) -> Result<Vec<CodeSearchRow>> {
     let (sql, mut params) = build_semantic_search_sql(view_name, request, limit);
     params[0] = turso::Value::Blob(encode_vector_blob(query_vector, "semantic query vector")?);
-    query_rows(conn, &sql, params).await
+    let mut rows = query_rows(conn, &sql, params).await?;
+    if request.trace {
+        for row in &mut rows {
+            row.trace = Some(CodeSearchTrace {
+                requested_mode: None,
+                effective_mode: CodeSearchMode::Semantic.as_str().to_string(),
+                fallback_reason: None,
+                lexical_rank: None,
+                semantic_rank: Some(row.rank),
+                lexical_rrf: None,
+                semantic_rrf: None,
+                fusion: None,
+            });
+        }
+    }
+    Ok(rows)
 }
 
 async fn query_rows(
@@ -200,6 +261,7 @@ async fn query_rows(
             lexical_score: row.get::<Option<f64>>(10)?,
             semantic_score: row.get::<Option<f64>>(11)?,
             rank,
+            trace: None,
         });
         rank += 1;
     }
@@ -235,6 +297,27 @@ async fn hybrid_search_rows(
     )
     .await?;
 
+    let lexical_trace = lexical_rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            (
+                row.chunk_key.clone(),
+                ((index + 1) as i64, reciprocal_rank(index + 1)),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let semantic_trace = semantic_rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            (
+                row.chunk_key.clone(),
+                ((index + 1) as i64, reciprocal_rank(index + 1)),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
     let mut fused = HashMap::<String, CodeSearchRow>::new();
     for (index, row) in lexical_rows.iter().enumerate() {
         let key = row.chunk_key.clone();
@@ -252,6 +335,7 @@ async fn hybrid_search_rows(
             lexical_score: row.lexical_score.or(Some(row.score)),
             semantic_score: None,
             rank: 0,
+            trace: None,
         });
         entry.score += reciprocal_rank(index + 1);
         entry.lexical_score = row.lexical_score.or(Some(row.score));
@@ -273,6 +357,7 @@ async fn hybrid_search_rows(
             lexical_score: None,
             semantic_score: row.semantic_score.or(Some(row.score)),
             rank: 0,
+            trace: None,
         });
         entry.score += reciprocal_rank(index + 1);
         entry.semantic_score = row.semantic_score.or(Some(row.score));
@@ -290,6 +375,20 @@ async fn hybrid_search_rows(
     rows.truncate(request.limit.max(1));
     for (index, row) in rows.iter_mut().enumerate() {
         row.rank = (index + 1) as i64;
+        if request.trace {
+            let lexical = lexical_trace.get(&row.chunk_key).copied();
+            let semantic = semantic_trace.get(&row.chunk_key).copied();
+            row.trace = Some(CodeSearchTrace {
+                requested_mode: None,
+                effective_mode: CodeSearchMode::Hybrid.as_str().to_string(),
+                fallback_reason: None,
+                lexical_rank: lexical.map(|value| value.0),
+                semantic_rank: semantic.map(|value| value.0),
+                lexical_rrf: lexical.map(|value| value.1),
+                semantic_rrf: semantic.map(|value| value.1),
+                fusion: Some("rrf".to_string()),
+            });
+        }
     }
     Ok(rows)
 }
@@ -302,6 +401,14 @@ impl CodeSearchMode {
             Self::Hybrid => "v_code_hybrid",
         }
     }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Lexical => "lexical",
+            Self::Semantic => "semantic",
+            Self::Hybrid => "hybrid",
+        }
+    }
 }
 
 impl Default for CodeSearchRequest {
@@ -312,7 +419,31 @@ impl Default for CodeSearchRequest {
             kinds: Vec::new(),
             min_score: 0.0,
             strict: false,
+            trace: false,
         }
+    }
+}
+
+fn annotate_request_trace(
+    rows: &mut [CodeSearchRow],
+    requested_mode: CodeSearchMode,
+    effective_mode: CodeSearchMode,
+    fallback_reason: Option<&str>,
+) {
+    for row in rows {
+        let trace = row.trace.get_or_insert_with(|| CodeSearchTrace {
+            requested_mode: None,
+            effective_mode: effective_mode.as_str().to_string(),
+            fallback_reason: None,
+            lexical_rank: None,
+            semantic_rank: None,
+            lexical_rrf: None,
+            semantic_rrf: None,
+            fusion: None,
+        });
+        trace.requested_mode = Some(requested_mode.as_str().to_string());
+        trace.effective_mode = effective_mode.as_str().to_string();
+        trace.fallback_reason = fallback_reason.map(str::to_string);
     }
 }
 
@@ -566,6 +697,7 @@ FROM code_chunks;
                 kinds: vec!["function".to_string()],
                 min_score: 0.1,
                 strict: false,
+                trace: true,
             },
             Some(&vec![0.001_f32; CODE_INDEX_VECTOR_DIM]),
         )
@@ -575,6 +707,13 @@ FROM code_chunks;
         assert_eq!(rows[0].rank, 1);
         assert!(rows[0].lexical_score.is_some());
         assert!(rows[0].semantic_score.is_some());
+        assert_eq!(
+            rows[0]
+                .trace
+                .as_ref()
+                .and_then(|trace| trace.fusion.as_deref()),
+            Some("rrf")
+        );
 
         let lexical_only_root = tmp.path().join("repo_lexical_only");
         std::fs::create_dir_all(&lexical_only_root)?;
@@ -590,6 +729,7 @@ FROM code_chunks;
             "cache",
             &CodeSearchRequest {
                 strict: false,
+                trace: true,
                 ..CodeSearchRequest::default()
             },
             None,
@@ -599,6 +739,27 @@ FROM code_chunks;
         assert_eq!(fallback_rows[0].name, "on_turn_prepare");
         assert!(fallback_rows[0].lexical_score.is_some());
         assert!(fallback_rows[0].semantic_score.is_none());
+        assert_eq!(
+            fallback_rows[0]
+                .trace
+                .as_ref()
+                .and_then(|trace| trace.requested_mode.as_deref()),
+            Some("semantic")
+        );
+        assert_eq!(
+            fallback_rows[0]
+                .trace
+                .as_ref()
+                .map(|trace| trace.effective_mode.as_str()),
+            Some("lexical")
+        );
+        assert_eq!(
+            fallback_rows[0]
+                .trace
+                .as_ref()
+                .and_then(|trace| trace.fallback_reason.as_deref()),
+            Some("capability_fallback")
+        );
 
         let lexical_phrase_rows = search(
             tmp.path(),

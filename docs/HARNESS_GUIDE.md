@@ -496,9 +496,13 @@ end
 
 local rows, rerr = runtime.code.search.hybrid(".", "capability decision", {
   languages = { "rust" },
+  trace = true,
   strict = false,
 })
 if not rows then error(rerr) end
+if rows[1] and rows[1].trace then
+  log("effective mode: " .. rows[1].trace.effective_mode)
+end
 ```
 
 Semantic/hybrid queries need both a semantic index and a configured embedding provider at query time.

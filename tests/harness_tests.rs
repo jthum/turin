@@ -1614,19 +1614,32 @@ async fn test_runtime_code_search_api_round_trip() -> Result<()> {
             if rows[1].name ~= "capability_decision" then error("lexical row mismatch") end
             if rows[1].rank ~= 1 then error("lexical rank mismatch") end
 
-            local hybrid_rows, he = runtime.code.search.hybrid("repo", "capability")
+            local hybrid_rows, he = runtime.code.search.hybrid("repo", "capability", {
+                trace = true,
+            })
             if hybrid_rows == nil then error("hybrid search failed: " .. tostring(he)) end
             if hybrid_rows[1].lexical_score == nil or hybrid_rows[1].semantic_score == nil then
                 error("hybrid scores missing")
             end
+            if hybrid_rows[1].trace == nil or hybrid_rows[1].trace.fusion ~= "rrf" then
+                error("hybrid trace missing")
+            end
 
-            local fallback_rows, fe = runtime.code.search.semantic("repo_lexical_only", "cache")
+            local fallback_rows, fe = runtime.code.search.semantic("repo_lexical_only", "cache", {
+                trace = true,
+            })
             if fallback_rows == nil then error("semantic fallback failed: " .. tostring(fe)) end
             if fallback_rows[1].name ~= "on_turn_prepare" then
                 error("semantic fallback row mismatch")
             end
             if fallback_rows[1].semantic_score ~= nil then
                 error("semantic fallback should return lexical rows")
+            end
+            if fallback_rows[1].trace == nil or fallback_rows[1].trace.effective_mode ~= "lexical" then
+                error("semantic fallback trace missing")
+            end
+            if fallback_rows[1].trace.fallback_reason ~= "capability_fallback" then
+                error("semantic fallback reason mismatch")
             end
 
             local strict_rows, strict_err = runtime.code.search.semantic(
@@ -1716,16 +1729,26 @@ async fn test_runtime_code_search_falls_back_without_embedding_provider() -> Res
 
     let harness_code = r#"
         function on_turn_prepare(ctx)
-            local semantic_rows, semantic_err = runtime.code.search.semantic("repo", "capability")
+            local semantic_rows, semantic_err = runtime.code.search.semantic("repo", "capability", {
+                trace = true,
+            })
             if semantic_rows == nil then error("semantic fallback failed: " .. tostring(semantic_err)) end
             if semantic_rows[1].semantic_score ~= nil then
                 error("semantic fallback should return lexical rows when no embedding provider exists")
             end
+            if semantic_rows[1].trace == nil or semantic_rows[1].trace.fallback_reason ~= "missing_embedding_provider" then
+                error("semantic fallback trace mismatch")
+            end
 
-            local hybrid_rows, hybrid_err = runtime.code.search.hybrid("repo", "capability")
+            local hybrid_rows, hybrid_err = runtime.code.search.hybrid("repo", "capability", {
+                trace = true,
+            })
             if hybrid_rows == nil then error("hybrid fallback failed: " .. tostring(hybrid_err)) end
             if hybrid_rows[1].semantic_score ~= nil then
                 error("hybrid fallback should return lexical rows when no embedding provider exists")
+            end
+            if hybrid_rows[1].trace == nil or hybrid_rows[1].trace.fallback_reason ~= "missing_embedding_provider" then
+                error("hybrid fallback trace mismatch")
             end
 
             local strict_rows, strict_err = runtime.code.search.semantic(

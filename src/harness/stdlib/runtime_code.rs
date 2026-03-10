@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::code_index_reader::{
-    CodeSearchMode, CodeSearchRequest, CodebaseSelector, search as code_search,
+    CodeSearchMode, CodeSearchRequest, CodeSearchTrace, CodebaseSelector, search as code_search,
     status as code_status,
 };
 use crate::harness::globals::HarnessAppData;
@@ -169,6 +169,7 @@ fn run_code_search(
     let workspace_root = workspace_root.to_path_buf();
     let result = bridge_async_result(async move {
         let mut effective_mode = mode;
+        let mut runtime_fallback_reason = None::<String>;
         let query_vector = match mode {
             CodeSearchMode::Lexical => None,
             CodeSearchMode::Semantic | CodeSearchMode::Hybrid => {
@@ -199,6 +200,7 @@ fn run_code_search(
                             ));
                         }
                         effective_mode = CodeSearchMode::Lexical;
+                        runtime_fallback_reason = Some("embedding_profile_mismatch".to_string());
                         None
                     } else {
                         Some(
@@ -218,12 +220,13 @@ fn run_code_search(
                     return Err(format!("{mode_name} search requires an embedding provider"));
                 } else {
                     effective_mode = CodeSearchMode::Lexical;
+                    runtime_fallback_reason = Some("missing_embedding_provider".to_string());
                     None
                 }
             }
         };
 
-        code_search(
+        let mut rows = code_search(
             &workspace_root,
             selector,
             effective_mode,
@@ -232,7 +235,27 @@ fn run_code_search(
             query_vector.as_deref(),
         )
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+        if request.trace {
+            for row in &mut rows {
+                let trace = row.trace.get_or_insert_with(|| CodeSearchTrace {
+                    requested_mode: None,
+                    effective_mode: effective_mode.as_str().to_string(),
+                    fallback_reason: None,
+                    lexical_rank: None,
+                    semantic_rank: None,
+                    lexical_rrf: None,
+                    semantic_rrf: None,
+                    fusion: None,
+                });
+                trace.requested_mode = Some(mode.as_str().to_string());
+                trace.effective_mode = effective_mode.as_str().to_string();
+                if let Some(reason) = runtime_fallback_reason.as_ref() {
+                    trace.fallback_reason = Some(reason.clone());
+                }
+            }
+        }
+        Ok(rows)
     });
     match result {
         Ok(rows) => Ok(ok_value(lua.to_value(&rows)?)),
@@ -273,6 +296,7 @@ fn code_search_request_from_opts(lua: &Lua, opts: Option<Table>) -> LuaResult<Co
         kinds: parsed.kinds.unwrap_or_default(),
         min_score: parsed.min_score.unwrap_or(0.0),
         strict: parsed.strict.unwrap_or(false),
+        trace: parsed.trace.unwrap_or(false),
     })
 }
 
