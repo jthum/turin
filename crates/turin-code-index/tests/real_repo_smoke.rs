@@ -104,6 +104,32 @@ async fn real_repo_smoke_runtime_harness_index() -> Result<()> {
         lexical_rows[0].path
     );
 
+    let lexical_phrase_rows = search(
+        &repo_root,
+        selector.clone(),
+        CodeSearchMode::Lexical,
+        "runtime code search namespace",
+        &CodeSearchRequest {
+            limit: 5,
+            languages: vec!["rust".to_string()],
+            ..CodeSearchRequest::default()
+        },
+        None,
+    )
+    .await?;
+    assert!(
+        lexical_phrase_rows
+            .iter()
+            .take(3)
+            .any(|row| row.name == "register_runtime_code_namespace"),
+        "expected runtime code namespace in top lexical phrase hits, got {:?}",
+        lexical_phrase_rows
+            .iter()
+            .take(3)
+            .map(|row| row.name.as_str())
+            .collect::<Vec<_>>()
+    );
+
     let hybrid_query = "runtime code search namespace";
     let hybrid_vector = provider.embed(hybrid_query).await?;
     let hybrid_rows = search(
@@ -133,7 +159,10 @@ async fn real_repo_smoke_runtime_harness_index() -> Result<()> {
             .collect::<Vec<_>>()
     );
     assert!(
-        hybrid_rows.iter().take(3).any(|row| row.semantic_score.is_some()),
+        hybrid_rows
+            .iter()
+            .take(3)
+            .any(|row| row.semantic_score.is_some()),
         "expected semantic contribution in top hybrid hits"
     );
 

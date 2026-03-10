@@ -329,6 +329,11 @@ end
         assert_eq!(rows[0].name, "capability_decision");
         assert!(rows[0].score > 0.0);
 
+        let natural_language_rows =
+            lexical_search(tmp.path(), "runtime code search lexical").await?;
+        assert!(!natural_language_rows.is_empty());
+        assert_eq!(natural_language_rows[0].name, "capability_decision");
+
         let removed = remove_file(&root, None, Path::new("src/governance.rs")).await?;
         assert!(removed.removed_chunks >= 1);
 

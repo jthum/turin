@@ -147,8 +147,14 @@ async fn lexical_search_rows(
     request: &CodeSearchRequest,
     limit: usize,
 ) -> Result<Vec<CodeSearchRow>> {
-    let has_search_text = has_optional_column(conn, view_name, "search_text").await;
-    let (sql, params) = build_lexical_search_sql(view_name, query, request, has_search_text, limit);
+    let has_search_text = has_optional_column(conn, "code_chunks", "search_text").await;
+    let source_name = if has_search_text {
+        "code_chunks"
+    } else {
+        view_name
+    };
+    let (sql, params) =
+        build_lexical_search_sql(source_name, true, query, request, has_search_text, limit);
     query_rows(conn, &sql, params).await
 }
 

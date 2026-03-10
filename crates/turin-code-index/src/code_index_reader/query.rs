@@ -29,7 +29,8 @@ pub(super) fn negotiated_search_mode(
 }
 
 pub(super) fn build_lexical_search_sql(
-    view_name: &str,
+    source_name: &str,
+    use_computed_lexical_score: bool,
     query: &str,
     request: &CodeSearchRequest,
     has_search_text: bool,
@@ -42,10 +43,20 @@ pub(super) fn build_lexical_search_sql(
     ];
     let pattern_slot = "?1";
     let exact_slot = "?2";
+    let use_token_match = has_search_text && query.chars().any(char::is_whitespace);
+    let token_query = if use_token_match {
+        build_token_query(&mut params, query)
+    } else {
+        None
+    };
+    let token_bonus_expr = token_query
+        .as_ref()
+        .map(|query| query.bonus_expr.as_str())
+        .unwrap_or("0.0");
 
-    let lexical_score_expr = if view_name == CodeSearchMode::Lexical.view_name() {
+    let lexical_score_expr = if use_computed_lexical_score {
         Some(format!(
-            "CASE \
+            "(CASE \
                 WHEN LOWER(name) = LOWER({exact_slot}) THEN 120.0 \
                 WHEN LOWER(COALESCE(signature, '')) = LOWER({exact_slot}) THEN 90.0 \
                 WHEN LOWER(name) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 70.0 \
@@ -53,7 +64,8 @@ pub(super) fn build_lexical_search_sql(
                 WHEN LOWER(snippet) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 20.0 \
                 WHEN LOWER(path) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 10.0 \
                 ELSE 0.0 \
-            END"
+            END + \
+            {token_bonus_expr})"
         ))
     } else {
         None
@@ -62,16 +74,26 @@ pub(super) fn build_lexical_search_sql(
     let (mut sql, mut clauses) = if let Some(lexical_score) = lexical_score_expr.as_deref() {
         (
             format!(
-                "SELECT chunk_key, path, language, kind, name, signature, snippet, start_line, end_line, {lexical_score} AS score, {lexical_score} AS lexical_score, NULL AS semantic_score FROM {view_name}"
+                "SELECT chunk_key, path, language, kind, name, signature, snippet, start_line, end_line, {lexical_score} AS score, {lexical_score} AS lexical_score, NULL AS semantic_score FROM {source_name}"
             ),
-            vec![lexical_match_clause(pattern_slot, has_search_text)],
+            vec![lexical_match_clause(
+                pattern_slot,
+                token_query
+                    .as_ref()
+                    .map(|query| query.match_clause.as_str()),
+            )],
         )
     } else {
         (
             format!(
-                "SELECT chunk_key, path, language, kind, name, signature, snippet, start_line, end_line, score, lexical_score, semantic_score FROM {view_name}"
+                "SELECT chunk_key, path, language, kind, name, signature, snippet, start_line, end_line, score, lexical_score, semantic_score FROM {source_name}"
             ),
-            vec![lexical_match_clause(pattern_slot, has_search_text)],
+            vec![lexical_match_clause(
+                pattern_slot,
+                token_query
+                    .as_ref()
+                    .map(|query| query.match_clause.as_str()),
+            )],
         )
     };
 
@@ -148,14 +170,58 @@ pub(super) fn reciprocal_rank(rank: usize) -> f64 {
     100.0 / (60.0 + rank as f64)
 }
 
-fn lexical_match_clause(pattern_slot: &str, has_search_text: bool) -> String {
-    if has_search_text {
-        format!("search_text LIKE {pattern_slot} ESCAPE '\\'")
+fn lexical_match_clause(pattern_slot: &str, token_match_clause: Option<&str>) -> String {
+    let fallback = format!(
+        "(path LIKE {pattern_slot} ESCAPE '\\' OR name LIKE {pattern_slot} ESCAPE '\\' OR COALESCE(signature, '') LIKE {pattern_slot} ESCAPE '\\' OR snippet LIKE {pattern_slot} ESCAPE '\\')"
+    );
+    if let Some(token_match_clause) = token_match_clause {
+        format!("({fallback} OR ({token_match_clause}))")
     } else {
-        format!(
-            "(path LIKE {pattern_slot} ESCAPE '\\' OR name LIKE {pattern_slot} ESCAPE '\\' OR COALESCE(signature, '') LIKE {pattern_slot} ESCAPE '\\' OR snippet LIKE {pattern_slot} ESCAPE '\\')"
-        )
+        fallback
     }
+}
+
+struct TokenQuery {
+    bonus_expr: String,
+    match_clause: String,
+}
+
+fn build_token_query(params: &mut Vec<Value>, query: &str) -> Option<TokenQuery> {
+    let mut parts = Vec::new();
+    let mut matches = Vec::new();
+    let tokens = lexical_tokens(query);
+    for token in tokens {
+        params.push(Value::Text(escape_like_pattern(&token)));
+        let slot = format!("?{}", params.len());
+        matches.push(format!("LOWER(search_text) LIKE LOWER({slot}) ESCAPE '\\'"));
+        parts.push(format!(
+            "CASE WHEN LOWER(search_text) LIKE LOWER({slot}) ESCAPE '\\' THEN 12.0 ELSE 0.0 END"
+        ));
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(TokenQuery {
+            bonus_expr: parts.join(" + "),
+            match_clause: matches.join(" AND "),
+        })
+    }
+}
+
+fn lexical_tokens(query: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for token in query
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .map(str::trim)
+        .filter(|token| token.len() >= 2)
+    {
+        let lowered = token.to_ascii_lowercase();
+        if !out.iter().any(|existing| existing == &lowered) {
+            out.push(lowered);
+        }
+    }
+    out
 }
 
 fn push_in_params(params: &mut Vec<Value>, values: &[String]) -> Vec<String> {
