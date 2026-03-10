@@ -36,6 +36,16 @@ pub(super) fn build_lexical_search_sql(
     has_search_text: bool,
     limit: usize,
 ) -> (String, Vec<Value>) {
+    if has_search_text && should_use_fts_lexical(query) {
+        return build_fts_lexical_search_sql(
+            source_name,
+            use_computed_lexical_score,
+            query,
+            request,
+            limit,
+        );
+    }
+
     let like_value = escape_like_pattern(query);
     let mut params = vec![
         Value::Text(like_value.clone()),
@@ -93,6 +103,110 @@ pub(super) fn build_lexical_search_sql(
                 token_query
                     .as_ref()
                     .map(|query| query.match_clause.as_str()),
+            )],
+        )
+    };
+
+    if request.min_score > 0.0 {
+        params.push(Value::Real(request.min_score));
+        if let Some(lexical_score) = lexical_score_expr.as_deref() {
+            clauses.push(format!("({lexical_score}) >= ?{}", params.len()));
+        } else {
+            clauses.push(format!("score >= ?{}", params.len()));
+        }
+    }
+
+    if !request.languages.is_empty() {
+        let slots = push_in_params(&mut params, &request.languages);
+        clauses.push(format!("language IN ({})", slots.join(", ")));
+    }
+
+    if !request.kinds.is_empty() {
+        let slots = push_in_params(&mut params, &request.kinds);
+        clauses.push(format!("kind IN ({})", slots.join(", ")));
+    }
+
+    if !clauses.is_empty() {
+        sql.push_str(" WHERE ");
+        sql.push_str(&clauses.join(" AND "));
+    }
+
+    sql.push_str(" ORDER BY score DESC, path ASC, start_line ASC");
+    params.push(Value::Integer(limit as i64));
+    sql.push_str(&format!(" LIMIT ?{}", params.len()));
+    (sql, params)
+}
+
+fn build_fts_lexical_search_sql(
+    source_name: &str,
+    use_computed_lexical_score: bool,
+    query: &str,
+    request: &CodeSearchRequest,
+    limit: usize,
+) -> (String, Vec<Value>) {
+    let fts_query = build_fts_query(query);
+    let like_value = escape_like_pattern(query);
+    let mut params = vec![
+        Value::Text(fts_query),
+        Value::Text(query.to_string()),
+        Value::Text(like_value.clone()),
+    ];
+    let fts_slot = "?1";
+    let exact_slot = "?2";
+    let pattern_slot = "?3";
+    let token_query = if query.chars().any(char::is_whitespace) {
+        build_token_query(&mut params, query)
+    } else {
+        None
+    };
+    let token_bonus_expr = token_query
+        .as_ref()
+        .map(|query| query.bonus_expr.as_str())
+        .unwrap_or("0.0");
+    let fts_score_expr = format!(
+        "CASE WHEN fts_match(search_text, {fts_slot}) THEN fts_score(search_text, {fts_slot}) ELSE 0.0 END"
+    );
+    let fallback_match_clause = lexical_match_clause(
+        pattern_slot,
+        token_query
+            .as_ref()
+            .map(|query| query.match_clause.as_str()),
+    );
+
+    let lexical_score_expr = if use_computed_lexical_score {
+        Some(format!(
+            "({fts_score_expr} + \
+              CASE \
+                WHEN LOWER(name) = LOWER({exact_slot}) THEN 120.0 \
+                WHEN LOWER(COALESCE(signature, '')) = LOWER({exact_slot}) THEN 90.0 \
+                WHEN LOWER(name) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 70.0 \
+                WHEN LOWER(COALESCE(signature, '')) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 45.0 \
+                WHEN LOWER(snippet) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 20.0 \
+                WHEN LOWER(path) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 10.0 \
+                ELSE 0.0 \
+              END + \
+              {token_bonus_expr})"
+        ))
+    } else {
+        None
+    };
+
+    let (mut sql, mut clauses) = if let Some(lexical_score) = lexical_score_expr.as_deref() {
+        (
+            format!(
+                "SELECT chunk_key, path, language, kind, name, signature, snippet, start_line, end_line, {lexical_score} AS score, {lexical_score} AS lexical_score, NULL AS semantic_score FROM {source_name}"
+            ),
+            vec![format!(
+                "(fts_match(search_text, {fts_slot}) OR {fallback_match_clause})"
+            )],
+        )
+    } else {
+        (
+            format!(
+                "SELECT chunk_key, path, language, kind, name, signature, snippet, start_line, end_line, score, lexical_score, semantic_score FROM {source_name}"
+            ),
+            vec![format!(
+                "(fts_match(search_text, {fts_slot}) OR {fallback_match_clause})"
             )],
         )
     };
@@ -222,6 +336,28 @@ fn lexical_tokens(query: &str) -> Vec<String> {
         }
     }
     out
+}
+
+fn build_fts_query(query: &str) -> String {
+    let tokens = lexical_tokens(query);
+    if tokens.is_empty() {
+        format!("\"{}\"", escape_fts_term(query.trim()))
+    } else {
+        tokens
+            .into_iter()
+            .map(|token| format!("\"{}\"", escape_fts_term(&token)))
+            .collect::<Vec<_>>()
+            .join(" AND ")
+    }
+}
+
+fn should_use_fts_lexical(query: &str) -> bool {
+    let tokens = lexical_tokens(query);
+    query.chars().any(char::is_whitespace) || tokens.len() > 1
+}
+
+fn escape_fts_term(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn push_in_params(params: &mut Vec<Value>, values: &[String]) -> Vec<String> {

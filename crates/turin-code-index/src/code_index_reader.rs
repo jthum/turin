@@ -388,6 +388,7 @@ CREATE TABLE code_chunks (
     lexical_score REAL NOT NULL,
     semantic_score REAL
 );
+CREATE INDEX idx_code_chunks_search_fts ON code_chunks USING fts(search_text);
 "#,
         )
         .await?;
@@ -590,6 +591,36 @@ FROM code_chunks;
         assert_eq!(fallback_rows[0].name, "on_turn_prepare");
         assert!(fallback_rows[0].lexical_score.is_some());
         assert!(fallback_rows[0].semantic_score.is_none());
+
+        let lexical_phrase_rows = search(
+            tmp.path(),
+            CodebaseSelector {
+                root: "repo_lexical_only".to_string(),
+                index_path: None,
+            },
+            CodeSearchMode::Lexical,
+            "runtime cache stats",
+            &CodeSearchRequest::default(),
+            None,
+        )
+        .await?;
+        assert_eq!(lexical_phrase_rows.len(), 1);
+        assert_eq!(lexical_phrase_rows[0].name, "on_turn_prepare");
+
+        let lexical_path_rows = search(
+            tmp.path(),
+            CodebaseSelector {
+                root: "repo".to_string(),
+                index_path: None,
+            },
+            CodeSearchMode::Lexical,
+            "src/kernel/governance.rs",
+            &CodeSearchRequest::default(),
+            None,
+        )
+        .await?;
+        assert_eq!(lexical_path_rows.len(), 1);
+        assert_eq!(lexical_path_rows[0].name, "capability_decision");
 
         let strict_err = search(
             tmp.path(),
