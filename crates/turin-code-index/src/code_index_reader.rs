@@ -1,9 +1,15 @@
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use turso::{Connection, Database, Value};
+use std::path::Path;
 
-const CODE_INDEX_SCHEMA_REVISION: i64 = 20260307;
+use crate::shared::open_index_connection;
+
+mod query;
+mod resolve;
+
+use query::{build_search_sql, negotiated_search_mode};
+use resolve::{has_optional_column, validate_index};
+
 const DEFAULT_LIMIT: usize = 10;
 
 #[derive(Debug, Clone)]
@@ -66,22 +72,6 @@ pub struct CodeSearchRow {
     pub rank: i64,
 }
 
-#[derive(Debug, Clone)]
-struct ResolvedCodebase {
-    root: PathBuf,
-    index_path: PathBuf,
-}
-
-#[derive(Debug, Clone)]
-struct ValidatedIndex {
-    root: PathBuf,
-    index_path: PathBuf,
-    schema_revision: i64,
-    updated_at: String,
-    index_age_seconds: u64,
-    capabilities: CodeIndexCapabilities,
-}
-
 pub async fn status(workspace_root: &Path, selector: CodebaseSelector) -> Result<CodeIndexStatus> {
     let validated = validate_index(workspace_root, selector).await?;
     Ok(CodeIndexStatus {
@@ -117,14 +107,8 @@ pub async fn search(
     let (_db, conn) = open_index_connection(&validated.index_path).await?;
     let has_search_text = has_optional_column(&conn, view_name, "search_text").await;
     let (sql, params) = build_search_sql(view_name, query, request, has_search_text);
-    let mut stmt = conn
-        .prepare(&sql)
-        .await
-        .with_context(|| format!("failed to prepare query for '{view_name}'"))?;
-    let mut rows = stmt
-        .query(params)
-        .await
-        .with_context(|| format!("failed to execute query against '{view_name}'"))?;
+    let mut stmt = conn.prepare(&sql).await?;
+    let mut rows = stmt.query(params).await?;
 
     let mut out = Vec::new();
     let mut rank = 1_i64;
@@ -150,307 +134,8 @@ pub async fn search(
     Ok(out)
 }
 
-async fn validate_index(
-    workspace_root: &Path,
-    selector: CodebaseSelector,
-) -> Result<ValidatedIndex> {
-    let resolved = resolve_codebase(workspace_root, selector)?;
-    let (_db, conn) = open_index_connection(&resolved.index_path).await?;
-    let (schema_revision, root_path, updated_at, capabilities) = load_index_meta(&conn).await?;
-
-    if schema_revision != CODE_INDEX_SCHEMA_REVISION {
-        bail!(
-            "unsupported schema_revision {} at '{}'; expected {}",
-            schema_revision,
-            resolved.index_path.display(),
-            CODE_INDEX_SCHEMA_REVISION
-        );
-    }
-
-    let declared_root = std::fs::canonicalize(&root_path).with_context(|| {
-        format!(
-            "index_meta.root_path '{}' is not a valid canonical path",
-            root_path
-        )
-    })?;
-    if declared_root != resolved.root {
-        bail!(
-            "index_meta.root_path '{}' does not match resolved root '{}'",
-            declared_root.display(),
-            resolved.root.display()
-        );
-    }
-
-    if !capabilities.lexical {
-        bail!("index capabilities.lexical must be true");
-    }
-
-    validate_view_contract(&conn, "v_code_lexical").await?;
-    if capabilities.semantic {
-        validate_view_contract(&conn, "v_code_semantic").await?;
-    }
-    if capabilities.hybrid {
-        validate_view_contract(&conn, "v_code_hybrid").await?;
-    }
-
-    Ok(ValidatedIndex {
-        root: resolved.root,
-        index_path: resolved.index_path,
-        schema_revision,
-        updated_at,
-        index_age_seconds: index_age_seconds(&conn).await?,
-        capabilities,
-    })
-}
-
-fn resolve_codebase(workspace_root: &Path, selector: CodebaseSelector) -> Result<ResolvedCodebase> {
-    let workspace_root = std::fs::canonicalize(workspace_root).with_context(|| {
-        format!(
-            "workspace root '{}' does not exist",
-            workspace_root.display()
-        )
-    })?;
-
-    let root_value = selector.root.trim();
-    if root_value.is_empty() {
-        bail!("codebase.root must not be empty");
-    }
-
-    let root = canonicalize_selector_path(&workspace_root, Path::new(root_value))
-        .with_context(|| format!("codebase root '{}' not found", root_value))?;
-
-    let index_path = match selector.index_path {
-        Some(index_path) => {
-            let candidate = PathBuf::from(index_path);
-            if candidate.is_absolute() {
-                candidate
-            } else {
-                root.join(candidate)
-            }
-        }
-        None => root.join(".turin").join("codebase.db"),
-    };
-
-    let index_path = std::fs::canonicalize(&index_path)
-        .with_context(|| format!("index db not found at '{}'", index_path.display()))?;
-
-    Ok(ResolvedCodebase { root, index_path })
-}
-
-fn canonicalize_selector_path(base: &Path, candidate: &Path) -> Result<PathBuf> {
-    let path = if candidate.is_absolute() {
-        candidate.to_path_buf()
-    } else {
-        base.join(candidate)
-    };
-    Ok(std::fs::canonicalize(&path)?)
-}
-
-async fn open_index_connection(index_path: &Path) -> Result<(Database, Connection)> {
-    let index_path = index_path.to_string_lossy().to_string();
-    let db = turso::Builder::new_local(&index_path)
-        .experimental_index_method(true)
-        .build()
-        .await
-        .with_context(|| format!("failed to open index db '{}'", index_path))?;
-    let conn = db.connect()?;
-    conn.execute("PRAGMA busy_timeout = 5000;", ()).await.ok();
-    Ok((db, conn))
-}
-
-async fn load_index_meta(
-    conn: &Connection,
-) -> Result<(i64, String, String, CodeIndexCapabilities)> {
-    let mut rows = conn
-        .query(
-            "SELECT schema_revision, root_path, updated_at, capabilities FROM index_meta LIMIT 1",
-            (),
-        )
-        .await
-        .context("missing required index_meta contract; run `turin-map index --root <path>`")?;
-    let row = rows
-        .next()
-        .await?
-        .ok_or_else(|| anyhow!("index_meta is empty; run `turin-map index --root <path>`"))?;
-
-    let schema_revision = row.get::<i64>(0)?;
-    let root_path = row.get::<String>(1)?;
-    let updated_at = row.get::<String>(2)?;
-    let capabilities_json = row.get::<String>(3)?;
-    let capabilities = serde_json::from_str::<CodeIndexCapabilities>(&capabilities_json)
-        .with_context(|| "index_meta.capabilities must be valid JSON")?;
-
-    Ok((schema_revision, root_path, updated_at, capabilities))
-}
-
-async fn index_age_seconds(conn: &Connection) -> Result<u64> {
-    let mut rows = conn
-        .query(
-            "SELECT CAST(strftime('%s', 'now') - strftime('%s', updated_at) AS INTEGER) FROM index_meta LIMIT 1",
-            (),
-        )
-        .await?;
-    let row = rows
-        .next()
-        .await?
-        .ok_or_else(|| anyhow!("index_meta is empty"))?;
-    let age = row.get::<Option<i64>>(0)?.unwrap_or(0).max(0) as u64;
-    Ok(age)
-}
-
-async fn validate_view_contract(conn: &Connection, view_name: &str) -> Result<()> {
-    let sql = format!(
-        "SELECT chunk_key, path, language, kind, name, signature, snippet, start_line, end_line, score, lexical_score, semantic_score FROM {view_name} LIMIT 0"
-    );
-    conn.query(&sql, ())
-        .await
-        .with_context(|| format!("missing required read view contract '{view_name}'"))?;
-    Ok(())
-}
-
-async fn has_optional_column(conn: &Connection, view_name: &str, column_name: &str) -> bool {
-    let sql = format!("SELECT {column_name} FROM {view_name} LIMIT 0");
-    conn.query(&sql, ()).await.is_ok()
-}
-
-fn negotiated_search_mode(
-    requested_mode: CodeSearchMode,
-    capabilities: &CodeIndexCapabilities,
-    root: &Path,
-    strict: bool,
-) -> Result<CodeSearchMode> {
-    match requested_mode {
-        CodeSearchMode::Lexical => Ok(CodeSearchMode::Lexical),
-        CodeSearchMode::Semantic if capabilities.semantic => Ok(CodeSearchMode::Semantic),
-        CodeSearchMode::Semantic if !strict => Ok(CodeSearchMode::Lexical),
-        CodeSearchMode::Semantic => bail!(
-            "semantic capability not available for root '{}'",
-            root.display()
-        ),
-        CodeSearchMode::Hybrid if capabilities.hybrid => Ok(CodeSearchMode::Hybrid),
-        CodeSearchMode::Hybrid if capabilities.semantic && !strict => Ok(CodeSearchMode::Semantic),
-        CodeSearchMode::Hybrid if !strict => Ok(CodeSearchMode::Lexical),
-        CodeSearchMode::Hybrid => bail!(
-            "hybrid capability not available for root '{}'",
-            root.display()
-        ),
-    }
-}
-
-fn build_search_sql(
-    view_name: &str,
-    query: &str,
-    request: &CodeSearchRequest,
-    has_search_text: bool,
-) -> (String, Vec<Value>) {
-    let like_value = escape_like_pattern(query);
-    let mut params = vec![
-        Value::Text(like_value.clone()),
-        Value::Text(query.to_string()),
-    ];
-    let pattern_slot = "?1";
-    let exact_slot = "?2";
-
-    let lexical_score_expr = if view_name == CodeSearchMode::Lexical.view_name() {
-        Some(format!(
-            "CASE \
-                WHEN LOWER(name) = LOWER({exact_slot}) THEN 120.0 \
-                WHEN LOWER(COALESCE(signature, '')) = LOWER({exact_slot}) THEN 90.0 \
-                WHEN LOWER(name) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 70.0 \
-                WHEN LOWER(COALESCE(signature, '')) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 45.0 \
-                WHEN LOWER(snippet) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 20.0 \
-                WHEN LOWER(path) LIKE LOWER({pattern_slot}) ESCAPE '\\' THEN 10.0 \
-                ELSE 0.0 \
-            END"
-        ))
-    } else {
-        None
-    };
-
-    let (mut sql, mut clauses) = if let Some(lexical_score) = lexical_score_expr.as_deref() {
-        (
-            format!(
-                "SELECT chunk_key, path, language, kind, name, signature, snippet, start_line, end_line, {lexical_score} AS score, {lexical_score} AS lexical_score, NULL AS semantic_score FROM {view_name}"
-            ),
-            vec![lexical_match_clause(pattern_slot, has_search_text)],
-        )
-    } else {
-        (
-            format!(
-                "SELECT chunk_key, path, language, kind, name, signature, snippet, start_line, end_line, score, lexical_score, semantic_score FROM {view_name}"
-            ),
-            vec![lexical_match_clause(pattern_slot, has_search_text)],
-        )
-    };
-
-    if request.min_score > 0.0 {
-        params.push(Value::Real(request.min_score));
-        if let Some(lexical_score) = lexical_score_expr.as_deref() {
-            clauses.push(format!("({lexical_score}) >= ?{}", params.len()));
-        } else {
-            clauses.push(format!("score >= ?{}", params.len()));
-        }
-    }
-
-    if !request.languages.is_empty() {
-        let slots = push_in_params(&mut params, &request.languages);
-        clauses.push(format!("language IN ({})", slots.join(", ")));
-    }
-
-    if !request.kinds.is_empty() {
-        let slots = push_in_params(&mut params, &request.kinds);
-        clauses.push(format!("kind IN ({})", slots.join(", ")));
-    }
-
-    if !clauses.is_empty() {
-        sql.push_str(" WHERE ");
-        sql.push_str(&clauses.join(" AND "));
-    }
-
-    sql.push_str(" ORDER BY score DESC, path ASC, start_line ASC");
-    let limit = request.limit.max(1);
-    params.push(Value::Integer(limit as i64));
-    sql.push_str(&format!(" LIMIT ?{}", params.len()));
-    (sql, params)
-}
-
-fn lexical_match_clause(pattern_slot: &str, has_search_text: bool) -> String {
-    if has_search_text {
-        format!("search_text LIKE {pattern_slot} ESCAPE '\\'")
-    } else {
-        format!(
-            "(path LIKE {pattern_slot} ESCAPE '\\' OR name LIKE {pattern_slot} ESCAPE '\\' OR COALESCE(signature, '') LIKE {pattern_slot} ESCAPE '\\' OR snippet LIKE {pattern_slot} ESCAPE '\\')"
-        )
-    }
-}
-
-fn push_in_params(params: &mut Vec<Value>, values: &[String]) -> Vec<String> {
-    let mut slots = Vec::with_capacity(values.len());
-    for value in values {
-        params.push(Value::Text(value.clone()));
-        slots.push(format!("?{}", params.len()));
-    }
-    slots
-}
-
-fn escape_like_pattern(query: &str) -> String {
-    let mut out = String::with_capacity(query.len() + 2);
-    out.push('%');
-    for ch in query.chars() {
-        match ch {
-            '\\' | '%' | '_' => {
-                out.push('\\');
-                out.push(ch);
-            }
-            _ => out.push(ch),
-        }
-    }
-    out.push('%');
-    out
-}
-
 impl CodeSearchMode {
-    fn view_name(self) -> &'static str {
+    pub(crate) fn view_name(self) -> &'static str {
         match self {
             Self::Lexical => "v_code_lexical",
             Self::Semantic => "v_code_semantic",
@@ -474,13 +159,14 @@ impl Default for CodeSearchRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::CODE_INDEX_SCHEMA_REVISION;
     use tempfile::tempdir;
 
     async fn create_synthetic_code_index(
         root: &Path,
         semantic: bool,
         hybrid: bool,
-    ) -> Result<PathBuf> {
+    ) -> Result<std::path::PathBuf> {
         let index_dir = root.join(".turin");
         std::fs::create_dir_all(&index_dir)?;
         let index_path = index_dir.join("codebase.db");

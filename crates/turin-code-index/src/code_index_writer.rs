@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-const CODE_INDEX_SCHEMA_REVISION: i64 = 20260307;
+use crate::shared::{CODE_INDEX_SCHEMA_REVISION, open_index_connection};
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct CodeIndexWriteCapabilities {
@@ -77,8 +77,7 @@ use chunking::build_chunks;
 use fs::{collect_indexable_files, normalize_relative_path, read_indexable_file};
 use store::{
     current_timestamp, delete_indexed_file, init_schema, insert_chunks, load_index_summary,
-    load_indexed_files, open_index_connection, should_recreate_index, upsert_indexed_file,
-    write_index_meta,
+    load_indexed_files, should_recreate_index, upsert_indexed_file, write_index_meta,
 };
 
 pub async fn build_index(root: &Path, index_path: Option<&Path>) -> Result<CodeIndexBuildReport> {

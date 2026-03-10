@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
+use crate::shared::open_index_connection;
+
 use super::{
     CODE_INDEX_SCHEMA_REVISION, CodeChunkRecord, CodeIndexSummary, CodeIndexWriteCapabilities,
     IndexableFileContent, IndexedFileState,
@@ -25,19 +27,6 @@ pub(super) async fn should_recreate_index(index_path: &Path) -> Result<bool> {
     }
 
     Ok(load_existing_schema_revision(&conn).await? != Some(CODE_INDEX_SCHEMA_REVISION))
-}
-
-pub(super) async fn open_index_connection(
-    index_path: &Path,
-) -> Result<(turso::Database, turso::Connection)> {
-    let db = turso::Builder::new_local(index_path.to_str().unwrap())
-        .experimental_index_method(true)
-        .build()
-        .await
-        .with_context(|| format!("failed to open '{}'", index_path.display()))?;
-    let conn = db.connect()?;
-    conn.execute("PRAGMA busy_timeout = 5000;", ()).await.ok();
-    Ok((db, conn))
 }
 
 pub(super) async fn current_timestamp(conn: &turso::Connection) -> Result<String> {
