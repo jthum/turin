@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
+use crate::embeddings::CODE_INDEX_VECTOR_DIM;
+use crate::metadata::CodeIndexSemanticStatus;
 use crate::shared::{encode_vector_blob, open_index_connection};
 
 use super::{
@@ -168,6 +170,7 @@ pub(super) async fn load_index_summary(conn: &turso::Connection) -> Result<CodeI
         .await?
         .context("semantic summary query returned no row")?;
     let embedded_chunks = semantic_row.get::<i64>(0)? as u64;
+    let semantic = load_semantic_status(conn, embedded_chunks).await?;
 
     let mut language_rows = conn
         .query(
@@ -183,10 +186,11 @@ pub(super) async fn load_index_summary(conn: &turso::Connection) -> Result<CodeI
     Ok(CodeIndexSummary {
         capabilities: CodeIndexWriteCapabilities {
             lexical: true,
-            semantic: embedded_chunks > 0,
-            hybrid: embedded_chunks > 0,
+            semantic: semantic.embedded_chunks > 0,
+            hybrid: semantic.embedded_chunks > 0,
             languages: languages.into_iter().collect(),
         },
+        semantic,
         files_indexed,
         chunks_indexed,
     })
@@ -196,25 +200,53 @@ pub(super) async fn write_index_meta(
     conn: &turso::Connection,
     root: &Path,
     updated_at: &str,
-    capabilities: &CodeIndexWriteCapabilities,
+    codebase_id: &Option<String>,
+    summary: &CodeIndexSummary,
 ) -> Result<()> {
-    let codebase_id = root
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(str::to_string);
     conn.execute("DELETE FROM index_meta", ()).await?;
     conn.execute(
-        "INSERT INTO index_meta (schema_revision, root_path, updated_at, capabilities, codebase_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO index_meta (schema_revision, root_path, updated_at, capabilities, codebase_id, embedding_key, embedding_dimensions, embedded_chunks) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         turso::params![
             CODE_INDEX_SCHEMA_REVISION,
             root.to_string_lossy().to_string(),
             updated_at.to_string(),
-            serde_json::to_string(capabilities)?,
-            codebase_id
+            serde_json::to_string(&summary.capabilities)?,
+            codebase_id.clone(),
+            summary.semantic.embedding_key.clone(),
+            summary.semantic.embedding_dimensions.map(|value| value as i64),
+            summary.semantic.embedded_chunks as i64
         ],
     )
     .await?;
     Ok(())
+}
+
+async fn load_semantic_status(
+    conn: &turso::Connection,
+    embedded_chunks: u64,
+) -> Result<CodeIndexSemanticStatus> {
+    if embedded_chunks == 0 {
+        return Ok(CodeIndexSemanticStatus::disabled());
+    }
+
+    let mut rows = conn
+        .query(
+            "SELECT embedding_key FROM indexed_files WHERE embedding_key <> 'none' LIMIT 1",
+            (),
+        )
+        .await?;
+    let embedding_key = rows
+        .next()
+        .await?
+        .map(|row| row.get::<String>(0))
+        .transpose()?
+        .unwrap_or_else(|| "unknown".to_string());
+
+    Ok(CodeIndexSemanticStatus::enabled(
+        embedded_chunks,
+        embedding_key,
+        CODE_INDEX_VECTOR_DIM,
+    ))
 }
 
 async fn table_exists(conn: &turso::Connection, table: &str) -> Result<bool> {
@@ -243,7 +275,10 @@ CREATE TABLE IF NOT EXISTS index_meta (
     root_path TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     capabilities TEXT NOT NULL,
-    codebase_id TEXT
+    codebase_id TEXT,
+    embedding_key TEXT,
+    embedding_dimensions INTEGER,
+    embedded_chunks INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS indexed_files (

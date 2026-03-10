@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::embeddings::CodeEmbeddingProvider;
+use crate::metadata::CodeIndexSemanticStatus;
 use crate::shared::{CODE_INDEX_SCHEMA_REVISION, open_index_connection};
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -21,7 +22,9 @@ pub struct CodeIndexBuildReport {
     pub index_path: String,
     pub schema_revision: i64,
     pub updated_at: String,
+    pub codebase_id: Option<String>,
     pub capabilities: CodeIndexWriteCapabilities,
+    pub semantic: CodeIndexSemanticStatus,
     pub files_indexed: u64,
     pub chunks_indexed: u64,
 }
@@ -69,6 +72,7 @@ struct IndexableFileContent {
 #[derive(Debug, Clone)]
 struct CodeIndexSummary {
     capabilities: CodeIndexWriteCapabilities,
+    semantic: CodeIndexSemanticStatus,
     files_indexed: u64,
     chunks_indexed: u64,
 }
@@ -208,14 +212,17 @@ async fn build_index_internal(
     }
 
     let summary = load_index_summary(&conn).await?;
-    write_index_meta(&conn, &root, &run_updated_at, &summary.capabilities).await?;
+    let codebase_id = codebase_id_for(&root);
+    write_index_meta(&conn, &root, &run_updated_at, &codebase_id, &summary).await?;
 
     Ok(CodeIndexBuildReport {
         root: root.to_string_lossy().to_string(),
         index_path: index_path.to_string_lossy().to_string(),
         schema_revision: CODE_INDEX_SCHEMA_REVISION,
         updated_at: run_updated_at,
+        codebase_id,
         capabilities: summary.capabilities,
+        semantic: summary.semantic,
         files_indexed: summary.files_indexed,
         chunks_indexed: summary.chunks_indexed,
     })
@@ -238,7 +245,8 @@ pub async fn remove_file(
     let removed_chunks = delete_indexed_file(&conn, &relative_path).await?;
     let updated_at = current_timestamp(&conn).await?;
     let summary = load_index_summary(&conn).await?;
-    write_index_meta(&conn, &root, &updated_at, &summary.capabilities).await?;
+    let codebase_id = codebase_id_for(&root);
+    write_index_meta(&conn, &root, &updated_at, &codebase_id, &summary).await?;
 
     Ok(CodeIndexRemoveReport {
         root: root.to_string_lossy().to_string(),
@@ -263,6 +271,12 @@ fn remove_index_db_if_present(index_path: &Path) -> Result<()> {
             .with_context(|| format!("failed to replace '{}'", index_path.display()))?;
     }
     Ok(())
+}
+
+fn codebase_id_for(root: &Path) -> Option<String> {
+    root.file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
 }
 
 #[cfg(test)]
@@ -321,8 +335,11 @@ end
         let report = build_index(&root, None).await?;
         assert_eq!(report.files_indexed, 2);
         assert!(report.chunks_indexed >= 2);
+        assert_eq!(report.codebase_id.as_deref(), Some("repo"));
         assert!(report.capabilities.lexical);
         assert!(!report.capabilities.semantic);
+        assert_eq!(report.semantic.embedded_chunks, 0);
+        assert!(report.semantic.embedding_key.is_none());
 
         let rows = lexical_search(tmp.path(), "capability_decision").await?;
         assert!(!rows.is_empty());
@@ -370,6 +387,16 @@ pub fn capability_decision(capability: &str) -> bool {
         assert!(report.capabilities.lexical);
         assert!(report.capabilities.semantic);
         assert!(report.capabilities.hybrid);
+        assert_eq!(report.codebase_id.as_deref(), Some("repo"));
+        assert!(report.semantic.embedded_chunks > 0);
+        assert_eq!(
+            report.semantic.embedding_dimensions,
+            Some(CODE_INDEX_VECTOR_DIM)
+        );
+        assert_eq!(
+            report.semantic.embedding_key.as_deref(),
+            Some("test:deterministic")
+        );
 
         let rows = crate::code_index_reader::search(
             tmp.path(),

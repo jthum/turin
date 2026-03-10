@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use std::path::{Path, PathBuf};
 use turso::Connection;
 
+use crate::metadata::CodeIndexSemanticStatus;
 use crate::shared::{CODE_INDEX_SCHEMA_REVISION, open_index_connection};
 
 use super::{CodeIndexCapabilities, CodebaseSelector};
@@ -13,7 +14,9 @@ pub(super) struct ValidatedIndex {
     pub(super) schema_revision: i64,
     pub(super) updated_at: String,
     pub(super) index_age_seconds: u64,
+    pub(super) codebase_id: Option<String>,
     pub(super) capabilities: CodeIndexCapabilities,
+    pub(super) semantic: CodeIndexSemanticStatus,
 }
 
 #[derive(Debug, Clone)]
@@ -28,7 +31,8 @@ pub(super) async fn validate_index(
 ) -> Result<ValidatedIndex> {
     let resolved = resolve_codebase(workspace_root, selector)?;
     let (_db, conn) = open_index_connection(&resolved.index_path).await?;
-    let (schema_revision, root_path, updated_at, capabilities) = load_index_meta(&conn).await?;
+    let (schema_revision, root_path, updated_at, codebase_id, capabilities, semantic) =
+        load_index_meta(&conn).await?;
 
     if schema_revision != CODE_INDEX_SCHEMA_REVISION {
         bail!(
@@ -77,7 +81,9 @@ pub(super) async fn validate_index(
         schema_revision,
         updated_at,
         index_age_seconds: index_age_seconds(&conn).await?,
+        codebase_id,
         capabilities,
+        semantic,
     })
 }
 
@@ -135,10 +141,17 @@ fn canonicalize_selector_path(base: &Path, candidate: &Path) -> Result<PathBuf> 
 
 async fn load_index_meta(
     conn: &Connection,
-) -> Result<(i64, String, String, CodeIndexCapabilities)> {
+) -> Result<(
+    i64,
+    String,
+    String,
+    Option<String>,
+    CodeIndexCapabilities,
+    CodeIndexSemanticStatus,
+)> {
     let mut rows = conn
         .query(
-            "SELECT schema_revision, root_path, updated_at, capabilities FROM index_meta LIMIT 1",
+            "SELECT schema_revision, root_path, updated_at, codebase_id, capabilities, embedding_key, embedding_dimensions, embedded_chunks FROM index_meta LIMIT 1",
             (),
         )
         .await
@@ -151,11 +164,29 @@ async fn load_index_meta(
     let schema_revision = row.get::<i64>(0)?;
     let root_path = row.get::<String>(1)?;
     let updated_at = row.get::<String>(2)?;
-    let capabilities_json = row.get::<String>(3)?;
+    let codebase_id = row.get::<Option<String>>(3)?;
+    let capabilities_json = row.get::<String>(4)?;
     let capabilities = serde_json::from_str::<CodeIndexCapabilities>(&capabilities_json)
         .with_context(|| "index_meta.capabilities must be valid JSON")?;
+    let embedded_chunks = row.get::<Option<i64>>(7)?.unwrap_or(0).max(0) as u64;
+    let semantic = if embedded_chunks == 0 {
+        CodeIndexSemanticStatus::disabled()
+    } else {
+        CodeIndexSemanticStatus {
+            embedded_chunks,
+            embedding_key: row.get::<Option<String>>(5)?,
+            embedding_dimensions: row.get::<Option<i64>>(6)?.map(|value| value as usize),
+        }
+    };
 
-    Ok((schema_revision, root_path, updated_at, capabilities))
+    Ok((
+        schema_revision,
+        root_path,
+        updated_at,
+        codebase_id,
+        capabilities,
+        semantic,
+    ))
 }
 
 async fn index_age_seconds(conn: &Connection) -> Result<u64> {

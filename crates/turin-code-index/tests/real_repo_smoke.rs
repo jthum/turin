@@ -69,6 +69,16 @@ async fn real_repo_smoke_runtime_harness_index() -> Result<()> {
     assert!(report.capabilities.hybrid);
     assert!(report.files_indexed > 10);
     assert!(report.chunks_indexed > 10);
+    assert_eq!(report.codebase_id.as_deref(), Some("harness"));
+    assert!(report.semantic.embedded_chunks > 0);
+    assert_eq!(
+        report.semantic.embedding_dimensions,
+        Some(CODE_INDEX_VECTOR_DIM)
+    );
+    assert_eq!(
+        report.semantic.embedding_key.as_deref(),
+        Some("test:keyword")
+    );
 
     let selector = CodebaseSelector {
         root: "src/harness".to_string(),
@@ -76,8 +86,18 @@ async fn real_repo_smoke_runtime_harness_index() -> Result<()> {
     };
 
     let index_status = status(&repo_root, selector.clone()).await?;
+    assert_eq!(index_status.codebase_id.as_deref(), Some("harness"));
     assert!(index_status.capabilities.semantic);
     assert!(index_status.capabilities.hybrid);
+    assert!(index_status.semantic.embedded_chunks > 0);
+    assert_eq!(
+        index_status.semantic.embedding_dimensions,
+        Some(CODE_INDEX_VECTOR_DIM)
+    );
+    assert_eq!(
+        index_status.semantic.embedding_key.as_deref(),
+        Some("test:keyword")
+    );
     assert_eq!(
         Path::new(&index_status.root).canonicalize()?,
         harness_root.canonicalize()?

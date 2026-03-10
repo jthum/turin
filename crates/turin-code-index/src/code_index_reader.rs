@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::metadata::CodeIndexSemanticStatus;
 use crate::shared::{encode_vector_blob, open_index_connection};
 
 mod query;
@@ -56,7 +57,9 @@ pub struct CodeIndexStatus {
     pub schema_revision: i64,
     pub updated_at: String,
     pub index_age_seconds: u64,
+    pub codebase_id: Option<String>,
     pub capabilities: CodeIndexCapabilities,
+    pub semantic: CodeIndexSemanticStatus,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -84,7 +87,9 @@ pub async fn status(workspace_root: &Path, selector: CodebaseSelector) -> Result
         schema_revision: validated.schema_revision,
         updated_at: validated.updated_at,
         index_age_seconds: validated.index_age_seconds,
+        codebase_id: validated.codebase_id,
         capabilities: validated.capabilities,
+        semantic: validated.semantic,
     })
 }
 
@@ -363,7 +368,10 @@ CREATE TABLE index_meta (
     root_path TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     capabilities TEXT NOT NULL,
-    codebase_id TEXT
+    codebase_id TEXT,
+    embedding_key TEXT,
+    embedding_dimensions INTEGER,
+    embedded_chunks INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE code_chunks (
     chunk_key TEXT PRIMARY KEY,
@@ -384,8 +392,16 @@ CREATE TABLE code_chunks (
         )
         .await?;
         conn.execute(
-            "INSERT INTO index_meta (schema_revision, root_path, updated_at, capabilities, codebase_id) VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?3, ?4)",
-            turso::params![CODE_INDEX_SCHEMA_REVISION, root_path.to_string_lossy().to_string(), capabilities, "repo-main"],
+            "INSERT INTO index_meta (schema_revision, root_path, updated_at, capabilities, codebase_id, embedding_key, embedding_dimensions, embedded_chunks) VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?3, ?4, ?5, ?6, ?7)",
+            turso::params![
+                CODE_INDEX_SCHEMA_REVISION,
+                root_path.to_string_lossy().to_string(),
+                capabilities,
+                "repo-main",
+                if semantic { Some("test:synthetic".to_string()) } else { None },
+                if semantic { Some(CODE_INDEX_VECTOR_DIM as i64) } else { None },
+                if semantic { 2_i64 } else { 0_i64 }
+            ],
         )
         .await?;
         conn.execute(
@@ -514,8 +530,18 @@ FROM code_chunks;
         )
         .await?;
         assert_eq!(status.schema_revision, CODE_INDEX_SCHEMA_REVISION);
+        assert_eq!(status.codebase_id.as_deref(), Some("repo-main"));
         assert!(status.capabilities.semantic);
         assert!(status.capabilities.hybrid);
+        assert_eq!(status.semantic.embedded_chunks, 2);
+        assert_eq!(
+            status.semantic.embedding_dimensions,
+            Some(CODE_INDEX_VECTOR_DIM)
+        );
+        assert_eq!(
+            status.semantic.embedding_key.as_deref(),
+            Some("test:synthetic")
+        );
 
         let rows = search(
             tmp.path(),

@@ -4,7 +4,7 @@ use turso::{Connection, Database};
 
 use crate::embeddings::CODE_INDEX_VECTOR_DIM;
 
-pub(crate) const CODE_INDEX_SCHEMA_REVISION: i64 = 20260310;
+pub(crate) const CODE_INDEX_SCHEMA_REVISION: i64 = 2026031001;
 
 pub(crate) async fn open_index_connection(index_path: &Path) -> Result<(Database, Connection)> {
     let index_path = index_path.to_string_lossy().to_string();
