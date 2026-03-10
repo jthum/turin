@@ -406,7 +406,8 @@ CREATE INDEX idx_code_chunks_search_fts ON code_chunks USING fts(search_text);
         )
         .await?;
         conn.execute(
-            "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, search_text, embedding, start_line, end_line, lexical_score, semantic_score) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, search_text, embedding, start_line, end_line, lexical_score, semantic_score)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, vector8(?9), ?10, ?11, ?12, ?13)",
             turso::params![
                 "chunk_rust",
                 "src/kernel/governance.rs",
@@ -425,7 +426,8 @@ CREATE INDEX idx_code_chunks_search_fts ON code_chunks USING fts(search_text);
         )
         .await?;
         conn.execute(
-            "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, search_text, embedding, start_line, end_line, lexical_score, semantic_score) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, search_text, embedding, start_line, end_line, lexical_score, semantic_score)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, vector8(?9), ?10, ?11, ?12, ?13)",
             turso::params![
                 "chunk_lua",
                 "harnesses/runtime_cache.lua",

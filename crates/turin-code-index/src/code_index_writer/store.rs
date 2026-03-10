@@ -78,7 +78,8 @@ pub(super) async fn insert_chunks(
             .map(|vector| encode_vector_blob(vector, "code chunk embedding"))
             .transpose()?;
         conn.execute(
-            "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, search_text, embedding, start_line, end_line) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO code_chunks (chunk_key, path, language, kind, name, signature, snippet, search_text, embedding, start_line, end_line)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CASE WHEN ?9 IS NULL THEN NULL ELSE vector8(?9) END, ?10, ?11)",
             turso::params![
                 chunk.chunk_key.clone(),
                 chunk.path.clone(),

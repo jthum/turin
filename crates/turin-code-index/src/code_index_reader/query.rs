@@ -247,7 +247,7 @@ pub(super) fn build_semantic_search_sql(
     limit: usize,
 ) -> (String, Vec<Value>) {
     let mut params = vec![Value::Blob(Vec::new())];
-    let semantic_score_expr = "1.0 - vector_distance_cos(embedding, ?1)";
+    let semantic_score_expr = "1.0 - vector_distance_cos(embedding, vector8(?1))";
     let mut clauses = vec!["embedding IS NOT NULL".to_string()];
 
     if request.min_score > 0.0 {

@@ -409,6 +409,10 @@ pub fn capability_decision(capability: &str) -> bool {
             report.semantic.embedding_key.as_deref(),
             Some("test:deterministic")
         );
+        assert!(
+            first_embedding_blob_len(&root).await? < (CODE_INDEX_VECTOR_DIM * 4) as i64,
+            "expected quantized code index embeddings to be smaller than raw f32 blobs"
+        );
 
         let rows = crate::code_index_reader::search(
             tmp.path(),
@@ -622,5 +626,18 @@ pub fn capability_decision(capability: &str) -> bool {
             Some(row) => Ok(Some(row.get::<String>(0)?)),
             None => Ok(None),
         }
+    }
+
+    async fn first_embedding_blob_len(root: &Path) -> Result<i64> {
+        let index_path = resolve_index_path(root, None)?;
+        let (_db, conn) = open_index_connection(&index_path).await?;
+        let mut rows = conn
+            .query(
+                "SELECT length(embedding) FROM code_chunks WHERE embedding IS NOT NULL LIMIT 1",
+                (),
+            )
+            .await?;
+        let row = rows.next().await?.context("expected embedded chunk row")?;
+        Ok(row.get::<i64>(0)?)
     }
 }
