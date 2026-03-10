@@ -218,8 +218,10 @@ This keeps provider-specific logic out of Turin and speeds debugging.
 - Focused commands for recent code-search and DX work:
   - `cargo test -p turin-code-index -- --nocapture`
   - `cargo test -p turin-code-index real_repo_smoke -- --ignored --nocapture`
+  - `cargo test -p turin-map -- --nocapture`
   - `cargo test test_runtime_code_search_ --test harness_tests -- --nocapture`
   - `cargo test test_dx_fixture_code_cache_shortcuts --test dx_harness_examples -- --nocapture`
+  - `cargo test test_lexical_only_hybrid_fallback_prefers_best_text_match --lib`
 
 ## Phase 4 Closeout Commands
 
@@ -246,6 +248,23 @@ If you are tuning ranking behavior, use `trace = true` in harness/runtime calls 
 
 - Run full `cargo test` before committing
 - Reserve live tests for behavior that depends on real provider responses
+
+## Local SDK Development Without Breaking CI
+
+Keep the checked-in `.cargo/config.toml` CI-safe. Put machine-specific path patches in `~/.cargo/config.toml` instead:
+
+```toml
+[patch."https://github.com/jthum/inference-sdk-rust"]
+inference-sdk-core = { path = "/home/you/src/inference-sdk-rust/core" }
+anthropic-sdk = { path = "/home/you/src/inference-sdk-rust/anthropic" }
+openai-sdk = { path = "/home/you/src/inference-sdk-rust/openai" }
+inference-sdk-registry = { path = "/home/you/src/inference-sdk-rust/registry" }
+
+[patch."https://github.com/jthum/mcp-sdk-rust"]
+mcp-sdk = { path = "/home/you/src/mcp-sdk-rust" }
+```
+
+Turin’s `Cargo.toml` should stay pinned to GitHub commits or tags for reproducible CI and release builds. Cargo keeps git dependencies in a local cache, so normal local builds do not refetch them every time.
 
 ## Release Validation Checklist (Recommended)
 

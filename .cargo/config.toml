@@ -1,4 +1,5 @@
 [build]
+# Keep this file CI-safe. Put local path patches for sibling SDK repos in ~/.cargo/config.toml.
 # Keep peak rustc memory predictable during editor-driven development.
 # Override locally with CARGO_BUILD_JOBS if a larger machine can handle more.
 jobs = 1

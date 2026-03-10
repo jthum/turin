@@ -82,6 +82,9 @@ type = "mock"
 # provider = "openai"          # or "local_embeddings" / "noop"
 # model = "text-embedding-3-small"
 # dimensions = 1536            # set this to the model's actual output size
+#
+# Then run `turin-map index` from the project root.
+# It reuses ./turin.toml automatically unless you override with --config / --embedding-*.
 
 # -----------------------------------------------------------------------------
 # Governance (opt-in, flexibility-first)

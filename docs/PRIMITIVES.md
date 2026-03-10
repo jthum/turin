@@ -421,9 +421,10 @@ Root-path-first code search API backed by `turin-map` indexes.
 
 Notes:
 
-- build the index first with `turin-map index --root .`
-- add semantic chunks with `turin-map index --root . --embedding-provider openai --embedding-model text-embedding-3-small --embedding-dimensions 1536`
-- local OpenAI-compatible embedding servers work via `--embedding-base-url ...`; use the same model and dimensions you configure under `[embeddings]`
+- build the index first with `turin-map index`
+- from a Turin project root, `turin-map index` automatically reuses `./turin.toml` and its `[embeddings]` / `[providers.*]` settings
+- use `turin-map index --config path/to/turin.toml` when the config lives elsewhere
+- use explicit `--embedding-*` flags only when you want to override the configured embedding profile for one run
 - `runtime.code.search.status(...)` returns fact-level semantic metadata including `codebase_id`, `embedded_chunks`, `embedding_key`, `embedding_dimensions`, and `vector_format`
 - semantic and hybrid queries require both semantic index capability and a query-time embedding provider
 - semantic and hybrid queries also require the query-time embedding profile to match the index profile; `strict=false` falls back to lexical, `strict=true` errors

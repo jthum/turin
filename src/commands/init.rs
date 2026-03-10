@@ -58,6 +58,8 @@ api_key_env = "OPENAI_API_KEY"
 # provider = "openai"          # or "local_embeddings" / "noop"
 # model = "text-embedding-3-small"
 # dimensions = 1536
+#
+# Then run `turin-map index` from the project root.
 "#;
     fs::write("turin.toml", turin_toml)?;
     println!("{} Created turin.toml", display::ok_mark(ansi));

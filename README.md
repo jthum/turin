@@ -150,17 +150,16 @@ model = "your-small-embedding-model"
 dimensions = 384                # set this to the model's actual output size
 ```
 
-Then build code indexes with the same embedding profile:
+Then build code indexes from the project root. `turin-map index` automatically reuses `./turin.toml` when it finds `[embeddings]`:
 
 ```bash
-target/release/turin-map index --root . \
-  --embedding-provider openai \
-  --embedding-base-url http://127.0.0.1:11434/v1 \
-  --embedding-model your-small-embedding-model \
-  --embedding-dimensions 384
+target/release/turin-map index
+target/release/turin-map status
 ```
 
-Turin matches semantic/hybrid queries against the index embedding profile. If the runtime provider and index disagree on driver, base URL, model, or dimensions, `strict = false` falls back to lexical search and `strict = true` returns an error.
+Use `--config path/to/turin.toml` if the config file lives elsewhere, and use explicit `--embedding-*` flags only when you want to override the configured profile for one run.
+
+Turin matches semantic/hybrid queries against the index embedding profile. If the runtime provider and index disagree on driver, base URL, model, or dimensions, `strict = false` falls back to lexical search and `strict = true` returns an error. If you do not configure embeddings at all, Turin still works with lexical-only recall and code search.
 
 ### 3. Add a harness script
 

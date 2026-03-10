@@ -454,11 +454,8 @@ local ok, kerr = runtime.kv.set("last_error", "E0425", ctx)
 Build the index before querying it:
 
 ```bash
-turin-map index --root .
-turin-map index --root . \
-  --embedding-provider openai \
-  --embedding-model text-embedding-3-small \
-  --embedding-dimensions 1536
+turin-map index
+turin-map status
 ```
 
 For a small local embedding model behind an OpenAI-compatible endpoint:
@@ -475,12 +472,10 @@ dimensions = 384
 ```
 
 ```bash
-turin-map index --root . \
-  --embedding-provider openai \
-  --embedding-base-url http://127.0.0.1:11434/v1 \
-  --embedding-model your-small-embedding-model \
-  --embedding-dimensions 384
+turin-map index
 ```
+
+`turin-map` automatically reuses `./turin.toml` when run from a Turin project root. Use `turin-map index --config path/to/turin.toml` if the config lives elsewhere, and use explicit `--embedding-*` flags only when you want to override the configured profile for one run.
 
 Then query it from the harness:
 
