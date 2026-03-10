@@ -220,6 +220,30 @@ This keeps provider-specific logic out of Turin and speeds debugging.
   - `cargo test -p turin-code-index real_repo_smoke -- --ignored --nocapture`
   - `cargo test test_runtime_code_search_ --test harness_tests -- --nocapture`
   - `cargo test test_dx_fixture_code_cache_shortcuts --test dx_harness_examples -- --nocapture`
+
+## Phase 4 Closeout Commands
+
+When validating code-search integration changes specifically:
+
+```bash
+cargo test -p turin-code-index -- --nocapture
+cargo test -p turin-code-index real_repo_smoke -- --ignored --nocapture
+cargo test test_runtime_code_search_ --test harness_tests -- --nocapture
+```
+
+What these cover:
+
+- direct index contract validation and fallback behavior
+- lexical/semantic/hybrid retrieval quality on a real repo slice
+- runtime-facing `runtime.code.search.*` behavior, including fallback and trace metadata
+
+If you are tuning ranking behavior, use `trace = true` in harness/runtime calls so you can inspect:
+
+- requested vs effective mode
+- fallback reason
+- lexical/semantic candidate ranks
+- RRF contributions for hybrid results
+
 - Run full `cargo test` before committing
 - Reserve live tests for behavior that depends on real provider responses
 

@@ -1,8 +1,13 @@
 # Turin Implementation Plan: Turso-Native AI Primitives + Optional AgentFS
 
 Date: 2026-03-05
-Status: Proposed (ready for implementation after doc review)
+Status: Phase 0-4 implemented; Phase 5 pending
 Owner: Codex
+
+## Progress Update
+
+As of 2026-03-10, Phases 0 through 4 are implemented in code and covered by focused tests.
+Remaining work in this plan is Phase 5 (AgentFS design spike) plus any future retrieval-quality follow-up that goes beyond the locked Phase 4 acceptance bar.
 
 ## 1) Strategic Goal
 
@@ -201,6 +206,8 @@ We should borrow ideas aggressively from Turso's code-search article and Codemog
 
 ## Phase 4 — Code Search Integration (`turin-map` write path, Turin read path)
 
+Status: Complete
+
 ### Scope
 
 1. Add external `turin-map` binary for indexing lifecycle:
@@ -246,6 +253,12 @@ We should borrow ideas aggressively from Turso's code-search article and Codemog
 7. Lexical search returns definition-oriented results for identifier lookups instead of grep-like noise.
 8. Hybrid ranking behavior is explicit, tested, and not based on opaque raw score mixing.
 9. Real-repo smoke tests exist for at least one medium codebase, and the results are reviewed against a Codemogger/Turso-inspired quality bar even if Turin does not match them fully in the first release.
+
+Completion note:
+
+- `turin-map` is a separate workspace crate.
+- Turin reads code indexes directly through `turin-code-index`.
+- Incremental indexing, `.gitignore` handling, symbol-aware chunking, FTS-backed lexical ranking, float8 semantic storage, RRF hybrid fusion, trace metadata, and real-repo smoke coverage are all in place.
 
 ---
 

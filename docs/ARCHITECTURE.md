@@ -224,6 +224,40 @@ The tool execution path is split into dedicated `kernel::turn` submodules and in
 - `src/persistence/manager/cache_support.rs`
   - store handle cache/open/trim/eviction logic
 
+### Code Search
+
+Turin’s code search is intentionally split across two binaries/crates:
+
+- `turin`
+  - owns the runtime read/query path
+  - exposes `runtime.code.search.*` and DX wrappers like `code.find(...)`
+  - validates `index_meta` plus stable read views before querying
+  - negotiates lexical/semantic/hybrid behavior at query time
+- `turin-map`
+  - owns the index write/update/remove/rebuild lifecycle
+  - walks the filesystem, applies ignore rules, chunks code, and enriches embeddings
+  - writes a root-path-first code index DB that Turin can read directly
+- `turin-code-index`
+  - shared contract/read/write crate used by both binaries
+  - keeps the runtime/query contract and write-path schema aligned
+
+Key design rules:
+
+- codebase discovery is root-path-first, not `codebase_id`-first
+- `codebase_id` is optional metadata only
+- Turin never shells out to `turin-map` per query
+- contract validation failures are hard errors, not silent fallback
+- semantic storage format is observable fact (`vector_format`) rather than hidden implementation detail
+
+Current code-search quality behavior:
+
+- lexical search uses a mixed strategy
+  - deterministic definition-oriented ranking for symbol lookups
+  - Tantivy/Turso FTS for multi-token natural-language and path-like queries
+- semantic search uses shared embedding-provider infrastructure from `inference-sdk-rust`
+- hybrid search uses explicit RRF fusion
+- `trace = true` exposes effective mode, fallback reason, candidate ranks, and fusion metadata for tuning/debugging
+
 ## Data Model and Identity
 
 ### Runtime Identity
