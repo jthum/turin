@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use turin_daemon_protocol::{
-    DaemonRequest, EventEnvelope, RequestEnvelope, ResponseEnvelope, RuntimeEventsSubscribeParams,
+    DAEMON_PROTOCOL_VERSION, DAEMON_TRANSPORT_UNIX, DaemonHandshake, DaemonRequest, EventEnvelope,
+    NoParams, RequestEnvelope, ResponseEnvelope, RuntimeEventsSubscribeParams,
 };
 
 #[derive(Debug, Clone)]
@@ -79,6 +80,14 @@ impl DaemonClient {
         decode_ok(response)
     }
 
+    pub async fn handshake(&self) -> Result<DaemonHandshake> {
+        let handshake: DaemonHandshake = self
+            .request_ok(None, DaemonRequest::DaemonPing(NoParams::default()))
+            .await?;
+        ensure_compatible_handshake(&handshake)?;
+        Ok(handshake)
+    }
+
     pub async fn subscribe(
         &self,
         id: Option<String>,
@@ -136,6 +145,24 @@ pub fn encode_params<T: Serialize>(value: T) -> Value {
     serde_json::to_value(value).expect("daemon params must serialize")
 }
 
+pub fn ensure_compatible_handshake(handshake: &DaemonHandshake) -> Result<()> {
+    if handshake.protocol_version != DAEMON_PROTOCOL_VERSION {
+        return Err(anyhow!(
+            "Unsupported daemon protocol version {} (client expects {})",
+            handshake.protocol_version,
+            DAEMON_PROTOCOL_VERSION
+        ));
+    }
+    if handshake.transport != DAEMON_TRANSPORT_UNIX {
+        return Err(anyhow!(
+            "Unsupported daemon transport '{}' (client expects '{}')",
+            handshake.transport,
+            DAEMON_TRANSPORT_UNIX
+        ));
+    }
+    Ok(())
+}
+
 fn format_error(response: &ResponseEnvelope) -> String {
     match &response.error {
         Some(err) => match &err.details {
@@ -149,7 +176,10 @@ fn format_error(response: &ResponseEnvelope) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use turin_daemon_protocol::{DaemonRequest, NoParams, ResponseEnvelope};
+    use turin_daemon_protocol::{
+        DAEMON_PROTOCOL_VERSION, DAEMON_TRANSPORT_UNIX, DaemonCapabilities, DaemonRequest,
+        NoParams, ResponseEnvelope,
+    };
 
     #[test]
     fn decode_ok_rejects_error_response() {
@@ -171,5 +201,47 @@ mod tests {
         let envelope = RequestEnvelope::new(Some("x".into()), request);
         let encoded = serde_json::to_value(envelope).expect("serialize");
         assert_eq!(encoded["op"], "daemon.ping");
+    }
+
+    #[test]
+    fn compatible_handshake_is_accepted() {
+        let handshake = DaemonHandshake {
+            pong: true,
+            version: "0.23.0".into(),
+            protocol_version: DAEMON_PROTOCOL_VERSION,
+            transport: DAEMON_TRANSPORT_UNIX.into(),
+            wire_format: "ndjson".into(),
+            capabilities: DaemonCapabilities {
+                runtime_snapshot_v1: true,
+                scoped_event_snapshots: true,
+                lag_resnapshot: true,
+                watcher_rescan_failed_events: true,
+                channels: true,
+            },
+        };
+        ensure_compatible_handshake(&handshake).expect("handshake accepted");
+    }
+
+    #[test]
+    fn incompatible_protocol_version_is_rejected() {
+        let handshake = DaemonHandshake {
+            pong: true,
+            version: "0.23.0".into(),
+            protocol_version: DAEMON_PROTOCOL_VERSION + 1,
+            transport: DAEMON_TRANSPORT_UNIX.into(),
+            wire_format: "ndjson".into(),
+            capabilities: DaemonCapabilities {
+                runtime_snapshot_v1: true,
+                scoped_event_snapshots: true,
+                lag_resnapshot: true,
+                watcher_rescan_failed_events: true,
+                channels: true,
+            },
+        };
+        let err = ensure_compatible_handshake(&handshake).expect_err("version mismatch rejected");
+        assert!(
+            err.to_string()
+                .contains("Unsupported daemon protocol version")
+        );
     }
 }

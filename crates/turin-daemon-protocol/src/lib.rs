@@ -3,8 +3,31 @@ use serde_json::Value;
 use std::fmt;
 use turin_types::{AgentMode, ThinkingConfig};
 
+pub const DAEMON_PROTOCOL_VERSION: u32 = 1;
+pub const DAEMON_TRANSPORT_UNIX: &str = "unix";
+pub const DAEMON_WIRE_FORMAT_NDJSON: &str = "ndjson";
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct NoParams {}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct DaemonCapabilities {
+    pub runtime_snapshot_v1: bool,
+    pub scoped_event_snapshots: bool,
+    pub lag_resnapshot: bool,
+    pub watcher_rescan_failed_events: bool,
+    pub channels: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct DaemonHandshake {
+    pub pong: bool,
+    pub version: String,
+    pub protocol_version: u32,
+    pub transport: String,
+    pub wire_format: String,
+    pub capabilities: DaemonCapabilities,
+}
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct RuntimeEventsSubscribeParams {
@@ -418,5 +441,32 @@ mod tests {
 
         let value = serde_json::to_value(&response).expect("serialize response");
         assert_eq!(value["error"]["code"], "agent_not_found");
+    }
+
+    #[test]
+    fn handshake_round_trips_typed_shape() {
+        let handshake = DaemonHandshake {
+            pong: true,
+            version: "0.23.0".to_string(),
+            protocol_version: DAEMON_PROTOCOL_VERSION,
+            transport: DAEMON_TRANSPORT_UNIX.to_string(),
+            wire_format: DAEMON_WIRE_FORMAT_NDJSON.to_string(),
+            capabilities: DaemonCapabilities {
+                runtime_snapshot_v1: true,
+                scoped_event_snapshots: true,
+                lag_resnapshot: true,
+                watcher_rescan_failed_events: true,
+                channels: true,
+            },
+        };
+
+        let value = serde_json::to_value(&handshake).expect("serialize handshake");
+        assert_eq!(value["protocol_version"], DAEMON_PROTOCOL_VERSION);
+        assert_eq!(value["transport"], DAEMON_TRANSPORT_UNIX);
+
+        let decoded: DaemonHandshake =
+            serde_json::from_value(value).expect("deserialize handshake");
+        assert!(decoded.capabilities.runtime_snapshot_v1);
+        assert!(decoded.capabilities.channels);
     }
 }

@@ -10,6 +10,7 @@ use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, timeout};
 use turin::daemon::protocol::{DaemonRequest, EventEnvelope, RequestEnvelope, ResponseEnvelope};
+use turin_daemon_protocol::{DAEMON_PROTOCOL_VERSION, DAEMON_TRANSPORT_UNIX};
 
 struct DaemonHarness {
     tempdir: std::sync::Arc<TempDir>,
@@ -577,6 +578,25 @@ async fn daemon_event_subscription_receives_snapshot_and_mutation() -> Result<()
 
     let created = subscription.wait_for("agent.created").await?;
     assert_eq!(created.data["id"], "writer");
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_ping_exposes_typed_handshake() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+    let client = turin_daemon_client::DaemonClient::new(&daemon.socket_path);
+
+    let handshake = client.handshake().await?;
+    assert!(handshake.pong);
+    assert_eq!(handshake.protocol_version, DAEMON_PROTOCOL_VERSION);
+    assert_eq!(handshake.transport, DAEMON_TRANSPORT_UNIX);
+    assert_eq!(handshake.wire_format, "ndjson");
+    assert!(handshake.capabilities.runtime_snapshot_v1);
+    assert!(handshake.capabilities.scoped_event_snapshots);
+    assert!(handshake.capabilities.lag_resnapshot);
+    assert!(handshake.capabilities.watcher_rescan_failed_events);
+    assert!(handshake.capabilities.channels);
 
     daemon.stop().await
 }

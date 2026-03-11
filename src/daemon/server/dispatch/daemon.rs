@@ -1,6 +1,9 @@
 use serde_json::json;
 
-use crate::daemon::protocol::{NoParams, ResponseEnvelope};
+use crate::daemon::protocol::{
+    DAEMON_PROTOCOL_VERSION, DAEMON_TRANSPORT_UNIX, DAEMON_WIRE_FORMAT_NDJSON, DaemonCapabilities,
+    DaemonHandshake, NoParams, ResponseEnvelope,
+};
 
 use super::{DispatchContext, build_runtime_snapshot, emit_event};
 
@@ -9,12 +12,23 @@ pub(super) async fn ping(
     _params: NoParams,
     _ctx: &DispatchContext,
 ) -> ResponseEnvelope {
+    let handshake = DaemonHandshake {
+        pong: true,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        protocol_version: DAEMON_PROTOCOL_VERSION,
+        transport: DAEMON_TRANSPORT_UNIX.to_string(),
+        wire_format: DAEMON_WIRE_FORMAT_NDJSON.to_string(),
+        capabilities: DaemonCapabilities {
+            runtime_snapshot_v1: true,
+            scoped_event_snapshots: true,
+            lag_resnapshot: true,
+            watcher_rescan_failed_events: true,
+            channels: true,
+        },
+    };
     ResponseEnvelope::ok(
         id,
-        json!({
-            "pong": true,
-            "version": env!("CARGO_PKG_VERSION"),
-        }),
+        serde_json::to_value(handshake).expect("daemon handshake serializes"),
     )
 }
 

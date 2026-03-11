@@ -112,6 +112,7 @@ Current protocol:
 
 - NDJSON request/response
 - NDJSON event stream for subscriptions
+- `daemon.ping` is the handshake endpoint for protocol compatibility checks
 
 Example request:
 
@@ -124,6 +125,20 @@ Example response:
 ```json
 {"id":"req_1","ok":true,"result":{"agents":[]}}
 ```
+
+`daemon.ping` returns a typed handshake payload with:
+
+- `version`
+- `protocol_version`
+- `transport`
+- `wire_format`
+- `capabilities`
+
+Current handshake values:
+
+- `transport = "unix"`
+- `wire_format = "ndjson"`
+- `protocol_version = 1`
 
 Event stream example:
 
