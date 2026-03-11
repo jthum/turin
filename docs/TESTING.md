@@ -225,6 +225,12 @@ This keeps provider-specific logic out of Turin and speeds debugging.
   - `cargo test test_dx_fixture_workspace_review_assistant --test dx_harness_examples -- --nocapture`
   - `cargo test test_lexical_only_hybrid_fallback_prefers_best_text_match --lib`
 
+For a manual local-embeddings smoke check:
+  - start your local OpenAI-compatible embeddings endpoint
+  - `turin-map index`
+  - `turin-map status`
+  - confirm the status output says `Semantic: enabled (...)`
+
 ## Phase 4 Closeout Commands
 
 When validating code-search integration changes specifically:

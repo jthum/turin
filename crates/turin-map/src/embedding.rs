@@ -23,19 +23,32 @@ pub(crate) enum EmbeddingProviderKind {
 
 #[derive(Args, Debug, Clone)]
 pub(crate) struct EmbeddingArgs {
-    #[arg(long, value_enum)]
+    #[arg(
+        long,
+        value_enum,
+        help = "Override the embedding driver for this run instead of using [embeddings] from turin.toml"
+    )]
     pub embedding_provider: Option<EmbeddingProviderKind>,
 
-    #[arg(long)]
+    #[arg(long, help = "Embedding model identifier to use for this indexing run")]
     pub embedding_model: Option<String>,
 
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Embedding output dimensions; must match the model's actual output size"
+    )]
     pub embedding_dimensions: Option<usize>,
 
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Base URL for a local or proxied OpenAI-compatible embeddings endpoint"
+    )]
     pub embedding_base_url: Option<String>,
 
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Environment variable holding the embedding API key, when required"
+    )]
     pub embedding_api_key_env: Option<String>,
 }
 

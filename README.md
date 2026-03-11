@@ -150,12 +150,14 @@ model = "your-small-embedding-model"
 dimensions = 384                # set this to the model's actual output size
 ```
 
-Then build code indexes from the project root. `turin-map index` automatically reuses `./turin.toml` when it finds `[embeddings]`:
+Quick local check from the project root:
 
 ```bash
 target/release/turin-map index
 target/release/turin-map status
 ```
+
+You should see `Semantic: enabled (...)` in the status output once the local endpoint, model, and dimensions are wired correctly.
 
 Use `--config path/to/turin.toml` if the config file lives elsewhere, and use explicit `--embedding-*` flags only when you want to override the configured profile for one run.
 

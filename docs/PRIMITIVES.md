@@ -423,6 +423,7 @@ Notes:
 
 - build the index first with `turin-map index`
 - from a Turin project root, `turin-map index` automatically reuses `./turin.toml` and its `[embeddings]` / `[providers.*]` settings
+- use `turin-map status` as the quick local check; successful semantic setup shows `Semantic: enabled (...)`
 - use `turin-map index --config path/to/turin.toml` when the config lives elsewhere
 - use explicit `--embedding-*` flags only when you want to override the configured embedding profile for one run
 - `runtime.code.search.status(...)` returns fact-level semantic metadata including `codebase_id`, `embedded_chunks`, `embedding_key`, `embedding_dimensions`, and `vector_format`
