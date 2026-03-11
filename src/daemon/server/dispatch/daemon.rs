@@ -1,8 +1,9 @@
 use serde_json::json;
+use turin_local_ipc::current_transport_name;
 
 use crate::daemon::protocol::{
-    DAEMON_PROTOCOL_VERSION, DAEMON_TRANSPORT_UNIX, DAEMON_WIRE_FORMAT_NDJSON, DaemonCapabilities,
-    DaemonHandshake, NoParams, ResponseEnvelope,
+    DAEMON_PROTOCOL_VERSION, DAEMON_WIRE_FORMAT_NDJSON, DaemonCapabilities, DaemonHandshake,
+    NoParams, ResponseEnvelope,
 };
 
 use super::{DispatchContext, build_runtime_snapshot, emit_event};
@@ -16,7 +17,7 @@ pub(super) async fn ping(
         pong: true,
         version: env!("CARGO_PKG_VERSION").to_string(),
         protocol_version: DAEMON_PROTOCOL_VERSION,
-        transport: DAEMON_TRANSPORT_UNIX.to_string(),
+        transport: current_transport_name().to_string(),
         wire_format: DAEMON_WIRE_FORMAT_NDJSON.to_string(),
         capabilities: DaemonCapabilities {
             runtime_snapshot_v1: true,

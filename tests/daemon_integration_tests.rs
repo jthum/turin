@@ -5,12 +5,14 @@ use anyhow::{Context, Result, anyhow};
 use serde_json::Value;
 use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-use tokio::net::UnixStream;
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, timeout};
 use turin::daemon::protocol::{DaemonRequest, EventEnvelope, RequestEnvelope, ResponseEnvelope};
-use turin_daemon_protocol::{DAEMON_PROTOCOL_VERSION, DAEMON_TRANSPORT_UNIX};
+use turin_daemon_protocol::DAEMON_PROTOCOL_VERSION;
+use turin_local_ipc::{
+    LocalIpcReadHalf, LocalIpcWriteHalf, connect as connect_local_ipc, current_transport_name,
+    split as split_local_ipc,
+};
 
 struct DaemonHarness {
     tempdir: std::sync::Arc<TempDir>,
@@ -19,8 +21,8 @@ struct DaemonHarness {
 }
 
 struct EventSubscription {
-    _writer: OwnedWriteHalf,
-    lines: Lines<BufReader<OwnedReadHalf>>,
+    _writer: LocalIpcWriteHalf,
+    lines: Lines<BufReader<LocalIpcReadHalf>>,
 }
 
 impl DaemonHarness {
@@ -80,19 +82,23 @@ base_url = "PONG"
             tokio::spawn(async move { turin::daemon::server::serve(&serve_config_path).await });
 
         let deadline = Instant::now() + Duration::from_secs(5);
-        while !socket_path.exists() {
+        let client = turin_daemon_client::DaemonClient::new(&socket_path);
+        loop {
+            if client.handshake().await.is_ok() {
+                break;
+            }
             if join.is_finished() {
                 let result = join
                     .await
-                    .context("daemon task join failed before socket bind")?;
+                    .context("daemon task join failed before endpoint bind")?;
                 return Err(result
                     .err()
-                    .unwrap_or_else(|| anyhow!("daemon exited before creating socket")));
+                    .unwrap_or_else(|| anyhow!("daemon exited before creating daemon endpoint")));
             }
             if Instant::now() >= deadline {
                 join.abort();
                 return Err(anyhow!(
-                    "Timed out waiting for daemon socket '{}'",
+                    "Timed out waiting for daemon endpoint '{}'",
                     socket_path.display()
                 ));
             }
@@ -113,15 +119,15 @@ base_url = "PONG"
     }
 
     async fn request(&self, request: DaemonRequest) -> Result<ResponseEnvelope> {
-        let stream = UnixStream::connect(&self.socket_path)
+        let stream = connect_local_ipc(&self.socket_path)
             .await
             .with_context(|| {
                 format!(
-                    "Failed to connect to daemon socket '{}'",
+                    "Failed to connect to daemon endpoint '{}'",
                     self.socket_path.display()
                 )
             })?;
-        let (reader, mut writer) = stream.into_split();
+        let (reader, mut writer) = split_local_ipc(stream);
         let request = RequestEnvelope::new(Some(format!("req-{}", uuid::Uuid::new_v4())), request);
         writer
             .write_all(serde_json::to_string(&request)?.as_bytes())
@@ -139,8 +145,8 @@ base_url = "PONG"
         &self,
         params: turin::daemon::protocol::RuntimeEventsSubscribeParams,
     ) -> Result<(ResponseEnvelope, EventEnvelope, EventSubscription)> {
-        let stream = UnixStream::connect(&self.socket_path).await?;
-        let (reader, mut writer) = stream.into_split();
+        let stream = connect_local_ipc(&self.socket_path).await?;
+        let (reader, mut writer) = split_local_ipc(stream);
         let request = RequestEnvelope::new(
             Some(format!("req-{}", uuid::Uuid::new_v4())),
             DaemonRequest::RuntimeEventsSubscribe(params),
@@ -590,7 +596,7 @@ async fn daemon_ping_exposes_typed_handshake() -> Result<()> {
     let handshake = client.handshake().await?;
     assert!(handshake.pong);
     assert_eq!(handshake.protocol_version, DAEMON_PROTOCOL_VERSION);
-    assert_eq!(handshake.transport, DAEMON_TRANSPORT_UNIX);
+    assert_eq!(handshake.transport, current_transport_name());
     assert_eq!(handshake.wire_format, "ndjson");
     assert!(handshake.capabilities.runtime_snapshot_v1);
     assert!(handshake.capabilities.scoped_event_snapshots);
@@ -1043,6 +1049,12 @@ async fn daemon_fs_channel_runtime_processes_inbox_and_reports_runtime_status() 
             ))
             .await?,
     );
+    assert!(
+        daemon_status["endpoint"]
+            .as_str()
+            .is_some_and(|endpoint| !endpoint.is_empty()),
+        "daemon.status should expose a non-empty endpoint"
+    );
     let runtime_list = daemon_status["channel_runtimes"]
         .as_array()
         .context("daemon.status channel_runtimes should be an array")?;
@@ -1173,6 +1185,12 @@ async fn daemon_discord_channel_reports_failed_runtime_when_token_is_missing() -
                 turin::daemon::protocol::NoParams::default(),
             ))
             .await?,
+    );
+    assert!(
+        daemon_status["endpoint"]
+            .as_str()
+            .is_some_and(|endpoint| !endpoint.is_empty()),
+        "daemon.status should expose a non-empty endpoint"
     );
     let runtime_list = daemon_status["channel_runtimes"]
         .as_array()

@@ -3,7 +3,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
+use turin_local_ipc::{connect as connect_local_ipc, split as split_local_ipc};
 
 use turin::daemon::protocol::{
     DaemonRequest, ErrorCode, ErrorEnvelope, EventEnvelope, RequestEnvelope, ResponseEnvelope,
@@ -15,7 +15,7 @@ use turin::kernel::config::TurinConfig;
 struct DaemonStatusView {
     config_path: String,
     workspace_root: String,
-    socket_path: String,
+    endpoint: String,
     registry: RegistrySnapshotView,
     harnesses: Vec<HarnessRuntimeView>,
     agent_runtimes: Vec<AgentRuntimeView>,
@@ -800,15 +800,15 @@ pub async fn run_channel_delete(
 }
 
 pub async fn run_events(config_path: &std::path::Path, json_output: bool) -> Result<()> {
-    let socket_path = resolve_socket_path(config_path)?;
-    let stream = UnixStream::connect(&socket_path).await.with_context(|| {
+    let endpoint = resolve_endpoint_path(config_path)?;
+    let stream = connect_local_ipc(&endpoint).await.with_context(|| {
         format!(
-            "Failed to connect to daemon socket '{}'",
-            socket_path.display()
+            "Failed to connect to daemon endpoint '{}'",
+            endpoint.display()
         )
     })?;
 
-    let (reader, mut writer) = stream.into_split();
+    let (reader, mut writer) = split_local_ipc(stream);
     let request = RequestEnvelope::new(
         Some(format!("req-{}", uuid::Uuid::new_v4())),
         DaemonRequest::RuntimeEventsSubscribe(RuntimeEventsSubscribeParams::default()),
@@ -913,7 +913,7 @@ fn decode_result<T: serde::de::DeserializeOwned>(response: ResponseEnvelope) -> 
 fn print_daemon_status(status: DaemonStatusView) {
     println!("Config:    {}", status.config_path);
     println!("Workspace: {}", status.workspace_root);
-    println!("Socket:    {}", status.socket_path);
+    println!("Endpoint:  {}", status.endpoint);
     println!(
         "Agents:    {} daemon-managed, {} shared harnesses, {} channels, {} issues",
         status.registry.agents.len(),
@@ -1537,15 +1537,15 @@ async fn send_request(
     op: &str,
     params: Value,
 ) -> Result<ResponseEnvelope> {
-    let socket_path = resolve_socket_path(config_path)?;
-    let stream = UnixStream::connect(&socket_path).await.with_context(|| {
+    let endpoint = resolve_endpoint_path(config_path)?;
+    let stream = connect_local_ipc(&endpoint).await.with_context(|| {
         format!(
-            "Failed to connect to daemon socket '{}'",
-            socket_path.display()
+            "Failed to connect to daemon endpoint '{}'",
+            endpoint.display()
         )
     })?;
 
-    let (reader, mut writer) = stream.into_split();
+    let (reader, mut writer) = split_local_ipc(stream);
     let request: RequestEnvelope = serde_json::from_value(json!({
         "id": format!("req-{}", uuid::Uuid::new_v4()),
         "op": op,
@@ -1568,7 +1568,7 @@ async fn send_request(
     Ok(response)
 }
 
-fn resolve_socket_path(config_path: &std::path::Path) -> Result<std::path::PathBuf> {
+fn resolve_endpoint_path(config_path: &std::path::Path) -> Result<std::path::PathBuf> {
     let config = TurinConfig::from_file(config_path)?;
     let config_base = config_path
         .parent()

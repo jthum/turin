@@ -52,6 +52,7 @@ socket_path = ".turin/daemon.sock"
 ```
 
 These values define where the daemon reads and watches filesystem-backed state.
+`socket_path` remains the bootstrap config key for the local IPC endpoint seed; on Windows, Turin derives a stable named pipe endpoint from that value.
 
 Channel-related bootstrap settings also live under `[daemon]`:
 
@@ -105,8 +106,10 @@ to inspect isolated load/config problems.
 
 Current daemon transport:
 
-- Unix domain socket
-- default path: `.turin/daemon.sock`
+- local IPC endpoint
+- Unix domain socket on macOS/Linux
+- Windows named pipe on Windows
+- default endpoint seed: `.turin/daemon.sock`
 
 Current protocol:
 
@@ -136,7 +139,8 @@ Example response:
 
 Current handshake values:
 
-- `transport = "unix"`
+- `transport = "unix"` on macOS/Linux
+- `transport = "named_pipe"` on Windows
 - `wire_format = "ndjson"`
 - `protocol_version = 1`
 
@@ -321,6 +325,7 @@ turin daemon session kill <session_id>
 The daemon now exposes:
 
 - top-level daemon status with:
+  - local IPC endpoint
   - registry snapshot
   - harness runtime snapshots
   - live agent runtime snapshots

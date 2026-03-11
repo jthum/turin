@@ -4,21 +4,24 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
 use turin_daemon_protocol::{
-    DAEMON_PROTOCOL_VERSION, DAEMON_TRANSPORT_UNIX, DaemonHandshake, DaemonRequest, EventEnvelope,
-    NoParams, RequestEnvelope, ResponseEnvelope, RuntimeEventsSubscribeParams,
+    DAEMON_PROTOCOL_VERSION, DaemonHandshake, DaemonRequest, EventEnvelope, NoParams,
+    RequestEnvelope, ResponseEnvelope, RuntimeEventsSubscribeParams,
+};
+use turin_local_ipc::{
+    LocalIpcReadHalf, connect as connect_local_ipc, current_transport_name,
+    resolve_endpoint as resolve_local_ipc_endpoint, split as split_local_ipc,
 };
 
 #[derive(Debug, Clone)]
 pub struct DaemonClient {
-    socket_path: PathBuf,
+    endpoint: PathBuf,
 }
 
 impl DaemonClient {
-    pub fn new(socket_path: impl Into<PathBuf>) -> Self {
+    pub fn new(endpoint: impl Into<PathBuf>) -> Self {
         Self {
-            socket_path: socket_path.into(),
+            endpoint: endpoint.into(),
         }
     }
 
@@ -28,33 +31,36 @@ impl DaemonClient {
             .with_context(|| format!("Failed to read '{}'", config_path.as_ref().display()))?;
         let value: toml::Value = toml::from_str(&raw)
             .with_context(|| format!("Failed to parse '{}'", config_path.as_ref().display()))?;
-        let socket_path = value
+        let workspace_root = value
+            .get("kernel")
+            .and_then(|k| k.get("workspace_root"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
+        let endpoint = value
             .get("daemon")
             .and_then(|d| d.get("socket_path"))
             .and_then(|v| v.as_str())
             .unwrap_or(".turin/daemon.sock");
-        Ok(Self::new(
-            config_path
-                .as_ref()
-                .parent()
-                .unwrap_or(Path::new("."))
-                .join(socket_path),
-        ))
+        Ok(Self::new(resolve_local_ipc_endpoint(
+            config_path.as_ref().parent().unwrap_or(Path::new(".")),
+            workspace_root,
+            endpoint,
+        )))
     }
 
-    pub fn socket_path(&self) -> &Path {
-        &self.socket_path
+    pub fn endpoint(&self) -> &Path {
+        &self.endpoint
     }
 
     pub async fn send(&self, request: RequestEnvelope) -> Result<ResponseEnvelope> {
-        let mut stream = UnixStream::connect(&self.socket_path)
+        let mut stream = connect_local_ipc(&self.endpoint)
             .await
-            .with_context(|| format!("Failed to connect to '{}'", self.socket_path.display()))?;
+            .with_context(|| format!("Failed to connect to '{}'", self.endpoint.display()))?;
         let body = serde_json::to_string(&request)?;
         stream.write_all(body.as_bytes()).await?;
         stream.write_all(b"\n").await?;
 
-        let (reader, _) = stream.into_split();
+        let (reader, _) = split_local_ipc(stream);
         let mut lines = BufReader::new(reader).lines();
         let line = lines
             .next_line()
@@ -93,15 +99,15 @@ impl DaemonClient {
         id: Option<String>,
         filter: RuntimeEventsSubscribeParams,
     ) -> Result<EventStream> {
-        let mut stream = UnixStream::connect(&self.socket_path)
+        let mut stream = connect_local_ipc(&self.endpoint)
             .await
-            .with_context(|| format!("Failed to connect to '{}'", self.socket_path.display()))?;
+            .with_context(|| format!("Failed to connect to '{}'", self.endpoint.display()))?;
         let request = RequestEnvelope::new(id, DaemonRequest::RuntimeEventsSubscribe(filter));
         let body = serde_json::to_string(&request)?;
         stream.write_all(body.as_bytes()).await?;
         stream.write_all(b"\n").await?;
 
-        let (reader, _) = stream.into_split();
+        let (reader, _) = split_local_ipc(stream);
         let mut lines = BufReader::new(reader).lines();
         let ack_line = lines
             .next_line()
@@ -117,7 +123,7 @@ impl DaemonClient {
 }
 
 pub struct EventStream {
-    lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+    lines: tokio::io::Lines<BufReader<LocalIpcReadHalf>>,
 }
 
 impl EventStream {
@@ -153,11 +159,11 @@ pub fn ensure_compatible_handshake(handshake: &DaemonHandshake) -> Result<()> {
             DAEMON_PROTOCOL_VERSION
         ));
     }
-    if handshake.transport != DAEMON_TRANSPORT_UNIX {
+    if handshake.transport != current_transport_name() {
         return Err(anyhow!(
             "Unsupported daemon transport '{}' (client expects '{}')",
             handshake.transport,
-            DAEMON_TRANSPORT_UNIX
+            current_transport_name()
         ));
     }
     Ok(())
@@ -177,8 +183,7 @@ fn format_error(response: &ResponseEnvelope) -> String {
 mod tests {
     use super::*;
     use turin_daemon_protocol::{
-        DAEMON_PROTOCOL_VERSION, DAEMON_TRANSPORT_UNIX, DaemonCapabilities, DaemonRequest,
-        NoParams, ResponseEnvelope,
+        DAEMON_PROTOCOL_VERSION, DaemonCapabilities, DaemonRequest, NoParams, ResponseEnvelope,
     };
 
     #[test]
@@ -209,7 +214,7 @@ mod tests {
             pong: true,
             version: "0.23.0".into(),
             protocol_version: DAEMON_PROTOCOL_VERSION,
-            transport: DAEMON_TRANSPORT_UNIX.into(),
+            transport: current_transport_name().into(),
             wire_format: "ndjson".into(),
             capabilities: DaemonCapabilities {
                 runtime_snapshot_v1: true,
@@ -228,7 +233,7 @@ mod tests {
             pong: true,
             version: "0.23.0".into(),
             protocol_version: DAEMON_PROTOCOL_VERSION + 1,
-            transport: DAEMON_TRANSPORT_UNIX.into(),
+            transport: current_transport_name().into(),
             wire_format: "ndjson".into(),
             capabilities: DaemonCapabilities {
                 runtime_snapshot_v1: true,

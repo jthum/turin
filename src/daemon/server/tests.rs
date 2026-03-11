@@ -59,7 +59,7 @@ fn classify_registry_issue_recognizes_agent_and_harness_paths() {
     let status = DaemonStatus {
         config_path: "turin.toml".to_string(),
         workspace_root: ".".to_string(),
-        socket_path: ".turin/daemon.sock".to_string(),
+        endpoint: ".turin/daemon.sock".to_string(),
         registry: RegistrySnapshot {
             agents_dir: "/tmp/work/agents".to_string(),
             harnesses_dir: "/tmp/work/harnesses".to_string(),

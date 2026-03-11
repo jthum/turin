@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use turin_local_ipc::resolve_endpoint as resolve_local_ipc_endpoint;
 
 pub use turin_types::{AgentMode, ThinkingConfig};
 
@@ -567,7 +568,7 @@ impl TurinConfig {
     }
 
     pub fn resolve_daemon_socket_path(&self, base: &Path) -> PathBuf {
-        resolve_under_workspace(base, &self.kernel.workspace_root, &self.daemon.socket_path)
+        resolve_local_ipc_endpoint(base, &self.kernel.workspace_root, &self.daemon.socket_path)
     }
 }
 

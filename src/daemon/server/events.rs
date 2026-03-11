@@ -6,8 +6,8 @@ use std::time::Duration;
 use anyhow::Result;
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
-use tokio::net::unix::OwnedWriteHalf;
 use tokio::sync::{RwLock, broadcast, watch};
+use turin_local_ipc::LocalIpcWriteHalf;
 
 use crate::daemon::channels::ChannelRuntimeManager;
 use crate::daemon::protocol::{
@@ -29,7 +29,7 @@ pub(super) async fn stream_events(
     channel_runtimes: Arc<ChannelRuntimeManager>,
     mut event_rx: broadcast::Receiver<EventEnvelope>,
     mut shutdown_rx: watch::Receiver<bool>,
-    writer: &mut OwnedWriteHalf,
+    writer: &mut LocalIpcWriteHalf,
 ) -> Result<()> {
     let filter = EventFilter::from_request(&request);
     let ack = ResponseEnvelope::ok(request.id, json!({ "subscribed": true }));
@@ -171,7 +171,7 @@ async fn write_runtime_snapshot_event(
     channel_runtimes: &Arc<ChannelRuntimeManager>,
     filter: &EventFilter,
     skip_empty_scoped: bool,
-    writer: &mut OwnedWriteHalf,
+    writer: &mut LocalIpcWriteHalf,
 ) -> Result<()> {
     let snapshot = build_runtime_snapshot(state, channel_runtimes).await;
     let scoped = scope_runtime_snapshot(snapshot, filter);
@@ -182,7 +182,7 @@ async fn write_runtime_snapshot_event(
     write_event(writer, &event).await
 }
 
-async fn write_event(writer: &mut OwnedWriteHalf, event: &EventEnvelope) -> Result<()> {
+async fn write_event(writer: &mut LocalIpcWriteHalf, event: &EventEnvelope) -> Result<()> {
     writer
         .write_all(serde_json::to_string(event)?.as_bytes())
         .await?;
@@ -329,7 +329,7 @@ mod tests {
         let snapshot = DaemonRuntimeSnapshot {
             config_path: "turin.toml".into(),
             workspace_root: "/tmp/work".into(),
-            socket_path: "/tmp/work/.turin/daemon.sock".into(),
+            endpoint: "/tmp/work/.turin/daemon.sock".into(),
             registry: RegistrySnapshot {
                 agents_dir: "/tmp/work/agents".into(),
                 harnesses_dir: "/tmp/work/harnesses".into(),

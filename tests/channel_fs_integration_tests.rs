@@ -66,22 +66,23 @@ base_url = "PONG"
             tokio::spawn(async move { turin::daemon::server::serve(&serve_config_path).await });
 
         let deadline = Instant::now() + Duration::from_secs(10);
+        let client = turin_daemon_client::DaemonClient::new(&socket_path);
         loop {
-            if socket_path.exists() {
+            if client.handshake().await.is_ok() {
                 break;
             }
             if join.is_finished() {
                 let result = join
                     .await
-                    .context("daemon task join failed before socket bind")?;
+                    .context("daemon task join failed before endpoint bind")?;
                 return Err(result
                     .err()
-                    .unwrap_or_else(|| anyhow!("daemon exited before creating socket")));
+                    .unwrap_or_else(|| anyhow!("daemon exited before creating daemon endpoint")));
             }
             if Instant::now() >= deadline {
                 join.abort();
                 return Err(anyhow!(
-                    "Timed out waiting for daemon socket '{}'",
+                    "Timed out waiting for daemon endpoint '{}'",
                     socket_path.display()
                 ));
             }

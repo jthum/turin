@@ -5,6 +5,7 @@ use turin_types::{AgentMode, ThinkingConfig};
 
 pub const DAEMON_PROTOCOL_VERSION: u32 = 1;
 pub const DAEMON_TRANSPORT_UNIX: &str = "unix";
+pub const DAEMON_TRANSPORT_NAMED_PIPE: &str = "named_pipe";
 pub const DAEMON_WIRE_FORMAT_NDJSON: &str = "ndjson";
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

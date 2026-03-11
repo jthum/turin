@@ -9,9 +9,12 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{RwLock, broadcast, watch as watch_channel};
 use tracing::{error, info, warn};
+use turin_local_ipc::{
+    BoxedLocalIpcStream, LocalIpcListener, cleanup_stale_endpoint, remove_endpoint,
+    split as split_local_ipc,
+};
 
 use crate::daemon::channels::ChannelRuntimeManager;
 use crate::daemon::protocol::{DaemonRequest, ErrorCode, RequestEnvelope, ResponseEnvelope};
@@ -35,17 +38,29 @@ pub async fn serve(config_path: &Path) -> Result<()> {
         guard.socket_path().to_path_buf()
     };
 
+    #[cfg(unix)]
     if let Some(parent) = socket_path.parent() {
         tokio::fs::create_dir_all(parent)
             .await
             .with_context(|| format!("Failed to create socket directory '{}'", parent.display()))?;
     }
 
-    cleanup_stale_socket(&socket_path).await?;
-    let listener = UnixListener::bind(&socket_path)
-        .with_context(|| format!("Failed to bind socket '{}'", socket_path.display()))?;
+    cleanup_stale_endpoint(&socket_path)
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to prepare local IPC endpoint '{}'",
+                socket_path.display()
+            )
+        })?;
+    let mut listener = LocalIpcListener::bind(&socket_path).with_context(|| {
+        format!(
+            "Failed to bind local IPC endpoint '{}'",
+            socket_path.display()
+        )
+    })?;
 
-    info!(socket = %socket_path.display(), "Turin daemon started");
+    info!(endpoint = %socket_path.display(), "Turin daemon started");
 
     let (shutdown_tx, mut shutdown_rx) = watch_channel::channel(false);
     let (event_tx, _) = broadcast::channel(512);
@@ -92,7 +107,7 @@ pub async fn serve(config_path: &Path) -> Result<()> {
             }
             accept_res = listener.accept() => {
                 match accept_res {
-                    Ok((stream, _)) => {
+                    Ok(stream) => {
                         let client_ctx = client_ctx.clone();
                         tokio::spawn(async move {
                             if let Err(err) = handle_client(stream, client_ctx).await {
@@ -101,7 +116,7 @@ pub async fn serve(config_path: &Path) -> Result<()> {
                         });
                     }
                     Err(err) => {
-                        warn!(error = %err, "Failed to accept daemon socket connection");
+                        warn!(error = %err, "Failed to accept daemon IPC connection");
                     }
                 }
             }
@@ -115,32 +130,12 @@ pub async fn serve(config_path: &Path) -> Result<()> {
         *slot = None;
     }
     channel_runtimes.shutdown().await;
-    tokio::fs::remove_file(&socket_path).await.ok();
+    remove_endpoint(&socket_path).await.ok();
     Ok(())
 }
 
-async fn cleanup_stale_socket(socket_path: &Path) -> Result<()> {
-    if !socket_path.exists() {
-        return Ok(());
-    }
-
-    match UnixStream::connect(socket_path).await {
-        Ok(_) => anyhow::bail!(
-            "Daemon socket '{}' is already in use",
-            socket_path.display()
-        ),
-        Err(_) => {
-            tokio::fs::remove_file(socket_path).await.with_context(|| {
-                format!("Failed to remove stale socket '{}'", socket_path.display())
-            })?;
-        }
-    }
-
-    Ok(())
-}
-
-async fn handle_client(stream: UnixStream, ctx: ClientContext) -> Result<()> {
-    let (reader, mut writer) = stream.into_split();
+async fn handle_client(stream: BoxedLocalIpcStream, ctx: ClientContext) -> Result<()> {
+    let (reader, mut writer) = split_local_ipc(stream);
     let mut lines = BufReader::new(reader).lines();
 
     while let Some(line) = lines.next_line().await? {

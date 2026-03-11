@@ -35,7 +35,7 @@ pub struct DaemonWatchPaths {
 pub struct DaemonStatus {
     pub config_path: String,
     pub workspace_root: String,
-    pub socket_path: String,
+    pub endpoint: String,
     pub registry: RegistrySnapshot,
     pub harnesses: Vec<crate::kernel::HarnessRuntimeSnapshot>,
     pub agent_runtimes: Vec<crate::kernel::agent_manager::AgentStatusSnapshot>,
@@ -45,7 +45,7 @@ pub struct DaemonStatus {
 pub struct DaemonRuntimeSnapshot {
     pub config_path: String,
     pub workspace_root: String,
-    pub socket_path: String,
+    pub endpoint: String,
     pub registry: RegistrySnapshot,
     pub harnesses: Vec<crate::kernel::HarnessRuntimeSnapshot>,
     pub agent_runtimes: Vec<crate::kernel::agent_manager::AgentStatusSnapshot>,
@@ -142,7 +142,7 @@ impl DaemonState {
         DaemonStatus {
             config_path: self.config_path.display().to_string(),
             workspace_root: self.bootstrap_config.kernel.workspace_root.clone(),
-            socket_path: self.socket_path.display().to_string(),
+            endpoint: self.socket_path.display().to_string(),
             registry: snapshot(&self.registry_load),
             harnesses: self.kernel.harness_snapshots(),
             agent_runtimes: self.list_agent_runtime_statuses().await,
@@ -215,7 +215,7 @@ impl DaemonRuntimeSnapshot {
         Self {
             config_path: status.config_path,
             workspace_root: status.workspace_root,
-            socket_path: status.socket_path,
+            endpoint: status.endpoint,
             registry: status.registry,
             harnesses: status.harnesses,
             agent_runtimes: status.agent_runtimes,

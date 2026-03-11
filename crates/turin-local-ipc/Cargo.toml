@@ -1,0 +1,10 @@
+[package]
+name = "turin-local-ipc"
+version = "0.23.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.0", default-features = false, features = ["net", "io-util", "fs"] }
+
+[target.'cfg(windows)'.dependencies]
+sha2 = "0.10"
