@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Serialize;
 
+use crate::daemon::channels::ChannelRuntimeSnapshot;
 use crate::daemon::registry::{
     RegistryLoad, RegistrySnapshot, build_effective_config, scan_registry, snapshot,
 };
@@ -38,6 +39,17 @@ pub struct DaemonStatus {
     pub registry: RegistrySnapshot,
     pub harnesses: Vec<crate::kernel::HarnessRuntimeSnapshot>,
     pub agent_runtimes: Vec<crate::kernel::agent_manager::AgentStatusSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DaemonRuntimeSnapshot {
+    pub config_path: String,
+    pub workspace_root: String,
+    pub socket_path: String,
+    pub registry: RegistrySnapshot,
+    pub harnesses: Vec<crate::kernel::HarnessRuntimeSnapshot>,
+    pub agent_runtimes: Vec<crate::kernel::agent_manager::AgentStatusSnapshot>,
+    pub channel_runtimes: Vec<ChannelRuntimeSnapshot>,
 }
 
 pub struct DaemonState {
@@ -195,5 +207,19 @@ impl DaemonState {
 
     pub fn runtime_errors(&self) -> Vec<crate::daemon::registry::RegistryIssue> {
         self.registry_snapshot().issues
+    }
+}
+
+impl DaemonRuntimeSnapshot {
+    pub fn from_parts(status: DaemonStatus, channel_runtimes: Vec<ChannelRuntimeSnapshot>) -> Self {
+        Self {
+            config_path: status.config_path,
+            workspace_root: status.workspace_root,
+            socket_path: status.socket_path,
+            registry: status.registry,
+            harnesses: status.harnesses,
+            agent_runtimes: status.agent_runtimes,
+            channel_runtimes,
+        }
     }
 }

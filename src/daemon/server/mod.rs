@@ -169,6 +169,7 @@ async fn handle_client(stream: UnixStream, ctx: ClientContext) -> Result<()> {
             events::stream_events(
                 request,
                 Arc::clone(&ctx.state),
+                Arc::clone(&ctx.channel_runtimes),
                 ctx.event_tx.subscribe(),
                 ctx.shutdown_rx.clone(),
                 &mut writer,

@@ -8,9 +8,9 @@ use tracing::{error, info, warn};
 
 use crate::daemon::channels::ChannelRuntimeManager;
 use crate::daemon::protocol::EventEnvelope;
-use crate::daemon::state::{DaemonState, DaemonStatus, DaemonWatchPaths};
+use crate::daemon::state::{DaemonRuntimeSnapshot, DaemonState, DaemonWatchPaths};
 
-use super::dispatch::{emit_event, emit_registry_issue_events};
+use super::dispatch::{build_runtime_snapshot, emit_event, emit_registry_issue_events};
 
 pub(super) async fn start_daemon_watcher(
     state: Arc<RwLock<DaemonState>>,
@@ -54,6 +54,18 @@ pub(super) async fn start_daemon_watcher(
             )
             .await
             {
+                emit_event(
+                    &event_tx,
+                    "runtime.rescan_failed",
+                    serde_json::json!({
+                        "source": "watcher",
+                        "message": err.to_string(),
+                        "changed_paths": changed_paths
+                            .iter()
+                            .map(|path| path.display().to_string())
+                            .collect::<Vec<_>>(),
+                    }),
+                );
                 error!(error = %err, "Daemon filesystem rescan failed");
             }
         }
@@ -78,7 +90,7 @@ pub(super) async fn rescan_and_refresh_watcher(
     tx: tokio::sync::mpsc::Sender<Vec<PathBuf>>,
     channel_runtimes: Arc<ChannelRuntimeManager>,
     event_tx: broadcast::Sender<EventEnvelope>,
-) -> Result<DaemonStatus> {
+) -> Result<DaemonRuntimeSnapshot> {
     let (status, watch_paths, workspace_root, channels) = {
         let mut guard = state.write().await;
         let status = guard.rescan().await?;
@@ -91,18 +103,21 @@ pub(super) async fn rescan_and_refresh_watcher(
     channel_runtimes.sync(workspace_root, channels).await?;
 
     let watcher = build_daemon_watcher(&watch_paths, tx)?;
-    let mut slot = watcher_slot
-        .lock()
-        .expect("daemon watcher mutex poisoned during refresh");
-    *slot = watcher;
+    {
+        let mut slot = watcher_slot
+            .lock()
+            .expect("daemon watcher mutex poisoned during refresh");
+        *slot = watcher;
+    }
 
+    let runtime_snapshot = build_runtime_snapshot(&state, &channel_runtimes).await;
     emit_event(
         &event_tx,
         "runtime.rescanned",
-        serde_json::json!(status.clone()),
+        serde_json::to_value(runtime_snapshot.clone()).expect("runtime snapshot serializes"),
     );
     emit_registry_issue_events(&event_tx, &status);
-    Ok(status)
+    Ok(runtime_snapshot)
 }
 
 fn build_daemon_watcher(

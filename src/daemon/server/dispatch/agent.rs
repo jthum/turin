@@ -6,9 +6,9 @@ use crate::daemon::protocol::{
 use crate::daemon::state::{CreateAgentInput, UpdateAgentInput};
 
 use super::{
-    DispatchContext, emit_event, emit_registry_issue_events, internal_error, not_found_error,
-    serialize_response, serialize_response_with_event, serialize_value, sync_channel_runtimes,
-    validation_error,
+    DispatchContext, build_runtime_snapshot, emit_event, emit_registry_issue_events,
+    internal_error, not_found_error, serialize_response, serialize_response_with_event,
+    serialize_value, sync_channel_runtimes, validation_error,
 };
 use crate::daemon::protocol::ErrorCode;
 
@@ -290,23 +290,24 @@ pub(super) async fn delete(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let mut guard = ctx.state.write().await;
-    let response = match guard.delete_agent(&params.id).await {
-        Ok(status) => match serialize_value(&id, &status, "delete status") {
-            Ok(value) => {
-                emit_event(&ctx.event_tx, "agent.deleted", json!({ "id": params.id }));
-                emit_event(&ctx.event_tx, "runtime.rescanned", value.clone());
-                emit_registry_issue_events(&ctx.event_tx, &status);
-                ResponseEnvelope::ok(id, value)
-            }
-            Err(response) => *response,
-        },
-        Err(err) => validation_error(id, err),
+    let status = match guard.delete_agent(&params.id).await {
+        Ok(status) => status,
+        Err(err) => return validation_error(id, err),
     };
     drop(guard);
-    if response.ok
-        && let Err(err) = sync_channel_runtimes(ctx).await
-    {
-        return internal_error(response.id, err);
+
+    if let Err(err) = sync_channel_runtimes(ctx).await {
+        return internal_error(id, err);
     }
-    response
+
+    let runtime_snapshot = build_runtime_snapshot(&ctx.state, &ctx.channel_runtimes).await;
+    match serialize_value(&id, runtime_snapshot, "delete status") {
+        Ok(value) => {
+            emit_event(&ctx.event_tx, "agent.deleted", json!({ "id": params.id }));
+            emit_event(&ctx.event_tx, "runtime.rescanned", value.clone());
+            emit_registry_issue_events(&ctx.event_tx, &status);
+            ResponseEnvelope::ok(id, value)
+        }
+        Err(response) => *response,
+    }
 }

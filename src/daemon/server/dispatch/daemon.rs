@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::daemon::protocol::{NoParams, ResponseEnvelope};
 
-use super::{DispatchContext, emit_event};
+use super::{DispatchContext, build_runtime_snapshot, emit_event};
 
 pub(super) async fn ping(
     id: Option<String>,
@@ -23,21 +23,10 @@ pub(super) async fn status(
     _params: NoParams,
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
-    let guard = ctx.state.read().await;
-    let status = guard.status().await;
-    drop(guard);
-    let channel_runtimes = ctx.channel_runtimes.list().await;
+    let status = build_runtime_snapshot(&ctx.state, &ctx.channel_runtimes).await;
     ResponseEnvelope::ok(
         id,
-        json!({
-            "config_path": status.config_path,
-            "workspace_root": status.workspace_root,
-            "socket_path": status.socket_path,
-            "registry": status.registry,
-            "harnesses": status.harnesses,
-            "agent_runtimes": status.agent_runtimes,
-            "channel_runtimes": channel_runtimes,
-        }),
+        serde_json::to_value(status).expect("runtime snapshot serializes"),
     )
 }
 

@@ -131,6 +131,14 @@ Event stream example:
 {"event":"task.updated","data":{"request_id":"...","state":"completed"}}
 ```
 
+Subscription semantics:
+
+- `runtime.events.subscribe` starts with a `runtime.snapshot` event
+- `runtime.snapshot` uses the same control-plane shape as `daemon.status`, including `channel_runtimes`
+- when `agent_id` and/or `session_id` filters are supplied, the snapshot is scoped to that view instead of leaking unrelated runtime state
+- if the event stream lags, the daemon emits `runtime.events_lagged` and then immediately sends a fresh `runtime.snapshot`
+- if a watcher-triggered registry rescan fails, the daemon emits `runtime.rescan_failed` with the error message and changed paths
+
 ## Current Command Surface
 
 ### Daemon lifecycle
@@ -246,6 +254,8 @@ When a channel is `enabled`, the daemon owns the runtime lifecycle:
 Channel runtime events are also streamed via `runtime.events.subscribe`:
 - `channel.runtime.updated` for state transitions and error updates
 - `channel.runtime.removed` when a runtime disappears from the active set
+- `runtime.rescanned` for successful registry rescans, using the same snapshot shape as `daemon.status`
+- `runtime.rescan_failed` when filesystem-triggered rescans are rejected or fail
 
 `channel.status` and `daemon.status.channel_runtimes` now include lifecycle metrics:
 - `start_count`

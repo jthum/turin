@@ -674,6 +674,68 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn daemon_event_subscription_scopes_initial_snapshot_and_includes_channel_runtimes()
+-> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+
+    let _ = daemon
+        .request(DaemonRequest::AgentCreate(
+            turin::daemon::protocol::CreateAgentParams {
+                id: "writer".to_string(),
+                provider: "mock".to_string(),
+                model: "mock-model".to_string(),
+                system_prompt: Some("Write".to_string()),
+                thinking: None,
+                mode: None,
+                harness: None,
+                idle_grace_secs: None,
+                enabled: true,
+            },
+        ))
+        .await?;
+
+    let _ = daemon
+        .request(DaemonRequest::ChannelCreate(
+            turin::daemon::protocol::CreateChannelParams {
+                id: "writer-fs".to_string(),
+                kind: "fs".to_string(),
+                agent_id: "writer".to_string(),
+                idle_ttl_secs: Some(600),
+                enabled: true,
+                settings: Some(serde_json::json!({
+                    "inbox_dir": "inbox",
+                    "outbox_dir": "outbox",
+                    "processed_dir": "processed",
+                    "failed_dir": "failed",
+                    "poll_interval_ms": 25,
+                })),
+            },
+        ))
+        .await?;
+
+    let (_ack, snapshot, _subscription) = daemon
+        .subscribe(turin::daemon::protocol::RuntimeEventsSubscribeParams {
+            agent_id: Some("writer".to_string()),
+            session_id: None,
+        })
+        .await?;
+
+    assert_eq!(snapshot.event, "runtime.snapshot");
+    let agents = snapshot.data["registry"]["agents"]
+        .as_array()
+        .context("snapshot registry.agents should be an array")?;
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0]["id"], "writer");
+    let channel_runtimes = snapshot.data["channel_runtimes"]
+        .as_array()
+        .context("snapshot channel_runtimes should be an array")?;
+    assert_eq!(channel_runtimes.len(), 1);
+    assert_eq!(channel_runtimes[0]["agent_id"], "writer");
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn daemon_event_subscription_receives_channel_runtime_events() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
     let (_ack, _snapshot, mut subscription) = daemon.subscribe(Default::default()).await?;

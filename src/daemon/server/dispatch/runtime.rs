@@ -1,8 +1,6 @@
 use crate::daemon::protocol::{NoParams, ResponseEnvelope};
 
-use super::{
-    DispatchContext, resource_busy_error, serialize_response, serialize_response_with_event,
-};
+use super::{DispatchContext, emit_event, resource_busy_error, serialize_response};
 use crate::daemon::server::watch::rescan_and_refresh_watcher;
 
 pub(super) async fn rescan(
@@ -38,13 +36,11 @@ pub(super) async fn reload(
     )
     .await
     {
-        Ok(status) => serialize_response_with_event(
-            id,
-            status,
-            "reload result",
-            &ctx.event_tx,
-            "runtime.reloaded",
-        ),
+        Ok(status) => {
+            let value = serde_json::to_value(status).expect("runtime snapshot serializes");
+            emit_event(&ctx.event_tx, "runtime.reloaded", value.clone());
+            ResponseEnvelope::ok(id, value)
+        }
         Err(err) => resource_busy_error(id, err),
     }
 }

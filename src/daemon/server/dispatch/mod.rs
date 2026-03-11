@@ -9,7 +9,7 @@ use crate::daemon::channels::ChannelRuntimeManager;
 use crate::daemon::protocol::{
     DaemonRequest, ErrorCode, EventEnvelope, RequestEnvelope, ResponseEnvelope,
 };
-use crate::daemon::state::{DaemonState, DaemonStatus};
+use crate::daemon::state::{DaemonRuntimeSnapshot, DaemonState, DaemonStatus};
 
 mod agent;
 mod channel;
@@ -193,6 +193,18 @@ pub(super) fn emit_registry_issue_events(
             emit_event(tx, event_name, data);
         }
     }
+}
+
+pub(super) async fn build_runtime_snapshot(
+    state: &Arc<RwLock<DaemonState>>,
+    channel_runtimes: &ChannelRuntimeManager,
+) -> DaemonRuntimeSnapshot {
+    let status = {
+        let guard = state.read().await;
+        guard.status().await
+    };
+    let channel_runtimes = channel_runtimes.list().await;
+    DaemonRuntimeSnapshot::from_parts(status, channel_runtimes)
 }
 
 pub(super) async fn sync_channel_runtimes(ctx: &DispatchContext) -> Result<(), anyhow::Error> {
