@@ -91,9 +91,45 @@ cargo build --release
 cargo build --release -p turin-map
 ```
 
-### 2. Create `turin.toml`
+### 2. Try Turin with no API key
 
-Start from the example:
+The fastest local-first smoke path is:
+
+```bash
+target/release/turin quickstart --prompt "Summarize this workspace."
+```
+
+That will:
+
+- scaffold `turin.toml`
+- create `.turin/harnesses/`
+- add `.turin/` to `.gitignore`
+- run a real Turin session with the mock provider
+
+### 3. Scaffold a real project
+
+If you want a real provider-backed config from the start:
+
+```bash
+target/release/turin init \
+  --provider anthropic \
+  --harness-template coding-assistant \
+  --governance balanced
+```
+
+Useful starter commands:
+
+```bash
+target/release/turin init --yes --provider openai --harness-template starter
+target/release/turin harness new reviewer --dir .turin/harnesses-reviewer
+target/release/turin harness test --response "HARNESS_TEST_OK"
+```
+
+`turin init` is interactive when run in a terminal without `--yes`.
+
+### 4. Manual `turin.toml` path
+
+If you prefer hand-edited config, start from the example:
 
 ```bash
 cp turin.toml.example turin.toml
@@ -163,7 +199,7 @@ Use `--config path/to/turin.toml` if the config file lives elsewhere, and use ex
 
 Turin matches semantic/hybrid queries against the index embedding profile. If the runtime provider and index disagree on driver, base URL, model, or dimensions, `strict = false` falls back to lexical search and `strict = true` returns an error. If you do not configure embeddings at all, Turin still works with lexical-only recall and code search.
 
-### 3. Add a harness script
+### 5. Add a harness script manually
 
 ```bash
 mkdir -p .turin/harnesses
@@ -180,7 +216,7 @@ end
 LUA
 ```
 
-### 4. Run Turin
+### 6. Run Turin
 
 ```bash
 target/release/turin run --prompt "List the files in this project and summarize the layout."
@@ -193,12 +229,17 @@ target/release/turin run --prompt "List the files in this project and summarize 
 - `turin repl` — interactive session
 - `turin repl --agent reviewer` — interactive session for a specific configured agent
 - `turin script PATH` — run a harness script directly for testing
-- `turin init` — scaffold a Turin project
+- `turin init` — scaffold a Turin project, interactively or from flags
+- `turin quickstart` — scaffold a mock-backed project if needed and run a first prompt immediately
+- `turin harness new ...` — generate a starter harness template
+- `turin harness test ...` — run a harness against the mock provider
 - `turin check` — validate config + harness scripts
 
 Global options:
 - `--log-level error|warn|info|debug|trace`
 - `--log-file PATH`
+
+See [docs/HARNESS_COOKBOOK.md](docs/HARNESS_COOKBOOK.md) for the progressive starter flow.
 
 ## Daemon Mode
 

@@ -14,6 +14,7 @@ This is the documentation landing page for Turin.
 
 - `docs/HOOKS.md` — stable hook lifecycle, payloads, verdict semantics
 - `docs/PRIMITIVES.md` — **canonical harness API surface reference** (`runtime.*`, aliases, and DX helpers)
+- `docs/HARNESS_COOKBOOK.md` — quick scaffold, template, and mock-test path for new harnesses
 - `docs/HARNESS_GUIDE.md` — practical harness patterns, DX examples, governance-aware design
 - `docs/HARNESS_LIBRARY.md` — ready-to-use harness library entries and how they are validated
 - `library/README.md` — Harness Library catalog from the repository root
@@ -33,9 +34,10 @@ This is the documentation landing page for Turin.
 
 1. `README.md`
 2. `docs/TURIN.md`
-3. `docs/HOOKS.md`
-4. `docs/PRIMITIVES.md`
-5. `docs/HARNESS_GUIDE.md`
+3. `docs/HARNESS_COOKBOOK.md`
+4. `docs/HOOKS.md`
+5. `docs/PRIMITIVES.md`
+6. `docs/HARNESS_GUIDE.md`
 
 ### For contributors
 

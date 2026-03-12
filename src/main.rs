@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser};
-use std::path::Path;
 use std::path::PathBuf;
 
-use turin::kernel::Kernel;
-use turin::kernel::config::TurinConfig;
-
 mod commands;
+use commands::harness::{HarnessNewArgs, HarnessTestArgs};
+use commands::init::{InitArgs, QuickstartArgs};
+use commands::scaffold::{GovernancePreset, HarnessTemplate, InitProvider};
+use turin::kernel::Kernel;
 
 /// Turin: A single-binary, event-driven LLM execution runtime
 #[derive(Parser, Debug)]
@@ -99,13 +99,66 @@ enum Commands {
     },
 
     /// Initialize a new Turin project in the current directory
-    Init,
+    Init {
+        /// Starter provider profile for the generated config
+        #[arg(long, value_enum)]
+        provider: Option<InitProvider>,
+        /// Override the default starter model for the chosen provider
+        #[arg(long)]
+        model: Option<String>,
+        /// Initial harness template
+        #[arg(long, value_enum)]
+        harness_template: Option<HarnessTemplate>,
+        /// Governance preset for the generated config
+        #[arg(long, value_enum)]
+        governance: Option<GovernancePreset>,
+        /// Overwrite an existing turin.toml / starter harness files
+        #[arg(long)]
+        force: bool,
+        /// Skip prompts and accept defaults
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// Initialize a Turin project if needed and run a first prompt immediately
+    Quickstart {
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Prompt to run after scaffolding or loading config
+        #[arg(long)]
+        prompt: Option<String>,
+        /// Starter provider profile when scaffolding a new project
+        #[arg(long, value_enum)]
+        provider: Option<InitProvider>,
+        /// Override the default starter model for the chosen provider
+        #[arg(long)]
+        model: Option<String>,
+        /// Initial harness template when scaffolding a new project
+        #[arg(long, value_enum)]
+        harness_template: Option<HarnessTemplate>,
+        /// Governance preset when scaffolding a new project
+        #[arg(long, value_enum)]
+        governance: Option<GovernancePreset>,
+        /// Overwrite an existing turin.toml / starter harness files when scaffolding
+        #[arg(long)]
+        force: bool,
+        /// Skip prompts and accept defaults when scaffolding
+        #[arg(long)]
+        yes: bool,
+    },
 
     /// Validate configuration and harness scripts
     Check {
         /// Path to turin.toml config file
         #[arg(long, default_value = "turin.toml")]
         config: std::path::PathBuf,
+    },
+
+    /// Scaffold and validate harness scripts
+    Harness {
+        #[command(subcommand)]
+        command: HarnessCommands,
     },
 
     /// Run or control the Turin daemon
@@ -201,6 +254,43 @@ enum DaemonCommands {
     Session {
         #[command(subcommand)]
         command: DaemonSessionCommands,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum HarnessCommands {
+    /// Create a starter harness template
+    New {
+        /// Template to scaffold
+        #[arg(value_enum)]
+        template: HarnessTemplate,
+        /// Target harness directory
+        #[arg(long, default_value = ".turin/harnesses")]
+        dir: PathBuf,
+        /// Overwrite an existing file if the template uses the same path
+        #[arg(long)]
+        force: bool,
+    },
+    /// Run the configured harness against the mock provider
+    Test {
+        /// Path to turin.toml config file
+        #[arg(long, default_value = "turin.toml")]
+        config: PathBuf,
+        /// Override the harness directory just for this test run
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        /// Run the test against a named configured agent
+        #[arg(long)]
+        agent: Option<String>,
+        /// Prompt sent into the mock-backed run
+        #[arg(
+            long,
+            default_value = "Summarize this workspace and mention the active harness files."
+        )]
+        prompt: String,
+        /// Mock provider response returned by the test run
+        #[arg(long, default_value = "Harness test OK.")]
+        response: String,
     },
 }
 
@@ -661,39 +751,6 @@ fn init_tracing(log_level: &str, log_file: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn load_config_with_overrides(
-    config_path: &Path,
-    model: Option<String>,
-    provider: Option<String>,
-    agent_id: Option<&str>,
-) -> Result<TurinConfig> {
-    let mut config =
-        TurinConfig::from_file(config_path).with_context(|| "Failed to load config")?;
-
-    let target = if let Some(agent_id) = agent_id {
-        if agent_id == config.agent.id {
-            &mut config.agent
-        } else {
-            config
-                .agents
-                .get_mut(agent_id)
-                .ok_or_else(|| anyhow::anyhow!("Unknown agent profile: {}", agent_id))?
-        }
-    } else {
-        &mut config.agent
-    };
-
-    if let Some(m) = model {
-        target.model = m;
-    }
-    if let Some(p) = provider {
-        target.provider = p;
-    }
-    config.validate()?;
-
-    Ok(config)
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -709,43 +766,13 @@ async fn main() -> Result<()> {
             verbose: _,
             json,
         } => {
-            let config = load_config_with_overrides(&config, model, provider, agent.as_deref())?;
-            let selected_agent_id = agent.unwrap_or_else(|| config.agent.id.clone());
-            let selected_agent = if selected_agent_id == config.agent.id {
-                &config.agent
-            } else {
-                config.agents.get(&selected_agent_id).ok_or_else(|| {
-                    anyhow::anyhow!("Unknown agent profile: {}", selected_agent_id)
-                })?
-            };
-            let (harness_id, harness_cfg) = config.harness_binding_for_agent(selected_agent)?;
-
-            tracing::info!(
-                agent_id = %selected_agent_id,
-                model = %selected_agent.model,
-                provider = %selected_agent.provider,
-                workspace = %config.kernel.workspace_root,
-                harness_id = %harness_id,
-                harness_dir = %harness_cfg.directory,
-                db = %config.persistence.database_path,
-                "Config loaded"
-            );
-
-            // Build kernel, initialize state store, and run
-            let mut kernel = Kernel::builder(config).json_mode(json).build()?;
-            kernel.init_state().await?;
-            kernel.init_clients()?;
-            kernel.init_harness().await?;
-            kernel.start_watcher()?;
-            let mut session = kernel.create_session_for_agent(&selected_agent_id).await;
-            kernel.start_session(&mut session).await?;
-            kernel.run(&mut session, Some(prompt)).await?;
-            kernel.end_session(&mut session).await?;
-            kernel.shutdown_mcp_clients().await;
-            if !json {
-                commands::common::print_session_summary(&session);
-            }
-            Ok(())
+            let config = commands::common::load_config_with_overrides(
+                &config,
+                model,
+                provider,
+                agent.as_deref(),
+            )?;
+            commands::common::run_prompt_once(config, prompt, agent, json).await
         }
         Commands::Repl {
             config,
@@ -754,7 +781,12 @@ async fn main() -> Result<()> {
             agent,
             verbose,
         } => {
-            let config = load_config_with_overrides(&config, model, provider, agent.as_deref())?;
+            let config = commands::common::load_config_with_overrides(
+                &config,
+                model,
+                provider,
+                agent.as_deref(),
+            )?;
             commands::repl::run_repl(config, verbose, agent).await
         }
         Commands::Script {
@@ -763,7 +795,8 @@ async fn main() -> Result<()> {
             model,
             provider,
         } => {
-            let config = load_config_with_overrides(&config, model, provider, None)?;
+            let config =
+                commands::common::load_config_with_overrides(&config, model, provider, None)?;
 
             // Build kernel
             let mut kernel = Kernel::builder(config).json_mode(false).build()?;
@@ -780,14 +813,82 @@ async fn main() -> Result<()> {
 
             Ok(())
         }
-        Commands::Init => {
-            commands::init::run_init()?;
+        Commands::Init {
+            provider,
+            model,
+            harness_template,
+            governance,
+            force,
+            yes,
+        } => {
+            commands::init::run_init(InitArgs {
+                provider,
+                model,
+                harness_template,
+                governance,
+                force,
+                yes,
+            })?;
+            Ok(())
+        }
+        Commands::Quickstart {
+            config,
+            prompt,
+            provider,
+            model,
+            harness_template,
+            governance,
+            force,
+            yes,
+        } => {
+            commands::init::run_quickstart(QuickstartArgs {
+                config,
+                prompt,
+                provider,
+                model,
+                harness_template,
+                governance,
+                force,
+                yes,
+            })
+            .await?;
             Ok(())
         }
         Commands::Check { config } => {
             commands::check::run_check(&config).await?;
             Ok(())
         }
+        Commands::Harness { command } => match command {
+            HarnessCommands::New {
+                template,
+                dir,
+                force,
+            } => {
+                commands::harness::run_harness_new(HarnessNewArgs {
+                    template,
+                    dir,
+                    force,
+                })?;
+                Ok(())
+            }
+            HarnessCommands::Test {
+                config,
+                dir,
+                agent,
+                prompt,
+                response,
+            } => {
+                commands::harness::run_harness_test(HarnessTestArgs {
+                    config,
+                    dir,
+                    agent,
+                    prompt,
+                    response,
+                })
+                .await?;
+                Ok(())
+            }
+        },
         Commands::Daemon { command } => match command {
             DaemonCommands::Start { args } => {
                 commands::daemon::run_start(

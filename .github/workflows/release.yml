@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-release-assets:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x86_64
+            archive: tar.gz
+          - os: macos-latest
+            name: macos
+            archive: tar.gz
+          - os: windows-latest
+            name: windows-x86_64
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: cargo build --release -p turin -p turin-map
+
+      - name: Package release bundle (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/release/turin dist/
+          cp target/release/turin-map dist/
+          tar -czf "turin-${{ matrix.name }}.tar.gz" -C dist turin turin-map
+
+      - name: Package release bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/turin.exe dist/turin.exe
+          Copy-Item target/release/turin-map.exe dist/turin-map.exe
+          Compress-Archive -Path dist/turin.exe, dist/turin-map.exe -DestinationPath "turin-${{ matrix.name }}.zip"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: turin-${{ matrix.name }}
+          path: turin-${{ matrix.name }}.${{ matrix.archive }}
+
+      - name: Publish release assets
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: turin-${{ matrix.name }}.${{ matrix.archive }}

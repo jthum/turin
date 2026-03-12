@@ -555,6 +555,10 @@ end
 
 Turin keeps ergonomic aliases for common workflows.
 
+If you are starting from zero, use `turin init`, `turin quickstart`, `turin harness new`, and
+`turin harness test` first, then come back here for the deeper patterns.
+The fast bootstrap flow lives in `docs/HARNESS_COOKBOOK.md`.
+
 ### Agent-scoped defaults
 
 ```lua

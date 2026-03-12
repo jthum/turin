@@ -219,6 +219,7 @@ This keeps provider-specific logic out of Turin and speeds debugging.
   - `cargo test -p turin-code-index -- --nocapture`
   - `cargo test -p turin-code-index real_repo_smoke -- --ignored --nocapture`
   - `cargo test -p turin-map -- --nocapture`
+  - `cargo test --test project_cli_integration_tests -- --nocapture`
   - `cargo test test_runtime_code_search_ --test harness_tests -- --nocapture`
   - `cargo test test_dx_fixture_code_cache_shortcuts --test dx_harness_examples -- --nocapture`
   - `cargo test test_dx_fixture_code_search_fallback --test dx_harness_examples -- --nocapture`
@@ -259,6 +260,21 @@ If you are tuning ranking behavior, use `trace = true` in harness/runtime calls 
 
 - Run full `cargo test` before committing
 - Reserve live tests for behavior that depends on real provider responses
+
+## Phase 6 / 7 CLI Smoke
+
+When validating the current onboarding and harness-authoring UX specifically:
+
+```bash
+cargo test --test project_cli_integration_tests -- --nocapture
+```
+
+What this covers:
+
+- `turin init` scaffolding and `.gitignore` update
+- `turin quickstart` bootstrapping and first mock-backed run
+- `turin harness new`
+- `turin harness test`
 
 ## Local SDK Development Without Breaking CI
 
