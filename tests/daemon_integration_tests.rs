@@ -16,7 +16,7 @@ use turin_local_ipc::{
 
 struct DaemonHarness {
     tempdir: std::sync::Arc<TempDir>,
-    socket_path: PathBuf,
+    endpoint: PathBuf,
     join: JoinHandle<Result<()>>,
 }
 
@@ -75,14 +75,14 @@ base_url = "PONG"
             harness_directory = harness_dir.display(),
         );
         std::fs::write(&config_path, config_toml)?;
-        let socket_path = workspace_root.join(".turin/daemon.sock");
+        let endpoint = workspace_root.join(".turin/daemon.sock");
 
         let serve_config_path = config_path.clone();
         let join =
             tokio::spawn(async move { turin::daemon::server::serve(&serve_config_path).await });
 
         let deadline = Instant::now() + Duration::from_secs(5);
-        let client = turin_daemon_client::DaemonClient::new(&socket_path);
+        let client = turin_daemon_client::DaemonClient::new(&endpoint);
         loop {
             if client.handshake().await.is_ok() {
                 break;
@@ -99,7 +99,7 @@ base_url = "PONG"
                 join.abort();
                 return Err(anyhow!(
                     "Timed out waiting for daemon endpoint '{}'",
-                    socket_path.display()
+                    endpoint.display()
                 ));
             }
             sleep(Duration::from_millis(25)).await;
@@ -107,7 +107,7 @@ base_url = "PONG"
 
         Ok(Self {
             tempdir,
-            socket_path,
+            endpoint,
             join,
         })
     }
@@ -119,12 +119,12 @@ base_url = "PONG"
     }
 
     async fn request(&self, request: DaemonRequest) -> Result<ResponseEnvelope> {
-        let stream = connect_local_ipc(&self.socket_path)
+        let stream = connect_local_ipc(&self.endpoint)
             .await
             .with_context(|| {
                 format!(
                     "Failed to connect to daemon endpoint '{}'",
-                    self.socket_path.display()
+                    self.endpoint.display()
                 )
             })?;
         let (reader, mut writer) = split_local_ipc(stream);
@@ -145,7 +145,7 @@ base_url = "PONG"
         &self,
         params: turin::daemon::protocol::RuntimeEventsSubscribeParams,
     ) -> Result<(ResponseEnvelope, EventEnvelope, EventSubscription)> {
-        let stream = connect_local_ipc(&self.socket_path).await?;
+        let stream = connect_local_ipc(&self.endpoint).await?;
         let (reader, mut writer) = split_local_ipc(stream);
         let request = RequestEnvelope::new(
             Some(format!("req-{}", uuid::Uuid::new_v4())),
@@ -268,7 +268,7 @@ async fn wait_for_channel_state(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn daemon_agent_crud_round_trip_over_socket() -> Result<()> {
+async fn daemon_agent_crud_round_trip_over_endpoint() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
 
     let created = result_value(
@@ -348,7 +348,7 @@ async fn daemon_agent_crud_round_trip_over_socket() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn daemon_task_wait_and_session_round_trip_over_socket() -> Result<()> {
+async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
 
     let live = result_value(
@@ -591,7 +591,7 @@ async fn daemon_event_subscription_receives_snapshot_and_mutation() -> Result<()
 #[tokio::test(flavor = "multi_thread")]
 async fn daemon_ping_exposes_typed_handshake() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
-    let client = turin_daemon_client::DaemonClient::new(&daemon.socket_path);
+    let client = turin_daemon_client::DaemonClient::new(&daemon.endpoint);
 
     let handshake = client.handshake().await?;
     assert!(handshake.pong);
@@ -832,7 +832,7 @@ async fn daemon_event_subscription_receives_channel_runtime_events() -> Result<(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn daemon_channel_registry_round_trip_over_socket() -> Result<()> {
+async fn daemon_channel_registry_round_trip_over_endpoint() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
     let channels_dir = daemon.tempdir.path().join("workspace/channels/discord");
     std::fs::create_dir_all(&channels_dir)?;
@@ -883,7 +883,7 @@ channel_id = "1234567890"
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn daemon_channel_management_round_trip_over_socket() -> Result<()> {
+async fn daemon_channel_management_round_trip_over_endpoint() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
 
     let created = result_value(

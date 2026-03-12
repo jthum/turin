@@ -38,7 +38,7 @@ impl DaemonClient {
             .unwrap_or(".");
         let endpoint = value
             .get("daemon")
-            .and_then(|d| d.get("socket_path"))
+            .and_then(|d| d.get("endpoint"))
             .and_then(|v| v.as_str())
             .unwrap_or(".turin/daemon.sock");
         Ok(Self::new(resolve_local_ipc_endpoint(

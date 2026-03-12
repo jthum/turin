@@ -33,40 +33,40 @@ struct ClientContext {
 
 pub async fn serve(config_path: &Path) -> Result<()> {
     let state = Arc::new(RwLock::new(DaemonState::load(config_path).await?));
-    let socket_path = {
+    let endpoint = {
         let guard = state.read().await;
-        guard.socket_path().to_path_buf()
+        guard.endpoint().to_path_buf()
     };
 
     #[cfg(unix)]
-    if let Some(parent) = socket_path.parent() {
+    if let Some(parent) = endpoint.parent() {
         tokio::fs::create_dir_all(parent)
             .await
-            .with_context(|| format!("Failed to create socket directory '{}'", parent.display()))?;
+            .with_context(|| format!("Failed to create endpoint directory '{}'", parent.display()))?;
     }
 
-    cleanup_stale_endpoint(&socket_path)
+    cleanup_stale_endpoint(&endpoint)
         .await
         .with_context(|| {
             format!(
                 "Failed to prepare local IPC endpoint '{}'",
-                socket_path.display()
+                endpoint.display()
             )
         })?;
-    let mut listener = LocalIpcListener::bind(&socket_path).with_context(|| {
+    let mut listener = LocalIpcListener::bind(&endpoint).with_context(|| {
         format!(
             "Failed to bind local IPC endpoint '{}'",
-            socket_path.display()
+            endpoint.display()
         )
     })?;
 
-    info!(endpoint = %socket_path.display(), "Turin daemon started");
+    info!(endpoint = %endpoint.display(), "Turin daemon started");
 
     let (shutdown_tx, mut shutdown_rx) = watch_channel::channel(false);
     let (event_tx, _) = broadcast::channel(512);
     let watcher_slot = Arc::new(std::sync::Mutex::new(None));
     let channel_runtimes = Arc::new(ChannelRuntimeManager::new(
-        socket_path.clone(),
+        endpoint.clone(),
         event_tx.clone(),
     ));
     {
@@ -130,7 +130,7 @@ pub async fn serve(config_path: &Path) -> Result<()> {
         *slot = None;
     }
     channel_runtimes.shutdown().await;
-    remove_endpoint(&socket_path).await.ok();
+    remove_endpoint(&endpoint).await.ok();
     Ok(())
 }
 

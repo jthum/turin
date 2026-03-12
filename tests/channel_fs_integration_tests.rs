@@ -13,7 +13,7 @@ use turin_channel_runner::{ChannelRunner, RunnerConfig};
 struct DaemonHarness {
     _tempdir: std::sync::Arc<TempDir>,
     workspace_root: PathBuf,
-    socket_path: PathBuf,
+    endpoint: PathBuf,
     join: JoinHandle<Result<()>>,
 }
 
@@ -60,13 +60,13 @@ base_url = "PONG"
         );
         std::fs::write(&config_path, config_toml)?;
 
-        let socket_path = workspace_root.join(".turin/daemon.sock");
+        let endpoint = workspace_root.join(".turin/daemon.sock");
         let serve_config_path = config_path.clone();
         let join =
             tokio::spawn(async move { turin::daemon::server::serve(&serve_config_path).await });
 
         let deadline = Instant::now() + Duration::from_secs(10);
-        let client = turin_daemon_client::DaemonClient::new(&socket_path);
+        let client = turin_daemon_client::DaemonClient::new(&endpoint);
         loop {
             if client.handshake().await.is_ok() {
                 break;
@@ -83,7 +83,7 @@ base_url = "PONG"
                 join.abort();
                 return Err(anyhow!(
                     "Timed out waiting for daemon endpoint '{}'",
-                    socket_path.display()
+                    endpoint.display()
                 ));
             }
             sleep(Duration::from_millis(25)).await;
@@ -92,14 +92,14 @@ base_url = "PONG"
         Ok(Self {
             _tempdir: tempdir,
             workspace_root,
-            socket_path,
+            endpoint,
             join,
         })
     }
 
     fn runner(&self) -> ChannelRunner {
         ChannelRunner::new(
-            turin_daemon_client::DaemonClient::new(&self.socket_path),
+            turin_daemon_client::DaemonClient::new(&self.endpoint),
             RunnerConfig {
                 state_path: self.workspace_root.join(".turin/channel-bindings.json"),
                 idle_ttl: Some(Duration::from_secs(600)),
@@ -108,7 +108,7 @@ base_url = "PONG"
     }
 
     async fn stop(self) -> Result<()> {
-        let client = turin_daemon_client::DaemonClient::new(&self.socket_path);
+        let client = turin_daemon_client::DaemonClient::new(&self.endpoint);
         let _: serde_json::Value = client
             .request_ok(
                 None,

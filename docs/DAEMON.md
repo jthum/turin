@@ -48,11 +48,11 @@ Daemon-related bootstrap settings live under `[daemon]` in `turin.toml`:
 [daemon]
 agents_dir = "agents"
 harnesses_dir = "harnesses"
-socket_path = ".turin/daemon.sock"
+endpoint = ".turin/daemon.sock"
 ```
 
 These values define where the daemon reads and watches filesystem-backed state.
-`socket_path` remains the bootstrap config key for the local IPC endpoint seed; on Windows, Turin derives a stable named pipe endpoint from that value.
+On Windows, Turin derives a stable named pipe endpoint from the configured endpoint seed.
 
 Channel-related bootstrap settings also live under `[daemon]`:
 

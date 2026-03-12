@@ -1573,5 +1573,5 @@ fn resolve_endpoint_path(config_path: &std::path::Path) -> Result<std::path::Pat
     let config_base = config_path
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
-    Ok(config.resolve_daemon_socket_path(config_base))
+    Ok(config.resolve_daemon_endpoint(config_base))
 }

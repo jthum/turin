@@ -145,8 +145,8 @@ pub struct DaemonConfig {
     pub harnesses_dir: String,
     #[serde(default = "default_daemon_channels_dir")]
     pub channels_dir: String,
-    #[serde(default = "default_daemon_socket_path")]
-    pub socket_path: String,
+    #[serde(default = "default_daemon_endpoint")]
+    pub endpoint: String,
 }
 
 impl Default for DaemonConfig {
@@ -155,7 +155,7 @@ impl Default for DaemonConfig {
             agents_dir: default_daemon_agents_dir(),
             harnesses_dir: default_daemon_harnesses_dir(),
             channels_dir: default_daemon_channels_dir(),
-            socket_path: default_daemon_socket_path(),
+            endpoint: default_daemon_endpoint(),
         }
     }
 }
@@ -346,7 +346,7 @@ fn default_daemon_channels_dir() -> String {
     "channels".to_string()
 }
 
-fn default_daemon_socket_path() -> String {
+fn default_daemon_endpoint() -> String {
     ".turin/daemon.sock".to_string()
 }
 
@@ -407,8 +407,8 @@ impl TurinConfig {
             "daemon.channels_dir must not be empty"
         );
         anyhow::ensure!(
-            !self.daemon.socket_path.trim().is_empty(),
-            "daemon.socket_path must not be empty"
+            !self.daemon.endpoint.trim().is_empty(),
+            "daemon.endpoint must not be empty"
         );
 
         for (harness_id, harness_cfg) in &self.harnesses {
@@ -567,8 +567,8 @@ impl TurinConfig {
         resolve_under_workspace(base, &self.kernel.workspace_root, &self.daemon.channels_dir)
     }
 
-    pub fn resolve_daemon_socket_path(&self, base: &Path) -> PathBuf {
-        resolve_local_ipc_endpoint(base, &self.kernel.workspace_root, &self.daemon.socket_path)
+    pub fn resolve_daemon_endpoint(&self, base: &Path) -> PathBuf {
+        resolve_local_ipc_endpoint(base, &self.kernel.workspace_root, &self.daemon.endpoint)
     }
 }
 

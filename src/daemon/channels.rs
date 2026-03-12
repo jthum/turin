@@ -64,15 +64,15 @@ struct Inner {
 }
 
 pub struct ChannelRuntimeManager {
-    socket_path: PathBuf,
+    endpoint: PathBuf,
     event_tx: broadcast::Sender<EventEnvelope>,
     inner: Arc<Mutex<Inner>>,
 }
 
 impl ChannelRuntimeManager {
-    pub fn new(socket_path: PathBuf, event_tx: broadcast::Sender<EventEnvelope>) -> Self {
+    pub fn new(endpoint: PathBuf, event_tx: broadcast::Sender<EventEnvelope>) -> Self {
         Self {
-            socket_path,
+            endpoint,
             event_tx,
             inner: Arc::new(Mutex::new(Inner {
                 by_id: HashMap::new(),
@@ -265,7 +265,7 @@ impl ChannelRuntimeManager {
     }
 
     async fn start_fs_channel(&self, workspace_root: PathBuf, channel: DesiredChannel) {
-        let socket_path = self.socket_path.clone();
+        let endpoint = self.endpoint.clone();
         let event_tx = self.event_tx.clone();
         let inner = Arc::clone(&self.inner);
 
@@ -275,7 +275,7 @@ impl ChannelRuntimeManager {
 
         let join = tokio::spawn(async move {
             let run_result = async {
-                let daemon = turin_daemon_client::DaemonClient::new(&socket_path);
+                let daemon = turin_daemon_client::DaemonClient::new(&endpoint);
                 let binding_state = workspace_root
                     .join(".turin/channels")
                     .join(format!("{}-bindings.json", channel.id));
@@ -355,7 +355,7 @@ impl ChannelRuntimeManager {
     }
 
     async fn start_discord_channel(&self, workspace_root: PathBuf, channel: DesiredChannel) {
-        let socket_path = self.socket_path.clone();
+        let endpoint = self.endpoint.clone();
         let event_tx = self.event_tx.clone();
         let inner = Arc::clone(&self.inner);
 
@@ -365,7 +365,7 @@ impl ChannelRuntimeManager {
 
         let join = tokio::spawn(async move {
             let run_result = async {
-                let daemon = turin_daemon_client::DaemonClient::new(&socket_path);
+                let daemon = turin_daemon_client::DaemonClient::new(&endpoint);
                 let binding_state = workspace_root
                     .join(".turin/channels")
                     .join(format!("{}-bindings.json", channel.id));

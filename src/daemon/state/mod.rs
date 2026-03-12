@@ -56,7 +56,7 @@ pub struct DaemonState {
     pub(super) config_path: PathBuf,
     pub(super) config_base: PathBuf,
     pub(super) bootstrap_config: TurinConfig,
-    socket_path: PathBuf,
+    endpoint: PathBuf,
     pub(super) registry_load: RegistryLoad,
     pub(super) kernel: Kernel,
 }
@@ -116,7 +116,7 @@ impl DaemonState {
 
         let registry_load = scan_registry(&bootstrap_config, &config_base)?;
         let effective_config = build_effective_config(&bootstrap_config, &registry_load)?;
-        let socket_path = bootstrap_config.resolve_daemon_socket_path(&config_base);
+        let endpoint = bootstrap_config.resolve_daemon_endpoint(&config_base);
 
         let mut kernel = Kernel::builder(effective_config).build()?;
         kernel.init_state().await?;
@@ -128,21 +128,21 @@ impl DaemonState {
             config_path,
             config_base,
             bootstrap_config,
-            socket_path,
+            endpoint,
             registry_load,
             kernel,
         })
     }
 
-    pub fn socket_path(&self) -> &Path {
-        &self.socket_path
+    pub fn endpoint(&self) -> &Path {
+        &self.endpoint
     }
 
     pub async fn status(&self) -> DaemonStatus {
         DaemonStatus {
             config_path: self.config_path.display().to_string(),
             workspace_root: self.bootstrap_config.kernel.workspace_root.clone(),
-            endpoint: self.socket_path.display().to_string(),
+            endpoint: self.endpoint.display().to_string(),
             registry: snapshot(&self.registry_load),
             harnesses: self.kernel.harness_snapshots(),
             agent_runtimes: self.list_agent_runtime_statuses().await,
