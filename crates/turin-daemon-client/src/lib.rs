@@ -468,7 +468,7 @@ mod tests {
     fn compatible_handshake_is_accepted() {
         let handshake = DaemonHandshake {
             pong: true,
-            version: "0.23.0".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
             protocol_version: DAEMON_PROTOCOL_VERSION,
             transport: current_transport_name().into(),
             wire_format: "ndjson".into(),
@@ -487,7 +487,7 @@ mod tests {
     fn incompatible_protocol_version_is_rejected() {
         let handshake = DaemonHandshake {
             pong: true,
-            version: "0.23.0".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
             protocol_version: DAEMON_PROTOCOL_VERSION + 1,
             transport: current_transport_name().into(),
             wire_format: "ndjson".into(),

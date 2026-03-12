@@ -1817,7 +1817,7 @@ fn resolve_daemon_log_path(
     log_file_override: Option<&Path>,
 ) -> Result<PathBuf> {
     if let Some(path) = log_file_override {
-        return Ok(absolute_path(path)?);
+        return absolute_path(path);
     }
 
     let config = TurinConfig::from_file(config_path)?;

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-03-12
+
+### Added
+- **Cold-Start DX**
+  - Added an interactive `turin init` flow with provider, harness-template, and governance presets.
+  - Added `turin quickstart` for the "scaffold and run a first prompt immediately" path.
+  - Added starter harness templates with readable defaults for `starter`, `safety`, `coding-assistant`, and `reviewer`.
+- **Harness Script DX**
+  - Added `turin harness new <template>` to scaffold starter harnesses into any directory.
+  - Added `turin harness test` to run a real Turin session against the mock provider for cheap deterministic harness validation.
+  - Added `docs/HARNESS_COOKBOOK.md` as the quick path from scaffold to harness testing.
+- **Release Packaging**
+  - Added a first-pass tag-driven GitHub Actions release workflow that packages `turin` and `turin-map` bundles for Linux, macOS, and Windows.
+
+### Changed
+- **Project Scaffolding**
+  - `turin init` now writes a fuller `turin.toml`, seeds `.turin/harnesses`, creates `.turin/state.db`, and adds `.turin/` to `.gitignore`.
+  - The shared scaffold path now keeps generated config and harnesses aligned across `init`, `quickstart`, and `harness new`.
+- **Docs and Testing**
+  - Updated README and harness docs to reflect the new onboarding and harness-authoring flow.
+  - Added focused CLI integration coverage for `init`, `quickstart`, `harness new`, and `harness test`.
+
 ## [0.23.0] - 2026-03-10
 
 ### Added

@@ -448,7 +448,7 @@ mod tests {
     fn handshake_round_trips_typed_shape() {
         let handshake = DaemonHandshake {
             pong: true,
-            version: "0.23.0".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
             protocol_version: DAEMON_PROTOCOL_VERSION,
             transport: DAEMON_TRANSPORT_UNIX.to_string(),
             wire_format: DAEMON_WIRE_FORMAT_NDJSON.to_string(),

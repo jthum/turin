@@ -66,7 +66,7 @@ pub async fn connect(endpoint: &Path) -> io::Result<BoxedLocalIpcStream> {
     #[cfg(unix)]
     {
         let stream = tokio::net::UnixStream::connect(endpoint).await?;
-        return Ok(Box::new(stream));
+        Ok(Box::new(stream))
     }
 
     #[cfg(windows)]
@@ -74,7 +74,7 @@ pub async fn connect(endpoint: &Path) -> io::Result<BoxedLocalIpcStream> {
         use tokio::net::windows::named_pipe::ClientOptions;
 
         let stream = ClientOptions::new().open(endpoint.as_os_str())?;
-        return Ok(Box::new(stream));
+        Ok(Box::new(stream))
     }
 }
 
@@ -166,7 +166,7 @@ impl LocalIpcListener {
         #[cfg(unix)]
         {
             let listener = tokio::net::UnixListener::bind(endpoint)?;
-            return Ok(Self { listener });
+            Ok(Self { listener })
         }
 
         #[cfg(windows)]
@@ -183,7 +183,7 @@ impl LocalIpcListener {
         #[cfg(unix)]
         {
             let (stream, _) = self.listener.accept().await?;
-            return Ok(Box::new(stream));
+            Ok(Box::new(stream))
         }
 
         #[cfg(windows)]

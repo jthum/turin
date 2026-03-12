@@ -21,7 +21,7 @@ pub(crate) enum EmbeddingProviderKind {
     Noop,
 }
 
-#[derive(Args, Debug, Clone)]
+#[derive(Args, Debug, Clone, Default)]
 pub(crate) struct EmbeddingArgs {
     #[arg(
         long,
@@ -50,18 +50,6 @@ pub(crate) struct EmbeddingArgs {
         help = "Environment variable holding the embedding API key, when required"
     )]
     pub embedding_api_key_env: Option<String>,
-}
-
-impl Default for EmbeddingArgs {
-    fn default() -> Self {
-        Self {
-            embedding_provider: None,
-            embedding_model: None,
-            embedding_dimensions: None,
-            embedding_base_url: None,
-            embedding_api_key_env: None,
-        }
-    }
 }
 
 pub(crate) fn build_embedding_provider(

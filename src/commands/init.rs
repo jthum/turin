@@ -148,11 +148,7 @@ fn resolve_init_options(args: InitArgs, quickstart_defaults: bool) -> Result<Ini
                 HarnessTemplate::CodingAssistant,
                 HarnessTemplate::Reviewer,
             ],
-            if quickstart_defaults {
-                HarnessTemplate::CodingAssistant
-            } else {
-                HarnessTemplate::CodingAssistant
-            },
+            HarnessTemplate::CodingAssistant,
             |choice| format!("{} ({})", choice.name(), choice.description()),
         )?,
     };

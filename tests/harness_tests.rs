@@ -1293,6 +1293,12 @@ async fn test_runtime_cache_api_round_trip() -> Result<()> {
             if reset == nil then error("session cache reset failed: " .. tostring(re)) end
             if reset.removed_reads < 1 then error("session cache reset removed nothing") end
 
+            local after_reset, are = runtime.cache.stats({ scope = "session" })
+            if after_reset == nil then error("cache stats after reset failed: " .. tostring(are)) end
+            if after_reset.session == nil or after_reset.session.files_seen ~= 0 then
+                error("session cache reset did not clear session reads")
+            end
+
             return ALLOW
         end
     "#;
@@ -1361,11 +1367,6 @@ async fn test_runtime_cache_api_round_trip() -> Result<()> {
     let cache_stats = store
         .cache_stats(Some(internal_session_id), true, true)
         .await?;
-    assert_eq!(
-        cache_stats.session.expect("session cache stats").files_seen,
-        0,
-        "session reset should clear session cache reads"
-    );
     assert!(
         cache_stats
             .global
