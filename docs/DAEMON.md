@@ -158,6 +158,12 @@ Subscription semantics:
 - if the event stream lags, the daemon emits `runtime.events_lagged` and then immediately sends a fresh `runtime.snapshot`
 - if a watcher-triggered registry rescan fails, the daemon emits `runtime.rescan_failed` with the error message and changed paths
 
+For local GUI wrappers, prefer the managed client subscription in `turin-daemon-client`:
+
+- `DaemonClient::subscribe(...)` is the low-level raw stream
+- `DaemonClient::subscribe_managed(...)` reconnects and resubscribes after daemon restarts
+- after a managed reconnect, the first event is a fresh `runtime.snapshot`
+
 ## Current Command Surface
 
 ### Daemon lifecycle

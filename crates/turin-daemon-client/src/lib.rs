@@ -3,7 +3,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::time::sleep;
 use turin_daemon_protocol::{
     DAEMON_PROTOCOL_VERSION, DaemonHandshake, DaemonRequest, EventEnvelope, NoParams,
     RequestEnvelope, ResponseEnvelope, RuntimeEventsSubscribeParams,
@@ -16,6 +18,21 @@ use turin_local_ipc::{
 #[derive(Debug, Clone)]
 pub struct DaemonClient {
     endpoint: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ManagedSubscribeOptions {
+    pub initial_backoff: Duration,
+    pub max_backoff: Duration,
+}
+
+impl Default for ManagedSubscribeOptions {
+    fn default() -> Self {
+        Self {
+            initial_backoff: Duration::from_millis(100),
+            max_backoff: Duration::from_secs(1),
+        }
+    }
 }
 
 impl DaemonClient {
@@ -120,6 +137,28 @@ impl DaemonClient {
         }
         Ok(EventStream { lines })
     }
+
+    pub async fn subscribe_managed(
+        &self,
+        filter: RuntimeEventsSubscribeParams,
+    ) -> Result<ManagedEventStream> {
+        self.subscribe_managed_with_options(filter, ManagedSubscribeOptions::default())
+            .await
+    }
+
+    pub async fn subscribe_managed_with_options(
+        &self,
+        filter: RuntimeEventsSubscribeParams,
+        options: ManagedSubscribeOptions,
+    ) -> Result<ManagedEventStream> {
+        let stream = self.subscribe(None, filter.clone()).await?;
+        Ok(ManagedEventStream {
+            client: self.clone(),
+            filter,
+            options,
+            stream: Some(stream),
+        })
+    }
 }
 
 pub struct EventStream {
@@ -133,6 +172,64 @@ impl EventStream {
                 serde_json::from_str(&line).context("Failed to decode daemon event")?,
             )),
             None => Ok(None),
+        }
+    }
+}
+
+pub struct ManagedEventStream {
+    client: DaemonClient,
+    filter: RuntimeEventsSubscribeParams,
+    options: ManagedSubscribeOptions,
+    stream: Option<EventStream>,
+}
+
+impl ManagedEventStream {
+    pub async fn next_event(&mut self) -> Result<EventEnvelope> {
+        loop {
+            if self.stream.is_none() {
+                self.stream = Some(self.reconnect().await?);
+            }
+
+            match self
+                .stream
+                .as_mut()
+                .expect("managed stream set before polling")
+                .next()
+                .await
+            {
+                Ok(Some(event)) => return Ok(event),
+                Ok(None) => {
+                    self.stream = None;
+                }
+                Err(err) if is_recoverable_subscription_error(&err) => {
+                    self.stream = None;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    async fn reconnect(&self) -> Result<EventStream> {
+        let mut delay = self.options.initial_backoff;
+        loop {
+            match self.client.handshake().await {
+                Ok(_) => {}
+                Err(err) if is_recoverable_subscription_error(&err) => {
+                    sleep(delay).await;
+                    delay = next_backoff(delay, self.options.max_backoff);
+                    continue;
+                }
+                Err(err) => return Err(err),
+            }
+
+            match self.client.subscribe(None, self.filter.clone()).await {
+                Ok(stream) => return Ok(stream),
+                Err(err) if is_recoverable_subscription_error(&err) => {
+                    sleep(delay).await;
+                    delay = next_backoff(delay, self.options.max_backoff);
+                }
+                Err(err) => return Err(err),
+            }
         }
     }
 }
@@ -169,6 +266,21 @@ pub fn ensure_compatible_handshake(handshake: &DaemonHandshake) -> Result<()> {
     Ok(())
 }
 
+fn is_recoverable_subscription_error(err: &anyhow::Error) -> bool {
+    if err.chain().any(|cause| cause.is::<std::io::Error>()) {
+        return true;
+    }
+
+    let message = err.to_string();
+    message.contains("Failed to connect to")
+        || message.contains("Daemon closed connection before response")
+        || message.contains("Daemon closed connection before subscription ack")
+}
+
+fn next_backoff(current: Duration, max: Duration) -> Duration {
+    current.checked_mul(2).unwrap_or(max).min(max)
+}
+
 fn format_error(response: &ResponseEnvelope) -> String {
     match &response.error {
         Some(err) => match &err.details {
@@ -182,6 +294,7 @@ fn format_error(response: &ResponseEnvelope) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
     use turin_daemon_protocol::{
         DAEMON_PROTOCOL_VERSION, DaemonCapabilities, DaemonRequest, NoParams, ResponseEnvelope,
     };
@@ -247,6 +360,53 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("Unsupported daemon protocol version")
+        );
+    }
+
+    #[test]
+    fn managed_subscribe_defaults_are_wrapper_friendly() {
+        let options = ManagedSubscribeOptions::default();
+        assert_eq!(options.initial_backoff, Duration::from_millis(100));
+        assert_eq!(options.max_backoff, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn io_errors_are_recoverable_for_managed_subscriptions() {
+        let err = anyhow!(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "refused",
+        ));
+        assert!(is_recoverable_subscription_error(&err));
+    }
+
+    #[test]
+    fn protocol_mismatch_is_not_recoverable_for_managed_subscriptions() {
+        let err = anyhow!("Unsupported daemon protocol version 99 (client expects 1)");
+        assert!(!is_recoverable_subscription_error(&err));
+    }
+
+    #[tokio::test]
+    async fn from_config_uses_daemon_endpoint_key() {
+        let tempdir = tempdir().expect("tempdir");
+        let config_path = tempdir.path().join("turin.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[kernel]
+workspace_root = "workspace"
+
+[daemon]
+endpoint = ".turin/gui.sock"
+"#,
+        )
+        .expect("write config");
+
+        let client = DaemonClient::from_config(&config_path)
+            .await
+            .expect("load client from config");
+        assert_eq!(
+            client.endpoint(),
+            tempdir.path().join("workspace/.turin/gui.sock").as_path()
         );
     }
 }

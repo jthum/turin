@@ -119,14 +119,12 @@ base_url = "PONG"
     }
 
     async fn request(&self, request: DaemonRequest) -> Result<ResponseEnvelope> {
-        let stream = connect_local_ipc(&self.endpoint)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to connect to daemon endpoint '{}'",
-                    self.endpoint.display()
-                )
-            })?;
+        let stream = connect_local_ipc(&self.endpoint).await.with_context(|| {
+            format!(
+                "Failed to connect to daemon endpoint '{}'",
+                self.endpoint.display()
+            )
+        })?;
         let (reader, mut writer) = split_local_ipc(stream);
         let request = RequestEnvelope::new(Some(format!("req-{}", uuid::Uuid::new_v4())), request);
         writer
@@ -603,6 +601,97 @@ async fn daemon_ping_exposes_typed_handshake() -> Result<()> {
     assert!(handshake.capabilities.lag_resnapshot);
     assert!(handshake.capabilities.watcher_rescan_failed_events);
     assert!(handshake.capabilities.channels);
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_managed_subscription_reconnects_after_restart() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+    let client = turin_daemon_client::DaemonClient::new(&daemon.endpoint);
+    let mut managed = client.subscribe_managed(Default::default()).await?;
+
+    let snapshot = timeout(Duration::from_secs(5), managed.next_event())
+        .await
+        .context("timed out waiting for initial managed runtime snapshot")??;
+    assert_eq!(snapshot.event, "runtime.snapshot");
+
+    let created = result_value(
+        daemon
+            .request(DaemonRequest::AgentCreate(
+                turin::daemon::protocol::CreateAgentParams {
+                    id: "before-restart".to_string(),
+                    provider: "mock".to_string(),
+                    model: "mock-model".to_string(),
+                    system_prompt: Some("Before restart".to_string()),
+                    thinking: None,
+                    mode: None,
+                    harness: None,
+                    idle_grace_secs: None,
+                    enabled: true,
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(created["id"], "before-restart");
+
+    loop {
+        let event = timeout(Duration::from_secs(5), managed.next_event())
+            .await
+            .context("timed out waiting for pre-restart agent.created")??;
+        if event.event == "agent.created" {
+            assert_eq!(event.data["id"], "before-restart");
+            break;
+        }
+    }
+
+    let daemon = daemon.restart().await?;
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let snapshot = loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let event = timeout(remaining, managed.next_event())
+            .await
+            .context("timed out waiting for managed resubscribe snapshot after restart")??;
+        if event.event == "runtime.snapshot" {
+            break event;
+        }
+    };
+    assert!(
+        snapshot.data["endpoint"]
+            .as_str()
+            .is_some_and(|endpoint| !endpoint.is_empty()),
+        "managed runtime snapshot should include endpoint after reconnect"
+    );
+
+    let created = result_value(
+        daemon
+            .request(DaemonRequest::AgentCreate(
+                turin::daemon::protocol::CreateAgentParams {
+                    id: "after-restart".to_string(),
+                    provider: "mock".to_string(),
+                    model: "mock-model".to_string(),
+                    system_prompt: Some("After restart".to_string()),
+                    thinking: None,
+                    mode: None,
+                    harness: None,
+                    idle_grace_secs: None,
+                    enabled: true,
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(created["id"], "after-restart");
+
+    loop {
+        let event = timeout(Duration::from_secs(5), managed.next_event())
+            .await
+            .context("timed out waiting for post-restart agent.created")??;
+        if event.event == "agent.created" {
+            assert_eq!(event.data["id"], "after-restart");
+            break;
+        }
+    }
 
     daemon.stop().await
 }
