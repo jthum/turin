@@ -170,14 +170,26 @@ For local GUI wrappers, prefer the managed client subscription in `turin-daemon-
 
 ```bash
 turin daemon start
+turin daemon start --background
+turin daemon ensure
 turin daemon ping
+turin daemon health
 turin daemon status
+turin daemon wait
 turin daemon reload
 turin daemon rescan
 turin daemon errors
+turin daemon logs
 turin daemon stop
 turin daemon events
 ```
+
+Wrapper-oriented lifecycle notes:
+
+- `turin daemon start --background` spawns the daemon and waits for readiness
+- `turin daemon ensure` is single-instance friendly and only starts a new daemon if one is not already reachable at the configured endpoint
+- `turin daemon health --json` returns a compact readiness/degradation/offline view for local wrappers
+- `turin daemon logs` uses the default background log path at `<workspace>/.turin/daemon.log` unless `--log-file` is explicitly supplied
 
 ### Agents
 
@@ -351,6 +363,7 @@ The daemon now exposes:
 The CLI defaults are also intentionally human-readable:
 
 - `turin daemon status`, `agent list`, and `harness list` render tables
+- `turin daemon health` and `turin daemon ensure` render compact lifecycle/readiness summaries
 - `turin daemon task *` renders compact task summaries by default
 - `turin daemon session *` renders readable session summaries and persisted detail tables by default
 - `--json` remains available everywhere when a machine-readable response is needed

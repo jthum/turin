@@ -117,13 +117,18 @@ enum Commands {
 
 #[derive(clap::Subcommand, Debug)]
 enum DaemonCommands {
-    /// Start the daemon in the foreground
+    /// Start the daemon
     Start {
         #[command(flatten)]
-        args: DaemonConfigArgs,
+        args: DaemonStartArgs,
     },
     /// Ping the daemon
     Ping {
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
+    /// Show wrapper-friendly daemon health
+    Health {
         #[command(flatten)]
         args: DaemonOutputArgs,
     },
@@ -131,6 +136,16 @@ enum DaemonCommands {
     Status {
         #[command(flatten)]
         args: DaemonOutputArgs,
+    },
+    /// Wait for the daemon to become ready
+    Wait {
+        #[command(flatten)]
+        args: DaemonReadyArgs,
+    },
+    /// Ensure the daemon is running, starting it in the background if needed
+    Ensure {
+        #[command(flatten)]
+        args: DaemonReadyArgs,
     },
     /// Rescan filesystem-backed daemon state
     Rescan {
@@ -156,6 +171,11 @@ enum DaemonCommands {
     Events {
         #[command(flatten)]
         args: DaemonOutputArgs,
+    },
+    /// Inspect daemon log output
+    Logs {
+        #[command(flatten)]
+        args: DaemonLogsArgs,
     },
     /// Manage filesystem-backed daemon agents
     Agent {
@@ -560,12 +580,57 @@ struct DaemonConfigArgs {
 }
 
 #[derive(Args, Debug, Clone)]
+struct DaemonStartArgs {
+    #[command(flatten)]
+    config: DaemonConfigArgs,
+    /// Start the daemon in the background and wait for readiness
+    #[arg(long)]
+    background: bool,
+    /// When starting in the background, how long to wait for readiness
+    #[arg(long, default_value_t = 5000)]
+    wait_timeout_ms: u64,
+    /// Output wrapper-friendly JSON when using --background
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args, Debug, Clone)]
 struct DaemonOutputArgs {
     #[command(flatten)]
     config: DaemonConfigArgs,
     /// Output JSON
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+struct DaemonReadyArgs {
+    #[command(flatten)]
+    config: DaemonConfigArgs,
+    /// Maximum time to wait for the daemon to become ready
+    #[arg(long, default_value_t = 5000)]
+    timeout_ms: u64,
+    /// Poll interval used while waiting for readiness
+    #[arg(long, default_value_t = 100)]
+    poll_interval_ms: u64,
+    /// Output JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+struct DaemonLogsArgs {
+    #[command(flatten)]
+    config: DaemonConfigArgs,
+    /// Output JSON
+    #[arg(long)]
+    json: bool,
+    /// Show only the resolved daemon log path
+    #[arg(long)]
+    path_only: bool,
+    /// Number of trailing log lines to show
+    #[arg(long, default_value_t = 40)]
+    lines: usize,
 }
 
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
@@ -632,7 +697,7 @@ fn load_config_with_overrides(
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    init_tracing(&cli.log_level, cli.log_file)?;
+    init_tracing(&cli.log_level, cli.log_file.clone())?;
 
     match cli.command {
         Commands::Run {
@@ -724,12 +789,45 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Daemon { command } => match command {
-            DaemonCommands::Start { args } => commands::daemon::run_start(&args.config).await,
+            DaemonCommands::Start { args } => {
+                commands::daemon::run_start(
+                    &args.config.config,
+                    args.background,
+                    args.wait_timeout_ms,
+                    args.json,
+                    &cli.log_level,
+                    cli.log_file.as_deref(),
+                )
+                .await
+            }
             DaemonCommands::Ping { args } => {
                 commands::daemon::run_ping(&args.config.config, args.json).await
             }
+            DaemonCommands::Health { args } => {
+                commands::daemon::run_health(&args.config.config, args.json).await
+            }
             DaemonCommands::Status { args } => {
                 commands::daemon::run_status(&args.config.config, args.json).await
+            }
+            DaemonCommands::Wait { args } => {
+                commands::daemon::run_wait(
+                    &args.config.config,
+                    args.timeout_ms,
+                    args.poll_interval_ms,
+                    args.json,
+                )
+                .await
+            }
+            DaemonCommands::Ensure { args } => {
+                commands::daemon::run_ensure(
+                    &args.config.config,
+                    args.timeout_ms,
+                    args.poll_interval_ms,
+                    args.json,
+                    &cli.log_level,
+                    cli.log_file.as_deref(),
+                )
+                .await
             }
             DaemonCommands::Rescan { args } => {
                 commands::daemon::run_rescan(&args.config.config, args.json).await
@@ -745,6 +843,16 @@ async fn main() -> Result<()> {
             }
             DaemonCommands::Events { args } => {
                 commands::daemon::run_events(&args.config.config, args.json).await
+            }
+            DaemonCommands::Logs { args } => {
+                commands::daemon::run_logs(
+                    &args.config.config,
+                    args.lines,
+                    args.path_only,
+                    args.json,
+                    cli.log_file.as_deref(),
+                )
+                .await
             }
             DaemonCommands::Agent { command } => match command {
                 DaemonAgentCommands::List { args } => {

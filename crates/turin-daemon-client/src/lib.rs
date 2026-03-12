@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow};
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -18,6 +18,68 @@ use turin_local_ipc::{
 #[derive(Debug, Clone)]
 pub struct DaemonClient {
     endpoint: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DaemonHealthState {
+    Ready,
+    Degraded,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DaemonHealth {
+    pub state: DaemonHealthState,
+    pub ready: bool,
+    pub endpoint: String,
+    pub version: String,
+    pub protocol_version: u32,
+    pub transport: String,
+    pub wire_format: String,
+    pub issue_count: usize,
+    pub agent_count: usize,
+    pub harness_count: usize,
+    pub channel_count: usize,
+    pub running_agent_count: usize,
+    pub active_task_count: usize,
+    pub queued_task_count: usize,
+    pub awaiting_result_count: usize,
+    pub channel_runtime_count: usize,
+    pub failed_channel_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct DaemonStatusSnapshot {
+    endpoint: String,
+    registry: RegistrySnapshot,
+    agent_runtimes: Vec<AgentRuntimeSnapshot>,
+    #[serde(default)]
+    channel_runtimes: Vec<ChannelRuntimeSnapshot>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RegistrySnapshot {
+    #[serde(default)]
+    agents: Vec<Value>,
+    #[serde(default)]
+    shared_harnesses: Vec<Value>,
+    #[serde(default)]
+    channels: Vec<Value>,
+    #[serde(default)]
+    issues: Vec<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentRuntimeSnapshot {
+    running: bool,
+    active_tasks: usize,
+    queued_tasks: usize,
+    awaiting_results: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelRuntimeSnapshot {
+    state: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -109,6 +171,87 @@ impl DaemonClient {
             .await?;
         ensure_compatible_handshake(&handshake)?;
         Ok(handshake)
+    }
+
+    pub async fn health(&self) -> Result<DaemonHealth> {
+        let handshake = self.handshake().await?;
+        let status: DaemonStatusSnapshot = self
+            .request_ok(None, DaemonRequest::DaemonStatus(NoParams::default()))
+            .await?;
+
+        let running_agent_count = status
+            .agent_runtimes
+            .iter()
+            .filter(|runtime| runtime.running)
+            .count();
+        let active_task_count = status
+            .agent_runtimes
+            .iter()
+            .map(|runtime| runtime.active_tasks)
+            .sum();
+        let queued_task_count = status
+            .agent_runtimes
+            .iter()
+            .map(|runtime| runtime.queued_tasks)
+            .sum();
+        let awaiting_result_count = status
+            .agent_runtimes
+            .iter()
+            .map(|runtime| runtime.awaiting_results)
+            .sum();
+        let failed_channel_count = status
+            .channel_runtimes
+            .iter()
+            .filter(|runtime| runtime.state == "failed")
+            .count();
+        let state = if status.registry.issues.is_empty() && failed_channel_count == 0 {
+            DaemonHealthState::Ready
+        } else {
+            DaemonHealthState::Degraded
+        };
+
+        Ok(DaemonHealth {
+            ready: true,
+            endpoint: status.endpoint,
+            version: handshake.version,
+            protocol_version: handshake.protocol_version,
+            transport: handshake.transport,
+            wire_format: handshake.wire_format,
+            issue_count: status.registry.issues.len(),
+            agent_count: status.registry.agents.len(),
+            harness_count: status.registry.shared_harnesses.len(),
+            channel_count: status.registry.channels.len(),
+            running_agent_count,
+            active_task_count,
+            queued_task_count,
+            awaiting_result_count,
+            channel_runtime_count: status.channel_runtimes.len(),
+            failed_channel_count,
+            state,
+        })
+    }
+
+    pub async fn wait_until_ready(
+        &self,
+        timeout: Duration,
+        poll_interval: Duration,
+    ) -> Result<DaemonHandshake> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let poll_interval = poll_interval.max(Duration::from_millis(10));
+
+        loop {
+            match self.handshake().await {
+                Ok(handshake) => return Ok(handshake),
+                Err(err) if is_recoverable_subscription_error(&err) => {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(err);
+                    }
+                }
+                Err(err) => return Err(err),
+            }
+
+            sleep(poll_interval).await;
+        }
     }
 
     pub async fn subscribe(
@@ -407,6 +550,14 @@ endpoint = ".turin/gui.sock"
         assert_eq!(
             client.endpoint(),
             tempdir.path().join("workspace/.turin/gui.sock").as_path()
+        );
+    }
+
+    #[test]
+    fn next_backoff_caps_at_maximum() {
+        assert_eq!(
+            next_backoff(Duration::from_millis(750), Duration::from_secs(1)),
+            Duration::from_secs(1)
         );
     }
 }

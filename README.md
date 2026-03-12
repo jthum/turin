@@ -214,8 +214,10 @@ The daemon uses:
 Core commands:
 
 ```bash
-turin daemon start
+turin daemon ensure
+turin daemon health --json
 turin daemon status
+turin daemon logs
 turin daemon agent list
 turin daemon agent create docs-reviewer --provider mock --model mock-model
 turin daemon session open docs-reviewer
@@ -223,6 +225,13 @@ turin daemon session resume <session-id>
 turin daemon task submit docs-reviewer "Review the docs" --wait
 turin daemon events
 ```
+
+For local wrappers and desktop apps:
+
+- `turin daemon ensure` starts the daemon in the background if needed
+- `turin daemon wait` blocks until the daemon is ready
+- `turin daemon health --json` returns a compact readiness snapshot
+- `turin daemon logs` resolves the background daemon log path and shows recent lines
 
 See `docs/DAEMON.md` for the daemon filesystem model, runtime behavior, and command surface.
 

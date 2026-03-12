@@ -225,6 +225,7 @@ This keeps provider-specific logic out of Turin and speeds debugging.
   - `cargo test test_dx_fixture_workspace_review_assistant --test dx_harness_examples -- --nocapture`
   - `cargo test test_lexical_only_hybrid_fallback_prefers_best_text_match --lib`
   - `cargo test --test daemon_integration_tests -- --nocapture`
+  - `cargo test --test daemon_cli_integration_tests -- --nocapture`
   - `cargo test daemon_managed_subscription_reconnects_after_restart --test daemon_integration_tests -- --nocapture`
 
 For a manual local-embeddings smoke check:
