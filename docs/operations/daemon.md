@@ -2,6 +2,8 @@
 
 Turin now has a local-first daemon mode for dynamic agent and harness management.
 
+For authenticated network access on top of the daemon, see `docs/operations/remote.md`.
+
 The daemon is built around three rules:
 
 1. The filesystem is the persisted source of truth.

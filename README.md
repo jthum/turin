@@ -495,6 +495,7 @@ The library is exercised by `cargo test --test example_harness_examples`, so it 
 - `docs/guides/harness-library.md` — ready-to-use harness library entries
 - `docs/guides/channels/telegram.md` — step-by-step Telegram channel setup
 - `docs/concepts/governance.md` — capability model, profiles, import scoping, grants
+- `docs/operations/remote.md` — authenticated remote bridge for HTTP + SSE/WebSocket daemon access
 - `docs/operations/testing.md` — local validation, test suite, and smoke workflows
 - `docs/operations/live-provider-testing.md` — live endpoint testing procedures
 
