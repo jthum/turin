@@ -1,0 +1,54 @@
+use std::path::PathBuf;
+
+use anyhow::Result;
+use clap::Parser;
+use turin::remote::{RemoteServeOptions, serve};
+use turin::tracing_support::init_tracing;
+
+#[derive(Parser, Debug)]
+#[command(name = "turin-remote", version, about)]
+struct Cli {
+    /// Path to turin.toml config file
+    #[arg(long, default_value = "turin.toml")]
+    config: PathBuf,
+
+    /// Override the remote bind address
+    #[arg(long)]
+    bind: Option<String>,
+
+    /// Override the remote auth token directly
+    #[arg(long)]
+    auth_token: Option<String>,
+
+    /// Override the remote auth token env var name
+    #[arg(long)]
+    auth_token_env: Option<String>,
+
+    /// Override the SSE/WebSocket keepalive interval in seconds
+    #[arg(long)]
+    event_keepalive_secs: Option<u64>,
+
+    /// Log level (error, warn, info, debug, trace)
+    #[arg(long, default_value = "info")]
+    log_level: String,
+
+    /// Path to log file
+    #[arg(long)]
+    log_file: Option<PathBuf>,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+    init_tracing(&cli.log_level, cli.log_file)?;
+    serve(
+        &cli.config,
+        RemoteServeOptions {
+            bind: cli.bind,
+            auth_token: cli.auth_token,
+            auth_token_env: cli.auth_token_env,
+            event_keepalive_secs: cli.event_keepalive_secs,
+        },
+    )
+    .await
+}

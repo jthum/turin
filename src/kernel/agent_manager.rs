@@ -1192,6 +1192,7 @@ mod tests {
             embeddings: Some(EmbeddingConfig::noop()),
             governance: GovernanceConfig::default(),
             daemon: Default::default(),
+            remote: Default::default(),
         }
     }
 

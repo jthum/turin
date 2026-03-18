@@ -24,6 +24,10 @@ description = "A single-binary, event-driven LLM execution runtime with composab
 name = "turin"
 path = "src/main.rs"
 
+[[bin]]
+name = "turin-remote"
+path = "src/bin/turin_remote.rs"
+
 [lib]
 name = "turin"
 path = "src/lib.rs"
@@ -87,10 +91,20 @@ mlua = { version = "0.11", features = ["luau", "serialize", "async", "macros", "
 tracing = { version = "0.1.44", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.22", features = ["fmt", "env-filter", "ansi", "json"] }
 tracing-appender = "0.2.4"
+base64 = "0.22"
+bytes = "1.0"
+http = "1.0"
+http-body-util = "0.1"
+hyper = { version = "1.8", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["server", "http1", "tokio"] }
+sha1 = "0.10"
+tokio-tungstenite = { version = "0.24", default-features = false }
+url = "2.5"
 
 [dev-dependencies]
 tempfile = "3.10"
 proptest = "1.4"
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls"] }
 turin-daemon-client = { path = "crates/turin-daemon-client" }
 turin-daemon-protocol = { path = "crates/turin-daemon-protocol" }
 turin-local-ipc = { path = "crates/turin-local-ipc" }

@@ -204,6 +204,7 @@ mod tests {
             embeddings: Some(EmbeddingConfig::noop()),
             governance: crate::kernel::config::GovernanceConfig::default(),
             daemon: Default::default(),
+            remote: Default::default(),
         };
 
         let manager = HarnessManager::from_config(&config)?;

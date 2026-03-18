@@ -28,6 +28,8 @@ pub struct TurinConfig {
     pub governance: GovernanceConfig,
     #[serde(default)]
     pub daemon: DaemonConfig,
+    #[serde(default)]
+    pub remote: RemoteConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -156,6 +158,26 @@ impl Default for DaemonConfig {
             harnesses_dir: default_daemon_harnesses_dir(),
             channels_dir: default_daemon_channels_dir(),
             endpoint: default_daemon_endpoint(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct RemoteConfig {
+    #[serde(default = "default_remote_bind")]
+    pub bind: String,
+    #[serde(default = "default_remote_auth_token_env")]
+    pub auth_token_env: String,
+    #[serde(default = "default_remote_event_keepalive_secs")]
+    pub event_keepalive_secs: u64,
+}
+
+impl Default for RemoteConfig {
+    fn default() -> Self {
+        Self {
+            bind: default_remote_bind(),
+            auth_token_env: default_remote_auth_token_env(),
+            event_keepalive_secs: default_remote_event_keepalive_secs(),
         }
     }
 }
@@ -350,6 +372,18 @@ fn default_daemon_endpoint() -> String {
     ".turin/daemon.sock".to_string()
 }
 
+fn default_remote_bind() -> String {
+    "127.0.0.1:9324".to_string()
+}
+
+fn default_remote_auth_token_env() -> String {
+    "TURIN_REMOTE_TOKEN".to_string()
+}
+
+fn default_remote_event_keepalive_secs() -> u64 {
+    15
+}
+
 // ─── Loading ─────────────────────────────────────────────────────
 
 impl TurinConfig {
@@ -409,6 +443,18 @@ impl TurinConfig {
         anyhow::ensure!(
             !self.daemon.endpoint.trim().is_empty(),
             "daemon.endpoint must not be empty"
+        );
+        anyhow::ensure!(
+            !self.remote.bind.trim().is_empty(),
+            "remote.bind must not be empty"
+        );
+        anyhow::ensure!(
+            !self.remote.auth_token_env.trim().is_empty(),
+            "remote.auth_token_env must not be empty"
+        );
+        anyhow::ensure!(
+            self.remote.event_keepalive_secs > 0,
+            "remote.event_keepalive_secs must be greater than 0"
         );
 
         for (harness_id, harness_cfg) in &self.harnesses {
@@ -677,6 +723,8 @@ type = "openai"
         assert_eq!(config.kernel.max_turns, 50);
         assert_eq!(config.persistence.database_path, ".turin/state.db");
         assert_eq!(config.harness.directory, ".turin/harnesses");
+        assert_eq!(config.remote.bind, "127.0.0.1:9324");
+        assert_eq!(config.remote.auth_token_env, "TURIN_REMOTE_TOKEN");
     }
 
     #[test]
@@ -837,6 +885,23 @@ type = "openai"
 "#;
         let err = TurinConfig::from_str(toml).unwrap_err();
         assert!(err.to_string().contains("empty header name"));
+    }
+
+    #[test]
+    fn test_validate_remote_keepalive_must_be_positive() {
+        let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[remote]
+event_keepalive_secs = 0
+"#;
+        let err = TurinConfig::from_str(toml).unwrap_err();
+        assert!(err.to_string().contains("remote.event_keepalive_secs"));
     }
 
     #[test]
