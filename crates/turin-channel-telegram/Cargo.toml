@@ -1,0 +1,17 @@
+[package]
+name = "turin-channel-telegram"
+version = "0.24.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", default-features = false, features = ["time", "sync"] }
+turin-channel-core = { path = "../turin-channel-core" }
+turin-channel-runner = { path = "../turin-channel-runner" }
+
+[dev-dependencies]
+tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread"] }

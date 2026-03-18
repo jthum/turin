@@ -8,6 +8,7 @@ members = [
     "crates/turin-channel-runner",
     "crates/turin-channel-fs",
     "crates/turin-channel-discord",
+    "crates/turin-channel-telegram",
     "crates/turin-code-index",
     "crates/turin-map",
 ]
@@ -50,6 +51,7 @@ turin-daemon-client = { path = "crates/turin-daemon-client" }
 turin-channel-runner = { path = "crates/turin-channel-runner" }
 turin-channel-fs = { path = "crates/turin-channel-fs" }
 turin-channel-discord = { path = "crates/turin-channel-discord" }
+turin-channel-telegram = { path = "crates/turin-channel-telegram" }
 turin-code-index = { path = "crates/turin-code-index" }
 
 # Inference SDK family (unified provider layer)
@@ -96,6 +98,7 @@ turin-channel-core = { path = "crates/turin-channel-core" }
 turin-channel-runner = { path = "crates/turin-channel-runner" }
 turin-channel-fs = { path = "crates/turin-channel-fs" }
 turin-channel-discord = { path = "crates/turin-channel-discord" }
+turin-channel-telegram = { path = "crates/turin-channel-telegram" }
 
 [profile.dev]
 debug = 0         # Lower compile memory and artifact size during normal iteration

@@ -399,6 +399,75 @@ async fn channel_update_rejects_invalid_fs_poll_interval() -> Result<()> {
 }
 
 #[tokio::test]
+async fn channel_create_and_update_accept_valid_telegram_settings() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let mut state = DaemonState::load(&config_path).await?;
+
+    let created = state
+        .create_channel(CreateChannelInput {
+            id: "telegram".to_string(),
+            kind: "telegram".to_string(),
+            agent_id: "default".to_string(),
+            idle_ttl_secs: Some(600),
+            enabled: false,
+            settings: json!({
+                "token_env": "TELEGRAM_BOT_TOKEN",
+                "chat_id": -100123456,
+                "poll_timeout_secs": 10,
+            }),
+        })
+        .await?;
+    assert_eq!(created.id, "telegram");
+    assert_eq!(created.kind, "telegram");
+    assert_eq!(created.settings["chat_id"], -100123456);
+
+    let updated = state
+        .update_channel(
+            "telegram",
+            UpdateChannelInput {
+                idle_ttl_secs: Some(900),
+                settings: Some(json!({
+                    "workspace_id": "ops",
+                    "poll_interval_ms": 250,
+                })),
+                ..UpdateChannelInput::default()
+            },
+        )
+        .await?;
+    assert_eq!(updated.idle_ttl_secs, Some(900));
+    assert_eq!(updated.settings["workspace_id"], "ops");
+    assert_eq!(updated.settings["chat_id"], -100123456);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn channel_create_rejects_invalid_telegram_settings() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let mut state = DaemonState::load(&config_path).await?;
+
+    let error = state
+        .create_channel(CreateChannelInput {
+            id: "telegram".to_string(),
+            kind: "telegram".to_string(),
+            agent_id: "default".to_string(),
+            idle_ttl_secs: Some(600),
+            enabled: true,
+            settings: json!({
+                "token_env": "TELEGRAM_BOT_TOKEN",
+                "chat_id": "@ops"
+            }),
+        })
+        .await
+        .expect_err("telegram settings with non-numeric chat_id should fail");
+    assert!(error.to_string().contains("chat_id"));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn agent_can_bind_shared_harness_and_switch_back_to_local() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;

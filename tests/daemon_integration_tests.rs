@@ -1292,3 +1292,190 @@ async fn daemon_discord_channel_reports_failed_runtime_when_token_is_missing() -
 
     daemon.stop().await
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_telegram_channel_management_round_trip_over_endpoint() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+
+    let created = result_value(
+        daemon
+            .request(DaemonRequest::ChannelCreate(
+                turin::daemon::protocol::CreateChannelParams {
+                    id: "telegram-local".to_string(),
+                    kind: "telegram".to_string(),
+                    agent_id: "default".to_string(),
+                    idle_ttl_secs: Some(600),
+                    enabled: false,
+                    settings: Some(serde_json::json!({
+                        "token_env": "TELEGRAM_BOT_TOKEN",
+                        "chat_id": -100123456,
+                        "poll_timeout_secs": 10,
+                    })),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(created["id"], "telegram-local");
+    assert_eq!(created["kind"], "telegram");
+    assert_eq!(created["settings"]["chat_id"], -100123456);
+
+    let updated = result_value(
+        daemon
+            .request(DaemonRequest::ChannelUpdate(
+                turin::daemon::protocol::UpdateChannelParams {
+                    id: "telegram-local".to_string(),
+                    kind: None,
+                    agent_id: None,
+                    idle_ttl_secs: Some(900),
+                    settings: Some(serde_json::json!({
+                        "workspace_id": "ops",
+                        "poll_interval_ms": 250,
+                    })),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(updated["idle_ttl_secs"], 900);
+    assert_eq!(updated["settings"]["workspace_id"], "ops");
+    assert_eq!(updated["settings"]["chat_id"], -100123456);
+
+    let enabled = result_value(
+        daemon
+            .request(DaemonRequest::ChannelEnable(
+                turin::daemon::protocol::EntityIdParams {
+                    id: "telegram-local".to_string(),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(enabled["enabled"], true);
+
+    let disabled = result_value(
+        daemon
+            .request(DaemonRequest::ChannelDisable(
+                turin::daemon::protocol::EntityIdParams {
+                    id: "telegram-local".to_string(),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(disabled["enabled"], false);
+
+    let delete_result = result_value(
+        daemon
+            .request(DaemonRequest::ChannelDelete(
+                turin::daemon::protocol::EntityIdParams {
+                    id: "telegram-local".to_string(),
+                },
+            ))
+            .await?,
+    );
+    let channels = delete_result["registry"]["channels"]
+        .as_array()
+        .context("registry channels array")?;
+    assert!(
+        channels
+            .iter()
+            .all(|channel| channel["id"] != "telegram-local")
+    );
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_channel_create_rejects_invalid_telegram_settings() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+
+    let response = daemon
+        .request(DaemonRequest::ChannelCreate(
+            turin::daemon::protocol::CreateChannelParams {
+                id: "telegram-bad".to_string(),
+                kind: "telegram".to_string(),
+                agent_id: "default".to_string(),
+                idle_ttl_secs: Some(600),
+                enabled: true,
+                settings: Some(serde_json::json!({
+                    "token_env": "TELEGRAM_BOT_TOKEN",
+                    "chat_id": "@ops"
+                })),
+            },
+        ))
+        .await?;
+
+    assert!(!response.ok, "invalid settings should be rejected");
+    let error_message = response
+        .error
+        .as_ref()
+        .map(|error| error.message.clone())
+        .unwrap_or_default();
+    assert!(
+        error_message.contains("chat_id"),
+        "unexpected validation error: {}",
+        error_message
+    );
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_telegram_channel_reports_failed_runtime_when_token_is_missing() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+
+    let created = result_value(
+        daemon
+            .request(DaemonRequest::ChannelCreate(
+                turin::daemon::protocol::CreateChannelParams {
+                    id: "telegram-runtime".to_string(),
+                    kind: "telegram".to_string(),
+                    agent_id: "default".to_string(),
+                    idle_ttl_secs: Some(600),
+                    enabled: true,
+                    settings: Some(serde_json::json!({
+                        "token_env": "TELEGRAM_TOKEN_MISSING_FOR_TEST",
+                        "chat_id": -100123456,
+                        "poll_timeout_secs": 0,
+                        "poll_interval_ms": 25,
+                    })),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(created["id"], "telegram-runtime");
+
+    let failed = wait_for_channel_state(&daemon, "telegram-runtime", "failed", 10).await?;
+    let error = failed["last_error"]
+        .as_str()
+        .context("telegram-runtime failed state should include last_error")?;
+    let error_code = failed["last_error_code"]
+        .as_str()
+        .context("telegram-runtime failed state should include last_error_code")?;
+    assert!(
+        error_code.contains("telegram_auth_missing_token")
+            || error_code.contains("auth_missing_token"),
+        "unexpected telegram runtime error code: {}",
+        error_code
+    );
+    assert!(
+        error.contains("TELEGRAM_TOKEN_MISSING_FOR_TEST"),
+        "unexpected telegram runtime error: {}",
+        error
+    );
+
+    let daemon_status = result_value(
+        daemon
+            .request(DaemonRequest::DaemonStatus(
+                turin::daemon::protocol::NoParams::default(),
+            ))
+            .await?,
+    );
+    let runtime_list = daemon_status["channel_runtimes"]
+        .as_array()
+        .context("daemon.status channel_runtimes should be an array")?;
+    assert!(
+        runtime_list
+            .iter()
+            .any(|entry| entry["id"] == "telegram-runtime" && entry["state"] == "failed")
+    );
+
+    daemon.stop().await
+}
