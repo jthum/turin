@@ -28,6 +28,10 @@ struct Cli {
     #[arg(long)]
     event_keepalive_secs: Option<u64>,
 
+    /// Allow binding turin-remote to a non-loopback address
+    #[arg(long)]
+    allow_non_loopback: bool,
+
     /// Log level (error, warn, info, debug, trace)
     #[arg(long, default_value = "info")]
     log_level: String,
@@ -48,6 +52,7 @@ async fn main() -> Result<()> {
             auth_token: cli.auth_token,
             auth_token_env: cli.auth_token_env,
             event_keepalive_secs: cli.event_keepalive_secs,
+            allow_non_loopback: Some(cli.allow_non_loopback),
         },
     )
     .await

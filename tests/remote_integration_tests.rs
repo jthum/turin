@@ -9,6 +9,10 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, timeout};
+use tokio_tungstenite::{
+    client_async,
+    tungstenite::{client::IntoClientRequest, protocol::Message},
+};
 use turin::remote::{RemoteServeOptions, start as start_remote};
 use turin_daemon_protocol::DAEMON_PROTOCOL_VERSION;
 
@@ -124,16 +128,24 @@ struct RemoteHarness {
 
 impl RemoteHarness {
     async fn start(config_path: &PathBuf) -> Result<Self> {
-        let server = start_remote(
+        Self::start_with_options(
             config_path,
             RemoteServeOptions {
                 bind: Some("127.0.0.1:0".to_string()),
                 auth_token: Some("test-token".to_string()),
                 auth_token_env: None,
                 event_keepalive_secs: Some(1),
+                allow_non_loopback: Some(false),
             },
         )
-        .await?;
+        .await
+    }
+
+    async fn start_with_options(
+        config_path: &PathBuf,
+        options: RemoteServeOptions,
+    ) -> Result<Self> {
+        let server = start_remote(config_path, options).await?;
         Ok(Self {
             base_url: format!("http://{}", server.local_addr()),
             server,
@@ -306,4 +318,115 @@ async fn remote_sse_streams_runtime_events() -> Result<()> {
 
     remote.stop().await?;
     daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn remote_websocket_streams_runtime_events() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+    let remote = RemoteHarness::start(&daemon.config_path).await?;
+    let mut request =
+        format!("ws://{}/v1/events/ws", remote.server.local_addr()).into_client_request()?;
+    request
+        .headers_mut()
+        .insert(AUTHORIZATION, "Bearer test-token".parse()?);
+    let stream = tokio::net::TcpStream::connect(remote.server.local_addr()).await?;
+    let (mut websocket, _) = client_async(request, stream).await?;
+
+    let first = next_websocket_text(&mut websocket).await?;
+    let first: Value = serde_json::from_str(&first)?;
+    assert_eq!(first["event"], "runtime.snapshot");
+    assert_eq!(first["data"]["agent_runtimes"][0]["agent_id"], "default");
+
+    let client = reqwest::Client::new();
+    let created = client
+        .post(format!("{}/v1/daemon/request", remote.base_url))
+        .header(AUTHORIZATION, "Bearer test-token")
+        .json(&json!({
+            "op": "agent.create",
+            "params": {
+                "id": "remote-ws-reviewer",
+                "provider": "mock",
+                "model": "mock-model",
+                "system_prompt": "Review from websocket",
+                "enabled": true
+            }
+        }))
+        .send()
+        .await?;
+    assert_eq!(created.status(), reqwest::StatusCode::OK);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut saw_rescan = false;
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let next = timeout(remaining, websocket.next())
+            .await
+            .context("timed out waiting for runtime.rescanned websocket event")?
+            .context("websocket stream closed unexpectedly")??;
+        let Message::Text(next) = next else {
+            continue;
+        };
+        let payload: Value = serde_json::from_str(&next)?;
+        if payload["event"] == "runtime.rescanned" {
+            saw_rescan = payload["data"]["registry"]["agents"]
+                .as_array()
+                .is_some_and(|agents| {
+                    agents
+                        .iter()
+                        .any(|agent| agent["id"] == "remote-ws-reviewer")
+                });
+            if saw_rescan {
+                break;
+            }
+        }
+    }
+
+    assert!(
+        saw_rescan,
+        "runtime.rescanned websocket event should include new agent"
+    );
+
+    websocket.close(None).await?;
+    remote.stop().await?;
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn remote_refuses_non_loopback_bind_without_opt_in() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+    let err = start_remote(
+        &daemon.config_path,
+        RemoteServeOptions {
+            bind: Some("0.0.0.0:0".to_string()),
+            auth_token: Some("test-token".to_string()),
+            auth_token_env: None,
+            event_keepalive_secs: Some(1),
+            allow_non_loopback: Some(false),
+        },
+    )
+    .await
+    .expect_err("non-loopback bind should require explicit opt-in");
+    assert!(err.to_string().contains("allow_non_loopback"));
+    daemon.stop().await
+}
+
+async fn next_websocket_text<S>(websocket: &mut S) -> Result<String>
+where
+    S: futures::Stream<Item = std::result::Result<Message, tokio_tungstenite::tungstenite::Error>>
+        + Unpin,
+{
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let next = timeout(remaining, websocket.next())
+            .await
+            .context("timed out waiting for websocket text frame")?
+            .context("websocket stream closed unexpectedly")??;
+        match next {
+            Message::Text(text) => return Ok(text.to_string()),
+            Message::Ping(_) | Message::Pong(_) | Message::Binary(_) | Message::Frame(_) => {}
+            Message::Close(_) => return Err(anyhow!("websocket closed before text frame")),
+        }
+    }
+    Err(anyhow!("timed out waiting for websocket text frame"))
 }

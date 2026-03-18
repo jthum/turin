@@ -32,6 +32,7 @@ Add or review the `[remote]` section in `turin.toml`:
 bind = "127.0.0.1:9324"
 auth_token_env = "TURIN_REMOTE_TOKEN"
 event_keepalive_secs = 15
+allow_non_loopback = false
 ```
 
 Setting notes:
@@ -39,12 +40,14 @@ Setting notes:
 - `bind`: HTTP listen address for `turin-remote`
 - `auth_token_env`: env var that contains the bearer token required by remote clients
 - `event_keepalive_secs`: keepalive interval for SSE/WebSocket streams
+- `allow_non_loopback`: require explicit opt-in before binding to `0.0.0.0`, LAN, or public interfaces
 
 Defaults:
 
 - `bind = "127.0.0.1:9324"`
 - `auth_token_env = "TURIN_REMOTE_TOKEN"`
 - `event_keepalive_secs = 15`
+- `allow_non_loopback = false`
 
 ## Start The Remote Bridge
 
@@ -66,6 +69,7 @@ Useful overrides:
 turin-remote \
   --config turin.toml \
   --bind 0.0.0.0:9324 \
+  --allow-non-loopback \
   --auth-token-env TURIN_REMOTE_TOKEN \
   --event-keepalive-secs 10
 ```
@@ -214,8 +218,19 @@ Daemon-level failures are different:
 ## Deployment Notes
 
 - `turin-remote` binds to loopback by default
-- for LAN/VPS access, explicitly bind to a non-loopback address and put it behind TLS or a reverse proxy
+- non-loopback bind is refused unless `[remote].allow_non_loopback = true` or `--allow-non-loopback` is passed
+- for LAN/VPS access, explicitly opt in to a non-loopback bind and put it behind TLS or a reverse proxy
 - the daemon itself remains local-transport based; `turin-remote` is the network bridge
+
+## Smoke Check
+
+There is also a local operator smoke script:
+
+```bash
+scripts/remote_smoke.sh --token "replace-with-a-long-random-token"
+```
+
+It creates a temporary mock-backed workspace, starts the daemon and `turin-remote`, checks auth behavior, verifies a daemon ping round-trip, and confirms that SSE produces an initial runtime event.
 
 ## Browser Note
 

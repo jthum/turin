@@ -170,6 +170,8 @@ pub struct RemoteConfig {
     pub auth_token_env: String,
     #[serde(default = "default_remote_event_keepalive_secs")]
     pub event_keepalive_secs: u64,
+    #[serde(default)]
+    pub allow_non_loopback: bool,
 }
 
 impl Default for RemoteConfig {
@@ -178,6 +180,7 @@ impl Default for RemoteConfig {
             bind: default_remote_bind(),
             auth_token_env: default_remote_auth_token_env(),
             event_keepalive_secs: default_remote_event_keepalive_secs(),
+            allow_non_loopback: false,
         }
     }
 }
@@ -725,6 +728,7 @@ type = "openai"
         assert_eq!(config.harness.directory, ".turin/harnesses");
         assert_eq!(config.remote.bind, "127.0.0.1:9324");
         assert_eq!(config.remote.auth_token_env, "TURIN_REMOTE_TOKEN");
+        assert!(!config.remote.allow_non_loopback);
     }
 
     #[test]
