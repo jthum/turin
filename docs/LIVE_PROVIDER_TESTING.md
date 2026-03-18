@@ -20,6 +20,22 @@ Notes:
 - Requires a real Discord channel/thread ID.
 - Uses a temporary workspace and a minimal mock-provider harness to validate channel runtime lifecycle only.
 
+## Telegram Channel Runtime Live Validation (Manual / Opt-In)
+
+Turin also includes an opt-in live script for daemon-owned Telegram runtime checks:
+
+```bash
+scripts/live_telegram_channel_smoke.sh \
+  --chat-id "$TELEGRAM_CHAT_ID" \
+  --token-env-name TELEGRAM_BOT_TOKEN
+```
+
+Notes:
+- Requires a real Telegram bot token in the specified env var.
+- Requires a real numeric Telegram chat id.
+- Uses a temporary workspace and a minimal mock-provider harness to validate channel runtime lifecycle only.
+- If the bot still has an active webhook configured, long polling will fail until the webhook is removed.
+
 ## Why Live Tests Are Separate
 
 Live tests are valuable, but they are not deterministic:

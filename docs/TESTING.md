@@ -22,6 +22,7 @@ Reserve `cargo build --release` for checkpointing binary size or release-quality
 
 - `scripts/live_minimax_smoke.sh`
 - `scripts/live_discord_channel_smoke.sh`
+- `scripts/live_telegram_channel_smoke.sh`
 - project-specific real-harness runs using your provider credentials
 
 Live tests are never run automatically by Turin’s standard cargo commands.
@@ -176,6 +177,25 @@ scripts/live_discord_channel_smoke.sh \
 
 This script provisions a temporary workspace, starts the daemon, creates a
 `kind=discord` channel, and verifies that runtime reaches `running`.
+
+## Telegram Channel Live Validation (Manual / Opt-In)
+
+When validating daemon-owned channel runtimes against real Telegram:
+
+```bash
+scripts/live_telegram_channel_smoke.sh \
+  --chat-id "$TELEGRAM_CHAT_ID" \
+  --token-env-name TELEGRAM_BOT_TOKEN
+```
+
+This script provisions a temporary workspace, starts the daemon, creates a
+`kind=telegram` channel, and verifies that runtime reaches `running`.
+
+Notes:
+
+- Requires a real Telegram bot token in the specified env var.
+- Requires a real numeric Telegram chat id.
+- If the bot still has an active webhook configured, long polling will fail until the webhook is removed.
 
 ## Suggested Validation Workflow for Major Changes
 

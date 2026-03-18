@@ -238,6 +238,7 @@ turin daemon harness delete <id>
 turin daemon channel list
 turin daemon channel create fs-local --kind fs --agent default --setting inbox_dir=inbox --setting outbox_dir=outbox
 turin daemon channel create discord-dev --kind discord --agent default --setting token_env=DISCORD_TOKEN --setting channel_id=1234567890
+turin daemon channel create telegram-ops --kind telegram --agent default --setting token_env=TELEGRAM_BOT_TOKEN --setting chat_id=-1001234567890
 turin daemon channel get fs-local
 turin daemon channel status fs-local
 turin daemon channel issues fs-local
@@ -251,7 +252,7 @@ Channel settings are intentionally adapter-specific. The daemon accepts repeated
 `--setting key=value` entries and persists them into `channel.toml`. Values are
 parsed as JSON when possible, otherwise they are stored as strings.
 
-For known channel kinds (`fs`, `discord`), settings are validated on
+For known channel kinds (`fs`, `discord`, `telegram`), settings are validated on
 `channel.create` and `channel.update` before write/rescan.
 
 `channel.update --setting ...` performs a partial merge into existing settings
@@ -308,6 +309,29 @@ Discord runtime behavior notes:
 - Gateway session resume is attempted automatically when session/sequence state is available.
 - Duplicate inbound message IDs are suppressed across reconnect/replay windows.
 - Outbound responses support rich payloads (`content`, `embeds`, `components`, and local file attachments) with Discord-safe content chunking.
+
+`kind = "telegram"` is also available as a daemon-owned adapter:
+
+- uses Telegram Bot API long polling (`getUpdates`) for inbound events
+- accepts inbound text messages and posts outbound text replies with `sendMessage`
+- routes forum-topic messages to stable Turin slots using Telegram `message_thread_id` when present
+- requires:
+  - `token_env` (environment variable containing a Telegram bot token)
+  - `chat_id` (Telegram numeric chat id to listen on and reply to)
+- optional settings:
+  - `poll_timeout_secs` (default `30`, maximum `50`)
+  - `poll_interval_ms` (default `250`)
+  - `max_updates_per_poll`
+  - `workspace_id`
+  - `start_from_latest`
+  - `ignore_bot_messages`
+  - `base_url`
+
+Telegram runtime behavior notes:
+
+- The first pass is long-polling only; Turin does not auto-manage Telegram webhooks.
+- If the bot still has an active webhook, runtime startup fails with a polling/webhook error until the webhook is removed.
+- Outbound structured channel payloads are rendered to plain text blocks and chunked to Telegram-safe message sizes.
 
 To emit rich outbound payloads from task output, return a JSON envelope with
 `_turin_channel_outbound = true`, for example:
