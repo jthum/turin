@@ -103,8 +103,8 @@ Provider quirks belong in the normalized SDK layer (`inference-sdk-rust`), not i
 
 ## Where to Go Next
 
-- `docs/ARCHITECTURE.md` — implementation architecture and module layout
-- `docs/DAEMON.md` — daemon mode, dynamic filesystem-backed agents/harnesses, and control API
-- `docs/HOOKS.md` — exact hook lifecycle and payloads
-- `docs/PRIMITIVES.md` — current canonical stdlib API
-- `docs/GOVERNANCE.md` — profiles, capabilities, import scoping, grants
+- `docs/concepts/architecture.md` — implementation architecture and module layout
+- `docs/operations/daemon.md` — daemon mode, dynamic filesystem-backed agents/harnesses, and control API
+- `docs/reference/hooks.md` — exact hook lifecycle and payloads
+- `docs/reference/primitives.md` — current canonical stdlib API
+- `docs/concepts/governance.md` — profiles, capabilities, import scoping, grants

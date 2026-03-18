@@ -162,7 +162,7 @@ Repeat a suite/custom case set:
 scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --suite core --repeat 2
 ```
 
-See `docs/LIVE_PROVIDER_TESTING.md` for environment setup and troubleshooting.
+See `docs/operations/live-provider-testing.md` for environment setup and troubleshooting.
 
 ## Discord Channel Live Validation (Manual / Opt-In)
 

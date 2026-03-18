@@ -2,7 +2,7 @@
 
 This document describes Turin’s current architecture after the canonical stdlib, multi-db/multi-agent runtime, and governance refactors.
 
-For the non-obvious decisions behind the current shape, see `docs/adr/README.md`.
+For the non-obvious decisions behind the current shape, see `docs/adr/index.md`.
 
 ## Design Principles
 
@@ -397,4 +397,4 @@ Turin uses multiple validation layers:
 - release builds (`cargo build --release`)
 - manual live provider smoke tests (`scripts/live_minimax_smoke.sh`)
 
-See `docs/TESTING.md` and `docs/LIVE_PROVIDER_TESTING.md`.
+See `docs/operations/testing.md` and `docs/operations/live-provider-testing.md`.

@@ -78,7 +78,7 @@ Current workflows include:
 - `release_manager`
 - `docs_team_assistant`
 
-See `docs/HARNESS_LIBRARY.md` for the current catalog and validation approach.
+See `docs/guides/harness-library.md` for the current catalog and validation approach.
 
 ## Quickstart
 
@@ -239,7 +239,7 @@ Global options:
 - `--log-level error|warn|info|debug|trace`
 - `--log-file PATH`
 
-See [docs/HARNESS_COOKBOOK.md](docs/HARNESS_COOKBOOK.md) for the progressive starter flow.
+See [docs/getting-started/harness-cookbook.md](docs/getting-started/harness-cookbook.md) for the progressive starter flow.
 
 ## Daemon Mode
 
@@ -274,11 +274,11 @@ For local wrappers and desktop apps:
 - `turin daemon health --json` returns a compact readiness snapshot
 - `turin daemon logs` resolves the background daemon log path and shows recent lines
 
-See `docs/DAEMON.md` for the daemon filesystem model, runtime behavior, and command surface.
+See `docs/operations/daemon.md` for the daemon filesystem model, runtime behavior, and command surface.
 
 ## Architecture Notes
 
-For the key design decisions behind the current runtime and daemon shape, see `docs/adr/README.md`.
+For the key design decisions behind the current runtime and daemon shape, see `docs/adr/index.md`.
 
 ## Canonical Harness API (Overview)
 
@@ -316,7 +316,7 @@ Turin’s harness surface is split between **canonical runtime APIs** and **ergo
 - `agent.spawn`, `agent.complete`, `agent.send`, `agent.session.*`, `agent.mode.*`
 - `fs`, `json`, `time`, `log`, `import`, `import_scoped`, `use`, `use_scoped`, `watch`
 
-See `docs/PRIMITIVES.md` for the full surface.
+See `docs/reference/primitives.md` for the full surface.
 
 ## Hooks (Stable Lifecycle)
 
@@ -338,7 +338,7 @@ Core hooks include:
 - `on_all_tasks_complete`
 - `on_session_end`
 
-See `docs/HOOKS.md` for payloads, verdict semantics, and examples.
+See `docs/reference/hooks.md` for payloads, verdict semantics, and examples.
 
 ## Multi-DB and Multi-Agent (What’s New)
 
@@ -394,7 +394,7 @@ Governance is **not** hardcoded restriction. It is an opt-in capability system l
 - Temporary grants (TTL / max-uses)
 - Optional immutable audit persistence semantics
 
-See `docs/GOVERNANCE.md` for configuration and runtime behavior.
+See `docs/concepts/governance.md` for configuration and runtime behavior.
 
 ## Live Provider Testing (Manual / Opt-In)
 
@@ -457,7 +457,7 @@ scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --api-format op
 scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --api-format openai --suite soak --log-level error --report-json -
 ```
 
-See `docs/LIVE_PROVIDER_TESTING.md` for setup and troubleshooting.
+See `docs/operations/live-provider-testing.md` for setup and troubleshooting.
 
 ## Harness Library
 
@@ -486,16 +486,16 @@ The library is exercised by `cargo test --test example_harness_examples`, so it 
 
 ## Documentation Map
 
-- `docs/INDEX.md` — docs landing page and recommended reading paths
-- `docs/TURIN.md` — philosophy and product framing
-- `docs/ARCHITECTURE.md` — current runtime architecture and module layout
-- `docs/HOOKS.md` — stable hook lifecycle, payloads, verdict semantics
-- `docs/PRIMITIVES.md` — canonical stdlib API + aliases
-- `docs/HARNESS_GUIDE.md` — writing production harness scripts
-- `docs/HARNESS_LIBRARY.md` — ready-to-use harness library entries
-- `docs/GOVERNANCE.md` — capability model, profiles, import scoping, grants
-- `docs/TESTING.md` — local validation, test suite, and smoke workflows
-- `docs/LIVE_PROVIDER_TESTING.md` — live endpoint testing procedures
+- `docs/index.md` — docs landing page and recommended reading paths
+- `docs/concepts/turin.md` — philosophy and product framing
+- `docs/concepts/architecture.md` — current runtime architecture and module layout
+- `docs/reference/hooks.md` — stable hook lifecycle, payloads, verdict semantics
+- `docs/reference/primitives.md` — canonical stdlib API + aliases
+- `docs/guides/harness-guide.md` — writing production harness scripts
+- `docs/guides/harness-library.md` — ready-to-use harness library entries
+- `docs/concepts/governance.md` — capability model, profiles, import scoping, grants
+- `docs/operations/testing.md` — local validation, test suite, and smoke workflows
+- `docs/operations/live-provider-testing.md` — live endpoint testing procedures
 
 ## Thanks to the Turso Team
 

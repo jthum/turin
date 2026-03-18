@@ -1,6 +1,6 @@
 # DOCS TARGETS
 
 - README.md
-- docs/HARNESS_LIBRARY.md
-- docs/INDEX.md
-- docs/PRIMITIVES.md
+- docs/guides/harness-library.md
+- docs/index.md
+- docs/reference/primitives.md

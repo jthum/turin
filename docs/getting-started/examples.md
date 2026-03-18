@@ -11,7 +11,7 @@ See:
 
 - `examples/README.md`
 - `library/README.md`
-- `docs/HARNESS_LIBRARY.md`
+- `docs/guides/harness-library.md`
 
 ## What Belongs In `examples/`
 

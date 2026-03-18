@@ -387,7 +387,7 @@ function on_turn_prepare(ctx)
 end
 ```
 
-Note: `ctx.provider` and other mutable fields are part of the `ContextWrapper` contract. `ctx.model` is currently readable but not writable. See `docs/HOOKS.md` for exact semantics.
+Note: `ctx.provider` and other mutable fields are part of the `ContextWrapper` contract. `ctx.model` is currently readable but not writable. See `docs/reference/hooks.md` for exact semantics.
 
 ## 4. Plan Review (`on_plan_submit`)
 
@@ -557,7 +557,7 @@ Turin keeps ergonomic aliases for common workflows.
 
 If you are starting from zero, use `turin init`, `turin quickstart`, `turin harness new`, and
 `turin harness test` first, then come back here for the deeper patterns.
-The fast bootstrap flow lives in `docs/HARNESS_COOKBOOK.md`.
+The fast bootstrap flow lives in `docs/getting-started/harness-cookbook.md`.
 
 ### Agent-scoped defaults
 
@@ -671,4 +671,4 @@ Aliases are great for ergonomics, but `runtime.*` is clearer and more future-pro
 ## Compatibility Note
 
 Older Turin docs/examples used `turin.*` and `db.*` namespaces.
-The canonical API is now `runtime.*` plus the aliases documented in `docs/PRIMITIVES.md`.
+The canonical API is now `runtime.*` plus the aliases documented in `docs/reference/primitives.md`.
