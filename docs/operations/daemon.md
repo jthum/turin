@@ -333,6 +333,8 @@ Telegram runtime behavior notes:
 - If the bot still has an active webhook, runtime startup fails with a polling/webhook error until the webhook is removed.
 - Outbound structured channel payloads are rendered to plain text blocks and chunked to Telegram-safe message sizes.
 
+For a step-by-step operator walkthrough, see `docs/guides/channels/telegram.md`.
+
 To emit rich outbound payloads from task output, return a JSON envelope with
 `_turin_channel_outbound = true`, for example:
 

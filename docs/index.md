@@ -45,3 +45,7 @@ This is the documentation landing page for Turin.
 3. `docs/reference/primitives.md`
 4. `docs/guides/harness-guide.md`
 5. `docs/operations/live-provider-testing.md`
+
+## Channel Setup
+
+- `docs/guides/channels/telegram.md` — step-by-step Telegram bot, chat-id, webhook, and Turin channel setup

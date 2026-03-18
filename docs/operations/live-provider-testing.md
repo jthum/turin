@@ -36,6 +36,8 @@ Notes:
 - Uses a temporary workspace and a minimal mock-provider harness to validate channel runtime lifecycle only.
 - If the bot still has an active webhook configured, long polling will fail until the webhook is removed.
 
+For the full setup path, see `docs/guides/channels/telegram.md`.
+
 ## Why Live Tests Are Separate
 
 Live tests are valuable, but they are not deterministic:
