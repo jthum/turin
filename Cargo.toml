@@ -4,6 +4,9 @@ members = [
     "crates/turin-local-ipc",
     "crates/turin-daemon-protocol",
     "crates/turin-daemon-client",
+    "crates/turin-remote-client",
+    "crates/turin-control-client",
+    "crates/turin-ui-core",
     "crates/turin-channel-core",
     "crates/turin-channel-runner",
     "crates/turin-channel-fs",
@@ -11,6 +14,8 @@ members = [
     "crates/turin-channel-telegram",
     "crates/turin-code-index",
     "crates/turin-map",
+    "crates/turin-tui",
+    "crates/turin-app",
 ]
 resolver = "2"
 

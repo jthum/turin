@@ -330,7 +330,8 @@ impl ManagedEventStream {
     pub async fn next_event(&mut self) -> Result<EventEnvelope> {
         loop {
             if self.stream.is_none() {
-                self.stream = Some(self.reconnect().await?);
+                self.stream =
+                    Some(reconnect(self.client.clone(), self.filter.clone(), self.options).await?);
             }
 
             match self
@@ -351,28 +352,32 @@ impl ManagedEventStream {
             }
         }
     }
+}
 
-    async fn reconnect(&self) -> Result<EventStream> {
-        let mut delay = self.options.initial_backoff;
-        loop {
-            match self.client.handshake().await {
-                Ok(_) => {}
-                Err(err) if is_recoverable_subscription_error(&err) => {
-                    sleep(delay).await;
-                    delay = next_backoff(delay, self.options.max_backoff);
-                    continue;
-                }
-                Err(err) => return Err(err),
+async fn reconnect(
+    client: DaemonClient,
+    filter: RuntimeEventsSubscribeParams,
+    options: ManagedSubscribeOptions,
+) -> Result<EventStream> {
+    let mut delay = options.initial_backoff;
+    loop {
+        match client.handshake().await {
+            Ok(_) => {}
+            Err(err) if is_recoverable_subscription_error(&err) => {
+                sleep(delay).await;
+                delay = next_backoff(delay, options.max_backoff);
+                continue;
             }
+            Err(err) => return Err(err),
+        }
 
-            match self.client.subscribe(None, self.filter.clone()).await {
-                Ok(stream) => return Ok(stream),
-                Err(err) if is_recoverable_subscription_error(&err) => {
-                    sleep(delay).await;
-                    delay = next_backoff(delay, self.options.max_backoff);
-                }
-                Err(err) => return Err(err),
+        match client.subscribe(None, filter.clone()).await {
+            Ok(stream) => return Ok(stream),
+            Err(err) if is_recoverable_subscription_error(&err) => {
+                sleep(delay).await;
+                delay = next_backoff(delay, options.max_backoff);
             }
+            Err(err) => return Err(err),
         }
     }
 }
