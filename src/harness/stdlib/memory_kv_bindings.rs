@@ -6,15 +6,16 @@ use crate::harness::stdlib::binding_common::{
     memory_feedback_request_from_opts, memory_feedback_signal_from_value,
     memory_feedback_state_to_lua_value, memory_purge_report_to_lua_value,
     memory_purge_request_from_opts, memory_rows_to_lua_table, memory_search_request_from_opt,
-    memory_store_request_from_opts, memory_store_row_to_lua_value, metadata_json_or_empty,
-    nil_err, nil_ok, ok_bool, ok_value, string_ok,
+    memory_store_request_from_opts, memory_store_row_to_lua_value, metadata_json_or_empty, nil_err,
+    nil_ok, ok_bool, ok_value, string_ok,
 };
 use crate::harness::stdlib::context_selectors::{normalize_selector, table_to_selector};
 use crate::harness::stdlib::scoped_data_backend::{
-    kv_delete_backend, kv_get_backend, kv_set_backend, memory_correct_backend_with_request,
-    memory_feedback_backend_with_request, memory_purge_backend_with_request,
-    memory_search_backend_with_request, memory_store_backend_with_request, MemoryFeedbackRequest,
-    MemoryFeedbackSignal, MemoryPurgeRequest, MemorySearchRequest, MemoryStoreRequest,
+    MemoryFeedbackRequest, MemoryFeedbackSignal, MemoryPurgeRequest, MemorySearchRequest,
+    MemoryStoreRequest, kv_delete_backend, kv_get_backend, kv_set_backend,
+    memory_correct_backend_with_request, memory_feedback_backend_with_request,
+    memory_purge_backend_with_request, memory_search_backend_with_request,
+    memory_store_backend_with_request,
 };
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::kernel::identity::ContextSelector;
@@ -46,9 +47,15 @@ fn memory_search_result(
     request: MemorySearchRequest,
 ) -> LuaResult<(Value, Value)> {
     let result = bridge_async_result(async move {
-        memory_search_backend_with_request(&manager, embedding.as_ref(), &selector, &query, &request)
-            .await
-            .map_err(|e| e.to_string())
+        memory_search_backend_with_request(
+            &manager,
+            embedding.as_ref(),
+            &selector,
+            &query,
+            &request,
+        )
+        .await
+        .map_err(|e| e.to_string())
     });
     match result {
         Ok(rows) => Ok(ok_value(Value::Table(memory_rows_to_lua_table(lua, rows)?))),

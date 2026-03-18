@@ -40,25 +40,19 @@ pub async fn serve(config_path: &Path) -> Result<()> {
 
     #[cfg(unix)]
     if let Some(parent) = endpoint.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .with_context(|| format!("Failed to create endpoint directory '{}'", parent.display()))?;
+        tokio::fs::create_dir_all(parent).await.with_context(|| {
+            format!("Failed to create endpoint directory '{}'", parent.display())
+        })?;
     }
 
-    cleanup_stale_endpoint(&endpoint)
-        .await
-        .with_context(|| {
-            format!(
-                "Failed to prepare local IPC endpoint '{}'",
-                endpoint.display()
-            )
-        })?;
-    let mut listener = LocalIpcListener::bind(&endpoint).with_context(|| {
+    cleanup_stale_endpoint(&endpoint).await.with_context(|| {
         format!(
-            "Failed to bind local IPC endpoint '{}'",
+            "Failed to prepare local IPC endpoint '{}'",
             endpoint.display()
         )
     })?;
+    let mut listener = LocalIpcListener::bind(&endpoint)
+        .with_context(|| format!("Failed to bind local IPC endpoint '{}'", endpoint.display()))?;
 
     info!(endpoint = %endpoint.display(), "Turin daemon started");
 

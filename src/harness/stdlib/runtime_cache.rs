@@ -6,11 +6,15 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::harness::globals::{ActiveHarnessExecutionContext, HarnessAppData};
-use crate::harness::stdlib::binding_common::{bool_value_ok, bridge_async_result, nil_err, ok_value};
+use crate::harness::stdlib::binding_common::{
+    bool_value_ok, bridge_async_result, nil_err, ok_value,
+};
 use crate::harness::stdlib::governance_support::require_capability as require_governance_capability;
 use crate::harness::stdlib::system_globals::{require_capability_for_lua, resolve_safe_path};
 use crate::persistence::manager::StoreManager;
-use crate::persistence::schema::{CacheReadResult, CacheResetReport, CacheSessionStats, CacheStatsReport};
+use crate::persistence::schema::{
+    CacheReadResult, CacheResetReport, CacheSessionStats, CacheStatsReport,
+};
 
 #[derive(Debug, Default, Deserialize)]
 struct LuaCacheReadOpts {
@@ -134,9 +138,13 @@ pub fn register_runtime_cache_namespace(
                     let scope = parse_cache_scope(parsed.scope.as_deref())?;
                     let session_id = if matches!(scope, CacheScope::Session) {
                         Some(
-                            resolve_cache_session(manager.clone(), execution_ctx, parsed.session_id)
-                                .await?
-                                .0,
+                            resolve_cache_session(
+                                manager.clone(),
+                                execution_ctx,
+                                parsed.session_id,
+                            )
+                            .await?
+                            .0,
                         )
                     } else {
                         None
@@ -180,13 +188,19 @@ pub fn register_runtime_cache_namespace(
                 let execution_ctx = execution_ctx.clone();
                 let result = bridge_async_result(async move {
                     let scope = parse_cache_stats_scope(parsed.scope.as_deref())?;
-                    let include_global = matches!(scope, CacheStatsScope::Global | CacheStatsScope::Both);
-                    let include_session = matches!(scope, CacheStatsScope::Session | CacheStatsScope::Both);
+                    let include_global =
+                        matches!(scope, CacheStatsScope::Global | CacheStatsScope::Both);
+                    let include_session =
+                        matches!(scope, CacheStatsScope::Session | CacheStatsScope::Both);
                     let session_id = if include_session {
                         Some(
-                            resolve_cache_session(manager.clone(), execution_ctx, parsed.session_id)
-                                .await?
-                                .0,
+                            resolve_cache_session(
+                                manager.clone(),
+                                execution_ctx,
+                                parsed.session_id,
+                            )
+                            .await?
+                            .0,
                         )
                     } else {
                         None
@@ -227,9 +241,13 @@ pub fn register_runtime_cache_namespace(
                     let dry_run = parsed.dry_run.unwrap_or(true);
                     let session_id = if matches!(scope, CacheScope::Session) {
                         Some(
-                            resolve_cache_session(manager.clone(), execution_ctx, parsed.session_id)
-                                .await?
-                                .0,
+                            resolve_cache_session(
+                                manager.clone(),
+                                execution_ctx,
+                                parsed.session_id,
+                            )
+                            .await?
+                            .0,
                         )
                     } else {
                         None
@@ -318,7 +336,10 @@ async fn resolve_cache_session(
     Ok((session_id, uuid.simple().to_string()))
 }
 
-fn normalize_cache_path(root: &Path, requested_path: &str) -> Result<(String, std::path::PathBuf), String> {
+fn normalize_cache_path(
+    root: &Path,
+    requested_path: &str,
+) -> Result<(String, std::path::PathBuf), String> {
     let resolved = resolve_safe_path(root, requested_path)
         .ok_or_else(|| "Unsafe path traversal".to_string())?;
     let display_path = resolved

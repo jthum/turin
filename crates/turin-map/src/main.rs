@@ -99,9 +99,9 @@ async fn main() -> Result<()> {
     let cwd = std::env::current_dir()?;
     match cli.command {
         Command::Index(args) => {
-            let config = load_turin_map_config(&cwd, args.config.as_deref()).with_context(|| {
-                "Hint: run from the Turin project root or pass --config path/to/turin.toml"
-            })?;
+            let config = load_turin_map_config(&cwd, args.config.as_deref()).with_context(
+                || "Hint: run from the Turin project root or pass --config path/to/turin.toml",
+            )?;
             let report = build_index_with_options(
                 &args.root.root,
                 args.root.index_path.as_deref(),
@@ -112,9 +112,9 @@ async fn main() -> Result<()> {
             print_build_report(args.root.json, &report)?;
         }
         Command::Rebuild(args) => {
-            let config = load_turin_map_config(&cwd, args.config.as_deref()).with_context(|| {
-                "Hint: run from the Turin project root or pass --config path/to/turin.toml"
-            })?;
+            let config = load_turin_map_config(&cwd, args.config.as_deref()).with_context(
+                || "Hint: run from the Turin project root or pass --config path/to/turin.toml",
+            )?;
             let report = rebuild_index_with_options(
                 &args.root.root,
                 args.root.index_path.as_deref(),

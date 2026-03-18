@@ -6,8 +6,8 @@ use crate::harness::stdlib::binding_common::{
     memory_feedback_request_from_opts, memory_feedback_signal_from_value,
     memory_feedback_state_to_lua_value, memory_purge_report_to_lua_value,
     memory_purge_request_from_opts, memory_rows_to_lua_table, memory_search_request_from_opt,
-    memory_store_request_from_opts, memory_store_row_to_lua_value, metadata_json_or_empty,
-    nil_err, nil_ok, ok_bool, ok_value, string_ok,
+    memory_store_request_from_opts, memory_store_row_to_lua_value, metadata_json_or_empty, nil_err,
+    nil_ok, ok_bool, ok_value, string_ok,
 };
 use crate::harness::stdlib::context_selectors::selector_from_active_scope_lua;
 use crate::harness::stdlib::scoped_data_backend::{
@@ -101,11 +101,7 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                         let manager = manager.clone();
                         let result = bridge_async_result(async move {
                             memory_feedback_backend_with_request(
-                                &manager,
-                                &selector,
-                                &memory_id,
-                                signal,
-                                &request,
+                                &manager, &selector, &memory_id, signal, &request,
                             )
                             .await
                             .map_err(|e| e.to_string())
