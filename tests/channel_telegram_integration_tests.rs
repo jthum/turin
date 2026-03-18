@@ -28,7 +28,8 @@ struct TelegramMockServer {
 }
 
 struct TelegramMockState {
-    update_batches: VecDeque<Vec<serde_json::Value>>,
+    get_updates_responses: VecDeque<serde_json::Value>,
+    send_message_responses: VecDeque<serde_json::Value>,
     sent_messages: Vec<serde_json::Value>,
 }
 
@@ -139,12 +140,24 @@ base_url = "PONG"
 
 impl TelegramMockServer {
     async fn start(update_batches: Vec<Vec<serde_json::Value>>) -> Result<Self> {
+        let get_updates_responses = update_batches
+            .into_iter()
+            .map(|batch| json!({ "ok": true, "result": batch }))
+            .collect();
+        Self::start_with_responses(get_updates_responses, Vec::new()).await
+    }
+
+    async fn start_with_responses(
+        get_updates_responses: Vec<serde_json::Value>,
+        send_message_responses: Vec<serde_json::Value>,
+    ) -> Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
         let base_url = format!("http://{}", addr);
         let sent_messages = Arc::new(Mutex::new(Vec::new()));
         let state = Arc::new(Mutex::new(TelegramMockState {
-            update_batches: update_batches.into(),
+            get_updates_responses: get_updates_responses.into(),
+            send_message_responses: send_message_responses.into(),
             sent_messages: Vec::new(),
         }));
         let sent_messages_for_task = Arc::clone(&sent_messages);
@@ -196,30 +209,32 @@ fn handle_telegram_request(
     let method = path.rsplit('/').next().unwrap_or_default();
     match method {
         "getUpdates" => {
-            let batch = state
+            let response = state
                 .lock()
                 .expect("telegram mock state lock poisoned")
-                .update_batches
+                .get_updates_responses
                 .pop_front()
-                .unwrap_or_default();
-            Ok(json!({ "ok": true, "result": batch }))
+                .unwrap_or_else(|| json!({ "ok": true, "result": [] }));
+            Ok(response)
         }
         "sendMessage" => {
-            state
-                .lock()
-                .expect("telegram mock state lock poisoned")
-                .sent_messages
-                .push(body.clone());
+            let response = {
+                let mut guard = state.lock().expect("telegram mock state lock poisoned");
+                guard.sent_messages.push(body.clone());
+                guard.send_message_responses.pop_front().unwrap_or_else(|| {
+                    json!({
+                        "ok": true,
+                        "result": {
+                            "message_id": 1
+                        }
+                    })
+                })
+            };
             sent_messages
                 .lock()
                 .expect("telegram mock sent_messages lock poisoned")
                 .push(body.clone());
-            Ok(json!({
-                "ok": true,
-                "result": {
-                    "message_id": 1
-                }
-            }))
+            Ok(response)
         }
         _ => Ok(json!({
             "ok": false,
@@ -373,6 +388,7 @@ async fn telegram_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
     let outbound = outbound.context("telegram channel did not produce outbound response")?;
     assert_eq!(outbound["chat_id"], "-100777");
     assert_eq!(outbound["message_thread_id"], 555);
+    assert_eq!(outbound["reply_to_message_id"], 41);
     assert!(
         outbound["text"]
             .as_str()
@@ -392,6 +408,83 @@ async fn telegram_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
     assert!(binding_keys.keys().any(|key| {
         key.contains("\"channel\":\"telegram\"") && key.contains("\"thread_id\":\"555\"")
     }));
+
+    let _ = shutdown_tx.send(true);
+    let _ = timeout(Duration::from_secs(5), run)
+        .await
+        .context("timed out waiting for telegram channel runner shutdown")??;
+
+    server.stop().await?;
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn telegram_channel_driver_retries_transient_poll_and_send_failures() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+    let runner = daemon.runner();
+    let server = TelegramMockServer::start_with_responses(
+        vec![
+            json!({
+                "ok": false,
+                "error_code": 429,
+                "description": "Too Many Requests: retry later",
+                "parameters": { "retry_after": 0 }
+            }),
+            json!({ "ok": true, "result": [sample_update(-100777, Some(555), "Say pong")] }),
+        ],
+        vec![
+            json!({
+                "ok": false,
+                "error_code": 429,
+                "description": "Too Many Requests: retry later",
+                "parameters": { "retry_after": 0 }
+            }),
+            json!({
+                "ok": true,
+                "result": { "message_id": 2 }
+            }),
+        ],
+    )
+    .await?;
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let mut driver = TelegramChannelDriver::from_config(
+        "telegram-test",
+        TelegramChannelDriverConfig {
+            base_url: server.base_url.clone(),
+            workspace_id: "telegram".to_string(),
+            chat_id: "-100777".to_string(),
+            token: "test-token".to_string(),
+            poll_timeout_secs: 0,
+            poll_interval: Duration::from_millis(25),
+            max_updates_per_poll: 10,
+            start_from_latest: false,
+            ignore_bot_messages: true,
+        },
+        shutdown_rx,
+    )?;
+
+    let run =
+        tokio::spawn(async move { runner.run_driver("default", &mut driver, Some(5_000)).await });
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut outbound_count = 0;
+    while Instant::now() < deadline {
+        outbound_count = server
+            .sent_messages
+            .lock()
+            .expect("telegram mock sent_messages lock poisoned")
+            .len();
+        if outbound_count >= 1 {
+            break;
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
+
+    assert!(
+        outbound_count >= 1,
+        "telegram channel did not recover from transient failures"
+    );
 
     let _ = shutdown_tx.send(true);
     let _ = timeout(Duration::from_secs(5), run)

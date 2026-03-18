@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::sleep;
+use tracing::warn;
 use turin_channel_core::{
     ChannelAttachment, ChannelCapabilities, ChannelConversationKey, ChannelKind, ChannelMessageRef,
     ChannelUser, InboundEvent, MessageBlock, OutboundMessage,
@@ -15,6 +16,7 @@ use turin_channel_runner::ChannelDriver;
 const DEFAULT_BASE_URL: &str = "https://api.telegram.org";
 const TELEGRAM_MESSAGE_MAX_LEN: usize = 4_096;
 const MAX_STARTUP_SKIP_BATCHES: usize = 32;
+const MAX_API_REQUEST_ATTEMPTS: u32 = 5;
 
 #[derive(Debug, Clone)]
 pub struct TelegramChannelDriverConfig {
@@ -176,6 +178,7 @@ pub struct TelegramChannelDriver {
     backlog: VecDeque<InboundEvent>,
     next_update_offset: Option<i64>,
     initialized: bool,
+    consecutive_poll_failures: u32,
 }
 
 impl TelegramChannelDriver {
@@ -210,17 +213,13 @@ impl TelegramChannelDriver {
             backlog: VecDeque::new(),
             next_update_offset: None,
             initialized: false,
+            consecutive_poll_failures: 0,
         })
     }
 
-    async fn skip_pending_updates(&mut self) -> Result<()> {
+    async fn skip_pending_updates(&mut self) -> std::result::Result<(), TelegramApiError> {
         for _ in 0..MAX_STARTUP_SKIP_BATCHES {
-            let updates = self
-                .fetch_updates(self.next_update_offset, 100, 0)
-                .await
-                .context(
-                    "[telegram_startup_skip_failed] Failed to skip pending Telegram updates",
-                )?;
+            let updates = self.fetch_updates(self.next_update_offset, 100, 0).await?;
             if updates.is_empty() {
                 break;
             }
@@ -232,7 +231,7 @@ impl TelegramChannelDriver {
         Ok(())
     }
 
-    async fn poll_once(&mut self) -> Result<bool> {
+    async fn poll_once(&mut self) -> std::result::Result<bool, TelegramApiError> {
         let updates = self
             .fetch_updates(
                 self.next_update_offset,
@@ -259,14 +258,14 @@ impl TelegramChannelDriver {
         offset: Option<i64>,
         limit: u8,
         timeout_secs: u64,
-    ) -> Result<Vec<TelegramUpdate>> {
+    ) -> std::result::Result<Vec<TelegramUpdate>, TelegramApiError> {
         let payload = serde_json::json!({
             "offset": offset,
             "limit": limit,
             "timeout": timeout_secs,
             "allowed_updates": ["message", "channel_post"]
         });
-        self.api_request("getUpdates", &payload).await
+        self.request_with_retry("getUpdates", &payload).await
     }
 
     async fn send_batches(
@@ -281,9 +280,13 @@ impl TelegramChannelDriver {
             .unwrap_or(&self.config.chat_id)
             .clone();
         let message_thread_id = resolve_message_thread_id(conversation)?;
+        let payloads = telegram_batches_from_message(&chat_id, message_thread_id, message)?;
 
-        for payload in telegram_batches_from_message(&chat_id, message_thread_id, message) {
-            let _: TelegramSentMessage = self.api_request("sendMessage", &payload).await?;
+        for payload in payloads {
+            let _: TelegramSentMessage = self
+                .request_with_retry("sendMessage", &payload)
+                .await
+                .map_err(TelegramApiError::into_anyhow)?;
         }
         Ok(())
     }
@@ -360,11 +363,11 @@ impl TelegramChannelDriver {
         })
     }
 
-    async fn api_request<T: DeserializeOwned>(
+    async fn api_request_once<T: DeserializeOwned>(
         &self,
         method: &str,
         payload: &serde_json::Value,
-    ) -> Result<T> {
+    ) -> std::result::Result<T, TelegramApiError> {
         let url = format!(
             "{}/bot{}/{}",
             self.config.base_url, self.config.token, method
@@ -375,43 +378,103 @@ impl TelegramChannelDriver {
             .json(payload)
             .send()
             .await
-            .with_context(|| {
-                format!(
-                    "[telegram_http_request_failed] Telegram {} request failed",
-                    method
-                )
+            .map_err(|error| TelegramApiError {
+                code: "telegram_http_request_failed".to_string(),
+                message: format!("Telegram {} request failed: {}", method, error),
+                retriable: true,
+                retry_after: None,
             })?;
 
         let status = response.status();
-        let body = response.text().await.with_context(|| {
-            format!(
-                "[telegram_http_decode_failed] Failed to read Telegram {} response body",
-                method
-            )
-        })?;
+        let body = response
+            .text()
+            .await
+            .with_context(|| {
+                format!(
+                    "[telegram_http_decode_failed] Failed to read Telegram {} response body",
+                    method
+                )
+            })
+            .map_err(|error| TelegramApiError {
+                code: "telegram_http_decode_failed".to_string(),
+                message: error.to_string(),
+                retriable: true,
+                retry_after: None,
+            })?;
 
-        let envelope: TelegramApiEnvelope<T> = serde_json::from_str(&body).with_context(|| {
-            format!(
-                "[telegram_http_decode_failed] Failed to decode Telegram {} response: {}",
-                method, body
-            )
-        })?;
+        let envelope: TelegramApiEnvelope<T> = serde_json::from_str(&body)
+            .with_context(|| {
+                format!(
+                    "[telegram_http_decode_failed] Failed to decode Telegram {} response: {}",
+                    method, body
+                )
+            })
+            .map_err(|error| TelegramApiError {
+                code: "telegram_http_decode_failed".to_string(),
+                message: error.to_string(),
+                retriable: false,
+                retry_after: None,
+            })?;
 
         if !status.is_success() || !envelope.ok {
             let description = envelope.description.clone().unwrap_or_else(|| body.clone());
             let error_code = envelope.error_code.unwrap_or(status.as_u16() as i64);
-            anyhow::bail!(
-                "[{}] Telegram {} request failed with {}: {}",
-                classify_api_error(method, status.as_u16(), &description),
-                method,
-                error_code,
-                description
-            );
+            let code = classify_api_error(method, status.as_u16(), &description);
+            return Err(TelegramApiError {
+                retriable: is_retriable_api_error(&code, status.as_u16()),
+                retry_after: envelope
+                    .parameters
+                    .as_ref()
+                    .and_then(|parameters| parameters.retry_after)
+                    .map(Duration::from_secs),
+                code,
+                message: format!(
+                    "Telegram {} request failed with {}: {}",
+                    method, error_code, description
+                ),
+            });
         }
 
         envelope
             .result
             .context(format!("Telegram {} response missing result", method))
+            .map_err(|error| TelegramApiError {
+                code: "telegram_missing_result".to_string(),
+                message: error.to_string(),
+                retriable: false,
+                retry_after: None,
+            })
+    }
+
+    async fn request_with_retry<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        payload: &serde_json::Value,
+    ) -> std::result::Result<T, TelegramApiError> {
+        let mut attempts: u32 = 0;
+        loop {
+            attempts = attempts.saturating_add(1);
+            match self.api_request_once(method, payload).await {
+                Ok(result) => return Ok(result),
+                Err(error) => {
+                    if !error.retriable || attempts >= MAX_API_REQUEST_ATTEMPTS {
+                        return Err(error);
+                    }
+
+                    let delay = error.retry_after.unwrap_or_else(|| retry_backoff(attempts));
+                    warn!(
+                        channel_runtime_id = %self.channel_runtime_id,
+                        method,
+                        attempt = attempts,
+                        delay_ms = delay.as_millis() as u64,
+                        error_code = %error.code,
+                        error = %error.message,
+                        "Retrying Telegram request after transient failure"
+                    );
+                    sleep(delay).await;
+                }
+            }
+        }
     }
 
     async fn sleep_or_shutdown(&self, duration: Duration) -> bool {
@@ -420,6 +483,22 @@ impl TelegramChannelDriver {
             changed = shutdown_rx.changed() => changed.is_ok() && *shutdown_rx.borrow(),
             _ = sleep(duration) => false,
         }
+    }
+
+    async fn handle_transient_poll_error(&mut self, phase: &str, error: TelegramApiError) -> bool {
+        self.consecutive_poll_failures = self.consecutive_poll_failures.saturating_add(1);
+        let delay = error
+            .retry_after
+            .unwrap_or_else(|| retry_backoff(self.consecutive_poll_failures));
+        warn!(
+            channel_runtime_id = %self.channel_runtime_id,
+            phase,
+            error_code = %error.code,
+            error = %error.message,
+            delay_ms = delay.as_millis() as u64,
+            "Telegram polling hit a transient failure; backing off"
+        );
+        self.sleep_or_shutdown(delay).await
     }
 }
 
@@ -431,7 +510,7 @@ impl ChannelDriver for TelegramChannelDriver {
 
     fn capabilities(&self) -> ChannelCapabilities {
         ChannelCapabilities {
-            rich_formatting: false,
+            rich_formatting: true,
             threads: true,
             attachments: false,
             ephemeral_messages: false,
@@ -449,7 +528,21 @@ impl ChannelDriver for TelegramChannelDriver {
 
             if !self.initialized {
                 if self.config.start_from_latest {
-                    self.skip_pending_updates().await?;
+                    match self.skip_pending_updates().await {
+                        Ok(()) => {
+                            self.consecutive_poll_failures = 0;
+                        }
+                        Err(error) if error.retriable => {
+                            if self
+                                .handle_transient_poll_error("startup skip", error)
+                                .await
+                            {
+                                return Ok(None);
+                            }
+                            continue;
+                        }
+                        Err(error) => return Err(error.into_anyhow()),
+                    }
                 }
                 self.initialized = true;
                 continue;
@@ -461,9 +554,23 @@ impl ChannelDriver for TelegramChannelDriver {
                     if changed.is_ok() && *shutdown_rx.borrow() {
                         return Ok(None);
                     }
-                    false
+                    Ok(false)
                 }
-                result = self.poll_once() => result?,
+                result = self.poll_once() => result,
+            };
+
+            let got_backlog = match got_backlog {
+                Ok(got_backlog) => {
+                    self.consecutive_poll_failures = 0;
+                    got_backlog
+                }
+                Err(error) if error.retriable => {
+                    if self.handle_transient_poll_error("poll", error).await {
+                        return Ok(None);
+                    }
+                    continue;
+                }
+                Err(error) => return Err(error.into_anyhow()),
             };
 
             if let Some(event) = self.backlog.pop_front() {
@@ -498,6 +605,28 @@ struct TelegramApiEnvelope<T> {
     description: Option<String>,
     #[serde(default)]
     error_code: Option<i64>,
+    #[serde(default)]
+    parameters: Option<TelegramApiParameters>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TelegramApiParameters {
+    #[serde(default)]
+    retry_after: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct TelegramApiError {
+    code: String,
+    message: String,
+    retriable: bool,
+    retry_after: Option<Duration>,
+}
+
+impl TelegramApiError {
+    fn into_anyhow(self) -> anyhow::Error {
+        anyhow!("[{}] {}", self.code, self.message)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -655,33 +784,115 @@ fn resolve_message_thread_id(conversation: &ChannelConversationKey) -> Result<Op
         })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TelegramRenderMode {
+    PlainText,
+    Html,
+}
+
+#[derive(Debug, Clone)]
+struct TelegramRenderedMessage {
+    chunks: Vec<String>,
+    parse_mode: Option<&'static str>,
+    reply_to_message_id: Option<i64>,
+    disable_web_page_preview: bool,
+    disable_notification: bool,
+}
+
 fn telegram_batches_from_message(
     chat_id: &str,
     message_thread_id: Option<i64>,
     message: &OutboundMessage,
-) -> Vec<serde_json::Value> {
-    let mut text_chunks = split_for_telegram_message(render_text_blocks(&message.blocks));
-
-    let attachment_lines = render_attachment_lines(&message.attachments);
-    if !attachment_lines.is_empty() {
-        text_chunks.extend(split_for_telegram_message(attachment_lines));
-    }
-
-    if text_chunks.is_empty() {
-        text_chunks.push("(no output)".to_string());
-    }
-
-    text_chunks
+) -> Result<Vec<serde_json::Value>> {
+    let rendered = render_telegram_message(message)?;
+    Ok(rendered
+        .chunks
         .into_iter()
         .map(|text| {
-            serde_json::json!({
-                "chat_id": chat_id,
-                "text": text,
-                "message_thread_id": message_thread_id,
-                "disable_web_page_preview": true
-            })
+            telegram_payload(
+                chat_id,
+                message_thread_id,
+                text,
+                rendered.parse_mode,
+                rendered.reply_to_message_id,
+                rendered.disable_web_page_preview,
+                rendered.disable_notification,
+            )
         })
-        .collect()
+        .collect())
+}
+
+fn render_telegram_message(message: &OutboundMessage) -> Result<TelegramRenderedMessage> {
+    let render_mode = resolve_render_mode(message);
+    let reply_to_message_id = metadata_i64(&message.metadata, "telegram_reply_to_message_id")?;
+    let disable_web_page_preview = message
+        .metadata
+        .get("telegram_disable_web_page_preview")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+    let disable_notification = message
+        .metadata
+        .get("telegram_disable_notification")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+
+    let mut chunks = match render_mode {
+        TelegramRenderMode::PlainText => {
+            let mut chunks = split_for_telegram_message(render_text_blocks(&message.blocks));
+            let attachment_lines = render_attachment_lines(&message.attachments);
+            if !attachment_lines.is_empty() {
+                chunks.extend(split_for_telegram_message(attachment_lines));
+            }
+            chunks
+        }
+        TelegramRenderMode::Html => render_html_chunks(message),
+    };
+
+    if chunks.is_empty() {
+        chunks.push("(no output)".to_string());
+    }
+
+    Ok(TelegramRenderedMessage {
+        chunks,
+        parse_mode: match render_mode {
+            TelegramRenderMode::PlainText => None,
+            TelegramRenderMode::Html => Some("HTML"),
+        },
+        reply_to_message_id,
+        disable_web_page_preview,
+        disable_notification,
+    })
+}
+
+fn resolve_render_mode(message: &OutboundMessage) -> TelegramRenderMode {
+    if message
+        .metadata
+        .get("telegram_format")
+        .and_then(|value| value.as_str())
+        .is_some_and(|value| {
+            value.eq_ignore_ascii_case("plain") || value.eq_ignore_ascii_case("text")
+        })
+    {
+        return TelegramRenderMode::PlainText;
+    }
+    if message
+        .metadata
+        .get("telegram_format")
+        .and_then(|value| value.as_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("html"))
+        || message
+            .metadata
+            .get("telegram_parse_mode")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("html"))
+        || message
+            .blocks
+            .iter()
+            .any(|block| matches!(block, MessageBlock::CodeBlock { .. }))
+    {
+        return TelegramRenderMode::Html;
+    }
+    TelegramRenderMode::PlainText
 }
 
 fn render_text_blocks(blocks: &[MessageBlock]) -> String {
@@ -717,6 +928,128 @@ fn render_attachment_lines(attachments: &[ChannelAttachment]) -> String {
         }
     }
     lines.join("\n")
+}
+
+fn render_html_chunks(message: &OutboundMessage) -> Vec<String> {
+    let mut segments = Vec::new();
+    for block in &message.blocks {
+        segments.extend(render_html_segments_for_block(block));
+    }
+
+    if !message.attachments.is_empty() {
+        let attachment_lines: Vec<String> = message
+            .attachments
+            .iter()
+            .map(|attachment| {
+                let location = attachment
+                    .url
+                    .as_deref()
+                    .or(attachment.local_path.as_deref())
+                    .unwrap_or("");
+                if location.is_empty() {
+                    format!("Attachment: {}", attachment.name)
+                } else {
+                    format!("Attachment: {} ({})", attachment.name, location)
+                }
+            })
+            .collect();
+        let attachment_text = attachment_lines.join("\n");
+        if !attachment_text.trim().is_empty() {
+            segments.extend(split_plain_segment(&escape_html(&attachment_text)));
+        }
+    }
+
+    pack_segments(segments)
+}
+
+fn render_html_segments_for_block(block: &MessageBlock) -> Vec<String> {
+    match block {
+        MessageBlock::Text { text } => {
+            let escaped = escape_html(text.trim());
+            if escaped.is_empty() {
+                Vec::new()
+            } else {
+                split_plain_segment(&escaped)
+            }
+        }
+        MessageBlock::CodeBlock { code, .. } => split_wrapped_segment(code, "<pre>", "</pre>"),
+    }
+}
+
+fn split_plain_segment(content: &str) -> Vec<String> {
+    split_content_to_limit(content, TELEGRAM_MESSAGE_MAX_LEN)
+}
+
+fn split_wrapped_segment(content: &str, prefix: &str, suffix: &str) -> Vec<String> {
+    let limit = TELEGRAM_MESSAGE_MAX_LEN
+        .saturating_sub(prefix.chars().count())
+        .saturating_sub(suffix.chars().count())
+        .max(1);
+    split_content_to_limit(&escape_html(content), limit)
+        .into_iter()
+        .map(|chunk| format!("{prefix}{chunk}{suffix}"))
+        .collect()
+}
+
+fn split_content_to_limit(content: &str, limit: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return out;
+    }
+
+    let mut current = String::new();
+    for ch in trimmed.chars() {
+        current.push(ch);
+        if current.chars().count() >= limit {
+            out.push(current.clone());
+            current.clear();
+        }
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
+}
+
+fn pack_segments(segments: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+
+    for segment in segments {
+        let segment = segment.trim().to_string();
+        if segment.is_empty() {
+            continue;
+        }
+
+        let tentative = if current.is_empty() {
+            segment.clone()
+        } else {
+            format!("{current}\n\n{segment}")
+        };
+        if tentative.chars().count() > TELEGRAM_MESSAGE_MAX_LEN {
+            if !current.is_empty() {
+                out.push(current.clone());
+                current.clear();
+            }
+            current = segment;
+        } else {
+            current = tentative;
+        }
+    }
+
+    if !current.is_empty() {
+        out.push(current);
+    }
+
+    out
+}
+
+fn escape_html(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn split_for_telegram_message(content: String) -> Vec<String> {
@@ -770,6 +1103,83 @@ fn split_for_telegram_message(content: String) -> Vec<String> {
     out
 }
 
+fn telegram_payload(
+    chat_id: &str,
+    message_thread_id: Option<i64>,
+    text: String,
+    parse_mode: Option<&'static str>,
+    reply_to_message_id: Option<i64>,
+    disable_web_page_preview: bool,
+    disable_notification: bool,
+) -> serde_json::Value {
+    let mut payload = serde_json::Map::new();
+    payload.insert("chat_id".to_string(), serde_json::json!(chat_id));
+    payload.insert("text".to_string(), serde_json::json!(text));
+    payload.insert(
+        "disable_web_page_preview".to_string(),
+        serde_json::json!(disable_web_page_preview),
+    );
+    payload.insert(
+        "disable_notification".to_string(),
+        serde_json::json!(disable_notification),
+    );
+    if let Some(message_thread_id) = message_thread_id {
+        payload.insert(
+            "message_thread_id".to_string(),
+            serde_json::json!(message_thread_id),
+        );
+    }
+    if let Some(parse_mode) = parse_mode {
+        payload.insert("parse_mode".to_string(), serde_json::json!(parse_mode));
+    }
+    if let Some(reply_to_message_id) = reply_to_message_id {
+        payload.insert(
+            "reply_to_message_id".to_string(),
+            serde_json::json!(reply_to_message_id),
+        );
+        payload.insert(
+            "allow_sending_without_reply".to_string(),
+            serde_json::json!(true),
+        );
+    }
+    serde_json::Value::Object(payload)
+}
+
+fn metadata_i64(
+    metadata: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<Option<i64>> {
+    let Some(value) = metadata.get(key) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    if let Some(number) = value.as_i64() {
+        return Ok(Some(number));
+    }
+    if let Some(number) = value.as_u64() {
+        return i64::try_from(number).map(Some).map_err(|_| {
+            anyhow!(
+                "[telegram_invalid_metadata] Telegram metadata '{}' is too large for i64",
+                key
+            )
+        });
+    }
+    if let Some(text) = value.as_str() {
+        return text.parse::<i64>().map(Some).map_err(|_| {
+            anyhow!(
+                "[telegram_invalid_metadata] Telegram metadata '{}' must be an integer or integer string",
+                key
+            )
+        });
+    }
+    anyhow::bail!(
+        "[telegram_invalid_metadata] Telegram metadata '{}' must be an integer or integer string",
+        key
+    );
+}
+
 fn classify_api_error(method: &str, status_code: u16, description: &str) -> String {
     let lower = description.to_ascii_lowercase();
     if status_code == 401 || lower.contains("unauthorized") {
@@ -800,6 +1210,25 @@ fn classify_api_error(method: &str, status_code: u16, description: &str) -> Stri
         }
         _ => "telegram_api_failed".to_string(),
     }
+}
+
+fn is_retriable_api_error(code: &str, status_code: u16) -> bool {
+    status_code == 429
+        || status_code >= 500
+        || matches!(
+            code,
+            "telegram_http_request_failed"
+                | "telegram_http_decode_failed"
+                | "telegram_rate_limited"
+                | "telegram_send_failed"
+                | "telegram_get_updates_failed"
+        )
+}
+
+fn retry_backoff(attempt: u32) -> Duration {
+    let exponent = attempt.min(5);
+    let millis = 250u64.saturating_mul(2u64.saturating_pow(exponent));
+    Duration::from_millis(millis.min(8_000))
 }
 
 #[cfg(test)]
@@ -934,7 +1363,8 @@ mod tests {
                 blocks: vec![MessageBlock::Text { text: long_text }],
                 ..OutboundMessage::default()
             },
-        );
+        )
+        .expect("render telegram payloads");
 
         assert!(payloads.len() >= 2);
         assert!(payloads.iter().all(|payload| {
@@ -948,5 +1378,71 @@ mod tests {
                 .iter()
                 .all(|payload| payload["message_thread_id"] == 555)
         );
+    }
+
+    #[test]
+    fn code_blocks_render_as_html_with_parse_mode() {
+        let payloads = telegram_batches_from_message(
+            "-10012345",
+            None,
+            &OutboundMessage {
+                blocks: vec![MessageBlock::CodeBlock {
+                    language: Some("rust".to_string()),
+                    code: "fn main() { println!(\"hi\"); }".to_string(),
+                }],
+                ..OutboundMessage::default()
+            },
+        )
+        .expect("render telegram payloads");
+
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0]["parse_mode"], "HTML");
+        assert!(
+            payloads[0]["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("<pre>") && text.contains("fn main()")),
+            "payload should render Telegram HTML code block: {}",
+            payloads[0]
+        );
+    }
+
+    #[test]
+    fn metadata_can_set_reply_target_and_disable_notification() {
+        let mut message = OutboundMessage::text("hello");
+        message.metadata.insert(
+            "telegram_reply_to_message_id".to_string(),
+            serde_json::json!(77),
+        );
+        message.metadata.insert(
+            "telegram_disable_notification".to_string(),
+            serde_json::json!(true),
+        );
+
+        let payloads = telegram_batches_from_message("-10012345", None, &message)
+            .expect("render telegram payloads");
+        assert_eq!(payloads[0]["reply_to_message_id"], 77);
+        assert_eq!(payloads[0]["allow_sending_without_reply"], true);
+        assert_eq!(payloads[0]["disable_notification"], true);
+    }
+
+    #[test]
+    fn telegram_format_plain_disables_html_rendering_for_code_blocks() {
+        let mut message = OutboundMessage {
+            blocks: vec![MessageBlock::CodeBlock {
+                language: Some("rust".to_string()),
+                code: "fn main() {}".to_string(),
+            }],
+            ..OutboundMessage::default()
+        };
+        message
+            .metadata
+            .insert("telegram_format".to_string(), serde_json::json!("plain"));
+
+        let payloads = telegram_batches_from_message("-10012345", None, &message)
+            .expect("render telegram payloads");
+
+        assert_eq!(payloads.len(), 1);
+        assert!(payloads[0].get("parse_mode").is_none());
+        assert_eq!(payloads[0]["text"], "```rust\nfn main() {}\n```");
     }
 }

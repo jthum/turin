@@ -14,7 +14,8 @@ Current Phase 8 scope:
 
 - Telegram Bot API via long polling
 - inbound text messages
-- outbound text replies
+- outbound replies with automatic reply threading to the source message
+- Telegram HTML rendering for code blocks
 - deterministic routing by Telegram chat and forum topic
 - daemon-managed lifecycle (`create`, `enable`, `disable`, `update`, `status`)
 
@@ -206,7 +207,27 @@ workspace_id = "telegram"
 
 You can manage this file directly through the filesystem or via `turin daemon channel ...` commands.
 
-## 8. Validate With The Smoke Script
+## 8. Outbound Reply And Formatting Behavior
+
+Turin now defaults Telegram responses to replying to the inbound Telegram message when the inbound event includes `telegram_message_id`.
+
+That means normal request/response turns in Telegram show up as native threaded replies without extra harness work.
+
+If you emit a structured outbound payload, you can also control Telegram-specific behavior through outbound metadata:
+
+- `telegram_reply_to_message_id`: explicit numeric reply target, or `null` to suppress the default reply-to behavior
+- `telegram_disable_web_page_preview`: defaults to `true`
+- `telegram_disable_notification`: defaults to `false`
+- `telegram_format`: `plain`/`text` to force plain text, or `html` to force Telegram HTML parse mode
+- `telegram_parse_mode`: currently supports `html`
+
+Formatting notes:
+
+- Turin automatically renders `CodeBlock` content as Telegram HTML `<pre>` blocks.
+- Plain text remains the default for normal text-only messages.
+- Attachments are still rendered as text lines; media upload is not part of this adapter yet.
+
+## 9. Validate With The Smoke Script
 
 For a quick live validation against the real Telegram Bot API:
 
@@ -241,6 +262,20 @@ curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/deleteWebhook?drop_pend
 ```
 
 Then restart or re-enable the channel.
+
+### Intermittent Telegram API failures or rate limits
+
+Meaning:
+- Telegram returned a transient send/poll error such as rate limiting or a temporary upstream failure
+
+What Turin does:
+- the Telegram adapter retries the individual API call with bounded backoff
+- if polling still cannot recover, the runtime keeps backing off instead of immediately crashing on the first transient error
+
+What to check:
+- whether the bot is being rate limited by repeated test traffic
+- whether another process is also polling the same bot token
+- whether Telegram still reports an active webhook
 
 ### No updates arrive from a group
 

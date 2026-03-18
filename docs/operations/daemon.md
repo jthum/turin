@@ -313,7 +313,7 @@ Discord runtime behavior notes:
 `kind = "telegram"` is also available as a daemon-owned adapter:
 
 - uses Telegram Bot API long polling (`getUpdates`) for inbound events
-- accepts inbound text messages and posts outbound text replies with `sendMessage`
+- accepts inbound text messages and posts outbound replies with `sendMessage`
 - routes forum-topic messages to stable Turin slots using Telegram `message_thread_id` when present
 - requires:
   - `token_env` (environment variable containing a Telegram bot token)
@@ -331,7 +331,18 @@ Telegram runtime behavior notes:
 
 - The first pass is long-polling only; Turin does not auto-manage Telegram webhooks.
 - If the bot still has an active webhook, runtime startup fails with a polling/webhook error until the webhook is removed.
-- Outbound structured channel payloads are rendered to plain text blocks and chunked to Telegram-safe message sizes.
+- Transient Telegram polling/send failures now use bounded retry/backoff instead of immediately failing the runtime.
+- Telegram replies default to `reply_to_message_id=<inbound message id>` when the inbound event came from Telegram and no explicit override is set.
+- Outbound text is chunked to Telegram-safe message sizes.
+- Code blocks render with Telegram HTML `<pre>` formatting by default.
+
+Telegram outbound metadata keys:
+
+- `telegram_reply_to_message_id`: override or clear the reply target for a specific outbound message
+- `telegram_disable_web_page_preview`: defaults to `true`
+- `telegram_disable_notification`: defaults to `false`
+- `telegram_format`: `plain`/`text` to force plain text, or `html` to force Telegram HTML parse mode
+- `telegram_parse_mode`: currently supports `html`
 
 For a step-by-step operator walkthrough, see `docs/guides/channels/telegram.md`.
 
