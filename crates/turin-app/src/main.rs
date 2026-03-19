@@ -7,13 +7,15 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
-use tokio::time;
 use turin_control_client::{
-    AgentRuntime, AgentSummary, ChannelRuntime, ChannelSummary, ConnectionKind, ConnectionSpec,
-    ControlClient, LiveSession, SessionSummary, TaskStatus,
+    AgentRuntime, AgentSummary, ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession,
+    SessionSummary, TaskStatus,
 };
-use turin_daemon_protocol::{EventEnvelope, RuntimeEventsSubscribeParams};
-use turin_ui_core::{DashboardSnapshot, DashboardState};
+use turin_daemon_protocol::EventEnvelope;
+use turin_ui_core::{
+    ConnectionOptions, DashboardState, OperatorCommand, UiUpdate, connect_dashboard,
+    spawn_controller,
+};
 
 #[derive(Parser, Debug)]
 #[command(name = "turin-app", version, about)]
@@ -28,23 +30,6 @@ struct Args {
     auth_token: Option<String>,
     #[arg(long)]
     auth_token_env: Option<String>,
-}
-
-enum UiUpdate {
-    Snapshot(Box<DashboardSnapshot>),
-    Event(EventEnvelope),
-    Error(String),
-    Info(String),
-}
-
-enum OperatorCommand {
-    Refresh,
-    OpenSession { agent_id: String },
-    ResumeSession { session_id: String },
-    SubmitPrompt { session_id: String, prompt: String },
-    CancelSession { session_id: String },
-    KillSession { session_id: String },
-    CancelTask { request_id: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,16 +66,10 @@ impl TabKind {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let spec = connection_spec_from_args(&args)?;
+    let spec = connection_options(&args).to_spec()?;
     let runtime = Arc::new(Runtime::new()?);
-    let client = runtime.block_on(ControlClient::connect(&spec))?;
-    let dashboard = runtime.block_on(DashboardState::load(&client))?;
-    let (tx, rx) = mpsc::unbounded_channel::<UiUpdate>();
-    let (command_tx, command_rx) = mpsc::unbounded_channel::<OperatorCommand>();
-
-    spawn_event_task(runtime.clone(), client.clone(), tx.clone());
-    spawn_refresh_task(runtime.clone(), client.clone(), tx.clone());
-    spawn_command_task(runtime.clone(), client, command_rx, tx);
+    let (client, dashboard) = runtime.block_on(connect_dashboard(&spec))?;
+    let controller = spawn_controller(runtime.handle(), client);
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -105,167 +84,23 @@ fn main() -> Result<()> {
         Box::new(move |cc| {
             configure_visuals(&cc.egui_ctx);
             Ok(Box::new(TurinDesktopApp::new(
-                dashboard, rx, command_tx, runtime,
+                dashboard,
+                controller.update_rx,
+                controller.command_tx,
+                runtime,
             )))
         }),
     )
     .map_err(|err| anyhow!(err.to_string()))
 }
 
-fn connection_spec_from_args(args: &Args) -> Result<ConnectionSpec> {
-    if let Some(base_url) = &args.remote_url {
-        if let Some(auth_token) = &args.auth_token {
-            return Ok(ConnectionSpec::Remote {
-                base_url: base_url.clone(),
-                auth_token: auth_token.clone(),
-            });
-        }
-        if let Some(auth_token_env) = &args.auth_token_env {
-            return Ok(ConnectionSpec::RemoteEnv {
-                base_url: base_url.clone(),
-                auth_token_env: auth_token_env.clone(),
-            });
-        }
-        return Err(anyhow!(
-            "--remote-url requires either --auth-token or --auth-token-env"
-        ));
-    }
-
-    if let Some(endpoint) = &args.endpoint {
-        return Ok(ConnectionSpec::LocalEndpoint {
-            endpoint: endpoint.clone(),
-        });
-    }
-
-    Ok(ConnectionSpec::LocalConfig {
+fn connection_options(args: &Args) -> ConnectionOptions {
+    ConnectionOptions {
         config_path: args.config.clone(),
-    })
-}
-
-fn spawn_event_task(
-    runtime: Arc<Runtime>,
-    client: ControlClient,
-    tx: mpsc::UnboundedSender<UiUpdate>,
-) {
-    runtime.spawn(async move {
-        match client
-            .subscribe_managed(RuntimeEventsSubscribeParams::default())
-            .await
-        {
-            Ok(mut stream) => loop {
-                match stream.next_event().await {
-                    Ok(event) => {
-                        let _ = tx.send(UiUpdate::Event(event));
-                    }
-                    Err(err) => {
-                        let _ = tx.send(UiUpdate::Error(err.to_string()));
-                        break;
-                    }
-                }
-            },
-            Err(err) => {
-                let _ = tx.send(UiUpdate::Error(err.to_string()));
-            }
-        }
-    });
-}
-
-fn spawn_refresh_task(
-    runtime: Arc<Runtime>,
-    client: ControlClient,
-    tx: mpsc::UnboundedSender<UiUpdate>,
-) {
-    runtime.spawn(async move {
-        let mut interval = time::interval(Duration::from_secs(5));
-        loop {
-            interval.tick().await;
-            match DashboardState::snapshot(&client).await {
-                Ok(snapshot) => {
-                    let _ = tx.send(UiUpdate::Snapshot(Box::new(snapshot)));
-                }
-                Err(err) => {
-                    let _ = tx.send(UiUpdate::Error(err.to_string()));
-                }
-            }
-        }
-    });
-}
-
-fn spawn_command_task(
-    runtime: Arc<Runtime>,
-    client: ControlClient,
-    mut command_rx: mpsc::UnboundedReceiver<OperatorCommand>,
-    tx: mpsc::UnboundedSender<UiUpdate>,
-) {
-    runtime.spawn(async move {
-        while let Some(command) = command_rx.recv().await {
-            match handle_command(&client, command).await {
-                Ok(message) => {
-                    let _ = tx.send(UiUpdate::Info(message));
-                    match DashboardState::snapshot(&client).await {
-                        Ok(snapshot) => {
-                            let _ = tx.send(UiUpdate::Snapshot(Box::new(snapshot)));
-                        }
-                        Err(err) => {
-                            let _ = tx.send(UiUpdate::Error(err.to_string()));
-                        }
-                    }
-                }
-                Err(err) => {
-                    let _ = tx.send(UiUpdate::Error(err.to_string()));
-                }
-            }
-        }
-    });
-}
-
-async fn handle_command(client: &ControlClient, command: OperatorCommand) -> Result<String> {
-    match command {
-        OperatorCommand::Refresh => Ok("Refreshed Turin state".to_string()),
-        OperatorCommand::OpenSession { agent_id } => {
-            let session = client.open_session(&agent_id, None).await?;
-            Ok(format!(
-                "Opened live session {} for agent {}",
-                session.session_id, session.agent_id
-            ))
-        }
-        OperatorCommand::ResumeSession { session_id } => {
-            let session = client.resume_session(&session_id, None).await?;
-            Ok(format!(
-                "Resumed session {} into live slot {}",
-                session.session_id, session.slot_id
-            ))
-        }
-        OperatorCommand::SubmitPrompt { session_id, prompt } => {
-            let task = client
-                .submit_task(None, Some(session_id.clone()), prompt)
-                .await?;
-            Ok(format!(
-                "Submitted task {} to session {}",
-                task.request_id, session_id
-            ))
-        }
-        OperatorCommand::CancelSession { session_id } => {
-            let result = client.cancel_session(&session_id).await?;
-            Ok(format!(
-                "Requested cancel for session {} ({})",
-                result.session_id, result.agent_id
-            ))
-        }
-        OperatorCommand::KillSession { session_id } => {
-            let result = client.kill_session(&session_id).await?;
-            Ok(format!(
-                "Killed session {} ({})",
-                result.session_id, result.agent_id
-            ))
-        }
-        OperatorCommand::CancelTask { request_id } => {
-            let task = client.cancel_task(&request_id).await?;
-            Ok(format!(
-                "Cancelled task {} -> {}",
-                task.request_id, task.state
-            ))
-        }
+        endpoint: args.endpoint.clone(),
+        remote_url: args.remote_url.clone(),
+        auth_token: args.auth_token.clone(),
+        auth_token_env: args.auth_token_env.clone(),
     }
 }
 
@@ -319,12 +154,7 @@ impl TurinDesktopApp {
     }
 
     fn apply_update(&mut self, update: UiUpdate) {
-        match update {
-            UiUpdate::Snapshot(snapshot) => self.dashboard.apply_snapshot(*snapshot),
-            UiUpdate::Event(event) => self.dashboard.record_event(event),
-            UiUpdate::Error(message) => self.dashboard.record_error(message),
-            UiUpdate::Info(message) => self.dashboard.record_info(message),
-        }
+        self.dashboard.apply_update(update);
         self.clamp_selection_indices();
     }
 
