@@ -288,6 +288,13 @@ Both clients can connect either:
 - locally through the daemon endpoint resolved from `turin.toml`
 - remotely through `turin-remote`
 
+Both clients now share:
+
+- `ui-profiles.toml` connection profiles
+- in-UI profile switching and draft editing
+- draft/selected-profile preflight checks before reconnecting
+- task, channel, and event filtering in the operator views
+
 Examples:
 
 ```bash

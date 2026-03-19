@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-03-19
+
+### Added
+- **Telegram Channel Adapter**
+  - Added daemon-runnable `kind = "telegram"` support with long-polling inbound handling, outbound replies, forum-topic slot mapping, and operator setup/testing docs.
+  - Added Telegram live smoke coverage and richer runtime/operator guidance.
+- **Remote Operator Surface**
+  - Added the `turin-remote` binary for authenticated HTTP control requests plus SSE and WebSocket event streaming on top of the existing daemon protocol.
+  - Added the `turin-remote-client`, `turin-control-client`, and `turin-ui-core` crates as the shared transport-agnostic client stack for UI consumers.
+- **First Operator Clients**
+  - Added `turin-tui`, a terminal operator console for sessions, tasks, channels, and events across both local-daemon and remote-network modes.
+  - Added `turin-app`, a native desktop operator shell over the same shared control layer.
+  - Added shared connection-profile files, in-UI profile switching, recent draft recall, draft preflight/testing, local-daemon ensure helpers for local-config drafts, and live filtering/event controls in the UI clients.
+
+### Changed
+- **Documentation Information Architecture**
+  - Reorganized `docs/` into a site-friendly structure with focused `getting-started`, `concepts`, `guides`, `operations`, `reference`, and `adr` sections.
+  - Added dedicated operator docs for UI clients, profile files, remote usage, and Telegram setup.
+- **Runtime And Control-Plane Maintainability**
+  - Split the daemon CLI, remote server, agent manager, and top-level CLI entrypoint into focused submodules to reduce large-file hotspots.
+  - Hardened Telegram runtime behavior with retry/backoff and better reply formatting defaults.
+- **Operator UX**
+  - The UI clients now surface richer session detail, profile diffing, overwrite safety, dirty-draft guards, preflight diagnostics, and task/channel/event filtering.
+
+### Fixed
+- **Telegram Build Wiring**
+  - Fixed Telegram crate tokio feature wiring so the adapter remains clean under clippy and release builds.
+
 ## [0.24.0] - 2026-03-12
 
 ### Added
