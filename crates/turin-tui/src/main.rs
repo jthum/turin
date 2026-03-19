@@ -167,28 +167,50 @@ fn connection_options(args: &Args) -> ConnectionOptions {
 
 async fn run_shell(
     terminal: &mut DefaultTerminal,
-    mut connection_options: ConnectionOptions,
+    initial_connection_options: ConnectionOptions,
 ) -> Result<()> {
-    loop {
-        let spec = connection_options.to_spec()?;
-        let (client, dashboard) = connect_dashboard(&spec).await?;
-        let profile_catalog = connection_options.load_profiles()?;
-        let active_profile = connection_options.resolved_profile_name()?;
-        let mut app = TuiApp::new(
-            dashboard,
-            connection_options.clone(),
-            profile_catalog,
-            active_profile,
-        );
-        let mut controller = spawn_controller(&tokio::runtime::Handle::current(), client);
-        let action = run_app(terminal, &mut app, &mut controller)?;
-        controller.shutdown();
+    let (mut app, mut controller) = connect_shell_state(initial_connection_options).await?;
 
+    loop {
+        let action = run_app(terminal, &mut app, &mut controller)?;
         match action {
-            LoopAction::Quit => return Ok(()),
-            LoopAction::Reconnect(next) => connection_options = next,
+            LoopAction::Quit => {
+                controller.shutdown();
+                return Ok(());
+            }
+            LoopAction::Reconnect(next_options) => match connect_shell_state(next_options).await {
+                Ok((next_app, next_controller)) => {
+                    controller.shutdown();
+                    app = next_app;
+                    controller = next_controller;
+                    let target = app.dashboard.connection_target.clone();
+                    app.dashboard
+                        .record_info(format!("Connected UI client to {target}"));
+                }
+                Err(err) => {
+                    app.dashboard
+                        .record_error(format!("Failed to connect to selected profile: {err}"));
+                }
+            },
         }
     }
+}
+
+async fn connect_shell_state(
+    connection_options: ConnectionOptions,
+) -> Result<(TuiApp, UiController)> {
+    let spec = connection_options.to_spec()?;
+    let (client, dashboard) = connect_dashboard(&spec).await?;
+    let profile_catalog = connection_options.load_profiles()?;
+    let active_profile = connection_options.resolved_profile_name()?;
+    let app = TuiApp::new(
+        dashboard,
+        connection_options,
+        profile_catalog,
+        active_profile,
+    );
+    let controller = spawn_controller(&tokio::runtime::Handle::current(), client);
+    Ok((app, controller))
 }
 
 fn run_app(
