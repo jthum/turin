@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,12 @@ pub struct DashboardState {
     pub recent_events: Vec<EventEnvelope>,
     #[serde(default)]
     pub recent_notices: Vec<DashboardNotice>,
+    #[serde(default = "now_unix_ms")]
+    pub last_snapshot_unix_ms: u64,
+    #[serde(default)]
+    pub last_event_unix_ms: Option<u64>,
+    #[serde(default)]
+    pub last_notice_unix_ms: Option<u64>,
     pub last_error: Option<String>,
     pub last_info: Option<String>,
 }
@@ -75,9 +82,18 @@ pub enum DashboardNoticeLevel {
     Info,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DashboardFreshness {
+    Fresh,
+    Quiet,
+    Stale,
+}
+
 impl DashboardState {
     pub async fn load(client: &ControlClient) -> Result<Self> {
         let snapshot = Self::snapshot(client).await?;
+        let now = now_unix_ms();
         Ok(Self {
             connection_kind: snapshot.connection_kind,
             connection_target: snapshot.connection_target,
@@ -89,6 +105,9 @@ impl DashboardState {
             session_details: BTreeMap::new(),
             recent_events: Vec::new(),
             recent_notices: Vec::new(),
+            last_snapshot_unix_ms: now,
+            last_event_unix_ms: None,
+            last_notice_unix_ms: None,
             last_error: None,
             last_info: None,
         })
@@ -111,6 +130,7 @@ impl DashboardState {
     }
 
     pub fn apply_snapshot(&mut self, snapshot: DashboardSnapshot) {
+        let now = now_unix_ms();
         let mut retained_details = BTreeMap::new();
         for session_id in snapshot
             .live_sessions
@@ -135,6 +155,7 @@ impl DashboardState {
         self.sessions = snapshot.sessions;
         self.tasks = snapshot.tasks;
         self.session_details = retained_details;
+        self.last_snapshot_unix_ms = now;
         self.last_error = None;
     }
 
@@ -154,6 +175,7 @@ impl DashboardState {
     }
 
     pub fn record_event(&mut self, event: EventEnvelope) {
+        self.last_event_unix_ms = Some(now_unix_ms());
         self.recent_events.push(event);
         if self.recent_events.len() > MAX_RECENT_EVENTS {
             let drop_count = self.recent_events.len() - MAX_RECENT_EVENTS;
@@ -164,13 +186,31 @@ impl DashboardState {
     pub fn record_error(&mut self, message: impl Into<String>) {
         let message = message.into();
         self.last_error = Some(message.clone());
+        self.last_notice_unix_ms = Some(now_unix_ms());
         self.push_notice(DashboardNoticeLevel::Error, message);
     }
 
     pub fn record_info(&mut self, message: impl Into<String>) {
         let message = message.into();
         self.last_info = Some(message.clone());
+        self.last_notice_unix_ms = Some(now_unix_ms());
         self.push_notice(DashboardNoticeLevel::Info, message);
+    }
+
+    pub fn snapshot_freshness(&self) -> DashboardFreshness {
+        freshness_at(now_unix_ms(), self.last_snapshot_unix_ms)
+    }
+
+    pub fn snapshot_age_label(&self) -> String {
+        format_relative_age(age_seconds(now_unix_ms(), Some(self.last_snapshot_unix_ms)))
+    }
+
+    pub fn event_age_label(&self) -> String {
+        format_relative_age(age_seconds(now_unix_ms(), self.last_event_unix_ms))
+    }
+
+    pub fn notice_age_label(&self) -> String {
+        format_relative_age(age_seconds(now_unix_ms(), self.last_notice_unix_ms))
     }
 
     pub fn status_pretty_json(&self) -> String {
@@ -207,6 +247,17 @@ impl DashboardState {
     }
 }
 
+pub fn format_relative_age(age_seconds: Option<u64>) -> String {
+    match age_seconds {
+        None => "none yet".to_string(),
+        Some(0) => "just now".to_string(),
+        Some(seconds) if seconds < 60 => format!("{seconds}s ago"),
+        Some(seconds) if seconds < 3600 => format!("{}m ago", seconds / 60),
+        Some(seconds) if seconds < 86_400 => format!("{}h ago", seconds / 3600),
+        Some(seconds) => format!("{}d ago", seconds / 86_400),
+    }
+}
+
 impl From<ControlHealth> for DashboardHealth {
     fn from(value: ControlHealth) -> Self {
         Self {
@@ -229,9 +280,31 @@ impl From<ControlHealth> for DashboardHealth {
     }
 }
 
+fn now_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn age_seconds(now_ms: u64, timestamp_ms: Option<u64>) -> Option<u64> {
+    timestamp_ms.map(|timestamp_ms| now_ms.saturating_sub(timestamp_ms) / 1000)
+}
+
+fn freshness_at(now_ms: u64, last_snapshot_ms: u64) -> DashboardFreshness {
+    match now_ms.saturating_sub(last_snapshot_ms) / 1000 {
+        0..=10 => DashboardFreshness::Fresh,
+        11..=30 => DashboardFreshness::Quiet,
+        _ => DashboardFreshness::Stale,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{DashboardNoticeLevel, DashboardState, MAX_RECENT_NOTICES};
+    use super::{
+        DashboardFreshness, DashboardNoticeLevel, DashboardState, MAX_RECENT_NOTICES,
+        format_relative_age, freshness_at,
+    };
     use turin_control_client::ConnectionKind;
 
     fn empty_dashboard() -> DashboardState {
@@ -246,6 +319,9 @@ mod tests {
             session_details: Default::default(),
             recent_events: Vec::new(),
             recent_notices: Vec::new(),
+            last_snapshot_unix_ms: 0,
+            last_event_unix_ms: None,
+            last_notice_unix_ms: None,
             last_error: None,
             last_info: None,
         }
@@ -279,5 +355,21 @@ mod tests {
             Some(DashboardNoticeLevel::Error)
         );
         assert_eq!(dashboard.last_error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn snapshot_freshness_thresholds_are_stable() {
+        assert_eq!(freshness_at(10_000, 10_000), DashboardFreshness::Fresh);
+        assert_eq!(freshness_at(22_000, 10_000), DashboardFreshness::Quiet);
+        assert_eq!(freshness_at(45_000, 10_000), DashboardFreshness::Stale);
+    }
+
+    #[test]
+    fn relative_age_labels_cover_common_ranges() {
+        assert_eq!(format_relative_age(None), "none yet");
+        assert_eq!(format_relative_age(Some(0)), "just now");
+        assert_eq!(format_relative_age(Some(9)), "9s ago");
+        assert_eq!(format_relative_age(Some(90)), "1m ago");
+        assert_eq!(format_relative_age(Some(7200)), "2h ago");
     }
 }

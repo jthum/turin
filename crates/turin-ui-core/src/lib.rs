@@ -7,5 +7,6 @@ pub use controller::{
     connect_dashboard, execute_operator_command, spawn_controller, spawn_controller_with_interval,
 };
 pub use dashboard::{
-    DashboardHealth, DashboardNotice, DashboardNoticeLevel, DashboardSnapshot, DashboardState,
+    DashboardFreshness, DashboardHealth, DashboardNotice, DashboardNoticeLevel, DashboardSnapshot,
+    DashboardState, format_relative_age,
 };

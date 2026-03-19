@@ -21,8 +21,8 @@ use turin_control_client::{
 use turin_daemon_protocol::EventEnvelope;
 use turin_ui_core::{
     ConnectionOptions, ConnectionProfileAuth, ConnectionProfileCatalog, ConnectionProfileKind,
-    ConnectionProfileSummary, DashboardState, OperatorCommand, UiController, UiUpdate,
-    connect_dashboard, spawn_controller,
+    ConnectionProfileSummary, DashboardFreshness, DashboardState, OperatorCommand, UiController,
+    UiUpdate, connect_dashboard, spawn_controller,
 };
 
 #[derive(Parser, Debug)]
@@ -402,7 +402,7 @@ fn render(frame: &mut Frame<'_>, app: &mut TuiApp) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(5),
+            Constraint::Length(6),
             Constraint::Length(3),
             Constraint::Min(12),
             Constraint::Length(4),
@@ -456,9 +456,24 @@ fn render_banner(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
                     .clone()
                     .unwrap_or_else(|| "Direct CLI/config".to_string()),
             ),
+            Span::styled("  Sync: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                format!(
+                    "{} ({})",
+                    freshness_label(app.dashboard.snapshot_freshness()),
+                    app.dashboard.snapshot_age_label()
+                ),
+                Style::default().fg(freshness_color(app.dashboard.snapshot_freshness())),
+            ),
         ]),
         Line::from(vec![
-            Span::styled("Counts: ", Style::default().fg(Color::Gray)),
+            Span::styled("Activity: ", Style::default().fg(Color::Gray)),
+            Span::raw(format!(
+                "event {}  notice {}",
+                app.dashboard.event_age_label(),
+                app.dashboard.notice_age_label()
+            )),
+            Span::styled("  Counts: ", Style::default().fg(Color::Gray)),
             Span::raw(format!(
                 "{} agents, {} live sessions, {} stored sessions, {} tasks, {} channels",
                 app.dashboard.agents().len(),
@@ -864,6 +879,12 @@ impl TuiApp {
                     "target": self.dashboard.connection_target,
                     "active_profile": self.active_profile.as_deref().unwrap_or("Direct CLI/config"),
                     "profiles_source": self.connection_options.profiles_path().display().to_string(),
+                    "snapshot_freshness": freshness_label(self.dashboard.snapshot_freshness()),
+                    "last_snapshot": self.dashboard.snapshot_age_label(),
+                    "last_event": self.dashboard.event_age_label(),
+                    "last_notice": self.dashboard.notice_age_label(),
+                    "transport": self.dashboard.health.as_ref().map(|health| health.transport.clone()),
+                    "wire_format": self.dashboard.health.as_ref().map(|health| health.wire_format.clone()),
                 },
                 "selected_profile": self.selected_profile().map(|profile| serde_json::json!({
                     "name": profile.name,
@@ -1024,6 +1045,22 @@ fn connection_kind_label(kind: ConnectionKind) -> &'static str {
     match kind {
         ConnectionKind::Local => "local",
         ConnectionKind::Remote => "remote",
+    }
+}
+
+fn freshness_label(freshness: DashboardFreshness) -> &'static str {
+    match freshness {
+        DashboardFreshness::Fresh => "fresh",
+        DashboardFreshness::Quiet => "quiet",
+        DashboardFreshness::Stale => "stale",
+    }
+}
+
+fn freshness_color(freshness: DashboardFreshness) -> Color {
+    match freshness {
+        DashboardFreshness::Fresh => Color::LightGreen,
+        DashboardFreshness::Quiet => Color::Yellow,
+        DashboardFreshness::Stale => Color::LightRed,
     }
 }
 

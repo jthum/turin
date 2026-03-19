@@ -13,8 +13,8 @@ use turin_control_client::{
 use turin_daemon_protocol::EventEnvelope;
 use turin_ui_core::{
     ConnectionOptions, ConnectionProfileAuth, ConnectionProfileCatalog, ConnectionProfileKind,
-    ConnectionProfileSummary, DashboardNoticeLevel, DashboardState, OperatorCommand, UiController,
-    UiUpdate, connect_dashboard, spawn_controller,
+    ConnectionProfileSummary, DashboardFreshness, DashboardNoticeLevel, DashboardState,
+    OperatorCommand, UiController, UiUpdate, connect_dashboard, spawn_controller,
 };
 
 #[derive(Parser, Debug)]
@@ -491,6 +491,17 @@ impl TurinDesktopApp {
                 );
                 detail_kv(
                     ui,
+                    "Snapshot Freshness",
+                    format!(
+                        "{} ({})",
+                        freshness_label(self.dashboard.snapshot_freshness()),
+                        self.dashboard.snapshot_age_label()
+                    ),
+                );
+                detail_kv(ui, "Last Event", self.dashboard.event_age_label());
+                detail_kv(ui, "Last Notice", self.dashboard.notice_age_label());
+                detail_kv(
+                    ui,
                     "Active Profile",
                     self.active_profile
                         .clone()
@@ -498,6 +509,11 @@ impl TurinDesktopApp {
                 );
                 detail_kv(ui, "Profiles File", profiles_source.display().to_string());
                 detail_kv(ui, "Available Profiles", profiles.len().to_string());
+                if let Some(health) = self.dashboard.health.as_ref() {
+                    detail_kv(ui, "Transport", health.transport.clone());
+                    detail_kv(ui, "Wire Format", health.wire_format.clone());
+                    detail_kv(ui, "Ready", yes_no(health.ready));
+                }
                 detail_kv(
                     ui,
                     "Last Error",
@@ -1030,6 +1046,16 @@ impl eframe::App for TurinDesktopApp {
                     );
                 }
                 ui.add_space(12.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Sync {} ({})",
+                        freshness_label(self.dashboard.snapshot_freshness()),
+                        self.dashboard.snapshot_age_label()
+                    ))
+                    .color(freshness_color(self.dashboard.snapshot_freshness()))
+                    .strong(),
+                );
+                ui.add_space(12.0);
                 if ui.button("Refresh").clicked() {
                     self.send_command(OperatorCommand::Refresh);
                 }
@@ -1129,6 +1155,22 @@ fn connection_kind_label(kind: ConnectionKind) -> &'static str {
     match kind {
         ConnectionKind::Local => "local",
         ConnectionKind::Remote => "remote",
+    }
+}
+
+fn freshness_label(freshness: DashboardFreshness) -> &'static str {
+    match freshness {
+        DashboardFreshness::Fresh => "fresh",
+        DashboardFreshness::Quiet => "quiet",
+        DashboardFreshness::Stale => "stale",
+    }
+}
+
+fn freshness_color(freshness: DashboardFreshness) -> Color32 {
+    match freshness {
+        DashboardFreshness::Fresh => Color32::from_rgb(111, 214, 161),
+        DashboardFreshness::Quiet => Color32::from_rgb(255, 214, 102),
+        DashboardFreshness::Stale => Color32::from_rgb(255, 171, 145),
     }
 }
 
