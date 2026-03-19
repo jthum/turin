@@ -13,9 +13,9 @@ use turin_control_client::{
 use turin_daemon_protocol::EventEnvelope;
 use turin_ui_core::{
     ConnectionOptions, ConnectionProfileAuth, ConnectionProfileCatalog, ConnectionProfileDraft,
-    ConnectionProfileDraftAuthMode, ConnectionProfileKind, ConnectionProfileSummary,
-    DashboardFreshness, DashboardNoticeLevel, DashboardState, OperatorCommand, UiController,
-    UiUpdate, connect_dashboard, spawn_controller,
+    ConnectionProfileDraftAuthMode, ConnectionProfileDraftValidation, ConnectionProfileKind,
+    ConnectionProfileSummary, DashboardFreshness, DashboardNoticeLevel, DashboardState,
+    OperatorCommand, UiController, UiUpdate, connect_dashboard, spawn_controller,
 };
 
 #[derive(Parser, Debug)]
@@ -246,6 +246,10 @@ impl TurinDesktopApp {
         self.selected_profile().map(|profile| profile.name.clone())
     }
 
+    fn profile_draft_validation(&self) -> ConnectionProfileDraftValidation {
+        self.profile_draft.validate()
+    }
+
     fn reload_profiles(&mut self) {
         match self.connection_options.load_profiles() {
             Ok(catalog) => {
@@ -333,6 +337,14 @@ impl TurinDesktopApp {
                 .record_error("Enter a profile name or select an existing profile before saving");
             return;
         };
+        let validation = self.profile_draft_validation();
+        if !validation.is_valid() {
+            self.dashboard.record_error(format!(
+                "Cannot save invalid connection profile draft: {}",
+                validation.summary()
+            ));
+            return;
+        }
 
         match self.connection_options.save_profile_draft(
             &profile_name,
@@ -779,6 +791,16 @@ impl TurinDesktopApp {
                     TextEdit::singleline(&mut self.profile_draft.target)
                         .hint_text(profile_target_hint(self.profile_draft.kind)),
                 );
+                let target_validation = self.profile_draft.validate();
+                if let Some(message) = target_validation.target_error.as_ref() {
+                    ui.label(
+                        RichText::new(message.clone()).color(Color32::from_rgb(255, 138, 128)),
+                    );
+                } else if let Some(message) = target_validation.target_notice.as_ref() {
+                    ui.label(
+                        RichText::new(message.clone()).color(Color32::from_rgb(255, 209, 128)),
+                    );
+                }
                 if self.profile_draft.kind == ConnectionProfileKind::Remote {
                     ui.add_space(8.0);
                     ui.horizontal_wrapped(|ui| {
@@ -812,14 +834,37 @@ impl TurinDesktopApp {
                             )
                             .hint_text(profile_auth_value_hint(self.profile_draft.auth_mode)),
                     );
+                    let auth_validation = self.profile_draft.validate();
+                    if let Some(message) = auth_validation.auth_error.as_ref() {
+                        ui.label(
+                            RichText::new(message.clone()).color(Color32::from_rgb(255, 138, 128)),
+                        );
+                    } else if let Some(message) = auth_validation.auth_notice.as_ref() {
+                        ui.label(
+                            RichText::new(message.clone()).color(Color32::from_rgb(255, 209, 128)),
+                        );
+                    }
                 } else {
                     self.profile_draft.auth_mode = ConnectionProfileDraftAuthMode::None;
                     self.profile_draft.auth_value.clear();
                 }
+                let draft_validation = self.profile_draft_validation();
+                ui.add_space(8.0);
+                ui.label(RichText::new("Draft Validation").strong());
+                ui.label(RichText::new(draft_validation.summary()).color(
+                    if draft_validation.is_valid() {
+                        Color32::from_rgb(168, 228, 160)
+                    } else {
+                        Color32::from_rgb(255, 138, 128)
+                    },
+                ));
                 ui.checkbox(&mut self.save_profile_as_default, "Set as default");
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Save Draft").clicked() {
+                    if ui
+                        .add_enabled(draft_validation.is_valid(), egui::Button::new("Save Draft"))
+                        .clicked()
+                    {
                         self.save_current_profile();
                     }
                     if ui.button("Duplicate Selected").clicked() {
@@ -863,6 +908,7 @@ impl TurinDesktopApp {
             });
 
             columns[1].group(|ui| {
+                let draft_validation = self.profile_draft_validation();
                 ui.heading("Connection Detail");
                 ui.add_space(8.0);
                 detail_kv(
@@ -978,6 +1024,16 @@ impl TurinDesktopApp {
                     "Draft Auth",
                     profile_draft_auth_label(self.profile_draft.auth_mode),
                 );
+                detail_kv(
+                    ui,
+                    "Draft Status",
+                    if draft_validation.is_valid() {
+                        "valid".to_string()
+                    } else {
+                        "invalid".to_string()
+                    },
+                );
+                detail_kv(ui, "Draft Summary", draft_validation.summary());
 
                 if !self.dashboard.recent_notices.is_empty() {
                     ui.add_space(12.0);

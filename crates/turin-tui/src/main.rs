@@ -21,9 +21,9 @@ use turin_control_client::{
 use turin_daemon_protocol::EventEnvelope;
 use turin_ui_core::{
     ConnectionOptions, ConnectionProfileAuth, ConnectionProfileCatalog, ConnectionProfileDraft,
-    ConnectionProfileDraftAuthMode, ConnectionProfileKind, ConnectionProfileSummary,
-    DashboardFreshness, DashboardState, OperatorCommand, UiController, UiUpdate, connect_dashboard,
-    spawn_controller,
+    ConnectionProfileDraftAuthMode, ConnectionProfileDraftValidation, ConnectionProfileKind,
+    ConnectionProfileSummary, DashboardFreshness, DashboardState, OperatorCommand, UiController,
+    UiUpdate, connect_dashboard, spawn_controller,
 };
 
 #[derive(Parser, Debug)]
@@ -762,6 +762,22 @@ fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
         }
     } else {
         let mut lines = vec![Line::from(app.help_text())];
+        if app.tab == TabKind::Connections {
+            let validation = app.profile_draft_validation();
+            if !validation.is_valid()
+                || validation.target_notice.is_some()
+                || validation.auth_notice.is_some()
+            {
+                lines.push(Line::from(Span::styled(
+                    format!("Draft: {}", validation.summary()),
+                    Style::default().fg(if validation.is_valid() {
+                        Color::Yellow
+                    } else {
+                        Color::LightRed
+                    }),
+                )));
+            }
+        }
         if let Some(error) = &app.dashboard.last_error {
             lines.push(Line::from(Span::styled(
                 error.clone(),
@@ -960,6 +976,10 @@ impl TuiApp {
         }
     }
 
+    fn profile_draft_validation(&self) -> ConnectionProfileDraftValidation {
+        self.profile_draft.validate()
+    }
+
     fn cycle_profile_draft_kind(&mut self) {
         self.profile_draft.kind = match self.profile_draft.kind {
             ConnectionProfileKind::LocalConfig => ConnectionProfileKind::LocalEndpoint,
@@ -1008,6 +1028,14 @@ impl TuiApp {
     }
 
     fn save_current_profile(&mut self, profile_name: &str, make_default: bool) {
+        let validation = self.profile_draft_validation();
+        if !validation.is_valid() {
+            self.dashboard.record_error(format!(
+                "Cannot save invalid connection profile draft: {}",
+                validation.summary()
+            ));
+            return;
+        }
         match self.connection_options.save_profile_draft(
             profile_name,
             &self.profile_draft,
@@ -1144,6 +1172,12 @@ impl TuiApp {
         if self.profile_draft.kind != ConnectionProfileKind::Remote {
             self.dashboard
                 .record_error("Draft auth can only be edited for remote profiles");
+            return;
+        }
+        if self.profile_draft.auth_mode == ConnectionProfileDraftAuthMode::None {
+            self.dashboard.record_error(
+                "Draft auth value can only be edited after choosing env or inline auth mode",
+            );
             return;
         }
         self.input_mode = Some(InputMode::EditDraftAuth);
@@ -1304,52 +1338,63 @@ impl TuiApp {
 
     fn detail_text(&self) -> String {
         match self.tab {
-            TabKind::Connections => pretty_json(&serde_json::json!({
-                "current_connection": {
-                    "kind": connection_kind_label(self.dashboard.connection_kind),
-                    "target": self.dashboard.connection_target,
-                    "active_profile": self.active_profile.as_deref().unwrap_or("Direct CLI/config"),
-                    "profiles_source": self.connection_options.profiles_path().display().to_string(),
-                    "snapshot_freshness": freshness_label(self.dashboard.snapshot_freshness()),
-                    "last_snapshot": self.dashboard.snapshot_age_label(),
-                    "last_event": self.dashboard.event_age_label(),
-                    "last_notice": self.dashboard.notice_age_label(),
-                    "total_events": self.dashboard.total_event_count,
-                    "refresh_success_count": self.dashboard.refresh_success_count,
-                    "refresh_failure_count": self.dashboard.refresh_failure_count,
-                    "last_refresh_status": self.dashboard.last_refresh_status_label(),
-                    "last_refresh_latency": self.dashboard.last_refresh_latency_label(),
-                    "transport": self.dashboard.health.as_ref().map(|health| health.transport.clone()),
-                    "wire_format": self.dashboard.health.as_ref().map(|health| health.wire_format.clone()),
-                },
-                "selected_profile": self.selected_profile().map(|profile| serde_json::json!({
-                    "name": profile.name,
-                    "kind": profile_kind_label(profile.kind),
-                    "target": profile.target,
-                    "auth": profile_auth_label(profile.auth.as_ref()),
-                    "default": profile.is_default,
-                })),
-                "profile_draft": {
-                    "kind": profile_kind_label(self.profile_draft.kind),
-                    "target": self.profile_draft.target,
-                    "auth_mode": profile_draft_auth_label(self.profile_draft.auth_mode),
-                    "auth_value": if self.profile_draft.auth_mode == ConnectionProfileDraftAuthMode::InlineToken {
-                        "<hidden>"
-                    } else {
-                        self.profile_draft.auth_value.as_str()
+            TabKind::Connections => {
+                let validation = self.profile_draft_validation();
+                pretty_json(&serde_json::json!({
+                    "current_connection": {
+                        "kind": connection_kind_label(self.dashboard.connection_kind),
+                        "target": self.dashboard.connection_target,
+                        "active_profile": self.active_profile.as_deref().unwrap_or("Direct CLI/config"),
+                        "profiles_source": self.connection_options.profiles_path().display().to_string(),
+                        "snapshot_freshness": freshness_label(self.dashboard.snapshot_freshness()),
+                        "last_snapshot": self.dashboard.snapshot_age_label(),
+                        "last_event": self.dashboard.event_age_label(),
+                        "last_notice": self.dashboard.notice_age_label(),
+                        "total_events": self.dashboard.total_event_count,
+                        "refresh_success_count": self.dashboard.refresh_success_count,
+                        "refresh_failure_count": self.dashboard.refresh_failure_count,
+                        "last_refresh_status": self.dashboard.last_refresh_status_label(),
+                        "last_refresh_latency": self.dashboard.last_refresh_latency_label(),
+                        "transport": self.dashboard.health.as_ref().map(|health| health.transport.clone()),
+                        "wire_format": self.dashboard.health.as_ref().map(|health| health.wire_format.clone()),
                     },
-                },
-                "available_profiles": self.profile_catalog.as_ref().map(|catalog| catalog.profiles().len()).unwrap_or(0),
-                "last_error": self.dashboard.last_error.clone(),
-                "last_info": self.dashboard.last_info.clone(),
-                "recent_notices": self
-                    .dashboard
-                    .recent_notices
-                    .iter()
-                    .rev()
-                    .take(6)
-                    .collect::<Vec<_>>(),
-            })),
+                    "selected_profile": self.selected_profile().map(|profile| serde_json::json!({
+                        "name": profile.name,
+                        "kind": profile_kind_label(profile.kind),
+                        "target": profile.target,
+                        "auth": profile_auth_label(profile.auth.as_ref()),
+                        "default": profile.is_default,
+                    })),
+                    "profile_draft": {
+                        "kind": profile_kind_label(self.profile_draft.kind),
+                        "target": self.profile_draft.target,
+                        "auth_mode": profile_draft_auth_label(self.profile_draft.auth_mode),
+                        "auth_value": if self.profile_draft.auth_mode == ConnectionProfileDraftAuthMode::InlineToken {
+                            "<hidden>"
+                        } else {
+                            self.profile_draft.auth_value.as_str()
+                        },
+                        "validation": {
+                            "status": if validation.is_valid() { "valid" } else { "invalid" },
+                            "summary": validation.summary(),
+                            "target_error": validation.target_error,
+                            "auth_error": validation.auth_error,
+                            "target_notice": validation.target_notice,
+                            "auth_notice": validation.auth_notice,
+                        },
+                    },
+                    "available_profiles": self.profile_catalog.as_ref().map(|catalog| catalog.profiles().len()).unwrap_or(0),
+                    "last_error": self.dashboard.last_error.clone(),
+                    "last_info": self.dashboard.last_info.clone(),
+                    "recent_notices": self
+                        .dashboard
+                        .recent_notices
+                        .iter()
+                        .rev()
+                        .take(6)
+                        .collect::<Vec<_>>(),
+                }))
+            }
             TabKind::Agents => self
                 .selected_agent()
                 .map(|agent| {

@@ -140,6 +140,7 @@ Current behavior:
 - both clients can load and display profiles from `ui-profiles.toml` or an explicit `--profiles-file`
 - both clients can switch the active backend to a selected profile without restarting the UI
 - both clients can edit a profile draft with connection kind, target, and auth settings
+- both clients validate the edited draft inline before saving, including remote URL and auth checks
 - both clients can save the edited draft back into the profile file
 - both clients can duplicate or rename an existing profile from inside the UI
 - both clients can delete a selected profile from inside the UI
@@ -152,6 +153,7 @@ The desktop app exposes this through the Connections tab controls:
 - `Load Selected` copies the highlighted stored profile into the editor draft
 - `New Draft` resets the editor to a fresh draft
 - edit the draft kind, target, and remote auth mode/value inline in the Connections tab
+- invalid draft fields are highlighted inline, and `Save Draft` stays disabled until the draft is valid
 - `Save Draft` writes the edited draft into the profile file under the typed profile name
 - `Duplicate Selected` copies the highlighted profile to the typed name
 - `Rename Selected` renames the highlighted profile to the typed name
@@ -167,6 +169,7 @@ The TUI exposes it through the Connections tab plus keyboard actions:
 - `o` cycles the draft auth mode for remote drafts
 - `t` edits the draft target
 - `g` edits the draft auth value
+- the detail pane and footer show draft validation issues before save, and `g` only edits auth when the draft is using env or inline auth
 - `a` saves the current draft to a typed profile name
 - `A` saves the current draft and marks it as the default profile
 - `y` duplicates the selected profile to a typed name
