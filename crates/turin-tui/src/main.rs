@@ -20,9 +20,10 @@ use turin_control_client::{
 };
 use turin_daemon_protocol::EventEnvelope;
 use turin_ui_core::{
-    ConnectionOptions, ConnectionProfileAuth, ConnectionProfileCatalog, ConnectionProfileKind,
-    ConnectionProfileSummary, DashboardFreshness, DashboardState, OperatorCommand, UiController,
-    UiUpdate, connect_dashboard, spawn_controller,
+    ConnectionOptions, ConnectionProfileAuth, ConnectionProfileCatalog, ConnectionProfileDraft,
+    ConnectionProfileDraftAuthMode, ConnectionProfileKind, ConnectionProfileSummary,
+    DashboardFreshness, DashboardState, OperatorCommand, UiController, UiUpdate, connect_dashboard,
+    spawn_controller,
 };
 
 #[derive(Parser, Debug)]
@@ -127,6 +128,8 @@ enum InputMode {
     ConfirmDelete {
         profile_name: String,
     },
+    EditDraftTarget,
+    EditDraftAuth,
 }
 
 struct TuiApp {
@@ -142,6 +145,7 @@ struct TuiApp {
     task_index: usize,
     channel_index: usize,
     event_index: usize,
+    profile_draft: ConnectionProfileDraft,
     input_mode: Option<InputMode>,
     input: String,
     requested_session_detail: Option<String>,
@@ -275,6 +279,18 @@ fn handle_key(
         KeyCode::Up | KeyCode::Char('k') => app.move_selection(-1),
         KeyCode::Char('r') => send_command(command_tx, OperatorCommand::Refresh)?,
         KeyCode::Char('l') if app.tab == TabKind::Connections => app.reload_profiles(),
+        KeyCode::Char('v') if app.tab == TabKind::Connections => {
+            app.load_current_connection_into_draft()
+        }
+        KeyCode::Char('b') if app.tab == TabKind::Connections => {
+            app.load_selected_profile_into_draft()
+        }
+        KeyCode::Char('m') if app.tab == TabKind::Connections => app.cycle_profile_draft_kind(),
+        KeyCode::Char('o') if app.tab == TabKind::Connections => {
+            app.cycle_profile_draft_auth_mode()
+        }
+        KeyCode::Char('t') if app.tab == TabKind::Connections => app.start_edit_draft_target(),
+        KeyCode::Char('g') if app.tab == TabKind::Connections => app.start_edit_draft_auth(),
         KeyCode::Char('a') if app.tab == TabKind::Connections => {
             app.start_save_profile_input(false)
         }
@@ -427,6 +443,8 @@ fn handle_input_mode(
                     Some(InputMode::SaveProfile { .. })
                     | Some(InputMode::DuplicateProfile { .. })
                     | Some(InputMode::RenameProfile { .. }) => "Profile name cannot be empty",
+                    Some(InputMode::EditDraftTarget) => "Profile target cannot be empty",
+                    Some(InputMode::EditDraftAuth) => "Profile auth value cannot be empty",
                     Some(InputMode::ConfirmDelete { .. }) => "Delete confirmation is required",
                     None => "Input cannot be empty",
                 };
@@ -459,6 +477,16 @@ fn handle_input_mode(
                     make_default,
                 }) => {
                     app.rename_profile(&source_name, &input, make_default);
+                }
+                Some(InputMode::EditDraftTarget) => {
+                    app.profile_draft.target = input;
+                    app.dashboard
+                        .record_info("Updated the connection profile draft target");
+                }
+                Some(InputMode::EditDraftAuth) => {
+                    app.profile_draft.auth_value = input;
+                    app.dashboard
+                        .record_info("Updated the connection profile draft auth value");
                 }
                 Some(InputMode::ConfirmDelete { .. }) => {}
                 None => {}
@@ -716,6 +744,20 @@ fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
                 ]),
                 Line::from("Press y or Enter to confirm delete. Press n or Esc to cancel."),
             ],
+            Some(InputMode::EditDraftTarget) => vec![
+                Line::from(vec![
+                    Span::styled("Target> ", Style::default().fg(Color::LightCyan)),
+                    Span::raw(app.input.clone()),
+                ]),
+                Line::from("Enter updates the profile draft target. Esc cancels."),
+            ],
+            Some(InputMode::EditDraftAuth) => vec![
+                Line::from(vec![
+                    Span::styled("Auth> ", Style::default().fg(Color::LightCyan)),
+                    Span::raw(app.input.clone()),
+                ]),
+                Line::from("Enter updates the profile draft auth value. Esc cancels."),
+            ],
             None => Vec::new(),
         }
     } else {
@@ -756,6 +798,9 @@ impl TuiApp {
         profile_catalog: Option<ConnectionProfileCatalog>,
         active_profile: Option<String>,
     ) -> Self {
+        let profile_draft = connection_options
+            .current_profile_draft()
+            .unwrap_or_else(|_| ConnectionProfileDraft::default());
         let mut app = Self {
             dashboard,
             connection_options,
@@ -769,6 +814,7 @@ impl TuiApp {
             task_index: 0,
             channel_index: 0,
             event_index: 0,
+            profile_draft,
             input_mode: None,
             input: String::new(),
             requested_session_detail: None,
@@ -881,6 +927,75 @@ impl TuiApp {
         }
     }
 
+    fn load_current_connection_into_draft(&mut self) {
+        match self.connection_options.current_profile_draft() {
+            Ok(draft) => {
+                self.profile_draft = draft;
+                self.dashboard
+                    .record_info("Loaded current connection into the profile draft");
+            }
+            Err(err) => self.dashboard.record_error(format!(
+                "Failed to load current connection into draft: {err}"
+            )),
+        }
+    }
+
+    fn load_selected_profile_into_draft(&mut self) {
+        let Some(profile_name) = self.selected_profile().map(|profile| profile.name.clone()) else {
+            self.dashboard
+                .record_error("No connection profile is currently selected");
+            return;
+        };
+        match self.connection_options.load_profile_draft(&profile_name) {
+            Ok(draft) => {
+                self.profile_draft = draft;
+                self.dashboard.record_info(format!(
+                    "Loaded connection profile '{}' into the draft",
+                    profile_name
+                ));
+            }
+            Err(err) => self.dashboard.record_error(format!(
+                "Failed to load connection profile into draft: {err}"
+            )),
+        }
+    }
+
+    fn cycle_profile_draft_kind(&mut self) {
+        self.profile_draft.kind = match self.profile_draft.kind {
+            ConnectionProfileKind::LocalConfig => ConnectionProfileKind::LocalEndpoint,
+            ConnectionProfileKind::LocalEndpoint => ConnectionProfileKind::Remote,
+            ConnectionProfileKind::Remote => ConnectionProfileKind::LocalConfig,
+        };
+        if self.profile_draft.kind != ConnectionProfileKind::Remote {
+            self.profile_draft.auth_mode = ConnectionProfileDraftAuthMode::None;
+            self.profile_draft.auth_value.clear();
+        }
+        self.dashboard.record_info(format!(
+            "Profile draft kind is now {}",
+            profile_kind_label(self.profile_draft.kind)
+        ));
+    }
+
+    fn cycle_profile_draft_auth_mode(&mut self) {
+        if self.profile_draft.kind != ConnectionProfileKind::Remote {
+            self.dashboard
+                .record_error("Auth mode can only be edited for remote profile drafts");
+            return;
+        }
+        self.profile_draft.auth_mode = match self.profile_draft.auth_mode {
+            ConnectionProfileDraftAuthMode::None => ConnectionProfileDraftAuthMode::TokenEnv,
+            ConnectionProfileDraftAuthMode::TokenEnv => ConnectionProfileDraftAuthMode::InlineToken,
+            ConnectionProfileDraftAuthMode::InlineToken => ConnectionProfileDraftAuthMode::None,
+        };
+        if self.profile_draft.auth_mode == ConnectionProfileDraftAuthMode::None {
+            self.profile_draft.auth_value.clear();
+        }
+        self.dashboard.record_info(format!(
+            "Profile draft auth mode is now {}",
+            profile_draft_auth_label(self.profile_draft.auth_mode)
+        ));
+    }
+
     fn select_profile_by_name(&mut self, profile_name: &str) {
         if let Some(index) = self.profile_catalog.as_ref().and_then(|catalog| {
             catalog
@@ -893,10 +1008,11 @@ impl TuiApp {
     }
 
     fn save_current_profile(&mut self, profile_name: &str, make_default: bool) {
-        match self
-            .connection_options
-            .save_profile(profile_name, make_default)
-        {
+        match self.connection_options.save_profile_draft(
+            profile_name,
+            &self.profile_draft,
+            make_default,
+        ) {
             Ok(catalog) => {
                 self.profile_catalog = Some(catalog);
                 self.select_profile_by_name(profile_name);
@@ -1017,6 +1133,21 @@ impl TuiApp {
             .selected_profile()
             .map(|profile| profile.name.clone())
             .unwrap_or_default();
+    }
+
+    fn start_edit_draft_target(&mut self) {
+        self.input_mode = Some(InputMode::EditDraftTarget);
+        self.input = self.profile_draft.target.clone();
+    }
+
+    fn start_edit_draft_auth(&mut self) {
+        if self.profile_draft.kind != ConnectionProfileKind::Remote {
+            self.dashboard
+                .record_error("Draft auth can only be edited for remote profiles");
+            return;
+        }
+        self.input_mode = Some(InputMode::EditDraftAuth);
+        self.input = self.profile_draft.auth_value.clone();
     }
 
     fn start_duplicate_profile_input(&mut self, make_default: bool) {
@@ -1198,6 +1329,16 @@ impl TuiApp {
                     "auth": profile_auth_label(profile.auth.as_ref()),
                     "default": profile.is_default,
                 })),
+                "profile_draft": {
+                    "kind": profile_kind_label(self.profile_draft.kind),
+                    "target": self.profile_draft.target,
+                    "auth_mode": profile_draft_auth_label(self.profile_draft.auth_mode),
+                    "auth_value": if self.profile_draft.auth_mode == ConnectionProfileDraftAuthMode::InlineToken {
+                        "<hidden>"
+                    } else {
+                        self.profile_draft.auth_value.as_str()
+                    },
+                },
                 "available_profiles": self.profile_catalog.as_ref().map(|catalog| catalog.profiles().len()).unwrap_or(0),
                 "last_error": self.dashboard.last_error.clone(),
                 "last_info": self.dashboard.last_info.clone(),
@@ -1262,7 +1403,7 @@ impl TuiApp {
         let shared = "1-7 switch views | Tab cycle | arrows/j/k move | r refresh | q quit";
         let scoped = match self.tab {
             TabKind::Connections => {
-                "Enter/s connect | a/A save | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
+                "Enter/s connect | v load current | b load selected | m/o cycle draft | t/g edit draft | a/A save | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
             }
             TabKind::Agents => "n or Enter opens a live session for the selected agent",
             TabKind::LiveSessions => "p or Enter prompts | c cancel session | x kill session",
@@ -1382,5 +1523,13 @@ fn profile_auth_label(auth: Option<&ConnectionProfileAuth>) -> String {
         Some(ConnectionProfileAuth::TokenEnv(name)) => format!("env:{name}"),
         Some(ConnectionProfileAuth::InlineToken) => "inline token".to_string(),
         None => "none".to_string(),
+    }
+}
+
+fn profile_draft_auth_label(mode: ConnectionProfileDraftAuthMode) -> &'static str {
+    match mode {
+        ConnectionProfileDraftAuthMode::None => "none",
+        ConnectionProfileDraftAuthMode::TokenEnv => "token-env",
+        ConnectionProfileDraftAuthMode::InlineToken => "inline-token",
     }
 }

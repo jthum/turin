@@ -139,7 +139,8 @@ Current behavior:
 
 - both clients can load and display profiles from `ui-profiles.toml` or an explicit `--profiles-file`
 - both clients can switch the active backend to a selected profile without restarting the UI
-- both clients can save the current live connection back into the profile file
+- both clients can edit a profile draft with connection kind, target, and auth settings
+- both clients can save the edited draft back into the profile file
 - both clients can duplicate or rename an existing profile from inside the UI
 - both clients can delete a selected profile from inside the UI
 - the current connection target and active profile are shown in the shell chrome
@@ -147,8 +148,11 @@ Current behavior:
 
 The desktop app exposes this through the Connections tab controls:
 
-- enter a profile name, or select an existing profile name to update it
-- `Save Current` writes the current live connection into the profile file
+- `Load Current` copies the active connection into the editor draft
+- `Load Selected` copies the highlighted stored profile into the editor draft
+- `New Draft` resets the editor to a fresh draft
+- edit the draft kind, target, and remote auth mode/value inline in the Connections tab
+- `Save Draft` writes the edited draft into the profile file under the typed profile name
 - `Duplicate Selected` copies the highlighted profile to the typed name
 - `Rename Selected` renames the highlighted profile to the typed name
 - `Set as default` marks the saved profile as `default_profile`
@@ -157,8 +161,14 @@ The desktop app exposes this through the Connections tab controls:
 The TUI exposes it through the Connections tab plus keyboard actions:
 
 - `Enter` or `s` connects to the selected profile
-- `a` saves the current connection to a typed profile name
-- `A` saves the current connection and marks it as the default profile
+- `v` loads the current connection into the profile draft
+- `b` loads the selected stored profile into the draft
+- `m` cycles the draft kind between local-config, local-endpoint, and remote
+- `o` cycles the draft auth mode for remote drafts
+- `t` edits the draft target
+- `g` edits the draft auth value
+- `a` saves the current draft to a typed profile name
+- `A` saves the current draft and marks it as the default profile
 - `y` duplicates the selected profile to a typed name
 - `Y` duplicates the selected profile to a typed name and marks it default
 - `u` renames the selected profile to a typed name

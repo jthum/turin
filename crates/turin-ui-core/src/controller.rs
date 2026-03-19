@@ -84,6 +84,32 @@ pub enum ConnectionProfileAuth {
     InlineToken,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionProfileDraft {
+    pub kind: ConnectionProfileKind,
+    pub target: String,
+    pub auth_mode: ConnectionProfileDraftAuthMode,
+    pub auth_value: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionProfileDraftAuthMode {
+    None,
+    TokenEnv,
+    InlineToken,
+}
+
+impl Default for ConnectionProfileDraft {
+    fn default() -> Self {
+        Self {
+            kind: ConnectionProfileKind::LocalConfig,
+            target: "turin.toml".to_string(),
+            auth_mode: ConnectionProfileDraftAuthMode::None,
+            auth_value: String::new(),
+        }
+    }
+}
+
 impl ConnectionOptions {
     pub fn to_spec(&self) -> Result<ConnectionSpec> {
         let resolved = self.resolve_profile()?;
@@ -165,14 +191,43 @@ impl ConnectionOptions {
         })
     }
 
+    pub fn current_profile_draft(&self) -> Result<ConnectionProfileDraft> {
+        let materialized = self.materialized()?;
+        Ok(StoredConnectionProfile::from_options(&materialized).to_draft())
+    }
+
+    pub fn load_profile_draft(&self, name: &str) -> Result<ConnectionProfileDraft> {
+        let name = validate_profile_name(name)?;
+        let profiles_path = self.profiles_path();
+        let profiles = ConnectionProfiles::load(&profiles_path)?;
+        let profile = profiles.profiles.get(name).with_context(|| {
+            format!(
+                "Connection profile '{}' was not found in '{}'",
+                name,
+                profiles_path.display()
+            )
+        })?;
+        Ok(profile.to_draft())
+    }
+
     pub fn save_profile(&self, name: &str, make_default: bool) -> Result<ConnectionProfileCatalog> {
+        let draft = self.current_profile_draft()?;
+        self.save_profile_draft(name, &draft, make_default)
+    }
+
+    pub fn save_profile_draft(
+        &self,
+        name: &str,
+        draft: &ConnectionProfileDraft,
+        make_default: bool,
+    ) -> Result<ConnectionProfileCatalog> {
         let name = validate_profile_name(name)?;
 
         let profiles_path = self.profiles_path();
         let mut profiles = ConnectionProfiles::load_optional(&profiles_path)?;
         profiles.profiles.insert(
             name.to_string(),
-            StoredConnectionProfile::from_options(&self.materialized()?),
+            StoredConnectionProfile::from_draft(draft)?,
         );
         if make_default || profiles.default_profile.is_none() {
             profiles.default_profile = Some(name.to_string());
@@ -739,6 +794,73 @@ impl StoredConnectionProfile {
         }
     }
 
+    fn from_draft(draft: &ConnectionProfileDraft) -> Result<Self> {
+        let target = draft.target.trim();
+
+        match draft.kind {
+            ConnectionProfileKind::LocalConfig => Ok(Self {
+                config_path: Some(if target.is_empty() {
+                    PathBuf::from("turin.toml")
+                } else {
+                    PathBuf::from(target)
+                }),
+                endpoint: None,
+                remote_url: None,
+                auth_token: None,
+                auth_token_env: None,
+            }),
+            ConnectionProfileKind::LocalEndpoint => {
+                if target.is_empty() {
+                    return Err(anyhow!("Local endpoint profiles require an endpoint path"));
+                }
+                Ok(Self {
+                    config_path: None,
+                    endpoint: Some(PathBuf::from(target)),
+                    remote_url: None,
+                    auth_token: None,
+                    auth_token_env: None,
+                })
+            }
+            ConnectionProfileKind::Remote => {
+                if target.is_empty() {
+                    return Err(anyhow!("Remote profiles require a base URL"));
+                }
+                let auth_value = draft.auth_value.trim();
+                let (auth_token, auth_token_env) = match draft.auth_mode {
+                    ConnectionProfileDraftAuthMode::None => {
+                        return Err(anyhow!(
+                            "Remote profiles require either a token env var or an inline token"
+                        ));
+                    }
+                    ConnectionProfileDraftAuthMode::TokenEnv => {
+                        if auth_value.is_empty() {
+                            return Err(anyhow!(
+                                "Remote profiles using env auth require an env var name"
+                            ));
+                        }
+                        (None, Some(auth_value.to_string()))
+                    }
+                    ConnectionProfileDraftAuthMode::InlineToken => {
+                        if auth_value.is_empty() {
+                            return Err(anyhow!(
+                                "Remote profiles using inline auth require a token value"
+                            ));
+                        }
+                        (Some(auth_value.to_string()), None)
+                    }
+                };
+
+                Ok(Self {
+                    config_path: None,
+                    endpoint: None,
+                    remote_url: Some(target.to_string()),
+                    auth_token,
+                    auth_token_env,
+                })
+            }
+        }
+    }
+
     fn kind(&self) -> ConnectionProfileKind {
         if self.remote_url.is_some() {
             ConnectionProfileKind::Remote
@@ -774,6 +896,23 @@ impl StoredConnectionProfile {
                     .as_ref()
                     .map(|_| ConnectionProfileAuth::InlineToken)
             })
+    }
+
+    fn to_draft(&self) -> ConnectionProfileDraft {
+        let (auth_mode, auth_value) = if let Some(env) = &self.auth_token_env {
+            (ConnectionProfileDraftAuthMode::TokenEnv, env.clone())
+        } else if let Some(token) = &self.auth_token {
+            (ConnectionProfileDraftAuthMode::InlineToken, token.clone())
+        } else {
+            (ConnectionProfileDraftAuthMode::None, String::new())
+        };
+
+        ConnectionProfileDraft {
+            kind: self.kind(),
+            target: self.target(),
+            auth_mode,
+            auth_value,
+        }
     }
 }
 
@@ -990,5 +1129,34 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
                 .iter()
                 .any(|profile| profile.name == "lab-stage")
         );
+    }
+
+    #[test]
+    fn connection_profile_drafts_roundtrip_through_profile_storage() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let profiles_path = temp.path().join("ui-profiles.toml");
+        let options = ConnectionOptions {
+            config_path: None,
+            endpoint: None,
+            remote_url: None,
+            auth_token: None,
+            auth_token_env: None,
+            profile: None,
+            profiles_file: Some(profiles_path),
+        };
+
+        let draft = ConnectionProfileDraft {
+            kind: ConnectionProfileKind::Remote,
+            target: "http://example.test:9324".to_string(),
+            auth_mode: ConnectionProfileDraftAuthMode::TokenEnv,
+            auth_value: "TURIN_REMOTE_TOKEN".to_string(),
+        };
+
+        options
+            .save_profile_draft("lab", &draft, true)
+            .expect("save draft");
+        let loaded = options.load_profile_draft("lab").expect("load draft");
+
+        assert_eq!(loaded, draft);
     }
 }

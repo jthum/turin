@@ -12,9 +12,10 @@ use turin_control_client::{
 };
 use turin_daemon_protocol::EventEnvelope;
 use turin_ui_core::{
-    ConnectionOptions, ConnectionProfileAuth, ConnectionProfileCatalog, ConnectionProfileKind,
-    ConnectionProfileSummary, DashboardFreshness, DashboardNoticeLevel, DashboardState,
-    OperatorCommand, UiController, UiUpdate, connect_dashboard, spawn_controller,
+    ConnectionOptions, ConnectionProfileAuth, ConnectionProfileCatalog, ConnectionProfileDraft,
+    ConnectionProfileDraftAuthMode, ConnectionProfileKind, ConnectionProfileSummary,
+    DashboardFreshness, DashboardNoticeLevel, DashboardState, OperatorCommand, UiController,
+    UiUpdate, connect_dashboard, spawn_controller,
 };
 
 #[derive(Parser, Debug)]
@@ -144,6 +145,7 @@ struct TurinDesktopApp {
     channel_index: usize,
     event_index: usize,
     profile_name_input: String,
+    profile_draft: ConnectionProfileDraft,
     save_profile_as_default: bool,
     pending_delete_profile: Option<String>,
     prompt_input: String,
@@ -161,6 +163,9 @@ impl TurinDesktopApp {
         active_profile: Option<String>,
     ) -> Self {
         let profile_name_input = active_profile.clone().unwrap_or_default();
+        let profile_draft = connection_options
+            .current_profile_draft()
+            .unwrap_or_else(|_| ConnectionProfileDraft::default());
         Self {
             dashboard,
             controller,
@@ -176,6 +181,7 @@ impl TurinDesktopApp {
             channel_index: 0,
             event_index: 0,
             profile_name_input,
+            profile_draft,
             save_profile_as_default: false,
             pending_delete_profile: None,
             prompt_input: String::new(),
@@ -262,6 +268,52 @@ impl TurinDesktopApp {
             .connection_options(&selected.name)
     }
 
+    fn load_current_connection_into_editor(&mut self) {
+        match self.connection_options.current_profile_draft() {
+            Ok(draft) => {
+                self.profile_draft = draft;
+                self.profile_name_input = self.active_profile.clone().unwrap_or_default();
+                self.pending_delete_profile = None;
+                self.dashboard
+                    .record_info("Loaded current connection into the profile editor");
+            }
+            Err(err) => self.dashboard.record_error(format!(
+                "Failed to load current connection into editor: {err}"
+            )),
+        }
+    }
+
+    fn load_selected_profile_into_editor(&mut self) {
+        let Some(profile_name) = self.selected_profile().map(|profile| profile.name.clone()) else {
+            self.dashboard
+                .record_error("No connection profile is currently selected");
+            return;
+        };
+        match self.connection_options.load_profile_draft(&profile_name) {
+            Ok(draft) => {
+                self.profile_draft = draft;
+                self.profile_name_input = profile_name.clone();
+                self.pending_delete_profile = None;
+                self.dashboard.record_info(format!(
+                    "Loaded connection profile '{}' into the editor",
+                    profile_name
+                ));
+            }
+            Err(err) => self.dashboard.record_error(format!(
+                "Failed to load connection profile into editor: {err}"
+            )),
+        }
+    }
+
+    fn reset_profile_editor(&mut self) {
+        self.profile_draft = ConnectionProfileDraft::default();
+        self.profile_name_input.clear();
+        self.pending_delete_profile = None;
+        self.save_profile_as_default = false;
+        self.dashboard
+            .record_info("Reset the connection profile editor");
+    }
+
     fn reconnect_current(&mut self) {
         self.switch_connection(self.connection_options.clone());
     }
@@ -282,10 +334,11 @@ impl TurinDesktopApp {
             return;
         };
 
-        match self
-            .connection_options
-            .save_profile(&profile_name, self.save_profile_as_default)
-        {
+        match self.connection_options.save_profile_draft(
+            &profile_name,
+            &self.profile_draft,
+            self.save_profile_as_default,
+        ) {
             Ok(catalog) => {
                 self.profile_catalog = Some(catalog);
                 self.select_profile_by_name(&profile_name);
@@ -459,6 +512,10 @@ impl TurinDesktopApp {
                 self.profile_catalog = connection_options.load_profiles().ok().flatten();
                 self.dashboard = dashboard;
                 self.profile_name_input = self.active_profile.clone().unwrap_or_default();
+                self.profile_draft = self
+                    .connection_options
+                    .current_profile_draft()
+                    .unwrap_or_else(|_| ConnectionProfileDraft::default());
                 self.pending_delete_profile = None;
                 self.prompt_input.clear();
                 self.requested_session_detail = None;
@@ -681,14 +738,88 @@ impl TurinDesktopApp {
                 ui.add_space(8.0);
                 ui.label(RichText::new("Manage Profiles").strong());
                 ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Load Current").clicked() {
+                        self.load_current_connection_into_editor();
+                    }
+                    if ui.button("Load Selected").clicked() {
+                        self.load_selected_profile_into_editor();
+                    }
+                    if ui.button("New Draft").clicked() {
+                        self.reset_profile_editor();
+                    }
+                });
+                ui.add_space(6.0);
                 ui.add(
                     TextEdit::singleline(&mut self.profile_name_input)
                         .hint_text(profile_name_hint.clone()),
                 );
+                ui.add_space(8.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Kind").strong());
+                    ui.selectable_value(
+                        &mut self.profile_draft.kind,
+                        ConnectionProfileKind::LocalConfig,
+                        "Local Config",
+                    );
+                    ui.selectable_value(
+                        &mut self.profile_draft.kind,
+                        ConnectionProfileKind::LocalEndpoint,
+                        "Local Endpoint",
+                    );
+                    ui.selectable_value(
+                        &mut self.profile_draft.kind,
+                        ConnectionProfileKind::Remote,
+                        "Remote",
+                    );
+                });
+                ui.add_space(6.0);
+                ui.label(RichText::new(profile_target_label(self.profile_draft.kind)).strong());
+                ui.add(
+                    TextEdit::singleline(&mut self.profile_draft.target)
+                        .hint_text(profile_target_hint(self.profile_draft.kind)),
+                );
+                if self.profile_draft.kind == ConnectionProfileKind::Remote {
+                    ui.add_space(8.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new("Auth").strong());
+                        ui.selectable_value(
+                            &mut self.profile_draft.auth_mode,
+                            ConnectionProfileDraftAuthMode::TokenEnv,
+                            "Token Env",
+                        );
+                        ui.selectable_value(
+                            &mut self.profile_draft.auth_mode,
+                            ConnectionProfileDraftAuthMode::InlineToken,
+                            "Inline Token",
+                        );
+                        ui.selectable_value(
+                            &mut self.profile_draft.auth_mode,
+                            ConnectionProfileDraftAuthMode::None,
+                            "None",
+                        );
+                    });
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(profile_auth_value_label(self.profile_draft.auth_mode))
+                            .strong(),
+                    );
+                    ui.add(
+                        TextEdit::singleline(&mut self.profile_draft.auth_value)
+                            .password(
+                                self.profile_draft.auth_mode
+                                    == ConnectionProfileDraftAuthMode::InlineToken,
+                            )
+                            .hint_text(profile_auth_value_hint(self.profile_draft.auth_mode)),
+                    );
+                } else {
+                    self.profile_draft.auth_mode = ConnectionProfileDraftAuthMode::None;
+                    self.profile_draft.auth_value.clear();
+                }
                 ui.checkbox(&mut self.save_profile_as_default, "Set as default");
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Save Current").clicked() {
+                    if ui.button("Save Draft").clicked() {
                         self.save_current_profile();
                     }
                     if ui.button("Duplicate Selected").clicked() {
@@ -833,6 +964,20 @@ impl TurinDesktopApp {
                         self.connect_selected_profile();
                     }
                 }
+
+                ui.add_space(12.0);
+                ui.label(RichText::new("Editor Draft").strong());
+                detail_kv(
+                    ui,
+                    "Draft Kind",
+                    profile_kind_label(self.profile_draft.kind),
+                );
+                detail_kv(ui, "Draft Target", self.profile_draft.target.clone());
+                detail_kv(
+                    ui,
+                    "Draft Auth",
+                    profile_draft_auth_label(self.profile_draft.auth_mode),
+                );
 
                 if !self.dashboard.recent_notices.is_empty() {
                     ui.add_space(12.0);
@@ -1463,11 +1608,51 @@ fn profile_kind_label(kind: ConnectionProfileKind) -> &'static str {
     }
 }
 
+fn profile_target_label(kind: ConnectionProfileKind) -> &'static str {
+    match kind {
+        ConnectionProfileKind::LocalConfig => "Config Path",
+        ConnectionProfileKind::LocalEndpoint => "Endpoint Path",
+        ConnectionProfileKind::Remote => "Remote URL",
+    }
+}
+
+fn profile_target_hint(kind: ConnectionProfileKind) -> &'static str {
+    match kind {
+        ConnectionProfileKind::LocalConfig => "turin.toml",
+        ConnectionProfileKind::LocalEndpoint => ".turin/daemon.sock",
+        ConnectionProfileKind::Remote => "http://127.0.0.1:9324",
+    }
+}
+
 fn profile_auth_label(auth: Option<&ConnectionProfileAuth>) -> String {
     match auth {
         Some(ConnectionProfileAuth::TokenEnv(name)) => format!("env:{name}"),
         Some(ConnectionProfileAuth::InlineToken) => "inline token".to_string(),
         None => "none".to_string(),
+    }
+}
+
+fn profile_draft_auth_label(mode: ConnectionProfileDraftAuthMode) -> &'static str {
+    match mode {
+        ConnectionProfileDraftAuthMode::None => "none",
+        ConnectionProfileDraftAuthMode::TokenEnv => "token-env",
+        ConnectionProfileDraftAuthMode::InlineToken => "inline-token",
+    }
+}
+
+fn profile_auth_value_label(mode: ConnectionProfileDraftAuthMode) -> &'static str {
+    match mode {
+        ConnectionProfileDraftAuthMode::None => "Auth Value",
+        ConnectionProfileDraftAuthMode::TokenEnv => "Token Env Var",
+        ConnectionProfileDraftAuthMode::InlineToken => "Inline Token",
+    }
+}
+
+fn profile_auth_value_hint(mode: ConnectionProfileDraftAuthMode) -> &'static str {
+    match mode {
+        ConnectionProfileDraftAuthMode::None => "remote auth disabled",
+        ConnectionProfileDraftAuthMode::TokenEnv => "TURIN_REMOTE_TOKEN",
+        ConnectionProfileDraftAuthMode::InlineToken => "paste bearer token",
     }
 }
 
