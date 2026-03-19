@@ -140,7 +140,11 @@ Current behavior:
 - both clients can load and display profiles from `ui-profiles.toml` or an explicit `--profiles-file`
 - both clients can switch the active backend to a selected profile without restarting the UI
 - both clients can edit a profile draft with connection kind, target, and auth settings
+- both clients track whether the editor draft has diverged from the last loaded/saved baseline, so it is obvious when you are holding unsaved connection changes
 - both clients validate the edited draft inline before saving, including remote URL and auth checks
+- both clients can diff the editor draft against the selected saved profile before overwriting it
+- both clients keep the latest preflight result in the Connections view, including target, auth source, readiness, and latency
+- both clients keep lightweight in-memory profile activity metadata like connect attempts, successful connects, and last preflight result for the selected saved profile
 - both clients can connect directly from the current unsaved draft, so you can test edits before writing them to disk
 - both clients keep a small recent-successful-drafts history so you can reload draft connections after switching away
 - both clients can save the edited draft back into the profile file
@@ -148,6 +152,8 @@ Current behavior:
 - both clients can delete a selected profile from inside the UI
 - the current connection target and active profile are shown in the shell chrome
 - reloading the profile file happens inside the UI, so you can edit the file and refresh the profile list
+- both clients can run a draft or selected-profile preflight before reconnecting
+- both clients can ask Turin to `daemon ensure` for local-config drafts, which is useful when you are switching from a remote profile back to a local workspace
 
 The desktop app exposes this through the Connections tab controls:
 
@@ -158,12 +164,17 @@ The desktop app exposes this through the Connections tab controls:
 - a Recent Drafts list shows recent successful draft connections and lets you load one back into the editor
 - edit the draft kind, target, and remote auth mode/value inline in the Connections tab
 - invalid draft fields are highlighted inline, `Update Selected` stays disabled until the draft is valid, and `Save As Name` also requires a typed target name
+- when the editor is dirty, the Connections tab shows which baseline it differs from and which fields changed
 - `Update Selected` overwrites the highlighted saved profile in place using the current draft
 - `Save As Name` writes the edited draft into the profile file under the typed profile name
+- `Test Draft` preflights the current unsaved draft without reconnecting
+- `Test Selected` preflights the highlighted saved profile
+- `Ensure Draft Local` runs `turin daemon ensure --config ...` for local-config drafts
 - `Connect Draft` switches the UI to the currently edited draft without saving it first
 - `Duplicate Selected` copies the highlighted profile to the typed name
 - `Rename Selected` renames the highlighted profile to the typed name
 - `Set as default` marks the saved profile as `default_profile`
+- if you try to load another profile while the editor is dirty, the Connections tab makes you explicitly discard or cancel the pending action
 - delete is a two-step flow: `Arm Delete`, then `Confirm Delete` or `Cancel Delete`
 
 The TUI exposes it through the Connections tab plus keyboard actions:
@@ -171,11 +182,15 @@ The TUI exposes it through the Connections tab plus keyboard actions:
 - `Enter` or `s` connects to the selected profile
 - `v` loads the current connection into the profile draft
 - `b` loads the selected stored profile into the draft
+- if the draft is dirty, `v`, `b`, and `R` switch into explicit discard confirmation before replacing the editor
 - `m` cycles the draft kind between local-config, local-endpoint, and remote
 - `o` cycles the draft auth mode for remote drafts
 - `t` edits the draft target
 - `g` edits the draft auth value
 - the detail pane and footer show draft validation issues before save, and `g` only edits auth when the draft is using env or inline auth
+- `T` preflights the current draft without reconnecting
+- `P` preflights the selected saved profile
+- `E` runs `turin daemon ensure --config ...` for local-config drafts
 - `C` connects to the current draft without saving it first
 - `S` overwrites the selected saved profile in place using the current draft
 - `R` loads the selected recent draft back into the editor
@@ -199,9 +214,31 @@ That keeps the initial dashboard refresh lightweight while still giving you rich
 
 Current behavior:
 
-- the TUI detail pane expands from session summary to full session detail once it is fetched
-- the desktop app shows recent messages and tool calls in the session detail panel
+- the TUI detail pane expands from session summary to full session detail once it is fetched, including recent transcript turns, events, and tool calls
+- the desktop app shows recent messages, events, and tool calls in the session detail panel
 - session detail is cached in the UI state until that session disappears from the current dashboard snapshot
+
+## Filtering And Event Flow
+
+The UI clients now include lightweight operator filtering so the runtime views stay usable once the daemon is busy:
+
+- tasks can be filtered by request ID, agent ID, or state
+- channels can be filtered by channel ID, kind, or agent ID
+- events can be filtered by event name or payload text
+
+The desktop app exposes those as inline filter fields inside the Tasks, Channels, and Events tabs.
+
+The TUI exposes them as keyboard actions:
+
+- Tasks: `/` edits the task filter, `F` clears it
+- Channels: `/` edits the channel filter, `F` clears it
+- Events: `/` edits the event filter, `F` clears it
+
+For high-volume event streams, both clients also support:
+
+- pause/resume against the current event snapshot
+- follow-latest behavior so selection can keep snapping to the newest event while you monitor
+- explicit “jump to latest” behavior in the event view
 
 ## Current Scope
 

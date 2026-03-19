@@ -20,10 +20,13 @@ use turin_control_client::{
 };
 use turin_daemon_protocol::EventEnvelope;
 use turin_ui_core::{
-    ConnectionDraftHistory, ConnectionOptions, ConnectionProfileAuth, ConnectionProfileCatalog,
-    ConnectionProfileDraft, ConnectionProfileDraftAuthMode, ConnectionProfileDraftValidation,
-    ConnectionProfileKind, ConnectionProfileSummary, DashboardFreshness, DashboardState,
-    OperatorCommand, UiController, UiUpdate, connect_dashboard, spawn_controller,
+    ConnectionDraftHistory, ConnectionOptions, ConnectionPreflightOutcome,
+    ConnectionPreflightReport, ConnectionProfileActivityBook, ConnectionProfileAuth,
+    ConnectionProfileCatalog, ConnectionProfileDraft, ConnectionProfileDraftAuthMode,
+    ConnectionProfileDraftDiff, ConnectionProfileDraftValidation, ConnectionProfileKind,
+    ConnectionProfileSummary, DashboardFreshness, DashboardState, OperatorCommand, UiController,
+    UiUpdate, connect_dashboard, ensure_local_daemon_for_draft, preflight_connection_blocking,
+    preflight_draft_blocking, spawn_controller,
 };
 
 #[derive(Parser, Debug)]
@@ -114,6 +117,9 @@ enum InputMode {
     SubmitPrompt {
         session_id: String,
     },
+    ConfirmDiscard {
+        action: PendingDraftAction,
+    },
     SaveProfile {
         make_default: bool,
     },
@@ -130,6 +136,32 @@ enum InputMode {
     },
     EditDraftTarget,
     EditDraftAuth,
+    EditTaskFilter,
+    EditChannelFilter,
+    EditEventFilter,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PendingDraftAction {
+    CurrentConnection,
+    SelectedProfile(String),
+    SelectedRecentDraft,
+}
+
+impl PendingDraftAction {
+    fn description(&self) -> String {
+        match self {
+            Self::CurrentConnection => {
+                "load the current live connection into the editor".to_string()
+            }
+            Self::SelectedProfile(name) => {
+                format!("load the saved profile '{name}' into the editor")
+            }
+            Self::SelectedRecentDraft => {
+                "load the selected recent draft into the editor".to_string()
+            }
+        }
+    }
 }
 
 struct TuiApp {
@@ -147,10 +179,20 @@ struct TuiApp {
     channel_index: usize,
     event_index: usize,
     profile_draft: ConnectionProfileDraft,
+    draft_baseline: ConnectionProfileDraft,
+    draft_baseline_label: String,
     recent_drafts: ConnectionDraftHistory,
+    profile_activity: ConnectionProfileActivityBook,
+    last_preflight_report: Option<ConnectionPreflightReport>,
     input_mode: Option<InputMode>,
     input: String,
     requested_session_detail: Option<String>,
+    task_filter: String,
+    channel_filter: String,
+    event_filter: String,
+    events_paused: bool,
+    events_follow_latest: bool,
+    paused_events: Vec<EventEnvelope>,
 }
 
 enum LoopAction {
@@ -199,6 +241,7 @@ async fn run_shell(
     let (mut app, mut controller) = connect_shell_state(
         initial_connection_options,
         ConnectionDraftHistory::default(),
+        ConnectionProfileActivityBook::default(),
     )
     .await?;
 
@@ -214,19 +257,38 @@ async fn run_shell(
                 connected_draft,
             } => {
                 let mut recent_drafts = app.recent_drafts.clone();
+                let mut profile_activity = app.profile_activity.clone();
                 if let Some(draft) = connected_draft.as_ref() {
                     recent_drafts.record_success(draft);
                 }
-                match connect_shell_state(*options, recent_drafts).await {
+                let options = *options;
+                let reconnect_profile = options.resolved_profile_name().ok().flatten();
+                match connect_shell_state(options, recent_drafts, profile_activity.clone()).await {
                     Ok((next_app, next_controller)) => {
                         controller.shutdown();
                         app = next_app;
                         controller = next_controller;
+                        if let Some(profile_name) = app.active_profile.clone() {
+                            profile_activity.record_connect_result(
+                                profile_name,
+                                true,
+                                format!("Connected to {}", app.dashboard.connection_target),
+                            );
+                            app.profile_activity = profile_activity;
+                        }
                         let target = app.dashboard.connection_target.clone();
                         app.dashboard
                             .record_info(format!("Connected UI client to {target}"));
                     }
                     Err(err) => {
+                        if let Some(profile_name) = reconnect_profile {
+                            profile_activity.record_connect_result(
+                                profile_name,
+                                false,
+                                format!("Failed to connect UI client: {err}"),
+                            );
+                            app.profile_activity = profile_activity;
+                        }
                         app.dashboard
                             .record_error(format!("Failed to connect UI client: {err}"));
                     }
@@ -239,6 +301,7 @@ async fn run_shell(
 async fn connect_shell_state(
     connection_options: ConnectionOptions,
     recent_drafts: ConnectionDraftHistory,
+    profile_activity: ConnectionProfileActivityBook,
 ) -> Result<(TuiApp, UiController)> {
     let spec = connection_options.to_spec()?;
     let (client, dashboard) = connect_dashboard(&spec).await?;
@@ -250,6 +313,7 @@ async fn connect_shell_state(
         profile_catalog,
         active_profile,
         recent_drafts,
+        profile_activity,
     );
     let controller = spawn_controller(&tokio::runtime::Handle::current(), client);
     Ok((app, controller))
@@ -306,6 +370,11 @@ fn handle_key(
         KeyCode::Char('b') if app.tab == TabKind::Connections => {
             app.load_selected_profile_into_draft()
         }
+        KeyCode::Char('P') if app.tab == TabKind::Connections => app.preflight_selected_profile(),
+        KeyCode::Char('T') if app.tab == TabKind::Connections => app.preflight_draft(),
+        KeyCode::Char('E') if app.tab == TabKind::Connections => {
+            app.ensure_local_daemon_for_draft()
+        }
         KeyCode::Char('m') if app.tab == TabKind::Connections => app.cycle_profile_draft_kind(),
         KeyCode::Char('o') if app.tab == TabKind::Connections => {
             app.cycle_profile_draft_auth_mode()
@@ -343,6 +412,15 @@ fn handle_key(
         }
         KeyCode::Char(']') if app.tab == TabKind::Connections => app.move_recent_draft_selection(1),
         KeyCode::Char('R') if app.tab == TabKind::Connections => app.load_selected_recent_draft(),
+        KeyCode::Char('/') if app.tab == TabKind::Tasks => app.start_edit_task_filter(),
+        KeyCode::Char('/') if app.tab == TabKind::Channels => app.start_edit_channel_filter(),
+        KeyCode::Char('/') if app.tab == TabKind::Events => app.start_edit_event_filter(),
+        KeyCode::Char('F') if app.tab == TabKind::Tasks => app.clear_task_filter(),
+        KeyCode::Char('F') if app.tab == TabKind::Channels => app.clear_channel_filter(),
+        KeyCode::Char('F') if app.tab == TabKind::Events => app.clear_event_filter(),
+        KeyCode::Char('z') if app.tab == TabKind::Events => app.toggle_events_paused(),
+        KeyCode::Char('f') if app.tab == TabKind::Events => app.toggle_events_follow_latest(),
+        KeyCode::Char('G') if app.tab == TabKind::Events => app.jump_latest_event(),
         KeyCode::Char('C') if app.tab == TabKind::Connections => {
             if let Some(options) = app.draft_connection_options() {
                 return Ok(Some(LoopAction::Reconnect {
@@ -451,6 +529,23 @@ fn handle_input_mode(
     key: KeyCode,
     command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
 ) -> Result<Option<LoopAction>> {
+    if let Some(InputMode::ConfirmDiscard { action }) = app.input_mode.as_ref() {
+        match key {
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                app.dashboard.record_info("Kept the current editor draft");
+                app.clear_input_mode();
+                return Ok(None);
+            }
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let action = action.clone();
+                app.apply_draft_action(action);
+                app.clear_input_mode();
+                return Ok(None);
+            }
+            _ => return Ok(None),
+        }
+    }
+
     if let Some(InputMode::ConfirmDelete { profile_name }) = app.input_mode.as_ref() {
         match key {
             KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
@@ -486,6 +581,10 @@ fn handle_input_mode(
                     | Some(InputMode::RenameProfile { .. }) => "Profile name cannot be empty",
                     Some(InputMode::EditDraftTarget) => "Profile target cannot be empty",
                     Some(InputMode::EditDraftAuth) => "Profile auth value cannot be empty",
+                    Some(InputMode::EditTaskFilter)
+                    | Some(InputMode::EditChannelFilter)
+                    | Some(InputMode::EditEventFilter) => "Use Esc to clear the filter",
+                    Some(InputMode::ConfirmDiscard { .. }) => "Discard confirmation is required",
                     Some(InputMode::ConfirmDelete { .. }) => "Delete confirmation is required",
                     None => "Input cannot be empty",
                 };
@@ -529,6 +628,19 @@ fn handle_input_mode(
                     app.dashboard
                         .record_info("Updated the connection profile draft auth value");
                 }
+                Some(InputMode::EditTaskFilter) => {
+                    app.task_filter = input;
+                    app.dashboard.record_info("Updated the task filter");
+                }
+                Some(InputMode::EditChannelFilter) => {
+                    app.channel_filter = input;
+                    app.dashboard.record_info("Updated the channel filter");
+                }
+                Some(InputMode::EditEventFilter) => {
+                    app.event_filter = input;
+                    app.dashboard.record_info("Updated the event filter");
+                }
+                Some(InputMode::ConfirmDiscard { .. }) => {}
                 Some(InputMode::ConfirmDelete { .. }) => {}
                 None => {}
             }
@@ -726,6 +838,13 @@ fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
                 ]),
                 Line::from("Enter submits prompt to the selected live session. Esc cancels."),
             ],
+            Some(InputMode::ConfirmDiscard { action }) => vec![
+                Line::from(vec![
+                    Span::styled("Discard> ", Style::default().fg(Color::LightYellow)),
+                    Span::raw(action.description()),
+                ]),
+                Line::from("Press y or Enter to discard editor changes. Press n or Esc to cancel."),
+            ],
             Some(InputMode::SaveProfile { make_default }) => vec![
                 Line::from(vec![
                     Span::styled("Profile> ", Style::default().fg(Color::LightCyan)),
@@ -795,6 +914,27 @@ fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
                 ]),
                 Line::from("Enter updates the profile draft auth value. Esc cancels."),
             ],
+            Some(InputMode::EditTaskFilter) => vec![
+                Line::from(vec![
+                    Span::styled("Task Filter> ", Style::default().fg(Color::LightCyan)),
+                    Span::raw(app.input.clone()),
+                ]),
+                Line::from("Enter updates the task filter. Esc cancels."),
+            ],
+            Some(InputMode::EditChannelFilter) => vec![
+                Line::from(vec![
+                    Span::styled("Channel Filter> ", Style::default().fg(Color::LightCyan)),
+                    Span::raw(app.input.clone()),
+                ]),
+                Line::from("Enter updates the channel filter. Esc cancels."),
+            ],
+            Some(InputMode::EditEventFilter) => vec![
+                Line::from(vec![
+                    Span::styled("Event Filter> ", Style::default().fg(Color::LightCyan)),
+                    Span::raw(app.input.clone()),
+                ]),
+                Line::from("Enter updates the event filter. Esc cancels."),
+            ],
             None => Vec::new(),
         }
     } else {
@@ -812,6 +952,16 @@ fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
                     } else {
                         Color::LightRed
                     }),
+                )));
+            }
+            if app.editor_is_dirty() {
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "Draft differs from {}: {}",
+                        app.draft_baseline_label,
+                        app.editor_diff().summary()
+                    ),
+                    Style::default().fg(Color::Yellow),
                 )));
             }
         }
@@ -851,6 +1001,7 @@ impl TuiApp {
         profile_catalog: Option<ConnectionProfileCatalog>,
         active_profile: Option<String>,
         recent_drafts: ConnectionDraftHistory,
+        profile_activity: ConnectionProfileActivityBook,
     ) -> Self {
         let profile_draft = connection_options
             .current_profile_draft()
@@ -869,18 +1020,34 @@ impl TuiApp {
             task_index: 0,
             channel_index: 0,
             event_index: 0,
+            draft_baseline: profile_draft.clone(),
+            draft_baseline_label: "current connection".to_string(),
             profile_draft,
             recent_drafts,
+            profile_activity,
+            last_preflight_report: None,
             input_mode: None,
             input: String::new(),
             requested_session_detail: None,
+            task_filter: String::new(),
+            channel_filter: String::new(),
+            event_filter: String::new(),
+            events_paused: false,
+            events_follow_latest: true,
+            paused_events: Vec::new(),
         };
         app.clamp_selection();
         app
     }
 
     fn apply_update(&mut self, update: UiUpdate) {
+        let auto_follow_event = matches!(update, UiUpdate::Event(_))
+            && !self.events_paused
+            && self.events_follow_latest;
         self.dashboard.apply_update(update);
+        if auto_follow_event {
+            self.event_index = 0;
+        }
         self.clamp_selection();
     }
 
@@ -898,9 +1065,9 @@ impl TuiApp {
         self.live_session_index =
             clamp_index(self.live_session_index, self.dashboard.live_sessions.len());
         self.session_index = clamp_index(self.session_index, self.dashboard.sessions.len());
-        self.task_index = clamp_index(self.task_index, self.dashboard.tasks.len());
-        self.channel_index = clamp_index(self.channel_index, self.dashboard.channels().len());
-        self.event_index = clamp_index(self.event_index, self.dashboard.recent_events.len());
+        self.task_index = clamp_index(self.task_index, self.filtered_tasks().len());
+        self.channel_index = clamp_index(self.channel_index, self.filtered_channels().len());
+        self.event_index = clamp_index(self.event_index, self.filtered_events().len());
     }
 
     fn move_selection(&mut self, delta: isize) {
@@ -947,9 +1114,9 @@ impl TuiApp {
             TabKind::Agents => self.dashboard.agents().len(),
             TabKind::LiveSessions => self.dashboard.live_sessions.len(),
             TabKind::Sessions => self.dashboard.sessions.len(),
-            TabKind::Tasks => self.dashboard.tasks.len(),
-            TabKind::Channels => self.dashboard.channels().len(),
-            TabKind::Events => self.dashboard.recent_events.len(),
+            TabKind::Tasks => self.filtered_tasks().len(),
+            TabKind::Channels => self.filtered_channels().len(),
+            TabKind::Events => self.filtered_events().len(),
         }
     }
 
@@ -989,6 +1156,31 @@ impl TuiApp {
         self.recent_drafts.drafts().get(self.recent_draft_index)
     }
 
+    fn set_profile_draft(
+        &mut self,
+        draft: ConnectionProfileDraft,
+        baseline_label: impl Into<String>,
+    ) {
+        self.profile_draft = draft.clone();
+        self.draft_baseline = draft;
+        self.draft_baseline_label = baseline_label.into();
+    }
+
+    fn editor_diff(&self) -> ConnectionProfileDraftDiff {
+        self.profile_draft.diff_against(&self.draft_baseline)
+    }
+
+    fn editor_is_dirty(&self) -> bool {
+        !self.editor_diff().is_empty()
+    }
+
+    fn selected_profile_diff(&self) -> Option<ConnectionProfileDraftDiff> {
+        let selected = self.selected_profile()?;
+        self.connection_options
+            .draft_diff_against_profile(&self.profile_draft, &selected.name)
+            .ok()
+    }
+
     fn selected_profile_options(&self) -> Option<ConnectionOptions> {
         let selected = self.selected_profile()?;
         self.profile_catalog
@@ -1011,16 +1203,17 @@ impl TuiApp {
     }
 
     fn load_current_connection_into_draft(&mut self) {
-        match self.connection_options.current_profile_draft() {
-            Ok(draft) => {
-                self.profile_draft = draft;
-                self.dashboard
-                    .record_info("Loaded current connection into the profile draft");
-            }
-            Err(err) => self.dashboard.record_error(format!(
-                "Failed to load current connection into draft: {err}"
-            )),
+        if self.editor_is_dirty() {
+            self.input_mode = Some(InputMode::ConfirmDiscard {
+                action: PendingDraftAction::CurrentConnection,
+            });
+            self.dashboard.record_info(format!(
+                "The profile editor has unsaved changes ({}). Press y or Enter to discard them and load the current connection.",
+                self.editor_diff().summary()
+            ));
+            return;
         }
+        self.apply_draft_action(PendingDraftAction::CurrentConnection);
     }
 
     fn load_selected_profile_into_draft(&mut self) {
@@ -1029,29 +1222,32 @@ impl TuiApp {
                 .record_error("No connection profile is currently selected");
             return;
         };
-        match self.connection_options.load_profile_draft(&profile_name) {
-            Ok(draft) => {
-                self.profile_draft = draft;
-                self.dashboard.record_info(format!(
-                    "Loaded connection profile '{}' into the draft",
-                    profile_name
-                ));
-            }
-            Err(err) => self.dashboard.record_error(format!(
-                "Failed to load connection profile into draft: {err}"
-            )),
+        if self.editor_is_dirty() {
+            self.input_mode = Some(InputMode::ConfirmDiscard {
+                action: PendingDraftAction::SelectedProfile(profile_name.clone()),
+            });
+            self.dashboard.record_info(format!(
+                "The profile editor has unsaved changes ({}). Press y or Enter to discard them and load '{}'.",
+                self.editor_diff().summary(),
+                profile_name
+            ));
+            return;
         }
+        self.apply_draft_action(PendingDraftAction::SelectedProfile(profile_name));
     }
 
     fn load_selected_recent_draft(&mut self) {
-        let Some(draft) = self.selected_recent_draft().cloned() else {
-            self.dashboard
-                .record_error("No recent draft connection is currently selected");
+        if self.editor_is_dirty() {
+            self.input_mode = Some(InputMode::ConfirmDiscard {
+                action: PendingDraftAction::SelectedRecentDraft,
+            });
+            self.dashboard.record_info(format!(
+                "The profile editor has unsaved changes ({}). Press y or Enter to discard them and load the selected recent draft.",
+                self.editor_diff().summary()
+            ));
             return;
-        };
-        self.profile_draft = draft;
-        self.dashboard
-            .record_info("Loaded the selected recent draft into the profile draft");
+        }
+        self.apply_draft_action(PendingDraftAction::SelectedRecentDraft);
     }
 
     fn profile_draft_validation(&self) -> ConnectionProfileDraftValidation {
@@ -1105,6 +1301,47 @@ impl TuiApp {
         }
     }
 
+    fn apply_draft_action(&mut self, action: PendingDraftAction) {
+        match action {
+            PendingDraftAction::CurrentConnection => {
+                match self.connection_options.current_profile_draft() {
+                    Ok(draft) => {
+                        self.set_profile_draft(draft, "current connection");
+                        self.dashboard
+                            .record_info("Loaded current connection into the profile draft");
+                    }
+                    Err(err) => self.dashboard.record_error(format!(
+                        "Failed to load current connection into draft: {err}"
+                    )),
+                }
+            }
+            PendingDraftAction::SelectedProfile(profile_name) => {
+                match self.connection_options.load_profile_draft(&profile_name) {
+                    Ok(draft) => {
+                        self.set_profile_draft(draft, format!("saved profile '{}'", profile_name));
+                        self.dashboard.record_info(format!(
+                            "Loaded connection profile '{}' into the draft",
+                            profile_name
+                        ));
+                    }
+                    Err(err) => self.dashboard.record_error(format!(
+                        "Failed to load connection profile into draft: {err}"
+                    )),
+                }
+            }
+            PendingDraftAction::SelectedRecentDraft => {
+                let Some(draft) = self.selected_recent_draft().cloned() else {
+                    self.dashboard
+                        .record_error("No recent draft connection is currently selected");
+                    return;
+                };
+                self.set_profile_draft(draft, "selected recent draft");
+                self.dashboard
+                    .record_info("Loaded the selected recent draft into the profile draft");
+            }
+        }
+    }
+
     fn save_current_profile(&mut self, profile_name: &str, make_default: bool) {
         let validation = self.profile_draft_validation();
         if !validation.is_valid() {
@@ -1122,6 +1359,10 @@ impl TuiApp {
             Ok(catalog) => {
                 self.profile_catalog = Some(catalog);
                 self.select_profile_by_name(profile_name);
+                self.set_profile_draft(
+                    self.profile_draft.clone(),
+                    format!("saved profile '{}'", profile_name),
+                );
                 self.clamp_selection();
                 self.dashboard.record_info(format!(
                     "Saved draft to profile '{}' in '{}'",
@@ -1149,6 +1390,16 @@ impl TuiApp {
             ));
             return;
         }
+        if self
+            .selected_profile_diff()
+            .is_some_and(|diff| diff.is_empty())
+        {
+            self.dashboard.record_info(format!(
+                "The editor draft already matches saved profile '{}'",
+                profile_name
+            ));
+            return;
+        }
 
         match self
             .connection_options
@@ -1158,6 +1409,10 @@ impl TuiApp {
                 let active_profile = self.active_profile.as_deref() == Some(profile_name.as_str());
                 self.profile_catalog = Some(catalog);
                 self.select_profile_by_name(&profile_name);
+                self.set_profile_draft(
+                    self.profile_draft.clone(),
+                    format!("saved profile '{}'", profile_name),
+                );
                 self.clamp_selection();
                 self.dashboard.record_info(if active_profile {
                     format!(
@@ -1171,6 +1426,55 @@ impl TuiApp {
             Err(err) => self.dashboard.record_error(format!(
                 "Failed to update selected connection profile: {err}"
             )),
+        }
+    }
+
+    fn preflight_selected_profile(&mut self) {
+        let Some(selected) = self.selected_profile().cloned() else {
+            self.dashboard
+                .record_error("No connection profile is currently selected");
+            return;
+        };
+        let Some(options) = self.selected_profile_options() else {
+            self.dashboard
+                .record_error("Failed to resolve the selected connection profile");
+            return;
+        };
+        let report = preflight_connection_blocking(&options);
+        self.profile_activity.record_preflight_result(
+            selected.name.clone(),
+            report.is_success(),
+            report.summary_label(),
+        );
+        self.last_preflight_report = Some(report.clone());
+        if report.is_success() {
+            self.dashboard
+                .record_info(format!("Preflight for '{}' succeeded", selected.name));
+        } else {
+            self.dashboard.record_error(format!(
+                "Preflight for '{}' failed: {}",
+                selected.name, report.message
+            ));
+        }
+    }
+
+    fn preflight_draft(&mut self) {
+        let report = preflight_draft_blocking(&self.connection_options, &self.profile_draft);
+        self.last_preflight_report = Some(report.clone());
+        if report.is_success() {
+            self.dashboard.record_info("Draft preflight succeeded");
+        } else {
+            self.dashboard
+                .record_error(format!("Draft preflight failed: {}", report.message));
+        }
+    }
+
+    fn ensure_local_daemon_for_draft(&mut self) {
+        match ensure_local_daemon_for_draft(&self.connection_options, &self.profile_draft) {
+            Ok(message) => self.dashboard.record_info(message),
+            Err(err) => self
+                .dashboard
+                .record_error(format!("Failed to ensure local daemon: {err}")),
         }
     }
 
@@ -1278,12 +1582,12 @@ impl TuiApp {
         self.dashboard.sessions.get(self.session_index)
     }
 
-    fn selected_task(&self) -> Option<&TaskStatus> {
-        self.dashboard.tasks.get(self.task_index)
+    fn selected_task(&self) -> Option<TaskStatus> {
+        self.filtered_tasks().get(self.task_index).cloned()
     }
 
-    fn selected_channel(&self) -> Option<&ChannelSummary> {
-        self.dashboard.channels().get(self.channel_index)
+    fn selected_channel(&self) -> Option<ChannelSummary> {
+        self.filtered_channels().get(self.channel_index).cloned()
     }
 
     fn start_prompt_input(&mut self) {
@@ -1319,6 +1623,133 @@ impl TuiApp {
         }
         self.input_mode = Some(InputMode::EditDraftAuth);
         self.input = self.profile_draft.auth_value.clone();
+    }
+
+    fn start_edit_task_filter(&mut self) {
+        self.input_mode = Some(InputMode::EditTaskFilter);
+        self.input = self.task_filter.clone();
+    }
+
+    fn start_edit_channel_filter(&mut self) {
+        self.input_mode = Some(InputMode::EditChannelFilter);
+        self.input = self.channel_filter.clone();
+    }
+
+    fn start_edit_event_filter(&mut self) {
+        self.input_mode = Some(InputMode::EditEventFilter);
+        self.input = self.event_filter.clone();
+    }
+
+    fn clear_task_filter(&mut self) {
+        self.task_filter.clear();
+        self.clamp_selection();
+        self.dashboard.record_info("Cleared the task filter");
+    }
+
+    fn clear_channel_filter(&mut self) {
+        self.channel_filter.clear();
+        self.clamp_selection();
+        self.dashboard.record_info("Cleared the channel filter");
+    }
+
+    fn clear_event_filter(&mut self) {
+        self.event_filter.clear();
+        self.clamp_selection();
+        self.dashboard.record_info("Cleared the event filter");
+    }
+
+    fn toggle_events_paused(&mut self) {
+        self.events_paused = !self.events_paused;
+        if self.events_paused {
+            self.paused_events = self.dashboard.recent_events.clone();
+            self.dashboard
+                .record_info("Paused the event list at the current snapshot");
+        } else {
+            self.paused_events.clear();
+            self.dashboard.record_info("Resumed live event updates");
+        }
+        if self.events_follow_latest {
+            self.event_index = 0;
+        }
+        self.clamp_selection();
+    }
+
+    fn toggle_events_follow_latest(&mut self) {
+        self.events_follow_latest = !self.events_follow_latest;
+        if self.events_follow_latest {
+            self.event_index = 0;
+        }
+        self.dashboard.record_info(format!(
+            "Event follow-latest is now {}",
+            if self.events_follow_latest {
+                "on"
+            } else {
+                "off"
+            }
+        ));
+    }
+
+    fn jump_latest_event(&mut self) {
+        self.event_index = 0;
+        self.dashboard
+            .record_info("Jumped to the latest visible event");
+    }
+
+    fn filtered_tasks(&self) -> Vec<TaskStatus> {
+        let filter = self.task_filter.trim().to_ascii_lowercase();
+        self.dashboard
+            .tasks
+            .iter()
+            .filter(|task| {
+                filter.is_empty()
+                    || task.request_id.to_ascii_lowercase().contains(&filter)
+                    || task.agent_id.to_ascii_lowercase().contains(&filter)
+                    || task.state.to_ascii_lowercase().contains(&filter)
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn filtered_channels(&self) -> Vec<ChannelSummary> {
+        let filter = self.channel_filter.trim().to_ascii_lowercase();
+        self.dashboard
+            .channels()
+            .iter()
+            .filter(|channel| {
+                filter.is_empty()
+                    || channel.id.to_ascii_lowercase().contains(&filter)
+                    || channel.kind.to_ascii_lowercase().contains(&filter)
+                    || channel.agent_id.to_ascii_lowercase().contains(&filter)
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn event_source(&self) -> &[EventEnvelope] {
+        if self.events_paused {
+            &self.paused_events
+        } else {
+            &self.dashboard.recent_events
+        }
+    }
+
+    fn filtered_events(&self) -> Vec<EventEnvelope> {
+        let filter = self.event_filter.trim().to_ascii_lowercase();
+        self.event_source()
+            .iter()
+            .rev()
+            .filter(|event| {
+                if filter.is_empty() {
+                    return true;
+                }
+                event.event.to_ascii_lowercase().contains(&filter)
+                    || serde_json::to_string(&event.data)
+                        .unwrap_or_else(|_| "{}".to_string())
+                        .to_ascii_lowercase()
+                        .contains(&filter)
+            })
+            .cloned()
+            .collect()
     }
 
     fn start_duplicate_profile_input(&mut self, make_default: bool) {
@@ -1436,8 +1867,7 @@ impl TuiApp {
                 })
                 .collect(),
             TabKind::Tasks => self
-                .dashboard
-                .tasks
+                .filtered_tasks()
                 .iter()
                 .map(|task| {
                     ListItem::new(format!(
@@ -1447,8 +1877,7 @@ impl TuiApp {
                 })
                 .collect(),
             TabKind::Channels => self
-                .dashboard
-                .channels()
+                .filtered_channels()
                 .iter()
                 .map(|channel| {
                     ListItem::new(format!(
@@ -1464,10 +1893,8 @@ impl TuiApp {
                 })
                 .collect(),
             TabKind::Events => self
-                .dashboard
-                .recent_events
+                .filtered_events()
                 .iter()
-                .rev()
                 .map(|event| ListItem::new(event.event.clone()))
                 .collect(),
         }
@@ -1477,6 +1904,8 @@ impl TuiApp {
         match self.tab {
             TabKind::Connections => {
                 let validation = self.profile_draft_validation();
+                let editor_diff = self.editor_diff();
+                let selected_diff = self.selected_profile_diff();
                 pretty_json(&serde_json::json!({
                     "current_connection": {
                         "kind": connection_kind_label(self.dashboard.connection_kind),
@@ -1521,8 +1950,25 @@ impl TuiApp {
                         "target_notice": validation.target_notice,
                         "auth_notice": validation.auth_notice,
                     },
-                    "selected_update_ready": self.selected_profile().is_some() && validation.is_valid(),
+                    "dirty": self.editor_is_dirty(),
+                    "baseline": self.draft_baseline_label,
+                    "changes": editor_diff,
+                    "selected_update_ready": selected_diff.as_ref().is_some_and(|diff| !diff.is_empty() && validation.is_valid()),
                 },
+                "selected_profile_diff": selected_diff,
+                    "selected_profile_activity": self
+                        .selected_profile()
+                        .and_then(|profile| self.profile_activity.entry(&profile.name)),
+                "latest_preflight": self.last_preflight_report.as_ref().map(|report| serde_json::json!({
+                    "outcome": preflight_outcome_label(report.outcome),
+                    "target": report.target,
+                    "auth": report.auth,
+                    "message": report.message,
+                    "latency_ms": report.latency_ms,
+                    "ready": report.ready,
+                    "transport": report.transport,
+                    "wire_format": report.wire_format,
+                })),
                 "recent_drafts": self
                     .recent_drafts
                     .drafts()
@@ -1560,7 +2006,7 @@ impl TuiApp {
                 .map(|session| {
                     pretty_json(&serde_json::json!({
                         "live_session": session,
-                        "detail": self.dashboard.session_detail(&session.session_id),
+                        "detail": session_detail_preview(self.dashboard.session_detail(&session.session_id)),
                     }))
                 })
                 .unwrap_or_else(|| "No live sessions available.".to_string()),
@@ -1569,19 +2015,25 @@ impl TuiApp {
                 .map(|session| {
                     pretty_json(&serde_json::json!({
                         "session": session,
-                        "detail": self.dashboard.session_detail(&session.session_id),
+                        "detail": session_detail_preview(self.dashboard.session_detail(&session.session_id)),
                     }))
                 })
                 .unwrap_or_else(|| "No stored sessions available.".to_string()),
             TabKind::Tasks => self
                 .selected_task()
-                .map(pretty_json)
+                .map(|task| {
+                    pretty_json(&serde_json::json!({
+                        "filter": self.task_filter,
+                        "task": task,
+                    }))
+                })
                 .unwrap_or_else(|| "No tasks available.".to_string()),
             TabKind::Channels => self
                 .selected_channel()
                 .map(|channel| {
                     let runtime = self.channel_runtime(&channel.id);
                     pretty_json(&serde_json::json!({
+                        "filter": self.channel_filter,
                         "channel": channel,
                         "runtime": runtime,
                     }))
@@ -1589,7 +2041,15 @@ impl TuiApp {
                 .unwrap_or_else(|| "No channels available.".to_string()),
             TabKind::Events => self
                 .selected_event()
-                .map(pretty_json)
+                .map(|event| {
+                    pretty_json(&serde_json::json!({
+                        "filter": self.event_filter,
+                        "paused": self.events_paused,
+                        "follow_latest": self.events_follow_latest,
+                        "visible_events": self.filtered_events().len(),
+                        "event": event,
+                    }))
+                })
                 .unwrap_or_else(|| "No events yet.".to_string()),
         }
     }
@@ -1598,14 +2058,16 @@ impl TuiApp {
         let shared = "1-7 switch views | Tab cycle | arrows/j/k move | r refresh | q quit";
         let scoped = match self.tab {
             TabKind::Connections => {
-                "Enter/s connect selected | C connect draft | S update selected | R load recent | [/ ] pick recent | v load current | b load selected | m/o cycle draft | t/g edit draft | a/A save as named | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
+                "Enter/s connect selected | C connect draft | T test draft | P test selected | E ensure draft local | S update selected | R load recent | [/ ] pick recent | v load current | b load selected | m/o cycle draft | t/g edit draft | a/A save as named | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
             }
             TabKind::Agents => "n or Enter opens a live session for the selected agent",
             TabKind::LiveSessions => "p or Enter prompts | c cancel session | x kill session",
             TabKind::Sessions => "e or Enter resumes the selected stored session",
-            TabKind::Tasks => "c cancels the selected task",
-            TabKind::Channels => "channel view is read-only in this pass",
-            TabKind::Events => "event stream is live; latest entries are appended automatically",
+            TabKind::Tasks => "/ edit filter | F clear filter | c cancels the selected task",
+            TabKind::Channels => "/ edit filter | F clear filter | channel view is read-only",
+            TabKind::Events => {
+                "/ edit filter | F clear filter | z pause | f follow latest | G latest"
+            }
         };
         format!("{} | {}", shared, scoped)
     }
@@ -1628,12 +2090,8 @@ impl TuiApp {
             .find(|runtime| runtime.id == channel_id)
     }
 
-    fn selected_event(&self) -> Option<&EventEnvelope> {
-        self.dashboard
-            .recent_events
-            .iter()
-            .rev()
-            .nth(self.event_index)
+    fn selected_event(&self) -> Option<EventEnvelope> {
+        self.filtered_events().get(self.event_index).cloned()
     }
 
     fn current_detail_session_id(&self) -> Option<String> {
@@ -1682,6 +2140,35 @@ fn pretty_json<T: Serialize>(value: &T) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "<unserializable>".to_string())
 }
 
+fn session_detail_preview(
+    detail: Option<&turin_control_client::SessionDetail>,
+) -> Option<serde_json::Value> {
+    detail.map(|detail| {
+        serde_json::json!({
+            "session": {
+                "messages": detail.messages.len(),
+                "events": detail.events.len(),
+                "tool_calls": detail.tool_executions.len(),
+            },
+            "recent_messages": detail.messages.iter().rev().take(4).rev().map(|message| serde_json::json!({
+                "role": message.role,
+                "turn": message.turn_index,
+                "content": message.content,
+            })).collect::<Vec<_>>(),
+            "recent_events": detail.events.iter().rev().take(3).rev().map(|event| serde_json::json!({
+                "type": event.event_type,
+                "created_at": event.created_at,
+                "payload": event.payload,
+            })).collect::<Vec<_>>(),
+            "recent_tools": detail.tool_executions.iter().rev().take(3).rev().map(|tool| serde_json::json!({
+                "tool": tool.tool_name,
+                "verdict": tool.verdict,
+                "duration_ms": tool.duration_ms,
+            })).collect::<Vec<_>>(),
+        })
+    })
+}
+
 fn connection_kind_label(kind: ConnectionKind) -> &'static str {
     match kind {
         ConnectionKind::Local => "local",
@@ -1702,6 +2189,15 @@ fn freshness_color(freshness: DashboardFreshness) -> Color {
         DashboardFreshness::Fresh => Color::LightGreen,
         DashboardFreshness::Quiet => Color::Yellow,
         DashboardFreshness::Stale => Color::LightRed,
+    }
+}
+
+fn preflight_outcome_label(outcome: ConnectionPreflightOutcome) -> &'static str {
+    match outcome {
+        ConnectionPreflightOutcome::Ready => "ready",
+        ConnectionPreflightOutcome::Degraded => "degraded",
+        ConnectionPreflightOutcome::Invalid => "invalid",
+        ConnectionPreflightOutcome::ConnectFailed => "connect-failed",
     }
 }
 

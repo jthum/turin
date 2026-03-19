@@ -1,10 +1,12 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
+use tokio::runtime::Builder;
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, watch};
 use tokio::time;
@@ -102,9 +104,67 @@ pub struct ConnectionProfileDraftValidation {
     pub auth_notice: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectionProfileDraftFieldDiff {
+    pub field: String,
+    pub draft_value: String,
+    pub comparison_value: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectionProfileDraftDiff {
+    #[serde(default)]
+    pub changed_fields: Vec<ConnectionProfileDraftFieldDiff>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConnectionDraftHistory {
     drafts: Vec<ConnectionProfileDraft>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionPreflightOutcome {
+    Ready,
+    Degraded,
+    Invalid,
+    ConnectFailed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectionPreflightReport {
+    pub outcome: ConnectionPreflightOutcome,
+    pub connection_kind: String,
+    pub target: String,
+    pub auth: String,
+    pub resolved_profile: Option<String>,
+    pub message: String,
+    pub latency_ms: Option<u64>,
+    pub ready: Option<bool>,
+    pub transport: Option<String>,
+    pub wire_format: Option<String>,
+    pub issue_count: Option<usize>,
+    pub agent_count: Option<usize>,
+    pub channel_count: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectionProfileActivityBook {
+    #[serde(default)]
+    entries: BTreeMap<String, ConnectionProfileActivity>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectionProfileActivity {
+    pub connect_count: u64,
+    pub successful_connect_count: u64,
+    pub preflight_count: u64,
+    pub failure_count: u64,
+    pub last_connect_unix_ms: Option<u64>,
+    pub last_successful_connect_unix_ms: Option<u64>,
+    pub last_preflight_unix_ms: Option<u64>,
+    pub last_connect_result: Option<String>,
+    pub last_preflight_result: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,6 +258,46 @@ impl ConnectionProfileDraft {
         )
     }
 
+    pub fn diff_against(&self, other: &Self) -> ConnectionProfileDraftDiff {
+        let draft = self.canonicalized();
+        let comparison = other.canonicalized();
+        let mut changed_fields = Vec::new();
+
+        if draft.kind != comparison.kind {
+            changed_fields.push(ConnectionProfileDraftFieldDiff {
+                field: "kind".to_string(),
+                draft_value: profile_kind_label(draft.kind).to_string(),
+                comparison_value: profile_kind_label(comparison.kind).to_string(),
+            });
+        }
+
+        if draft.display_target() != comparison.display_target() {
+            changed_fields.push(ConnectionProfileDraftFieldDiff {
+                field: "target".to_string(),
+                draft_value: draft.display_target(),
+                comparison_value: comparison.display_target(),
+            });
+        }
+
+        if draft.auth_mode != comparison.auth_mode {
+            changed_fields.push(ConnectionProfileDraftFieldDiff {
+                field: "auth_mode".to_string(),
+                draft_value: profile_draft_auth_label(draft.auth_mode).to_string(),
+                comparison_value: profile_draft_auth_label(comparison.auth_mode).to_string(),
+            });
+        }
+
+        if draft.auth_value != comparison.auth_value {
+            changed_fields.push(ConnectionProfileDraftFieldDiff {
+                field: "auth_value".to_string(),
+                draft_value: redacted_auth_value(&draft),
+                comparison_value: redacted_auth_value(&comparison),
+            });
+        }
+
+        ConnectionProfileDraftDiff { changed_fields }
+    }
+
     fn canonicalized(&self) -> Self {
         StoredConnectionProfile::from_draft(self)
             .map(|profile| profile.to_draft())
@@ -243,6 +343,34 @@ impl ConnectionProfileDraftValidation {
     }
 }
 
+impl ConnectionProfileDraftDiff {
+    pub fn is_empty(&self) -> bool {
+        self.changed_fields.is_empty()
+    }
+
+    pub fn changed_field_names(&self) -> Vec<&str> {
+        self.changed_fields
+            .iter()
+            .map(|field| field.field.as_str())
+            .collect()
+    }
+
+    pub fn summary(&self) -> String {
+        if self.changed_fields.is_empty() {
+            "Draft matches the comparison target".to_string()
+        } else {
+            format!(
+                "Changed fields: {}",
+                self.changed_fields
+                    .iter()
+                    .map(|field| field.field.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+    }
+}
+
 impl ConnectionDraftHistory {
     pub fn record_success(&mut self, draft: &ConnectionProfileDraft) {
         let draft = draft.canonicalized();
@@ -271,6 +399,35 @@ fn profile_kind_label(kind: ConnectionProfileKind) -> &'static str {
         ConnectionProfileKind::LocalConfig => "local-config",
         ConnectionProfileKind::LocalEndpoint => "local-endpoint",
         ConnectionProfileKind::Remote => "remote",
+    }
+}
+
+fn profile_draft_auth_label(mode: ConnectionProfileDraftAuthMode) -> &'static str {
+    match mode {
+        ConnectionProfileDraftAuthMode::None => "none",
+        ConnectionProfileDraftAuthMode::TokenEnv => "token-env",
+        ConnectionProfileDraftAuthMode::InlineToken => "inline-token",
+    }
+}
+
+fn redacted_auth_value(draft: &ConnectionProfileDraft) -> String {
+    match draft.auth_mode {
+        ConnectionProfileDraftAuthMode::None => "none".to_string(),
+        ConnectionProfileDraftAuthMode::TokenEnv => {
+            let value = draft.auth_value.trim();
+            if value.is_empty() {
+                "<unset env>".to_string()
+            } else {
+                value.to_string()
+            }
+        }
+        ConnectionProfileDraftAuthMode::InlineToken => {
+            if draft.auth_value.trim().is_empty() {
+                "<unset inline token>".to_string()
+            } else {
+                "<inline token set>".to_string()
+            }
+        }
     }
 }
 
@@ -380,6 +537,15 @@ impl ConnectionOptions {
 
     pub fn draft_to_spec(&self, draft: &ConnectionProfileDraft) -> Result<ConnectionSpec> {
         self.connection_options_for_draft(draft)?.to_spec()
+    }
+
+    pub fn draft_diff_against_profile(
+        &self,
+        draft: &ConnectionProfileDraft,
+        profile_name: &str,
+    ) -> Result<ConnectionProfileDraftDiff> {
+        let profile_draft = self.load_profile_draft(profile_name)?;
+        Ok(draft.diff_against(&profile_draft))
     }
 
     pub fn load_profile_draft(&self, name: &str) -> Result<ConnectionProfileDraft> {
@@ -578,12 +744,337 @@ impl ConnectionOptions {
     }
 }
 
+impl ConnectionPreflightReport {
+    pub fn is_success(&self) -> bool {
+        matches!(
+            self.outcome,
+            ConnectionPreflightOutcome::Ready | ConnectionPreflightOutcome::Degraded
+        )
+    }
+
+    pub fn summary_label(&self) -> String {
+        match self.latency_ms {
+            Some(latency) => format!(
+                "{} in {}ms: {}",
+                preflight_outcome_label(self.outcome),
+                latency,
+                self.message
+            ),
+            None => format!(
+                "{}: {}",
+                preflight_outcome_label(self.outcome),
+                self.message
+            ),
+        }
+    }
+}
+
+impl ConnectionProfileActivityBook {
+    pub fn record_connect_result(
+        &mut self,
+        profile_name: impl Into<String>,
+        success: bool,
+        message: impl Into<String>,
+    ) {
+        let now = now_unix_ms();
+        let entry = self.entries.entry(profile_name.into()).or_default();
+        entry.connect_count += 1;
+        entry.last_connect_unix_ms = Some(now);
+        entry.last_connect_result = Some(message.into());
+        if success {
+            entry.successful_connect_count += 1;
+            entry.last_successful_connect_unix_ms = Some(now);
+        } else {
+            entry.failure_count += 1;
+        }
+    }
+
+    pub fn record_preflight_result(
+        &mut self,
+        profile_name: impl Into<String>,
+        success: bool,
+        message: impl Into<String>,
+    ) {
+        let now = now_unix_ms();
+        let entry = self.entries.entry(profile_name.into()).or_default();
+        entry.preflight_count += 1;
+        entry.last_preflight_unix_ms = Some(now);
+        entry.last_preflight_result = Some(message.into());
+        if !success {
+            entry.failure_count += 1;
+        }
+    }
+
+    pub fn entry(&self, profile_name: &str) -> Option<&ConnectionProfileActivity> {
+        self.entries.get(profile_name)
+    }
+}
+
+pub fn preflight_connection_blocking(options: &ConnectionOptions) -> ConnectionPreflightReport {
+    let resolved = match options.materialized() {
+        Ok(resolved) => resolved,
+        Err(err) => {
+            return invalid_preflight_report(
+                &options
+                    .current_profile_draft()
+                    .unwrap_or_else(|_| ConnectionProfileDraft::default()),
+                options.profile.clone(),
+                err.to_string(),
+            );
+        }
+    };
+
+    let draft = resolved
+        .current_profile_draft()
+        .unwrap_or_else(|_| ConnectionProfileDraft::default());
+    if let Some(report) = preflight_env_error_report(&resolved, &draft, options.profile.clone()) {
+        return report;
+    }
+
+    let spec = match resolved.to_spec() {
+        Ok(spec) => spec,
+        Err(err) => {
+            return invalid_preflight_report(&draft, options.profile.clone(), err.to_string());
+        }
+    };
+
+    let started = Instant::now();
+    match blocking_connect_dashboard(spec) {
+        Ok((_, dashboard)) => {
+            let latency_ms = started.elapsed().as_millis() as u64;
+            let ready = dashboard
+                .health
+                .as_ref()
+                .map(|health| health.ready)
+                .unwrap_or(false);
+            let transport = dashboard
+                .health
+                .as_ref()
+                .map(|health| health.transport.clone());
+            let wire_format = dashboard
+                .health
+                .as_ref()
+                .map(|health| health.wire_format.clone());
+            let issue_count = dashboard.health.as_ref().map(|health| health.issue_count);
+            let agent_count = dashboard.health.as_ref().map(|health| health.agent_count);
+            let channel_count = dashboard.health.as_ref().map(|health| health.channel_count);
+            ConnectionPreflightReport {
+                outcome: if ready {
+                    ConnectionPreflightOutcome::Ready
+                } else {
+                    ConnectionPreflightOutcome::Degraded
+                },
+                connection_kind: profile_kind_label(draft.kind).to_string(),
+                target: draft.display_target(),
+                auth: draft.auth_summary(),
+                resolved_profile: options.profile.clone(),
+                message: if ready {
+                    "Connected and daemon reported ready".to_string()
+                } else {
+                    "Connected, but the daemon reported degraded readiness".to_string()
+                },
+                latency_ms: Some(latency_ms),
+                ready: Some(ready),
+                transport,
+                wire_format,
+                issue_count,
+                agent_count,
+                channel_count,
+            }
+        }
+        Err(err) => ConnectionPreflightReport {
+            outcome: ConnectionPreflightOutcome::ConnectFailed,
+            connection_kind: profile_kind_label(draft.kind).to_string(),
+            target: draft.display_target(),
+            auth: draft.auth_summary(),
+            resolved_profile: options.profile.clone(),
+            message: err.to_string(),
+            latency_ms: Some(started.elapsed().as_millis() as u64),
+            ready: None,
+            transport: None,
+            wire_format: None,
+            issue_count: None,
+            agent_count: None,
+            channel_count: None,
+        },
+    }
+}
+
+pub fn preflight_draft_blocking(
+    options: &ConnectionOptions,
+    draft: &ConnectionProfileDraft,
+) -> ConnectionPreflightReport {
+    let validation = draft.validate();
+    if !validation.is_valid() {
+        return invalid_preflight_report(draft, None, validation.summary());
+    }
+
+    match options.connection_options_for_draft(draft) {
+        Ok(options) => preflight_connection_blocking(&options),
+        Err(err) => invalid_preflight_report(draft, None, err.to_string()),
+    }
+}
+
+pub fn ensure_local_daemon_for_options(options: &ConnectionOptions) -> Result<String> {
+    let resolved = options.materialized()?;
+    let draft = resolved.current_profile_draft()?;
+    run_local_daemon_ensure(&resolved, &draft)
+}
+
+pub fn ensure_local_daemon_for_draft(
+    options: &ConnectionOptions,
+    draft: &ConnectionProfileDraft,
+) -> Result<String> {
+    let resolved = options.connection_options_for_draft(draft)?;
+    run_local_daemon_ensure(&resolved, draft)
+}
+
 fn validate_profile_name(name: &str) -> Result<&str> {
     let name = name.trim();
     if name.is_empty() {
         return Err(anyhow!("Connection profile name cannot be empty"));
     }
     Ok(name)
+}
+
+fn invalid_preflight_report(
+    draft: &ConnectionProfileDraft,
+    resolved_profile: Option<String>,
+    message: String,
+) -> ConnectionPreflightReport {
+    ConnectionPreflightReport {
+        outcome: ConnectionPreflightOutcome::Invalid,
+        connection_kind: profile_kind_label(draft.kind).to_string(),
+        target: draft.display_target(),
+        auth: draft.auth_summary(),
+        resolved_profile,
+        message,
+        latency_ms: None,
+        ready: None,
+        transport: None,
+        wire_format: None,
+        issue_count: None,
+        agent_count: None,
+        channel_count: None,
+    }
+}
+
+fn preflight_env_error_report(
+    options: &ConnectionOptions,
+    draft: &ConnectionProfileDraft,
+    resolved_profile: Option<String>,
+) -> Option<ConnectionPreflightReport> {
+    let env_name = options.auth_token_env.as_deref()?;
+    if std::env::var_os(env_name).is_some() {
+        return None;
+    }
+    Some(invalid_preflight_report(
+        draft,
+        resolved_profile,
+        format!("Environment variable '{}' is not set", env_name),
+    ))
+}
+
+fn blocking_connect_dashboard(spec: ConnectionSpec) -> Result<(ControlClient, DashboardState)> {
+    std::thread::spawn(move || {
+        let runtime = Builder::new_current_thread().enable_all().build()?;
+        runtime.block_on(async move { connect_dashboard(&spec).await })
+    })
+    .join()
+    .map_err(|_| anyhow!("Connection preflight thread panicked"))?
+}
+
+fn run_local_daemon_ensure(
+    options: &ConnectionOptions,
+    draft: &ConnectionProfileDraft,
+) -> Result<String> {
+    let config_path = match draft.kind {
+        ConnectionProfileKind::LocalConfig => options
+            .config_path
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("turin.toml")),
+        ConnectionProfileKind::LocalEndpoint => {
+            return Err(anyhow!(
+                "Local endpoint profiles do not imply a config file. Run `turin daemon ensure --config <path>` manually."
+            ));
+        }
+        ConnectionProfileKind::Remote => {
+            return Err(anyhow!(
+                "Local daemon ensure is only available for local connection profiles."
+            ));
+        }
+    };
+
+    let (program, command_label) = resolve_turin_binary();
+    let output = Command::new(&program)
+        .arg("daemon")
+        .arg("ensure")
+        .arg("--config")
+        .arg(&config_path)
+        .output()
+        .with_context(|| {
+            format!(
+                "Failed to launch `{command_label} daemon ensure --config {}`",
+                config_path.display()
+            )
+        })?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if !stdout.is_empty() {
+            stdout
+        } else if !stderr.is_empty() {
+            stderr
+        } else {
+            "daemon ensure completed successfully".to_string()
+        };
+        Ok(format!(
+            "Ensured local daemon with `{command_label} daemon ensure --config {}`: {}",
+            config_path.display(),
+            detail
+        ))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() { stderr } else { stdout };
+        Err(anyhow!(
+            "`{command_label} daemon ensure --config {}` failed: {}",
+            config_path.display(),
+            detail
+        ))
+    }
+}
+
+fn resolve_turin_binary() -> (PathBuf, String) {
+    let fallback = PathBuf::from("turin");
+    let current_exe = std::env::current_exe().ok();
+    let sibling_name = if cfg!(windows) { "turin.exe" } else { "turin" };
+    if let Some(path) = current_exe
+        .as_ref()
+        .and_then(|path| path.parent())
+        .map(|dir| dir.join(sibling_name))
+        && path.exists()
+    {
+        return (path.clone(), path.display().to_string());
+    }
+    (fallback.clone(), fallback.display().to_string())
+}
+
+fn preflight_outcome_label(outcome: ConnectionPreflightOutcome) -> &'static str {
+    match outcome {
+        ConnectionPreflightOutcome::Ready => "ready",
+        ConnectionPreflightOutcome::Degraded => "degraded",
+        ConnectionPreflightOutcome::Invalid => "invalid",
+        ConnectionPreflightOutcome::ConnectFailed => "connect-failed",
+    }
+}
+
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn validate_remote_target(target: &str) -> Option<String> {
@@ -1557,5 +2048,65 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn profile_draft_diff_redacts_inline_tokens() {
+        let baseline = ConnectionProfileDraft {
+            kind: ConnectionProfileKind::Remote,
+            target: "https://turin.example.com".to_string(),
+            auth_mode: ConnectionProfileDraftAuthMode::InlineToken,
+            auth_value: "secret-a".to_string(),
+        };
+        let changed = ConnectionProfileDraft {
+            auth_value: "secret-b".to_string(),
+            ..baseline.clone()
+        };
+
+        let diff = changed.diff_against(&baseline);
+        assert_eq!(diff.changed_field_names(), vec!["auth_value"]);
+        assert_eq!(diff.changed_fields[0].draft_value, "<inline token set>");
+        assert_eq!(
+            diff.changed_fields[0].comparison_value,
+            "<inline token set>"
+        );
+    }
+
+    #[test]
+    fn remote_preflight_reports_missing_env_before_connect() {
+        let options = ConnectionOptions {
+            config_path: None,
+            endpoint: None,
+            remote_url: Some("https://turin.example.com".to_string()),
+            auth_token: None,
+            auth_token_env: Some("TURIN_UI_CORE_MISSING_TOKEN".to_string()),
+            profile: None,
+            profiles_file: None,
+            suppress_profile_resolution: false,
+        };
+
+        let report = preflight_connection_blocking(&options);
+        assert_eq!(report.outcome, ConnectionPreflightOutcome::Invalid);
+        assert!(
+            report
+                .message
+                .contains("Environment variable 'TURIN_UI_CORE_MISSING_TOKEN' is not set")
+        );
+    }
+
+    #[test]
+    fn connection_profile_activity_book_tracks_success_and_failure() {
+        let mut book = ConnectionProfileActivityBook::default();
+        book.record_preflight_result("lab", true, "ready");
+        book.record_connect_result("lab", false, "failed");
+        book.record_connect_result("lab", true, "connected");
+
+        let entry = book.entry("lab").expect("activity entry");
+        assert_eq!(entry.preflight_count, 1);
+        assert_eq!(entry.connect_count, 2);
+        assert_eq!(entry.successful_connect_count, 1);
+        assert_eq!(entry.failure_count, 1);
+        assert_eq!(entry.last_connect_result.as_deref(), Some("connected"));
+        assert_eq!(entry.last_preflight_result.as_deref(), Some("ready"));
     }
 }

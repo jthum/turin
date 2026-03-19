@@ -12,10 +12,13 @@ use turin_control_client::{
 };
 use turin_daemon_protocol::EventEnvelope;
 use turin_ui_core::{
-    ConnectionDraftHistory, ConnectionOptions, ConnectionProfileAuth, ConnectionProfileCatalog,
-    ConnectionProfileDraft, ConnectionProfileDraftAuthMode, ConnectionProfileDraftValidation,
-    ConnectionProfileKind, ConnectionProfileSummary, DashboardFreshness, DashboardNoticeLevel,
-    DashboardState, OperatorCommand, UiController, UiUpdate, connect_dashboard, spawn_controller,
+    ConnectionDraftHistory, ConnectionOptions, ConnectionPreflightOutcome,
+    ConnectionPreflightReport, ConnectionProfileActivityBook, ConnectionProfileAuth,
+    ConnectionProfileCatalog, ConnectionProfileDraft, ConnectionProfileDraftAuthMode,
+    ConnectionProfileDraftDiff, ConnectionProfileDraftValidation, ConnectionProfileKind,
+    ConnectionProfileSummary, DashboardFreshness, DashboardNoticeLevel, DashboardState,
+    OperatorCommand, UiController, UiUpdate, connect_dashboard, ensure_local_daemon_for_draft,
+    preflight_connection_blocking, preflight_draft_blocking, spawn_controller,
 };
 
 #[derive(Parser, Debug)]
@@ -148,12 +151,50 @@ struct TurinDesktopApp {
     event_index: usize,
     profile_name_input: String,
     profile_draft: ConnectionProfileDraft,
+    draft_baseline: ConnectionProfileDraft,
+    draft_baseline_label: String,
     recent_drafts: ConnectionDraftHistory,
+    profile_activity: ConnectionProfileActivityBook,
+    pending_discard_action: Option<PendingDraftAction>,
+    last_preflight_report: Option<ConnectionPreflightReport>,
     save_profile_as_default: bool,
     pending_delete_profile: Option<String>,
     prompt_input: String,
     requested_session_detail: Option<String>,
+    task_filter: String,
+    channel_filter: String,
+    event_filter: String,
+    events_paused: bool,
+    events_follow_latest: bool,
+    paused_events: Vec<EventEnvelope>,
     _runtime: Arc<Runtime>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PendingDraftAction {
+    CurrentConnection,
+    SelectedProfile(String),
+    LatestRecentDraft,
+    SelectedRecentDraft,
+    BlankDraft,
+}
+
+impl PendingDraftAction {
+    fn description(&self) -> String {
+        match self {
+            Self::CurrentConnection => {
+                "load the current live connection into the editor".to_string()
+            }
+            Self::SelectedProfile(name) => {
+                format!("load the saved profile '{name}' into the editor")
+            }
+            Self::LatestRecentDraft => "load the latest recent draft into the editor".to_string(),
+            Self::SelectedRecentDraft => {
+                "load the selected recent draft into the editor".to_string()
+            }
+            Self::BlankDraft => "reset the profile editor to a blank draft".to_string(),
+        }
+    }
 }
 
 impl TurinDesktopApp {
@@ -184,18 +225,35 @@ impl TurinDesktopApp {
             channel_index: 0,
             event_index: 0,
             profile_name_input: String::new(),
+            draft_baseline: profile_draft.clone(),
+            draft_baseline_label: "current connection".to_string(),
             profile_draft,
             recent_drafts: ConnectionDraftHistory::default(),
+            profile_activity: ConnectionProfileActivityBook::default(),
+            pending_discard_action: None,
+            last_preflight_report: None,
             save_profile_as_default: false,
             pending_delete_profile: None,
             prompt_input: String::new(),
             requested_session_detail: None,
+            task_filter: String::new(),
+            channel_filter: String::new(),
+            event_filter: String::new(),
+            events_paused: false,
+            events_follow_latest: true,
+            paused_events: Vec::new(),
             _runtime: runtime,
         }
     }
 
     fn apply_update(&mut self, update: UiUpdate) {
+        let auto_follow_event = matches!(update, UiUpdate::Event(_))
+            && !self.events_paused
+            && self.events_follow_latest;
         self.dashboard.apply_update(update);
+        if auto_follow_event {
+            self.event_index = 0;
+        }
         self.clamp_selection_indices();
     }
 
@@ -213,9 +271,9 @@ impl TurinDesktopApp {
         self.live_session_index =
             clamp_index(self.live_session_index, self.dashboard.live_sessions.len());
         self.session_index = clamp_index(self.session_index, self.dashboard.sessions.len());
-        self.task_index = clamp_index(self.task_index, self.dashboard.tasks.len());
-        self.channel_index = clamp_index(self.channel_index, self.dashboard.channels().len());
-        self.event_index = clamp_index(self.event_index, self.dashboard.recent_events.len());
+        self.task_index = clamp_index(self.task_index, self.filtered_tasks().len());
+        self.channel_index = clamp_index(self.channel_index, self.filtered_channels().len());
+        self.event_index = clamp_index(self.event_index, self.filtered_events().len());
     }
 
     fn send_command(&mut self, command: OperatorCommand) {
@@ -248,31 +306,130 @@ impl TurinDesktopApp {
         self.recent_drafts.drafts().get(self.recent_draft_index)
     }
 
-    fn load_selected_recent_draft(&mut self) {
-        let Some(draft) = self.selected_recent_draft().cloned() else {
+    fn set_profile_draft(
+        &mut self,
+        draft: ConnectionProfileDraft,
+        baseline_label: impl Into<String>,
+    ) {
+        self.profile_draft = draft.clone();
+        self.draft_baseline = draft;
+        self.draft_baseline_label = baseline_label.into();
+        self.pending_discard_action = None;
+    }
+
+    fn editor_diff(&self) -> ConnectionProfileDraftDiff {
+        self.profile_draft.diff_against(&self.draft_baseline)
+    }
+
+    fn editor_is_dirty(&self) -> bool {
+        !self.editor_diff().is_empty()
+    }
+
+    fn selected_profile_diff(&self) -> Option<ConnectionProfileDraftDiff> {
+        let selected = self.selected_profile()?;
+        self.connection_options
+            .draft_diff_against_profile(&self.profile_draft, &selected.name)
+            .ok()
+    }
+
+    fn queue_or_apply_draft_action(&mut self, action: PendingDraftAction) {
+        if self.editor_is_dirty() {
+            self.pending_discard_action = Some(action.clone());
+            self.dashboard.record_info(format!(
+                "The profile editor has unsaved changes ({}). Use Discard Pending Action to {} or Cancel Pending Action to keep editing.",
+                self.editor_diff().summary(),
+                action.description()
+            ));
+            return;
+        }
+
+        self.apply_draft_action(action);
+    }
+
+    fn confirm_pending_discard_action(&mut self) {
+        let Some(action) = self.pending_discard_action.take() else {
             self.dashboard
-                .record_error("No recent draft connection is currently selected");
+                .record_error("No pending editor action is waiting for discard confirmation");
             return;
         };
-        self.profile_draft = draft;
+        self.apply_draft_action(action);
+    }
+
+    fn cancel_pending_discard_action(&mut self) {
+        self.pending_discard_action = None;
+        self.dashboard
+            .record_info("Kept the current editor draft and cancelled the pending discard");
+    }
+
+    fn apply_draft_action(&mut self, action: PendingDraftAction) {
+        match action {
+            PendingDraftAction::CurrentConnection => {
+                match self.connection_options.current_profile_draft() {
+                    Ok(draft) => {
+                        self.set_profile_draft(draft, "current connection");
+                        self.dashboard
+                            .record_info("Loaded current connection into the profile editor");
+                    }
+                    Err(err) => self.dashboard.record_error(format!(
+                        "Failed to load current connection into editor: {err}"
+                    )),
+                }
+            }
+            PendingDraftAction::SelectedProfile(profile_name) => {
+                match self.connection_options.load_profile_draft(&profile_name) {
+                    Ok(draft) => {
+                        self.set_profile_draft(draft, format!("saved profile '{profile_name}'"));
+                        self.dashboard.record_info(format!(
+                            "Loaded connection profile '{}' into the editor",
+                            profile_name
+                        ));
+                    }
+                    Err(err) => self.dashboard.record_error(format!(
+                        "Failed to load connection profile into editor: {err}"
+                    )),
+                }
+            }
+            PendingDraftAction::LatestRecentDraft => {
+                let Some(draft) = self.recent_drafts.latest().cloned() else {
+                    self.dashboard
+                        .record_error("No recent draft connections have been recorded yet");
+                    return;
+                };
+                self.recent_draft_index = 0;
+                self.set_profile_draft(draft, "latest recent draft");
+                self.dashboard
+                    .record_info("Loaded the latest successful draft connection into the editor");
+            }
+            PendingDraftAction::SelectedRecentDraft => {
+                let Some(draft) = self.selected_recent_draft().cloned() else {
+                    self.dashboard
+                        .record_error("No recent draft connection is currently selected");
+                    return;
+                };
+                self.set_profile_draft(draft, "selected recent draft");
+                self.dashboard
+                    .record_info("Loaded the selected recent draft into the editor");
+            }
+            PendingDraftAction::BlankDraft => {
+                self.set_profile_draft(ConnectionProfileDraft::default(), "blank draft");
+                self.profile_name_input.clear();
+                self.save_profile_as_default = false;
+                self.dashboard
+                    .record_info("Reset the connection profile editor");
+            }
+        }
+    }
+
+    fn load_selected_recent_draft(&mut self) {
         self.profile_name_input.clear();
         self.pending_delete_profile = None;
-        self.dashboard
-            .record_info("Loaded the selected recent draft into the editor");
+        self.queue_or_apply_draft_action(PendingDraftAction::SelectedRecentDraft);
     }
 
     fn load_latest_recent_draft(&mut self) {
-        let Some(draft) = self.recent_drafts.latest().cloned() else {
-            self.dashboard
-                .record_error("No recent draft connections have been recorded yet");
-            return;
-        };
-        self.recent_draft_index = 0;
-        self.profile_draft = draft;
         self.profile_name_input.clear();
         self.pending_delete_profile = None;
-        self.dashboard
-            .record_info("Loaded the latest successful draft connection into the editor");
+        self.queue_or_apply_draft_action(PendingDraftAction::LatestRecentDraft);
     }
 
     fn typed_profile_name(&self) -> Option<String> {
@@ -307,17 +464,8 @@ impl TurinDesktopApp {
     }
 
     fn load_current_connection_into_editor(&mut self) {
-        match self.connection_options.current_profile_draft() {
-            Ok(draft) => {
-                self.profile_draft = draft;
-                self.pending_delete_profile = None;
-                self.dashboard
-                    .record_info("Loaded current connection into the profile editor");
-            }
-            Err(err) => self.dashboard.record_error(format!(
-                "Failed to load current connection into editor: {err}"
-            )),
-        }
+        self.pending_delete_profile = None;
+        self.queue_or_apply_draft_action(PendingDraftAction::CurrentConnection);
     }
 
     fn load_selected_profile_into_editor(&mut self) {
@@ -326,28 +474,64 @@ impl TurinDesktopApp {
                 .record_error("No connection profile is currently selected");
             return;
         };
-        match self.connection_options.load_profile_draft(&profile_name) {
-            Ok(draft) => {
-                self.profile_draft = draft;
-                self.pending_delete_profile = None;
-                self.dashboard.record_info(format!(
-                    "Loaded connection profile '{}' into the editor",
-                    profile_name
-                ));
-            }
-            Err(err) => self.dashboard.record_error(format!(
-                "Failed to load connection profile into editor: {err}"
-            )),
-        }
+        self.pending_delete_profile = None;
+        self.queue_or_apply_draft_action(PendingDraftAction::SelectedProfile(profile_name));
     }
 
     fn reset_profile_editor(&mut self) {
-        self.profile_draft = ConnectionProfileDraft::default();
         self.profile_name_input.clear();
         self.pending_delete_profile = None;
-        self.save_profile_as_default = false;
-        self.dashboard
-            .record_info("Reset the connection profile editor");
+        self.queue_or_apply_draft_action(PendingDraftAction::BlankDraft);
+    }
+
+    fn preflight_selected_profile(&mut self) {
+        let Some(selected) = self.selected_profile().cloned() else {
+            self.dashboard
+                .record_error("No connection profile is currently selected");
+            return;
+        };
+        let Some(options) = self.selected_profile_options() else {
+            self.dashboard
+                .record_error("Failed to resolve the selected connection profile");
+            return;
+        };
+
+        let report = preflight_connection_blocking(&options);
+        self.profile_activity.record_preflight_result(
+            selected.name.clone(),
+            report.is_success(),
+            report.summary_label(),
+        );
+        if report.is_success() {
+            self.dashboard
+                .record_info(format!("Preflight for '{}' succeeded", selected.name));
+        } else {
+            self.dashboard.record_error(format!(
+                "Preflight for '{}' failed: {}",
+                selected.name, report.message
+            ));
+        }
+        self.last_preflight_report = Some(report);
+    }
+
+    fn preflight_draft(&mut self) {
+        let report = preflight_draft_blocking(&self.connection_options, &self.profile_draft);
+        if report.is_success() {
+            self.dashboard.record_info("Draft preflight succeeded");
+        } else {
+            self.dashboard
+                .record_error(format!("Draft preflight failed: {}", report.message));
+        }
+        self.last_preflight_report = Some(report);
+    }
+
+    fn ensure_local_daemon_for_draft(&mut self) {
+        match ensure_local_daemon_for_draft(&self.connection_options, &self.profile_draft) {
+            Ok(message) => self.dashboard.record_info(message),
+            Err(err) => self
+                .dashboard
+                .record_error(format!("Failed to ensure local daemon: {err}")),
+        }
     }
 
     fn reconnect_current(&mut self) {
@@ -398,6 +582,16 @@ impl TurinDesktopApp {
             ));
             return;
         }
+        if self
+            .selected_profile_diff()
+            .is_some_and(|diff| diff.is_empty())
+        {
+            self.dashboard.record_info(format!(
+                "The editor draft already matches saved profile '{}'",
+                profile_name
+            ));
+            return;
+        }
 
         match self.connection_options.save_profile_draft(
             &profile_name,
@@ -408,6 +602,10 @@ impl TurinDesktopApp {
                 let active_profile = self.active_profile.as_deref() == Some(profile_name.as_str());
                 self.profile_catalog = Some(catalog);
                 self.select_profile_by_name(&profile_name);
+                self.set_profile_draft(
+                    self.profile_draft.clone(),
+                    format!("saved profile '{}'", profile_name),
+                );
                 self.clamp_selection_indices();
                 self.dashboard.record_info(if active_profile {
                     format!(
@@ -447,7 +645,11 @@ impl TurinDesktopApp {
             Ok(catalog) => {
                 self.profile_catalog = Some(catalog);
                 self.select_profile_by_name(&profile_name);
-                self.profile_name_input = profile_name.clone();
+                self.set_profile_draft(
+                    self.profile_draft.clone(),
+                    format!("saved profile '{}'", profile_name),
+                );
+                self.profile_name_input = String::new();
                 self.clamp_selection_indices();
                 self.dashboard.record_info(format!(
                     "Saved draft to profile '{}' in '{}'",
@@ -521,6 +723,7 @@ impl TurinDesktopApp {
                 self.profile_catalog = Some(catalog);
                 self.select_profile_by_name(&target_name);
                 self.profile_name_input = target_name.clone();
+                self.draft_baseline_label = format!("saved profile '{}'", target_name);
                 self.clamp_selection_indices();
                 self.dashboard.record_info(format!(
                     "Renamed connection profile '{}' to '{}'",
@@ -585,10 +788,7 @@ impl TurinDesktopApp {
                 self.pending_delete_profile = None;
                 self.profile_catalog = Some(catalog);
                 self.clamp_selection_indices();
-                self.profile_name_input = self
-                    .selected_profile()
-                    .map(|profile| profile.name.clone())
-                    .unwrap_or_default();
+                self.profile_name_input.clear();
                 self.dashboard
                     .record_info(format!("Deleted connection profile '{}'", profile_name));
             }
@@ -623,21 +823,38 @@ impl TurinDesktopApp {
                     self.recent_drafts.record_success(draft);
                     self.recent_draft_index = 0;
                 }
+                if let Some(profile_name) = self.active_profile.clone() {
+                    self.profile_activity.record_connect_result(
+                        profile_name,
+                        true,
+                        format!("Connected to {}", dashboard.connection_target),
+                    );
+                }
                 self.dashboard = dashboard;
                 self.profile_name_input.clear();
-                self.profile_draft = self
-                    .connection_options
-                    .current_profile_draft()
-                    .unwrap_or_else(|_| ConnectionProfileDraft::default());
+                self.set_profile_draft(
+                    self.connection_options
+                        .current_profile_draft()
+                        .unwrap_or_else(|_| ConnectionProfileDraft::default()),
+                    "current connection",
+                );
                 self.pending_delete_profile = None;
                 self.prompt_input.clear();
                 self.requested_session_detail = None;
+                self.last_preflight_report = None;
                 self.clamp_selection_indices();
                 let target = self.dashboard.connection_target.clone();
                 self.dashboard
                     .record_info(format!("Connected UI client to {target}"));
             }
             Err(err) => {
+                if let Ok(Some(profile_name)) = connection_options.resolved_profile_name() {
+                    self.profile_activity.record_connect_result(
+                        profile_name,
+                        false,
+                        format!("Failed to connect UI client: {err}"),
+                    );
+                }
                 self.dashboard
                     .record_error(format!("Failed to connect UI client: {err}"));
             }
@@ -670,11 +887,11 @@ impl TurinDesktopApp {
     }
 
     fn selected_task(&self) -> Option<TaskStatus> {
-        self.dashboard.tasks.get(self.task_index).cloned()
+        self.filtered_tasks().get(self.task_index).cloned()
     }
 
     fn selected_channel(&self) -> Option<ChannelSummary> {
-        self.dashboard.channels().get(self.channel_index).cloned()
+        self.filtered_channels().get(self.channel_index).cloned()
     }
 
     fn selected_channel_runtime(&self, channel_id: &str) -> Option<ChannelRuntime> {
@@ -688,12 +905,83 @@ impl TurinDesktopApp {
     }
 
     fn selected_event(&self) -> Option<EventEnvelope> {
+        self.filtered_events().get(self.event_index).cloned()
+    }
+
+    fn filtered_tasks(&self) -> Vec<TaskStatus> {
+        let filter = self.task_filter.trim().to_ascii_lowercase();
         self.dashboard
-            .recent_events
+            .tasks
+            .iter()
+            .filter(|task| {
+                filter.is_empty()
+                    || task.request_id.to_ascii_lowercase().contains(&filter)
+                    || task.agent_id.to_ascii_lowercase().contains(&filter)
+                    || task.state.to_ascii_lowercase().contains(&filter)
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn filtered_channels(&self) -> Vec<ChannelSummary> {
+        let filter = self.channel_filter.trim().to_ascii_lowercase();
+        self.dashboard
+            .channels()
+            .iter()
+            .filter(|channel| {
+                filter.is_empty()
+                    || channel.id.to_ascii_lowercase().contains(&filter)
+                    || channel.kind.to_ascii_lowercase().contains(&filter)
+                    || channel.agent_id.to_ascii_lowercase().contains(&filter)
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn event_source(&self) -> &[EventEnvelope] {
+        if self.events_paused {
+            &self.paused_events
+        } else {
+            &self.dashboard.recent_events
+        }
+    }
+
+    fn filtered_events(&self) -> Vec<EventEnvelope> {
+        let filter = self.event_filter.trim().to_ascii_lowercase();
+        self.event_source()
             .iter()
             .rev()
-            .nth(self.event_index)
+            .filter(|event| {
+                if filter.is_empty() {
+                    return true;
+                }
+                event.event.to_ascii_lowercase().contains(&filter)
+                    || serde_json::to_string(&event.data)
+                        .unwrap_or_else(|_| "{}".to_string())
+                        .to_ascii_lowercase()
+                        .contains(&filter)
+            })
             .cloned()
+            .collect()
+    }
+
+    fn set_events_paused(&mut self, paused: bool) {
+        if paused == self.events_paused {
+            return;
+        }
+        self.events_paused = paused;
+        if paused {
+            self.paused_events = self.dashboard.recent_events.clone();
+            self.dashboard
+                .record_info("Paused the event list at the current snapshot");
+        } else {
+            self.paused_events.clear();
+            self.dashboard.record_info("Resumed live event updates");
+        }
+        if self.events_follow_latest {
+            self.event_index = 0;
+        }
+        self.clamp_selection_indices();
     }
 
     fn selected_session_detail(&self) -> Option<&SessionDetail> {
@@ -823,6 +1111,15 @@ impl TurinDesktopApp {
         let selected = self.selected_profile().cloned();
         let profiles_source = self.connection_options.profiles_path();
         let typed_name_ready = self.typed_profile_name().is_some();
+        let editor_diff = self.editor_diff();
+        let selected_diff = self.selected_profile_diff();
+        let update_selected_ready = selected_diff
+            .as_ref()
+            .is_some_and(|diff| !diff.is_empty() && self.profile_draft_validation().is_valid());
+        let selected_activity = selected
+            .as_ref()
+            .and_then(|profile| self.profile_activity.entry(&profile.name))
+            .cloned();
         let profile_name_hint = selected
             .as_ref()
             .map(|profile| profile.name.clone())
@@ -998,9 +1295,24 @@ impl TurinDesktopApp {
                         Color32::from_rgb(255, 138, 128)
                     },
                 ));
+                if self.editor_is_dirty() {
+                    ui.label(
+                        RichText::new(format!(
+                            "Unsaved editor changes vs {}",
+                            self.draft_baseline_label
+                        ))
+                        .color(Color32::from_rgb(255, 209, 128)),
+                    );
+                }
                 ui.checkbox(&mut self.save_profile_as_default, "Set as default");
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add_enabled(draft_validation.is_valid(), egui::Button::new("Test Draft"))
+                        .clicked()
+                    {
+                        self.preflight_draft();
+                    }
                     if ui
                         .add_enabled(
                             draft_validation.is_valid(),
@@ -1011,10 +1323,22 @@ impl TurinDesktopApp {
                         self.connect_profile_draft();
                     }
                     if ui
+                        .add_enabled(selected.is_some(), egui::Button::new("Test Selected"))
+                        .clicked()
+                    {
+                        self.preflight_selected_profile();
+                    }
+                    if ui
                         .add_enabled(
-                            selected.is_some() && draft_validation.is_valid(),
-                            egui::Button::new("Update Selected"),
+                            self.profile_draft.kind == ConnectionProfileKind::LocalConfig,
+                            egui::Button::new("Ensure Draft Local"),
                         )
+                        .clicked()
+                    {
+                        self.ensure_local_daemon_for_draft();
+                    }
+                    if ui
+                        .add_enabled(update_selected_ready, egui::Button::new("Update Selected"))
                         .clicked()
                     {
                         self.update_selected_profile();
@@ -1035,6 +1359,22 @@ impl TurinDesktopApp {
                         self.rename_selected_profile();
                     }
                 });
+                if let Some(action) = self.pending_discard_action.as_ref() {
+                    let action_description = action.description();
+                    ui.add_space(6.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            RichText::new(format!("Pending: {}", action_description))
+                                .color(Color32::from_rgb(255, 209, 128)),
+                        );
+                        if ui.button("Discard Pending Action").clicked() {
+                            self.confirm_pending_discard_action();
+                        }
+                        if ui.button("Cancel Pending Action").clicked() {
+                            self.cancel_pending_discard_action();
+                        }
+                    });
+                }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     let armed = self.is_delete_armed_for_selected();
@@ -1192,8 +1532,19 @@ impl TurinDesktopApp {
                 detail_kv(ui, "Draft Summary", draft_validation.summary());
                 detail_kv(
                     ui,
+                    "Draft Dirty",
+                    if self.editor_is_dirty() {
+                        "yes".to_string()
+                    } else {
+                        "no".to_string()
+                    },
+                );
+                detail_kv(ui, "Draft Baseline", self.draft_baseline_label.clone());
+                detail_kv(ui, "Draft Changes", editor_diff.summary());
+                detail_kv(
+                    ui,
                     "Selected Update Ready",
-                    if selected.is_some() && draft_validation.is_valid() {
+                    if update_selected_ready {
                         "yes".to_string()
                     } else {
                         "no".to_string()
@@ -1210,6 +1561,75 @@ impl TurinDesktopApp {
                 );
                 if let Some(draft) = self.selected_recent_draft() {
                     detail_kv(ui, "Recent Draft Selection", draft.summary_label());
+                }
+                if let Some(diff) = selected_diff.as_ref() {
+                    ui.add_space(10.0);
+                    ui.label(RichText::new("Selected Profile Diff").strong());
+                    detail_kv(ui, "Summary", diff.summary());
+                    if diff.is_empty() {
+                        ui.label("The editor draft already matches the selected saved profile.");
+                    } else {
+                        for field in &diff.changed_fields {
+                            detail_kv(
+                                ui,
+                                &field.field,
+                                format!("{} -> {}", field.comparison_value, field.draft_value),
+                            );
+                        }
+                    }
+                }
+                if let Some(activity) = selected_activity.as_ref() {
+                    ui.add_space(10.0);
+                    ui.label(RichText::new("Selected Profile Activity").strong());
+                    detail_kv(ui, "Connect Attempts", activity.connect_count.to_string());
+                    detail_kv(
+                        ui,
+                        "Successful Connects",
+                        activity.successful_connect_count.to_string(),
+                    );
+                    detail_kv(ui, "Preflights", activity.preflight_count.to_string());
+                    detail_kv(ui, "Failures", activity.failure_count.to_string());
+                    detail_kv(
+                        ui,
+                        "Last Connect",
+                        activity
+                            .last_connect_result
+                            .clone()
+                            .unwrap_or_else(|| "None".to_string()),
+                    );
+                    detail_kv(
+                        ui,
+                        "Last Preflight",
+                        activity
+                            .last_preflight_result
+                            .clone()
+                            .unwrap_or_else(|| "None".to_string()),
+                    );
+                }
+                if let Some(report) = self.last_preflight_report.as_ref() {
+                    ui.add_space(10.0);
+                    ui.label(RichText::new("Latest Preflight").strong());
+                    detail_kv(ui, "Outcome", preflight_outcome_label(report.outcome));
+                    detail_kv(ui, "Target", report.target.clone());
+                    detail_kv(ui, "Auth", report.auth.clone());
+                    detail_kv(ui, "Message", report.message.clone());
+                    detail_kv(
+                        ui,
+                        "Latency",
+                        report
+                            .latency_ms
+                            .map(|latency| format!("{latency}ms"))
+                            .unwrap_or_else(|| "None".to_string()),
+                    );
+                    if let Some(ready) = report.ready {
+                        detail_kv(ui, "Ready", yes_no(ready));
+                    }
+                    if let Some(transport) = report.transport.as_ref() {
+                        detail_kv(ui, "Transport", transport.clone());
+                    }
+                    if let Some(wire_format) = report.wire_format.as_ref() {
+                        detail_kv(ui, "Wire Format", wire_format.clone());
+                    }
                 }
 
                 if !self.dashboard.recent_notices.is_empty() {
@@ -1450,12 +1870,23 @@ impl TurinDesktopApp {
     }
 
     fn render_tasks_tab(&mut self, ui: &mut egui::Ui) {
-        let tasks = self.dashboard.tasks.clone();
+        let tasks = self.filtered_tasks();
         let selected = self.selected_task();
 
         ui.columns(2, |columns| {
             columns[0].group(|ui| {
                 ui.heading("Tasks");
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Filter").strong());
+                    ui.add(
+                        TextEdit::singleline(&mut self.task_filter)
+                            .hint_text("request id, agent, or state"),
+                    );
+                    if ui.button("Clear").clicked() {
+                        self.task_filter.clear();
+                    }
+                });
                 ui.add_space(8.0);
                 ScrollArea::vertical().show(ui, |ui| {
                     for (index, task) in tasks.iter().enumerate() {
@@ -1533,7 +1964,7 @@ impl TurinDesktopApp {
     }
 
     fn render_channels_tab(&mut self, ui: &mut egui::Ui) {
-        let channels = self.dashboard.channels().to_vec();
+        let channels = self.filtered_channels();
         let selected = self.selected_channel();
         let selected_runtime = selected
             .as_ref()
@@ -1542,6 +1973,17 @@ impl TurinDesktopApp {
         ui.columns(2, |columns| {
             columns[0].group(|ui| {
                 ui.heading("Channels");
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Filter").strong());
+                    ui.add(
+                        TextEdit::singleline(&mut self.channel_filter)
+                            .hint_text("channel id, kind, or agent"),
+                    );
+                    if ui.button("Clear").clicked() {
+                        self.channel_filter.clear();
+                    }
+                });
                 ui.add_space(8.0);
                 ScrollArea::vertical().show(ui, |ui| {
                     for (index, channel) in channels.iter().enumerate() {
@@ -1595,12 +2037,33 @@ impl TurinDesktopApp {
     }
 
     fn render_events_tab(&mut self, ui: &mut egui::Ui) {
-        let events: Vec<_> = self.dashboard.recent_events.iter().rev().cloned().collect();
+        let events = self.filtered_events();
         let selected = self.selected_event();
 
         ui.columns(2, |columns| {
             columns[0].group(|ui| {
                 ui.heading("Recent Events");
+                ui.add_space(8.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Filter").strong());
+                    ui.add(
+                        TextEdit::singleline(&mut self.event_filter)
+                            .hint_text("event name or payload text"),
+                    );
+                    if ui.button("Clear").clicked() {
+                        self.event_filter.clear();
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    let mut paused = self.events_paused;
+                    if ui.checkbox(&mut paused, "Pause").changed() {
+                        self.set_events_paused(paused);
+                    }
+                    ui.checkbox(&mut self.events_follow_latest, "Follow Latest");
+                    if ui.button("Jump Latest").clicked() {
+                        self.event_index = 0;
+                    }
+                });
                 ui.add_space(8.0);
                 ScrollArea::vertical().show(ui, |ui| {
                     for (index, event) in events.iter().enumerate() {
@@ -1626,6 +2089,17 @@ impl TurinDesktopApp {
             columns[1].group(|ui| {
                 ui.heading("Event Detail");
                 ui.add_space(8.0);
+                detail_kv(
+                    ui,
+                    "Event Source",
+                    if self.events_paused {
+                        "paused snapshot".to_string()
+                    } else {
+                        "live stream".to_string()
+                    },
+                );
+                detail_kv(ui, "Follow Latest", yes_no(self.events_follow_latest));
+                detail_kv(ui, "Visible Events", events.len().to_string());
                 if let Some(event) = selected {
                     detail_kv(ui, "Event", &event.event);
                     ui.add_space(8.0);
@@ -1831,6 +2305,15 @@ fn freshness_color(freshness: DashboardFreshness) -> Color32 {
     }
 }
 
+fn preflight_outcome_label(outcome: ConnectionPreflightOutcome) -> &'static str {
+    match outcome {
+        ConnectionPreflightOutcome::Ready => "ready",
+        ConnectionPreflightOutcome::Degraded => "degraded",
+        ConnectionPreflightOutcome::Invalid => "invalid",
+        ConnectionPreflightOutcome::ConnectFailed => "connect-failed",
+    }
+}
+
 fn profile_kind_label(kind: ConnectionProfileKind) -> &'static str {
     match kind {
         ConnectionProfileKind::LocalConfig => "local-config",
@@ -1916,6 +2399,10 @@ fn render_session_detail_panel(ui: &mut egui::Ui, detail: Option<&SessionDetail>
 
     ui.add_space(8.0);
     ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
+        if !detail.messages.is_empty() {
+            ui.label(RichText::new("Transcript").strong());
+            ui.add_space(4.0);
+        }
         for message in detail.messages.iter().rev().take(8).rev() {
             ui.group(|ui| {
                 ui.label(
@@ -1928,7 +2415,25 @@ fn render_session_detail_panel(ui: &mut egui::Ui, detail: Option<&SessionDetail>
             ui.add_space(6.0);
         }
 
+        if !detail.events.is_empty() {
+            ui.add_space(8.0);
+            ui.label(RichText::new("Recent Events").strong());
+            ui.add_space(4.0);
+            for event in detail.events.iter().rev().take(4).rev() {
+                ui.group(|ui| {
+                    ui.label(
+                        RichText::new(event.event_type.clone())
+                            .strong()
+                            .color(Color32::from_rgb(173, 167, 159)),
+                    );
+                    ui.code(json_preview(&event.payload, 220));
+                });
+                ui.add_space(6.0);
+            }
+        }
+
         if !detail.tool_executions.is_empty() {
+            ui.add_space(8.0);
             ui.label(RichText::new("Recent Tool Calls").strong());
             ui.add_space(4.0);
             for tool in detail.tool_executions.iter().rev().take(4).rev() {
