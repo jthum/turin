@@ -316,6 +316,7 @@ fn handle_key(
             app.start_save_profile_input(false)
         }
         KeyCode::Char('A') if app.tab == TabKind::Connections => app.start_save_profile_input(true),
+        KeyCode::Char('S') if app.tab == TabKind::Connections => app.update_selected_profile(),
         KeyCode::Char('y') if app.tab == TabKind::Connections => {
             app.start_duplicate_profile_input(false)
         }
@@ -731,9 +732,9 @@ fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
                     Span::raw(app.input.clone()),
                 ]),
                 Line::from(if *make_default {
-                    "Enter saves the current connection as the default profile. Esc cancels."
+                    "Enter saves the current draft under the typed name and marks it default. Esc cancels."
                 } else {
-                    "Enter saves the current connection to the named profile. Esc cancels."
+                    "Enter saves the current draft under the typed profile name. Esc cancels."
                 }),
             ],
             Some(InputMode::DuplicateProfile {
@@ -1123,7 +1124,7 @@ impl TuiApp {
                 self.select_profile_by_name(profile_name);
                 self.clamp_selection();
                 self.dashboard.record_info(format!(
-                    "Saved current connection to profile '{}' in '{}'",
+                    "Saved draft to profile '{}' in '{}'",
                     profile_name,
                     self.connection_options.profiles_path().display()
                 ));
@@ -1131,6 +1132,45 @@ impl TuiApp {
             Err(err) => self
                 .dashboard
                 .record_error(format!("Failed to save connection profile: {err}")),
+        }
+    }
+
+    fn update_selected_profile(&mut self) {
+        let Some(profile_name) = self.selected_profile().map(|profile| profile.name.clone()) else {
+            self.dashboard
+                .record_error("No connection profile is currently selected");
+            return;
+        };
+        let validation = self.profile_draft_validation();
+        if !validation.is_valid() {
+            self.dashboard.record_error(format!(
+                "Cannot update selected connection profile: {}",
+                validation.summary()
+            ));
+            return;
+        }
+
+        match self
+            .connection_options
+            .save_profile_draft(&profile_name, &self.profile_draft, false)
+        {
+            Ok(catalog) => {
+                let active_profile = self.active_profile.as_deref() == Some(profile_name.as_str());
+                self.profile_catalog = Some(catalog);
+                self.select_profile_by_name(&profile_name);
+                self.clamp_selection();
+                self.dashboard.record_info(if active_profile {
+                    format!(
+                        "Updated connection profile '{}'. Use reconnect to apply the saved changes.",
+                        profile_name
+                    )
+                } else {
+                    format!("Updated connection profile '{}'", profile_name)
+                });
+            }
+            Err(err) => self.dashboard.record_error(format!(
+                "Failed to update selected connection profile: {err}"
+            )),
         }
     }
 
@@ -1257,10 +1297,7 @@ impl TuiApp {
 
     fn start_save_profile_input(&mut self, make_default: bool) {
         self.input_mode = Some(InputMode::SaveProfile { make_default });
-        self.input = self
-            .selected_profile()
-            .map(|profile| profile.name.clone())
-            .unwrap_or_default();
+        self.input.clear();
     }
 
     fn start_edit_draft_target(&mut self) {
@@ -1484,6 +1521,7 @@ impl TuiApp {
                         "target_notice": validation.target_notice,
                         "auth_notice": validation.auth_notice,
                     },
+                    "selected_update_ready": self.selected_profile().is_some() && validation.is_valid(),
                 },
                 "recent_drafts": self
                     .recent_drafts
@@ -1560,7 +1598,7 @@ impl TuiApp {
         let shared = "1-7 switch views | Tab cycle | arrows/j/k move | r refresh | q quit";
         let scoped = match self.tab {
             TabKind::Connections => {
-                "Enter/s connect selected | C connect draft | R load recent | [/ ] pick recent | v load current | b load selected | m/o cycle draft | t/g edit draft | a/A save | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
+                "Enter/s connect selected | C connect draft | S update selected | R load recent | [/ ] pick recent | v load current | b load selected | m/o cycle draft | t/g edit draft | a/A save as named | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
             }
             TabKind::Agents => "n or Enter opens a live session for the selected agent",
             TabKind::LiveSessions => "p or Enter prompts | c cancel session | x kill session",

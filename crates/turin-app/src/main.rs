@@ -165,7 +165,6 @@ impl TurinDesktopApp {
         profile_catalog: Option<ConnectionProfileCatalog>,
         active_profile: Option<String>,
     ) -> Self {
-        let profile_name_input = active_profile.clone().unwrap_or_default();
         let profile_draft = connection_options
             .current_profile_draft()
             .unwrap_or_else(|_| ConnectionProfileDraft::default());
@@ -184,7 +183,7 @@ impl TurinDesktopApp {
             task_index: 0,
             channel_index: 0,
             event_index: 0,
-            profile_name_input,
+            profile_name_input: String::new(),
             profile_draft,
             recent_drafts: ConnectionDraftHistory::default(),
             save_profile_as_default: false,
@@ -276,12 +275,9 @@ impl TurinDesktopApp {
             .record_info("Loaded the latest successful draft connection into the editor");
     }
 
-    fn profile_name_for_save(&self) -> Option<String> {
+    fn typed_profile_name(&self) -> Option<String> {
         let trimmed = self.profile_name_input.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
-        self.selected_profile().map(|profile| profile.name.clone())
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
     }
 
     fn profile_draft_validation(&self) -> ConnectionProfileDraftValidation {
@@ -314,7 +310,6 @@ impl TurinDesktopApp {
         match self.connection_options.current_profile_draft() {
             Ok(draft) => {
                 self.profile_draft = draft;
-                self.profile_name_input = self.active_profile.clone().unwrap_or_default();
                 self.pending_delete_profile = None;
                 self.dashboard
                     .record_info("Loaded current connection into the profile editor");
@@ -334,7 +329,6 @@ impl TurinDesktopApp {
         match self.connection_options.load_profile_draft(&profile_name) {
             Ok(draft) => {
                 self.profile_draft = draft;
-                self.profile_name_input = profile_name.clone();
                 self.pending_delete_profile = None;
                 self.dashboard.record_info(format!(
                     "Loaded connection profile '{}' into the editor",
@@ -390,10 +384,50 @@ impl TurinDesktopApp {
         }
     }
 
-    fn save_current_profile(&mut self) {
-        let Some(profile_name) = self.profile_name_for_save() else {
+    fn update_selected_profile(&mut self) {
+        let Some(profile_name) = self.selected_profile().map(|profile| profile.name.clone()) else {
             self.dashboard
-                .record_error("Enter a profile name or select an existing profile before saving");
+                .record_error("No connection profile is currently selected");
+            return;
+        };
+        let validation = self.profile_draft_validation();
+        if !validation.is_valid() {
+            self.dashboard.record_error(format!(
+                "Cannot update selected connection profile: {}",
+                validation.summary()
+            ));
+            return;
+        }
+
+        match self.connection_options.save_profile_draft(
+            &profile_name,
+            &self.profile_draft,
+            self.save_profile_as_default,
+        ) {
+            Ok(catalog) => {
+                let active_profile = self.active_profile.as_deref() == Some(profile_name.as_str());
+                self.profile_catalog = Some(catalog);
+                self.select_profile_by_name(&profile_name);
+                self.clamp_selection_indices();
+                self.dashboard.record_info(if active_profile {
+                    format!(
+                        "Updated connection profile '{}'. Reconnect current to apply the saved changes.",
+                        profile_name
+                    )
+                } else {
+                    format!("Updated connection profile '{}'", profile_name)
+                });
+            }
+            Err(err) => self.dashboard.record_error(format!(
+                "Failed to update selected connection profile: {err}"
+            )),
+        }
+    }
+
+    fn save_current_profile(&mut self) {
+        let Some(profile_name) = self.typed_profile_name() else {
+            self.dashboard
+                .record_error("Enter a profile name before saving the draft as a profile");
             return;
         };
         let validation = self.profile_draft_validation();
@@ -416,7 +450,7 @@ impl TurinDesktopApp {
                 self.profile_name_input = profile_name.clone();
                 self.clamp_selection_indices();
                 self.dashboard.record_info(format!(
-                    "Saved current connection to profile '{}' in '{}'",
+                    "Saved draft to profile '{}' in '{}'",
                     profile_name,
                     self.connection_options.profiles_path().display()
                 ));
@@ -433,7 +467,7 @@ impl TurinDesktopApp {
                 .record_error("No connection profile is currently selected");
             return;
         };
-        let Some(target_name) = self.profile_name_for_save() else {
+        let Some(target_name) = self.typed_profile_name() else {
             self.dashboard
                 .record_error("Enter a new profile name before duplicating the selected profile");
             return;
@@ -466,7 +500,7 @@ impl TurinDesktopApp {
                 .record_error("No connection profile is currently selected");
             return;
         };
-        let Some(target_name) = self.profile_name_for_save() else {
+        let Some(target_name) = self.typed_profile_name() else {
             self.dashboard
                 .record_error("Enter a new profile name before renaming the selected profile");
             return;
@@ -590,7 +624,7 @@ impl TurinDesktopApp {
                     self.recent_draft_index = 0;
                 }
                 self.dashboard = dashboard;
-                self.profile_name_input = self.active_profile.clone().unwrap_or_default();
+                self.profile_name_input.clear();
                 self.profile_draft = self
                     .connection_options
                     .current_profile_draft()
@@ -788,6 +822,7 @@ impl TurinDesktopApp {
         let recent_drafts = self.recent_drafts.drafts().to_vec();
         let selected = self.selected_profile().cloned();
         let profiles_source = self.connection_options.profiles_path();
+        let typed_name_ready = self.typed_profile_name().is_some();
         let profile_name_hint = selected
             .as_ref()
             .map(|profile| profile.name.clone())
@@ -816,7 +851,6 @@ impl TurinDesktopApp {
                                 .clicked()
                             {
                                 self.profile_index = index;
-                                self.profile_name_input = profile.name.clone();
                                 self.pending_delete_profile = None;
                             }
                         }
@@ -867,6 +901,7 @@ impl TurinDesktopApp {
                     }
                 }
                 ui.add_space(6.0);
+                ui.label(RichText::new("Save As Name").strong());
                 ui.add(
                     TextEdit::singleline(&mut self.profile_name_input)
                         .hint_text(profile_name_hint.clone()),
@@ -976,7 +1011,19 @@ impl TurinDesktopApp {
                         self.connect_profile_draft();
                     }
                     if ui
-                        .add_enabled(draft_validation.is_valid(), egui::Button::new("Save Draft"))
+                        .add_enabled(
+                            selected.is_some() && draft_validation.is_valid(),
+                            egui::Button::new("Update Selected"),
+                        )
+                        .clicked()
+                    {
+                        self.update_selected_profile();
+                    }
+                    if ui
+                        .add_enabled(
+                            draft_validation.is_valid() && typed_name_ready,
+                            egui::Button::new("Save As Name"),
+                        )
                         .clicked()
                     {
                         self.save_current_profile();
@@ -1106,7 +1153,7 @@ impl TurinDesktopApp {
                     }
                 });
 
-                if let Some(profile) = selected {
+                if let Some(profile) = selected.as_ref() {
                     ui.add_space(12.0);
                     ui.label(RichText::new("Selected Profile").strong());
                     detail_kv(ui, "Name", profile.name.clone());
@@ -1143,6 +1190,24 @@ impl TurinDesktopApp {
                     },
                 );
                 detail_kv(ui, "Draft Summary", draft_validation.summary());
+                detail_kv(
+                    ui,
+                    "Selected Update Ready",
+                    if selected.is_some() && draft_validation.is_valid() {
+                        "yes".to_string()
+                    } else {
+                        "no".to_string()
+                    },
+                );
+                detail_kv(
+                    ui,
+                    "Named Save Ready",
+                    if draft_validation.is_valid() && typed_name_ready {
+                        "yes".to_string()
+                    } else {
+                        "no".to_string()
+                    },
+                );
                 if let Some(draft) = self.selected_recent_draft() {
                     detail_kv(ui, "Recent Draft Selection", draft.summary_label());
                 }

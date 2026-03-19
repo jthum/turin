@@ -157,8 +157,9 @@ The desktop app exposes this through the Connections tab controls:
 - `New Draft` resets the editor to a fresh draft
 - a Recent Drafts list shows recent successful draft connections and lets you load one back into the editor
 - edit the draft kind, target, and remote auth mode/value inline in the Connections tab
-- invalid draft fields are highlighted inline, and `Save Draft` stays disabled until the draft is valid
-- `Save Draft` writes the edited draft into the profile file under the typed profile name
+- invalid draft fields are highlighted inline, `Update Selected` stays disabled until the draft is valid, and `Save As Name` also requires a typed target name
+- `Update Selected` overwrites the highlighted saved profile in place using the current draft
+- `Save As Name` writes the edited draft into the profile file under the typed profile name
 - `Connect Draft` switches the UI to the currently edited draft without saving it first
 - `Duplicate Selected` copies the highlighted profile to the typed name
 - `Rename Selected` renames the highlighted profile to the typed name
@@ -176,10 +177,11 @@ The TUI exposes it through the Connections tab plus keyboard actions:
 - `g` edits the draft auth value
 - the detail pane and footer show draft validation issues before save, and `g` only edits auth when the draft is using env or inline auth
 - `C` connects to the current draft without saving it first
+- `S` overwrites the selected saved profile in place using the current draft
 - `R` loads the selected recent draft back into the editor
 - `[` and `]` move through the recent draft history shown in the detail pane
 - `a` saves the current draft to a typed profile name
-- `A` saves the current draft and marks it as the default profile
+- `A` saves the current draft to a typed profile name and marks it as the default profile
 - `y` duplicates the selected profile to a typed name
 - `Y` duplicates the selected profile to a typed name and marks it default
 - `u` renames the selected profile to a typed name
