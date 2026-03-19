@@ -110,6 +110,7 @@ impl TabKind {
 
 enum InputMode {
     SubmitPrompt { session_id: String },
+    SaveProfile { make_default: bool },
 }
 
 struct TuiApp {
@@ -258,6 +259,11 @@ fn handle_key(
         KeyCode::Up | KeyCode::Char('k') => app.move_selection(-1),
         KeyCode::Char('r') => send_command(command_tx, OperatorCommand::Refresh)?,
         KeyCode::Char('l') if app.tab == TabKind::Connections => app.reload_profiles(),
+        KeyCode::Char('a') if app.tab == TabKind::Connections => {
+            app.start_save_profile_input(false)
+        }
+        KeyCode::Char('A') if app.tab == TabKind::Connections => app.start_save_profile_input(true),
+        KeyCode::Char('d') if app.tab == TabKind::Connections => app.delete_selected_profile(),
         KeyCode::Char('s') if app.tab == TabKind::Connections => {
             if let Some(options) = app.selected_profile_options() {
                 return Ok(Some(LoopAction::Reconnect(options)));
@@ -366,20 +372,32 @@ fn handle_input_mode(
             app.input.pop();
         }
         KeyCode::Enter => {
-            let prompt = app.input.trim().to_string();
-            if prompt.is_empty() {
-                app.dashboard.record_error("Prompt cannot be empty");
+            let input = app.input.trim().to_string();
+            if input.is_empty() {
+                let message = match app.input_mode.as_ref() {
+                    Some(InputMode::SubmitPrompt { .. }) => "Prompt cannot be empty",
+                    Some(InputMode::SaveProfile { .. }) => "Profile name cannot be empty",
+                    None => "Input cannot be empty",
+                };
+                app.dashboard.record_error(message);
                 app.clear_input_mode();
                 return Ok(None);
             }
-            if let Some(InputMode::SubmitPrompt { session_id }) = &app.input_mode {
-                send_command(
-                    command_tx,
-                    OperatorCommand::SubmitPrompt {
-                        session_id: session_id.clone(),
-                        prompt,
-                    },
-                )?;
+
+            match &app.input_mode {
+                Some(InputMode::SubmitPrompt { session_id }) => {
+                    send_command(
+                        command_tx,
+                        OperatorCommand::SubmitPrompt {
+                            session_id: session_id.clone(),
+                            prompt: input,
+                        },
+                    )?;
+                }
+                Some(InputMode::SaveProfile { make_default }) => {
+                    app.save_current_profile(&input, *make_default);
+                }
+                None => {}
             }
             app.clear_input_mode();
         }
@@ -571,13 +589,27 @@ fn render_right_panel(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout
 
 fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
     let lines = if app.input_mode.is_some() {
-        vec![
-            Line::from(vec![
-                Span::styled("Prompt> ", Style::default().fg(Color::LightCyan)),
-                Span::raw(app.input.clone()),
-            ]),
-            Line::from("Enter submits prompt to the selected live session. Esc cancels."),
-        ]
+        match app.input_mode.as_ref() {
+            Some(InputMode::SubmitPrompt { .. }) => vec![
+                Line::from(vec![
+                    Span::styled("Prompt> ", Style::default().fg(Color::LightCyan)),
+                    Span::raw(app.input.clone()),
+                ]),
+                Line::from("Enter submits prompt to the selected live session. Esc cancels."),
+            ],
+            Some(InputMode::SaveProfile { make_default }) => vec![
+                Line::from(vec![
+                    Span::styled("Profile> ", Style::default().fg(Color::LightCyan)),
+                    Span::raw(app.input.clone()),
+                ]),
+                Line::from(if *make_default {
+                    "Enter saves the current connection as the default profile. Esc cancels."
+                } else {
+                    "Enter saves the current connection to the named profile. Esc cancels."
+                }),
+            ],
+            None => Vec::new(),
+        }
     } else {
         let mut lines = vec![Line::from(app.help_text())];
         if let Some(error) = &app.dashboard.last_error {
@@ -741,6 +773,66 @@ impl TuiApp {
         }
     }
 
+    fn save_current_profile(&mut self, profile_name: &str, make_default: bool) {
+        match self
+            .connection_options
+            .save_profile(profile_name, make_default)
+        {
+            Ok(catalog) => {
+                self.profile_catalog = Some(catalog);
+                if let Some(index) = self.profile_catalog.as_ref().and_then(|catalog| {
+                    catalog
+                        .profiles()
+                        .iter()
+                        .position(|profile| profile.name == profile_name)
+                }) {
+                    self.profile_index = index;
+                }
+                self.clamp_selection();
+                self.dashboard.record_info(format!(
+                    "Saved current connection to profile '{}' in '{}'",
+                    profile_name,
+                    self.connection_options.profiles_path().display()
+                ));
+            }
+            Err(err) => self
+                .dashboard
+                .record_error(format!("Failed to save connection profile: {err}")),
+        }
+    }
+
+    fn delete_selected_profile(&mut self) {
+        let Some(profile_name) = self.selected_profile().map(|profile| profile.name.clone()) else {
+            self.dashboard
+                .record_error("No connection profile is currently selected");
+            return;
+        };
+        let fallback_connection =
+            if self.connection_options.profile.as_deref() == Some(profile_name.as_str()) {
+                self.connection_options.materialized().ok()
+            } else {
+                None
+            };
+
+        match self.connection_options.delete_profile(&profile_name) {
+            Ok(catalog) => {
+                if let Some(options) = fallback_connection {
+                    self.connection_options = options;
+                }
+                if self.active_profile.as_deref() == Some(profile_name.as_str()) {
+                    self.active_profile = None;
+                }
+                self.profile_catalog = Some(catalog);
+                self.clamp_selection();
+                self.dashboard
+                    .record_info(format!("Deleted connection profile '{}'", profile_name));
+            }
+            Err(err) => self
+                .dashboard
+                .record_error(format!("Failed to delete connection profile: {err}")),
+        }
+    }
+
     fn selected_live_session(&self) -> Option<&LiveSession> {
         self.dashboard.live_sessions.get(self.live_session_index)
     }
@@ -764,6 +856,14 @@ impl TuiApp {
             });
             self.input.clear();
         }
+    }
+
+    fn start_save_profile_input(&mut self, make_default: bool) {
+        self.input_mode = Some(InputMode::SaveProfile { make_default });
+        self.input = self
+            .selected_profile()
+            .map(|profile| profile.name.clone())
+            .unwrap_or_default();
     }
 
     fn clear_input_mode(&mut self) {
@@ -967,7 +1067,7 @@ impl TuiApp {
         let shared = "1-7 switch views | Tab cycle | arrows/j/k move | r refresh | q quit";
         let scoped = match self.tab {
             TabKind::Connections => {
-                "Enter or s switches to the selected profile | l reloads profile file"
+                "Enter/s connect | a save current | A save+default | d delete selected | l reload"
             }
             TabKind::Agents => "n or Enter opens a live session for the selected agent",
             TabKind::LiveSessions => "p or Enter prompts | c cancel session | x kill session",

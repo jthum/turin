@@ -143,6 +143,8 @@ struct TurinDesktopApp {
     task_index: usize,
     channel_index: usize,
     event_index: usize,
+    profile_name_input: String,
+    save_profile_as_default: bool,
     prompt_input: String,
     requested_session_detail: Option<String>,
     _runtime: Arc<Runtime>,
@@ -157,6 +159,7 @@ impl TurinDesktopApp {
         profile_catalog: Option<ConnectionProfileCatalog>,
         active_profile: Option<String>,
     ) -> Self {
+        let profile_name_input = active_profile.clone().unwrap_or_default();
         Self {
             dashboard,
             controller,
@@ -171,6 +174,8 @@ impl TurinDesktopApp {
             task_index: 0,
             channel_index: 0,
             event_index: 0,
+            profile_name_input,
+            save_profile_as_default: false,
             prompt_input: String::new(),
             requested_session_detail: None,
             _runtime: runtime,
@@ -213,6 +218,25 @@ impl TurinDesktopApp {
             .get(self.profile_index)
     }
 
+    fn select_profile_by_name(&mut self, name: &str) {
+        if let Some(catalog) = &self.profile_catalog
+            && let Some(index) = catalog
+                .profiles()
+                .iter()
+                .position(|profile| profile.name == name)
+        {
+            self.profile_index = index;
+        }
+    }
+
+    fn profile_name_for_save(&self) -> Option<String> {
+        let trimmed = self.profile_name_input.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+        self.selected_profile().map(|profile| profile.name.clone())
+    }
+
     fn reload_profiles(&mut self) {
         match self.connection_options.load_profiles() {
             Ok(catalog) => {
@@ -247,6 +271,70 @@ impl TurinDesktopApp {
         }
     }
 
+    fn save_current_profile(&mut self) {
+        let Some(profile_name) = self.profile_name_for_save() else {
+            self.dashboard
+                .record_error("Enter a profile name or select an existing profile before saving");
+            return;
+        };
+
+        match self
+            .connection_options
+            .save_profile(&profile_name, self.save_profile_as_default)
+        {
+            Ok(catalog) => {
+                self.profile_catalog = Some(catalog);
+                self.select_profile_by_name(&profile_name);
+                self.profile_name_input = profile_name.clone();
+                self.clamp_selection_indices();
+                self.dashboard.record_info(format!(
+                    "Saved current connection to profile '{}' in '{}'",
+                    profile_name,
+                    self.connection_options.profiles_path().display()
+                ));
+            }
+            Err(err) => self
+                .dashboard
+                .record_error(format!("Failed to save connection profile: {err}")),
+        }
+    }
+
+    fn delete_selected_profile(&mut self) {
+        let Some(profile_name) = self.selected_profile().map(|profile| profile.name.clone()) else {
+            self.dashboard
+                .record_error("No connection profile is currently selected");
+            return;
+        };
+        let fallback_connection =
+            if self.connection_options.profile.as_deref() == Some(profile_name.as_str()) {
+                self.connection_options.materialized().ok()
+            } else {
+                None
+            };
+
+        match self.connection_options.delete_profile(&profile_name) {
+            Ok(catalog) => {
+                if let Some(options) = fallback_connection {
+                    self.connection_options = options;
+                }
+                if self.active_profile.as_deref() == Some(profile_name.as_str()) {
+                    self.active_profile = None;
+                }
+                self.profile_catalog = Some(catalog);
+                self.clamp_selection_indices();
+                self.profile_name_input = self
+                    .selected_profile()
+                    .map(|profile| profile.name.clone())
+                    .unwrap_or_default();
+                self.dashboard
+                    .record_info(format!("Deleted connection profile '{}'", profile_name));
+            }
+            Err(err) => self
+                .dashboard
+                .record_error(format!("Failed to delete connection profile: {err}")),
+        }
+    }
+
     fn switch_connection(&mut self, connection_options: ConnectionOptions) {
         let spec = match connection_options.to_spec() {
             Ok(spec) => spec,
@@ -265,6 +353,7 @@ impl TurinDesktopApp {
                 self.active_profile = connection_options.resolved_profile_name().ok().flatten();
                 self.profile_catalog = connection_options.load_profiles().ok().flatten();
                 self.dashboard = dashboard;
+                self.profile_name_input = self.active_profile.clone().unwrap_or_default();
                 self.prompt_input.clear();
                 self.requested_session_detail = None;
                 self.clamp_selection_indices();
@@ -446,6 +535,10 @@ impl TurinDesktopApp {
             .unwrap_or_default();
         let selected = self.selected_profile().cloned();
         let profiles_source = self.connection_options.profiles_path();
+        let profile_name_hint = selected
+            .as_ref()
+            .map(|profile| profile.name.clone())
+            .unwrap_or_else(|| "new-profile".to_string());
 
         ui.columns(2, |columns| {
             columns[0].group(|ui| {
@@ -470,10 +563,31 @@ impl TurinDesktopApp {
                                 .clicked()
                             {
                                 self.profile_index = index;
+                                self.profile_name_input = profile.name.clone();
                             }
                         }
                     });
                 }
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(8.0);
+                ui.label(RichText::new("Manage Profiles").strong());
+                ui.add_space(6.0);
+                ui.add(
+                    TextEdit::singleline(&mut self.profile_name_input)
+                        .hint_text(profile_name_hint.clone()),
+                );
+                ui.checkbox(&mut self.save_profile_as_default, "Set as default");
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Save Current").clicked() {
+                        self.save_current_profile();
+                    }
+                    if ui.button("Delete Selected").clicked() {
+                        self.delete_selected_profile();
+                    }
+                });
             });
 
             columns[1].group(|ui| {

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, watch};
 use tokio::time;
@@ -146,6 +146,64 @@ impl ConnectionOptions {
             profiles_path,
             profiles,
         )))
+    }
+
+    pub fn materialized(&self) -> Result<Self> {
+        let resolved = if self.profile.is_some() || self.profiles_path().exists() {
+            self.resolve_profile()?
+        } else {
+            self.clone()
+        };
+        Ok(Self {
+            config_path: resolved.config_path,
+            endpoint: resolved.endpoint,
+            remote_url: resolved.remote_url,
+            auth_token: resolved.auth_token,
+            auth_token_env: resolved.auth_token_env,
+            profile: None,
+            profiles_file: Some(self.profiles_path()),
+        })
+    }
+
+    pub fn save_profile(&self, name: &str, make_default: bool) -> Result<ConnectionProfileCatalog> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(anyhow!("Connection profile name cannot be empty"));
+        }
+
+        let profiles_path = self.profiles_path();
+        let mut profiles = ConnectionProfiles::load_optional(&profiles_path)?;
+        profiles.profiles.insert(
+            name.to_string(),
+            StoredConnectionProfile::from_options(&self.materialized()?),
+        );
+        if make_default || profiles.default_profile.is_none() {
+            profiles.default_profile = Some(name.to_string());
+        }
+        profiles.save(&profiles_path)?;
+        Ok(ConnectionProfileCatalog::from_raw(profiles_path, profiles))
+    }
+
+    pub fn delete_profile(&self, name: &str) -> Result<ConnectionProfileCatalog> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(anyhow!("Connection profile name cannot be empty"));
+        }
+
+        let profiles_path = self.profiles_path();
+        let mut profiles = ConnectionProfiles::load(&profiles_path)?;
+        if profiles.profiles.remove(name).is_none() {
+            return Err(anyhow!(
+                "Connection profile '{}' was not found in '{}'",
+                name,
+                profiles_path.display()
+            ));
+        }
+        if profiles.default_profile.as_deref() == Some(name) {
+            profiles.default_profile = profiles.profiles.keys().next().cloned();
+        }
+        profiles.save(&profiles_path)?;
+        Ok(ConnectionProfileCatalog::from_raw(profiles_path, profiles))
     }
 
     fn resolve_profile(&self) -> Result<Self> {
@@ -535,29 +593,69 @@ pub async fn execute_operator_command(
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 struct ConnectionProfiles {
-    #[allow(dead_code)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     default_profile: Option<String>,
     #[serde(default)]
     profiles: BTreeMap<String, StoredConnectionProfile>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 struct StoredConnectionProfile {
-    #[serde(default, alias = "config")]
+    #[serde(
+        default,
+        rename = "config",
+        alias = "config_path",
+        skip_serializing_if = "Option::is_none"
+    )]
     config_path: Option<PathBuf>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     endpoint: Option<PathBuf>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     remote_url: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     auth_token: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     auth_token_env: Option<String>,
 }
 
 impl StoredConnectionProfile {
+    fn from_options(options: &ConnectionOptions) -> Self {
+        if let Some(remote_url) = &options.remote_url {
+            return Self {
+                config_path: None,
+                endpoint: None,
+                remote_url: Some(remote_url.clone()),
+                auth_token: options.auth_token.clone(),
+                auth_token_env: options.auth_token_env.clone(),
+            };
+        }
+
+        if let Some(endpoint) = &options.endpoint {
+            return Self {
+                config_path: None,
+                endpoint: Some(endpoint.clone()),
+                remote_url: None,
+                auth_token: None,
+                auth_token_env: None,
+            };
+        }
+
+        Self {
+            config_path: Some(
+                options
+                    .config_path
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from("turin.toml")),
+            ),
+            endpoint: None,
+            remote_url: None,
+            auth_token: None,
+            auth_token_env: None,
+        }
+    }
+
     fn kind(&self) -> ConnectionProfileKind {
         if self.remote_url.is_some() {
             ConnectionProfileKind::Remote
@@ -607,6 +705,34 @@ impl ConnectionProfiles {
         toml::from_str(&raw).with_context(|| {
             format!(
                 "Failed to parse connection profiles TOML from '{}'",
+                path.display()
+            )
+        })
+    }
+
+    fn load_optional(path: &Path) -> Result<Self> {
+        if path.exists() {
+            Self::load(path)
+        } else {
+            Ok(Self::default())
+        }
+    }
+
+    fn save(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "Failed to create connection profile directory '{}'",
+                    parent.display()
+                )
+            })?;
+        }
+        let raw = toml::to_string_pretty(self).context("Failed to encode connection profiles")?;
+        fs::write(path, raw).with_context(|| {
+            format!(
+                "Failed to write connection profiles to '{}'",
                 path.display()
             )
         })
@@ -689,5 +815,52 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
             }
             other => panic!("unexpected spec: {other:?}"),
         }
+    }
+
+    #[test]
+    fn connection_options_can_save_and_delete_profiles() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let profiles_path = temp.path().join("ui-profiles.toml");
+
+        let remote = ConnectionOptions {
+            config_path: None,
+            endpoint: None,
+            remote_url: Some("http://example.test".to_string()),
+            auth_token: None,
+            auth_token_env: Some("TURIN_REMOTE_TOKEN".to_string()),
+            profile: None,
+            profiles_file: Some(profiles_path.clone()),
+        };
+
+        let catalog = remote
+            .save_profile("lab", true)
+            .expect("save remote profile");
+        assert_eq!(catalog.default_profile(), Some("lab"));
+        assert_eq!(catalog.profiles().len(), 1);
+
+        let local = ConnectionOptions {
+            config_path: Some(PathBuf::from("turin-dev.toml")),
+            endpoint: None,
+            remote_url: None,
+            auth_token: None,
+            auth_token_env: None,
+            profile: None,
+            profiles_file: Some(profiles_path.clone()),
+        };
+
+        let catalog = local
+            .save_profile("local", false)
+            .expect("save local profile");
+        assert_eq!(catalog.default_profile(), Some("lab"));
+        assert_eq!(catalog.profiles().len(), 2);
+
+        let deleted = local.delete_profile("lab").expect("delete profile");
+        assert_eq!(deleted.default_profile(), Some("local"));
+        assert_eq!(deleted.profiles().len(), 1);
+        assert_eq!(deleted.profiles()[0].name, "local");
+
+        let raw = fs::read_to_string(&profiles_path).expect("read saved file");
+        assert!(raw.contains("default_profile = \"local\""));
+        assert!(raw.contains("[profiles.local]"));
     }
 }

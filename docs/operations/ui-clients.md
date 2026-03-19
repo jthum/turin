@@ -139,14 +139,27 @@ Current behavior:
 
 - both clients can load and display profiles from `ui-profiles.toml` or an explicit `--profiles-file`
 - both clients can switch the active backend to a selected profile without restarting the UI
+- both clients can save the current live connection back into the profile file
+- both clients can delete a selected profile from inside the UI
 - the current connection target and active profile are shown in the shell chrome
 - reloading the profile file happens inside the UI, so you can edit the file and refresh the profile list
 
-The desktop app exposes this through the Connections tab buttons.
+The desktop app exposes this through the Connections tab controls:
+
+- enter a profile name, or select an existing profile name to update it
+- `Save Current` writes the current live connection into the profile file
+- `Set as default` marks the saved profile as `default_profile`
+- `Delete Selected` removes the highlighted profile
+
 The TUI exposes it through the Connections tab plus keyboard actions:
 
 - `Enter` or `s` connects to the selected profile
+- `a` saves the current connection to a typed profile name
+- `A` saves the current connection and marks it as the default profile
+- `d` deletes the selected profile
 - `l` reloads the profile file
+
+If you delete the profile that the current UI session was launched from, the clients detach that running connection from the deleted profile entry so `Reconnect Current` continues to work.
 
 ## Session Detail Loading
 
