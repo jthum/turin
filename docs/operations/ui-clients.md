@@ -131,6 +131,23 @@ Profile rules:
 - if `default_profile = "..."` exists and you pass `--profiles-file` without `--profile`, that default profile is used
 - without `--profile` or `--profiles-file`, the clients do not auto-load a profile file
 
+## In-UI Profile Switching
+
+Both operator shells now expose a dedicated Connections view on top of the shared profile catalog.
+
+Current behavior:
+
+- both clients can load and display profiles from `ui-profiles.toml` or an explicit `--profiles-file`
+- both clients can switch the active backend to a selected profile without restarting the UI
+- the current connection target and active profile are shown in the shell chrome
+- reloading the profile file happens inside the UI, so you can edit the file and refresh the profile list
+
+The desktop app exposes this through the Connections tab buttons.
+The TUI exposes it through the Connections tab plus keyboard actions:
+
+- `Enter` or `s` connects to the selected profile
+- `l` reloads the profile file
+
 ## Session Detail Loading
 
 Session transcripts and tool history are loaded lazily when you focus a live session or stored session.
@@ -153,6 +170,7 @@ Today they are best for:
 - opening and resuming sessions
 - inspecting task/session state
 - sending prompts to active sessions
+- switching between local and remote profile targets from inside the UI
 - validating local-versus-remote control parity
 
-They do not yet manage connection profiles interactively in the UI, and they do not replace the richer filesystem/CLI management surfaces for daemon-owned agents, harnesses, or channels.
+They still do not replace the richer filesystem/CLI management surfaces for daemon-owned agents, harnesses, or channels.

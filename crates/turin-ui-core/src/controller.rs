@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 use tokio::runtime::Handle;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::time;
 use turin_control_client::{ConnectionSpec, ControlClient, SessionDetail};
 use turin_daemon_protocol::{EventEnvelope, RuntimeEventsSubscribeParams};
@@ -30,6 +30,7 @@ pub struct ConnectionOptions {
 pub struct UiController {
     pub update_rx: mpsc::UnboundedReceiver<UiUpdate>,
     pub command_tx: mpsc::UnboundedSender<OperatorCommand>,
+    shutdown_tx: watch::Sender<bool>,
 }
 
 #[derive(Debug)]
@@ -51,6 +52,35 @@ pub enum OperatorCommand {
     CancelSession { session_id: String },
     KillSession { session_id: String },
     CancelTask { request_id: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct ConnectionProfileCatalog {
+    source_path: PathBuf,
+    default_profile: Option<String>,
+    profiles: Vec<ConnectionProfileSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionProfileSummary {
+    pub name: String,
+    pub kind: ConnectionProfileKind,
+    pub target: String,
+    pub auth: Option<ConnectionProfileAuth>,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionProfileKind {
+    LocalConfig,
+    LocalEndpoint,
+    Remote,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionProfileAuth {
+    TokenEnv(String),
+    InlineToken,
 }
 
 impl ConnectionOptions {
@@ -88,15 +118,41 @@ impl ConnectionOptions {
         })
     }
 
+    pub fn resolved_profile_name(&self) -> Result<Option<String>> {
+        if self.profile.is_none() && self.profiles_file.is_none() {
+            return Ok(None);
+        }
+
+        let profiles_path = self.profiles_path();
+        let profiles = ConnectionProfiles::load(&profiles_path)?;
+        Ok(self
+            .profile
+            .clone()
+            .or_else(|| profiles.default_profile.clone()))
+    }
+
+    pub fn load_profiles(&self) -> Result<Option<ConnectionProfileCatalog>> {
+        let profiles_path = self.profiles_path();
+        if !profiles_path.exists() {
+            if self.profile.is_some() || self.profiles_file.is_some() {
+                let _ = ConnectionProfiles::load(&profiles_path)?;
+            }
+            return Ok(None);
+        }
+
+        let profiles = ConnectionProfiles::load(&profiles_path)?;
+        Ok(Some(ConnectionProfileCatalog::from_raw(
+            profiles_path,
+            profiles,
+        )))
+    }
+
     fn resolve_profile(&self) -> Result<Self> {
         if self.profile.is_none() && self.profiles_file.is_none() {
             return Ok(self.clone());
         }
 
-        let profiles_path = self
-            .profiles_file
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("ui-profiles.toml"));
+        let profiles_path = self.profiles_path();
         let profiles = ConnectionProfiles::load(&profiles_path)?;
         let Some(profile_name) = self
             .profile
@@ -135,6 +191,12 @@ impl ConnectionOptions {
             profiles_file: Some(profiles_path),
         })
     }
+
+    pub fn profiles_path(&self) -> PathBuf {
+        self.profiles_file
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("ui-profiles.toml"))
+    }
 }
 
 pub async fn connect_dashboard(spec: &ConnectionSpec) -> Result<(ControlClient, DashboardState)> {
@@ -154,31 +216,120 @@ pub fn spawn_controller_with_interval(
 ) -> UiController {
     let (update_tx, update_rx) = mpsc::unbounded_channel::<UiUpdate>();
     let (command_tx, command_rx) = mpsc::unbounded_channel::<OperatorCommand>();
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    spawn_event_task(handle, client.clone(), update_tx.clone());
-    spawn_refresh_task(handle, client.clone(), update_tx.clone(), refresh_interval);
-    spawn_command_task(handle, client, command_rx, update_tx);
+    spawn_event_task(
+        handle,
+        client.clone(),
+        update_tx.clone(),
+        shutdown_rx.clone(),
+    );
+    spawn_refresh_task(
+        handle,
+        client.clone(),
+        update_tx.clone(),
+        refresh_interval,
+        shutdown_rx.clone(),
+    );
+    spawn_command_task(handle, client, command_rx, update_tx, shutdown_rx);
 
     UiController {
         update_rx,
         command_tx,
+        shutdown_tx,
     }
 }
 
-fn spawn_event_task(handle: &Handle, client: ControlClient, tx: mpsc::UnboundedSender<UiUpdate>) {
+impl UiController {
+    pub fn shutdown(&self) {
+        let _ = self.shutdown_tx.send(true);
+    }
+}
+
+impl ConnectionProfileCatalog {
+    pub fn source_path(&self) -> &Path {
+        &self.source_path
+    }
+
+    pub fn default_profile(&self) -> Option<&str> {
+        self.default_profile.as_deref()
+    }
+
+    pub fn profiles(&self) -> &[ConnectionProfileSummary] {
+        &self.profiles
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.profiles.is_empty()
+    }
+
+    pub fn connection_options(&self, name: &str) -> Option<ConnectionOptions> {
+        self.profiles
+            .iter()
+            .any(|profile| profile.name == name)
+            .then(|| ConnectionOptions {
+                config_path: None,
+                endpoint: None,
+                remote_url: None,
+                auth_token: None,
+                auth_token_env: None,
+                profile: Some(name.to_string()),
+                profiles_file: Some(self.source_path.clone()),
+            })
+    }
+
+    fn from_raw(source_path: PathBuf, raw: ConnectionProfiles) -> Self {
+        let default_profile = raw.default_profile.clone();
+        let profiles = raw
+            .profiles
+            .into_iter()
+            .map(|(name, profile)| ConnectionProfileSummary {
+                is_default: default_profile.as_deref() == Some(name.as_str()),
+                name,
+                kind: profile.kind(),
+                target: profile.target(),
+                auth: profile.auth_label(),
+            })
+            .collect();
+
+        Self {
+            source_path,
+            default_profile,
+            profiles,
+        }
+    }
+}
+
+fn spawn_event_task(
+    handle: &Handle,
+    client: ControlClient,
+    tx: mpsc::UnboundedSender<UiUpdate>,
+    mut shutdown_rx: watch::Receiver<bool>,
+) {
     handle.spawn(async move {
         match client
             .subscribe_managed(RuntimeEventsSubscribeParams::default())
             .await
         {
             Ok(mut stream) => loop {
-                match stream.next_event().await {
+                tokio::select! {
+                    changed = shutdown_rx.changed() => {
+                        if changed.is_ok() && *shutdown_rx.borrow() {
+                            break;
+                        }
+                    }
+                    next = stream.next_event() => match next {
                     Ok(event) => {
-                        let _ = tx.send(UiUpdate::Event(event));
+                        if tx.send(UiUpdate::Event(event)).is_err() {
+                            break;
+                        }
                     }
                     Err(err) => {
-                        let _ = tx.send(UiUpdate::Error(err.to_string()));
+                        if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                            break;
+                        }
                         break;
+                    }
                     }
                 }
             },
@@ -194,17 +345,29 @@ fn spawn_refresh_task(
     client: ControlClient,
     tx: mpsc::UnboundedSender<UiUpdate>,
     refresh_interval: Duration,
+    mut shutdown_rx: watch::Receiver<bool>,
 ) {
     handle.spawn(async move {
         let mut interval = time::interval(refresh_interval);
         loop {
-            interval.tick().await;
+            tokio::select! {
+                changed = shutdown_rx.changed() => {
+                    if changed.is_ok() && *shutdown_rx.borrow() {
+                        break;
+                    }
+                }
+                _ = interval.tick() => {}
+            }
             match DashboardState::snapshot(&client).await {
                 Ok(snapshot) => {
-                    let _ = tx.send(UiUpdate::Snapshot(Box::new(snapshot)));
+                    if tx.send(UiUpdate::Snapshot(Box::new(snapshot))).is_err() {
+                        break;
+                    }
                 }
                 Err(err) => {
-                    let _ = tx.send(UiUpdate::Error(err.to_string()));
+                    if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                        break;
+                    }
                 }
             }
         }
@@ -216,16 +379,36 @@ fn spawn_command_task(
     client: ControlClient,
     mut command_rx: mpsc::UnboundedReceiver<OperatorCommand>,
     tx: mpsc::UnboundedSender<UiUpdate>,
+    mut shutdown_rx: watch::Receiver<bool>,
 ) {
     handle.spawn(async move {
-        while let Some(command) = command_rx.recv().await {
+        loop {
+            let command = tokio::select! {
+                changed = shutdown_rx.changed() => {
+                    if changed.is_ok() && *shutdown_rx.borrow() {
+                        break;
+                    }
+                    continue;
+                }
+                maybe_command = command_rx.recv() => {
+                    match maybe_command {
+                        Some(command) => command,
+                        None => break,
+                    }
+                }
+            };
+
             if let OperatorCommand::LoadSessionDetail { session_id } = &command {
-                match client.get_session(session_id).await {
+                match client.get_session(session_id.as_str()).await {
                     Ok(detail) => {
-                        let _ = tx.send(UiUpdate::SessionDetail(Box::new(detail)));
+                        if tx.send(UiUpdate::SessionDetail(Box::new(detail))).is_err() {
+                            break;
+                        }
                     }
                     Err(err) => {
-                        let _ = tx.send(UiUpdate::Error(err.to_string()));
+                        if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                            break;
+                        }
                     }
                 }
                 continue;
@@ -233,18 +416,26 @@ fn spawn_command_task(
 
             match execute_operator_command(&client, command).await {
                 Ok(message) => {
-                    let _ = tx.send(UiUpdate::Info(message));
+                    if tx.send(UiUpdate::Info(message)).is_err() {
+                        break;
+                    }
                     match DashboardState::snapshot(&client).await {
                         Ok(snapshot) => {
-                            let _ = tx.send(UiUpdate::Snapshot(Box::new(snapshot)));
+                            if tx.send(UiUpdate::Snapshot(Box::new(snapshot))).is_err() {
+                                break;
+                            }
                         }
                         Err(err) => {
-                            let _ = tx.send(UiUpdate::Error(err.to_string()));
+                            if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                                break;
+                            }
                         }
                     }
                 }
                 Err(err) => {
-                    let _ = tx.send(UiUpdate::Error(err.to_string()));
+                    if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                        break;
+                    }
                 }
             }
         }
@@ -325,6 +516,45 @@ struct StoredConnectionProfile {
     auth_token: Option<String>,
     #[serde(default)]
     auth_token_env: Option<String>,
+}
+
+impl StoredConnectionProfile {
+    fn kind(&self) -> ConnectionProfileKind {
+        if self.remote_url.is_some() {
+            ConnectionProfileKind::Remote
+        } else if self.endpoint.is_some() {
+            ConnectionProfileKind::LocalEndpoint
+        } else {
+            ConnectionProfileKind::LocalConfig
+        }
+    }
+
+    fn target(&self) -> String {
+        self.remote_url
+            .clone()
+            .or_else(|| {
+                self.endpoint
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+            })
+            .or_else(|| {
+                self.config_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+            })
+            .unwrap_or_else(|| "turin.toml".to_string())
+    }
+
+    fn auth_label(&self) -> Option<ConnectionProfileAuth> {
+        self.auth_token_env
+            .as_ref()
+            .map(|env| ConnectionProfileAuth::TokenEnv(env.clone()))
+            .or_else(|| {
+                self.auth_token
+                    .as_ref()
+                    .map(|_| ConnectionProfileAuth::InlineToken)
+            })
+    }
 }
 
 impl ConnectionProfiles {

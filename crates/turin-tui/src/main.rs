@@ -14,15 +14,15 @@ use serde::Serialize;
 use std::io::stdout;
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::sync::mpsc;
 use turin_control_client::{
     AgentRuntime, AgentSummary, ChannelRuntime, ChannelSummary, LiveSession, SessionSummary,
     TaskStatus,
 };
 use turin_daemon_protocol::EventEnvelope;
 use turin_ui_core::{
-    ConnectionOptions, DashboardState, OperatorCommand, UiUpdate, connect_dashboard,
-    spawn_controller,
+    ConnectionOptions, ConnectionProfileAuth, ConnectionProfileCatalog, ConnectionProfileKind,
+    ConnectionProfileSummary, DashboardState, OperatorCommand, UiController, UiUpdate,
+    connect_dashboard, spawn_controller,
 };
 
 #[derive(Parser, Debug)]
@@ -46,6 +46,7 @@ struct Args {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TabKind {
+    Connections,
     Agents,
     LiveSessions,
     Sessions,
@@ -55,7 +56,8 @@ enum TabKind {
 }
 
 impl TabKind {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
+        Self::Connections,
         Self::Agents,
         Self::LiveSessions,
         Self::Sessions,
@@ -66,6 +68,7 @@ impl TabKind {
 
     fn title(self) -> &'static str {
         match self {
+            Self::Connections => "Connections",
             Self::Agents => "Agents",
             Self::LiveSessions => "Live Sessions",
             Self::Sessions => "Sessions",
@@ -93,12 +96,13 @@ impl TabKind {
 
     fn from_digit(digit: char) -> Option<Self> {
         match digit {
-            '1' => Some(Self::Agents),
-            '2' => Some(Self::LiveSessions),
-            '3' => Some(Self::Sessions),
-            '4' => Some(Self::Tasks),
-            '5' => Some(Self::Channels),
-            '6' => Some(Self::Events),
+            '1' => Some(Self::Connections),
+            '2' => Some(Self::Agents),
+            '3' => Some(Self::LiveSessions),
+            '4' => Some(Self::Sessions),
+            '5' => Some(Self::Tasks),
+            '6' => Some(Self::Channels),
+            '7' => Some(Self::Events),
             _ => None,
         }
     }
@@ -110,7 +114,11 @@ enum InputMode {
 
 struct TuiApp {
     dashboard: DashboardState,
+    connection_options: ConnectionOptions,
+    profile_catalog: Option<ConnectionProfileCatalog>,
+    active_profile: Option<String>,
     tab: TabKind,
+    profile_index: usize,
     agent_index: usize,
     live_session_index: usize,
     session_index: usize,
@@ -122,22 +130,21 @@ struct TuiApp {
     requested_session_detail: Option<String>,
 }
 
+enum LoopAction {
+    Quit,
+    Reconnect(ConnectionOptions),
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let spec = connection_options(&args).to_spec()?;
-    let (client, dashboard) = connect_dashboard(&spec).await?;
-    let mut app = TuiApp::new(dashboard);
-
-    let controller = spawn_controller(&tokio::runtime::Handle::current(), client);
-    let mut update_rx = controller.update_rx;
-    let command_tx = controller.command_tx;
+    let initial_options = connection_options(&args);
 
     enable_raw_mode()?;
     execute!(stdout(), EnterAlternateScreen)?;
     let mut terminal = ratatui::init();
 
-    let loop_result = run_app(&mut terminal, &mut app, &mut update_rx, command_tx);
+    let loop_result = run_shell(&mut terminal, initial_options).await;
 
     ratatui::restore();
     disable_raw_mode()?;
@@ -158,26 +165,51 @@ fn connection_options(args: &Args) -> ConnectionOptions {
     }
 }
 
+async fn run_shell(
+    terminal: &mut DefaultTerminal,
+    mut connection_options: ConnectionOptions,
+) -> Result<()> {
+    loop {
+        let spec = connection_options.to_spec()?;
+        let (client, dashboard) = connect_dashboard(&spec).await?;
+        let profile_catalog = connection_options.load_profiles()?;
+        let active_profile = connection_options.resolved_profile_name()?;
+        let mut app = TuiApp::new(
+            dashboard,
+            connection_options.clone(),
+            profile_catalog,
+            active_profile,
+        );
+        let mut controller = spawn_controller(&tokio::runtime::Handle::current(), client);
+        let action = run_app(terminal, &mut app, &mut controller)?;
+        controller.shutdown();
+
+        match action {
+            LoopAction::Quit => return Ok(()),
+            LoopAction::Reconnect(next) => connection_options = next,
+        }
+    }
+}
+
 fn run_app(
     terminal: &mut DefaultTerminal,
     app: &mut TuiApp,
-    update_rx: &mut mpsc::UnboundedReceiver<UiUpdate>,
-    command_tx: mpsc::UnboundedSender<OperatorCommand>,
-) -> Result<()> {
+    controller: &mut UiController,
+) -> Result<LoopAction> {
     loop {
-        while let Ok(update) = update_rx.try_recv() {
+        while let Ok(update) = controller.update_rx.try_recv() {
             app.apply_update(update);
         }
 
-        app.ensure_session_detail_loaded(&command_tx)?;
+        app.ensure_session_detail_loaded(&controller.command_tx)?;
 
         terminal.draw(|frame| render(frame, app))?;
 
         if event::poll(Duration::from_millis(120)).context("Failed to poll terminal events")?
             && let CEvent::Key(key) = event::read().context("Failed to read terminal event")?
-            && handle_key(app, key.code, &command_tx)?
+            && let Some(action) = handle_key(app, key.code, &controller.command_tx)?
         {
-            return Ok(());
+            return Ok(action);
         }
     }
 }
@@ -185,14 +217,14 @@ fn run_app(
 fn handle_key(
     app: &mut TuiApp,
     key: KeyCode,
-    command_tx: &mpsc::UnboundedSender<OperatorCommand>,
-) -> Result<bool> {
+    command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+) -> Result<Option<LoopAction>> {
     if app.input_mode.is_some() {
         return handle_input_mode(app, key, command_tx);
     }
 
     match key {
-        KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
+        KeyCode::Char('q') | KeyCode::Esc => return Ok(Some(LoopAction::Quit)),
         KeyCode::Tab => app.tab = app.tab.next(),
         KeyCode::BackTab => app.tab = app.tab.prev(),
         KeyCode::Left => app.tab = app.tab.prev(),
@@ -203,6 +235,12 @@ fn handle_key(
         KeyCode::Down | KeyCode::Char('j') => app.move_selection(1),
         KeyCode::Up | KeyCode::Char('k') => app.move_selection(-1),
         KeyCode::Char('r') => send_command(command_tx, OperatorCommand::Refresh)?,
+        KeyCode::Char('l') if app.tab == TabKind::Connections => app.reload_profiles(),
+        KeyCode::Char('s') if app.tab == TabKind::Connections => {
+            if let Some(options) = app.selected_profile_options() {
+                return Ok(Some(LoopAction::Reconnect(options)));
+            }
+        }
         KeyCode::Char('n') => {
             if let Some(agent) = app.selected_agent() {
                 send_command(
@@ -224,6 +262,11 @@ fn handle_key(
             }
         }
         KeyCode::Enter => match app.tab {
+            TabKind::Connections => {
+                if let Some(options) = app.selected_profile_options() {
+                    return Ok(Some(LoopAction::Reconnect(options)));
+                }
+            }
             TabKind::Agents => {
                 if let Some(agent) = app.selected_agent() {
                     send_command(
@@ -287,14 +330,14 @@ fn handle_key(
     }
 
     app.clamp_selection();
-    Ok(false)
+    Ok(None)
 }
 
 fn handle_input_mode(
     app: &mut TuiApp,
     key: KeyCode,
-    command_tx: &mpsc::UnboundedSender<OperatorCommand>,
-) -> Result<bool> {
+    command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+) -> Result<Option<LoopAction>> {
     match key {
         KeyCode::Esc => app.clear_input_mode(),
         KeyCode::Backspace => {
@@ -305,7 +348,7 @@ fn handle_input_mode(
             if prompt.is_empty() {
                 app.dashboard.record_error("Prompt cannot be empty");
                 app.clear_input_mode();
-                return Ok(false);
+                return Ok(None);
             }
             if let Some(InputMode::SubmitPrompt { session_id }) = &app.input_mode {
                 send_command(
@@ -321,11 +364,11 @@ fn handle_input_mode(
         KeyCode::Char(ch) => app.input.push(ch),
         _ => {}
     }
-    Ok(false)
+    Ok(None)
 }
 
 fn send_command(
-    command_tx: &mpsc::UnboundedSender<OperatorCommand>,
+    command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
     command: OperatorCommand,
 ) -> Result<()> {
     command_tx
@@ -385,6 +428,14 @@ fn render_banner(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
             Span::raw(app.dashboard.connection_target.clone()),
         ]),
         Line::from(vec![
+            Span::styled("Profile: ", Style::default().fg(Color::Gray)),
+            Span::raw(
+                app.active_profile
+                    .clone()
+                    .unwrap_or_else(|| "Direct CLI/config".to_string()),
+            ),
+        ]),
+        Line::from(vec![
             Span::styled("Counts: ", Style::default().fg(Color::Gray)),
             Span::raw(format!(
                 "{} agents, {} live sessions, {} stored sessions, {} tasks, {} channels",
@@ -434,6 +485,7 @@ fn render_tabs(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect)
 
 fn render_left_panel(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::layout::Rect) {
     let title = match app.tab {
+        TabKind::Connections => "Connections",
         TabKind::Agents => "Agents",
         TabKind::LiveSessions => "Live Sessions",
         TabKind::Sessions => "Stored Sessions",
@@ -514,10 +566,19 @@ fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
 }
 
 impl TuiApp {
-    fn new(dashboard: DashboardState) -> Self {
+    fn new(
+        dashboard: DashboardState,
+        connection_options: ConnectionOptions,
+        profile_catalog: Option<ConnectionProfileCatalog>,
+        active_profile: Option<String>,
+    ) -> Self {
         let mut app = Self {
             dashboard,
-            tab: TabKind::Agents,
+            connection_options,
+            profile_catalog,
+            active_profile,
+            tab: TabKind::Connections,
+            profile_index: 0,
             agent_index: 0,
             live_session_index: 0,
             session_index: 0,
@@ -538,6 +599,13 @@ impl TuiApp {
     }
 
     fn clamp_selection(&mut self) {
+        self.profile_index = clamp_index(
+            self.profile_index,
+            self.profile_catalog
+                .as_ref()
+                .map(|catalog| catalog.profiles().len())
+                .unwrap_or(0),
+        );
         self.agent_index = clamp_index(self.agent_index, self.dashboard.agents().len());
         self.live_session_index =
             clamp_index(self.live_session_index, self.dashboard.live_sessions.len());
@@ -559,6 +627,7 @@ impl TuiApp {
 
     fn selected_index(&self) -> usize {
         match self.tab {
+            TabKind::Connections => self.profile_index,
             TabKind::Agents => self.agent_index,
             TabKind::LiveSessions => self.live_session_index,
             TabKind::Sessions => self.session_index,
@@ -570,6 +639,7 @@ impl TuiApp {
 
     fn set_selected_index(&mut self, value: usize) {
         match self.tab {
+            TabKind::Connections => self.profile_index = value,
             TabKind::Agents => self.agent_index = value,
             TabKind::LiveSessions => self.live_session_index = value,
             TabKind::Sessions => self.session_index = value,
@@ -581,6 +651,11 @@ impl TuiApp {
 
     fn current_len(&self) -> usize {
         match self.tab {
+            TabKind::Connections => self
+                .profile_catalog
+                .as_ref()
+                .map(|catalog| catalog.profiles().len())
+                .unwrap_or(0),
             TabKind::Agents => self.dashboard.agents().len(),
             TabKind::LiveSessions => self.dashboard.live_sessions.len(),
             TabKind::Sessions => self.dashboard.sessions.len(),
@@ -592,6 +667,34 @@ impl TuiApp {
 
     fn selected_agent(&self) -> Option<&AgentSummary> {
         self.dashboard.agents().get(self.agent_index)
+    }
+
+    fn selected_profile(&self) -> Option<&ConnectionProfileSummary> {
+        self.profile_catalog
+            .as_ref()?
+            .profiles()
+            .get(self.profile_index)
+    }
+
+    fn selected_profile_options(&self) -> Option<ConnectionOptions> {
+        let selected = self.selected_profile()?;
+        self.profile_catalog
+            .as_ref()?
+            .connection_options(&selected.name)
+    }
+
+    fn reload_profiles(&mut self) {
+        match self.connection_options.load_profiles() {
+            Ok(catalog) => {
+                self.profile_catalog = catalog;
+                self.clamp_selection();
+                self.dashboard
+                    .record_info("Reloaded UI connection profiles");
+            }
+            Err(err) => self
+                .dashboard
+                .record_error(format!("Failed to load UI profiles: {err}")),
+        }
     }
 
     fn selected_live_session(&self) -> Option<&LiveSession> {
@@ -626,6 +729,25 @@ impl TuiApp {
 
     fn list_items(&self) -> Vec<ListItem<'static>> {
         match self.tab {
+            TabKind::Connections => self
+                .profile_catalog
+                .as_ref()
+                .map(|catalog| {
+                    catalog
+                        .profiles()
+                        .iter()
+                        .map(|profile| {
+                            let default = if profile.is_default { " default" } else { "" };
+                            ListItem::new(format!(
+                                "{} [{}{}]",
+                                profile.name,
+                                profile_kind_label(profile.kind),
+                                default
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
             TabKind::Agents => self
                 .dashboard
                 .agents()
@@ -711,6 +833,19 @@ impl TuiApp {
 
     fn detail_text(&self) -> String {
         match self.tab {
+            TabKind::Connections => pretty_json(&serde_json::json!({
+                "current_target": self.dashboard.connection_target,
+                "active_profile": self.active_profile,
+                "profiles_source": self.connection_options.profiles_path().display().to_string(),
+                "selected_profile": self.selected_profile().map(|profile| serde_json::json!({
+                    "name": profile.name,
+                    "kind": profile_kind_label(profile.kind),
+                    "target": profile.target,
+                    "auth": profile_auth_label(profile.auth.as_ref()),
+                    "default": profile.is_default,
+                })),
+                "available_profiles": self.profile_catalog.as_ref().map(|catalog| catalog.profiles().len()).unwrap_or(0),
+            })),
             TabKind::Agents => self
                 .selected_agent()
                 .map(|agent| {
@@ -761,8 +896,11 @@ impl TuiApp {
     }
 
     fn help_text(&self) -> String {
-        let shared = "1-6 switch views | Tab cycle | arrows/j/k move | r refresh | q quit";
+        let shared = "1-7 switch views | Tab cycle | arrows/j/k move | r refresh | q quit";
         let scoped = match self.tab {
+            TabKind::Connections => {
+                "Enter or s switches to the selected profile | l reloads profile file"
+            }
             TabKind::Agents => "n or Enter opens a live session for the selected agent",
             TabKind::LiveSessions => "p or Enter prompts | c cancel session | x kill session",
             TabKind::Sessions => "e or Enter resumes the selected stored session",
@@ -813,7 +951,7 @@ impl TuiApp {
 
     fn ensure_session_detail_loaded(
         &mut self,
-        command_tx: &mpsc::UnboundedSender<OperatorCommand>,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
     ) -> Result<()> {
         let Some(session_id) = self.current_detail_session_id() else {
             self.requested_session_detail = None;
@@ -843,4 +981,20 @@ fn clamp_index(index: usize, len: usize) -> usize {
 
 fn pretty_json<T: Serialize>(value: &T) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "<unserializable>".to_string())
+}
+
+fn profile_kind_label(kind: ConnectionProfileKind) -> &'static str {
+    match kind {
+        ConnectionProfileKind::LocalConfig => "local-config",
+        ConnectionProfileKind::LocalEndpoint => "local-endpoint",
+        ConnectionProfileKind::Remote => "remote",
+    }
+}
+
+fn profile_auth_label(auth: Option<&ConnectionProfileAuth>) -> &'static str {
+    match auth {
+        Some(ConnectionProfileAuth::TokenEnv(_)) => "token env",
+        Some(ConnectionProfileAuth::InlineToken) => "inline token",
+        None => "none",
+    }
 }

@@ -6,15 +6,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
-use tokio::sync::mpsc;
 use turin_control_client::{
     AgentRuntime, AgentSummary, ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession,
     SessionDetail, SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::EventEnvelope;
 use turin_ui_core::{
-    ConnectionOptions, DashboardState, OperatorCommand, UiUpdate, connect_dashboard,
-    spawn_controller,
+    ConnectionOptions, ConnectionProfileAuth, ConnectionProfileCatalog, ConnectionProfileKind,
+    ConnectionProfileSummary, DashboardState, OperatorCommand, UiController, UiUpdate,
+    connect_dashboard, spawn_controller,
 };
 
 #[derive(Parser, Debug)]
@@ -38,6 +38,7 @@ struct Args {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TabKind {
+    Connections,
     Agents,
     LiveSessions,
     Sessions,
@@ -47,7 +48,8 @@ enum TabKind {
 }
 
 impl TabKind {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
+        Self::Connections,
         Self::Agents,
         Self::LiveSessions,
         Self::Sessions,
@@ -58,6 +60,7 @@ impl TabKind {
 
     fn title(self) -> &'static str {
         match self {
+            Self::Connections => "Connections",
             Self::Agents => "Agents",
             Self::LiveSessions => "Live Sessions",
             Self::Sessions => "Sessions",
@@ -70,10 +73,13 @@ impl TabKind {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let spec = connection_options(&args).to_spec()?;
+    let connection_options = connection_options(&args);
+    let spec = connection_options.to_spec()?;
     let runtime = Arc::new(Runtime::new()?);
     let (client, dashboard) = runtime.block_on(connect_dashboard(&spec))?;
     let controller = spawn_controller(runtime.handle(), client);
+    let profile_catalog = connection_options.load_profiles()?;
+    let active_profile = connection_options.resolved_profile_name()?;
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -89,9 +95,11 @@ fn main() -> Result<()> {
             configure_visuals(&cc.egui_ctx);
             Ok(Box::new(TurinDesktopApp::new(
                 dashboard,
-                controller.update_rx,
-                controller.command_tx,
+                controller,
                 runtime,
+                connection_options,
+                profile_catalog,
+                active_profile,
             )))
         }),
     )
@@ -123,9 +131,12 @@ fn configure_visuals(ctx: &egui::Context) {
 
 struct TurinDesktopApp {
     dashboard: DashboardState,
-    rx: mpsc::UnboundedReceiver<UiUpdate>,
-    command_tx: mpsc::UnboundedSender<OperatorCommand>,
+    controller: UiController,
+    connection_options: ConnectionOptions,
+    profile_catalog: Option<ConnectionProfileCatalog>,
+    active_profile: Option<String>,
     tab: TabKind,
+    profile_index: usize,
     agent_index: usize,
     live_session_index: usize,
     session_index: usize,
@@ -140,15 +151,20 @@ struct TurinDesktopApp {
 impl TurinDesktopApp {
     fn new(
         dashboard: DashboardState,
-        rx: mpsc::UnboundedReceiver<UiUpdate>,
-        command_tx: mpsc::UnboundedSender<OperatorCommand>,
+        controller: UiController,
         runtime: Arc<Runtime>,
+        connection_options: ConnectionOptions,
+        profile_catalog: Option<ConnectionProfileCatalog>,
+        active_profile: Option<String>,
     ) -> Self {
         Self {
             dashboard,
-            rx,
-            command_tx,
-            tab: TabKind::Agents,
+            controller,
+            connection_options,
+            profile_catalog,
+            active_profile,
+            tab: TabKind::Connections,
+            profile_index: 0,
             agent_index: 0,
             live_session_index: 0,
             session_index: 0,
@@ -167,6 +183,13 @@ impl TurinDesktopApp {
     }
 
     fn clamp_selection_indices(&mut self) {
+        self.profile_index = clamp_index(
+            self.profile_index,
+            self.profile_catalog
+                .as_ref()
+                .map(|catalog| catalog.profiles().len())
+                .unwrap_or(0),
+        );
         self.agent_index = clamp_index(self.agent_index, self.dashboard.agents().len());
         self.live_session_index =
             clamp_index(self.live_session_index, self.dashboard.live_sessions.len());
@@ -177,9 +200,82 @@ impl TurinDesktopApp {
     }
 
     fn send_command(&mut self, command: OperatorCommand) {
-        if let Err(err) = self.command_tx.send(command) {
+        if let Err(err) = self.controller.command_tx.send(command) {
             self.dashboard
                 .record_error(format!("Failed to dispatch operator command: {err}"));
+        }
+    }
+
+    fn selected_profile(&self) -> Option<&ConnectionProfileSummary> {
+        self.profile_catalog
+            .as_ref()?
+            .profiles()
+            .get(self.profile_index)
+    }
+
+    fn reload_profiles(&mut self) {
+        match self.connection_options.load_profiles() {
+            Ok(catalog) => {
+                self.profile_catalog = catalog;
+                self.clamp_selection_indices();
+                self.dashboard
+                    .record_info("Reloaded UI connection profiles");
+            }
+            Err(err) => self
+                .dashboard
+                .record_error(format!("Failed to load UI profiles: {err}")),
+        }
+    }
+
+    fn selected_profile_options(&self) -> Option<ConnectionOptions> {
+        let selected = self.selected_profile()?;
+        self.profile_catalog
+            .as_ref()?
+            .connection_options(&selected.name)
+    }
+
+    fn reconnect_current(&mut self) {
+        self.switch_connection(self.connection_options.clone());
+    }
+
+    fn connect_selected_profile(&mut self) {
+        if let Some(options) = self.selected_profile_options() {
+            self.switch_connection(options);
+        } else {
+            self.dashboard
+                .record_error("No connection profile is currently selected");
+        }
+    }
+
+    fn switch_connection(&mut self, connection_options: ConnectionOptions) {
+        let spec = match connection_options.to_spec() {
+            Ok(spec) => spec,
+            Err(err) => {
+                self.dashboard
+                    .record_error(format!("Failed to resolve connection: {err}"));
+                return;
+            }
+        };
+
+        match self._runtime.block_on(connect_dashboard(&spec)) {
+            Ok((client, dashboard)) => {
+                self.controller.shutdown();
+                self.controller = spawn_controller(self._runtime.handle(), client);
+                self.connection_options = connection_options.clone();
+                self.active_profile = connection_options.resolved_profile_name().ok().flatten();
+                self.profile_catalog = connection_options.load_profiles().ok().flatten();
+                self.dashboard = dashboard;
+                self.prompt_input.clear();
+                self.requested_session_detail = None;
+                self.clamp_selection_indices();
+                let target = self.dashboard.connection_target.clone();
+                self.dashboard
+                    .record_info(format!("Connected UI client to {target}"));
+            }
+            Err(err) => {
+                self.dashboard
+                    .record_error(format!("Failed to connect UI client: {err}"));
+            }
         }
     }
 
@@ -332,6 +428,7 @@ impl TurinDesktopApp {
 
     fn render_active_tab(&mut self, ui: &mut egui::Ui) {
         match self.tab {
+            TabKind::Connections => self.render_connections_tab(ui),
             TabKind::Agents => self.render_agents_tab(ui),
             TabKind::LiveSessions => self.render_live_sessions_tab(ui),
             TabKind::Sessions => self.render_sessions_tab(ui),
@@ -339,6 +436,90 @@ impl TurinDesktopApp {
             TabKind::Channels => self.render_channels_tab(ui),
             TabKind::Events => self.render_events_tab(ui),
         }
+    }
+
+    fn render_connections_tab(&mut self, ui: &mut egui::Ui) {
+        let profiles = self
+            .profile_catalog
+            .as_ref()
+            .map(|catalog| catalog.profiles().to_vec())
+            .unwrap_or_default();
+        let selected = self.selected_profile().cloned();
+        let profiles_source = self.connection_options.profiles_path();
+
+        ui.columns(2, |columns| {
+            columns[0].group(|ui| {
+                ui.heading("Connection Profiles");
+                ui.add_space(6.0);
+                ui.label(format!("Source: {}", profiles_source.display()));
+                ui.add_space(8.0);
+                if profiles.is_empty() {
+                    ui.label("No profiles loaded. Add ui-profiles.toml or pass --profiles-file.");
+                } else {
+                    ScrollArea::vertical().show(ui, |ui| {
+                        for (index, profile) in profiles.iter().enumerate() {
+                            let label = format!(
+                                "{}{} [{}]",
+                                profile.name,
+                                if profile.is_default { " (default)" } else { "" },
+                                profile_kind_label(profile.kind)
+                            );
+                            if ui
+                                .selectable_label(index == self.profile_index, label)
+                                .clicked()
+                            {
+                                self.profile_index = index;
+                            }
+                        }
+                    });
+                }
+            });
+
+            columns[1].group(|ui| {
+                ui.heading("Connection Detail");
+                ui.add_space(8.0);
+                detail_kv(
+                    ui,
+                    "Current Target",
+                    self.dashboard.connection_target.clone(),
+                );
+                detail_kv(
+                    ui,
+                    "Active Profile",
+                    self.active_profile
+                        .clone()
+                        .unwrap_or_else(|| "Direct CLI/config".to_string()),
+                );
+                detail_kv(ui, "Profiles File", profiles_source.display().to_string());
+
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Reconnect Current").clicked() {
+                        self.reconnect_current();
+                    }
+                    if ui.button("Reload Profiles").clicked() {
+                        self.reload_profiles();
+                    }
+                });
+
+                if let Some(profile) = selected {
+                    ui.add_space(12.0);
+                    ui.label(RichText::new("Selected Profile").strong());
+                    detail_kv(ui, "Name", profile.name.clone());
+                    detail_kv(ui, "Kind", profile_kind_label(profile.kind));
+                    detail_kv(ui, "Target", profile.target.clone());
+                    detail_kv(
+                        ui,
+                        "Auth",
+                        profile_auth_label(profile.auth.as_ref()).to_string(),
+                    );
+                    ui.add_space(10.0);
+                    if ui.button("Connect Selected Profile").clicked() {
+                        self.connect_selected_profile();
+                    }
+                }
+            });
+        });
     }
 
     fn render_agents_tab(&mut self, ui: &mut egui::Ui) {
@@ -754,7 +935,7 @@ impl TurinDesktopApp {
 
 impl eframe::App for TurinDesktopApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        while let Ok(update) = self.rx.try_recv() {
+        while let Ok(update) = self.controller.update_rx.try_recv() {
             self.apply_update(update);
         }
 
@@ -802,6 +983,14 @@ impl eframe::App for TurinDesktopApp {
                     RichText::new(self.dashboard.connection_target.clone())
                         .color(Color32::from_rgb(201, 195, 187)),
                 );
+                if let Some(profile) = &self.active_profile {
+                    ui.add_space(12.0);
+                    ui.label(
+                        RichText::new(format!("Profile {profile}"))
+                            .color(Color32::from_rgb(151, 214, 255))
+                            .strong(),
+                    );
+                }
                 ui.add_space(12.0);
                 if ui.button("Refresh").clicked() {
                     self.send_command(OperatorCommand::Refresh);
@@ -896,6 +1085,22 @@ fn truncate_for_list(value: &str, max_chars: usize) -> String {
 
 fn yes_no(value: bool) -> &'static str {
     if value { "Yes" } else { "No" }
+}
+
+fn profile_kind_label(kind: ConnectionProfileKind) -> &'static str {
+    match kind {
+        ConnectionProfileKind::LocalConfig => "local-config",
+        ConnectionProfileKind::LocalEndpoint => "local-endpoint",
+        ConnectionProfileKind::Remote => "remote",
+    }
+}
+
+fn profile_auth_label(auth: Option<&ConnectionProfileAuth>) -> &'static str {
+    match auth {
+        Some(ConnectionProfileAuth::TokenEnv(_)) => "token env",
+        Some(ConnectionProfileAuth::InlineToken) => "inline token",
+        None => "none",
+    }
 }
 
 fn render_session_detail_panel(ui: &mut egui::Ui, detail: Option<&SessionDetail>) {
