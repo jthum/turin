@@ -15,8 +15,8 @@ use std::io::stdout;
 use std::path::PathBuf;
 use std::time::Duration;
 use turin_control_client::{
-    AgentRuntime, AgentSummary, ChannelRuntime, ChannelSummary, LiveSession, SessionSummary,
-    TaskStatus,
+    AgentRuntime, AgentSummary, ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession,
+    SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::EventEnvelope;
 use turin_ui_core::{
@@ -560,17 +560,19 @@ fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
         ]
     } else {
         let mut lines = vec![Line::from(app.help_text())];
+        if let Some(error) = &app.dashboard.last_error {
+            lines.push(Line::from(Span::styled(
+                error.clone(),
+                Style::default().fg(Color::LightRed),
+            )));
+        }
         if let Some(info) = &app.dashboard.last_info {
             lines.push(Line::from(Span::styled(
                 info.clone(),
                 Style::default().fg(Color::LightGreen),
             )));
-        } else if let Some(error) = &app.dashboard.last_error {
-            lines.push(Line::from(Span::styled(
-                error.clone(),
-                Style::default().fg(Color::LightRed),
-            )));
-        } else {
+        }
+        if lines.len() == 1 {
             lines.push(Line::from(
                 "Actions update through the shared local/remote control client.",
             ));
@@ -761,9 +763,10 @@ impl TuiApp {
                         .map(|profile| {
                             let default = if profile.is_default { " default" } else { "" };
                             ListItem::new(format!(
-                                "{} [{}{}]",
+                                "{} [{} | {}{}]",
                                 profile.name,
                                 profile_kind_label(profile.kind),
+                                profile_auth_label(profile.auth.as_ref()),
                                 default
                             ))
                         })
@@ -856,9 +859,12 @@ impl TuiApp {
     fn detail_text(&self) -> String {
         match self.tab {
             TabKind::Connections => pretty_json(&serde_json::json!({
-                "current_target": self.dashboard.connection_target,
-                "active_profile": self.active_profile,
-                "profiles_source": self.connection_options.profiles_path().display().to_string(),
+                "current_connection": {
+                    "kind": connection_kind_label(self.dashboard.connection_kind),
+                    "target": self.dashboard.connection_target,
+                    "active_profile": self.active_profile.as_deref().unwrap_or("Direct CLI/config"),
+                    "profiles_source": self.connection_options.profiles_path().display().to_string(),
+                },
                 "selected_profile": self.selected_profile().map(|profile| serde_json::json!({
                     "name": profile.name,
                     "kind": profile_kind_label(profile.kind),
@@ -867,6 +873,15 @@ impl TuiApp {
                     "default": profile.is_default,
                 })),
                 "available_profiles": self.profile_catalog.as_ref().map(|catalog| catalog.profiles().len()).unwrap_or(0),
+                "last_error": self.dashboard.last_error.clone(),
+                "last_info": self.dashboard.last_info.clone(),
+                "recent_notices": self
+                    .dashboard
+                    .recent_notices
+                    .iter()
+                    .rev()
+                    .take(6)
+                    .collect::<Vec<_>>(),
             })),
             TabKind::Agents => self
                 .selected_agent()
@@ -1005,6 +1020,13 @@ fn pretty_json<T: Serialize>(value: &T) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "<unserializable>".to_string())
 }
 
+fn connection_kind_label(kind: ConnectionKind) -> &'static str {
+    match kind {
+        ConnectionKind::Local => "local",
+        ConnectionKind::Remote => "remote",
+    }
+}
+
 fn profile_kind_label(kind: ConnectionProfileKind) -> &'static str {
     match kind {
         ConnectionProfileKind::LocalConfig => "local-config",
@@ -1013,10 +1035,10 @@ fn profile_kind_label(kind: ConnectionProfileKind) -> &'static str {
     }
 }
 
-fn profile_auth_label(auth: Option<&ConnectionProfileAuth>) -> &'static str {
+fn profile_auth_label(auth: Option<&ConnectionProfileAuth>) -> String {
     match auth {
-        Some(ConnectionProfileAuth::TokenEnv(_)) => "token env",
-        Some(ConnectionProfileAuth::InlineToken) => "inline token",
-        None => "none",
+        Some(ConnectionProfileAuth::TokenEnv(name)) => format!("env:{name}"),
+        Some(ConnectionProfileAuth::InlineToken) => "inline token".to_string(),
+        None => "none".to_string(),
     }
 }

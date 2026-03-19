@@ -11,6 +11,7 @@ use turin_daemon_protocol::EventEnvelope;
 use crate::controller::UiUpdate;
 
 const MAX_RECENT_EVENTS: usize = 64;
+const MAX_RECENT_NOTICES: usize = 16;
 const DEFAULT_SESSION_LIMIT: usize = 25;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +26,8 @@ pub struct DashboardState {
     #[serde(default)]
     pub session_details: BTreeMap<String, SessionDetail>,
     pub recent_events: Vec<EventEnvelope>,
+    #[serde(default)]
+    pub recent_notices: Vec<DashboardNotice>,
     pub last_error: Option<String>,
     pub last_info: Option<String>,
 }
@@ -59,6 +62,19 @@ pub struct DashboardHealth {
     pub failed_channel_count: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DashboardNotice {
+    pub level: DashboardNoticeLevel,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DashboardNoticeLevel {
+    Error,
+    Info,
+}
+
 impl DashboardState {
     pub async fn load(client: &ControlClient) -> Result<Self> {
         let snapshot = Self::snapshot(client).await?;
@@ -72,6 +88,7 @@ impl DashboardState {
             tasks: snapshot.tasks,
             session_details: BTreeMap::new(),
             recent_events: Vec::new(),
+            recent_notices: Vec::new(),
             last_error: None,
             last_info: None,
         })
@@ -145,11 +162,15 @@ impl DashboardState {
     }
 
     pub fn record_error(&mut self, message: impl Into<String>) {
-        self.last_error = Some(message.into());
+        let message = message.into();
+        self.last_error = Some(message.clone());
+        self.push_notice(DashboardNoticeLevel::Error, message);
     }
 
     pub fn record_info(&mut self, message: impl Into<String>) {
-        self.last_info = Some(message.into());
+        let message = message.into();
+        self.last_info = Some(message.clone());
+        self.push_notice(DashboardNoticeLevel::Info, message);
     }
 
     pub fn status_pretty_json(&self) -> String {
@@ -176,6 +197,14 @@ impl DashboardState {
     pub fn session_detail(&self, session_id: &str) -> Option<&SessionDetail> {
         self.session_details.get(session_id)
     }
+
+    fn push_notice(&mut self, level: DashboardNoticeLevel, message: String) {
+        self.recent_notices.push(DashboardNotice { level, message });
+        if self.recent_notices.len() > MAX_RECENT_NOTICES {
+            let drop_count = self.recent_notices.len() - MAX_RECENT_NOTICES;
+            self.recent_notices.drain(0..drop_count);
+        }
+    }
 }
 
 impl From<ControlHealth> for DashboardHealth {
@@ -197,5 +226,58 @@ impl From<ControlHealth> for DashboardHealth {
             channel_runtime_count: value.channel_runtime_count,
             failed_channel_count: value.failed_channel_count,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DashboardNoticeLevel, DashboardState, MAX_RECENT_NOTICES};
+    use turin_control_client::ConnectionKind;
+
+    fn empty_dashboard() -> DashboardState {
+        DashboardState {
+            connection_kind: ConnectionKind::Local,
+            connection_target: "turin.toml".to_string(),
+            health: None,
+            status: None,
+            live_sessions: Vec::new(),
+            sessions: Vec::new(),
+            tasks: Vec::new(),
+            session_details: Default::default(),
+            recent_events: Vec::new(),
+            recent_notices: Vec::new(),
+            last_error: None,
+            last_info: None,
+        }
+    }
+
+    #[test]
+    fn recent_notices_are_bounded_and_keep_latest_entries() {
+        let mut dashboard = empty_dashboard();
+        for idx in 0..(MAX_RECENT_NOTICES + 4) {
+            dashboard.record_info(format!("info-{idx}"));
+        }
+        dashboard.record_error("boom");
+
+        assert_eq!(dashboard.recent_notices.len(), MAX_RECENT_NOTICES);
+        assert_eq!(
+            dashboard
+                .recent_notices
+                .first()
+                .map(|notice| notice.message.as_str()),
+            Some("info-5")
+        );
+        assert_eq!(
+            dashboard
+                .recent_notices
+                .last()
+                .map(|notice| notice.message.as_str()),
+            Some("boom")
+        );
+        assert_eq!(
+            dashboard.recent_notices.last().map(|notice| notice.level),
+            Some(DashboardNoticeLevel::Error)
+        );
+        assert_eq!(dashboard.last_error.as_deref(), Some("boom"));
     }
 }

@@ -13,8 +13,8 @@ use turin_control_client::{
 use turin_daemon_protocol::EventEnvelope;
 use turin_ui_core::{
     ConnectionOptions, ConnectionProfileAuth, ConnectionProfileCatalog, ConnectionProfileKind,
-    ConnectionProfileSummary, DashboardState, OperatorCommand, UiController, UiUpdate,
-    connect_dashboard, spawn_controller,
+    ConnectionProfileSummary, DashboardNoticeLevel, DashboardState, OperatorCommand, UiController,
+    UiUpdate, connect_dashboard, spawn_controller,
 };
 
 #[derive(Parser, Debug)]
@@ -459,10 +459,11 @@ impl TurinDesktopApp {
                     ScrollArea::vertical().show(ui, |ui| {
                         for (index, profile) in profiles.iter().enumerate() {
                             let label = format!(
-                                "{}{} [{}]",
+                                "{}{} [{} | {}]",
                                 profile.name,
                                 if profile.is_default { " (default)" } else { "" },
-                                profile_kind_label(profile.kind)
+                                profile_kind_label(profile.kind),
+                                profile_auth_label(profile.auth.as_ref())
                             );
                             if ui
                                 .selectable_label(index == self.profile_index, label)
@@ -485,12 +486,34 @@ impl TurinDesktopApp {
                 );
                 detail_kv(
                     ui,
+                    "Connection Kind",
+                    connection_kind_label(self.dashboard.connection_kind),
+                );
+                detail_kv(
+                    ui,
                     "Active Profile",
                     self.active_profile
                         .clone()
                         .unwrap_or_else(|| "Direct CLI/config".to_string()),
                 );
                 detail_kv(ui, "Profiles File", profiles_source.display().to_string());
+                detail_kv(ui, "Available Profiles", profiles.len().to_string());
+                detail_kv(
+                    ui,
+                    "Last Error",
+                    self.dashboard
+                        .last_error
+                        .clone()
+                        .unwrap_or_else(|| "None".to_string()),
+                );
+                detail_kv(
+                    ui,
+                    "Last Info",
+                    self.dashboard
+                        .last_info
+                        .clone()
+                        .unwrap_or_else(|| "None".to_string()),
+                );
 
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
@@ -508,15 +531,30 @@ impl TurinDesktopApp {
                     detail_kv(ui, "Name", profile.name.clone());
                     detail_kv(ui, "Kind", profile_kind_label(profile.kind));
                     detail_kv(ui, "Target", profile.target.clone());
-                    detail_kv(
-                        ui,
-                        "Auth",
-                        profile_auth_label(profile.auth.as_ref()).to_string(),
-                    );
+                    detail_kv(ui, "Default", yes_no(profile.is_default));
+                    detail_kv(ui, "Auth", profile_auth_label(profile.auth.as_ref()));
                     ui.add_space(10.0);
                     if ui.button("Connect Selected Profile").clicked() {
                         self.connect_selected_profile();
                     }
+                }
+
+                if !self.dashboard.recent_notices.is_empty() {
+                    ui.add_space(12.0);
+                    ui.label(RichText::new("Recent Notices").strong());
+                    ui.add_space(6.0);
+                    ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
+                        for notice in self.dashboard.recent_notices.iter().rev().take(6) {
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} {}",
+                                    notice_level_label(notice.level),
+                                    notice.message
+                                ))
+                                .color(notice_level_color(notice.level)),
+                            );
+                        }
+                    });
                 }
             });
         });
@@ -1087,6 +1125,13 @@ fn yes_no(value: bool) -> &'static str {
     if value { "Yes" } else { "No" }
 }
 
+fn connection_kind_label(kind: ConnectionKind) -> &'static str {
+    match kind {
+        ConnectionKind::Local => "local",
+        ConnectionKind::Remote => "remote",
+    }
+}
+
 fn profile_kind_label(kind: ConnectionProfileKind) -> &'static str {
     match kind {
         ConnectionProfileKind::LocalConfig => "local-config",
@@ -1095,11 +1140,25 @@ fn profile_kind_label(kind: ConnectionProfileKind) -> &'static str {
     }
 }
 
-fn profile_auth_label(auth: Option<&ConnectionProfileAuth>) -> &'static str {
+fn profile_auth_label(auth: Option<&ConnectionProfileAuth>) -> String {
     match auth {
-        Some(ConnectionProfileAuth::TokenEnv(_)) => "token env",
-        Some(ConnectionProfileAuth::InlineToken) => "inline token",
-        None => "none",
+        Some(ConnectionProfileAuth::TokenEnv(name)) => format!("env:{name}"),
+        Some(ConnectionProfileAuth::InlineToken) => "inline token".to_string(),
+        None => "none".to_string(),
+    }
+}
+
+fn notice_level_label(level: DashboardNoticeLevel) -> &'static str {
+    match level {
+        DashboardNoticeLevel::Error => "ERROR",
+        DashboardNoticeLevel::Info => "INFO",
+    }
+}
+
+fn notice_level_color(level: DashboardNoticeLevel) -> Color32 {
+    match level {
+        DashboardNoticeLevel::Error => Color32::from_rgb(255, 171, 145),
+        DashboardNoticeLevel::Info => Color32::from_rgb(151, 214, 255),
     }
 }
 
