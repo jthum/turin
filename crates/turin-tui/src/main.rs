@@ -108,9 +108,25 @@ impl TabKind {
     }
 }
 
+#[derive(Clone)]
 enum InputMode {
-    SubmitPrompt { session_id: String },
-    SaveProfile { make_default: bool },
+    SubmitPrompt {
+        session_id: String,
+    },
+    SaveProfile {
+        make_default: bool,
+    },
+    DuplicateProfile {
+        source_name: String,
+        make_default: bool,
+    },
+    RenameProfile {
+        source_name: String,
+        make_default: bool,
+    },
+    ConfirmDelete {
+        profile_name: String,
+    },
 }
 
 struct TuiApp {
@@ -263,7 +279,19 @@ fn handle_key(
             app.start_save_profile_input(false)
         }
         KeyCode::Char('A') if app.tab == TabKind::Connections => app.start_save_profile_input(true),
-        KeyCode::Char('d') if app.tab == TabKind::Connections => app.delete_selected_profile(),
+        KeyCode::Char('y') if app.tab == TabKind::Connections => {
+            app.start_duplicate_profile_input(false)
+        }
+        KeyCode::Char('Y') if app.tab == TabKind::Connections => {
+            app.start_duplicate_profile_input(true)
+        }
+        KeyCode::Char('u') if app.tab == TabKind::Connections => {
+            app.start_rename_profile_input(false)
+        }
+        KeyCode::Char('U') if app.tab == TabKind::Connections => {
+            app.start_rename_profile_input(true)
+        }
+        KeyCode::Char('d') if app.tab == TabKind::Connections => app.start_delete_confirmation(),
         KeyCode::Char('s') if app.tab == TabKind::Connections => {
             if let Some(options) = app.selected_profile_options() {
                 return Ok(Some(LoopAction::Reconnect(options)));
@@ -366,6 +394,26 @@ fn handle_input_mode(
     key: KeyCode,
     command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
 ) -> Result<Option<LoopAction>> {
+    if let Some(InputMode::ConfirmDelete { profile_name }) = app.input_mode.as_ref() {
+        match key {
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                app.dashboard.record_info(format!(
+                    "Cancelled delete for connection profile '{}'",
+                    profile_name
+                ));
+                app.clear_input_mode();
+                return Ok(None);
+            }
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let profile_name = profile_name.clone();
+                app.delete_profile(&profile_name);
+                app.clear_input_mode();
+                return Ok(None);
+            }
+            _ => return Ok(None),
+        }
+    }
+
     match key {
         KeyCode::Esc => app.clear_input_mode(),
         KeyCode::Backspace => {
@@ -376,7 +424,10 @@ fn handle_input_mode(
             if input.is_empty() {
                 let message = match app.input_mode.as_ref() {
                     Some(InputMode::SubmitPrompt { .. }) => "Prompt cannot be empty",
-                    Some(InputMode::SaveProfile { .. }) => "Profile name cannot be empty",
+                    Some(InputMode::SaveProfile { .. })
+                    | Some(InputMode::DuplicateProfile { .. })
+                    | Some(InputMode::RenameProfile { .. }) => "Profile name cannot be empty",
+                    Some(InputMode::ConfirmDelete { .. }) => "Delete confirmation is required",
                     None => "Input cannot be empty",
                 };
                 app.dashboard.record_error(message);
@@ -384,19 +435,32 @@ fn handle_input_mode(
                 return Ok(None);
             }
 
-            match &app.input_mode {
+            match app.input_mode.clone() {
                 Some(InputMode::SubmitPrompt { session_id }) => {
                     send_command(
                         command_tx,
                         OperatorCommand::SubmitPrompt {
-                            session_id: session_id.clone(),
+                            session_id,
                             prompt: input,
                         },
                     )?;
                 }
                 Some(InputMode::SaveProfile { make_default }) => {
-                    app.save_current_profile(&input, *make_default);
+                    app.save_current_profile(&input, make_default);
                 }
+                Some(InputMode::DuplicateProfile {
+                    source_name,
+                    make_default,
+                }) => {
+                    app.duplicate_profile(&source_name, &input, make_default);
+                }
+                Some(InputMode::RenameProfile {
+                    source_name,
+                    make_default,
+                }) => {
+                    app.rename_profile(&source_name, &input, make_default);
+                }
+                Some(InputMode::ConfirmDelete { .. }) => {}
                 None => {}
             }
             app.clear_input_mode();
@@ -608,6 +672,50 @@ fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
                     "Enter saves the current connection to the named profile. Esc cancels."
                 }),
             ],
+            Some(InputMode::DuplicateProfile {
+                source_name,
+                make_default,
+            }) => vec![
+                Line::from(vec![
+                    Span::styled("Duplicate> ", Style::default().fg(Color::LightCyan)),
+                    Span::raw(app.input.clone()),
+                ]),
+                Line::from(if *make_default {
+                    format!(
+                        "Enter duplicates '{}' to the typed name and sets it as default. Esc cancels.",
+                        source_name
+                    )
+                } else {
+                    format!(
+                        "Enter duplicates '{}' to the typed name. Esc cancels.",
+                        source_name
+                    )
+                }),
+            ],
+            Some(InputMode::RenameProfile {
+                source_name,
+                make_default,
+            }) => vec![
+                Line::from(vec![
+                    Span::styled("Rename> ", Style::default().fg(Color::LightCyan)),
+                    Span::raw(app.input.clone()),
+                ]),
+                Line::from(if *make_default {
+                    format!(
+                        "Enter renames '{}' and marks the new name as default. Esc cancels.",
+                        source_name
+                    )
+                } else {
+                    format!("Enter renames '{}'. Esc cancels.", source_name)
+                }),
+            ],
+            Some(InputMode::ConfirmDelete { profile_name }) => vec![
+                Line::from(vec![
+                    Span::styled("Delete> ", Style::default().fg(Color::LightRed)),
+                    Span::raw(profile_name.clone()),
+                ]),
+                Line::from("Press y or Enter to confirm delete. Press n or Esc to cancel."),
+            ],
             None => Vec::new(),
         }
     } else {
@@ -773,6 +881,17 @@ impl TuiApp {
         }
     }
 
+    fn select_profile_by_name(&mut self, profile_name: &str) {
+        if let Some(index) = self.profile_catalog.as_ref().and_then(|catalog| {
+            catalog
+                .profiles()
+                .iter()
+                .position(|profile| profile.name == profile_name)
+        }) {
+            self.profile_index = index;
+        }
+    }
+
     fn save_current_profile(&mut self, profile_name: &str, make_default: bool) {
         match self
             .connection_options
@@ -780,14 +899,7 @@ impl TuiApp {
         {
             Ok(catalog) => {
                 self.profile_catalog = Some(catalog);
-                if let Some(index) = self.profile_catalog.as_ref().and_then(|catalog| {
-                    catalog
-                        .profiles()
-                        .iter()
-                        .position(|profile| profile.name == profile_name)
-                }) {
-                    self.profile_index = index;
-                }
+                self.select_profile_by_name(profile_name);
                 self.clamp_selection();
                 self.dashboard.record_info(format!(
                     "Saved current connection to profile '{}' in '{}'",
@@ -801,25 +913,66 @@ impl TuiApp {
         }
     }
 
-    fn delete_selected_profile(&mut self) {
-        let Some(profile_name) = self.selected_profile().map(|profile| profile.name.clone()) else {
-            self.dashboard
-                .record_error("No connection profile is currently selected");
-            return;
-        };
+    fn duplicate_profile(&mut self, source_name: &str, target_name: &str, make_default: bool) {
+        match self
+            .connection_options
+            .duplicate_profile(source_name, target_name, make_default)
+        {
+            Ok(catalog) => {
+                self.profile_catalog = Some(catalog);
+                self.select_profile_by_name(target_name);
+                self.clamp_selection();
+                self.dashboard.record_info(format!(
+                    "Duplicated connection profile '{}' to '{}'",
+                    source_name, target_name
+                ));
+            }
+            Err(err) => self
+                .dashboard
+                .record_error(format!("Failed to duplicate connection profile: {err}")),
+        }
+    }
+
+    fn rename_profile(&mut self, source_name: &str, target_name: &str, make_default: bool) {
+        match self
+            .connection_options
+            .rename_profile(source_name, target_name, make_default)
+        {
+            Ok(catalog) => {
+                if self.connection_options.profile.as_deref() == Some(source_name) {
+                    self.connection_options.profile = Some(target_name.to_string());
+                }
+                if self.active_profile.as_deref() == Some(source_name) {
+                    self.active_profile = Some(target_name.to_string());
+                }
+                self.profile_catalog = Some(catalog);
+                self.select_profile_by_name(target_name);
+                self.clamp_selection();
+                self.dashboard.record_info(format!(
+                    "Renamed connection profile '{}' to '{}'",
+                    source_name, target_name
+                ));
+            }
+            Err(err) => self
+                .dashboard
+                .record_error(format!("Failed to rename connection profile: {err}")),
+        }
+    }
+
+    fn delete_profile(&mut self, profile_name: &str) {
         let fallback_connection =
-            if self.connection_options.profile.as_deref() == Some(profile_name.as_str()) {
+            if self.connection_options.profile.as_deref() == Some(profile_name) {
                 self.connection_options.materialized().ok()
             } else {
                 None
             };
 
-        match self.connection_options.delete_profile(&profile_name) {
+        match self.connection_options.delete_profile(profile_name) {
             Ok(catalog) => {
                 if let Some(options) = fallback_connection {
                     self.connection_options = options;
                 }
-                if self.active_profile.as_deref() == Some(profile_name.as_str()) {
+                if self.active_profile.as_deref() == Some(profile_name) {
                     self.active_profile = None;
                 }
                 self.profile_catalog = Some(catalog);
@@ -864,6 +1017,48 @@ impl TuiApp {
             .selected_profile()
             .map(|profile| profile.name.clone())
             .unwrap_or_default();
+    }
+
+    fn start_duplicate_profile_input(&mut self, make_default: bool) {
+        let Some(source_name) = self.selected_profile().map(|profile| profile.name.clone()) else {
+            self.dashboard
+                .record_error("No connection profile is currently selected");
+            return;
+        };
+        self.input_mode = Some(InputMode::DuplicateProfile {
+            source_name: source_name.clone(),
+            make_default,
+        });
+        self.input = format!("{source_name}-copy");
+    }
+
+    fn start_rename_profile_input(&mut self, make_default: bool) {
+        let Some(source_name) = self.selected_profile().map(|profile| profile.name.clone()) else {
+            self.dashboard
+                .record_error("No connection profile is currently selected");
+            return;
+        };
+        self.input_mode = Some(InputMode::RenameProfile {
+            source_name: source_name.clone(),
+            make_default,
+        });
+        self.input = source_name;
+    }
+
+    fn start_delete_confirmation(&mut self) {
+        let Some(profile_name) = self.selected_profile().map(|profile| profile.name.clone()) else {
+            self.dashboard
+                .record_error("No connection profile is currently selected");
+            return;
+        };
+        self.input_mode = Some(InputMode::ConfirmDelete {
+            profile_name: profile_name.clone(),
+        });
+        self.input.clear();
+        self.dashboard.record_info(format!(
+            "Delete confirmation armed for connection profile '{}'",
+            profile_name
+        ));
     }
 
     fn clear_input_mode(&mut self) {
@@ -1067,7 +1262,7 @@ impl TuiApp {
         let shared = "1-7 switch views | Tab cycle | arrows/j/k move | r refresh | q quit";
         let scoped = match self.tab {
             TabKind::Connections => {
-                "Enter/s connect | a save current | A save+default | d delete selected | l reload"
+                "Enter/s connect | a/A save | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
             }
             TabKind::Agents => "n or Enter opens a live session for the selected agent",
             TabKind::LiveSessions => "p or Enter prompts | c cancel session | x kill session",

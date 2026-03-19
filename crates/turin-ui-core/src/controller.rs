@@ -166,10 +166,7 @@ impl ConnectionOptions {
     }
 
     pub fn save_profile(&self, name: &str, make_default: bool) -> Result<ConnectionProfileCatalog> {
-        let name = name.trim();
-        if name.is_empty() {
-            return Err(anyhow!("Connection profile name cannot be empty"));
-        }
+        let name = validate_profile_name(name)?;
 
         let profiles_path = self.profiles_path();
         let mut profiles = ConnectionProfiles::load_optional(&profiles_path)?;
@@ -184,11 +181,89 @@ impl ConnectionOptions {
         Ok(ConnectionProfileCatalog::from_raw(profiles_path, profiles))
     }
 
-    pub fn delete_profile(&self, name: &str) -> Result<ConnectionProfileCatalog> {
-        let name = name.trim();
-        if name.is_empty() {
-            return Err(anyhow!("Connection profile name cannot be empty"));
+    pub fn duplicate_profile(
+        &self,
+        source_name: &str,
+        new_name: &str,
+        make_default: bool,
+    ) -> Result<ConnectionProfileCatalog> {
+        let source_name = validate_profile_name(source_name)?;
+        let new_name = validate_profile_name(new_name)?;
+        if source_name == new_name {
+            return Err(anyhow!(
+                "New profile name must be different from the source profile"
+            ));
         }
+
+        let profiles_path = self.profiles_path();
+        let mut profiles = ConnectionProfiles::load(&profiles_path)?;
+        if profiles.profiles.contains_key(new_name) {
+            return Err(anyhow!(
+                "Connection profile '{}' already exists in '{}'",
+                new_name,
+                profiles_path.display()
+            ));
+        }
+        let source = profiles
+            .profiles
+            .get(source_name)
+            .cloned()
+            .with_context(|| {
+                format!(
+                    "Connection profile '{}' was not found in '{}'",
+                    source_name,
+                    profiles_path.display()
+                )
+            })?;
+        profiles.profiles.insert(new_name.to_string(), source);
+        if make_default || profiles.default_profile.is_none() {
+            profiles.default_profile = Some(new_name.to_string());
+        }
+        profiles.save(&profiles_path)?;
+        Ok(ConnectionProfileCatalog::from_raw(profiles_path, profiles))
+    }
+
+    pub fn rename_profile(
+        &self,
+        source_name: &str,
+        new_name: &str,
+        make_default: bool,
+    ) -> Result<ConnectionProfileCatalog> {
+        let source_name = validate_profile_name(source_name)?;
+        let new_name = validate_profile_name(new_name)?;
+        if source_name == new_name {
+            return Err(anyhow!(
+                "New profile name must be different from the source profile"
+            ));
+        }
+
+        let profiles_path = self.profiles_path();
+        let mut profiles = ConnectionProfiles::load(&profiles_path)?;
+        if profiles.profiles.contains_key(new_name) {
+            return Err(anyhow!(
+                "Connection profile '{}' already exists in '{}'",
+                new_name,
+                profiles_path.display()
+            ));
+        }
+        let source_was_default = profiles.default_profile.as_deref() == Some(source_name);
+        let profile = profiles.profiles.remove(source_name).with_context(|| {
+            format!(
+                "Connection profile '{}' was not found in '{}'",
+                source_name,
+                profiles_path.display()
+            )
+        })?;
+        profiles.profiles.insert(new_name.to_string(), profile);
+        if source_was_default || make_default {
+            profiles.default_profile = Some(new_name.to_string());
+        }
+        profiles.save(&profiles_path)?;
+        Ok(ConnectionProfileCatalog::from_raw(profiles_path, profiles))
+    }
+
+    pub fn delete_profile(&self, name: &str) -> Result<ConnectionProfileCatalog> {
+        let name = validate_profile_name(name)?;
 
         let profiles_path = self.profiles_path();
         let mut profiles = ConnectionProfiles::load(&profiles_path)?;
@@ -256,6 +331,14 @@ impl ConnectionOptions {
             .clone()
             .unwrap_or_else(|| PathBuf::from("ui-profiles.toml"))
     }
+}
+
+fn validate_profile_name(name: &str) -> Result<&str> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(anyhow!("Connection profile name cannot be empty"));
+    }
+    Ok(name)
 }
 
 pub async fn connect_dashboard(spec: &ConnectionSpec) -> Result<(ControlClient, DashboardState)> {
@@ -862,5 +945,50 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
         let raw = fs::read_to_string(&profiles_path).expect("read saved file");
         assert!(raw.contains("default_profile = \"local\""));
         assert!(raw.contains("[profiles.local]"));
+    }
+
+    #[test]
+    fn connection_options_can_duplicate_and_rename_profiles() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let profiles_path = temp.path().join("ui-profiles.toml");
+        fs::write(
+            &profiles_path,
+            r#"
+default_profile = "lab"
+
+[profiles.lab]
+remote_url = "http://example.test"
+auth_token_env = "TURIN_REMOTE_TOKEN"
+"#,
+        )
+        .expect("write initial profiles");
+
+        let options = ConnectionOptions {
+            config_path: None,
+            endpoint: None,
+            remote_url: None,
+            auth_token: None,
+            auth_token_env: None,
+            profile: None,
+            profiles_file: Some(profiles_path.clone()),
+        };
+
+        let duplicated = options
+            .duplicate_profile("lab", "lab-copy", false)
+            .expect("duplicate profile");
+        assert_eq!(duplicated.profiles().len(), 2);
+        assert_eq!(duplicated.default_profile(), Some("lab"));
+
+        let renamed = options
+            .rename_profile("lab-copy", "lab-stage", true)
+            .expect("rename profile");
+        assert_eq!(renamed.profiles().len(), 2);
+        assert_eq!(renamed.default_profile(), Some("lab-stage"));
+        assert!(
+            renamed
+                .profiles()
+                .iter()
+                .any(|profile| profile.name == "lab-stage")
+        );
     }
 }

@@ -145,6 +145,7 @@ struct TurinDesktopApp {
     event_index: usize,
     profile_name_input: String,
     save_profile_as_default: bool,
+    pending_delete_profile: Option<String>,
     prompt_input: String,
     requested_session_detail: Option<String>,
     _runtime: Arc<Runtime>,
@@ -176,6 +177,7 @@ impl TurinDesktopApp {
             event_index: 0,
             profile_name_input,
             save_profile_as_default: false,
+            pending_delete_profile: None,
             prompt_input: String::new(),
             requested_session_detail: None,
             _runtime: runtime,
@@ -227,6 +229,7 @@ impl TurinDesktopApp {
         {
             self.profile_index = index;
         }
+        self.pending_delete_profile = None;
     }
 
     fn profile_name_for_save(&self) -> Option<String> {
@@ -242,6 +245,7 @@ impl TurinDesktopApp {
             Ok(catalog) => {
                 self.profile_catalog = catalog;
                 self.clamp_selection_indices();
+                self.pending_delete_profile = None;
                 self.dashboard
                     .record_info("Reloaded UI connection profiles");
             }
@@ -299,6 +303,106 @@ impl TurinDesktopApp {
         }
     }
 
+    fn duplicate_selected_profile(&mut self) {
+        let Some(source_name) = self.selected_profile().map(|profile| profile.name.clone()) else {
+            self.dashboard
+                .record_error("No connection profile is currently selected");
+            return;
+        };
+        let Some(target_name) = self.profile_name_for_save() else {
+            self.dashboard
+                .record_error("Enter a new profile name before duplicating the selected profile");
+            return;
+        };
+
+        match self.connection_options.duplicate_profile(
+            &source_name,
+            &target_name,
+            self.save_profile_as_default,
+        ) {
+            Ok(catalog) => {
+                self.profile_catalog = Some(catalog);
+                self.select_profile_by_name(&target_name);
+                self.profile_name_input = target_name.clone();
+                self.clamp_selection_indices();
+                self.dashboard.record_info(format!(
+                    "Duplicated connection profile '{}' to '{}'",
+                    source_name, target_name
+                ));
+            }
+            Err(err) => self
+                .dashboard
+                .record_error(format!("Failed to duplicate connection profile: {err}")),
+        }
+    }
+
+    fn rename_selected_profile(&mut self) {
+        let Some(source_name) = self.selected_profile().map(|profile| profile.name.clone()) else {
+            self.dashboard
+                .record_error("No connection profile is currently selected");
+            return;
+        };
+        let Some(target_name) = self.profile_name_for_save() else {
+            self.dashboard
+                .record_error("Enter a new profile name before renaming the selected profile");
+            return;
+        };
+
+        match self.connection_options.rename_profile(
+            &source_name,
+            &target_name,
+            self.save_profile_as_default,
+        ) {
+            Ok(catalog) => {
+                if self.connection_options.profile.as_deref() == Some(source_name.as_str()) {
+                    self.connection_options.profile = Some(target_name.clone());
+                }
+                if self.active_profile.as_deref() == Some(source_name.as_str()) {
+                    self.active_profile = Some(target_name.clone());
+                }
+                self.profile_catalog = Some(catalog);
+                self.select_profile_by_name(&target_name);
+                self.profile_name_input = target_name.clone();
+                self.clamp_selection_indices();
+                self.dashboard.record_info(format!(
+                    "Renamed connection profile '{}' to '{}'",
+                    source_name, target_name
+                ));
+            }
+            Err(err) => self
+                .dashboard
+                .record_error(format!("Failed to rename connection profile: {err}")),
+        }
+    }
+
+    fn is_delete_armed_for_selected(&self) -> bool {
+        let Some(selected_name) = self.selected_profile().map(|profile| profile.name.as_str())
+        else {
+            return false;
+        };
+        self.pending_delete_profile.as_deref() == Some(selected_name)
+    }
+
+    fn arm_delete_selected_profile(&mut self) {
+        let Some(profile_name) = self.selected_profile().map(|profile| profile.name.clone()) else {
+            self.dashboard
+                .record_error("No connection profile is currently selected");
+            return;
+        };
+        self.pending_delete_profile = Some(profile_name.clone());
+        self.dashboard.record_info(format!(
+            "Delete armed for profile '{}'. Confirm to remove it from '{}'",
+            profile_name,
+            self.connection_options.profiles_path().display()
+        ));
+    }
+
+    fn cancel_delete_selected_profile(&mut self) {
+        self.pending_delete_profile = None;
+        self.dashboard
+            .record_info("Cancelled connection profile delete");
+    }
+
     fn delete_selected_profile(&mut self) {
         let Some(profile_name) = self.selected_profile().map(|profile| profile.name.clone()) else {
             self.dashboard
@@ -320,6 +424,7 @@ impl TurinDesktopApp {
                 if self.active_profile.as_deref() == Some(profile_name.as_str()) {
                     self.active_profile = None;
                 }
+                self.pending_delete_profile = None;
                 self.profile_catalog = Some(catalog);
                 self.clamp_selection_indices();
                 self.profile_name_input = self
@@ -354,6 +459,7 @@ impl TurinDesktopApp {
                 self.profile_catalog = connection_options.load_profiles().ok().flatten();
                 self.dashboard = dashboard;
                 self.profile_name_input = self.active_profile.clone().unwrap_or_default();
+                self.pending_delete_profile = None;
                 self.prompt_input.clear();
                 self.requested_session_detail = None;
                 self.clamp_selection_indices();
@@ -564,6 +670,7 @@ impl TurinDesktopApp {
                             {
                                 self.profile_index = index;
                                 self.profile_name_input = profile.name.clone();
+                                self.pending_delete_profile = None;
                             }
                         }
                     });
@@ -584,10 +691,44 @@ impl TurinDesktopApp {
                     if ui.button("Save Current").clicked() {
                         self.save_current_profile();
                     }
-                    if ui.button("Delete Selected").clicked() {
-                        self.delete_selected_profile();
+                    if ui.button("Duplicate Selected").clicked() {
+                        self.duplicate_selected_profile();
+                    }
+                    if ui.button("Rename Selected").clicked() {
+                        self.rename_selected_profile();
                     }
                 });
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    let armed = self.is_delete_armed_for_selected();
+                    if ui
+                        .button(if armed {
+                            "Confirm Delete"
+                        } else {
+                            "Arm Delete"
+                        })
+                        .clicked()
+                    {
+                        if armed {
+                            self.delete_selected_profile();
+                        } else {
+                            self.arm_delete_selected_profile();
+                        }
+                    }
+                    if armed && ui.button("Cancel Delete").clicked() {
+                        self.cancel_delete_selected_profile();
+                    }
+                });
+                if let Some(profile_name) = self.pending_delete_profile.as_deref() {
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "Delete armed for '{}'. Confirm to remove it from the profiles file.",
+                            profile_name
+                        ))
+                        .color(Color32::from_rgb(255, 171, 145)),
+                    );
+                }
             });
 
             columns[1].group(|ui| {
