@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
@@ -38,6 +38,7 @@ pub enum UiUpdate {
     Snapshot(Box<DashboardSnapshot>),
     SessionDetail(Box<SessionDetail>),
     Event(EventEnvelope),
+    RefreshTelemetry { duration_ms: u64, success: bool },
     Error(String),
     Info(String),
 }
@@ -358,14 +359,33 @@ fn spawn_refresh_task(
                 }
                 _ = interval.tick() => {}
             }
+            let started = Instant::now();
             match DashboardState::snapshot(&client).await {
                 Ok(snapshot) => {
                     if tx.send(UiUpdate::Snapshot(Box::new(snapshot))).is_err() {
                         break;
                     }
+                    if tx
+                        .send(UiUpdate::RefreshTelemetry {
+                            duration_ms: started.elapsed().as_millis() as u64,
+                            success: true,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
                 Err(err) => {
                     if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                        break;
+                    }
+                    if tx
+                        .send(UiUpdate::RefreshTelemetry {
+                            duration_ms: started.elapsed().as_millis() as u64,
+                            success: false,
+                        })
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -419,14 +439,33 @@ fn spawn_command_task(
                     if tx.send(UiUpdate::Info(message)).is_err() {
                         break;
                     }
+                    let started = Instant::now();
                     match DashboardState::snapshot(&client).await {
                         Ok(snapshot) => {
                             if tx.send(UiUpdate::Snapshot(Box::new(snapshot))).is_err() {
                                 break;
                             }
+                            if tx
+                                .send(UiUpdate::RefreshTelemetry {
+                                    duration_ms: started.elapsed().as_millis() as u64,
+                                    success: true,
+                                })
+                                .is_err()
+                            {
+                                break;
+                            }
                         }
                         Err(err) => {
                             if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                                break;
+                            }
+                            if tx
+                                .send(UiUpdate::RefreshTelemetry {
+                                    duration_ms: started.elapsed().as_millis() as u64,
+                                    success: false,
+                                })
+                                .is_err()
+                            {
                                 break;
                             }
                         }

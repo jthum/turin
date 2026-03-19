@@ -459,9 +459,11 @@ fn render_banner(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
             Span::styled("  Sync: ", Style::default().fg(Color::Gray)),
             Span::styled(
                 format!(
-                    "{} ({})",
+                    "{} ({} / {} / {})",
                     freshness_label(app.dashboard.snapshot_freshness()),
-                    app.dashboard.snapshot_age_label()
+                    app.dashboard.snapshot_age_label(),
+                    app.dashboard.last_refresh_status_label(),
+                    app.dashboard.last_refresh_latency_label()
                 ),
                 Style::default().fg(freshness_color(app.dashboard.snapshot_freshness())),
             ),
@@ -469,8 +471,11 @@ fn render_banner(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
         Line::from(vec![
             Span::styled("Activity: ", Style::default().fg(Color::Gray)),
             Span::raw(format!(
-                "event {}  notice {}",
+                "{} events  last event {}  refresh {} ok / {} fail  notice {}",
+                app.dashboard.total_event_count,
                 app.dashboard.event_age_label(),
+                app.dashboard.refresh_success_count,
+                app.dashboard.refresh_failure_count,
                 app.dashboard.notice_age_label()
             )),
             Span::styled("  Counts: ", Style::default().fg(Color::Gray)),
@@ -883,6 +888,11 @@ impl TuiApp {
                     "last_snapshot": self.dashboard.snapshot_age_label(),
                     "last_event": self.dashboard.event_age_label(),
                     "last_notice": self.dashboard.notice_age_label(),
+                    "total_events": self.dashboard.total_event_count,
+                    "refresh_success_count": self.dashboard.refresh_success_count,
+                    "refresh_failure_count": self.dashboard.refresh_failure_count,
+                    "last_refresh_status": self.dashboard.last_refresh_status_label(),
+                    "last_refresh_latency": self.dashboard.last_refresh_latency_label(),
                     "transport": self.dashboard.health.as_ref().map(|health| health.transport.clone()),
                     "wire_format": self.dashboard.health.as_ref().map(|health| health.wire_format.clone()),
                 },

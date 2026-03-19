@@ -35,6 +35,16 @@ pub struct DashboardState {
     pub last_event_unix_ms: Option<u64>,
     #[serde(default)]
     pub last_notice_unix_ms: Option<u64>,
+    #[serde(default)]
+    pub total_event_count: u64,
+    #[serde(default)]
+    pub refresh_success_count: u64,
+    #[serde(default)]
+    pub refresh_failure_count: u64,
+    #[serde(default)]
+    pub last_refresh_duration_ms: Option<u64>,
+    #[serde(default)]
+    pub last_refresh_ok: Option<bool>,
     pub last_error: Option<String>,
     pub last_info: Option<String>,
 }
@@ -108,6 +118,11 @@ impl DashboardState {
             last_snapshot_unix_ms: now,
             last_event_unix_ms: None,
             last_notice_unix_ms: None,
+            total_event_count: 0,
+            refresh_success_count: 0,
+            refresh_failure_count: 0,
+            last_refresh_duration_ms: None,
+            last_refresh_ok: None,
             last_error: None,
             last_info: None,
         })
@@ -164,6 +179,10 @@ impl DashboardState {
             UiUpdate::Snapshot(snapshot) => self.apply_snapshot(*snapshot),
             UiUpdate::SessionDetail(detail) => self.record_session_detail(*detail),
             UiUpdate::Event(event) => self.record_event(event),
+            UiUpdate::RefreshTelemetry {
+                duration_ms,
+                success,
+            } => self.record_refresh_telemetry(duration_ms, success),
             UiUpdate::Error(message) => self.record_error(message),
             UiUpdate::Info(message) => self.record_info(message),
         }
@@ -176,6 +195,7 @@ impl DashboardState {
 
     pub fn record_event(&mut self, event: EventEnvelope) {
         self.last_event_unix_ms = Some(now_unix_ms());
+        self.total_event_count += 1;
         self.recent_events.push(event);
         if self.recent_events.len() > MAX_RECENT_EVENTS {
             let drop_count = self.recent_events.len() - MAX_RECENT_EVENTS;
@@ -197,6 +217,16 @@ impl DashboardState {
         self.push_notice(DashboardNoticeLevel::Info, message);
     }
 
+    pub fn record_refresh_telemetry(&mut self, duration_ms: u64, success: bool) {
+        self.last_refresh_duration_ms = Some(duration_ms);
+        self.last_refresh_ok = Some(success);
+        if success {
+            self.refresh_success_count += 1;
+        } else {
+            self.refresh_failure_count += 1;
+        }
+    }
+
     pub fn snapshot_freshness(&self) -> DashboardFreshness {
         freshness_at(now_unix_ms(), self.last_snapshot_unix_ms)
     }
@@ -211,6 +241,20 @@ impl DashboardState {
 
     pub fn notice_age_label(&self) -> String {
         format_relative_age(age_seconds(now_unix_ms(), self.last_notice_unix_ms))
+    }
+
+    pub fn last_refresh_latency_label(&self) -> String {
+        self.last_refresh_duration_ms
+            .map(|duration_ms| format!("{duration_ms}ms"))
+            .unwrap_or_else(|| "none yet".to_string())
+    }
+
+    pub fn last_refresh_status_label(&self) -> &'static str {
+        match self.last_refresh_ok {
+            Some(true) => "ok",
+            Some(false) => "failed",
+            None => "none yet",
+        }
     }
 
     pub fn status_pretty_json(&self) -> String {
@@ -322,6 +366,11 @@ mod tests {
             last_snapshot_unix_ms: 0,
             last_event_unix_ms: None,
             last_notice_unix_ms: None,
+            total_event_count: 0,
+            refresh_success_count: 0,
+            refresh_failure_count: 0,
+            last_refresh_duration_ms: None,
+            last_refresh_ok: None,
             last_error: None,
             last_info: None,
         }
@@ -371,5 +420,19 @@ mod tests {
         assert_eq!(format_relative_age(Some(9)), "9s ago");
         assert_eq!(format_relative_age(Some(90)), "1m ago");
         assert_eq!(format_relative_age(Some(7200)), "2h ago");
+    }
+
+    #[test]
+    fn refresh_telemetry_updates_status_and_counts() {
+        let mut dashboard = empty_dashboard();
+        dashboard.record_refresh_telemetry(84, true);
+        dashboard.record_refresh_telemetry(120, false);
+
+        assert_eq!(dashboard.refresh_success_count, 1);
+        assert_eq!(dashboard.refresh_failure_count, 1);
+        assert_eq!(dashboard.last_refresh_duration_ms, Some(120));
+        assert_eq!(dashboard.last_refresh_ok, Some(false));
+        assert_eq!(dashboard.last_refresh_latency_label(), "120ms");
+        assert_eq!(dashboard.last_refresh_status_label(), "failed");
     }
 }

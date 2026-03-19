@@ -502,6 +502,30 @@ impl TurinDesktopApp {
                 detail_kv(ui, "Last Notice", self.dashboard.notice_age_label());
                 detail_kv(
                     ui,
+                    "Events Observed",
+                    self.dashboard.total_event_count.to_string(),
+                );
+                detail_kv(
+                    ui,
+                    "Refresh Successes",
+                    self.dashboard.refresh_success_count.to_string(),
+                );
+                detail_kv(
+                    ui,
+                    "Refresh Failures",
+                    self.dashboard.refresh_failure_count.to_string(),
+                );
+                detail_kv(
+                    ui,
+                    "Last Refresh",
+                    format!(
+                        "{} ({})",
+                        self.dashboard.last_refresh_status_label(),
+                        self.dashboard.last_refresh_latency_label()
+                    ),
+                );
+                detail_kv(
+                    ui,
                     "Active Profile",
                     self.active_profile
                         .clone()
@@ -1048,9 +1072,11 @@ impl eframe::App for TurinDesktopApp {
                 ui.add_space(12.0);
                 ui.label(
                     RichText::new(format!(
-                        "Sync {} ({})",
+                        "Sync {} ({} / {} / {})",
                         freshness_label(self.dashboard.snapshot_freshness()),
-                        self.dashboard.snapshot_age_label()
+                        self.dashboard.snapshot_age_label(),
+                        self.dashboard.last_refresh_status_label(),
+                        self.dashboard.last_refresh_latency_label()
                     ))
                     .color(freshness_color(self.dashboard.snapshot_freshness()))
                     .strong(),
