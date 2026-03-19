@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -127,7 +127,7 @@ struct RemoteHarness {
 }
 
 impl RemoteHarness {
-    async fn start(config_path: &PathBuf) -> Result<Self> {
+    async fn start(config_path: &Path) -> Result<Self> {
         Self::start_with_options(
             config_path,
             RemoteServeOptions {
@@ -141,10 +141,7 @@ impl RemoteHarness {
         .await
     }
 
-    async fn start_with_options(
-        config_path: &PathBuf,
-        options: RemoteServeOptions,
-    ) -> Result<Self> {
+    async fn start_with_options(config_path: &Path, options: RemoteServeOptions) -> Result<Self> {
         let server = start_remote(config_path, options).await?;
         Ok(Self {
             base_url: format!("http://{}", server.local_addr()),
