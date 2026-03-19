@@ -20,10 +20,10 @@ use turin_control_client::{
 };
 use turin_daemon_protocol::EventEnvelope;
 use turin_ui_core::{
-    ConnectionOptions, ConnectionProfileAuth, ConnectionProfileCatalog, ConnectionProfileDraft,
-    ConnectionProfileDraftAuthMode, ConnectionProfileDraftValidation, ConnectionProfileKind,
-    ConnectionProfileSummary, DashboardFreshness, DashboardState, OperatorCommand, UiController,
-    UiUpdate, connect_dashboard, spawn_controller,
+    ConnectionDraftHistory, ConnectionOptions, ConnectionProfileAuth, ConnectionProfileCatalog,
+    ConnectionProfileDraft, ConnectionProfileDraftAuthMode, ConnectionProfileDraftValidation,
+    ConnectionProfileKind, ConnectionProfileSummary, DashboardFreshness, DashboardState,
+    OperatorCommand, UiController, UiUpdate, connect_dashboard, spawn_controller,
 };
 
 #[derive(Parser, Debug)]
@@ -139,6 +139,7 @@ struct TuiApp {
     active_profile: Option<String>,
     tab: TabKind,
     profile_index: usize,
+    recent_draft_index: usize,
     agent_index: usize,
     live_session_index: usize,
     session_index: usize,
@@ -146,6 +147,7 @@ struct TuiApp {
     channel_index: usize,
     event_index: usize,
     profile_draft: ConnectionProfileDraft,
+    recent_drafts: ConnectionDraftHistory,
     input_mode: Option<InputMode>,
     input: String,
     requested_session_detail: Option<String>,
@@ -153,7 +155,10 @@ struct TuiApp {
 
 enum LoopAction {
     Quit,
-    Reconnect(ConnectionOptions),
+    Reconnect {
+        options: Box<ConnectionOptions>,
+        connected_draft: Option<ConnectionProfileDraft>,
+    },
 }
 
 #[tokio::main]
@@ -191,7 +196,11 @@ async fn run_shell(
     terminal: &mut DefaultTerminal,
     initial_connection_options: ConnectionOptions,
 ) -> Result<()> {
-    let (mut app, mut controller) = connect_shell_state(initial_connection_options).await?;
+    let (mut app, mut controller) = connect_shell_state(
+        initial_connection_options,
+        ConnectionDraftHistory::default(),
+    )
+    .await?;
 
     loop {
         let action = run_app(terminal, &mut app, &mut controller)?;
@@ -200,26 +209,36 @@ async fn run_shell(
                 controller.shutdown();
                 return Ok(());
             }
-            LoopAction::Reconnect(next_options) => match connect_shell_state(next_options).await {
-                Ok((next_app, next_controller)) => {
-                    controller.shutdown();
-                    app = next_app;
-                    controller = next_controller;
-                    let target = app.dashboard.connection_target.clone();
-                    app.dashboard
-                        .record_info(format!("Connected UI client to {target}"));
+            LoopAction::Reconnect {
+                options,
+                connected_draft,
+            } => {
+                let mut recent_drafts = app.recent_drafts.clone();
+                if let Some(draft) = connected_draft.as_ref() {
+                    recent_drafts.record_success(draft);
                 }
-                Err(err) => {
-                    app.dashboard
-                        .record_error(format!("Failed to connect to selected profile: {err}"));
+                match connect_shell_state(*options, recent_drafts).await {
+                    Ok((next_app, next_controller)) => {
+                        controller.shutdown();
+                        app = next_app;
+                        controller = next_controller;
+                        let target = app.dashboard.connection_target.clone();
+                        app.dashboard
+                            .record_info(format!("Connected UI client to {target}"));
+                    }
+                    Err(err) => {
+                        app.dashboard
+                            .record_error(format!("Failed to connect UI client: {err}"));
+                    }
                 }
-            },
+            }
         }
     }
 }
 
 async fn connect_shell_state(
     connection_options: ConnectionOptions,
+    recent_drafts: ConnectionDraftHistory,
 ) -> Result<(TuiApp, UiController)> {
     let spec = connection_options.to_spec()?;
     let (client, dashboard) = connect_dashboard(&spec).await?;
@@ -230,6 +249,7 @@ async fn connect_shell_state(
         connection_options,
         profile_catalog,
         active_profile,
+        recent_drafts,
     );
     let controller = spawn_controller(&tokio::runtime::Handle::current(), client);
     Ok((app, controller))
@@ -311,12 +331,23 @@ fn handle_key(
         KeyCode::Char('d') if app.tab == TabKind::Connections => app.start_delete_confirmation(),
         KeyCode::Char('s') if app.tab == TabKind::Connections => {
             if let Some(options) = app.selected_profile_options() {
-                return Ok(Some(LoopAction::Reconnect(options)));
+                return Ok(Some(LoopAction::Reconnect {
+                    options: Box::new(options),
+                    connected_draft: None,
+                }));
             }
         }
+        KeyCode::Char('[') if app.tab == TabKind::Connections => {
+            app.move_recent_draft_selection(-1)
+        }
+        KeyCode::Char(']') if app.tab == TabKind::Connections => app.move_recent_draft_selection(1),
+        KeyCode::Char('R') if app.tab == TabKind::Connections => app.load_selected_recent_draft(),
         KeyCode::Char('C') if app.tab == TabKind::Connections => {
             if let Some(options) = app.draft_connection_options() {
-                return Ok(Some(LoopAction::Reconnect(options)));
+                return Ok(Some(LoopAction::Reconnect {
+                    options: Box::new(options),
+                    connected_draft: Some(app.profile_draft.clone()),
+                }));
             }
         }
         KeyCode::Char('n') => {
@@ -342,7 +373,10 @@ fn handle_key(
         KeyCode::Enter => match app.tab {
             TabKind::Connections => {
                 if let Some(options) = app.selected_profile_options() {
-                    return Ok(Some(LoopAction::Reconnect(options)));
+                    return Ok(Some(LoopAction::Reconnect {
+                        options: Box::new(options),
+                        connected_draft: None,
+                    }));
                 }
             }
             TabKind::Agents => {
@@ -815,6 +849,7 @@ impl TuiApp {
         connection_options: ConnectionOptions,
         profile_catalog: Option<ConnectionProfileCatalog>,
         active_profile: Option<String>,
+        recent_drafts: ConnectionDraftHistory,
     ) -> Self {
         let profile_draft = connection_options
             .current_profile_draft()
@@ -826,6 +861,7 @@ impl TuiApp {
             active_profile,
             tab: TabKind::Connections,
             profile_index: 0,
+            recent_draft_index: 0,
             agent_index: 0,
             live_session_index: 0,
             session_index: 0,
@@ -833,6 +869,7 @@ impl TuiApp {
             channel_index: 0,
             event_index: 0,
             profile_draft,
+            recent_drafts,
             input_mode: None,
             input: String::new(),
             requested_session_detail: None,
@@ -854,6 +891,8 @@ impl TuiApp {
                 .map(|catalog| catalog.profiles().len())
                 .unwrap_or(0),
         );
+        self.recent_draft_index =
+            clamp_index(self.recent_draft_index, self.recent_drafts.drafts().len());
         self.agent_index = clamp_index(self.agent_index, self.dashboard.agents().len());
         self.live_session_index =
             clamp_index(self.live_session_index, self.dashboard.live_sessions.len());
@@ -913,6 +952,17 @@ impl TuiApp {
         }
     }
 
+    fn move_recent_draft_selection(&mut self, delta: isize) {
+        let len = self.recent_drafts.drafts().len();
+        if len == 0 {
+            self.dashboard
+                .record_error("No recent draft connections have been recorded yet");
+            return;
+        }
+        let index = self.recent_draft_index as isize + delta;
+        self.recent_draft_index = index.clamp(0, (len.saturating_sub(1)) as isize) as usize;
+    }
+
     fn active_connection_label(&self) -> String {
         if self.connection_options.suppress_profile_resolution {
             "Unsaved Draft".to_string()
@@ -932,6 +982,10 @@ impl TuiApp {
             .as_ref()?
             .profiles()
             .get(self.profile_index)
+    }
+
+    fn selected_recent_draft(&self) -> Option<&ConnectionProfileDraft> {
+        self.recent_drafts.drafts().get(self.recent_draft_index)
     }
 
     fn selected_profile_options(&self) -> Option<ConnectionOptions> {
@@ -986,6 +1040,17 @@ impl TuiApp {
                 "Failed to load connection profile into draft: {err}"
             )),
         }
+    }
+
+    fn load_selected_recent_draft(&mut self) {
+        let Some(draft) = self.selected_recent_draft().cloned() else {
+            self.dashboard
+                .record_error("No recent draft connection is currently selected");
+            return;
+        };
+        self.profile_draft = draft;
+        self.dashboard
+            .record_info("Loaded the selected recent draft into the profile draft");
     }
 
     fn profile_draft_validation(&self) -> ConnectionProfileDraftValidation {
@@ -1400,6 +1465,7 @@ impl TuiApp {
                         "auth": profile_auth_label(profile.auth.as_ref()),
                         "default": profile.is_default,
                     })),
+                    "selected_recent_draft": self.selected_recent_draft().map(|draft| draft.summary_label()),
                     "profile_draft": {
                         "kind": profile_kind_label(self.profile_draft.kind),
                         "target": self.profile_draft.target,
@@ -1417,12 +1483,22 @@ impl TuiApp {
                         "auth_error": validation.auth_error,
                         "target_notice": validation.target_notice,
                         "auth_notice": validation.auth_notice,
-                        },
                     },
-                    "available_profiles": self.profile_catalog.as_ref().map(|catalog| catalog.profiles().len()).unwrap_or(0),
-                    "last_error": self.dashboard.last_error.clone(),
-                    "last_info": self.dashboard.last_info.clone(),
-                    "recent_notices": self
+                },
+                "recent_drafts": self
+                    .recent_drafts
+                    .drafts()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, draft)| serde_json::json!({
+                        "selected": index == self.recent_draft_index,
+                        "summary": draft.summary_label(),
+                    }))
+                    .collect::<Vec<_>>(),
+                "available_profiles": self.profile_catalog.as_ref().map(|catalog| catalog.profiles().len()).unwrap_or(0),
+                "last_error": self.dashboard.last_error.clone(),
+                "last_info": self.dashboard.last_info.clone(),
+                "recent_notices": self
                         .dashboard
                         .recent_notices
                         .iter()
@@ -1484,7 +1560,7 @@ impl TuiApp {
         let shared = "1-7 switch views | Tab cycle | arrows/j/k move | r refresh | q quit";
         let scoped = match self.tab {
             TabKind::Connections => {
-                "Enter/s connect selected | C connect draft | v load current | b load selected | m/o cycle draft | t/g edit draft | a/A save | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
+                "Enter/s connect selected | C connect draft | R load recent | [/ ] pick recent | v load current | b load selected | m/o cycle draft | t/g edit draft | a/A save | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
             }
             TabKind::Agents => "n or Enter opens a live session for the selected agent",
             TabKind::LiveSessions => "p or Enter prompts | c cancel session | x kill session",

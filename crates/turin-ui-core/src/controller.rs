@@ -14,6 +14,7 @@ use turin_daemon_protocol::{EventEnvelope, RuntimeEventsSubscribeParams};
 use crate::{DashboardSnapshot, DashboardState};
 
 pub const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+pub const MAX_RECENT_CONNECTION_DRAFTS: usize = 5;
 
 #[derive(Debug, Clone)]
 pub struct ConnectionOptions {
@@ -101,6 +102,11 @@ pub struct ConnectionProfileDraftValidation {
     pub auth_notice: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConnectionDraftHistory {
+    drafts: Vec<ConnectionProfileDraft>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionProfileDraftAuthMode {
     None,
@@ -151,6 +157,61 @@ impl ConnectionProfileDraft {
             },
         }
     }
+
+    pub fn display_target(&self) -> String {
+        let target = self.target.trim();
+        match self.kind {
+            ConnectionProfileKind::LocalConfig => {
+                if target.is_empty() {
+                    "turin.toml".to_string()
+                } else {
+                    target.to_string()
+                }
+            }
+            ConnectionProfileKind::LocalEndpoint | ConnectionProfileKind::Remote => {
+                target.to_string()
+            }
+        }
+    }
+
+    pub fn auth_summary(&self) -> String {
+        let auth_value = self.auth_value.trim();
+        match self.auth_mode {
+            ConnectionProfileDraftAuthMode::None => "none".to_string(),
+            ConnectionProfileDraftAuthMode::TokenEnv => {
+                if auth_value.is_empty() {
+                    "env:<unset>".to_string()
+                } else {
+                    format!("env:{auth_value}")
+                }
+            }
+            ConnectionProfileDraftAuthMode::InlineToken => "inline token".to_string(),
+        }
+    }
+
+    pub fn summary_label(&self) -> String {
+        format!(
+            "{} [{} | {}]",
+            self.display_target(),
+            profile_kind_label(self.kind),
+            self.auth_summary()
+        )
+    }
+
+    fn canonicalized(&self) -> Self {
+        StoredConnectionProfile::from_draft(self)
+            .map(|profile| profile.to_draft())
+            .unwrap_or_else(|_| {
+                let mut draft = self.clone();
+                draft.target = draft.target.trim().to_string();
+                draft.auth_value = draft.auth_value.trim().to_string();
+                if draft.kind != ConnectionProfileKind::Remote {
+                    draft.auth_mode = ConnectionProfileDraftAuthMode::None;
+                    draft.auth_value.clear();
+                }
+                draft
+            })
+    }
 }
 
 impl ConnectionProfileDraftValidation {
@@ -179,6 +240,37 @@ impl ConnectionProfileDraftValidation {
         } else {
             parts.join(" ")
         }
+    }
+}
+
+impl ConnectionDraftHistory {
+    pub fn record_success(&mut self, draft: &ConnectionProfileDraft) {
+        let draft = draft.canonicalized();
+        self.drafts.retain(|existing| *existing != draft);
+        self.drafts.insert(0, draft);
+        if self.drafts.len() > MAX_RECENT_CONNECTION_DRAFTS {
+            self.drafts.truncate(MAX_RECENT_CONNECTION_DRAFTS);
+        }
+    }
+
+    pub fn drafts(&self) -> &[ConnectionProfileDraft] {
+        &self.drafts
+    }
+
+    pub fn latest(&self) -> Option<&ConnectionProfileDraft> {
+        self.drafts.first()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.drafts.is_empty()
+    }
+}
+
+fn profile_kind_label(kind: ConnectionProfileKind) -> &'static str {
+    match kind {
+        ConnectionProfileKind::LocalConfig => "local-config",
+        ConnectionProfileKind::LocalEndpoint => "local-endpoint",
+        ConnectionProfileKind::Remote => "remote",
     }
 }
 
@@ -1415,6 +1507,55 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
         assert_eq!(
             validation.target_notice.as_deref(),
             Some("Blank config path will default to turin.toml")
+        );
+    }
+
+    #[test]
+    fn recent_connection_drafts_are_deduped_and_bounded() {
+        let mut history = ConnectionDraftHistory::default();
+        let remote = ConnectionProfileDraft {
+            kind: ConnectionProfileKind::Remote,
+            target: "https://turin.example.com".to_string(),
+            auth_mode: ConnectionProfileDraftAuthMode::TokenEnv,
+            auth_value: "TURIN_REMOTE_TOKEN".to_string(),
+        };
+
+        history.record_success(&ConnectionProfileDraft {
+            kind: ConnectionProfileKind::LocalConfig,
+            target: String::new(),
+            auth_mode: ConnectionProfileDraftAuthMode::None,
+            auth_value: String::new(),
+        });
+        history.record_success(&ConnectionProfileDraft {
+            kind: ConnectionProfileKind::LocalEndpoint,
+            target: ".turin/daemon.sock".to_string(),
+            auth_mode: ConnectionProfileDraftAuthMode::None,
+            auth_value: String::new(),
+        });
+        history.record_success(&remote);
+        history.record_success(&ConnectionProfileDraft {
+            kind: ConnectionProfileKind::Remote,
+            target: "https://turin-backup.example.com".to_string(),
+            auth_mode: ConnectionProfileDraftAuthMode::InlineToken,
+            auth_value: "secret".to_string(),
+        });
+        history.record_success(&ConnectionProfileDraft {
+            kind: ConnectionProfileKind::LocalConfig,
+            target: "turin-stage.toml".to_string(),
+            auth_mode: ConnectionProfileDraftAuthMode::None,
+            auth_value: String::new(),
+        });
+        history.record_success(&remote);
+
+        assert_eq!(history.drafts().len(), MAX_RECENT_CONNECTION_DRAFTS);
+        assert_eq!(history.latest(), Some(&remote));
+        assert_eq!(
+            history
+                .drafts()
+                .iter()
+                .filter(|draft| draft.target == "https://turin.example.com")
+                .count(),
+            1
         );
     }
 }

@@ -12,10 +12,10 @@ use turin_control_client::{
 };
 use turin_daemon_protocol::EventEnvelope;
 use turin_ui_core::{
-    ConnectionOptions, ConnectionProfileAuth, ConnectionProfileCatalog, ConnectionProfileDraft,
-    ConnectionProfileDraftAuthMode, ConnectionProfileDraftValidation, ConnectionProfileKind,
-    ConnectionProfileSummary, DashboardFreshness, DashboardNoticeLevel, DashboardState,
-    OperatorCommand, UiController, UiUpdate, connect_dashboard, spawn_controller,
+    ConnectionDraftHistory, ConnectionOptions, ConnectionProfileAuth, ConnectionProfileCatalog,
+    ConnectionProfileDraft, ConnectionProfileDraftAuthMode, ConnectionProfileDraftValidation,
+    ConnectionProfileKind, ConnectionProfileSummary, DashboardFreshness, DashboardNoticeLevel,
+    DashboardState, OperatorCommand, UiController, UiUpdate, connect_dashboard, spawn_controller,
 };
 
 #[derive(Parser, Debug)]
@@ -139,6 +139,7 @@ struct TurinDesktopApp {
     active_profile: Option<String>,
     tab: TabKind,
     profile_index: usize,
+    recent_draft_index: usize,
     agent_index: usize,
     live_session_index: usize,
     session_index: usize,
@@ -147,6 +148,7 @@ struct TurinDesktopApp {
     event_index: usize,
     profile_name_input: String,
     profile_draft: ConnectionProfileDraft,
+    recent_drafts: ConnectionDraftHistory,
     save_profile_as_default: bool,
     pending_delete_profile: Option<String>,
     prompt_input: String,
@@ -175,6 +177,7 @@ impl TurinDesktopApp {
             active_profile,
             tab: TabKind::Connections,
             profile_index: 0,
+            recent_draft_index: 0,
             agent_index: 0,
             live_session_index: 0,
             session_index: 0,
@@ -183,6 +186,7 @@ impl TurinDesktopApp {
             event_index: 0,
             profile_name_input,
             profile_draft,
+            recent_drafts: ConnectionDraftHistory::default(),
             save_profile_as_default: false,
             pending_delete_profile: None,
             prompt_input: String::new(),
@@ -204,6 +208,8 @@ impl TurinDesktopApp {
                 .map(|catalog| catalog.profiles().len())
                 .unwrap_or(0),
         );
+        self.recent_draft_index =
+            clamp_index(self.recent_draft_index, self.recent_drafts.drafts().len());
         self.agent_index = clamp_index(self.agent_index, self.dashboard.agents().len());
         self.live_session_index =
             clamp_index(self.live_session_index, self.dashboard.live_sessions.len());
@@ -237,6 +243,37 @@ impl TurinDesktopApp {
             self.profile_index = index;
         }
         self.pending_delete_profile = None;
+    }
+
+    fn selected_recent_draft(&self) -> Option<&ConnectionProfileDraft> {
+        self.recent_drafts.drafts().get(self.recent_draft_index)
+    }
+
+    fn load_selected_recent_draft(&mut self) {
+        let Some(draft) = self.selected_recent_draft().cloned() else {
+            self.dashboard
+                .record_error("No recent draft connection is currently selected");
+            return;
+        };
+        self.profile_draft = draft;
+        self.profile_name_input.clear();
+        self.pending_delete_profile = None;
+        self.dashboard
+            .record_info("Loaded the selected recent draft into the editor");
+    }
+
+    fn load_latest_recent_draft(&mut self) {
+        let Some(draft) = self.recent_drafts.latest().cloned() else {
+            self.dashboard
+                .record_error("No recent draft connections have been recorded yet");
+            return;
+        };
+        self.recent_draft_index = 0;
+        self.profile_draft = draft;
+        self.profile_name_input.clear();
+        self.pending_delete_profile = None;
+        self.dashboard
+            .record_info("Loaded the latest successful draft connection into the editor");
     }
 
     fn profile_name_for_save(&self) -> Option<String> {
@@ -320,12 +357,12 @@ impl TurinDesktopApp {
     }
 
     fn reconnect_current(&mut self) {
-        self.switch_connection(self.connection_options.clone());
+        self.switch_connection(self.connection_options.clone(), None);
     }
 
     fn connect_selected_profile(&mut self) {
         if let Some(options) = self.selected_profile_options() {
-            self.switch_connection(options);
+            self.switch_connection(options, None);
         } else {
             self.dashboard
                 .record_error("No connection profile is currently selected");
@@ -346,7 +383,7 @@ impl TurinDesktopApp {
             .connection_options
             .connection_options_for_draft(&self.profile_draft)
         {
-            Ok(options) => self.switch_connection(options),
+            Ok(options) => self.switch_connection(options, Some(self.profile_draft.clone())),
             Err(err) => self
                 .dashboard
                 .record_error(format!("Failed to build connection from draft: {err}")),
@@ -527,7 +564,11 @@ impl TurinDesktopApp {
         }
     }
 
-    fn switch_connection(&mut self, connection_options: ConnectionOptions) {
+    fn switch_connection(
+        &mut self,
+        connection_options: ConnectionOptions,
+        connected_draft: Option<ConnectionProfileDraft>,
+    ) {
         let spec = match connection_options.to_spec() {
             Ok(spec) => spec,
             Err(err) => {
@@ -544,6 +585,10 @@ impl TurinDesktopApp {
                 self.connection_options = connection_options.clone();
                 self.active_profile = connection_options.resolved_profile_name().ok().flatten();
                 self.profile_catalog = connection_options.load_profiles().ok().flatten();
+                if let Some(draft) = connected_draft.as_ref() {
+                    self.recent_drafts.record_success(draft);
+                    self.recent_draft_index = 0;
+                }
                 self.dashboard = dashboard;
                 self.profile_name_input = self.active_profile.clone().unwrap_or_default();
                 self.profile_draft = self
@@ -740,6 +785,7 @@ impl TurinDesktopApp {
             .as_ref()
             .map(|catalog| catalog.profiles().to_vec())
             .unwrap_or_default();
+        let recent_drafts = self.recent_drafts.drafts().to_vec();
         let selected = self.selected_profile().cloned();
         let profiles_source = self.connection_options.profiles_path();
         let profile_name_hint = selected
@@ -789,10 +835,37 @@ impl TurinDesktopApp {
                     if ui.button("Load Selected").clicked() {
                         self.load_selected_profile_into_editor();
                     }
+                    if ui.button("Load Latest Recent").clicked() {
+                        self.load_latest_recent_draft();
+                    }
                     if ui.button("New Draft").clicked() {
                         self.reset_profile_editor();
                     }
                 });
+                ui.add_space(8.0);
+                ui.label(RichText::new("Recent Drafts").strong());
+                ui.add_space(4.0);
+                if recent_drafts.is_empty() {
+                    ui.label("No successful draft connections yet.");
+                } else {
+                    ScrollArea::vertical().max_height(132.0).show(ui, |ui| {
+                        for (index, draft) in recent_drafts.iter().enumerate() {
+                            if ui
+                                .selectable_label(
+                                    index == self.recent_draft_index,
+                                    draft.summary_label(),
+                                )
+                                .clicked()
+                            {
+                                self.recent_draft_index = index;
+                            }
+                        }
+                    });
+                    ui.add_space(6.0);
+                    if ui.button("Load Selected Recent").clicked() {
+                        self.load_selected_recent_draft();
+                    }
+                }
                 ui.add_space(6.0);
                 ui.add(
                     TextEdit::singleline(&mut self.profile_name_input)
@@ -1000,6 +1073,7 @@ impl TurinDesktopApp {
                 detail_kv(ui, "Active Profile", self.active_connection_label());
                 detail_kv(ui, "Profiles File", profiles_source.display().to_string());
                 detail_kv(ui, "Available Profiles", profiles.len().to_string());
+                detail_kv(ui, "Recent Drafts", recent_drafts.len().to_string());
                 if let Some(health) = self.dashboard.health.as_ref() {
                     detail_kv(ui, "Transport", health.transport.clone());
                     detail_kv(ui, "Wire Format", health.wire_format.clone());
@@ -1069,6 +1143,9 @@ impl TurinDesktopApp {
                     },
                 );
                 detail_kv(ui, "Draft Summary", draft_validation.summary());
+                if let Some(draft) = self.selected_recent_draft() {
+                    detail_kv(ui, "Recent Draft Selection", draft.summary_label());
+                }
 
                 if !self.dashboard.recent_notices.is_empty() {
                     ui.add_space(12.0);
