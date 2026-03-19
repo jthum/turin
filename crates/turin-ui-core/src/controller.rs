@@ -24,6 +24,7 @@ pub struct ConnectionOptions {
     pub auth_token_env: Option<String>,
     pub profile: Option<String>,
     pub profiles_file: Option<PathBuf>,
+    pub suppress_profile_resolution: bool,
 }
 
 #[derive(Debug)]
@@ -217,6 +218,9 @@ impl ConnectionOptions {
     }
 
     pub fn resolved_profile_name(&self) -> Result<Option<String>> {
+        if self.suppress_profile_resolution {
+            return Ok(self.profile.clone());
+        }
         if self.profile.is_none() && self.profiles_file.is_none() {
             return Ok(None);
         }
@@ -259,12 +263,31 @@ impl ConnectionOptions {
             auth_token_env: resolved.auth_token_env,
             profile: None,
             profiles_file: Some(self.profiles_path()),
+            suppress_profile_resolution: self.suppress_profile_resolution,
         })
     }
 
     pub fn current_profile_draft(&self) -> Result<ConnectionProfileDraft> {
         let materialized = self.materialized()?;
         Ok(StoredConnectionProfile::from_options(&materialized).to_draft())
+    }
+
+    pub fn connection_options_for_draft(&self, draft: &ConnectionProfileDraft) -> Result<Self> {
+        let profile = StoredConnectionProfile::from_draft(draft)?;
+        Ok(Self {
+            config_path: profile.config_path,
+            endpoint: profile.endpoint,
+            remote_url: profile.remote_url,
+            auth_token: profile.auth_token,
+            auth_token_env: profile.auth_token_env,
+            profile: None,
+            profiles_file: Some(self.profiles_path()),
+            suppress_profile_resolution: true,
+        })
+    }
+
+    pub fn draft_to_spec(&self, draft: &ConnectionProfileDraft) -> Result<ConnectionSpec> {
+        self.connection_options_for_draft(draft)?.to_spec()
     }
 
     pub fn load_profile_draft(&self, name: &str) -> Result<ConnectionProfileDraft> {
@@ -411,6 +434,9 @@ impl ConnectionOptions {
         if self.profile.is_none() && self.profiles_file.is_none() {
             return Ok(self.clone());
         }
+        if self.suppress_profile_resolution {
+            return Ok(self.clone());
+        }
 
         let profiles_path = self.profiles_path();
         let profiles = ConnectionProfiles::load(&profiles_path)?;
@@ -449,6 +475,7 @@ impl ConnectionOptions {
                 .or_else(|| profile.auth_token_env.clone()),
             profile: Some(profile_name),
             profiles_file: Some(profiles_path),
+            suppress_profile_resolution: false,
         })
     }
 
@@ -607,6 +634,7 @@ impl ConnectionProfileCatalog {
                 auth_token_env: None,
                 profile: Some(name.to_string()),
                 profiles_file: Some(self.source_path.clone()),
+                suppress_profile_resolution: false,
             })
     }
 
@@ -1095,6 +1123,7 @@ mod tests {
             auth_token_env: None,
             profile: None,
             profiles_file: None,
+            suppress_profile_resolution: false,
         };
 
         match options.to_spec().expect("spec") {
@@ -1115,6 +1144,7 @@ mod tests {
             auth_token_env: None,
             profile: None,
             profiles_file: None,
+            suppress_profile_resolution: false,
         };
 
         let err = options.to_spec().expect_err("missing auth should error");
@@ -1145,6 +1175,7 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
             auth_token_env: None,
             profile: Some("lab".to_string()),
             profiles_file: Some(temp.path().to_path_buf()),
+            suppress_profile_resolution: false,
         };
 
         match options.to_spec().expect("spec") {
@@ -1172,6 +1203,7 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
             auth_token_env: Some("TURIN_REMOTE_TOKEN".to_string()),
             profile: None,
             profiles_file: Some(profiles_path.clone()),
+            suppress_profile_resolution: false,
         };
 
         let catalog = remote
@@ -1188,6 +1220,7 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
             auth_token_env: None,
             profile: None,
             profiles_file: Some(profiles_path.clone()),
+            suppress_profile_resolution: false,
         };
 
         let catalog = local
@@ -1230,6 +1263,7 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
             auth_token_env: None,
             profile: None,
             profiles_file: Some(profiles_path.clone()),
+            suppress_profile_resolution: false,
         };
 
         let duplicated = options
@@ -1263,6 +1297,7 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
             auth_token_env: None,
             profile: None,
             profiles_file: Some(profiles_path),
+            suppress_profile_resolution: false,
         };
 
         let draft = ConnectionProfileDraft {
@@ -1278,6 +1313,54 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
         let loaded = options.load_profile_draft("lab").expect("load draft");
 
         assert_eq!(loaded, draft);
+    }
+
+    #[test]
+    fn connection_options_can_materialize_and_resolve_remote_drafts() {
+        let options = ConnectionOptions {
+            config_path: Some(PathBuf::from("turin.toml")),
+            endpoint: None,
+            remote_url: None,
+            auth_token: None,
+            auth_token_env: None,
+            profile: Some("ignored".to_string()),
+            profiles_file: Some(PathBuf::from("ui-profiles.toml")),
+            suppress_profile_resolution: false,
+        };
+        let draft = ConnectionProfileDraft {
+            kind: ConnectionProfileKind::Remote,
+            target: "https://turin.example.com".to_string(),
+            auth_mode: ConnectionProfileDraftAuthMode::TokenEnv,
+            auth_value: "TURIN_REMOTE_TOKEN".to_string(),
+        };
+
+        let materialized = options
+            .connection_options_for_draft(&draft)
+            .expect("materialize draft");
+        assert_eq!(
+            materialized.remote_url.as_deref(),
+            Some("https://turin.example.com")
+        );
+        assert_eq!(
+            materialized.auth_token_env.as_deref(),
+            Some("TURIN_REMOTE_TOKEN")
+        );
+        assert!(materialized.profile.is_none());
+        assert_eq!(
+            materialized.profiles_file.as_deref(),
+            Some(Path::new("ui-profiles.toml"))
+        );
+
+        match options.draft_to_spec(&draft).expect("draft spec") {
+            ConnectionSpec::RemoteEnv {
+                base_url,
+                auth_token_env,
+            } => {
+                assert_eq!(base_url, "https://turin.example.com");
+                assert_eq!(auth_token_env, "TURIN_REMOTE_TOKEN");
+            }
+            other => panic!("unexpected spec: {other:?}"),
+        }
     }
 
     #[test]

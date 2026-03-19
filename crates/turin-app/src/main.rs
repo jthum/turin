@@ -116,6 +116,7 @@ fn connection_options(args: &Args) -> ConnectionOptions {
         auth_token_env: args.auth_token_env.clone(),
         profile: args.profile.clone(),
         profiles_file: args.profiles_file.clone(),
+        suppress_profile_resolution: false,
     }
 }
 
@@ -328,6 +329,27 @@ impl TurinDesktopApp {
         } else {
             self.dashboard
                 .record_error("No connection profile is currently selected");
+        }
+    }
+
+    fn connect_profile_draft(&mut self) {
+        let validation = self.profile_draft_validation();
+        if !validation.is_valid() {
+            self.dashboard.record_error(format!(
+                "Cannot connect invalid connection profile draft: {}",
+                validation.summary()
+            ));
+            return;
+        }
+
+        match self
+            .connection_options
+            .connection_options_for_draft(&self.profile_draft)
+        {
+            Ok(options) => self.switch_connection(options),
+            Err(err) => self
+                .dashboard
+                .record_error(format!("Failed to build connection from draft: {err}")),
         }
     }
 
@@ -601,6 +623,16 @@ impl TurinDesktopApp {
             .and_then(|session_id| self.dashboard.session_detail(session_id))
     }
 
+    fn active_connection_label(&self) -> String {
+        if self.connection_options.suppress_profile_resolution {
+            "Unsaved Draft".to_string()
+        } else {
+            self.active_profile
+                .clone()
+                .unwrap_or_else(|| "Direct CLI/config".to_string())
+        }
+    }
+
     fn current_detail_session_id(&self) -> Option<String> {
         match self.tab {
             TabKind::LiveSessions => self
@@ -862,6 +894,15 @@ impl TurinDesktopApp {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui
+                        .add_enabled(
+                            draft_validation.is_valid(),
+                            egui::Button::new("Connect Draft"),
+                        )
+                        .clicked()
+                    {
+                        self.connect_profile_draft();
+                    }
+                    if ui
                         .add_enabled(draft_validation.is_valid(), egui::Button::new("Save Draft"))
                         .clicked()
                     {
@@ -956,13 +997,7 @@ impl TurinDesktopApp {
                         self.dashboard.last_refresh_latency_label()
                     ),
                 );
-                detail_kv(
-                    ui,
-                    "Active Profile",
-                    self.active_profile
-                        .clone()
-                        .unwrap_or_else(|| "Direct CLI/config".to_string()),
-                );
+                detail_kv(ui, "Active Profile", self.active_connection_label());
                 detail_kv(ui, "Profiles File", profiles_source.display().to_string());
                 detail_kv(ui, "Available Profiles", profiles.len().to_string());
                 if let Some(health) = self.dashboard.health.as_ref() {
@@ -1517,14 +1552,12 @@ impl eframe::App for TurinDesktopApp {
                     RichText::new(self.dashboard.connection_target.clone())
                         .color(Color32::from_rgb(201, 195, 187)),
                 );
-                if let Some(profile) = &self.active_profile {
-                    ui.add_space(12.0);
-                    ui.label(
-                        RichText::new(format!("Profile {profile}"))
-                            .color(Color32::from_rgb(151, 214, 255))
-                            .strong(),
-                    );
-                }
+                ui.add_space(12.0);
+                ui.label(
+                    RichText::new(format!("Source {}", self.active_connection_label()))
+                        .color(Color32::from_rgb(151, 214, 255))
+                        .strong(),
+                );
                 ui.add_space(12.0);
                 ui.label(
                     RichText::new(format!(

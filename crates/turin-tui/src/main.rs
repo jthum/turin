@@ -183,6 +183,7 @@ fn connection_options(args: &Args) -> ConnectionOptions {
         auth_token_env: args.auth_token_env.clone(),
         profile: args.profile.clone(),
         profiles_file: args.profiles_file.clone(),
+        suppress_profile_resolution: false,
     }
 }
 
@@ -310,6 +311,11 @@ fn handle_key(
         KeyCode::Char('d') if app.tab == TabKind::Connections => app.start_delete_confirmation(),
         KeyCode::Char('s') if app.tab == TabKind::Connections => {
             if let Some(options) = app.selected_profile_options() {
+                return Ok(Some(LoopAction::Reconnect(options)));
+            }
+        }
+        KeyCode::Char('C') if app.tab == TabKind::Connections => {
+            if let Some(options) = app.draft_connection_options() {
                 return Ok(Some(LoopAction::Reconnect(options)));
             }
         }
@@ -561,11 +567,7 @@ fn render_banner(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
         ]),
         Line::from(vec![
             Span::styled("Profile: ", Style::default().fg(Color::Gray)),
-            Span::raw(
-                app.active_profile
-                    .clone()
-                    .unwrap_or_else(|| "Direct CLI/config".to_string()),
-            ),
+            Span::raw(app.active_connection_label()),
             Span::styled("  Sync: ", Style::default().fg(Color::Gray)),
             Span::styled(
                 format!(
@@ -911,6 +913,16 @@ impl TuiApp {
         }
     }
 
+    fn active_connection_label(&self) -> String {
+        if self.connection_options.suppress_profile_resolution {
+            "Unsaved Draft".to_string()
+        } else {
+            self.active_profile
+                .clone()
+                .unwrap_or_else(|| "Direct CLI/config".to_string())
+        }
+    }
+
     fn selected_agent(&self) -> Option<&AgentSummary> {
         self.dashboard.agents().get(self.agent_index)
     }
@@ -1054,6 +1066,29 @@ impl TuiApp {
             Err(err) => self
                 .dashboard
                 .record_error(format!("Failed to save connection profile: {err}")),
+        }
+    }
+
+    fn draft_connection_options(&mut self) -> Option<ConnectionOptions> {
+        let validation = self.profile_draft_validation();
+        if !validation.is_valid() {
+            self.dashboard.record_error(format!(
+                "Cannot connect invalid connection profile draft: {}",
+                validation.summary()
+            ));
+            return None;
+        }
+
+        match self
+            .connection_options
+            .connection_options_for_draft(&self.profile_draft)
+        {
+            Ok(options) => Some(options),
+            Err(err) => {
+                self.dashboard
+                    .record_error(format!("Failed to build connection from draft: {err}"));
+                None
+            }
         }
     }
 
@@ -1344,7 +1379,7 @@ impl TuiApp {
                     "current_connection": {
                         "kind": connection_kind_label(self.dashboard.connection_kind),
                         "target": self.dashboard.connection_target,
-                        "active_profile": self.active_profile.as_deref().unwrap_or("Direct CLI/config"),
+                        "active_profile": self.active_connection_label(),
                         "profiles_source": self.connection_options.profiles_path().display().to_string(),
                         "snapshot_freshness": freshness_label(self.dashboard.snapshot_freshness()),
                         "last_snapshot": self.dashboard.snapshot_age_label(),
@@ -1374,13 +1409,14 @@ impl TuiApp {
                         } else {
                             self.profile_draft.auth_value.as_str()
                         },
-                        "validation": {
-                            "status": if validation.is_valid() { "valid" } else { "invalid" },
-                            "summary": validation.summary(),
-                            "target_error": validation.target_error,
-                            "auth_error": validation.auth_error,
-                            "target_notice": validation.target_notice,
-                            "auth_notice": validation.auth_notice,
+                    "validation": {
+                        "status": if validation.is_valid() { "valid" } else { "invalid" },
+                        "connect_ready": validation.is_valid(),
+                        "summary": validation.summary(),
+                        "target_error": validation.target_error,
+                        "auth_error": validation.auth_error,
+                        "target_notice": validation.target_notice,
+                        "auth_notice": validation.auth_notice,
                         },
                     },
                     "available_profiles": self.profile_catalog.as_ref().map(|catalog| catalog.profiles().len()).unwrap_or(0),
@@ -1448,7 +1484,7 @@ impl TuiApp {
         let shared = "1-7 switch views | Tab cycle | arrows/j/k move | r refresh | q quit";
         let scoped = match self.tab {
             TabKind::Connections => {
-                "Enter/s connect | v load current | b load selected | m/o cycle draft | t/g edit draft | a/A save | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
+                "Enter/s connect selected | C connect draft | v load current | b load selected | m/o cycle draft | t/g edit draft | a/A save | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
             }
             TabKind::Agents => "n or Enter opens a live session for the selected agent",
             TabKind::LiveSessions => "p or Enter prompts | c cancel session | x kill session",
