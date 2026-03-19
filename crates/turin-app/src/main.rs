@@ -9,7 +9,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use turin_control_client::{
     AgentRuntime, AgentSummary, ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession,
-    SessionSummary, TaskStatus,
+    SessionDetail, SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::EventEnvelope;
 use turin_ui_core::{
@@ -20,8 +20,8 @@ use turin_ui_core::{
 #[derive(Parser, Debug)]
 #[command(name = "turin-app", version, about)]
 struct Args {
-    #[arg(long, default_value = "turin.toml")]
-    config: PathBuf,
+    #[arg(long)]
+    config: Option<PathBuf>,
     #[arg(long)]
     endpoint: Option<PathBuf>,
     #[arg(long)]
@@ -30,6 +30,10 @@ struct Args {
     auth_token: Option<String>,
     #[arg(long)]
     auth_token_env: Option<String>,
+    #[arg(long)]
+    profile: Option<String>,
+    #[arg(long)]
+    profiles_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +105,8 @@ fn connection_options(args: &Args) -> ConnectionOptions {
         remote_url: args.remote_url.clone(),
         auth_token: args.auth_token.clone(),
         auth_token_env: args.auth_token_env.clone(),
+        profile: args.profile.clone(),
+        profiles_file: args.profiles_file.clone(),
     }
 }
 
@@ -127,6 +133,7 @@ struct TurinDesktopApp {
     channel_index: usize,
     event_index: usize,
     prompt_input: String,
+    requested_session_detail: Option<String>,
     _runtime: Arc<Runtime>,
 }
 
@@ -149,6 +156,7 @@ impl TurinDesktopApp {
             channel_index: 0,
             event_index: 0,
             prompt_input: String::new(),
+            requested_session_detail: None,
             _runtime: runtime,
         }
     }
@@ -225,6 +233,41 @@ impl TurinDesktopApp {
             .rev()
             .nth(self.event_index)
             .cloned()
+    }
+
+    fn selected_session_detail(&self) -> Option<&SessionDetail> {
+        self.current_detail_session_id()
+            .as_deref()
+            .and_then(|session_id| self.dashboard.session_detail(session_id))
+    }
+
+    fn current_detail_session_id(&self) -> Option<String> {
+        match self.tab {
+            TabKind::LiveSessions => self
+                .selected_live_session()
+                .map(|session| session.session_id),
+            TabKind::Sessions => self.selected_session().map(|session| session.session_id),
+            _ => None,
+        }
+    }
+
+    fn ensure_session_detail_loaded(&mut self) {
+        let Some(session_id) = self.current_detail_session_id() else {
+            self.requested_session_detail = None;
+            return;
+        };
+
+        if self.dashboard.session_detail(&session_id).is_some() {
+            self.requested_session_detail = Some(session_id);
+            return;
+        }
+
+        if self.requested_session_detail.as_deref() == Some(session_id.as_str()) {
+            return;
+        }
+
+        self.requested_session_detail = Some(session_id.clone());
+        self.send_command(OperatorCommand::LoadSessionDetail { session_id });
     }
 
     fn render_runtime_overview(&self, ui: &mut egui::Ui) {
@@ -365,6 +408,7 @@ impl TurinDesktopApp {
     fn render_live_sessions_tab(&mut self, ui: &mut egui::Ui) {
         let live_sessions = self.dashboard.live_sessions.clone();
         let selected = self.selected_live_session();
+        let selected_detail = self.selected_session_detail().cloned();
 
         ui.columns(2, |columns| {
             columns[0].group(|ui| {
@@ -443,6 +487,9 @@ impl TurinDesktopApp {
                             });
                         }
                     });
+
+                    ui.add_space(12.0);
+                    render_session_detail_panel(ui, selected_detail.as_ref());
                 } else {
                     ui.label("No live sessions are running right now.");
                 }
@@ -453,6 +500,7 @@ impl TurinDesktopApp {
     fn render_sessions_tab(&mut self, ui: &mut egui::Ui) {
         let sessions = self.dashboard.sessions.clone();
         let selected = self.selected_session();
+        let selected_detail = self.selected_session_detail().cloned();
 
         ui.columns(2, |columns| {
             columns[0].group(|ui| {
@@ -499,6 +547,9 @@ impl TurinDesktopApp {
                         });
                         self.tab = TabKind::LiveSessions;
                     }
+
+                    ui.add_space(12.0);
+                    render_session_detail_panel(ui, selected_detail.as_ref());
                 } else {
                     ui.label("No persisted sessions found.");
                 }
@@ -707,6 +758,8 @@ impl eframe::App for TurinDesktopApp {
             self.apply_update(update);
         }
 
+        self.ensure_session_detail_loaded();
+
         ctx.request_repaint_after(Duration::from_millis(250));
 
         let ready = self
@@ -843,4 +896,57 @@ fn truncate_for_list(value: &str, max_chars: usize) -> String {
 
 fn yes_no(value: bool) -> &'static str {
     if value { "Yes" } else { "No" }
+}
+
+fn render_session_detail_panel(ui: &mut egui::Ui, detail: Option<&SessionDetail>) {
+    ui.label(RichText::new("Session Detail").strong());
+    ui.add_space(8.0);
+
+    let Some(detail) = detail else {
+        ui.label("Loading detailed transcript and tool history...");
+        return;
+    };
+
+    detail_kv(ui, "Messages", detail.messages.len().to_string());
+    detail_kv(ui, "Events", detail.events.len().to_string());
+    detail_kv(ui, "Tool Calls", detail.tool_executions.len().to_string());
+
+    ui.add_space(8.0);
+    ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
+        for message in detail.messages.iter().rev().take(8).rev() {
+            ui.group(|ui| {
+                ui.label(
+                    RichText::new(format!("{} · turn {}", message.role, message.turn_index))
+                        .strong()
+                        .color(Color32::from_rgb(142, 214, 255)),
+                );
+                ui.code(json_preview(&message.content, 360));
+            });
+            ui.add_space(6.0);
+        }
+
+        if !detail.tool_executions.is_empty() {
+            ui.label(RichText::new("Recent Tool Calls").strong());
+            ui.add_space(4.0);
+            for tool in detail.tool_executions.iter().rev().take(4).rev() {
+                ui.group(|ui| {
+                    ui.label(
+                        RichText::new(format!("{} · {}", tool.tool_name, tool.verdict))
+                            .strong()
+                            .color(Color32::from_rgb(255, 196, 107)),
+                    );
+                    ui.code(json_preview(&tool.args, 260));
+                    if let Some(output) = &tool.output {
+                        ui.code(json_preview(output, 260));
+                    }
+                });
+                ui.add_space(6.0);
+            }
+        }
+    });
+}
+
+fn json_preview(value: &serde_json::Value, max_chars: usize) -> String {
+    let rendered = serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".to_string());
+    truncate_for_list(&rendered, max_chars)
 }

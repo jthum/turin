@@ -1,8 +1,10 @@
+use std::collections::BTreeMap;
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use turin_control_client::{
     AgentSummary, ChannelSummary, ConnectionKind, ControlClient, ControlHealth, DaemonStatus,
-    LiveSession, SessionSummary, TaskStatus,
+    LiveSession, SessionDetail, SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::EventEnvelope;
 
@@ -20,6 +22,8 @@ pub struct DashboardState {
     pub live_sessions: Vec<LiveSession>,
     pub sessions: Vec<SessionSummary>,
     pub tasks: Vec<TaskStatus>,
+    #[serde(default)]
+    pub session_details: BTreeMap<String, SessionDetail>,
     pub recent_events: Vec<EventEnvelope>,
     pub last_error: Option<String>,
     pub last_info: Option<String>,
@@ -66,6 +70,7 @@ impl DashboardState {
             live_sessions: snapshot.live_sessions,
             sessions: snapshot.sessions,
             tasks: snapshot.tasks,
+            session_details: BTreeMap::new(),
             recent_events: Vec::new(),
             last_error: None,
             last_info: None,
@@ -89,6 +94,22 @@ impl DashboardState {
     }
 
     pub fn apply_snapshot(&mut self, snapshot: DashboardSnapshot) {
+        let mut retained_details = BTreeMap::new();
+        for session_id in snapshot
+            .live_sessions
+            .iter()
+            .map(|session| session.session_id.as_str())
+            .chain(
+                snapshot
+                    .sessions
+                    .iter()
+                    .map(|session| session.session_id.as_str()),
+            )
+        {
+            if let Some(detail) = self.session_details.remove(session_id) {
+                retained_details.insert(session_id.to_string(), detail);
+            }
+        }
         self.connection_kind = snapshot.connection_kind;
         self.connection_target = snapshot.connection_target;
         self.health = Some(snapshot.health);
@@ -96,16 +117,23 @@ impl DashboardState {
         self.live_sessions = snapshot.live_sessions;
         self.sessions = snapshot.sessions;
         self.tasks = snapshot.tasks;
+        self.session_details = retained_details;
         self.last_error = None;
     }
 
     pub fn apply_update(&mut self, update: UiUpdate) {
         match update {
             UiUpdate::Snapshot(snapshot) => self.apply_snapshot(*snapshot),
+            UiUpdate::SessionDetail(detail) => self.record_session_detail(*detail),
             UiUpdate::Event(event) => self.record_event(event),
             UiUpdate::Error(message) => self.record_error(message),
             UiUpdate::Info(message) => self.record_info(message),
         }
+    }
+
+    pub fn record_session_detail(&mut self, detail: SessionDetail) {
+        self.session_details
+            .insert(detail.session.session_id.clone(), detail);
     }
 
     pub fn record_event(&mut self, event: EventEnvelope) {
@@ -143,6 +171,10 @@ impl DashboardState {
             .as_ref()
             .map(|status| status.registry.channels.as_slice())
             .unwrap_or(&[])
+    }
+
+    pub fn session_detail(&self, session_id: &str) -> Option<&SessionDetail> {
+        self.session_details.get(session_id)
     }
 }
 

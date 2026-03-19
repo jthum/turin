@@ -28,8 +28,8 @@ use turin_ui_core::{
 #[derive(Parser, Debug)]
 #[command(name = "turin-tui", version, about)]
 struct Args {
-    #[arg(long, default_value = "turin.toml")]
-    config: PathBuf,
+    #[arg(long)]
+    config: Option<PathBuf>,
     #[arg(long)]
     endpoint: Option<PathBuf>,
     #[arg(long)]
@@ -38,6 +38,10 @@ struct Args {
     auth_token: Option<String>,
     #[arg(long)]
     auth_token_env: Option<String>,
+    #[arg(long)]
+    profile: Option<String>,
+    #[arg(long)]
+    profiles_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,6 +119,7 @@ struct TuiApp {
     event_index: usize,
     input_mode: Option<InputMode>,
     input: String,
+    requested_session_detail: Option<String>,
 }
 
 #[tokio::main]
@@ -148,6 +153,8 @@ fn connection_options(args: &Args) -> ConnectionOptions {
         remote_url: args.remote_url.clone(),
         auth_token: args.auth_token.clone(),
         auth_token_env: args.auth_token_env.clone(),
+        profile: args.profile.clone(),
+        profiles_file: args.profiles_file.clone(),
     }
 }
 
@@ -161,6 +168,8 @@ fn run_app(
         while let Ok(update) = update_rx.try_recv() {
             app.apply_update(update);
         }
+
+        app.ensure_session_detail_loaded(&command_tx)?;
 
         terminal.draw(|frame| render(frame, app))?;
 
@@ -517,6 +526,7 @@ impl TuiApp {
             event_index: 0,
             input_mode: None,
             input: String::new(),
+            requested_session_detail: None,
         };
         app.clamp_selection();
         app
@@ -713,11 +723,21 @@ impl TuiApp {
                 .unwrap_or_else(|| "No agents available.".to_string()),
             TabKind::LiveSessions => self
                 .selected_live_session()
-                .map(pretty_json)
+                .map(|session| {
+                    pretty_json(&serde_json::json!({
+                        "live_session": session,
+                        "detail": self.dashboard.session_detail(&session.session_id),
+                    }))
+                })
                 .unwrap_or_else(|| "No live sessions available.".to_string()),
             TabKind::Sessions => self
                 .selected_persisted_session()
-                .map(pretty_json)
+                .map(|session| {
+                    pretty_json(&serde_json::json!({
+                        "session": session,
+                        "detail": self.dashboard.session_detail(&session.session_id),
+                    }))
+                })
                 .unwrap_or_else(|| "No stored sessions available.".to_string()),
             TabKind::Tasks => self
                 .selected_task()
@@ -777,6 +797,43 @@ impl TuiApp {
             .iter()
             .rev()
             .nth(self.event_index)
+    }
+
+    fn current_detail_session_id(&self) -> Option<String> {
+        match self.tab {
+            TabKind::LiveSessions => self
+                .selected_live_session()
+                .map(|session| session.session_id.clone()),
+            TabKind::Sessions => self
+                .selected_persisted_session()
+                .map(|session| session.session_id.clone()),
+            _ => None,
+        }
+    }
+
+    fn ensure_session_detail_loaded(
+        &mut self,
+        command_tx: &mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
+        let Some(session_id) = self.current_detail_session_id() else {
+            self.requested_session_detail = None;
+            return Ok(());
+        };
+
+        if self.dashboard.session_detail(&session_id).is_some() {
+            self.requested_session_detail = Some(session_id);
+            return Ok(());
+        }
+
+        if self.requested_session_detail.as_deref() == Some(session_id.as_str()) {
+            return Ok(());
+        }
+
+        self.requested_session_detail = Some(session_id.clone());
+        send_command(
+            command_tx,
+            OperatorCommand::LoadSessionDetail { session_id },
+        )
     }
 }
 
