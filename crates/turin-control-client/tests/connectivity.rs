@@ -7,7 +7,7 @@ use tempfile::TempDir;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep};
 use turin::remote::{RemoteServeOptions, start as start_remote};
-use turin_control_client::{ConnectionSpec, ControlClient};
+use turin_control_client::{ConnectionKind, ConnectionSpec, ControlClient};
 use turin_daemon_protocol::{DaemonRequest, NoParams, RuntimeEventsSubscribeParams};
 
 struct DaemonHarness {
@@ -141,6 +141,50 @@ impl RemoteHarness {
     }
 }
 
+async fn assert_session_and_task_workflow(client: &ControlClient) -> Result<()> {
+    let opened = client.open_session("default", None).await?;
+    assert_eq!(opened.agent_id, "default");
+    assert!(!opened.session_id.is_empty());
+
+    let live_sessions = client.list_live_sessions().await?;
+    assert!(
+        live_sessions
+            .iter()
+            .any(|session| session.session_id == opened.session_id)
+    );
+
+    let submitted = client
+        .submit_task(
+            None,
+            Some(opened.session_id.clone()),
+            "hello from control client".to_string(),
+        )
+        .await?;
+    assert_eq!(submitted.agent_id, "default");
+    assert_eq!(submitted.state, "queued");
+
+    let waited = client.wait_task(&submitted.request_id, Some(5_000)).await?;
+    assert_eq!(waited.status.as_deref(), Some("success"));
+
+    let tasks = client.list_tasks().await?;
+    assert!(
+        tasks
+            .iter()
+            .any(|task| task.request_id == submitted.request_id)
+    );
+
+    let detail = client.get_session(&opened.session_id).await?;
+    assert_eq!(detail.session.session_id, opened.session_id);
+    assert!(
+        detail
+            .messages
+            .iter()
+            .any(|message| message.role == "assistant")
+    );
+
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn control_client_local_health_and_events_work() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
@@ -161,6 +205,7 @@ async fn control_client_local_health_and_events_work() -> Result<()> {
         .await?;
     let event = stream.next_event().await?;
     assert_eq!(event.event, "runtime.snapshot");
+    assert_session_and_task_workflow(&client).await?;
 
     daemon.stop().await
 }
@@ -177,16 +222,14 @@ async fn control_client_remote_health_and_events_work() -> Result<()> {
 
     let health = client.health().await?;
     assert!(health.ready);
-    assert_eq!(
-        health.connection_kind,
-        turin_control_client::ConnectionKind::Remote
-    );
+    assert_eq!(health.connection_kind, ConnectionKind::Remote);
 
     let mut stream = client
         .subscribe_managed(RuntimeEventsSubscribeParams::default())
         .await?;
     let event = stream.next_event().await?;
     assert_eq!(event.event, "runtime.snapshot");
+    assert_session_and_task_workflow(&client).await?;
 
     remote.stop().await?;
     daemon.stop().await

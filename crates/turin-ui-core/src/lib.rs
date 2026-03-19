@@ -1,19 +1,26 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use turin_control_client::{ConnectionKind, ControlClient, ControlHealth};
-use turin_daemon_protocol::{DaemonRequest, EventEnvelope, NoParams};
+use turin_control_client::{
+    AgentSummary, ChannelSummary, ConnectionKind, ControlClient, ControlHealth, DaemonStatus,
+    LiveSession, SessionSummary, TaskStatus,
+};
+use turin_daemon_protocol::EventEnvelope;
 
 const MAX_RECENT_EVENTS: usize = 64;
+const DEFAULT_SESSION_LIMIT: usize = 25;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardState {
     pub connection_kind: ConnectionKind,
     pub connection_target: String,
     pub health: Option<DashboardHealth>,
-    pub runtime_status: Option<Value>,
+    pub status: Option<DaemonStatus>,
+    pub live_sessions: Vec<LiveSession>,
+    pub sessions: Vec<SessionSummary>,
+    pub tasks: Vec<TaskStatus>,
     pub recent_events: Vec<EventEnvelope>,
     pub last_error: Option<String>,
+    pub last_info: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,7 +28,10 @@ pub struct DashboardSnapshot {
     pub connection_kind: ConnectionKind,
     pub connection_target: String,
     pub health: DashboardHealth,
-    pub runtime_status: Value,
+    pub status: DaemonStatus,
+    pub live_sessions: Vec<LiveSession>,
+    pub sessions: Vec<SessionSummary>,
+    pub tasks: Vec<TaskStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,39 +57,43 @@ impl DashboardState {
     pub async fn load(client: &ControlClient) -> Result<Self> {
         let snapshot = Self::snapshot(client).await?;
         Ok(Self {
-            connection_kind: client.kind(),
-            connection_target: client.target(),
+            connection_kind: snapshot.connection_kind,
+            connection_target: snapshot.connection_target,
             health: Some(snapshot.health),
-            runtime_status: Some(snapshot.runtime_status),
+            status: Some(snapshot.status),
+            live_sessions: snapshot.live_sessions,
+            sessions: snapshot.sessions,
+            tasks: snapshot.tasks,
             recent_events: Vec::new(),
             last_error: None,
+            last_info: None,
         })
     }
 
     pub async fn snapshot(client: &ControlClient) -> Result<DashboardSnapshot> {
-        let health = client.health().await?;
-        let status: Value = client
-            .request_ok(None, DaemonRequest::DaemonStatus(NoParams::default()))
-            .await?;
+        let (health, status) = client.health_and_status().await?;
+        let live_sessions = client.list_live_sessions().await?;
+        let sessions = client.list_sessions(DEFAULT_SESSION_LIMIT, 0).await?;
+        let tasks = client.list_tasks().await?;
         Ok(DashboardSnapshot {
             connection_kind: client.kind(),
             connection_target: client.target(),
             health: health.into(),
-            runtime_status: status,
+            status,
+            live_sessions,
+            sessions,
+            tasks,
         })
-    }
-
-    pub async fn refresh(&mut self, client: &ControlClient) -> Result<()> {
-        let snapshot = Self::snapshot(client).await?;
-        self.apply_snapshot(snapshot);
-        Ok(())
     }
 
     pub fn apply_snapshot(&mut self, snapshot: DashboardSnapshot) {
         self.connection_kind = snapshot.connection_kind;
         self.connection_target = snapshot.connection_target;
         self.health = Some(snapshot.health);
-        self.runtime_status = Some(snapshot.runtime_status);
+        self.status = Some(snapshot.status);
+        self.live_sessions = snapshot.live_sessions;
+        self.sessions = snapshot.sessions;
+        self.tasks = snapshot.tasks;
         self.last_error = None;
     }
 
@@ -95,11 +109,29 @@ impl DashboardState {
         self.last_error = Some(message.into());
     }
 
+    pub fn record_info(&mut self, message: impl Into<String>) {
+        self.last_info = Some(message.into());
+    }
+
     pub fn status_pretty_json(&self) -> String {
-        self.runtime_status
+        self.status
             .as_ref()
             .and_then(|value| serde_json::to_string_pretty(value).ok())
             .unwrap_or_else(|| "{}".to_string())
+    }
+
+    pub fn agents(&self) -> &[AgentSummary] {
+        self.status
+            .as_ref()
+            .map(|status| status.registry.agents.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn channels(&self) -> &[ChannelSummary] {
+        self.status
+            .as_ref()
+            .map(|status| status.registry.channels.as_slice())
+            .unwrap_or(&[])
     }
 }
 

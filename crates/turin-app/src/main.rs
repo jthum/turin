@@ -27,7 +27,7 @@ struct Args {
 }
 
 enum UiUpdate {
-    Snapshot(DashboardSnapshot),
+    Snapshot(Box<DashboardSnapshot>),
     Event(EventEnvelope),
     Error(String),
 }
@@ -134,7 +134,7 @@ fn spawn_refresh_task(
             interval.tick().await;
             match DashboardState::snapshot(&client).await {
                 Ok(snapshot) => {
-                    let _ = tx.send(UiUpdate::Snapshot(snapshot));
+                    let _ = tx.send(UiUpdate::Snapshot(Box::new(snapshot)));
                 }
                 Err(err) => {
                     let _ = tx.send(UiUpdate::Error(err.to_string()));
@@ -165,7 +165,7 @@ impl eframe::App for TurinDesktopApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         while let Ok(update) = self.rx.try_recv() {
             match update {
-                UiUpdate::Snapshot(snapshot) => self.dashboard.apply_snapshot(snapshot),
+                UiUpdate::Snapshot(snapshot) => self.dashboard.apply_snapshot(*snapshot),
                 UiUpdate::Event(event) => self.dashboard.record_event(event),
                 UiUpdate::Error(message) => self.dashboard.record_error(message),
             }
