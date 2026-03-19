@@ -54,6 +54,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
+        remote: Default::default(),
     };
 
     let mut kernel = Kernel::builder(config).build()?;

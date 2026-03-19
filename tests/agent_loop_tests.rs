@@ -155,6 +155,7 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
+        remote: Default::default(),
     };
 
     let mut kernel = Kernel::builder(config).build()?;
@@ -351,6 +352,7 @@ async fn test_harness_observation() -> Result<()> {
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
+        remote: Default::default(),
     };
 
     let mut kernel = Kernel::builder(config).build()?;
@@ -466,6 +468,7 @@ async fn test_nested_agent_spawning() -> Result<()> {
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
+        remote: Default::default(),
     };
 
     let mut kernel = Kernel::builder(config).build()?;
@@ -589,6 +592,7 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
+        remote: Default::default(),
     };
 
     let mut kernel = Kernel::builder(config).build()?;
@@ -677,6 +681,7 @@ async fn test_dynamic_mode_switching_stateless() -> Result<()> {
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
+        remote: Default::default(),
     };
 
     let mut kernel = Kernel::builder(config).build()?;
