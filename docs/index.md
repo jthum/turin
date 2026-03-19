@@ -9,6 +9,7 @@ This is the documentation landing page for Turin.
 - `docs/concepts/turin.md` — Turin philosophy and design framing (kernel vs harness vs inference)
 - `docs/operations/daemon.md` — daemon mode, filesystem-backed dynamic state, and control API surface
 - `docs/operations/remote.md` — authenticated HTTP/SSE/WebSocket bridge for remote daemon access
+- `docs/operations/ui-clients.md` — local/remote operator shells for the Turin daemon control plane
 - `docs/adr/index.md` — architecture decision records for the current runtime and daemon shape
 
 ## Sections

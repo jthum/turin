@@ -3,6 +3,7 @@
 Turin now has a local-first daemon mode for dynamic agent and harness management.
 
 For authenticated network access on top of the daemon, see `docs/operations/remote.md`.
+For operator shells on top of the same control surface, see `docs/operations/ui-clients.md`.
 
 The daemon is built around three rules:
 

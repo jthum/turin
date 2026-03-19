@@ -276,6 +276,32 @@ For local wrappers and desktop apps:
 
 See `docs/operations/daemon.md` for the daemon filesystem model, runtime behavior, and command surface.
 
+## Operator Clients
+
+Turin also ships two operator-facing daemon clients:
+
+- `turin-tui` — terminal UI for live sessions, tasks, channels, and events
+- `turin-app` — native desktop shell over the same shared control layer
+
+Both clients can connect either:
+
+- locally through the daemon endpoint resolved from `turin.toml`
+- remotely through `turin-remote`
+
+Examples:
+
+```bash
+target/release/turin-tui --config turin.toml
+target/release/turin-app --config turin.toml
+
+target/release/turin-tui --remote-url http://127.0.0.1:9324 --auth-token-env TURIN_REMOTE_TOKEN
+target/release/turin-app --profile lab
+```
+
+Shared connection profiles live in `ui-profiles.toml` by convention. A copyable example is included at `ui-profiles.toml.example`.
+
+See `docs/operations/ui-clients.md` for local/remote usage, profile files, and current UI scope.
+
 ## Architecture Notes
 
 For the key design decisions behind the current runtime and daemon shape, see `docs/adr/index.md`.
@@ -496,6 +522,7 @@ The library is exercised by `cargo test --test example_harness_examples`, so it 
 - `docs/guides/channels/telegram.md` — step-by-step Telegram channel setup
 - `docs/concepts/governance.md` — capability model, profiles, import scoping, grants
 - `docs/operations/remote.md` — authenticated remote bridge for HTTP + SSE/WebSocket daemon access
+- `docs/operations/ui-clients.md` — TUI/desktop operator clients and shared connection profiles
 - `docs/operations/testing.md` — local validation, test suite, and smoke workflows
 - `docs/operations/live-provider-testing.md` — live endpoint testing procedures
 
