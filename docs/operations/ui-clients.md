@@ -1,13 +1,16 @@
 # Turin UI Clients
 
-`turin-tui` and `turin-app` are operator-facing clients built on the same transport-agnostic control layer.
+`turin-tui` and `turin-app` are built on the same transport-agnostic control layer, but they are no longer shaped the same way.
+
+- `turin-tui` is now chat-first, with optional side panes for session navigation and live inspection.
+- `turin-app` is still the broader operator console.
 
 They can both talk to:
 
 - a local Turin daemon over the existing local IPC transport
 - a remote Turin daemon through `turin-remote`
 
-That means the same operator workflows work in both modes:
+That means the same core workflows work in both modes:
 
 - inspect agents, sessions, tasks, channels, and events
 - open live sessions
@@ -15,6 +18,37 @@ That means the same operator workflows work in both modes:
 - submit prompts to live sessions
 - cancel tasks or sessions
 - inspect recent session transcript and tool history
+
+## Turin TUI: Chat-First Mode
+
+`turin-tui` now opens on a dedicated Chat view instead of dropping you into an operator dashboard first.
+
+The default shape is:
+
+- left pane: sessions
+- center: transcript
+- right pane: thinking
+
+The chat view is backed by the same daemon/remote event stream as the rest of Turin, so it can render:
+
+- persisted transcript from session detail
+- pending user prompts before the next session refresh lands
+- streamed assistant previews from `message_delta`
+- streamed thinking in a separate inspector pane when the model/provider emits `thinking_delta`
+
+The current chat hotkeys are:
+
+- `Enter`: prompt the current live chat session, or open/resume the selected agent/session from the left pane
+- `p`: prompt the current live chat session
+- `,`: cycle the left pane between `sessions`, `agents`, `channels`, `events`, and `none`
+- `.`: cycle the right pane between `thinking`, `tools`, `events`, `session`, and `none`
+- `h`: show/hide the thinking pane
+- `v`: show/hide streamed preview text
+- `f`: toggle chat follow-latest
+- `PageUp` / `PageDown`: scroll through the loaded transcript window
+- `Home` / `End`: jump toward the oldest loaded lines or back to the latest output
+
+The transcript view uses a bounded in-memory window instead of keeping the entire conversation rendered at once. Older persisted history can still be reloaded on demand from Turin storage.
 
 ## Prerequisites
 
@@ -123,6 +157,29 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
 
 There is also a copyable example at `ui-profiles.toml.example`.
 
+## Turin TUI Settings
+
+`turin-tui` also has its own UI settings file, separate from connection profiles.
+
+By default it looks for `turin-tui.toml` in the current working directory. You can override that with:
+
+```bash
+target/release/turin-tui --tui-config path/to/turin-tui.toml
+```
+
+A copyable example is included at `turin-tui.toml.example`.
+
+Current settings:
+
+- `[layout].left_pane`
+- `[layout].right_pane`
+- `[chat].transcript_memory_budget_bytes`
+- `[chat].show_streaming_preview`
+- `[chat].show_thinking`
+- `[chat].follow_latest`
+
+The Settings tab inside `turin-tui` can change those values interactively, and `w` writes them back to the configured `turin-tui.toml`.
+
 Profile rules:
 
 - CLI flags win over profile-file values
@@ -177,7 +234,7 @@ The desktop app exposes this through the Connections tab controls:
 - if you try to load another profile while the editor is dirty, the Connections tab makes you explicitly discard or cancel the pending action
 - delete is a two-step flow: `Arm Delete`, then `Confirm Delete` or `Cancel Delete`
 
-The TUI exposes it through the Connections tab plus keyboard actions:
+The TUI still exposes the profile system through the Connections tab plus keyboard actions:
 
 - `Enter` or `s` connects to the selected profile
 - `v` loads the current connection into the profile draft
@@ -214,7 +271,8 @@ That keeps the initial dashboard refresh lightweight while still giving you rich
 
 Current behavior:
 
-- the TUI detail pane expands from session summary to full session detail once it is fetched, including recent transcript turns, events, and tool calls
+- the chat-first TUI transcript pane loads session detail lazily and then overlays live streamed output on top
+- the TUI detail pane in non-chat tabs expands from session summary to full session detail once it is fetched, including recent transcript turns, events, and tool calls
 - the desktop app shows recent messages, events, and tool calls in the session detail panel
 - session detail is cached in the UI state until that session disappears from the current dashboard snapshot
 
@@ -242,10 +300,11 @@ For high-volume event streams, both clients also support:
 
 ## Current Scope
 
-The UI clients are operator shells, not full config management surfaces.
+The UI clients are still not full config management surfaces.
 
 Today they are best for:
 
+- chatting with a live session while keeping Turin runtime context nearby
 - monitoring runtime health
 - opening and resuming sessions
 - inspecting task/session state
