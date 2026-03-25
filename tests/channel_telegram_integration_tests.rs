@@ -139,14 +139,6 @@ base_url = "PONG"
 }
 
 impl TelegramMockServer {
-    async fn start(update_batches: Vec<Vec<serde_json::Value>>) -> Result<Self> {
-        let get_updates_responses = update_batches
-            .into_iter()
-            .map(|batch| json!({ "ok": true, "result": batch }))
-            .collect();
-        Self::start_with_responses(get_updates_responses, Vec::new()).await
-    }
-
     async fn start_with_responses(
         get_updates_responses: Vec<serde_json::Value>,
         send_message_responses: Vec<serde_json::Value>,
@@ -345,9 +337,51 @@ fn sample_update(chat_id: i64, message_thread_id: Option<i64>, text: &str) -> se
 async fn telegram_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
     let runner = daemon.runner();
-    let server =
-        TelegramMockServer::start(vec![vec![sample_update(-100777, Some(555), "Say pong")]])
-            .await?;
+    let server = TelegramMockServer::start_with_responses(
+        vec![json!({ "ok": true, "result": [sample_update(-100777, Some(555), "Say pong")] })],
+        vec![json!({
+            "ok": true,
+            "result": {
+                "message_id": 5,
+                "from": {
+                    "id": 8702474519_i64,
+                    "is_bot": true,
+                    "first_name": "Turin",
+                    "username": "the_turin_bot"
+                },
+                "chat": {
+                    "id": 498502840_i64,
+                    "first_name": "Jayadeep",
+                    "last_name": "Thum",
+                    "username": "jthum",
+                    "type": "private"
+                },
+                "date": 1774430415_i64,
+                "reply_to_message": {
+                    "message_id": 41,
+                    "from": {
+                        "id": 498502840_i64,
+                        "is_bot": false,
+                        "first_name": "Jayadeep",
+                        "last_name": "Thum",
+                        "username": "jthum",
+                        "language_code": "en"
+                    },
+                    "chat": {
+                        "id": 498502840_i64,
+                        "first_name": "Jayadeep",
+                        "last_name": "Thum",
+                        "username": "jthum",
+                        "type": "private"
+                    },
+                    "date": 1774430411_i64,
+                    "text": "Hello."
+                },
+                "text": "PONG"
+            }
+        })],
+    )
+    .await?;
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let mut driver = TelegramChannelDriver::from_config(

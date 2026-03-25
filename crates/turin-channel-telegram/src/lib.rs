@@ -709,6 +709,7 @@ struct TelegramChat {
 
 #[derive(Debug, Clone, Deserialize)]
 struct TelegramSentMessage {
+    #[serde(rename = "message_id")]
     _message_id: i64,
 }
 
