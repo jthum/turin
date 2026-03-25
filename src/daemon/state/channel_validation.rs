@@ -139,7 +139,11 @@ fn validate_telegram_settings(map: &serde_json::Map<String, serde_json::Value>) 
         }
     }
 
-    for key in ["start_from_latest", "ignore_bot_messages"] {
+    for key in [
+        "start_from_latest",
+        "ignore_bot_messages",
+        "stream_include_thinking",
+    ] {
         if let Some(value) = map.get(key)
             && !value.is_boolean()
         {
@@ -318,5 +322,19 @@ mod tests {
         )
         .expect_err("invalid stream mode should fail");
         assert!(error.to_string().contains("stream_mode"));
+    }
+
+    #[test]
+    fn telegram_stream_include_thinking_must_be_boolean() {
+        let error = validate_channel_settings(
+            "telegram",
+            &json!({
+                "token_env": "TELEGRAM_BOT_TOKEN",
+                "chat_id": -100123,
+                "stream_include_thinking": "yes"
+            }),
+        )
+        .expect_err("non-boolean stream_include_thinking should fail");
+        assert!(error.to_string().contains("stream_include_thinking"));
     }
 }

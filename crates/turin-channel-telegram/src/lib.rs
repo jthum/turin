@@ -31,6 +31,7 @@ pub struct TelegramChannelDriverConfig {
     pub start_from_latest: bool,
     pub ignore_bot_messages: bool,
     pub stream_mode: ChannelStreamMode,
+    pub stream_include_thinking: bool,
 }
 
 impl TelegramChannelDriverConfig {
@@ -169,6 +170,17 @@ impl TelegramChannelDriverConfig {
                 .transpose()?
                 .unwrap_or(true),
             stream_mode: read_stream_mode(settings.get("stream_mode"))?,
+            stream_include_thinking: settings
+                .get("stream_include_thinking")
+                .map(|value| {
+                    value.as_bool().ok_or_else(|| {
+                        anyhow!(
+                            "[telegram_config_invalid_stream_include_thinking] Telegram channel setting 'stream_include_thinking' must be a boolean"
+                        )
+                    })
+                })
+                .transpose()?
+                .unwrap_or(false),
         })
     }
 }
@@ -330,8 +342,13 @@ impl TelegramChannelDriver {
         Ok(())
     }
 
-    async fn send_progress_text(&mut self, event: &InboundEvent, text: &str) -> Result<()> {
-        let preview = stream_preview_text(text);
+    async fn send_stream_preview(
+        &mut self,
+        event: &InboundEvent,
+        text: &str,
+        thinking: Option<&str>,
+    ) -> Result<()> {
+        let preview = render_stream_preview(text, thinking);
         if preview.is_empty() {
             return Ok(());
         }
@@ -826,6 +843,10 @@ impl ChannelDriver for TelegramChannelDriver {
         self.config.stream_mode
     }
 
+    fn stream_include_thinking(&self) -> bool {
+        self.config.stream_mode.streams_text() && self.config.stream_include_thinking
+    }
+
     async fn send_progress(
         &mut self,
         event: &InboundEvent,
@@ -833,8 +854,9 @@ impl ChannelDriver for TelegramChannelDriver {
     ) -> Result<()> {
         match update {
             ChannelProgressUpdate::Typing => self.send_chat_action(event).await,
-            ChannelProgressUpdate::StreamingText { text } => {
-                self.send_progress_text(event, &text).await
+            ChannelProgressUpdate::StreamingPreview { text, thinking } => {
+                self.send_stream_preview(event, &text, thinking.as_deref())
+                    .await
             }
         }
     }
@@ -1076,6 +1098,29 @@ fn stream_preview_text(text: &str) -> String {
         out.push(ch);
     }
     out
+}
+
+fn render_stream_preview(text: &str, thinking: Option<&str>) -> String {
+    let text = text.trim();
+    let thinking = thinking.map(str::trim).unwrap_or_default();
+
+    if text.is_empty() && thinking.is_empty() {
+        return String::new();
+    }
+
+    let mut preview = String::new();
+    if !thinking.is_empty() {
+        preview.push_str("Thinking…\n");
+        preview.push_str(thinking);
+    }
+    if !text.is_empty() {
+        if !preview.is_empty() {
+            preview.push_str("\n\nReply\n");
+        }
+        preview.push_str(text);
+    }
+
+    stream_preview_text(&preview)
 }
 
 fn resolve_message_thread_id(conversation: &ChannelConversationKey) -> Result<Option<i64>> {
@@ -1938,6 +1983,7 @@ mod tests {
             start_from_latest: false,
             ignore_bot_messages: true,
             stream_mode: ChannelStreamMode::Off,
+            stream_include_thinking: false,
         }
     }
 
@@ -2142,6 +2188,21 @@ mod tests {
         assert!(text.contains("| Name  | Value |"), "payload text: {text}");
         assert!(text.contains("| alpha | 1     |"), "payload text: {text}");
         assert!(text.contains("| beta  | 22    |"), "payload text: {text}");
+    }
+
+    #[test]
+    fn stream_preview_can_include_thinking_sections() {
+        let preview = render_stream_preview("Partial answer", Some("Reasoning step"));
+        assert!(preview.contains("Thinking…"));
+        assert!(preview.contains("Reasoning step"));
+        assert!(preview.contains("Reply"));
+        assert!(preview.contains("Partial answer"));
+    }
+
+    #[test]
+    fn stream_preview_returns_text_only_when_no_thinking_is_present() {
+        let preview = render_stream_preview("Partial answer", None);
+        assert_eq!(preview, "Partial answer");
     }
 
     #[test]

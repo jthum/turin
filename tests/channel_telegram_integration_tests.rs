@@ -10,6 +10,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, timeout};
+use turin_channel_core::{
+    ChannelConversationKey, ChannelKind, ChannelMessageRef, ChannelUser, InboundEvent,
+};
+use turin_channel_runner::{ChannelDriver, ChannelProgressUpdate};
 use turin_channel_runner::{ChannelRunner, RunnerConfig};
 use turin_channel_telegram::{TelegramChannelDriver, TelegramChannelDriverConfig};
 
@@ -372,6 +376,37 @@ fn sample_update(chat_id: i64, message_thread_id: Option<i64>, text: &str) -> se
     })
 }
 
+fn sample_inbound_event(chat_id: i64, text: &str) -> InboundEvent {
+    let conversation = ChannelConversationKey {
+        channel: ChannelKind::Telegram,
+        workspace_id: "telegram".to_string(),
+        room_id: Some(chat_id.to_string()),
+        thread_id: chat_id.to_string(),
+        user_id: Some("7".to_string()),
+    };
+    InboundEvent {
+        message: ChannelMessageRef {
+            conversation: conversation.clone(),
+            message_id: "41".to_string(),
+        },
+        conversation,
+        user: ChannelUser {
+            id: "7".to_string(),
+            display_name: Some("Nina".to_string()),
+            username: Some("nina".to_string()),
+        },
+        text: text.to_string(),
+        attachments: Vec::new(),
+        metadata: json!({
+            "telegram_message_id": 41,
+            "telegram_chat_id": chat_id
+        })
+        .as_object()
+        .cloned()
+        .unwrap_or_default(),
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn telegram_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
@@ -436,6 +471,7 @@ async fn telegram_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
             start_from_latest: false,
             ignore_bot_messages: true,
             stream_mode: turin_channel_runner::ChannelStreamMode::Off,
+            stream_include_thinking: false,
         },
         shutdown_rx,
     )?;
@@ -535,6 +571,7 @@ async fn telegram_channel_driver_retries_transient_poll_and_send_failures() -> R
             start_from_latest: false,
             ignore_bot_messages: true,
             stream_mode: turin_channel_runner::ChannelStreamMode::Off,
+            stream_include_thinking: false,
         },
         shutdown_rx,
     )?;
@@ -609,6 +646,7 @@ async fn telegram_channel_driver_streams_progress_before_final_message() -> Resu
             start_from_latest: false,
             ignore_bot_messages: true,
             stream_mode: turin_channel_runner::ChannelStreamMode::Draft,
+            stream_include_thinking: false,
         },
         shutdown_rx,
     )?;
@@ -682,4 +720,63 @@ async fn telegram_channel_driver_streams_progress_before_final_message() -> Resu
 
     server.stop().await?;
     daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn telegram_progress_preview_can_include_thinking_text() -> Result<()> {
+    let server = TelegramMockServer::start_with_responses(vec![], vec![]).await?;
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let mut driver = TelegramChannelDriver::from_config(
+        "telegram-test",
+        TelegramChannelDriverConfig {
+            base_url: server.base_url.clone(),
+            workspace_id: "telegram".to_string(),
+            chat_id: "498502840".to_string(),
+            token: "test-token".to_string(),
+            poll_timeout_secs: 0,
+            poll_interval: Duration::from_millis(25),
+            max_updates_per_poll: 10,
+            start_from_latest: false,
+            ignore_bot_messages: true,
+            stream_mode: turin_channel_runner::ChannelStreamMode::Draft,
+            stream_include_thinking: true,
+        },
+        shutdown_rx,
+    )?;
+
+    let event = sample_inbound_event(498502840, "Say pong");
+    driver
+        .send_progress(
+            &event,
+            ChannelProgressUpdate::StreamingPreview {
+                text: "Partial answer".to_string(),
+                thinking: Some("Reasoning step".to_string()),
+            },
+        )
+        .await?;
+
+    let draft_or_edit = server
+        .requests
+        .lock()
+        .expect("telegram mock requests lock poisoned")
+        .iter()
+        .find(|request| request.method == "sendMessageDraft" || request.method == "editMessageText")
+        .cloned()
+        .context("expected draft or edit request")?;
+    let preview = draft_or_edit
+        .body
+        .get("text")
+        .and_then(|value| value.as_str())
+        .context("expected preview text in request body")?;
+    assert!(preview.contains("Thinking"), "preview text: {preview}");
+    assert!(
+        preview.contains("Reasoning step"),
+        "preview text: {preview}"
+    );
+    assert!(
+        preview.contains("Partial answer"),
+        "preview text: {preview}"
+    );
+
+    server.stop().await
 }

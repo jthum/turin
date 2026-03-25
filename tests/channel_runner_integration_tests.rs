@@ -185,7 +185,10 @@ impl ChannelDriver for MockDriver {
     ) -> Result<()> {
         let value = match update {
             ChannelProgressUpdate::Typing => "typing".to_string(),
-            ChannelProgressUpdate::StreamingText { text } => format!("text:{text}"),
+            ChannelProgressUpdate::StreamingPreview { text, thinking } => match thinking {
+                Some(thinking) => format!("preview:{text}|thinking:{thinking}"),
+                None => format!("text:{text}"),
+            },
         };
         self.progress
             .lock()

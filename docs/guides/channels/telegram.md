@@ -147,6 +147,7 @@ turin daemon channel create telegram-ops \
   --setting poll_timeout_secs=10 \
   --setting poll_interval_ms=250 \
   --setting stream_mode=typing \
+  --setting stream_include_thinking=false \
   --setting start_from_latest=true \
   --setting ignore_bot_messages=true \
   --setting workspace_id=telegram
@@ -159,6 +160,7 @@ Setting notes:
 - `poll_timeout_secs`: long-poll timeout, default `30`, maximum `50`
 - `poll_interval_ms`: delay between empty polls, default `250`
 - `stream_mode`: `off`, `typing`, `draft`, or `block`; default `off`
+- `stream_include_thinking`: optional boolean, default `false`; when enabled, `draft`/`block` previews can include streamed model thinking if the provider emits thinking deltas
 - `start_from_latest`: skip old queued updates at startup
 - `ignore_bot_messages`: ignore bot-authored inbound messages
 - `workspace_id`: optional routing namespace label
@@ -203,6 +205,7 @@ chat_id = -1001234567890
 poll_timeout_secs = 10
 poll_interval_ms = 250
 stream_mode = "typing"
+stream_include_thinking = false
 start_from_latest = true
 ignore_bot_messages = true
 workspace_id = "telegram"
@@ -238,6 +241,8 @@ Streaming notes:
 - `stream_mode = "typing"` sends Telegram `typing` actions while Turin is working, then sends the final reply.
 - `stream_mode = "draft"` streams a partial preview while the response is being generated. Turin prefers Telegram draft streaming in private chats and falls back to a bot-authored placeholder message plus edits when drafts are unavailable.
 - `stream_mode = "block"` is like `draft`, but updates less frequently and favors chunkier preview steps over every small delta.
+- `stream_include_thinking = true` is an additional opt-in. When paired with `draft` or `block`, preview messages can include streamed model thinking before or alongside the partial answer. It has no visible effect with `off` or `typing`.
+- Thinking previews only appear when the selected model/provider actually emits thinking deltas.
 - Final replies still use the normal Telegram HTML renderer even when preview streaming is enabled.
 
 ## 9. Validate With The Smoke Script
