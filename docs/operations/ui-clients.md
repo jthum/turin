@@ -177,6 +177,7 @@ Current settings:
 - `[chat].show_streaming_preview`
 - `[chat].show_thinking`
 - `[chat].follow_latest`
+- `[chat].user_label`
 
 The Settings tab inside `turin-tui` can change those values interactively, and `w` writes them back to the configured `turin-tui.toml`.
 

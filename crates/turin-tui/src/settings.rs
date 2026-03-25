@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_TRANSCRIPT_MEMORY_BUDGET_BYTES: usize = 1_048_576;
+const DEFAULT_USER_LABEL: &str = "You";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -109,6 +110,7 @@ pub struct TuiChatSettings {
     pub show_streaming_preview: bool,
     pub show_thinking: bool,
     pub follow_latest: bool,
+    pub user_label: String,
 }
 
 impl Default for TuiLayoutSettings {
@@ -127,6 +129,7 @@ impl Default for TuiChatSettings {
             show_streaming_preview: true,
             show_thinking: true,
             follow_latest: true,
+            user_label: DEFAULT_USER_LABEL.to_string(),
         }
     }
 }
@@ -185,6 +188,7 @@ mod tests {
         assert!(settings.chat.show_streaming_preview);
         assert!(settings.chat.show_thinking);
         assert!(settings.chat.follow_latest);
+        assert_eq!(settings.chat.user_label, DEFAULT_USER_LABEL);
         assert_eq!(
             settings.chat.transcript_memory_budget_bytes,
             DEFAULT_TRANSCRIPT_MEMORY_BUDGET_BYTES

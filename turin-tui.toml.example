@@ -7,3 +7,4 @@ transcript_memory_budget_bytes = 1048576
 show_streaming_preview = true
 show_thinking = true
 follow_latest = true
+user_label = "You"

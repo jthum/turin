@@ -160,6 +160,7 @@ enum InputMode {
     EditChannelFilter,
     EditEventFilter,
     EditTranscriptBudget,
+    EditUserLabel,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -709,6 +710,7 @@ fn handle_input_mode(
                     Some(InputMode::EditTranscriptBudget) => {
                         "Transcript budget must be a positive integer"
                     }
+                    Some(InputMode::EditUserLabel) => "User label cannot be empty",
                     Some(InputMode::EditTaskFilter)
                     | Some(InputMode::EditChannelFilter)
                     | Some(InputMode::EditEventFilter) => "Use Esc to clear the filter",
@@ -770,6 +772,11 @@ fn handle_input_mode(
                         .dashboard
                         .record_error("Transcript budget must be an integer >= 16384 bytes"),
                 },
+                Some(InputMode::EditUserLabel) => {
+                    app.settings.chat.user_label = input;
+                    app.dashboard
+                        .record_info("Updated the UI-only user label for chat rendering");
+                }
                 Some(InputMode::EditTaskFilter) => {
                     app.task_filter = input;
                     app.dashboard.record_info("Updated the task filter");
@@ -805,7 +812,7 @@ fn send_command(
 
 fn subtle_border_style() -> Style {
     Style::default()
-        .fg(Color::Rgb(92, 98, 108))
+        .fg(Color::Rgb(74, 78, 84))
         .add_modifier(Modifier::DIM)
 }
 
@@ -1107,10 +1114,14 @@ fn render_chat_sidebar(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::l
 }
 
 fn render_chat_center(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
+    let block = panel_block("Chat");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(8)])
-        .split(area);
+        .constraints([Constraint::Length(3), Constraint::Min(6)])
+        .split(inner);
 
     let header = Paragraph::new(vec![
         Line::from(vec![
@@ -1139,14 +1150,13 @@ fn render_chat_center(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout
             }),
         ]),
     ])
-    .block(panel_block("Chat"))
     .wrap(Wrap { trim: true });
     frame.render_widget(header, layout[0]);
 
-    let (text, scroll) = app.chat_transcript_text(layout[1].height.saturating_sub(2) as usize);
+    let transcript_width = layout[1].width.max(1) as usize;
+    let (text, scroll) = app.chat_transcript_text(layout[1].height as usize, transcript_width);
     let transcript = Paragraph::new(text)
         .scroll((scroll, 0))
-        .block(panel_block("Transcript"))
         .wrap(Wrap { trim: false });
     frame.render_widget(transcript, layout[1]);
 }
@@ -2196,6 +2206,7 @@ impl TuiApp {
             Some(InputMode::EditChannelFilter) => "Channel Filter",
             Some(InputMode::EditEventFilter) => "Event Filter",
             Some(InputMode::EditTranscriptBudget) => "Transcript Budget",
+            Some(InputMode::EditUserLabel) => "User Label",
             None => "Help",
         }
     }
@@ -2258,6 +2269,10 @@ impl TuiApp {
             }
             Some(InputMode::EditTranscriptBudget) => {
                 "Enter updates transcript memory budget in bytes (minimum 16384). Esc cancels."
+                    .to_string()
+            }
+            Some(InputMode::EditUserLabel) => {
+                "Enter updates the UI-only label used for your chat messages. Esc cancels."
                     .to_string()
             }
             None => String::new(),
@@ -2729,6 +2744,7 @@ impl TuiApp {
                     "off"
                 }
             ),
+            format!("User Label: {}", self.settings.chat.user_label),
             format!(
                 "Transcript Budget: {} bytes",
                 self.settings.chat.transcript_memory_budget_bytes
@@ -2743,9 +2759,17 @@ impl TuiApp {
             2 => self.toggle_streaming_preview(),
             3 => self.toggle_show_thinking(),
             4 => self.toggle_chat_follow_latest(),
-            5 => self.start_edit_transcript_budget(),
+            5 => self.start_edit_user_label(),
+            6 => self.start_edit_transcript_budget(),
             _ => {}
         }
+    }
+
+    fn start_edit_user_label(&mut self) {
+        self.begin_input_mode(
+            InputMode::EditUserLabel,
+            self.settings.chat.user_label.clone(),
+        );
     }
 
     fn start_edit_transcript_budget(&mut self) {
@@ -2758,7 +2782,11 @@ impl TuiApp {
         );
     }
 
-    fn chat_transcript_text(&self, viewport_height: usize) -> (Text<'static>, u16) {
+    fn chat_transcript_text(
+        &self,
+        viewport_height: usize,
+        viewport_width: usize,
+    ) -> (Text<'static>, u16) {
         let Some(session_id) = self.current_chat_session_id() else {
             return (
                 Text::from(vec![
@@ -2778,6 +2806,7 @@ impl TuiApp {
             .transcript_memory_budget_bytes
             .max(16 * 1024);
         trim_lines_to_budget(&mut lines, budget);
+        let lines = wrap_lines_for_width(lines, viewport_width.max(1));
 
         let total_lines = lines.len();
         let visible_lines = viewport_height.max(1);
@@ -2795,50 +2824,29 @@ impl TuiApp {
             for message in &detail.messages {
                 let content = message_content_text(&message.content)
                     .unwrap_or_else(|| compact_json(&message.content, 120));
-                let role_color = match message.role.as_str() {
-                    "user" => Color::LightBlue,
-                    "assistant" => Color::LightGreen,
-                    "system" => Color::Yellow,
-                    _ => Color::White,
-                };
-                lines.push(Line::from(Span::styled(
-                    format!("{} · turn {}", message.role, message.turn_index),
-                    Style::default().fg(role_color).add_modifier(Modifier::BOLD),
-                )));
-                for line in content.lines() {
-                    lines.push(Line::from(line.to_string()));
-                }
-                lines.push(Line::default());
+                self.push_message_block(
+                    &mut lines,
+                    message.role.as_str(),
+                    Some(format!("turn {}", message.turn_index)),
+                    &content,
+                );
             }
         }
 
         if let Some(state) = self.live_transcripts.get(session_id) {
             for prompt in &state.pending_user_messages {
-                lines.push(Line::from(Span::styled(
-                    "user · pending",
-                    Style::default()
-                        .fg(Color::LightBlue)
-                        .add_modifier(Modifier::BOLD),
-                )));
-                for line in prompt.lines() {
-                    lines.push(Line::from(line.to_string()));
-                }
-                lines.push(Line::default());
+                self.push_message_block(&mut lines, "user", Some("pending".to_string()), prompt);
             }
 
             if self.settings.chat.show_streaming_preview
                 && !state.assistant_preview.trim().is_empty()
             {
-                lines.push(Line::from(Span::styled(
-                    "assistant · streaming",
-                    Style::default()
-                        .fg(Color::LightGreen)
-                        .add_modifier(Modifier::BOLD),
-                )));
-                for line in state.assistant_preview.lines() {
-                    lines.push(Line::from(line.to_string()));
-                }
-                lines.push(Line::default());
+                self.push_message_block(
+                    &mut lines,
+                    "assistant",
+                    Some("streaming".to_string()),
+                    &state.assistant_preview,
+                );
             }
         }
 
@@ -2846,6 +2854,41 @@ impl TuiApp {
             lines.push(Line::from("No transcript has been loaded yet."));
         }
         lines
+    }
+
+    fn push_message_block(
+        &self,
+        lines: &mut Vec<Line<'static>>,
+        role: &str,
+        status: Option<String>,
+        content: &str,
+    ) {
+        let (label, color) = self.chat_role_descriptor(role);
+        let heading = match status {
+            Some(status) => format!("── {label} · {status}"),
+            None => format!("── {label}"),
+        };
+        lines.push(Line::from(Span::styled(
+            heading,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        )));
+        let body_prefix = format!("{label} │ ");
+        for body_line in content.lines() {
+            lines.push(Line::from(format!("{body_prefix}{body_line}")));
+        }
+        if content.is_empty() {
+            lines.push(Line::from(body_prefix));
+        }
+        lines.push(Line::default());
+    }
+
+    fn chat_role_descriptor(&self, role: &str) -> (String, Color) {
+        match role {
+            "user" => (self.settings.chat.user_label.clone(), Color::LightBlue),
+            "assistant" => ("Assistant".to_string(), Color::LightGreen),
+            "system" => ("System".to_string(), Color::Yellow),
+            _ => (role.to_string(), Color::White),
+        }
     }
 
     fn current_thinking_text(&self) -> String {
@@ -3046,6 +3089,7 @@ impl TuiApp {
                 "show_streaming_preview": self.settings.chat.show_streaming_preview,
                 "show_thinking": self.settings.chat.show_thinking,
                 "follow_latest": self.settings.chat.follow_latest,
+                "user_label": self.settings.chat.user_label,
                 "transcript_budget_bytes": self.settings.chat.transcript_memory_budget_bytes,
             })),
             TabKind::Connections => {
@@ -3208,6 +3252,7 @@ impl TuiApp {
                     "show_streaming_preview": self.settings.chat.show_streaming_preview,
                     "show_thinking": self.settings.chat.show_thinking,
                     "follow_latest": self.settings.chat.follow_latest,
+                    "user_label": self.settings.chat.user_label,
                 },
                 "save_hint": "Press w to persist settings",
             })),
@@ -3316,6 +3361,70 @@ fn split_input_lines(value: &str) -> Vec<String> {
         lines.push(String::new());
     }
     lines
+}
+
+fn wrap_lines_for_width(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
+    let width = width.max(1);
+    let mut wrapped = Vec::new();
+    for line in lines {
+        let style = line
+            .spans
+            .first()
+            .map(|span| span.style)
+            .unwrap_or(line.style);
+        let text = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        if text.is_empty() {
+            wrapped.push(Line::default());
+            continue;
+        }
+        for chunk in wrap_text_chunk(&text, width) {
+            wrapped.push(Line::from(Span::styled(chunk, style)));
+        }
+    }
+    wrapped
+}
+
+fn wrap_text_chunk(value: &str, width: usize) -> Vec<String> {
+    if value.chars().count() <= width {
+        return vec![value.to_string()];
+    }
+
+    let mut remaining = value.trim_end_matches('\n').to_string();
+    let mut wrapped = Vec::new();
+    while !remaining.is_empty() {
+        let remaining_len = remaining.chars().count();
+        if remaining_len <= width {
+            wrapped.push(remaining);
+            break;
+        }
+
+        let candidate = slice_chars(&remaining, 0, width);
+        let next_char_is_whitespace = remaining
+            .chars()
+            .nth(width)
+            .is_some_and(char::is_whitespace);
+        let split_at = if next_char_is_whitespace {
+            width
+        } else {
+            candidate
+                .char_indices()
+                .rev()
+                .find(|(_, ch)| ch.is_whitespace())
+                .map(|(index, _)| candidate[..index].chars().count())
+                .filter(|count| *count > 0)
+                .unwrap_or(width)
+        };
+
+        wrapped.push(slice_chars(&remaining, 0, split_at).trim_end().to_string());
+        remaining = slice_chars(&remaining, split_at, remaining_len)
+            .trim_start()
+            .to_string();
+    }
+    wrapped
 }
 
 fn cursor_line_col(value: &str, cursor_chars: usize) -> (usize, usize) {
@@ -3516,7 +3625,9 @@ fn profile_draft_auth_label(mode: ConnectionProfileDraftAuthMode) -> &'static st
 
 #[cfg(test)]
 mod tests {
-    use super::{cursor_line_col, nth_char_byte_index, slice_chars, split_input_lines};
+    use super::{
+        cursor_line_col, nth_char_byte_index, slice_chars, split_input_lines, wrap_text_chunk,
+    };
 
     #[test]
     fn nth_char_byte_index_handles_unicode_boundaries() {
@@ -3551,5 +3662,13 @@ mod tests {
     fn slice_chars_respects_character_offsets() {
         assert_eq!(slice_chars("abcdef", 1, 4), "bcd");
         assert_eq!(slice_chars("aé中", 1, 3), "é中");
+    }
+
+    #[test]
+    fn wrap_text_chunk_prefers_word_boundaries() {
+        assert_eq!(
+            wrap_text_chunk("alpha beta gamma", 10),
+            vec!["alpha beta".to_string(), "gamma".to_string()]
+        );
     }
 }

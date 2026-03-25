@@ -306,7 +306,7 @@ target/release/turin-app --profile lab
 ```
 
 Shared connection profiles live in `ui-profiles.toml` by convention. A copyable example is included at `ui-profiles.toml.example`.
-`turin-tui` also supports a separate `turin-tui.toml` settings file for chat layout, transcript budget, and live preview controls. A copyable example is included at `turin-tui.toml.example`.
+`turin-tui` also supports a separate `turin-tui.toml` settings file for chat layout, transcript budget, live preview controls, and the UI-only user label. A copyable example is included at `turin-tui.toml.example`.
 
 See `docs/operations/ui-clients.md` for local/remote usage, profile files, and current UI scope.
 
