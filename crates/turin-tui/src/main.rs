@@ -23,7 +23,7 @@ use settings::{
 use std::collections::{BTreeMap, VecDeque};
 use std::io::stdout;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use turin_control_client::{
     AgentRuntime, AgentSummary, ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession,
     SessionSummary, TaskStatus,
@@ -224,6 +224,8 @@ struct TuiApp {
     paused_events: Vec<EventEnvelope>,
     live_transcripts: BTreeMap<String, LiveTranscriptState>,
     pending_chat_prompt: Option<PendingChatPrompt>,
+    detail_retry_until: BTreeMap<String, Instant>,
+    detail_last_requested_at: BTreeMap<String, Instant>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -812,7 +814,7 @@ fn send_command(
 
 fn subtle_border_style() -> Style {
     Style::default()
-        .fg(Color::Rgb(74, 78, 84))
+        .fg(Color::Rgb(60, 64, 68))
         .add_modifier(Modifier::DIM)
 }
 
@@ -1118,12 +1120,17 @@ fn render_chat_center(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    let header_height = if app.current_prompt_context_summary().is_some() {
+        4
+    } else {
+        3
+    };
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(6)])
+        .constraints([Constraint::Length(header_height), Constraint::Min(6)])
         .split(inner);
 
-    let header = Paragraph::new(vec![
+    let mut header_lines = vec![
         Line::from(vec![
             Span::styled("Session: ", Style::default().fg(Color::Gray)),
             Span::styled(
@@ -1131,6 +1138,11 @@ fn render_chat_center(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout
                 Style::default()
                     .fg(Color::LightCyan)
                     .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                app.current_chat_activity_label(),
+                app.current_chat_activity_style(),
             ),
         ]),
         Line::from(vec![
@@ -1149,8 +1161,15 @@ fn render_chat_center(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout
                 "hidden"
             }),
         ]),
-    ])
-    .wrap(Wrap { trim: true });
+    ];
+    if let Some(summary) = app.current_prompt_context_summary() {
+        header_lines.push(Line::from(vec![
+            Span::styled("Replying to: ", Style::default().fg(Color::Gray)),
+            Span::styled(summary, Style::default().fg(Color::LightBlue)),
+        ]));
+    }
+
+    let header = Paragraph::new(header_lines).wrap(Wrap { trim: true });
     frame.render_widget(header, layout[0]);
 
     let transcript_width = layout[1].width.max(1) as usize;
@@ -1228,6 +1247,8 @@ impl TuiApp {
             paused_events: Vec::new(),
             live_transcripts: BTreeMap::new(),
             pending_chat_prompt: None,
+            detail_retry_until: BTreeMap::new(),
+            detail_last_requested_at: BTreeMap::new(),
         };
         app.events_follow_latest = app.settings.chat.follow_latest;
         app.initialize_chat_session();
@@ -1244,8 +1265,15 @@ impl TuiApp {
                 }
             }
             UiUpdate::SessionDetail(detail) => {
-                self.clear_live_transcript_for(&detail.session.session_id);
-                self.clear_pending_messages_for(&detail.session.session_id);
+                if self.session_detail_has_committed_reply(detail) {
+                    self.clear_live_transcript_for(&detail.session.session_id);
+                    self.clear_pending_messages_for(&detail.session.session_id);
+                    self.detail_retry_until.remove(&detail.session.session_id);
+                    self.detail_last_requested_at
+                        .remove(&detail.session.session_id);
+                } else {
+                    self.requested_session_detail = None;
+                }
             }
             UiUpdate::Snapshot(snapshot) => {
                 if self.chat_session_id.is_none() {
@@ -2053,6 +2081,8 @@ impl TuiApp {
                 state.thinking_preview.clear();
                 state.recent_tool_calls.clear();
                 state.recent_events.clear();
+                self.detail_retry_until.remove(session_id);
+                self.detail_last_requested_at.remove(session_id);
             }
             "message_delta" => {
                 if let Some(delta) = event
@@ -2080,16 +2110,32 @@ impl TuiApp {
                     8,
                 );
             }
+            "message_end" => {
+                self.requested_session_detail = None;
+                self.detail_retry_until.insert(
+                    session_id.to_string(),
+                    Instant::now() + Duration::from_secs(5),
+                );
+            }
             "task_complete" => {
                 self.dashboard.session_details.remove(session_id);
                 self.requested_session_detail = None;
+                self.detail_retry_until.insert(
+                    session_id.to_string(),
+                    Instant::now() + Duration::from_secs(5),
+                );
             }
             _ => {}
         }
 
         if matches!(
             event.event.as_str(),
-            "task_start" | "task_complete" | "message_delta" | "thinking_delta" | "tool_call"
+            "task_start"
+                | "task_complete"
+                | "message_delta"
+                | "thinking_delta"
+                | "message_end"
+                | "tool_call"
         ) {
             push_bounded_line(
                 &mut state.recent_events,
@@ -2127,6 +2173,11 @@ impl TuiApp {
         state.thinking_preview.clear();
         self.dashboard.session_details.remove(session_id);
         self.requested_session_detail = None;
+        self.detail_retry_until.insert(
+            session_id.to_string(),
+            Instant::now() + Duration::from_secs(10),
+        );
+        self.detail_last_requested_at.remove(session_id);
         self.chat_session_id = Some(session_id.to_string());
         self.chat_scroll_lines = 0;
     }
@@ -2863,7 +2914,7 @@ impl TuiApp {
         status: Option<String>,
         content: &str,
     ) {
-        let (label, color) = self.chat_role_descriptor(role);
+        let (label, color, body_style) = self.chat_role_descriptor(role);
         let heading = match status {
             Some(status) => format!("── {label} · {status}"),
             None => format!("── {label}"),
@@ -2872,23 +2923,98 @@ impl TuiApp {
             heading,
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         )));
-        let body_prefix = format!("{label} │ ");
+        let body_prefix = "│ ";
         for body_line in content.lines() {
-            lines.push(Line::from(format!("{body_prefix}{body_line}")));
+            lines.push(Line::from(Span::styled(
+                format!("{body_prefix}{body_line}"),
+                body_style,
+            )));
         }
         if content.is_empty() {
-            lines.push(Line::from(body_prefix));
+            lines.push(Line::from(Span::styled(
+                body_prefix.to_string(),
+                body_style,
+            )));
         }
         lines.push(Line::default());
     }
 
-    fn chat_role_descriptor(&self, role: &str) -> (String, Color) {
+    fn chat_role_descriptor(&self, role: &str) -> (String, Color, Style) {
         match role {
-            "user" => (self.settings.chat.user_label.clone(), Color::LightBlue),
-            "assistant" => ("Assistant".to_string(), Color::LightGreen),
-            "system" => ("System".to_string(), Color::Yellow),
-            _ => (role.to_string(), Color::White),
+            "user" => (
+                self.settings.chat.user_label.clone(),
+                Color::LightBlue,
+                Style::default()
+                    .fg(Color::LightBlue)
+                    .bg(Color::Rgb(18, 33, 48)),
+            ),
+            "assistant" => (
+                "Assistant".to_string(),
+                Color::LightGreen,
+                Style::default().fg(Color::White),
+            ),
+            "system" => (
+                "System".to_string(),
+                Color::Yellow,
+                Style::default().fg(Color::Yellow),
+            ),
+            _ => (
+                role.to_string(),
+                Color::White,
+                Style::default().fg(Color::White),
+            ),
         }
+    }
+
+    fn current_chat_activity_label(&self) -> String {
+        if self.current_chat_is_busy() {
+            format!("{} Thinking…", spinner_frame())
+        } else {
+            "Idle".to_string()
+        }
+    }
+
+    fn current_chat_activity_style(&self) -> Style {
+        if self.current_chat_is_busy() {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        }
+    }
+
+    fn current_chat_is_busy(&self) -> bool {
+        let Some(session_id) = self.current_chat_session_id() else {
+            return false;
+        };
+        self.dashboard
+            .live_sessions
+            .iter()
+            .find(|session| session.session_id == session_id)
+            .is_some_and(|session| session.active_tasks > 0 || session.queued_tasks > 0)
+            || self.live_transcripts.get(session_id).is_some_and(|state| {
+                !state.pending_user_messages.is_empty()
+                    || !state.assistant_preview.is_empty()
+                    || !state.thinking_preview.is_empty()
+            })
+    }
+
+    fn current_prompt_context_summary(&self) -> Option<String> {
+        let session_id = self.current_chat_session_id()?;
+        if let Some(state) = self.live_transcripts.get(session_id)
+            && let Some(prompt) = state.pending_user_messages.back()
+        {
+            return Some(excerpt_multiline(prompt, 2, 120));
+        }
+        let detail = self.dashboard.session_detail(session_id)?;
+        detail
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == "user")
+            .and_then(|message| message_content_text(&message.content))
+            .map(|text| excerpt_multiline(&text, 2, 120))
     }
 
     fn current_thinking_text(&self) -> String {
@@ -3327,20 +3453,65 @@ impl TuiApp {
             return Ok(());
         };
 
-        if self.dashboard.session_detail(&session_id).is_some() {
+        let should_retry = self.should_retry_session_detail(&session_id);
+
+        if self.dashboard.session_detail(&session_id).is_some() && !should_retry {
             self.requested_session_detail = Some(session_id);
             return Ok(());
         }
 
-        if self.requested_session_detail.as_deref() == Some(session_id.as_str()) {
+        if self.requested_session_detail.as_deref() == Some(session_id.as_str()) && !should_retry {
+            return Ok(());
+        }
+
+        let now = Instant::now();
+        if should_retry
+            && self
+                .detail_last_requested_at
+                .get(&session_id)
+                .is_some_and(|last| now.duration_since(*last) < Duration::from_millis(700))
+        {
             return Ok(());
         }
 
         self.requested_session_detail = Some(session_id.clone());
+        self.detail_last_requested_at
+            .insert(session_id.clone(), now);
         send_command(
             command_tx,
             OperatorCommand::LoadSessionDetail { session_id },
         )
+    }
+
+    fn should_retry_session_detail(&self, session_id: &str) -> bool {
+        let now = Instant::now();
+        self.detail_retry_until
+            .get(session_id)
+            .is_some_and(|deadline| *deadline > now)
+            && self.pending_reply_not_committed(session_id)
+    }
+
+    fn pending_reply_not_committed(&self, session_id: &str) -> bool {
+        self.live_transcripts
+            .get(session_id)
+            .is_some_and(|state| !state.pending_user_messages.is_empty())
+            && self
+                .dashboard
+                .session_detail(session_id)
+                .map(|detail| !self.session_detail_has_committed_reply(detail))
+                .unwrap_or(true)
+    }
+
+    fn session_detail_has_committed_reply(
+        &self,
+        detail: &turin_control_client::SessionDetail,
+    ) -> bool {
+        detail
+            .messages
+            .iter()
+            .rev()
+            .find(|message| !message.role.trim().is_empty())
+            .is_some_and(|message| message.role == "assistant")
     }
 }
 
@@ -3530,12 +3701,36 @@ fn excerpt(value: &str, max_chars: usize) -> String {
     out
 }
 
+fn excerpt_multiline(value: &str, max_lines: usize, max_chars: usize) -> String {
+    let mut joined = value
+        .lines()
+        .take(max_lines)
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" / ");
+    if joined.is_empty() {
+        joined = value.trim().to_string();
+    }
+    excerpt(&joined, max_chars)
+}
+
 fn tail(value: &str, max_chars: usize) -> String {
     let chars = value.chars().collect::<Vec<_>>();
     if chars.len() <= max_chars {
         return value.to_string();
     }
     chars[chars.len() - max_chars..].iter().collect()
+}
+
+fn spinner_frame() -> &'static str {
+    const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or(0);
+    let index = ((millis / 120) % FRAMES.len() as u128) as usize;
+    FRAMES[index]
 }
 
 fn push_bounded_line(queue: &mut VecDeque<String>, value: String, max_items: usize) {
@@ -3626,7 +3821,8 @@ fn profile_draft_auth_label(mode: ConnectionProfileDraftAuthMode) -> &'static st
 #[cfg(test)]
 mod tests {
     use super::{
-        cursor_line_col, nth_char_byte_index, slice_chars, split_input_lines, wrap_text_chunk,
+        cursor_line_col, excerpt_multiline, nth_char_byte_index, slice_chars, split_input_lines,
+        wrap_text_chunk,
     };
 
     #[test]
@@ -3669,6 +3865,14 @@ mod tests {
         assert_eq!(
             wrap_text_chunk("alpha beta gamma", 10),
             vec!["alpha beta".to_string(), "gamma".to_string()]
+        );
+    }
+
+    #[test]
+    fn excerpt_multiline_compacts_multiple_lines() {
+        assert_eq!(
+            excerpt_multiline("alpha\nbeta\ngamma", 2, 80),
+            "alpha / beta"
         );
     }
 }
