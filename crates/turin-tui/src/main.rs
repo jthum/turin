@@ -3,7 +3,8 @@ mod settings;
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event as CEvent, KeyCode, KeyEventKind,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event as CEvent, KeyCode, KeyEventKind, MouseEvent, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -227,6 +228,7 @@ struct TuiApp {
     pending_chat_prompt: Option<PendingChatPrompt>,
     detail_retry_until: BTreeMap<String, Instant>,
     detail_last_requested_at: BTreeMap<String, Instant>,
+    inline_thinking_expanded: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -234,6 +236,7 @@ struct LiveTranscriptState {
     pending_user_messages: VecDeque<String>,
     assistant_preview: String,
     thinking_preview: String,
+    completed_turn_thinking: BTreeMap<u32, String>,
     recent_tool_calls: VecDeque<String>,
     recent_events: VecDeque<String>,
     awaiting_reply: bool,
@@ -291,14 +294,24 @@ async fn main() -> Result<()> {
     let loaded_settings = load_settings(args.tui_config.as_deref())?;
 
     enable_raw_mode()?;
-    execute!(stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
+    execute!(
+        stdout(),
+        EnterAlternateScreen,
+        EnableBracketedPaste,
+        EnableMouseCapture
+    )?;
     let mut terminal = ratatui::init();
 
     let loop_result = run_shell(&mut terminal, initial_options, loaded_settings).await;
 
     ratatui::restore();
     disable_raw_mode()?;
-    execute!(stdout(), LeaveAlternateScreen, DisableBracketedPaste)?;
+    execute!(
+        stdout(),
+        LeaveAlternateScreen,
+        DisableBracketedPaste,
+        DisableMouseCapture
+    )?;
 
     loop_result
 }
@@ -428,21 +441,35 @@ fn run_app(
         app.ensure_chat_session_stream_loaded(&controller.command_tx)?;
         app.ensure_session_detail_loaded(&controller.command_tx)?;
 
-        terminal.draw(|frame| render(frame, app))?;
-
-        if event::poll(Duration::from_millis(120)).context("Failed to poll terminal events")? {
-            match event::read().context("Failed to read terminal event")? {
-                CEvent::Key(key)
-                    if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
-                {
-                    if let Some(action) = handle_key(app, key.code, &controller.command_tx)? {
-                        return Ok(action);
+        if event::poll(Duration::from_millis(16)).context("Failed to poll terminal events")? {
+            loop {
+                match event::read().context("Failed to read terminal event")? {
+                    CEvent::Key(key)
+                        if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
+                    {
+                        if let Some(action) = handle_key(app, key.code, &controller.command_tx)? {
+                            return Ok(action);
+                        }
                     }
+                    CEvent::Paste(text) => handle_paste(app, &text)?,
+                    CEvent::Mouse(mouse) => handle_mouse(app, mouse),
+                    _ => {}
                 }
-                CEvent::Paste(text) => handle_paste(app, &text)?,
-                _ => {}
+
+                while let Ok(update) = controller.update_rx.try_recv() {
+                    app.apply_update(update);
+                }
+
+                if !event::poll(Duration::ZERO).context("Failed to drain terminal events")? {
+                    break;
+                }
             }
         }
+
+        app.ensure_chat_session_stream_loaded(&controller.command_tx)?;
+        app.ensure_session_detail_loaded(&controller.command_tx)?;
+
+        terminal.draw(|frame| render(frame, app))?;
     }
 }
 
@@ -454,6 +481,20 @@ fn handle_paste(app: &mut TuiApp, text: &str) -> Result<()> {
         app.dashboard
             .record_info("Paste is only accepted while an input editor is open");
         Ok(())
+    }
+}
+
+fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) {
+    if app.input_mode.is_some() {
+        return;
+    }
+
+    if app.tab == TabKind::Chat {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => app.scroll_chat(3),
+            MouseEventKind::ScrollDown => app.scroll_chat(-3),
+            _ => {}
+        }
     }
 }
 
@@ -485,6 +526,7 @@ fn handle_key(
         KeyCode::Char(',') if app.tab == TabKind::Chat => app.cycle_left_chat_pane(),
         KeyCode::Char('.') if app.tab == TabKind::Chat => app.cycle_right_chat_pane(),
         KeyCode::Char('h') if app.tab == TabKind::Chat => app.toggle_show_thinking(),
+        KeyCode::Char('t') if app.tab == TabKind::Chat => app.toggle_inline_thinking_expansion(),
         KeyCode::Char('v') if app.tab == TabKind::Chat => app.toggle_streaming_preview(),
         KeyCode::Char('f') if app.tab == TabKind::Chat => app.toggle_chat_follow_latest(),
         KeyCode::Char('l') if app.tab == TabKind::Connections => app.reload_profiles(),
@@ -824,10 +866,19 @@ fn subtle_border_style() -> Style {
 
 fn panel_block<'a>(title: &'a str) -> Block<'a> {
     Block::default()
-        .title(title)
+        .title(Line::from(Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Rgb(124, 130, 142))
+                .add_modifier(Modifier::DIM),
+        )))
         .borders(Borders::ALL)
         .border_style(subtle_border_style())
         .padding(Padding::horizontal(1))
+}
+
+fn pane_block<'a>(title: &'a str) -> Block<'a> {
+    panel_block(title)
 }
 
 fn render(frame: &mut Frame<'_>, app: &mut TuiApp) {
@@ -953,7 +1004,7 @@ fn render_banner(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
             )),
         ]),
     ])
-    .block(panel_block("Connection"))
+    .block(pane_block("Connection"))
     .wrap(Wrap { trim: true });
     frame.render_widget(banner, area);
 }
@@ -1004,13 +1055,13 @@ fn render_left_panel(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::lay
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol(">> ")
-        .block(panel_block(title));
+        .block(pane_block(title));
     frame.render_stateful_widget(list, area, &mut state);
 }
 
 fn render_right_panel(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
     let detail = Paragraph::new(app.detail_text())
-        .block(panel_block("Detail"))
+        .block(pane_block("Detail"))
         .wrap(Wrap { trim: false });
     frame.render_widget(detail, area);
 }
@@ -1115,12 +1166,12 @@ fn render_chat_sidebar(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::l
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol(">> ")
-        .block(panel_block(app.settings.layout.left_pane.title()));
+        .block(pane_block(app.settings.layout.left_pane.title()));
     frame.render_stateful_widget(list, area, &mut state);
 }
 
 fn render_chat_center(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
-    let block = panel_block("Chat");
+    let block = pane_block("Chat");
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -1195,7 +1246,7 @@ fn render_chat_inspector(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::lay
     };
 
     let inspector = Paragraph::new(body)
-        .block(panel_block(title))
+        .block(pane_block(title))
         .wrap(Wrap { trim: false });
     frame.render_widget(inspector, area);
 }
@@ -1254,6 +1305,7 @@ impl TuiApp {
             pending_chat_prompt: None,
             detail_retry_until: BTreeMap::new(),
             detail_last_requested_at: BTreeMap::new(),
+            inline_thinking_expanded: false,
         };
         app.events_follow_latest = app.settings.chat.follow_latest;
         app.initialize_chat_session();
@@ -1275,8 +1327,8 @@ impl TuiApp {
             UiUpdate::SessionDetail(detail) => {
                 self.sync_pending_user_messages_from_detail(&detail.session.session_id, detail);
                 if self.session_detail_satisfies_pending_reply(&detail.session.session_id, detail) {
-                    self.clear_live_transcript_for(&detail.session.session_id);
-                    self.clear_pending_messages_for(&detail.session.session_id);
+                    self.capture_completed_thinking_from_detail(&detail.session.session_id, detail);
+                    self.finalize_live_transcript_for(&detail.session.session_id);
                     self.detail_retry_until.remove(&detail.session.session_id);
                     self.detail_last_requested_at
                         .remove(&detail.session.session_id);
@@ -2132,7 +2184,6 @@ impl TuiApp {
                 );
             }
             "task_complete" => {
-                self.dashboard.session_details.remove(session_id);
                 self.requested_session_detail = None;
                 self.detail_retry_until.insert(
                     session_id.to_string(),
@@ -2163,16 +2214,41 @@ impl TuiApp {
         }
     }
 
-    fn clear_live_transcript_for(&mut self, session_id: &str) {
-        self.live_transcripts.remove(session_id);
-    }
-
-    fn clear_pending_messages_for(&mut self, session_id: &str) {
+    fn finalize_live_transcript_for(&mut self, session_id: &str) {
         if let Some(state) = self.live_transcripts.get_mut(session_id) {
+            state.assistant_preview.clear();
+            state.thinking_preview.clear();
             state.pending_user_messages.clear();
             state.awaiting_reply = false;
             state.awaiting_reply_for = None;
         }
+    }
+
+    fn capture_completed_thinking_from_detail(
+        &mut self,
+        session_id: &str,
+        detail: &turin_control_client::SessionDetail,
+    ) {
+        let Some(state) = self.live_transcripts.get_mut(session_id) else {
+            return;
+        };
+        let thinking = state.thinking_preview.trim();
+        if thinking.is_empty() {
+            return;
+        }
+
+        let Some(prompt) = state.awaiting_reply_for.as_deref() else {
+            return;
+        };
+
+        let Some(turn_index) = assistant_turn_index_after_prompt(detail, prompt) else {
+            return;
+        };
+
+        state
+            .completed_turn_thinking
+            .entry(turn_index)
+            .or_insert_with(|| thinking.to_string());
     }
 
     fn note_prompt_submitted(&mut self, session_id: &str, prompt: &str) {
@@ -2189,7 +2265,6 @@ impl TuiApp {
         state.thinking_preview.clear();
         state.awaiting_reply = true;
         state.awaiting_reply_for = Some(prompt.trim().to_string());
-        self.dashboard.session_details.remove(session_id);
         self.requested_session_detail = None;
         self.detail_retry_until.insert(
             session_id.to_string(),
@@ -2724,6 +2799,18 @@ impl TuiApp {
         ));
     }
 
+    fn toggle_inline_thinking_expansion(&mut self) {
+        self.inline_thinking_expanded = !self.inline_thinking_expanded;
+        self.dashboard.record_info(format!(
+            "Inline thinking is now {}",
+            if self.inline_thinking_expanded {
+                "expanded"
+            } else {
+                "collapsed"
+            }
+        ));
+    }
+
     fn toggle_streaming_preview(&mut self) {
         self.settings.chat.show_streaming_preview = !self.settings.chat.show_streaming_preview;
         self.dashboard.record_info(format!(
@@ -2889,8 +2976,12 @@ impl TuiApp {
 
     fn build_transcript_lines(&self, session_id: &str) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
+        let completed_thinking = self
+            .live_transcripts
+            .get(session_id)
+            .map(|state| &state.completed_turn_thinking);
         if let Some(detail) = self.dashboard.session_detail(session_id) {
-            for message in &detail.messages {
+            for (index, message) in detail.messages.iter().enumerate() {
                 let content = message_content_text(&message.content)
                     .unwrap_or_else(|| compact_json(&message.content, 120));
                 self.push_message_block(
@@ -2899,12 +2990,39 @@ impl TuiApp {
                     Some(format!("turn {}", message.turn_index)),
                     &content,
                 );
+
+                if let Some(thinking) = completed_thinking
+                    .and_then(|turns| turns.get(&message.turn_index))
+                    .filter(|_| {
+                        message_has_renderable_assistant_text(message)
+                            && assistant_turn_message_is_last(detail, index)
+                    })
+                {
+                    self.push_thinking_preview_block(
+                        &mut lines,
+                        thinking,
+                        self.inline_thinking_expanded,
+                        true,
+                    );
+                }
             }
         }
 
         if let Some(state) = self.live_transcripts.get(session_id) {
             for prompt in &state.pending_user_messages {
                 self.push_message_block(&mut lines, "user", Some("pending".to_string()), prompt);
+            }
+
+            if self.settings.chat.show_thinking
+                && !state.thinking_preview.trim().is_empty()
+                && (state.awaiting_reply || !state.assistant_preview.trim().is_empty())
+            {
+                self.push_thinking_preview_block(
+                    &mut lines,
+                    &state.thinking_preview,
+                    self.inline_thinking_expanded,
+                    false,
+                );
             }
 
             if self.settings.chat.show_streaming_preview
@@ -2965,6 +3083,87 @@ impl TuiApp {
             lines.push(Line::from(Span::styled(
                 body_prefix.to_string(),
                 body_style,
+            )));
+        }
+        lines.push(Line::default());
+    }
+
+    fn push_thinking_preview_block(
+        &self,
+        lines: &mut Vec<Line<'static>>,
+        thinking: &str,
+        expanded: bool,
+        persisted: bool,
+    ) {
+        lines.push(Line::from(Span::styled(
+            if persisted {
+                if expanded {
+                    "·· Thinking"
+                } else {
+                    "·· Thinking (collapsed, press t to expand)"
+                }
+            } else if expanded {
+                "·· Thinking preview"
+            } else {
+                "·· Thinking preview (press t to expand)"
+            },
+            Style::default()
+                .fg(Color::Rgb(132, 144, 160))
+                .add_modifier(Modifier::ITALIC | Modifier::DIM),
+        )));
+
+        let preview_lines = if expanded {
+            thinking
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .collect::<Vec<_>>()
+        } else {
+            thinking
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .take(2)
+                .collect::<Vec<_>>()
+        };
+
+        if preview_lines.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "› reasoning stream active",
+                Style::default()
+                    .fg(Color::Rgb(110, 122, 138))
+                    .add_modifier(Modifier::DIM),
+            )));
+        } else {
+            for line in preview_lines {
+                lines.push(Line::from(Span::styled(
+                    format!("› {}", excerpt(line, 140)),
+                    Style::default()
+                        .fg(Color::Rgb(110, 122, 138))
+                        .add_modifier(Modifier::DIM),
+                )));
+            }
+        }
+
+        if !expanded
+            && thinking
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .count()
+                > 2
+        {
+            lines.push(Line::from(Span::styled(
+                "  … more available in the Thinking pane or via t",
+                Style::default()
+                    .fg(Color::Rgb(96, 108, 124))
+                    .add_modifier(Modifier::DIM),
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                "  full stream available in the Thinking pane",
+                Style::default()
+                    .fg(Color::Rgb(96, 108, 124))
+                    .add_modifier(Modifier::DIM),
             )));
         }
         lines.push(Line::default());
@@ -3129,10 +3328,12 @@ impl TuiApp {
         let Some(state) = self.live_transcripts.get(session_id) else {
             return "No streamed thinking for the selected session yet.".to_string();
         };
-        if state.thinking_preview.trim().is_empty() {
-            "No streamed thinking for the selected session yet.".to_string()
-        } else {
+        if !state.thinking_preview.trim().is_empty() {
             state.thinking_preview.clone()
+        } else if let Some((_, thinking)) = state.completed_turn_thinking.iter().next_back() {
+            thinking.clone()
+        } else {
+            "No streamed thinking for the selected session yet.".to_string()
         }
     }
 
@@ -3490,7 +3691,7 @@ impl TuiApp {
         let shared = "1-9 switch views | Tab cycle | arrows/j/k move | r refresh | q quit";
         let scoped = match self.tab {
             TabKind::Chat => {
-                "Enter opens/resumes or prompts | p prompt | ,/. cycle panes | h thinking | v preview | f follow-latest | PgUp/PgDn scroll | Home/End jump"
+                "Enter opens/resumes or prompts | p prompt | ,/. cycle panes | h thinking pane | t inline thinking | v preview | f follow-latest | PgUp/PgDn scroll | Home/End jump"
             }
             TabKind::Connections => {
                 "Enter/s connect selected | C connect draft | T test draft | P test selected | E ensure draft local | S update selected | R load recent | [/ ] pick recent | v load current | b load selected | m/o cycle draft | t/g edit draft | a/A save as named | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
@@ -3843,6 +4044,40 @@ fn message_has_renderable_assistant_text(
 ) -> bool {
     message.role == "assistant"
         && message_content_text(&message.content).is_some_and(|text| !text.trim().is_empty())
+}
+
+fn assistant_turn_message_is_last(
+    detail: &turin_control_client::SessionDetail,
+    message_index: usize,
+) -> bool {
+    let message = &detail.messages[message_index];
+    detail
+        .messages
+        .iter()
+        .skip(message_index + 1)
+        .all(|candidate| {
+            candidate.turn_index != message.turn_index
+                || !message_has_renderable_assistant_text(candidate)
+        })
+}
+
+fn assistant_turn_index_after_prompt(
+    detail: &turin_control_client::SessionDetail,
+    prompt: &str,
+) -> Option<u32> {
+    let user_index = detail.messages.iter().rposition(|message| {
+        message.role == "user"
+            && message_content_text(&message.content)
+                .is_some_and(|text| text.trim() == prompt.trim())
+    })?;
+
+    detail
+        .messages
+        .iter()
+        .skip(user_index + 1)
+        .rev()
+        .find(|message| message_has_renderable_assistant_text(message))
+        .map(|message| message.turn_index)
 }
 
 fn push_bounded_line(queue: &mut VecDeque<String>, value: String, max_items: usize) {
