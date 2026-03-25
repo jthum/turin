@@ -236,6 +236,7 @@ struct LiveTranscriptState {
     recent_tool_calls: VecDeque<String>,
     recent_events: VecDeque<String>,
     awaiting_reply: bool,
+    awaiting_reply_for: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1142,7 +1143,7 @@ fn render_chat_center(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout
             ),
             Span::raw("  "),
             Span::styled(
-                app.current_chat_activity_label(),
+                app.current_chat_status_label(),
                 app.current_chat_activity_style(),
             ),
         ]),
@@ -1267,7 +1268,7 @@ impl TuiApp {
             }
             UiUpdate::SessionDetail(detail) => {
                 self.sync_pending_user_messages_from_detail(&detail.session.session_id, detail);
-                if self.session_detail_has_committed_reply(detail) {
+                if self.session_detail_satisfies_pending_reply(&detail.session.session_id, detail) {
                     self.clear_live_transcript_for(&detail.session.session_id);
                     self.clear_pending_messages_for(&detail.session.session_id);
                     self.detail_retry_until.remove(&detail.session.session_id);
@@ -2162,6 +2163,7 @@ impl TuiApp {
         if let Some(state) = self.live_transcripts.get_mut(session_id) {
             state.pending_user_messages.clear();
             state.awaiting_reply = false;
+            state.awaiting_reply_for = None;
         }
     }
 
@@ -2178,6 +2180,7 @@ impl TuiApp {
         state.assistant_preview.clear();
         state.thinking_preview.clear();
         state.awaiting_reply = true;
+        state.awaiting_reply_for = Some(prompt.trim().to_string());
         self.dashboard.session_details.remove(session_id);
         self.requested_session_detail = None;
         self.detail_retry_until.insert(
@@ -2986,9 +2989,9 @@ impl TuiApp {
         }
     }
 
-    fn current_chat_activity_label(&self) -> String {
+    fn current_chat_status_label(&self) -> String {
         if self.current_chat_is_busy() {
-            format!("{} Thinking…", spinner_frame())
+            "Busy".to_string()
         } else {
             "Idle".to_string()
         }
@@ -3024,6 +3027,11 @@ impl TuiApp {
         let session_id = self.current_chat_session_id()?;
         if let Some(state) = self.live_transcripts.get(session_id)
             && let Some(prompt) = state.pending_user_messages.back()
+        {
+            return Some(excerpt_multiline(prompt, 2, 120));
+        }
+        if let Some(state) = self.live_transcripts.get(session_id)
+            && let Some(prompt) = state.awaiting_reply_for.as_deref()
         {
             return Some(excerpt_multiline(prompt, 2, 120));
         }
@@ -3063,6 +3071,43 @@ impl TuiApp {
         {
             state.pending_user_messages.pop_back();
         }
+    }
+
+    fn session_detail_satisfies_pending_reply(
+        &self,
+        session_id: &str,
+        detail: &turin_control_client::SessionDetail,
+    ) -> bool {
+        let Some(state) = self.live_transcripts.get(session_id) else {
+            return self.session_detail_has_any_assistant_text(detail);
+        };
+        let Some(prompt) = state.awaiting_reply_for.as_deref() else {
+            return self.session_detail_has_any_assistant_text(detail);
+        };
+
+        let Some(user_index) = detail.messages.iter().rposition(|message| {
+            message.role == "user"
+                && message_content_text(&message.content)
+                    .is_some_and(|text| text.trim() == prompt.trim())
+        }) else {
+            return false;
+        };
+
+        detail
+            .messages
+            .iter()
+            .skip(user_index + 1)
+            .any(message_has_renderable_assistant_text)
+    }
+
+    fn session_detail_has_any_assistant_text(
+        &self,
+        detail: &turin_control_client::SessionDetail,
+    ) -> bool {
+        detail
+            .messages
+            .iter()
+            .any(message_has_renderable_assistant_text)
     }
 
     fn current_thinking_text(&self) -> String {
@@ -3542,24 +3587,12 @@ impl TuiApp {
     fn pending_reply_not_committed(&self, session_id: &str) -> bool {
         self.live_transcripts
             .get(session_id)
-            .is_some_and(|state| !state.pending_user_messages.is_empty())
+            .is_some_and(|state| state.awaiting_reply)
             && self
                 .dashboard
                 .session_detail(session_id)
-                .map(|detail| !self.session_detail_has_committed_reply(detail))
+                .map(|detail| !self.session_detail_satisfies_pending_reply(session_id, detail))
                 .unwrap_or(true)
-    }
-
-    fn session_detail_has_committed_reply(
-        &self,
-        detail: &turin_control_client::SessionDetail,
-    ) -> bool {
-        detail
-            .messages
-            .iter()
-            .rev()
-            .find(|message| !message.role.trim().is_empty())
-            .is_some_and(|message| message.role == "assistant")
     }
 }
 
@@ -3779,6 +3812,13 @@ fn spinner_frame() -> &'static str {
         .unwrap_or(0);
     let index = ((millis / 120) % FRAMES.len() as u128) as usize;
     FRAMES[index]
+}
+
+fn message_has_renderable_assistant_text(
+    message: &turin_control_client::SessionMessageDetail,
+) -> bool {
+    message.role == "assistant"
+        && message_content_text(&message.content).is_some_and(|text| !text.trim().is_empty())
 }
 
 fn push_bounded_line(queue: &mut VecDeque<String>, value: String, max_items: usize) {
