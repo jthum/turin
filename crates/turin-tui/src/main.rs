@@ -1,3 +1,5 @@
+mod settings;
+
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use crossterm::event::{self, Event as CEvent, KeyCode};
@@ -7,10 +9,16 @@ use crossterm::terminal::{
 };
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 use serde::Serialize;
+use serde_json::Value;
+use settings::{
+    ChatInspectorPane, ChatSidebarPane, LoadedTuiSettings, TuiSettings, load_settings,
+    save_settings,
+};
+use std::collections::{BTreeMap, VecDeque};
 use std::io::stdout;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -46,10 +54,13 @@ struct Args {
     profile: Option<String>,
     #[arg(long)]
     profiles_file: Option<PathBuf>,
+    #[arg(long)]
+    tui_config: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TabKind {
+    Chat,
     Connections,
     Agents,
     LiveSessions,
@@ -57,10 +68,12 @@ enum TabKind {
     Tasks,
     Channels,
     Events,
+    Settings,
 }
 
 impl TabKind {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 9] = [
+        Self::Chat,
         Self::Connections,
         Self::Agents,
         Self::LiveSessions,
@@ -68,10 +81,12 @@ impl TabKind {
         Self::Tasks,
         Self::Channels,
         Self::Events,
+        Self::Settings,
     ];
 
     fn title(self) -> &'static str {
         match self {
+            Self::Chat => "Chat",
             Self::Connections => "Connections",
             Self::Agents => "Agents",
             Self::LiveSessions => "Live Sessions",
@@ -79,6 +94,7 @@ impl TabKind {
             Self::Tasks => "Tasks",
             Self::Channels => "Channels",
             Self::Events => "Events",
+            Self::Settings => "Settings",
         }
     }
 
@@ -100,13 +116,15 @@ impl TabKind {
 
     fn from_digit(digit: char) -> Option<Self> {
         match digit {
-            '1' => Some(Self::Connections),
-            '2' => Some(Self::Agents),
-            '3' => Some(Self::LiveSessions),
-            '4' => Some(Self::Sessions),
-            '5' => Some(Self::Tasks),
-            '6' => Some(Self::Channels),
-            '7' => Some(Self::Events),
+            '1' => Some(Self::Chat),
+            '2' => Some(Self::Connections),
+            '3' => Some(Self::Agents),
+            '4' => Some(Self::LiveSessions),
+            '5' => Some(Self::Sessions),
+            '6' => Some(Self::Tasks),
+            '7' => Some(Self::Channels),
+            '8' => Some(Self::Events),
+            '9' => Some(Self::Settings),
             _ => None,
         }
     }
@@ -139,6 +157,7 @@ enum InputMode {
     EditTaskFilter,
     EditChannelFilter,
     EditEventFilter,
+    EditTranscriptBudget,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,6 +186,8 @@ impl PendingDraftAction {
 struct TuiApp {
     dashboard: DashboardState,
     connection_options: ConnectionOptions,
+    settings: TuiSettings,
+    settings_path: PathBuf,
     profile_catalog: Option<ConnectionProfileCatalog>,
     active_profile: Option<String>,
     tab: TabKind,
@@ -178,6 +199,10 @@ struct TuiApp {
     task_index: usize,
     channel_index: usize,
     event_index: usize,
+    settings_index: usize,
+    chat_sidebar_index: usize,
+    chat_scroll_lines: u16,
+    chat_session_id: Option<String>,
     profile_draft: ConnectionProfileDraft,
     draft_baseline: ConnectionProfileDraft,
     draft_baseline_label: String,
@@ -193,6 +218,46 @@ struct TuiApp {
     events_paused: bool,
     events_follow_latest: bool,
     paused_events: Vec<EventEnvelope>,
+    live_transcripts: BTreeMap<String, LiveTranscriptState>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct LiveTranscriptState {
+    pending_user_messages: VecDeque<String>,
+    assistant_preview: String,
+    thinking_preview: String,
+    recent_tool_calls: VecDeque<String>,
+    recent_events: VecDeque<String>,
+}
+
+#[derive(Debug, Clone)]
+enum ChatSidebarItem {
+    LiveSession { session_id: String, label: String },
+    StoredSession { session_id: String, label: String },
+    Agent { agent_id: String, label: String },
+    Channel { label: String },
+    Event { summary: String },
+}
+
+impl ChatSidebarItem {
+    fn label(&self) -> &str {
+        match self {
+            Self::LiveSession { label, .. }
+            | Self::StoredSession { label, .. }
+            | Self::Agent { label, .. }
+            | Self::Channel { label, .. }
+            | Self::Event { summary: label } => label,
+        }
+    }
+
+    fn session_id(&self) -> Option<&str> {
+        match self {
+            Self::LiveSession { session_id, .. } | Self::StoredSession { session_id, .. } => {
+                Some(session_id)
+            }
+            _ => None,
+        }
+    }
 }
 
 enum LoopAction {
@@ -207,12 +272,13 @@ enum LoopAction {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let initial_options = connection_options(&args);
+    let loaded_settings = load_settings(args.tui_config.as_deref())?;
 
     enable_raw_mode()?;
     execute!(stdout(), EnterAlternateScreen)?;
     let mut terminal = ratatui::init();
 
-    let loop_result = run_shell(&mut terminal, initial_options).await;
+    let loop_result = run_shell(&mut terminal, initial_options, loaded_settings).await;
 
     ratatui::restore();
     disable_raw_mode()?;
@@ -237,9 +303,11 @@ fn connection_options(args: &Args) -> ConnectionOptions {
 async fn run_shell(
     terminal: &mut DefaultTerminal,
     initial_connection_options: ConnectionOptions,
+    loaded_settings: LoadedTuiSettings,
 ) -> Result<()> {
     let (mut app, mut controller) = connect_shell_state(
         initial_connection_options,
+        loaded_settings,
         ConnectionDraftHistory::default(),
         ConnectionProfileActivityBook::default(),
     )
@@ -263,7 +331,17 @@ async fn run_shell(
                 }
                 let options = *options;
                 let reconnect_profile = options.resolved_profile_name().ok().flatten();
-                match connect_shell_state(options, recent_drafts, profile_activity.clone()).await {
+                match connect_shell_state(
+                    options,
+                    LoadedTuiSettings {
+                        settings: app.settings.clone(),
+                        path: app.settings_path.clone(),
+                    },
+                    recent_drafts,
+                    profile_activity.clone(),
+                )
+                .await
+                {
                     Ok((next_app, next_controller)) => {
                         controller.shutdown();
                         app = next_app;
@@ -300,6 +378,7 @@ async fn run_shell(
 
 async fn connect_shell_state(
     connection_options: ConnectionOptions,
+    loaded_settings: LoadedTuiSettings,
     recent_drafts: ConnectionDraftHistory,
     profile_activity: ConnectionProfileActivityBook,
 ) -> Result<(TuiApp, UiController)> {
@@ -310,6 +389,7 @@ async fn connect_shell_state(
     let app = TuiApp::new(
         dashboard,
         connection_options,
+        loaded_settings,
         profile_catalog,
         active_profile,
         recent_drafts,
@@ -362,7 +442,16 @@ fn handle_key(
         }
         KeyCode::Down | KeyCode::Char('j') => app.move_selection(1),
         KeyCode::Up | KeyCode::Char('k') => app.move_selection(-1),
+        KeyCode::PageUp if app.tab == TabKind::Chat => app.scroll_chat(10),
+        KeyCode::PageDown if app.tab == TabKind::Chat => app.scroll_chat(-10),
+        KeyCode::Home if app.tab == TabKind::Chat => app.jump_chat_oldest(),
+        KeyCode::End if app.tab == TabKind::Chat => app.jump_chat_latest(),
         KeyCode::Char('r') => send_command(command_tx, OperatorCommand::Refresh)?,
+        KeyCode::Char(',') if app.tab == TabKind::Chat => app.cycle_left_chat_pane(),
+        KeyCode::Char('.') if app.tab == TabKind::Chat => app.cycle_right_chat_pane(),
+        KeyCode::Char('h') if app.tab == TabKind::Chat => app.toggle_show_thinking(),
+        KeyCode::Char('v') if app.tab == TabKind::Chat => app.toggle_streaming_preview(),
+        KeyCode::Char('f') if app.tab == TabKind::Chat => app.toggle_chat_follow_latest(),
         KeyCode::Char('l') if app.tab == TabKind::Connections => app.reload_profiles(),
         KeyCode::Char('v') if app.tab == TabKind::Connections => {
             app.load_current_connection_into_draft()
@@ -429,6 +518,7 @@ fn handle_key(
                 }));
             }
         }
+        KeyCode::Char('w') if app.tab == TabKind::Settings => app.save_settings(),
         KeyCode::Char('n') => {
             if let Some(agent) = app.selected_agent() {
                 send_command(
@@ -450,6 +540,7 @@ fn handle_key(
             }
         }
         KeyCode::Enter => match app.tab {
+            TabKind::Chat => app.handle_chat_enter(command_tx)?,
             TabKind::Connections => {
                 if let Some(options) = app.selected_profile_options() {
                     return Ok(Some(LoopAction::Reconnect {
@@ -481,9 +572,12 @@ fn handle_key(
             TabKind::LiveSessions => {
                 app.start_prompt_input();
             }
+            TabKind::Settings => app.activate_selected_setting(),
             _ => {}
         },
+        KeyCode::Char('p') if app.tab == TabKind::Chat => app.start_chat_prompt_input(),
         KeyCode::Char('p') => app.start_prompt_input(),
+        KeyCode::Char('b') if app.tab == TabKind::Settings => app.start_edit_transcript_budget(),
         KeyCode::Char('c') => match app.tab {
             TabKind::LiveSessions => {
                 if let Some(session) = app.selected_live_session() {
@@ -581,6 +675,9 @@ fn handle_input_mode(
                     | Some(InputMode::RenameProfile { .. }) => "Profile name cannot be empty",
                     Some(InputMode::EditDraftTarget) => "Profile target cannot be empty",
                     Some(InputMode::EditDraftAuth) => "Profile auth value cannot be empty",
+                    Some(InputMode::EditTranscriptBudget) => {
+                        "Transcript budget must be a positive integer"
+                    }
                     Some(InputMode::EditTaskFilter)
                     | Some(InputMode::EditChannelFilter)
                     | Some(InputMode::EditEventFilter) => "Use Esc to clear the filter",
@@ -595,6 +692,7 @@ fn handle_input_mode(
 
             match app.input_mode.clone() {
                 Some(InputMode::SubmitPrompt { session_id }) => {
+                    app.note_prompt_submitted(&session_id, &input);
                     send_command(
                         command_tx,
                         OperatorCommand::SubmitPrompt {
@@ -628,6 +726,19 @@ fn handle_input_mode(
                     app.dashboard
                         .record_info("Updated the connection profile draft auth value");
                 }
+                Some(InputMode::EditTranscriptBudget) => match input.parse::<usize>() {
+                    Ok(value) if value >= 16 * 1024 => {
+                        app.settings.chat.transcript_memory_budget_bytes = value;
+                        app.chat_scroll_lines = 0;
+                        app.dashboard.record_info(format!(
+                            "Updated transcript memory budget to {} bytes",
+                            value
+                        ));
+                    }
+                    _ => app
+                        .dashboard
+                        .record_error("Transcript budget must be an integer >= 16384 bytes"),
+                },
                 Some(InputMode::EditTaskFilter) => {
                     app.task_filter = input;
                     app.dashboard.record_info("Updated the task filter");
@@ -675,13 +786,48 @@ fn render(frame: &mut Frame<'_>, app: &mut TuiApp) {
     render_banner(frame, app, layout[0]);
     render_tabs(frame, app, layout[1]);
 
-    let main = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
-        .split(layout[2]);
-    render_left_panel(frame, app, main[0]);
-    render_right_panel(frame, app, main[1]);
+    if app.tab == TabKind::Chat {
+        render_chat(frame, app, layout[2]);
+    } else {
+        let main = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+            .split(layout[2]);
+        render_left_panel(frame, app, main[0]);
+        render_right_panel(frame, app, main[1]);
+    }
     render_footer(frame, app, layout[3]);
+}
+
+fn render_chat(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::layout::Rect) {
+    let show_left = app.settings.layout.left_pane != ChatSidebarPane::None;
+    let show_right = app.settings.layout.right_pane != ChatInspectorPane::None
+        && (app.settings.layout.right_pane != ChatInspectorPane::Thinking
+            || app.settings.chat.show_thinking);
+
+    let mut constraints = Vec::new();
+    if show_left {
+        constraints.push(Constraint::Length(32));
+    }
+    constraints.push(Constraint::Min(40));
+    if show_right {
+        constraints.push(Constraint::Length(36));
+    }
+
+    let sections = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(constraints)
+        .split(area);
+
+    let mut index = 0usize;
+    if show_left {
+        render_chat_sidebar(frame, app, sections[index]);
+        index += 1;
+    }
+    render_chat_center(frame, app, sections[index]);
+    if show_right {
+        render_chat_inspector(frame, app, sections[index + 1]);
+    }
 }
 
 fn render_banner(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
@@ -786,6 +932,7 @@ fn render_tabs(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect)
 
 fn render_left_panel(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::layout::Rect) {
     let title = match app.tab {
+        TabKind::Chat => "Chat",
         TabKind::Connections => "Connections",
         TabKind::Agents => "Agents",
         TabKind::LiveSessions => "Live Sessions",
@@ -793,6 +940,7 @@ fn render_left_panel(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::lay
         TabKind::Tasks => "Tasks",
         TabKind::Channels => "Channels",
         TabKind::Events => "Events",
+        TabKind::Settings => "Settings",
     };
     let items = app.list_items();
     let mut state = ListState::default();
@@ -914,6 +1062,15 @@ fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
                 ]),
                 Line::from("Enter updates the profile draft auth value. Esc cancels."),
             ],
+            Some(InputMode::EditTranscriptBudget) => vec![
+                Line::from(vec![
+                    Span::styled("Budget> ", Style::default().fg(Color::LightCyan)),
+                    Span::raw(app.input.clone()),
+                ]),
+                Line::from(
+                    "Enter updates transcript memory budget in bytes (minimum 16384). Esc cancels.",
+                ),
+            ],
             Some(InputMode::EditTaskFilter) => vec![
                 Line::from(vec![
                     Span::styled("Task Filter> ", Style::default().fg(Color::LightCyan)),
@@ -994,10 +1151,114 @@ fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
     frame.render_widget(footer, area);
 }
 
+fn render_chat_sidebar(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::layout::Rect) {
+    let items = app
+        .chat_sidebar_items()
+        .into_iter()
+        .map(|item| ListItem::new(item.label().to_string()))
+        .collect::<Vec<_>>();
+    let mut state = ListState::default();
+    if !items.is_empty() {
+        state.select(Some(app.chat_sidebar_index));
+    }
+    let list = List::new(items)
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(28, 56, 73))
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol(">> ")
+        .block(
+            Block::default()
+                .title(app.settings.layout.left_pane.title())
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        );
+    frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn render_chat_center(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(8)])
+        .split(area);
+
+    let header = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled("Session: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                app.current_chat_title(),
+                Style::default()
+                    .fg(Color::LightCyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Mode: ", Style::default().fg(Color::Gray)),
+            Span::raw(app.current_chat_mode_label()),
+            Span::styled("  Stream: ", Style::default().fg(Color::Gray)),
+            Span::raw(if app.settings.chat.show_streaming_preview {
+                "preview on"
+            } else {
+                "preview hidden"
+            }),
+            Span::styled("  Thinking: ", Style::default().fg(Color::Gray)),
+            Span::raw(if app.settings.chat.show_thinking {
+                "visible"
+            } else {
+                "hidden"
+            }),
+        ]),
+    ])
+    .block(
+        Block::default()
+            .title("Chat")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    )
+    .wrap(Wrap { trim: true });
+    frame.render_widget(header, layout[0]);
+
+    let (text, scroll) = app.chat_transcript_text(layout[1].height.saturating_sub(2) as usize);
+    let transcript = Paragraph::new(text)
+        .scroll((scroll, 0))
+        .block(
+            Block::default()
+                .title("Transcript")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(transcript, layout[1]);
+}
+
+fn render_chat_inspector(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
+    let title = app.settings.layout.right_pane.title();
+    let body = match app.settings.layout.right_pane {
+        ChatInspectorPane::Thinking => app.current_thinking_text(),
+        ChatInspectorPane::Tools => app.current_tool_text(),
+        ChatInspectorPane::Events => app.current_chat_event_text(),
+        ChatInspectorPane::SessionMeta => app.current_session_meta_text(),
+        ChatInspectorPane::None => String::new(),
+    };
+
+    let inspector = Paragraph::new(body)
+        .block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(inspector, area);
+}
+
 impl TuiApp {
     fn new(
         dashboard: DashboardState,
         connection_options: ConnectionOptions,
+        loaded_settings: LoadedTuiSettings,
         profile_catalog: Option<ConnectionProfileCatalog>,
         active_profile: Option<String>,
         recent_drafts: ConnectionDraftHistory,
@@ -1009,9 +1270,11 @@ impl TuiApp {
         let mut app = Self {
             dashboard,
             connection_options,
+            settings: loaded_settings.settings,
+            settings_path: loaded_settings.path,
             profile_catalog,
             active_profile,
-            tab: TabKind::Connections,
+            tab: TabKind::Chat,
             profile_index: 0,
             recent_draft_index: 0,
             agent_index: 0,
@@ -1020,6 +1283,10 @@ impl TuiApp {
             task_index: 0,
             channel_index: 0,
             event_index: 0,
+            settings_index: 0,
+            chat_sidebar_index: 0,
+            chat_scroll_lines: 0,
+            chat_session_id: None,
             draft_baseline: profile_draft.clone(),
             draft_baseline_label: "current connection".to_string(),
             profile_draft,
@@ -1035,19 +1302,45 @@ impl TuiApp {
             events_paused: false,
             events_follow_latest: true,
             paused_events: Vec::new(),
+            live_transcripts: BTreeMap::new(),
         };
+        app.events_follow_latest = app.settings.chat.follow_latest;
+        app.initialize_chat_session();
         app.clamp_selection();
         app
     }
 
     fn apply_update(&mut self, update: UiUpdate) {
-        let auto_follow_event = matches!(update, UiUpdate::Event(_))
-            && !self.events_paused
-            && self.events_follow_latest;
-        self.dashboard.apply_update(update);
-        if auto_follow_event {
-            self.event_index = 0;
+        match &update {
+            UiUpdate::Event(event) => {
+                self.apply_live_event(event);
+                if !self.events_paused && self.events_follow_latest {
+                    self.event_index = 0;
+                }
+            }
+            UiUpdate::SessionDetail(detail) => {
+                self.clear_live_transcript_for(&detail.session.session_id);
+                self.clear_pending_messages_for(&detail.session.session_id);
+            }
+            UiUpdate::Snapshot(snapshot) => {
+                if self.chat_session_id.is_none() {
+                    self.chat_session_id = snapshot
+                        .live_sessions
+                        .first()
+                        .map(|session| session.session_id.clone())
+                        .or_else(|| {
+                            snapshot
+                                .sessions
+                                .first()
+                                .map(|session| session.session_id.clone())
+                        });
+                }
+            }
+            UiUpdate::RefreshTelemetry { .. } | UiUpdate::Error(_) | UiUpdate::Info(_) => {}
         }
+
+        self.dashboard.apply_update(update);
+        self.initialize_chat_session();
         self.clamp_selection();
     }
 
@@ -1068,6 +1361,10 @@ impl TuiApp {
         self.task_index = clamp_index(self.task_index, self.filtered_tasks().len());
         self.channel_index = clamp_index(self.channel_index, self.filtered_channels().len());
         self.event_index = clamp_index(self.event_index, self.filtered_events().len());
+        self.settings_index = clamp_index(self.settings_index, self.settings_items().len());
+        self.chat_sidebar_index =
+            clamp_index(self.chat_sidebar_index, self.chat_sidebar_items().len());
+        self.sync_chat_selection_from_sidebar();
     }
 
     fn move_selection(&mut self, delta: isize) {
@@ -1082,6 +1379,7 @@ impl TuiApp {
 
     fn selected_index(&self) -> usize {
         match self.tab {
+            TabKind::Chat => self.chat_sidebar_index,
             TabKind::Connections => self.profile_index,
             TabKind::Agents => self.agent_index,
             TabKind::LiveSessions => self.live_session_index,
@@ -1089,11 +1387,13 @@ impl TuiApp {
             TabKind::Tasks => self.task_index,
             TabKind::Channels => self.channel_index,
             TabKind::Events => self.event_index,
+            TabKind::Settings => self.settings_index,
         }
     }
 
     fn set_selected_index(&mut self, value: usize) {
         match self.tab {
+            TabKind::Chat => self.chat_sidebar_index = value,
             TabKind::Connections => self.profile_index = value,
             TabKind::Agents => self.agent_index = value,
             TabKind::LiveSessions => self.live_session_index = value,
@@ -1101,11 +1401,13 @@ impl TuiApp {
             TabKind::Tasks => self.task_index = value,
             TabKind::Channels => self.channel_index = value,
             TabKind::Events => self.event_index = value,
+            TabKind::Settings => self.settings_index = value,
         }
     }
 
     fn current_len(&self) -> usize {
         match self.tab {
+            TabKind::Chat => self.chat_sidebar_items().len(),
             TabKind::Connections => self
                 .profile_catalog
                 .as_ref()
@@ -1117,6 +1419,7 @@ impl TuiApp {
             TabKind::Tasks => self.filtered_tasks().len(),
             TabKind::Channels => self.filtered_channels().len(),
             TabKind::Events => self.filtered_events().len(),
+            TabKind::Settings => self.settings_items().len(),
         }
     }
 
@@ -1590,12 +1893,308 @@ impl TuiApp {
         self.filtered_channels().get(self.channel_index).cloned()
     }
 
+    fn initialize_chat_session(&mut self) {
+        let current_exists = self
+            .chat_session_id
+            .as_deref()
+            .is_some_and(|session_id| self.session_exists(session_id));
+        if !current_exists {
+            self.chat_session_id = self
+                .dashboard
+                .live_sessions
+                .first()
+                .map(|session| session.session_id.clone())
+                .or_else(|| {
+                    self.dashboard
+                        .sessions
+                        .first()
+                        .map(|session| session.session_id.clone())
+                });
+        }
+        self.sync_chat_selection_to_session();
+    }
+
+    fn session_exists(&self, session_id: &str) -> bool {
+        self.dashboard
+            .live_sessions
+            .iter()
+            .any(|session| session.session_id == session_id)
+            || self
+                .dashboard
+                .sessions
+                .iter()
+                .any(|session| session.session_id == session_id)
+    }
+
+    fn sync_chat_selection_to_session(&mut self) {
+        let Some(session_id) = self.chat_session_id.as_deref() else {
+            return;
+        };
+        let sidebar = self.chat_sidebar_items();
+        if let Some(index) = sidebar
+            .iter()
+            .position(|item| item.session_id() == Some(session_id))
+        {
+            self.chat_sidebar_index = index;
+        }
+    }
+
+    fn sync_chat_selection_from_sidebar(&mut self) {
+        if self.tab != TabKind::Chat {
+            return;
+        }
+        if let Some(item) = self.current_chat_sidebar_item()
+            && let Some(session_id) = item.session_id()
+        {
+            self.chat_session_id = Some(session_id.to_string());
+            if self.settings.chat.follow_latest {
+                self.chat_scroll_lines = 0;
+            }
+        }
+    }
+
+    fn current_chat_sidebar_item(&self) -> Option<ChatSidebarItem> {
+        self.chat_sidebar_items()
+            .get(self.chat_sidebar_index)
+            .cloned()
+    }
+
+    fn chat_sidebar_items(&self) -> Vec<ChatSidebarItem> {
+        match self.settings.layout.left_pane {
+            ChatSidebarPane::Sessions => {
+                let mut items = self
+                    .dashboard
+                    .live_sessions
+                    .iter()
+                    .map(|session| ChatSidebarItem::LiveSession {
+                        session_id: session.session_id.clone(),
+                        label: format!(
+                            "{}  {}  live",
+                            self.session_label(&session.session_id, Some(&session.agent_id)),
+                            session.slot_id
+                        ),
+                    })
+                    .collect::<Vec<_>>();
+                items.extend(self.dashboard.sessions.iter().map(|session| {
+                    ChatSidebarItem::StoredSession {
+                        session_id: session.session_id.clone(),
+                        label: format!(
+                            "{}  {}",
+                            self.session_label(&session.session_id, Some(&session.agent_id)),
+                            session.created_at
+                        ),
+                    }
+                }));
+                items
+            }
+            ChatSidebarPane::Agents => self
+                .dashboard
+                .agents()
+                .iter()
+                .map(|agent| ChatSidebarItem::Agent {
+                    agent_id: agent.id.clone(),
+                    label: format!("{} [{}]", agent.id, agent.model),
+                })
+                .collect(),
+            ChatSidebarPane::Channels => self
+                .dashboard
+                .channels()
+                .iter()
+                .map(|channel| ChatSidebarItem::Channel {
+                    label: format!("{} [{}]", channel.id, channel.kind),
+                })
+                .collect(),
+            ChatSidebarPane::Events => self
+                .filtered_events()
+                .into_iter()
+                .take(32)
+                .map(|event| ChatSidebarItem::Event {
+                    summary: format!("{} {}", event.event, compact_json(&event.data, 72)),
+                })
+                .collect(),
+            ChatSidebarPane::None => Vec::new(),
+        }
+    }
+
+    fn current_chat_session_id(&self) -> Option<&str> {
+        self.chat_session_id.as_deref()
+    }
+
+    fn current_chat_title(&self) -> String {
+        self.current_chat_session_id()
+            .map(|session_id| self.session_label(session_id, None))
+            .unwrap_or_else(|| "No session selected".to_string())
+    }
+
+    fn current_chat_mode_label(&self) -> &'static str {
+        match self.current_chat_session_id() {
+            Some(session_id)
+                if self
+                    .dashboard
+                    .live_sessions
+                    .iter()
+                    .any(|session| session.session_id == session_id) =>
+            {
+                "live"
+            }
+            Some(_) => "stored",
+            None => "none",
+        }
+    }
+
+    fn session_label(&self, session_id: &str, fallback_agent: Option<&str>) -> String {
+        if let Some(detail) = self.dashboard.session_detail(session_id)
+            && let Some(summary) = detail
+                .messages
+                .iter()
+                .find(|message| message.role == "user")
+                .and_then(|message| message_content_text(&message.content))
+                .map(|text| excerpt(&text, 42))
+        {
+            return summary;
+        }
+
+        let agent_id = self
+            .dashboard
+            .live_sessions
+            .iter()
+            .find(|session| session.session_id == session_id)
+            .map(|session| session.agent_id.as_str())
+            .or_else(|| {
+                self.dashboard
+                    .sessions
+                    .iter()
+                    .find(|session| session.session_id == session_id)
+                    .map(|session| session.agent_id.as_str())
+            })
+            .or(fallback_agent)
+            .unwrap_or("session");
+        format!("{agent_id}:{}", tail(session_id, 8))
+    }
+
+    fn apply_live_event(&mut self, event: &EventEnvelope) {
+        let Some(session_id) = event
+            .data
+            .get("session_id")
+            .and_then(|value| value.as_str())
+        else {
+            return;
+        };
+        let state = self
+            .live_transcripts
+            .entry(session_id.to_string())
+            .or_default();
+        match event.event.as_str() {
+            "task_start" => {
+                state.assistant_preview.clear();
+                state.thinking_preview.clear();
+                state.recent_tool_calls.clear();
+                state.recent_events.clear();
+            }
+            "message_delta" => {
+                if let Some(delta) = event
+                    .data
+                    .get("content_delta")
+                    .and_then(|value| value.as_str())
+                {
+                    state.assistant_preview.push_str(delta);
+                }
+            }
+            "thinking_delta" => {
+                if let Some(delta) = event.data.get("thinking").and_then(|value| value.as_str()) {
+                    state.thinking_preview.push_str(delta);
+                }
+            }
+            "tool_call" => {
+                let tool_name = event
+                    .data
+                    .get("tool_name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("tool");
+                push_bounded_line(
+                    &mut state.recent_tool_calls,
+                    format!("{} {}", tool_name, compact_json(&event.data, 72)),
+                    8,
+                );
+            }
+            "task_complete" => {
+                self.dashboard.session_details.remove(session_id);
+                self.requested_session_detail = None;
+            }
+            _ => {}
+        }
+
+        if matches!(
+            event.event.as_str(),
+            "task_start" | "task_complete" | "message_delta" | "thinking_delta" | "tool_call"
+        ) {
+            push_bounded_line(
+                &mut state.recent_events,
+                format!("{} {}", event.event, compact_json(&event.data, 96)),
+                12,
+            );
+        }
+
+        if self.settings.chat.follow_latest && self.current_chat_session_id() == Some(session_id) {
+            self.chat_scroll_lines = 0;
+        }
+    }
+
+    fn clear_live_transcript_for(&mut self, session_id: &str) {
+        self.live_transcripts.remove(session_id);
+    }
+
+    fn clear_pending_messages_for(&mut self, session_id: &str) {
+        if let Some(state) = self.live_transcripts.get_mut(session_id) {
+            state.pending_user_messages.clear();
+        }
+    }
+
+    fn note_prompt_submitted(&mut self, session_id: &str, prompt: &str) {
+        let state = self
+            .live_transcripts
+            .entry(session_id.to_string())
+            .or_default();
+        push_bounded_line(
+            &mut state.pending_user_messages,
+            prompt.trim().to_string(),
+            8,
+        );
+        state.assistant_preview.clear();
+        state.thinking_preview.clear();
+        self.dashboard.session_details.remove(session_id);
+        self.requested_session_detail = None;
+        self.chat_session_id = Some(session_id.to_string());
+        self.chat_scroll_lines = 0;
+    }
+
     fn start_prompt_input(&mut self) {
         if let Some(session) = self.selected_live_session() {
             self.input_mode = Some(InputMode::SubmitPrompt {
                 session_id: session.session_id.clone(),
             });
             self.input.clear();
+        }
+    }
+
+    fn start_chat_prompt_input(&mut self) {
+        let Some(session_id) = self.current_chat_session_id().map(str::to_string) else {
+            self.dashboard
+                .record_error("No chat session is currently selected");
+            return;
+        };
+        if self
+            .dashboard
+            .live_sessions
+            .iter()
+            .any(|session| session.session_id == session_id)
+        {
+            self.input_mode = Some(InputMode::SubmitPrompt { session_id });
+            self.input.clear();
+        } else {
+            self.dashboard.record_error(
+                "The selected chat session is not live. Resume it first, or open a fresh live session.",
+            );
         }
     }
 
@@ -1799,8 +2398,344 @@ impl TuiApp {
         self.input.clear();
     }
 
+    fn handle_chat_enter(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
+        match self.current_chat_sidebar_item() {
+            Some(ChatSidebarItem::Agent { agent_id, .. }) => {
+                send_command(command_tx, OperatorCommand::OpenSession { agent_id })
+            }
+            Some(ChatSidebarItem::StoredSession { session_id, .. }) => {
+                send_command(command_tx, OperatorCommand::ResumeSession { session_id })
+            }
+            _ => {
+                self.start_chat_prompt_input();
+                Ok(())
+            }
+        }
+    }
+
+    fn cycle_left_chat_pane(&mut self) {
+        self.settings.layout.left_pane = self.settings.layout.left_pane.next();
+        self.chat_sidebar_index = 0;
+        self.clamp_selection();
+        self.dashboard.record_info(format!(
+            "Chat left pane is now {}",
+            self.settings.layout.left_pane.title()
+        ));
+    }
+
+    fn cycle_right_chat_pane(&mut self) {
+        self.settings.layout.right_pane = self.settings.layout.right_pane.next();
+        self.dashboard.record_info(format!(
+            "Chat right pane is now {}",
+            self.settings.layout.right_pane.title()
+        ));
+    }
+
+    fn toggle_show_thinking(&mut self) {
+        self.settings.chat.show_thinking = !self.settings.chat.show_thinking;
+        self.dashboard.record_info(format!(
+            "Thinking pane is now {}",
+            if self.settings.chat.show_thinking {
+                "visible"
+            } else {
+                "hidden"
+            }
+        ));
+    }
+
+    fn toggle_streaming_preview(&mut self) {
+        self.settings.chat.show_streaming_preview = !self.settings.chat.show_streaming_preview;
+        self.dashboard.record_info(format!(
+            "Streaming preview is now {}",
+            if self.settings.chat.show_streaming_preview {
+                "visible"
+            } else {
+                "hidden"
+            }
+        ));
+    }
+
+    fn toggle_chat_follow_latest(&mut self) {
+        self.settings.chat.follow_latest = !self.settings.chat.follow_latest;
+        if self.settings.chat.follow_latest {
+            self.chat_scroll_lines = 0;
+        }
+        self.dashboard.record_info(format!(
+            "Chat follow-latest is now {}",
+            if self.settings.chat.follow_latest {
+                "on"
+            } else {
+                "off"
+            }
+        ));
+    }
+
+    fn scroll_chat(&mut self, delta_from_bottom: i16) {
+        let next = self.chat_scroll_lines as i16 + delta_from_bottom;
+        self.chat_scroll_lines = next.max(0) as u16;
+        if self.chat_scroll_lines > 0 {
+            self.settings.chat.follow_latest = false;
+        }
+    }
+
+    fn jump_chat_latest(&mut self) {
+        self.chat_scroll_lines = 0;
+        self.settings.chat.follow_latest = true;
+        self.dashboard
+            .record_info("Chat view jumped back to the latest output");
+    }
+
+    fn jump_chat_oldest(&mut self) {
+        self.chat_scroll_lines = u16::MAX / 2;
+        self.settings.chat.follow_latest = false;
+        self.dashboard
+            .record_info("Chat view jumped toward the oldest loaded transcript lines");
+    }
+
+    fn save_settings(&mut self) {
+        match save_settings(&self.settings_path, &self.settings) {
+            Ok(()) => self.dashboard.record_info(format!(
+                "Saved TUI settings to '{}'",
+                self.settings_path.display()
+            )),
+            Err(err) => self
+                .dashboard
+                .record_error(format!("Failed to save TUI settings: {err}")),
+        }
+    }
+
+    fn settings_items(&self) -> Vec<String> {
+        vec![
+            format!("Left Pane: {}", self.settings.layout.left_pane.title()),
+            format!("Right Pane: {}", self.settings.layout.right_pane.title()),
+            format!(
+                "Streaming Preview: {}",
+                if self.settings.chat.show_streaming_preview {
+                    "on"
+                } else {
+                    "off"
+                }
+            ),
+            format!(
+                "Thinking Pane: {}",
+                if self.settings.chat.show_thinking {
+                    "on"
+                } else {
+                    "off"
+                }
+            ),
+            format!(
+                "Follow Latest: {}",
+                if self.settings.chat.follow_latest {
+                    "on"
+                } else {
+                    "off"
+                }
+            ),
+            format!(
+                "Transcript Budget: {} bytes",
+                self.settings.chat.transcript_memory_budget_bytes
+            ),
+        ]
+    }
+
+    fn activate_selected_setting(&mut self) {
+        match self.settings_index {
+            0 => self.cycle_left_chat_pane(),
+            1 => self.cycle_right_chat_pane(),
+            2 => self.toggle_streaming_preview(),
+            3 => self.toggle_show_thinking(),
+            4 => self.toggle_chat_follow_latest(),
+            5 => self.start_edit_transcript_budget(),
+            _ => {}
+        }
+    }
+
+    fn start_edit_transcript_budget(&mut self) {
+        self.input_mode = Some(InputMode::EditTranscriptBudget);
+        self.input = self
+            .settings
+            .chat
+            .transcript_memory_budget_bytes
+            .to_string();
+    }
+
+    fn chat_transcript_text(&self, viewport_height: usize) -> (Text<'static>, u16) {
+        let Some(session_id) = self.current_chat_session_id() else {
+            return (
+                Text::from(vec![
+                    Line::from("No chat session selected."),
+                    Line::from(
+                        "Use the left pane to pick a session, or switch the left pane to Agents and press Enter to open one.",
+                    ),
+                ]),
+                0,
+            );
+        };
+
+        let mut lines = self.build_transcript_lines(session_id);
+        let budget = self
+            .settings
+            .chat
+            .transcript_memory_budget_bytes
+            .max(16 * 1024);
+        trim_lines_to_budget(&mut lines, budget);
+
+        let total_lines = lines.len();
+        let visible_lines = viewport_height.max(1);
+        let scroll_from_top = total_lines
+            .saturating_sub(visible_lines.saturating_add(self.chat_scroll_lines as usize));
+        (
+            Text::from(lines),
+            scroll_from_top.min(u16::MAX as usize) as u16,
+        )
+    }
+
+    fn build_transcript_lines(&self, session_id: &str) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+        if let Some(detail) = self.dashboard.session_detail(session_id) {
+            for message in &detail.messages {
+                let content = message_content_text(&message.content)
+                    .unwrap_or_else(|| compact_json(&message.content, 120));
+                let role_color = match message.role.as_str() {
+                    "user" => Color::LightBlue,
+                    "assistant" => Color::LightGreen,
+                    "system" => Color::Yellow,
+                    _ => Color::White,
+                };
+                lines.push(Line::from(Span::styled(
+                    format!("{} · turn {}", message.role, message.turn_index),
+                    Style::default().fg(role_color).add_modifier(Modifier::BOLD),
+                )));
+                for line in content.lines() {
+                    lines.push(Line::from(line.to_string()));
+                }
+                lines.push(Line::default());
+            }
+        }
+
+        if let Some(state) = self.live_transcripts.get(session_id) {
+            for prompt in &state.pending_user_messages {
+                lines.push(Line::from(Span::styled(
+                    "user · pending",
+                    Style::default()
+                        .fg(Color::LightBlue)
+                        .add_modifier(Modifier::BOLD),
+                )));
+                for line in prompt.lines() {
+                    lines.push(Line::from(line.to_string()));
+                }
+                lines.push(Line::default());
+            }
+
+            if self.settings.chat.show_streaming_preview
+                && !state.assistant_preview.trim().is_empty()
+            {
+                lines.push(Line::from(Span::styled(
+                    "assistant · streaming",
+                    Style::default()
+                        .fg(Color::LightGreen)
+                        .add_modifier(Modifier::BOLD),
+                )));
+                for line in state.assistant_preview.lines() {
+                    lines.push(Line::from(line.to_string()));
+                }
+                lines.push(Line::default());
+            }
+        }
+
+        if lines.is_empty() {
+            lines.push(Line::from("No transcript has been loaded yet."));
+        }
+        lines
+    }
+
+    fn current_thinking_text(&self) -> String {
+        if !self.settings.chat.show_thinking {
+            return "Thinking pane is hidden in settings.".to_string();
+        }
+
+        let Some(session_id) = self.current_chat_session_id() else {
+            return "No chat session selected.".to_string();
+        };
+        let Some(state) = self.live_transcripts.get(session_id) else {
+            return "No streamed thinking for the selected session yet.".to_string();
+        };
+        if state.thinking_preview.trim().is_empty() {
+            "No streamed thinking for the selected session yet.".to_string()
+        } else {
+            state.thinking_preview.clone()
+        }
+    }
+
+    fn current_tool_text(&self) -> String {
+        let Some(session_id) = self.current_chat_session_id() else {
+            return "No chat session selected.".to_string();
+        };
+        let mut lines = Vec::new();
+        if let Some(detail) = self.dashboard.session_detail(session_id) {
+            for tool in detail.tool_executions.iter().rev().take(8).rev() {
+                lines.push(format!(
+                    "{} · {} · {}ms",
+                    tool.tool_name,
+                    tool.verdict,
+                    tool.duration_ms.unwrap_or(0)
+                ));
+            }
+        }
+        if let Some(state) = self.live_transcripts.get(session_id) {
+            lines.extend(state.recent_tool_calls.iter().cloned());
+        }
+        if lines.is_empty() {
+            "No tool activity for the selected session yet.".to_string()
+        } else {
+            lines.join("\n")
+        }
+    }
+
+    fn current_chat_event_text(&self) -> String {
+        let Some(session_id) = self.current_chat_session_id() else {
+            return "No chat session selected.".to_string();
+        };
+        if let Some(state) = self.live_transcripts.get(session_id)
+            && !state.recent_events.is_empty()
+        {
+            return state
+                .recent_events
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        "No live session events for the selected chat session yet.".to_string()
+    }
+
+    fn current_session_meta_text(&self) -> String {
+        let Some(session_id) = self.current_chat_session_id() else {
+            return "No chat session selected.".to_string();
+        };
+        let detail = self.dashboard.session_detail(session_id);
+        pretty_json(&serde_json::json!({
+            "session_id": session_id,
+            "title": self.session_label(session_id, None),
+            "mode": self.current_chat_mode_label(),
+            "loaded_detail": detail.is_some(),
+            "messages": detail.map(|value| value.messages.len()).unwrap_or(0),
+            "events": detail.map(|value| value.events.len()).unwrap_or(0),
+            "tool_calls": detail.map(|value| value.tool_executions.len()).unwrap_or(0),
+        }))
+    }
+
     fn list_items(&self) -> Vec<ListItem<'static>> {
         match self.tab {
+            TabKind::Chat => self
+                .chat_sidebar_items()
+                .iter()
+                .map(|item| ListItem::new(item.label().to_string()))
+                .collect(),
             TabKind::Connections => self
                 .profile_catalog
                 .as_ref()
@@ -1897,11 +2832,27 @@ impl TuiApp {
                 .iter()
                 .map(|event| ListItem::new(event.event.clone()))
                 .collect(),
+            TabKind::Settings => self
+                .settings_items()
+                .into_iter()
+                .map(ListItem::new)
+                .collect(),
         }
     }
 
     fn detail_text(&self) -> String {
         match self.tab {
+            TabKind::Chat => pretty_json(&serde_json::json!({
+                "chat_session_id": self.current_chat_session_id(),
+                "title": self.current_chat_title(),
+                "mode": self.current_chat_mode_label(),
+                "left_pane": self.settings.layout.left_pane.title(),
+                "right_pane": self.settings.layout.right_pane.title(),
+                "show_streaming_preview": self.settings.chat.show_streaming_preview,
+                "show_thinking": self.settings.chat.show_thinking,
+                "follow_latest": self.settings.chat.follow_latest,
+                "transcript_budget_bytes": self.settings.chat.transcript_memory_budget_bytes,
+            })),
             TabKind::Connections => {
                 let validation = self.profile_draft_validation();
                 let editor_diff = self.editor_diff();
@@ -2051,12 +3002,29 @@ impl TuiApp {
                     }))
                 })
                 .unwrap_or_else(|| "No events yet.".to_string()),
+            TabKind::Settings => pretty_json(&serde_json::json!({
+                "path": self.settings_path.display().to_string(),
+                "layout": {
+                    "left_pane": self.settings.layout.left_pane.title(),
+                    "right_pane": self.settings.layout.right_pane.title(),
+                },
+                "chat": {
+                    "transcript_memory_budget_bytes": self.settings.chat.transcript_memory_budget_bytes,
+                    "show_streaming_preview": self.settings.chat.show_streaming_preview,
+                    "show_thinking": self.settings.chat.show_thinking,
+                    "follow_latest": self.settings.chat.follow_latest,
+                },
+                "save_hint": "Press w to persist settings",
+            })),
         }
     }
 
     fn help_text(&self) -> String {
-        let shared = "1-7 switch views | Tab cycle | arrows/j/k move | r refresh | q quit";
+        let shared = "1-9 switch views | Tab cycle | arrows/j/k move | r refresh | q quit";
         let scoped = match self.tab {
+            TabKind::Chat => {
+                "Enter opens/resumes or prompts | p prompt | ,/. cycle panes | h thinking | v preview | f follow-latest | PgUp/PgDn scroll | Home/End jump"
+            }
             TabKind::Connections => {
                 "Enter/s connect selected | C connect draft | T test draft | P test selected | E ensure draft local | S update selected | R load recent | [/ ] pick recent | v load current | b load selected | m/o cycle draft | t/g edit draft | a/A save as named | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
             }
@@ -2067,6 +3035,9 @@ impl TuiApp {
             TabKind::Channels => "/ edit filter | F clear filter | channel view is read-only",
             TabKind::Events => {
                 "/ edit filter | F clear filter | z pause | f follow latest | G latest"
+            }
+            TabKind::Settings => {
+                "Enter toggles/cycles the selected setting | b edits transcript budget | w saves settings"
             }
         };
         format!("{} | {}", shared, scoped)
@@ -2096,6 +3067,7 @@ impl TuiApp {
 
     fn current_detail_session_id(&self) -> Option<String> {
         match self.tab {
+            TabKind::Chat => self.current_chat_session_id().map(str::to_string),
             TabKind::LiveSessions => self
                 .selected_live_session()
                 .map(|session| session.session_id.clone()),
@@ -2167,6 +3139,84 @@ fn session_detail_preview(
             })).collect::<Vec<_>>(),
         })
     })
+}
+
+fn compact_json(value: &Value, max_chars: usize) -> String {
+    excerpt(
+        &serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string()),
+        max_chars,
+    )
+}
+
+fn message_content_text(value: &Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return Some(text.to_string());
+    }
+    if let Some(content) = value.get("text").and_then(|inner| inner.as_str()) {
+        return Some(content.to_string());
+    }
+    if let Some(items) = value.as_array() {
+        let mut parts = Vec::new();
+        for item in items {
+            if let Some(text) = item.get("text").and_then(|inner| inner.as_str()) {
+                parts.push(text.to_string());
+            }
+        }
+        if !parts.is_empty() {
+            return Some(parts.join("\n"));
+        }
+    }
+    None
+}
+
+fn excerpt(value: &str, max_chars: usize) -> String {
+    let trimmed = value.trim();
+    let mut out = String::new();
+    for ch in trimmed.chars() {
+        if out.chars().count() >= max_chars {
+            out.push('…');
+            break;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn tail(value: &str, max_chars: usize) -> String {
+    let chars = value.chars().collect::<Vec<_>>();
+    if chars.len() <= max_chars {
+        return value.to_string();
+    }
+    chars[chars.len() - max_chars..].iter().collect()
+}
+
+fn push_bounded_line(queue: &mut VecDeque<String>, value: String, max_items: usize) {
+    if value.trim().is_empty() {
+        return;
+    }
+    queue.push_back(value);
+    while queue.len() > max_items {
+        queue.pop_front();
+    }
+}
+
+fn trim_lines_to_budget(lines: &mut Vec<Line<'static>>, budget_bytes: usize) {
+    let mut total = 0usize;
+    let mut kept = Vec::new();
+    for line in lines.iter().rev() {
+        let line_text = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        total = total.saturating_add(line_text.len() + 1);
+        if total > budget_bytes && !kept.is_empty() {
+            break;
+        }
+        kept.push(line.clone());
+    }
+    kept.reverse();
+    *lines = kept;
 }
 
 fn connection_kind_label(kind: ConnectionKind) -> &'static str {
