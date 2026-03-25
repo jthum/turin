@@ -2,15 +2,17 @@ mod settings;
 
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
-use crossterm::event::{self, Event as CEvent, KeyCode};
+use crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event as CEvent, KeyCode, KeyEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs, Wrap};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Padding, Paragraph, Tabs, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 use serde::Serialize;
 use serde_json::Value;
@@ -32,9 +34,9 @@ use turin_ui_core::{
     ConnectionPreflightReport, ConnectionProfileActivityBook, ConnectionProfileAuth,
     ConnectionProfileCatalog, ConnectionProfileDraft, ConnectionProfileDraftAuthMode,
     ConnectionProfileDraftDiff, ConnectionProfileDraftValidation, ConnectionProfileKind,
-    ConnectionProfileSummary, DashboardFreshness, DashboardState, OperatorCommand, UiController,
-    UiUpdate, connect_dashboard, ensure_local_daemon_for_draft, preflight_connection_blocking,
-    preflight_draft_blocking, spawn_controller,
+    ConnectionProfileSummary, DashboardFreshness, DashboardSnapshot, DashboardState,
+    OperatorCommand, UiController, UiUpdate, connect_dashboard, ensure_local_daemon_for_draft,
+    preflight_connection_blocking, preflight_draft_blocking, spawn_controller,
 };
 
 #[derive(Parser, Debug)]
@@ -211,6 +213,7 @@ struct TuiApp {
     last_preflight_report: Option<ConnectionPreflightReport>,
     input_mode: Option<InputMode>,
     input: String,
+    input_cursor: usize,
     requested_session_detail: Option<String>,
     task_filter: String,
     channel_filter: String,
@@ -219,6 +222,7 @@ struct TuiApp {
     events_follow_latest: bool,
     paused_events: Vec<EventEnvelope>,
     live_transcripts: BTreeMap<String, LiveTranscriptState>,
+    pending_chat_prompt: Option<PendingChatPrompt>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -268,6 +272,12 @@ enum LoopAction {
     },
 }
 
+#[derive(Debug, Clone)]
+enum PendingChatPrompt {
+    ResumeSession { session_id: String },
+    OpenAgent { agent_id: String },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -275,14 +285,14 @@ async fn main() -> Result<()> {
     let loaded_settings = load_settings(args.tui_config.as_deref())?;
 
     enable_raw_mode()?;
-    execute!(stdout(), EnterAlternateScreen)?;
+    execute!(stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
     let mut terminal = ratatui::init();
 
     let loop_result = run_shell(&mut terminal, initial_options, loaded_settings).await;
 
     ratatui::restore();
     disable_raw_mode()?;
-    execute!(stdout(), LeaveAlternateScreen)?;
+    execute!(stdout(), LeaveAlternateScreen, DisableBracketedPaste)?;
 
     loop_result
 }
@@ -413,12 +423,30 @@ fn run_app(
 
         terminal.draw(|frame| render(frame, app))?;
 
-        if event::poll(Duration::from_millis(120)).context("Failed to poll terminal events")?
-            && let CEvent::Key(key) = event::read().context("Failed to read terminal event")?
-            && let Some(action) = handle_key(app, key.code, &controller.command_tx)?
-        {
-            return Ok(action);
+        if event::poll(Duration::from_millis(120)).context("Failed to poll terminal events")? {
+            match event::read().context("Failed to read terminal event")? {
+                CEvent::Key(key)
+                    if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
+                {
+                    if let Some(action) = handle_key(app, key.code, &controller.command_tx)? {
+                        return Ok(action);
+                    }
+                }
+                CEvent::Paste(text) => handle_paste(app, &text)?,
+                _ => {}
+            }
         }
+    }
+}
+
+fn handle_paste(app: &mut TuiApp, text: &str) -> Result<()> {
+    if app.input_mode.is_some() {
+        app.insert_input_text(text);
+        Ok(())
+    } else {
+        app.dashboard
+            .record_info("Paste is only accepted while an input editor is open");
+        Ok(())
     }
 }
 
@@ -575,7 +603,7 @@ fn handle_key(
             TabKind::Settings => app.activate_selected_setting(),
             _ => {}
         },
-        KeyCode::Char('p') if app.tab == TabKind::Chat => app.start_chat_prompt_input(),
+        KeyCode::Char('p') if app.tab == TabKind::Chat => app.handle_chat_enter(command_tx)?,
         KeyCode::Char('p') => app.start_prompt_input(),
         KeyCode::Char('b') if app.tab == TabKind::Settings => app.start_edit_transcript_budget(),
         KeyCode::Char('c') => match app.tab {
@@ -662,9 +690,12 @@ fn handle_input_mode(
 
     match key {
         KeyCode::Esc => app.clear_input_mode(),
-        KeyCode::Backspace => {
-            app.input.pop();
-        }
+        KeyCode::Left => app.move_input_cursor_left(),
+        KeyCode::Right => app.move_input_cursor_right(),
+        KeyCode::Home => app.move_input_cursor_home(),
+        KeyCode::End => app.move_input_cursor_end(),
+        KeyCode::Backspace => app.delete_input_left(),
+        KeyCode::Delete => app.delete_input_right(),
         KeyCode::Enter => {
             let input = app.input.trim().to_string();
             if input.is_empty() {
@@ -757,7 +788,7 @@ fn handle_input_mode(
             }
             app.clear_input_mode();
         }
-        KeyCode::Char(ch) => app.input.push(ch),
+        KeyCode::Char(ch) => app.insert_input_char(ch),
         _ => {}
     }
     Ok(None)
@@ -772,14 +803,29 @@ fn send_command(
         .map_err(|_| anyhow!("UI command channel closed"))
 }
 
+fn subtle_border_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(92, 98, 108))
+        .add_modifier(Modifier::DIM)
+}
+
+fn panel_block<'a>(title: &'a str) -> Block<'a> {
+    Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(subtle_border_style())
+        .padding(Padding::horizontal(1))
+}
+
 fn render(frame: &mut Frame<'_>, app: &mut TuiApp) {
+    let footer_height = if app.input_mode.is_some() { 6 } else { 4 };
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(6),
             Constraint::Length(3),
             Constraint::Min(12),
-            Constraint::Length(4),
+            Constraint::Length(footer_height),
         ])
         .split(frame.area());
 
@@ -894,12 +940,7 @@ fn render_banner(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
             )),
         ]),
     ])
-    .block(
-        Block::default()
-            .title("Connection")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray)),
-    )
+    .block(panel_block("Connection"))
     .wrap(Wrap { trim: true });
     frame.render_widget(banner, area);
 }
@@ -921,12 +962,7 @@ fn render_tabs(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect)
                 .add_modifier(Modifier::BOLD),
         )
         .divider(Span::raw(" "))
-        .block(
-            Block::default()
-                .title("Views")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
-        );
+        .block(panel_block("Views"));
     frame.render_widget(tabs, area);
 }
 
@@ -955,146 +991,46 @@ fn render_left_panel(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::lay
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol(">> ")
-        .block(
-            Block::default()
-                .title(title)
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
-        );
+        .block(panel_block(title));
     frame.render_stateful_widget(list, area, &mut state);
 }
 
 fn render_right_panel(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
     let detail = Paragraph::new(app.detail_text())
-        .block(
-            Block::default()
-                .title("Detail")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
-        )
+        .block(panel_block("Detail"))
         .wrap(Wrap { trim: false });
     frame.render_widget(detail, area);
 }
 
 fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
-    let lines = if app.input_mode.is_some() {
-        match app.input_mode.as_ref() {
-            Some(InputMode::SubmitPrompt { .. }) => vec![
-                Line::from(vec![
-                    Span::styled("Prompt> ", Style::default().fg(Color::LightCyan)),
-                    Span::raw(app.input.clone()),
-                ]),
-                Line::from("Enter submits prompt to the selected live session. Esc cancels."),
-            ],
-            Some(InputMode::ConfirmDiscard { action }) => vec![
-                Line::from(vec![
-                    Span::styled("Discard> ", Style::default().fg(Color::LightYellow)),
-                    Span::raw(action.description()),
-                ]),
-                Line::from("Press y or Enter to discard editor changes. Press n or Esc to cancel."),
-            ],
-            Some(InputMode::SaveProfile { make_default }) => vec![
-                Line::from(vec![
-                    Span::styled("Profile> ", Style::default().fg(Color::LightCyan)),
-                    Span::raw(app.input.clone()),
-                ]),
-                Line::from(if *make_default {
-                    "Enter saves the current draft under the typed name and marks it default. Esc cancels."
-                } else {
-                    "Enter saves the current draft under the typed profile name. Esc cancels."
-                }),
-            ],
-            Some(InputMode::DuplicateProfile {
-                source_name,
-                make_default,
-            }) => vec![
-                Line::from(vec![
-                    Span::styled("Duplicate> ", Style::default().fg(Color::LightCyan)),
-                    Span::raw(app.input.clone()),
-                ]),
-                Line::from(if *make_default {
-                    format!(
-                        "Enter duplicates '{}' to the typed name and sets it as default. Esc cancels.",
-                        source_name
-                    )
-                } else {
-                    format!(
-                        "Enter duplicates '{}' to the typed name. Esc cancels.",
-                        source_name
-                    )
-                }),
-            ],
-            Some(InputMode::RenameProfile {
-                source_name,
-                make_default,
-            }) => vec![
-                Line::from(vec![
-                    Span::styled("Rename> ", Style::default().fg(Color::LightCyan)),
-                    Span::raw(app.input.clone()),
-                ]),
-                Line::from(if *make_default {
-                    format!(
-                        "Enter renames '{}' and marks the new name as default. Esc cancels.",
-                        source_name
-                    )
-                } else {
-                    format!("Enter renames '{}'. Esc cancels.", source_name)
-                }),
-            ],
-            Some(InputMode::ConfirmDelete { profile_name }) => vec![
-                Line::from(vec![
-                    Span::styled("Delete> ", Style::default().fg(Color::LightRed)),
-                    Span::raw(profile_name.clone()),
-                ]),
-                Line::from("Press y or Enter to confirm delete. Press n or Esc to cancel."),
-            ],
-            Some(InputMode::EditDraftTarget) => vec![
-                Line::from(vec![
-                    Span::styled("Target> ", Style::default().fg(Color::LightCyan)),
-                    Span::raw(app.input.clone()),
-                ]),
-                Line::from("Enter updates the profile draft target. Esc cancels."),
-            ],
-            Some(InputMode::EditDraftAuth) => vec![
-                Line::from(vec![
-                    Span::styled("Auth> ", Style::default().fg(Color::LightCyan)),
-                    Span::raw(app.input.clone()),
-                ]),
-                Line::from("Enter updates the profile draft auth value. Esc cancels."),
-            ],
-            Some(InputMode::EditTranscriptBudget) => vec![
-                Line::from(vec![
-                    Span::styled("Budget> ", Style::default().fg(Color::LightCyan)),
-                    Span::raw(app.input.clone()),
-                ]),
-                Line::from(
-                    "Enter updates transcript memory budget in bytes (minimum 16384). Esc cancels.",
-                ),
-            ],
-            Some(InputMode::EditTaskFilter) => vec![
-                Line::from(vec![
-                    Span::styled("Task Filter> ", Style::default().fg(Color::LightCyan)),
-                    Span::raw(app.input.clone()),
-                ]),
-                Line::from("Enter updates the task filter. Esc cancels."),
-            ],
-            Some(InputMode::EditChannelFilter) => vec![
-                Line::from(vec![
-                    Span::styled("Channel Filter> ", Style::default().fg(Color::LightCyan)),
-                    Span::raw(app.input.clone()),
-                ]),
-                Line::from("Enter updates the channel filter. Esc cancels."),
-            ],
-            Some(InputMode::EditEventFilter) => vec![
-                Line::from(vec![
-                    Span::styled("Event Filter> ", Style::default().fg(Color::LightCyan)),
-                    Span::raw(app.input.clone()),
-                ]),
-                Line::from("Enter updates the event filter. Esc cancels."),
-            ],
-            None => Vec::new(),
+    if app.input_mode.is_some() {
+        let block = panel_block(app.input_title());
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        let sections = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(2), Constraint::Length(1)])
+            .split(inner);
+
+        let (input_lines, cursor) = app.visible_input_editor(sections[0]);
+        let input_editor = Paragraph::new(input_lines)
+            .style(Style::default().fg(Color::White))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(input_editor, sections[0]);
+
+        let hint = Paragraph::new(Line::from(app.input_hint().to_string()))
+            .style(Style::default().fg(Color::Gray))
+            .wrap(Wrap { trim: true });
+        frame.render_widget(hint, sections[1]);
+
+        if let Some(cursor) = cursor {
+            frame.set_cursor_position(cursor);
         }
-    } else {
+        return;
+    }
+
+    let lines = {
         let mut lines = vec![Line::from(app.help_text())];
         if app.tab == TabKind::Connections {
             let validation = app.profile_draft_validation();
@@ -1142,12 +1078,9 @@ fn render_footer(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rec
         lines
     };
 
-    let footer = Paragraph::new(lines).block(
-        Block::default()
-            .title("Help")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray)),
-    );
+    let footer = Paragraph::new(lines)
+        .block(panel_block("Help"))
+        .wrap(Wrap { trim: true });
     frame.render_widget(footer, area);
 }
 
@@ -1169,12 +1102,7 @@ fn render_chat_sidebar(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::l
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol(">> ")
-        .block(
-            Block::default()
-                .title(app.settings.layout.left_pane.title())
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
-        );
+        .block(panel_block(app.settings.layout.left_pane.title()));
     frame.render_stateful_widget(list, area, &mut state);
 }
 
@@ -1211,24 +1139,14 @@ fn render_chat_center(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout
             }),
         ]),
     ])
-    .block(
-        Block::default()
-            .title("Chat")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray)),
-    )
+    .block(panel_block("Chat"))
     .wrap(Wrap { trim: true });
     frame.render_widget(header, layout[0]);
 
     let (text, scroll) = app.chat_transcript_text(layout[1].height.saturating_sub(2) as usize);
     let transcript = Paragraph::new(text)
         .scroll((scroll, 0))
-        .block(
-            Block::default()
-                .title("Transcript")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
-        )
+        .block(panel_block("Transcript"))
         .wrap(Wrap { trim: false });
     frame.render_widget(transcript, layout[1]);
 }
@@ -1244,12 +1162,7 @@ fn render_chat_inspector(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::lay
     };
 
     let inspector = Paragraph::new(body)
-        .block(
-            Block::default()
-                .title(title)
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
-        )
+        .block(panel_block(title))
         .wrap(Wrap { trim: false });
     frame.render_widget(inspector, area);
 }
@@ -1295,6 +1208,7 @@ impl TuiApp {
             last_preflight_report: None,
             input_mode: None,
             input: String::new(),
+            input_cursor: 0,
             requested_session_detail: None,
             task_filter: String::new(),
             channel_filter: String::new(),
@@ -1303,6 +1217,7 @@ impl TuiApp {
             events_follow_latest: true,
             paused_events: Vec::new(),
             live_transcripts: BTreeMap::new(),
+            pending_chat_prompt: None,
         };
         app.events_follow_latest = app.settings.chat.follow_latest;
         app.initialize_chat_session();
@@ -1335,6 +1250,7 @@ impl TuiApp {
                                 .map(|session| session.session_id.clone())
                         });
                 }
+                self.maybe_activate_pending_chat_prompt(snapshot);
             }
             UiUpdate::RefreshTelemetry { .. } | UiUpdate::Error(_) | UiUpdate::Info(_) => {}
         }
@@ -1507,9 +1423,12 @@ impl TuiApp {
 
     fn load_current_connection_into_draft(&mut self) {
         if self.editor_is_dirty() {
-            self.input_mode = Some(InputMode::ConfirmDiscard {
-                action: PendingDraftAction::CurrentConnection,
-            });
+            self.begin_input_mode(
+                InputMode::ConfirmDiscard {
+                    action: PendingDraftAction::CurrentConnection,
+                },
+                "",
+            );
             self.dashboard.record_info(format!(
                 "The profile editor has unsaved changes ({}). Press y or Enter to discard them and load the current connection.",
                 self.editor_diff().summary()
@@ -1526,9 +1445,12 @@ impl TuiApp {
             return;
         };
         if self.editor_is_dirty() {
-            self.input_mode = Some(InputMode::ConfirmDiscard {
-                action: PendingDraftAction::SelectedProfile(profile_name.clone()),
-            });
+            self.begin_input_mode(
+                InputMode::ConfirmDiscard {
+                    action: PendingDraftAction::SelectedProfile(profile_name.clone()),
+                },
+                "",
+            );
             self.dashboard.record_info(format!(
                 "The profile editor has unsaved changes ({}). Press y or Enter to discard them and load '{}'.",
                 self.editor_diff().summary(),
@@ -1541,9 +1463,12 @@ impl TuiApp {
 
     fn load_selected_recent_draft(&mut self) {
         if self.editor_is_dirty() {
-            self.input_mode = Some(InputMode::ConfirmDiscard {
-                action: PendingDraftAction::SelectedRecentDraft,
-            });
+            self.begin_input_mode(
+                InputMode::ConfirmDiscard {
+                    action: PendingDraftAction::SelectedRecentDraft,
+                },
+                "",
+            );
             self.dashboard.record_info(format!(
                 "The profile editor has unsaved changes ({}). Press y or Enter to discard them and load the selected recent draft.",
                 self.editor_diff().summary()
@@ -1914,6 +1839,34 @@ impl TuiApp {
         self.sync_chat_selection_to_session();
     }
 
+    fn maybe_activate_pending_chat_prompt(&mut self, snapshot: &DashboardSnapshot) {
+        let Some(pending) = self.pending_chat_prompt.clone() else {
+            return;
+        };
+
+        let resolved_session = match pending {
+            PendingChatPrompt::ResumeSession { session_id } => snapshot
+                .live_sessions
+                .iter()
+                .find(|session| session.session_id == session_id)
+                .map(|session| session.session_id.clone()),
+            PendingChatPrompt::OpenAgent { agent_id } => snapshot
+                .live_sessions
+                .iter()
+                .find(|session| session.agent_id == agent_id)
+                .map(|session| session.session_id.clone()),
+        };
+
+        if let Some(session_id) = resolved_session {
+            self.chat_session_id = Some(session_id.clone());
+            self.chat_scroll_lines = 0;
+            self.begin_input_mode(InputMode::SubmitPrompt { session_id }, "");
+            self.pending_chat_prompt = None;
+            self.dashboard
+                .record_info("Live chat session is ready. Type the prompt and press Enter.");
+        }
+    }
+
     fn session_exists(&self, session_id: &str) -> bool {
         self.dashboard
             .live_sessions
@@ -2168,16 +2121,236 @@ impl TuiApp {
         self.chat_scroll_lines = 0;
     }
 
+    fn input_len_chars(&self) -> usize {
+        self.input.chars().count()
+    }
+
+    fn input_byte_index(&self, char_index: usize) -> usize {
+        nth_char_byte_index(&self.input, char_index)
+    }
+
+    fn begin_input_mode(&mut self, mode: InputMode, initial: impl Into<String>) {
+        self.input_mode = Some(mode);
+        self.input = initial.into();
+        self.input_cursor = self.input_len_chars();
+    }
+
+    fn insert_input_char(&mut self, ch: char) {
+        let byte_index = self.input_byte_index(self.input_cursor);
+        self.input.insert(byte_index, ch);
+        self.input_cursor += 1;
+    }
+
+    fn insert_input_text(&mut self, text: &str) {
+        let byte_index = self.input_byte_index(self.input_cursor);
+        self.input.insert_str(byte_index, text);
+        self.input_cursor += text.chars().count();
+    }
+
+    fn move_input_cursor_left(&mut self) {
+        self.input_cursor = self.input_cursor.saturating_sub(1);
+    }
+
+    fn move_input_cursor_right(&mut self) {
+        self.input_cursor = (self.input_cursor + 1).min(self.input_len_chars());
+    }
+
+    fn move_input_cursor_home(&mut self) {
+        self.input_cursor = 0;
+    }
+
+    fn move_input_cursor_end(&mut self) {
+        self.input_cursor = self.input_len_chars();
+    }
+
+    fn delete_input_left(&mut self) {
+        if self.input_cursor == 0 {
+            return;
+        }
+        let end = self.input_byte_index(self.input_cursor);
+        let start = self.input_byte_index(self.input_cursor - 1);
+        self.input.replace_range(start..end, "");
+        self.input_cursor -= 1;
+    }
+
+    fn delete_input_right(&mut self) {
+        if self.input_cursor >= self.input_len_chars() {
+            return;
+        }
+        let start = self.input_byte_index(self.input_cursor);
+        let end = self.input_byte_index(self.input_cursor + 1);
+        self.input.replace_range(start..end, "");
+    }
+
+    fn input_title(&self) -> &'static str {
+        match self.input_mode.as_ref() {
+            Some(InputMode::SubmitPrompt { .. }) => "Prompt",
+            Some(InputMode::ConfirmDiscard { .. }) => "Discard Changes",
+            Some(InputMode::SaveProfile { .. }) => "Save Profile",
+            Some(InputMode::DuplicateProfile { .. }) => "Duplicate Profile",
+            Some(InputMode::RenameProfile { .. }) => "Rename Profile",
+            Some(InputMode::ConfirmDelete { .. }) => "Delete Profile",
+            Some(InputMode::EditDraftTarget) => "Edit Target",
+            Some(InputMode::EditDraftAuth) => "Edit Auth",
+            Some(InputMode::EditTaskFilter) => "Task Filter",
+            Some(InputMode::EditChannelFilter) => "Channel Filter",
+            Some(InputMode::EditEventFilter) => "Event Filter",
+            Some(InputMode::EditTranscriptBudget) => "Transcript Budget",
+            None => "Help",
+        }
+    }
+
+    fn input_hint(&self) -> String {
+        match self.input_mode.as_ref() {
+            Some(InputMode::SubmitPrompt { .. }) => {
+                "Enter submits. Esc cancels. Left/Right/Home/End move the cursor. Paste is inserted as one block.".to_string()
+            }
+            Some(InputMode::ConfirmDiscard { .. }) => {
+                "Press y or Enter to discard changes. Press n or Esc to cancel.".to_string()
+            }
+            Some(InputMode::SaveProfile { make_default }) => {
+                if *make_default {
+                    "Enter saves the current draft under the typed name and marks it default. Esc cancels.".to_string()
+                } else {
+                    "Enter saves the current draft under the typed profile name. Esc cancels.".to_string()
+                }
+            }
+            Some(InputMode::DuplicateProfile { source_name, make_default }) => {
+                if *make_default {
+                    format!(
+                        "Enter duplicates '{}' to the typed name and sets it default. Esc cancels.",
+                        source_name
+                    )
+                } else {
+                    format!(
+                        "Enter duplicates '{}' to the typed name. Esc cancels.",
+                        source_name
+                    )
+                }
+            }
+            Some(InputMode::RenameProfile { source_name, make_default }) => {
+                if *make_default {
+                    format!(
+                        "Enter renames '{}' and makes the new name default. Esc cancels.",
+                        source_name
+                    )
+                } else {
+                    format!("Enter renames '{}'. Esc cancels.", source_name)
+                }
+            }
+            Some(InputMode::ConfirmDelete { .. }) => {
+                "Press y or Enter to confirm delete. Press n or Esc to cancel.".to_string()
+            }
+            Some(InputMode::EditDraftTarget) => {
+                "Enter updates the profile draft target. Esc cancels.".to_string()
+            }
+            Some(InputMode::EditDraftAuth) => {
+                "Enter updates the profile draft auth value. Esc cancels.".to_string()
+            }
+            Some(InputMode::EditTaskFilter) => {
+                "Enter updates the task filter. Esc cancels.".to_string()
+            }
+            Some(InputMode::EditChannelFilter) => {
+                "Enter updates the channel filter. Esc cancels.".to_string()
+            }
+            Some(InputMode::EditEventFilter) => {
+                "Enter updates the event filter. Esc cancels.".to_string()
+            }
+            Some(InputMode::EditTranscriptBudget) => {
+                "Enter updates transcript memory budget in bytes (minimum 16384). Esc cancels."
+                    .to_string()
+            }
+            None => String::new(),
+        }
+    }
+
+    fn input_accepts_text(&self) -> bool {
+        !matches!(
+            self.input_mode.as_ref(),
+            Some(InputMode::ConfirmDiscard { .. } | InputMode::ConfirmDelete { .. }) | None
+        )
+    }
+
+    fn input_body_text(&self) -> String {
+        match self.input_mode.as_ref() {
+            Some(InputMode::ConfirmDiscard { action }) => action.description(),
+            Some(InputMode::ConfirmDelete { profile_name }) => profile_name.clone(),
+            _ => self.input.clone(),
+        }
+    }
+
+    fn visible_input_editor(&self, area: Rect) -> (Vec<Line<'static>>, Option<Position>) {
+        let available_width = area.width.max(1) as usize;
+        let available_height = area.height.max(1) as usize;
+        let body = self.input_body_text();
+        let cursor_index = if self.input_accepts_text() {
+            self.input_cursor
+        } else {
+            0
+        };
+        let (cursor_line, cursor_col) = cursor_line_col(&body, cursor_index);
+        let horizontal_offset = cursor_col.saturating_sub(available_width.saturating_sub(1));
+        let all_lines = split_input_lines(&body);
+        let start_line = cursor_line.saturating_sub(available_height.saturating_sub(1));
+        let end_line = (start_line + available_height).min(all_lines.len());
+
+        let visible_lines = all_lines[start_line..end_line]
+            .iter()
+            .map(|line| {
+                Line::from(slice_chars(
+                    line,
+                    horizontal_offset,
+                    horizontal_offset + available_width,
+                ))
+            })
+            .collect::<Vec<_>>();
+
+        let cursor = if self.input_accepts_text() {
+            Some(Position::new(
+                area.x + cursor_col.saturating_sub(horizontal_offset) as u16,
+                area.y + cursor_line.saturating_sub(start_line) as u16,
+            ))
+        } else {
+            None
+        };
+
+        (visible_lines, cursor)
+    }
+
     fn start_prompt_input(&mut self) {
         if let Some(session) = self.selected_live_session() {
-            self.input_mode = Some(InputMode::SubmitPrompt {
-                session_id: session.session_id.clone(),
-            });
-            self.input.clear();
+            self.begin_input_mode(
+                InputMode::SubmitPrompt {
+                    session_id: session.session_id.clone(),
+                },
+                "",
+            );
         }
     }
 
     fn start_chat_prompt_input(&mut self) {
+        match self.current_chat_sidebar_item() {
+            Some(ChatSidebarItem::Agent { agent_id, label }) => {
+                self.pending_chat_prompt = Some(PendingChatPrompt::OpenAgent {
+                    agent_id: agent_id.clone(),
+                });
+                self.dashboard.record_info(format!(
+                    "Opening a live session for '{}' and waiting to start prompt input",
+                    label
+                ));
+            }
+            Some(ChatSidebarItem::StoredSession { session_id, label }) => {
+                self.pending_chat_prompt = Some(PendingChatPrompt::ResumeSession {
+                    session_id: session_id.clone(),
+                });
+                self.dashboard.record_info(format!(
+                    "Resuming '{}' and waiting to start prompt input",
+                    label
+                ));
+            }
+            _ => {}
+        }
+
         let Some(session_id) = self.current_chat_session_id().map(str::to_string) else {
             self.dashboard
                 .record_error("No chat session is currently selected");
@@ -2189,9 +2362,9 @@ impl TuiApp {
             .iter()
             .any(|session| session.session_id == session_id)
         {
-            self.input_mode = Some(InputMode::SubmitPrompt { session_id });
-            self.input.clear();
-        } else {
+            self.begin_input_mode(InputMode::SubmitPrompt { session_id }, "");
+            self.pending_chat_prompt = None;
+        } else if self.pending_chat_prompt.is_none() {
             self.dashboard.record_error(
                 "The selected chat session is not live. Resume it first, or open a fresh live session.",
             );
@@ -2199,13 +2372,14 @@ impl TuiApp {
     }
 
     fn start_save_profile_input(&mut self, make_default: bool) {
-        self.input_mode = Some(InputMode::SaveProfile { make_default });
-        self.input.clear();
+        self.begin_input_mode(InputMode::SaveProfile { make_default }, "");
     }
 
     fn start_edit_draft_target(&mut self) {
-        self.input_mode = Some(InputMode::EditDraftTarget);
-        self.input = self.profile_draft.target.clone();
+        self.begin_input_mode(
+            InputMode::EditDraftTarget,
+            self.profile_draft.target.clone(),
+        );
     }
 
     fn start_edit_draft_auth(&mut self) {
@@ -2220,23 +2394,22 @@ impl TuiApp {
             );
             return;
         }
-        self.input_mode = Some(InputMode::EditDraftAuth);
-        self.input = self.profile_draft.auth_value.clone();
+        self.begin_input_mode(
+            InputMode::EditDraftAuth,
+            self.profile_draft.auth_value.clone(),
+        );
     }
 
     fn start_edit_task_filter(&mut self) {
-        self.input_mode = Some(InputMode::EditTaskFilter);
-        self.input = self.task_filter.clone();
+        self.begin_input_mode(InputMode::EditTaskFilter, self.task_filter.clone());
     }
 
     fn start_edit_channel_filter(&mut self) {
-        self.input_mode = Some(InputMode::EditChannelFilter);
-        self.input = self.channel_filter.clone();
+        self.begin_input_mode(InputMode::EditChannelFilter, self.channel_filter.clone());
     }
 
     fn start_edit_event_filter(&mut self) {
-        self.input_mode = Some(InputMode::EditEventFilter);
-        self.input = self.event_filter.clone();
+        self.begin_input_mode(InputMode::EditEventFilter, self.event_filter.clone());
     }
 
     fn clear_task_filter(&mut self) {
@@ -2357,11 +2530,13 @@ impl TuiApp {
                 .record_error("No connection profile is currently selected");
             return;
         };
-        self.input_mode = Some(InputMode::DuplicateProfile {
-            source_name: source_name.clone(),
-            make_default,
-        });
-        self.input = format!("{source_name}-copy");
+        self.begin_input_mode(
+            InputMode::DuplicateProfile {
+                source_name: source_name.clone(),
+                make_default,
+            },
+            format!("{source_name}-copy"),
+        );
     }
 
     fn start_rename_profile_input(&mut self, make_default: bool) {
@@ -2370,11 +2545,13 @@ impl TuiApp {
                 .record_error("No connection profile is currently selected");
             return;
         };
-        self.input_mode = Some(InputMode::RenameProfile {
-            source_name: source_name.clone(),
-            make_default,
-        });
-        self.input = source_name;
+        self.begin_input_mode(
+            InputMode::RenameProfile {
+                source_name: source_name.clone(),
+                make_default,
+            },
+            source_name,
+        );
     }
 
     fn start_delete_confirmation(&mut self) {
@@ -2383,10 +2560,12 @@ impl TuiApp {
                 .record_error("No connection profile is currently selected");
             return;
         };
-        self.input_mode = Some(InputMode::ConfirmDelete {
-            profile_name: profile_name.clone(),
-        });
-        self.input.clear();
+        self.begin_input_mode(
+            InputMode::ConfirmDelete {
+                profile_name: profile_name.clone(),
+            },
+            "",
+        );
         self.dashboard.record_info(format!(
             "Delete confirmation armed for connection profile '{}'",
             profile_name
@@ -2396,6 +2575,7 @@ impl TuiApp {
     fn clear_input_mode(&mut self) {
         self.input_mode = None;
         self.input.clear();
+        self.input_cursor = 0;
     }
 
     fn handle_chat_enter(
@@ -2404,9 +2584,23 @@ impl TuiApp {
     ) -> Result<()> {
         match self.current_chat_sidebar_item() {
             Some(ChatSidebarItem::Agent { agent_id, .. }) => {
+                self.pending_chat_prompt = Some(PendingChatPrompt::OpenAgent {
+                    agent_id: agent_id.clone(),
+                });
+                self.dashboard.record_info(format!(
+                    "Opening a live session for '{}' and waiting to start prompt input",
+                    agent_id
+                ));
                 send_command(command_tx, OperatorCommand::OpenSession { agent_id })
             }
             Some(ChatSidebarItem::StoredSession { session_id, .. }) => {
+                self.pending_chat_prompt = Some(PendingChatPrompt::ResumeSession {
+                    session_id: session_id.clone(),
+                });
+                self.dashboard.record_info(format!(
+                    "Resuming '{}' and waiting to start prompt input",
+                    tail(&session_id, 8)
+                ));
                 send_command(command_tx, OperatorCommand::ResumeSession { session_id })
             }
             _ => {
@@ -2555,12 +2749,13 @@ impl TuiApp {
     }
 
     fn start_edit_transcript_budget(&mut self) {
-        self.input_mode = Some(InputMode::EditTranscriptBudget);
-        self.input = self
-            .settings
-            .chat
-            .transcript_memory_budget_bytes
-            .to_string();
+        self.begin_input_mode(
+            InputMode::EditTranscriptBudget,
+            self.settings
+                .chat
+                .transcript_memory_budget_bytes
+                .to_string(),
+        );
     }
 
     fn chat_transcript_text(&self, viewport_height: usize) -> (Text<'static>, u16) {
@@ -3104,6 +3299,50 @@ impl TuiApp {
     }
 }
 
+fn nth_char_byte_index(value: &str, char_index: usize) -> usize {
+    value
+        .char_indices()
+        .nth(char_index)
+        .map(|(index, _)| index)
+        .unwrap_or_else(|| value.len())
+}
+
+fn split_input_lines(value: &str) -> Vec<String> {
+    let mut lines = value
+        .split('\n')
+        .map(std::string::ToString::to_string)
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+fn cursor_line_col(value: &str, cursor_chars: usize) -> (usize, usize) {
+    let mut line = 0usize;
+    let mut col = 0usize;
+    for (index, ch) in value.chars().enumerate() {
+        if index == cursor_chars {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+fn slice_chars(value: &str, start: usize, end: usize) -> String {
+    value
+        .chars()
+        .skip(start)
+        .take(end.saturating_sub(start))
+        .collect()
+}
+
 fn clamp_index(index: usize, len: usize) -> usize {
     if len == 0 { 0 } else { index.min(len - 1) }
 }
@@ -3272,5 +3511,45 @@ fn profile_draft_auth_label(mode: ConnectionProfileDraftAuthMode) -> &'static st
         ConnectionProfileDraftAuthMode::None => "none",
         ConnectionProfileDraftAuthMode::TokenEnv => "token-env",
         ConnectionProfileDraftAuthMode::InlineToken => "inline-token",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{cursor_line_col, nth_char_byte_index, slice_chars, split_input_lines};
+
+    #[test]
+    fn nth_char_byte_index_handles_unicode_boundaries() {
+        let value = "aé中";
+        assert_eq!(nth_char_byte_index(value, 0), 0);
+        assert_eq!(nth_char_byte_index(value, 1), 1);
+        assert_eq!(nth_char_byte_index(value, 2), 3);
+        assert_eq!(nth_char_byte_index(value, 3), value.len());
+    }
+
+    #[test]
+    fn cursor_line_col_tracks_multiline_input() {
+        let value = "one\ntwo\nthree";
+        assert_eq!(cursor_line_col(value, 0), (0, 0));
+        assert_eq!(cursor_line_col(value, 3), (0, 3));
+        assert_eq!(cursor_line_col(value, 4), (1, 0));
+        assert_eq!(cursor_line_col(value, 7), (1, 3));
+        assert_eq!(cursor_line_col(value, 8), (2, 0));
+        assert_eq!(cursor_line_col(value, value.chars().count()), (2, 5));
+    }
+
+    #[test]
+    fn split_input_lines_preserves_empty_input_and_newlines() {
+        assert_eq!(split_input_lines(""), vec![String::new()]);
+        assert_eq!(
+            split_input_lines("a\nb\n"),
+            vec!["a".to_string(), "b".to_string(), String::new()]
+        );
+    }
+
+    #[test]
+    fn slice_chars_respects_character_offsets() {
+        assert_eq!(slice_chars("abcdef", 1, 4), "bcd");
+        assert_eq!(slice_chars("aé中", 1, 3), "é中");
     }
 }
