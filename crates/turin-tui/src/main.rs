@@ -215,6 +215,7 @@ struct TuiApp {
     input_mode: Option<InputMode>,
     input: String,
     input_cursor: usize,
+    requested_stream_session: Option<String>,
     requested_session_detail: Option<String>,
     task_filter: String,
     channel_filter: String,
@@ -424,6 +425,7 @@ fn run_app(
             app.apply_update(update);
         }
 
+        app.ensure_chat_session_stream_loaded(&controller.command_tx)?;
         app.ensure_session_detail_loaded(&controller.command_tx)?;
 
         terminal.draw(|frame| render(frame, app))?;
@@ -1240,6 +1242,7 @@ impl TuiApp {
             input_mode: None,
             input: String::new(),
             input_cursor: 0,
+            requested_stream_session: None,
             requested_session_detail: None,
             task_filter: String::new(),
             channel_filter: String::new(),
@@ -1265,6 +1268,9 @@ impl TuiApp {
                 if !self.events_paused && self.events_follow_latest {
                     self.event_index = 0;
                 }
+            }
+            UiUpdate::SessionEvent(event) => {
+                self.apply_live_event(event);
             }
             UiUpdate::SessionDetail(detail) => {
                 self.sync_pending_user_messages_from_detail(&detail.session.session_id, detail);
@@ -1299,7 +1305,9 @@ impl TuiApp {
             UiUpdate::RefreshTelemetry { .. } | UiUpdate::Error(_) | UiUpdate::Info(_) => {}
         }
 
-        self.dashboard.apply_update(update);
+        if !matches!(&update, UiUpdate::SessionEvent(_)) {
+            self.dashboard.apply_update(update);
+        }
         self.initialize_chat_session();
         self.clamp_selection();
     }
@@ -3535,6 +3543,22 @@ impl TuiApp {
                 .map(|session| session.session_id.clone()),
             _ => None,
         }
+    }
+
+    fn ensure_chat_session_stream_loaded(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
+        let session_id = self.current_chat_session_id().map(str::to_string);
+        if self.requested_stream_session == session_id {
+            return Ok(());
+        }
+
+        self.requested_stream_session = session_id.clone();
+        send_command(
+            command_tx,
+            OperatorCommand::FocusSessionStream { session_id },
+        )
     }
 
     fn ensure_session_detail_loaded(

@@ -42,6 +42,7 @@ pub enum UiUpdate {
     Snapshot(Box<DashboardSnapshot>),
     SessionDetail(Box<SessionDetail>),
     Event(EventEnvelope),
+    SessionEvent(EventEnvelope),
     RefreshTelemetry { duration_ms: u64, success: bool },
     Error(String),
     Info(String),
@@ -50,6 +51,7 @@ pub enum UiUpdate {
 #[derive(Debug, Clone)]
 pub enum OperatorCommand {
     Refresh,
+    FocusSessionStream { session_id: Option<String> },
     LoadSessionDetail { session_id: String },
     OpenSession { agent_id: String },
     ResumeSession { session_id: String },
@@ -1159,11 +1161,19 @@ pub fn spawn_controller_with_interval(
     let (update_tx, update_rx) = mpsc::unbounded_channel::<UiUpdate>();
     let (command_tx, command_rx) = mpsc::unbounded_channel::<OperatorCommand>();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let (focused_session_tx, focused_session_rx) = watch::channel::<Option<String>>(None);
 
     spawn_event_task(
         handle,
         client.clone(),
         update_tx.clone(),
+        shutdown_rx.clone(),
+    );
+    spawn_focused_session_event_task(
+        handle,
+        client.clone(),
+        update_tx.clone(),
+        focused_session_rx,
         shutdown_rx.clone(),
     );
     spawn_refresh_task(
@@ -1173,7 +1183,14 @@ pub fn spawn_controller_with_interval(
         refresh_interval,
         shutdown_rx.clone(),
     );
-    spawn_command_task(handle, client, command_rx, update_tx, shutdown_rx);
+    spawn_command_task(
+        handle,
+        client,
+        command_rx,
+        update_tx,
+        focused_session_tx,
+        shutdown_rx,
+    );
 
     UiController {
         update_rx,
@@ -1283,6 +1300,93 @@ fn spawn_event_task(
     });
 }
 
+fn spawn_focused_session_event_task(
+    handle: &Handle,
+    client: ControlClient,
+    tx: mpsc::UnboundedSender<UiUpdate>,
+    mut focused_session_rx: watch::Receiver<Option<String>>,
+    mut shutdown_rx: watch::Receiver<bool>,
+) {
+    handle.spawn(async move {
+        let mut current_session_id = focused_session_rx.borrow().clone();
+        loop {
+            let Some(session_id) = current_session_id.clone() else {
+                tokio::select! {
+                    changed = shutdown_rx.changed() => {
+                        if changed.is_ok() && *shutdown_rx.borrow() {
+                            break;
+                        }
+                    }
+                    changed = focused_session_rx.changed() => {
+                        if changed.is_err() {
+                            break;
+                        }
+                        current_session_id = focused_session_rx.borrow().clone();
+                    }
+                }
+                continue;
+            };
+
+            match client
+                .subscribe_managed(RuntimeEventsSubscribeParams {
+                    agent_id: None,
+                    session_id: Some(session_id.clone()),
+                })
+                .await
+            {
+                Ok(mut stream) => loop {
+                    tokio::select! {
+                        changed = shutdown_rx.changed() => {
+                            if changed.is_ok() && *shutdown_rx.borrow() {
+                                return;
+                            }
+                        }
+                        changed = focused_session_rx.changed() => {
+                            if changed.is_err() {
+                                return;
+                            }
+                            let next_session_id = focused_session_rx.borrow().clone();
+                            if next_session_id != Some(session_id.clone()) {
+                                current_session_id = next_session_id;
+                                break;
+                            }
+                        }
+                        next = stream.next_event() => match next {
+                            Ok(event) => {
+                                if tx.send(UiUpdate::SessionEvent(event)).is_err() {
+                                    return;
+                                }
+                            }
+                            Err(err) => {
+                                if tx.send(UiUpdate::Error(format!(
+                                    "Focused session stream failed for {}: {}",
+                                    session_id, err
+                                ))).is_err() {
+                                    return;
+                                }
+                                current_session_id = focused_session_rx.borrow().clone();
+                                break;
+                            }
+                        }
+                    }
+                },
+                Err(err) => {
+                    if tx
+                        .send(UiUpdate::Error(format!(
+                            "Failed to subscribe to focused session {}: {}",
+                            session_id, err
+                        )))
+                        .is_err()
+                    {
+                        break;
+                    }
+                    current_session_id = focused_session_rx.borrow().clone();
+                }
+            }
+        }
+    });
+}
+
 fn spawn_refresh_task(
     handle: &Handle,
     client: ControlClient,
@@ -1341,6 +1445,7 @@ fn spawn_command_task(
     client: ControlClient,
     mut command_rx: mpsc::UnboundedReceiver<OperatorCommand>,
     tx: mpsc::UnboundedSender<UiUpdate>,
+    focused_session_tx: watch::Sender<Option<String>>,
     mut shutdown_rx: watch::Receiver<bool>,
 ) {
     handle.spawn(async move {
@@ -1359,6 +1464,19 @@ fn spawn_command_task(
                     }
                 }
             };
+
+            if let OperatorCommand::FocusSessionStream { session_id } = &command {
+                if focused_session_tx.send(session_id.clone()).is_err()
+                    && tx
+                        .send(UiUpdate::Error(
+                            "Failed to update focused session stream".to_string(),
+                        ))
+                        .is_err()
+                {
+                    break;
+                }
+                continue;
+            }
 
             if let OperatorCommand::LoadSessionDetail { session_id } = &command {
                 match client.get_session(session_id.as_str()).await {
@@ -1429,6 +1547,9 @@ pub async fn execute_operator_command(
 ) -> Result<String> {
     match command {
         OperatorCommand::Refresh => Ok("Refreshed Turin state".to_string()),
+        OperatorCommand::FocusSessionStream { .. } => {
+            Ok("Updated focused session stream".to_string())
+        }
         OperatorCommand::LoadSessionDetail { .. } => Ok("Loaded session detail".to_string()),
         OperatorCommand::OpenSession { agent_id } => {
             let session = client.open_session(&agent_id, None).await?;

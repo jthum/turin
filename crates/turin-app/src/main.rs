@@ -247,9 +247,13 @@ impl TurinDesktopApp {
     }
 
     fn apply_update(&mut self, update: UiUpdate) {
-        let auto_follow_event = matches!(update, UiUpdate::Event(_))
+        let auto_follow_event = matches!(&update, UiUpdate::Event(_))
             && !self.events_paused
             && self.events_follow_latest;
+        if matches!(&update, UiUpdate::SessionEvent(_)) {
+            self.clamp_selection_indices();
+            return;
+        }
         self.dashboard.apply_update(update);
         if auto_follow_event {
             self.event_index = 0;

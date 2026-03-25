@@ -179,6 +179,7 @@ impl DashboardState {
             UiUpdate::Snapshot(snapshot) => self.apply_snapshot(*snapshot),
             UiUpdate::SessionDetail(detail) => self.record_session_detail(*detail),
             UiUpdate::Event(event) => self.record_event(event),
+            UiUpdate::SessionEvent(_) => {}
             UiUpdate::RefreshTelemetry {
                 duration_ms,
                 success,
