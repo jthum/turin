@@ -64,6 +64,7 @@ struct Args {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TabKind {
     Chat,
+    Search,
     Connections,
     Agents,
     LiveSessions,
@@ -75,8 +76,9 @@ enum TabKind {
 }
 
 impl TabKind {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::Chat,
+        Self::Search,
         Self::Connections,
         Self::Agents,
         Self::LiveSessions,
@@ -90,6 +92,7 @@ impl TabKind {
     fn title(self) -> &'static str {
         match self {
             Self::Chat => "Chat",
+            Self::Search => "Search",
             Self::Connections => "Connections",
             Self::Agents => "Agents",
             Self::LiveSessions => "Live Sessions",
@@ -120,15 +123,50 @@ impl TabKind {
     fn from_digit(digit: char) -> Option<Self> {
         match digit {
             '1' => Some(Self::Chat),
-            '2' => Some(Self::Connections),
-            '3' => Some(Self::Agents),
-            '4' => Some(Self::LiveSessions),
-            '5' => Some(Self::Sessions),
-            '6' => Some(Self::Tasks),
-            '7' => Some(Self::Channels),
-            '8' => Some(Self::Events),
-            '9' => Some(Self::Settings),
+            '2' => Some(Self::Search),
+            '3' => Some(Self::Connections),
+            '4' => Some(Self::Agents),
+            '5' => Some(Self::LiveSessions),
+            '6' => Some(Self::Sessions),
+            '7' => Some(Self::Tasks),
+            '8' => Some(Self::Channels),
+            '9' => Some(Self::Events),
+            '0' => Some(Self::Settings),
             _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchScope {
+    All,
+    Sessions,
+    Agents,
+    Tasks,
+    Channels,
+    Events,
+}
+
+impl SearchScope {
+    fn title(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Sessions => "Sessions",
+            Self::Agents => "Agents",
+            Self::Tasks => "Tasks",
+            Self::Channels => "Channels",
+            Self::Events => "Events",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::All => Self::Sessions,
+            Self::Sessions => Self::Agents,
+            Self::Agents => Self::Tasks,
+            Self::Tasks => Self::Channels,
+            Self::Channels => Self::Events,
+            Self::Events => Self::All,
         }
     }
 }
@@ -160,6 +198,7 @@ enum InputMode {
     EditTaskFilter,
     EditChannelFilter,
     EditEventFilter,
+    EditSearchQuery,
     EditTranscriptBudget,
     EditUserLabel,
 }
@@ -196,6 +235,7 @@ struct TuiApp {
     active_profile: Option<String>,
     tab: TabKind,
     profile_index: usize,
+    search_index: usize,
     recent_draft_index: usize,
     agent_index: usize,
     live_session_index: usize,
@@ -218,6 +258,8 @@ struct TuiApp {
     input_cursor: usize,
     requested_stream_session: Option<String>,
     requested_session_detail: Option<String>,
+    search_query: String,
+    search_scope: SearchScope,
     task_filter: String,
     channel_filter: String,
     event_filter: String,
@@ -241,6 +283,41 @@ struct LiveTranscriptState {
     recent_events: VecDeque<String>,
     awaiting_reply: bool,
     awaiting_reply_for: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SearchHit {
+    kind: &'static str,
+    label: String,
+    summary: String,
+    detail: String,
+    action: SearchAction,
+}
+
+#[derive(Debug, Clone)]
+enum SearchAction {
+    OpenChatSession {
+        session_id: String,
+    },
+    FocusAgent {
+        agent_id: String,
+    },
+    FocusLiveSession {
+        session_id: String,
+    },
+    FocusStoredSession {
+        session_id: String,
+    },
+    FocusTask {
+        request_id: String,
+    },
+    FocusChannel {
+        channel_id: String,
+    },
+    FocusEvent {
+        event_name: String,
+        created_at: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -530,6 +607,8 @@ fn handle_key(
         KeyCode::Char('v') if app.tab == TabKind::Chat => app.toggle_streaming_preview(),
         KeyCode::Char('f') if app.tab == TabKind::Chat => app.toggle_chat_follow_latest(),
         KeyCode::Char('l') if app.tab == TabKind::Connections => app.reload_profiles(),
+        KeyCode::Char('m') if app.tab == TabKind::Search => app.cycle_search_scope(),
+        KeyCode::Char('F') if app.tab == TabKind::Search => app.clear_search_query(),
         KeyCode::Char('v') if app.tab == TabKind::Connections => {
             app.load_current_connection_into_draft()
         }
@@ -581,6 +660,10 @@ fn handle_key(
         KeyCode::Char('/') if app.tab == TabKind::Tasks => app.start_edit_task_filter(),
         KeyCode::Char('/') if app.tab == TabKind::Channels => app.start_edit_channel_filter(),
         KeyCode::Char('/') if app.tab == TabKind::Events => app.start_edit_event_filter(),
+        KeyCode::Char('/') => {
+            app.tab = TabKind::Search;
+            app.start_edit_search_query();
+        }
         KeyCode::Char('F') if app.tab == TabKind::Tasks => app.clear_task_filter(),
         KeyCode::Char('F') if app.tab == TabKind::Channels => app.clear_channel_filter(),
         KeyCode::Char('F') if app.tab == TabKind::Events => app.clear_event_filter(),
@@ -618,6 +701,7 @@ fn handle_key(
         }
         KeyCode::Enter => match app.tab {
             TabKind::Chat => app.handle_chat_enter(command_tx)?,
+            TabKind::Search => app.activate_search_result(command_tx)?,
             TabKind::Connections => {
                 if let Some(options) = app.selected_profile_options() {
                     return Ok(Some(LoopAction::Reconnect {
@@ -758,6 +842,7 @@ fn handle_input_mode(
                     Some(InputMode::EditTranscriptBudget) => {
                         "Transcript budget must be a positive integer"
                     }
+                    Some(InputMode::EditSearchQuery) => "Search query cannot be empty",
                     Some(InputMode::EditUserLabel) => "User label cannot be empty",
                     Some(InputMode::EditTaskFilter)
                     | Some(InputMode::EditChannelFilter)
@@ -836,6 +921,12 @@ fn handle_input_mode(
                 Some(InputMode::EditEventFilter) => {
                     app.event_filter = input;
                     app.dashboard.record_info("Updated the event filter");
+                }
+                Some(InputMode::EditSearchQuery) => {
+                    app.search_query = input;
+                    app.search_index = 0;
+                    app.tab = TabKind::Search;
+                    app.dashboard.record_info("Updated the search query");
                 }
                 Some(InputMode::ConfirmDiscard { .. }) => {}
                 Some(InputMode::ConfirmDelete { .. }) => {}
@@ -1033,6 +1124,7 @@ fn render_tabs(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect)
 fn render_left_panel(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::layout::Rect) {
     let title = match app.tab {
         TabKind::Chat => "Chat",
+        TabKind::Search => "Search",
         TabKind::Connections => "Connections",
         TabKind::Agents => "Agents",
         TabKind::LiveSessions => "Live Sessions",
@@ -1273,6 +1365,7 @@ impl TuiApp {
             active_profile,
             tab: TabKind::Chat,
             profile_index: 0,
+            search_index: 0,
             recent_draft_index: 0,
             agent_index: 0,
             live_session_index: 0,
@@ -1295,6 +1388,8 @@ impl TuiApp {
             input_cursor: 0,
             requested_stream_session: None,
             requested_session_detail: None,
+            search_query: String::new(),
+            search_scope: SearchScope::All,
             task_filter: String::new(),
             channel_filter: String::new(),
             event_filter: String::new(),
@@ -1372,6 +1467,7 @@ impl TuiApp {
                 .map(|catalog| catalog.profiles().len())
                 .unwrap_or(0),
         );
+        self.search_index = clamp_index(self.search_index, self.search_hits().len());
         self.recent_draft_index =
             clamp_index(self.recent_draft_index, self.recent_drafts.drafts().len());
         self.agent_index = clamp_index(self.agent_index, self.dashboard.agents().len());
@@ -1400,6 +1496,7 @@ impl TuiApp {
     fn selected_index(&self) -> usize {
         match self.tab {
             TabKind::Chat => self.chat_sidebar_index,
+            TabKind::Search => self.search_index,
             TabKind::Connections => self.profile_index,
             TabKind::Agents => self.agent_index,
             TabKind::LiveSessions => self.live_session_index,
@@ -1414,6 +1511,7 @@ impl TuiApp {
     fn set_selected_index(&mut self, value: usize) {
         match self.tab {
             TabKind::Chat => self.chat_sidebar_index = value,
+            TabKind::Search => self.search_index = value,
             TabKind::Connections => self.profile_index = value,
             TabKind::Agents => self.agent_index = value,
             TabKind::LiveSessions => self.live_session_index = value,
@@ -1428,6 +1526,7 @@ impl TuiApp {
     fn current_len(&self) -> usize {
         match self.tab {
             TabKind::Chat => self.chat_sidebar_items().len(),
+            TabKind::Search => self.search_hits().len(),
             TabKind::Connections => self
                 .profile_catalog
                 .as_ref()
@@ -1922,6 +2021,98 @@ impl TuiApp {
         self.filtered_channels().get(self.channel_index).cloned()
     }
 
+    fn activate_search_result(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
+        let Some(hit) = self.selected_search_hit() else {
+            self.dashboard
+                .record_error("No search result is currently selected");
+            return Ok(());
+        };
+
+        match hit.action {
+            SearchAction::OpenChatSession { session_id } => {
+                self.chat_session_id = Some(session_id);
+                self.tab = TabKind::Chat;
+                self.chat_scroll_lines = 0;
+            }
+            SearchAction::FocusAgent { agent_id } => {
+                if let Some(index) = self
+                    .dashboard
+                    .agents()
+                    .iter()
+                    .position(|agent| agent.id == agent_id)
+                {
+                    self.agent_index = index;
+                }
+                self.tab = TabKind::Agents;
+            }
+            SearchAction::FocusLiveSession { session_id } => {
+                self.chat_session_id = Some(session_id.clone());
+                if let Some(index) = self
+                    .dashboard
+                    .live_sessions
+                    .iter()
+                    .position(|session| session.session_id == session_id)
+                {
+                    self.live_session_index = index;
+                }
+                self.tab = TabKind::Chat;
+            }
+            SearchAction::FocusStoredSession { session_id } => {
+                self.chat_session_id = Some(session_id.clone());
+                if let Some(index) = self
+                    .dashboard
+                    .sessions
+                    .iter()
+                    .position(|session| session.session_id == session_id)
+                {
+                    self.session_index = index;
+                }
+                self.tab = TabKind::Chat;
+            }
+            SearchAction::FocusTask { request_id } => {
+                let filtered = self.filtered_tasks();
+                if let Some(index) = filtered
+                    .iter()
+                    .position(|task| task.request_id == request_id)
+                {
+                    self.task_index = index;
+                }
+                self.tab = TabKind::Tasks;
+            }
+            SearchAction::FocusChannel { channel_id } => {
+                let filtered = self.filtered_channels();
+                if let Some(index) = filtered.iter().position(|channel| channel.id == channel_id) {
+                    self.channel_index = index;
+                }
+                self.tab = TabKind::Channels;
+            }
+            SearchAction::FocusEvent {
+                event_name,
+                created_at,
+            } => {
+                let filtered = self.filtered_events();
+                if let Some(index) = filtered.iter().position(|event| {
+                    event.event == event_name
+                        && created_at.as_deref()
+                            == event
+                                .data
+                                .get("created_at")
+                                .and_then(|value| value.as_str())
+                }) {
+                    self.event_index = index;
+                }
+                self.tab = TabKind::Events;
+            }
+        }
+
+        self.ensure_chat_session_stream_loaded(command_tx)?;
+        self.ensure_session_detail_loaded(command_tx)?;
+        Ok(())
+    }
+
     fn initialize_chat_session(&mut self) {
         let current_exists = self
             .chat_session_id
@@ -2349,6 +2540,7 @@ impl TuiApp {
             Some(InputMode::EditTaskFilter) => "Task Filter",
             Some(InputMode::EditChannelFilter) => "Channel Filter",
             Some(InputMode::EditEventFilter) => "Event Filter",
+            Some(InputMode::EditSearchQuery) => "Search Query",
             Some(InputMode::EditTranscriptBudget) => "Transcript Budget",
             Some(InputMode::EditUserLabel) => "User Label",
             None => "Help",
@@ -2410,6 +2602,9 @@ impl TuiApp {
             }
             Some(InputMode::EditEventFilter) => {
                 "Enter updates the event filter. Esc cancels.".to_string()
+            }
+            Some(InputMode::EditSearchQuery) => {
+                "Enter updates the global search query. Esc cancels.".to_string()
             }
             Some(InputMode::EditTranscriptBudget) => {
                 "Enter updates transcript memory budget in bytes (minimum 16384). Esc cancels."
@@ -2683,6 +2878,260 @@ impl TuiApp {
             .collect()
     }
 
+    fn search_hits(&self) -> Vec<SearchHit> {
+        let query = self.search_query.trim().to_ascii_lowercase();
+        if query.is_empty() {
+            return Vec::new();
+        }
+
+        let mut hits = Vec::new();
+
+        if matches!(self.search_scope, SearchScope::All | SearchScope::Sessions) {
+            for session in &self.dashboard.live_sessions {
+                let label = self.session_label(&session.session_id, Some(&session.agent_id));
+                let summary = format!(
+                    "{} [{}] active:{} queued:{}",
+                    label, session.slot_id, session.active_tasks, session.queued_tasks
+                );
+                if search_match(&query, &[&summary, &session.session_id, &session.agent_id]) {
+                    hits.push(SearchHit {
+                        kind: "live_session",
+                        label: summary,
+                        summary: session.session_id.clone(),
+                        detail: pretty_json(&serde_json::json!({
+                            "type": "live_session",
+                            "session_id": session.session_id,
+                            "agent_id": session.agent_id,
+                            "slot_id": session.slot_id,
+                            "active_tasks": session.active_tasks,
+                            "queued_tasks": session.queued_tasks,
+                        })),
+                        action: SearchAction::FocusLiveSession {
+                            session_id: session.session_id.clone(),
+                        },
+                    });
+                }
+
+                if let Some(detail) = self.dashboard.session_detail(&session.session_id) {
+                    for message in &detail.messages {
+                        let content = message_content_text(&message.content)
+                            .unwrap_or_else(|| compact_json(&message.content, 160));
+                        if search_match(&query, &[&content]) {
+                            hits.push(SearchHit {
+                                kind: "message",
+                                label: format!(
+                                    "{} · {} · turn {}",
+                                    label, message.role, message.turn_index
+                                ),
+                                summary: excerpt_multiline(&content, 2, 120),
+                                detail: pretty_json(&serde_json::json!({
+                                    "type": "session_message",
+                                    "session_id": session.session_id,
+                                    "role": message.role,
+                                    "turn_index": message.turn_index,
+                                    "created_at": message.created_at,
+                                    "content": content,
+                                })),
+                                action: SearchAction::OpenChatSession {
+                                    session_id: session.session_id.clone(),
+                                },
+                            });
+                        }
+                    }
+                }
+            }
+
+            for session in &self.dashboard.sessions {
+                let label = self.session_label(&session.session_id, Some(&session.agent_id));
+                let summary = format!("{} [{}]", label, session.created_at);
+                if search_match(
+                    &query,
+                    &[
+                        &summary,
+                        &session.session_id,
+                        &session.agent_id,
+                        &session.created_at,
+                    ],
+                ) {
+                    hits.push(SearchHit {
+                        kind: "session",
+                        label: summary,
+                        summary: session.session_id.clone(),
+                        detail: pretty_json(&serde_json::json!({
+                            "type": "session",
+                            "session_id": session.session_id,
+                            "agent_id": session.agent_id,
+                            "created_at": session.created_at,
+                            "detail_loaded": self.dashboard.session_detail(&session.session_id).is_some(),
+                        })),
+                        action: SearchAction::FocusStoredSession {
+                            session_id: session.session_id.clone(),
+                        },
+                    });
+                }
+
+                if let Some(detail) = self.dashboard.session_detail(&session.session_id) {
+                    for message in &detail.messages {
+                        let content = message_content_text(&message.content)
+                            .unwrap_or_else(|| compact_json(&message.content, 160));
+                        if search_match(&query, &[&content]) {
+                            hits.push(SearchHit {
+                                kind: "message",
+                                label: format!(
+                                    "{} · {} · turn {}",
+                                    label, message.role, message.turn_index
+                                ),
+                                summary: excerpt_multiline(&content, 2, 120),
+                                detail: pretty_json(&serde_json::json!({
+                                    "type": "session_message",
+                                    "session_id": session.session_id,
+                                    "role": message.role,
+                                    "turn_index": message.turn_index,
+                                    "created_at": message.created_at,
+                                    "content": content,
+                                })),
+                                action: SearchAction::OpenChatSession {
+                                    session_id: session.session_id.clone(),
+                                },
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        if matches!(self.search_scope, SearchScope::All | SearchScope::Agents) {
+            for agent in self.dashboard.agents() {
+                let runtime = self.agent_runtime(&agent.id);
+                let summary = format!(
+                    "{} [{}] {}",
+                    agent.id,
+                    agent.model,
+                    if runtime.is_some_and(|runtime| runtime.running) {
+                        "running"
+                    } else {
+                        "idle"
+                    }
+                );
+                if search_match(
+                    &query,
+                    &[
+                        &summary,
+                        &agent.id,
+                        &agent.model,
+                        &agent.provider,
+                        &agent.harness_ref,
+                    ],
+                ) {
+                    hits.push(SearchHit {
+                        kind: "agent",
+                        label: summary,
+                        summary: agent.provider.clone(),
+                        detail: pretty_json(&serde_json::json!({
+                            "type": "agent",
+                            "agent": agent,
+                            "runtime": runtime,
+                        })),
+                        action: SearchAction::FocusAgent {
+                            agent_id: agent.id.clone(),
+                        },
+                    });
+                }
+            }
+        }
+
+        if matches!(self.search_scope, SearchScope::All | SearchScope::Tasks) {
+            for task in &self.dashboard.tasks {
+                let summary = format!("{} {} {}", task.request_id, task.state, task.agent_id);
+                if search_match(
+                    &query,
+                    &[
+                        &summary,
+                        &task.request_id,
+                        &task.agent_id,
+                        &task.state,
+                        task.error.as_deref().unwrap_or(""),
+                        task.output.as_deref().unwrap_or(""),
+                    ],
+                ) {
+                    hits.push(SearchHit {
+                        kind: "task",
+                        label: summary,
+                        summary: task.trace_id.clone(),
+                        detail: pretty_json(&serde_json::json!({
+                            "type": "task",
+                            "task": task,
+                        })),
+                        action: SearchAction::FocusTask {
+                            request_id: task.request_id.clone(),
+                        },
+                    });
+                }
+            }
+        }
+
+        if matches!(self.search_scope, SearchScope::All | SearchScope::Channels) {
+            for channel in self.dashboard.channels() {
+                let runtime = self.channel_runtime(&channel.id);
+                let summary = format!("{} [{}] {}", channel.id, channel.kind, channel.agent_id);
+                if search_match(
+                    &query,
+                    &[&summary, &channel.id, &channel.kind, &channel.agent_id],
+                ) {
+                    hits.push(SearchHit {
+                        kind: "channel",
+                        label: summary,
+                        summary: if channel.enabled {
+                            "enabled".to_string()
+                        } else {
+                            "disabled".to_string()
+                        },
+                        detail: pretty_json(&serde_json::json!({
+                            "type": "channel",
+                            "channel": channel,
+                            "runtime": runtime,
+                        })),
+                        action: SearchAction::FocusChannel {
+                            channel_id: channel.id.clone(),
+                        },
+                    });
+                }
+            }
+        }
+
+        if matches!(self.search_scope, SearchScope::All | SearchScope::Events) {
+            for event in self.event_source().iter().rev() {
+                let payload =
+                    serde_json::to_string(&event.data).unwrap_or_else(|_| "{}".to_string());
+                if search_match(&query, &[&event.event, &payload]) {
+                    hits.push(SearchHit {
+                        kind: "event",
+                        label: event.event.clone(),
+                        summary: compact_json(&event.data, 100),
+                        detail: pretty_json(&serde_json::json!({
+                            "type": "event",
+                            "event": event,
+                        })),
+                        action: SearchAction::FocusEvent {
+                            event_name: event.event.clone(),
+                            created_at: event
+                                .data
+                                .get("created_at")
+                                .and_then(|value| value.as_str())
+                                .map(str::to_string),
+                        },
+                    });
+                }
+            }
+        }
+
+        hits
+    }
+
+    fn selected_search_hit(&self) -> Option<SearchHit> {
+        self.search_hits().get(self.search_index).cloned()
+    }
+
     fn start_duplicate_profile_input(&mut self, make_default: bool) {
         let Some(source_name) = self.selected_profile().map(|profile| profile.name.clone()) else {
             self.dashboard
@@ -2809,6 +3258,24 @@ impl TuiApp {
                 "collapsed"
             }
         ));
+    }
+
+    fn start_edit_search_query(&mut self) {
+        self.begin_input_mode(InputMode::EditSearchQuery, self.search_query.clone());
+    }
+
+    fn cycle_search_scope(&mut self) {
+        self.search_scope = self.search_scope.next();
+        self.search_index = 0;
+        self.dashboard
+            .record_info(format!("Search scope is now {}", self.search_scope.title()));
+    }
+
+    fn clear_search_query(&mut self) {
+        self.search_query.clear();
+        self.search_index = 0;
+        self.dashboard
+            .record_info("Cleared the global search query");
     }
 
     fn toggle_streaming_preview(&mut self) {
@@ -3402,6 +3869,11 @@ impl TuiApp {
                 .iter()
                 .map(|item| ListItem::new(item.label().to_string()))
                 .collect(),
+            TabKind::Search => self
+                .search_hits()
+                .into_iter()
+                .map(|hit| ListItem::new(format!("[{}] {}  {}", hit.kind, hit.label, hit.summary)))
+                .collect(),
             TabKind::Connections => self
                 .profile_catalog
                 .as_ref()
@@ -3520,6 +3992,31 @@ impl TuiApp {
                 "user_label": self.settings.chat.user_label,
                 "transcript_budget_bytes": self.settings.chat.transcript_memory_budget_bytes,
             })),
+            TabKind::Search => self
+                .selected_search_hit()
+                .map(|hit| {
+                    format!(
+                        "Query: {}\nScope: {}\nKind: {}\nLabel: {}\nSummary: {}\n\n{}",
+                        self.search_query,
+                        self.search_scope.title(),
+                        hit.kind,
+                        hit.label,
+                        hit.summary,
+                        hit.detail
+                    )
+                })
+                .unwrap_or_else(|| {
+                    pretty_json(&serde_json::json!({
+                        "query": self.search_query,
+                        "scope": self.search_scope.title(),
+                        "result_count": self.search_hits().len(),
+                        "note": if self.search_query.trim().is_empty() {
+                            "Use / to enter a query. Search currently covers loaded Turin state and loaded session detail."
+                        } else {
+                            "No search hits for the current query."
+                        }
+                    }))
+                }),
             TabKind::Connections => {
                 let validation = self.profile_draft_validation();
                 let editor_diff = self.editor_diff();
@@ -3688,10 +4185,13 @@ impl TuiApp {
     }
 
     fn help_text(&self) -> String {
-        let shared = "1-9 switch views | Tab cycle | arrows/j/k move | r refresh | q quit";
+        let shared = "0-9 switch views | Tab cycle | arrows/j/k move | r refresh | q quit";
         let scoped = match self.tab {
             TabKind::Chat => {
                 "Enter opens/resumes or prompts | p prompt | ,/. cycle panes | h thinking pane | t inline thinking | v preview | f follow-latest | PgUp/PgDn scroll | Home/End jump"
+            }
+            TabKind::Search => {
+                "/ edits query | m cycles scope | F clears query | Enter opens selected hit"
             }
             TabKind::Connections => {
                 "Enter/s connect selected | C connect draft | T test draft | P test selected | E ensure draft local | S update selected | R load recent | [/ ] pick recent | v load current | b load selected | m/o cycle draft | t/g edit draft | a/A save as named | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
@@ -3736,6 +4236,12 @@ impl TuiApp {
     fn current_detail_session_id(&self) -> Option<String> {
         match self.tab {
             TabKind::Chat => self.current_chat_session_id().map(str::to_string),
+            TabKind::Search => self.selected_search_hit().and_then(|hit| match hit.action {
+                SearchAction::OpenChatSession { session_id }
+                | SearchAction::FocusLiveSession { session_id }
+                | SearchAction::FocusStoredSession { session_id } => Some(session_id),
+                _ => None,
+            }),
             TabKind::LiveSessions => self
                 .selected_live_session()
                 .map(|session| session.session_id.clone()),
@@ -3971,6 +4477,12 @@ fn compact_json(value: &Value, max_chars: usize) -> String {
         &serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string()),
         max_chars,
     )
+}
+
+fn search_match(query: &str, haystacks: &[&str]) -> bool {
+    haystacks
+        .iter()
+        .any(|value| value.to_ascii_lowercase().contains(query))
 }
 
 fn message_content_text(value: &Value) -> Option<String> {
