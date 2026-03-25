@@ -14,6 +14,7 @@ use crate::daemon::protocol::{
     DaemonRequest, EventEnvelope, RequestEnvelope, ResponseEnvelope, RuntimeEventsSubscribeParams,
 };
 use crate::daemon::state::{DaemonRuntimeSnapshot, DaemonState, DaemonStatus};
+use crate::kernel::event::KernelEvent;
 
 use super::dispatch::{build_runtime_snapshot, classify_registry_issue, emit_event};
 
@@ -32,6 +33,15 @@ pub(super) async fn stream_events(
     writer: &mut LocalIpcWriteHalf,
 ) -> Result<()> {
     let filter = EventFilter::from_request(&request);
+    let mut session_event_rx = if let Some(session_id) = filter.session_id.as_deref() {
+        let guard = state.read().await;
+        guard
+            .subscribe_live_session_events(session_id)
+            .await
+            .map(|(agent_id, receiver)| (agent_id, session_id.to_string(), receiver))
+    } else {
+        None
+    };
     let ack = ResponseEnvelope::ok(request.id, json!({ "subscribed": true }));
     writer
         .write_all(serde_json::to_string(&ack)?.as_bytes())
@@ -102,6 +112,22 @@ pub(super) async fn stream_events(
                         .await?;
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            session_event = next_session_kernel_event(&mut session_event_rx), if session_event_rx.is_some() => {
+                match session_event {
+                    Some(Ok(event)) => {
+                        if filter.matches(&event) {
+                            write_event(writer, &event).await?;
+                        }
+                    }
+                    Some(Err(broadcast::error::RecvError::Lagged(skipped))) => {
+                        let lagged = EventEnvelope::new("session.events_lagged", json!({ "skipped": skipped }));
+                        write_event(writer, &lagged).await?;
+                    }
+                    Some(Err(broadcast::error::RecvError::Closed)) | None => {
+                        session_event_rx = None;
+                    }
                 }
             }
         }
@@ -188,6 +214,53 @@ async fn write_event(writer: &mut LocalIpcWriteHalf, event: &EventEnvelope) -> R
         .await?;
     writer.write_all(b"\n").await?;
     Ok(())
+}
+
+async fn next_session_kernel_event(
+    session_event_rx: &mut Option<(
+        String,
+        String,
+        broadcast::Receiver<(Option<i64>, KernelEvent)>,
+    )>,
+) -> Option<std::result::Result<EventEnvelope, broadcast::error::RecvError>> {
+    let (agent_id, session_id, rx) = session_event_rx.as_mut()?;
+    Some(
+        rx.recv()
+            .await
+            .map(|(_, event)| kernel_event_envelope(agent_id, session_id, &event)),
+    )
+}
+
+fn kernel_event_envelope(agent_id: &str, session_id: &str, event: &KernelEvent) -> EventEnvelope {
+    let mut data = serde_json::to_value(event).unwrap_or_else(|_| json!({}));
+    if let serde_json::Value::Object(ref mut map) = data {
+        map.insert("agent_id".to_string(), json!(agent_id));
+        map.insert(
+            "session_id".to_string(),
+            json!(kernel_event_session_id(event).unwrap_or(session_id)),
+        );
+    }
+    EventEnvelope::new(event.event_type(), data)
+}
+
+fn kernel_event_session_id(event: &KernelEvent) -> Option<&str> {
+    match event {
+        KernelEvent::Lifecycle(lifecycle) => match lifecycle {
+            crate::kernel::event::LifecycleEvent::SessionStart { identity }
+            | crate::kernel::event::LifecycleEvent::SessionResume { identity }
+            | crate::kernel::event::LifecycleEvent::SessionEnd { identity, .. }
+            | crate::kernel::event::LifecycleEvent::TaskStart { identity, .. }
+            | crate::kernel::event::LifecycleEvent::TaskComplete { identity, .. }
+            | crate::kernel::event::LifecycleEvent::PlanComplete { identity, .. }
+            | crate::kernel::event::LifecycleEvent::AllTasksComplete { identity }
+            | crate::kernel::event::LifecycleEvent::TurnStart { identity, .. }
+            | crate::kernel::event::LifecycleEvent::TurnPrepare { identity, .. }
+            | crate::kernel::event::LifecycleEvent::TurnEnd { identity, .. } => {
+                Some(identity.session_id())
+            }
+        },
+        _ => None,
+    }
 }
 
 fn scope_runtime_snapshot(

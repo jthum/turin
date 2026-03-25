@@ -789,6 +789,72 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn daemon_session_subscription_receives_kernel_stream_events() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+
+    let opened = result_value(
+        daemon
+            .request(DaemonRequest::SessionOpen(
+                turin::daemon::protocol::OpenSessionParams {
+                    agent_id: "default".to_string(),
+                    slot_id: Some("stream-session".to_string()),
+                },
+            ))
+            .await?,
+    );
+    let session_id = opened["session_id"]
+        .as_str()
+        .context("session.open should return session_id")?
+        .to_string();
+
+    let (_ack, _snapshot, mut subscription) = daemon
+        .subscribe(turin::daemon::protocol::RuntimeEventsSubscribeParams {
+            agent_id: None,
+            session_id: Some(session_id.clone()),
+        })
+        .await?;
+
+    let submitted = result_value(
+        daemon
+            .request(DaemonRequest::TaskSubmit(
+                turin::daemon::protocol::SubmitTaskParams {
+                    agent_id: None,
+                    session_id: Some(session_id.clone()),
+                    prompt: "Say pong".to_string(),
+                },
+            ))
+            .await?,
+    );
+    let request_id = submitted["request_id"]
+        .as_str()
+        .context("task.submit should return request_id")?
+        .to_string();
+
+    let task_start = subscription.wait_for("task_start").await?;
+    assert_eq!(task_start.data["session_id"], session_id);
+    assert_eq!(task_start.data["agent_id"], "default");
+
+    let message_delta = subscription.wait_for("message_delta").await?;
+    assert_eq!(message_delta.data["session_id"], session_id);
+    assert_eq!(message_delta.data["agent_id"], "default");
+    assert_eq!(message_delta.data["content_delta"], "PONG");
+
+    let _ = daemon
+        .request(DaemonRequest::TaskWait(
+            turin::daemon::protocol::WaitTaskParams {
+                request_id,
+                timeout_ms: Some(5_000),
+            },
+        ))
+        .await?;
+
+    let task_complete = subscription.wait_for("task_complete").await?;
+    assert_eq!(task_complete.data["session_id"], session_id);
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn daemon_event_subscription_scopes_initial_snapshot_and_includes_channel_runtimes()
 -> Result<()> {
     let daemon = DaemonHarness::start().await?;

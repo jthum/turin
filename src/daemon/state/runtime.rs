@@ -8,6 +8,7 @@ use super::{
     SessionToolExecutionDetail,
 };
 use crate::kernel::agent_manager::{AgentStatusSnapshot, TaskStatusSnapshot};
+use crate::kernel::event::KernelEvent;
 use crate::kernel::session::QueuedTask;
 
 impl DaemonState {
@@ -106,6 +107,19 @@ impl DaemonState {
         &self,
     ) -> Vec<crate::kernel::agent_manager::LiveSessionSnapshot> {
         self.kernel.agent_manager().list_live_sessions(None).await
+    }
+
+    pub async fn subscribe_live_session_events(
+        &self,
+        session_id: &str,
+    ) -> Option<(
+        String,
+        tokio::sync::broadcast::Receiver<(Option<i64>, KernelEvent)>,
+    )> {
+        self.kernel
+            .agent_manager()
+            .subscribe_session_events(session_id)
+            .await
     }
 
     pub async fn open_session(

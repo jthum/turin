@@ -49,7 +49,10 @@ impl PeerRuntime {
             host.create_session_for_agent(agent_id).await
         };
         host.start_session(&mut session).await?;
-        control.set_current_session_id(Some(session.identity.session_id().to_string()));
+        control.set_current_session(
+            Some(session.identity.session_id().to_string()),
+            Some(session.event_tx.clone()),
+        );
 
         Ok(Self {
             manager,
@@ -114,7 +117,7 @@ impl PeerRuntime {
             warn!(agent_id = %self.agent_id, error = %e, "Peer agent session end error");
         }
         self.control.clear_active_task();
-        self.control.set_current_session_id(None);
+        self.control.set_current_session(None, None);
         self.host.shutdown_mcp_clients().await;
         info!(agent_id = %self.agent_id, "Peer runtime shut down");
     }
@@ -350,8 +353,10 @@ impl PeerRuntime {
         self.host.end_session(&mut self.session).await?;
         let mut session = self.host.create_session_for_agent(&self.agent_id).await;
         self.host.start_session(&mut session).await?;
-        self.control
-            .set_current_session_id(Some(session.identity.session_id().to_string()));
+        self.control.set_current_session(
+            Some(session.identity.session_id().to_string()),
+            Some(session.event_tx.clone()),
+        );
         self.session = session;
         Ok(())
     }
@@ -363,8 +368,10 @@ impl PeerRuntime {
             .resume_session_for_agent(&self.agent_id, session_id)
             .await?;
         self.host.start_session(&mut session).await?;
-        self.control
-            .set_current_session_id(Some(session.identity.session_id().to_string()));
+        self.control.set_current_session(
+            Some(session.identity.session_id().to_string()),
+            Some(session.event_tx.clone()),
+        );
         self.session = session;
         Ok(())
     }

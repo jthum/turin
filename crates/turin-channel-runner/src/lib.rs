@@ -5,13 +5,15 @@ use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
+use tokio::time::{Instant, MissedTickBehavior};
 use turin_channel_core::{
     ChannelCapabilities, ChannelConversationKey, ChannelKind, ConversationBinding, InboundEvent,
     OutboundMessage, RoutingDecision, decide_routing,
 };
 use turin_daemon_client::DaemonClient;
 use turin_daemon_protocol::{
-    OpenSessionParams, ResumeSessionParams, SubmitTaskParams, WaitTaskParams,
+    OpenSessionParams, ResumeSessionParams, RuntimeEventsSubscribeParams, SubmitTaskParams,
+    WaitTaskParams,
 };
 
 #[derive(Debug, Clone)]
@@ -37,6 +39,30 @@ pub struct TaskSnapshot {
     pub task_turn_count: Option<u32>,
     pub output: Option<String>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelStreamMode {
+    Off,
+    Typing,
+    Draft,
+    Block,
+}
+
+impl ChannelStreamMode {
+    fn sends_typing(self) -> bool {
+        matches!(self, Self::Typing | Self::Draft | Self::Block)
+    }
+
+    fn streams_text(self) -> bool {
+        matches!(self, Self::Draft | Self::Block)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChannelProgressUpdate {
+    Typing,
+    StreamingText { text: String },
 }
 
 pub struct FileBindingStore {
@@ -89,6 +115,18 @@ pub trait ChannelDriver {
         conversation: &ChannelConversationKey,
         message: OutboundMessage,
     ) -> Result<()>;
+
+    fn stream_mode(&self) -> ChannelStreamMode {
+        ChannelStreamMode::Off
+    }
+
+    async fn send_progress(
+        &mut self,
+        _event: &InboundEvent,
+        _update: ChannelProgressUpdate,
+    ) -> Result<()> {
+        Ok(())
+    }
 
     async fn shutdown(&mut self) -> Result<()>;
 }
@@ -186,12 +224,20 @@ impl ChannelRunner {
         let binding = self
             .ensure_session(agent_id, &event.conversation, reset_requested)
             .await?;
+        self.submit_with_binding(&binding, event).await
+    }
+
+    pub async fn submit_with_binding(
+        &self,
+        binding: &ConversationBinding,
+        event: &InboundEvent,
+    ) -> Result<TaskSnapshot> {
         self.daemon
             .request_ok(
                 None,
                 turin_daemon_protocol::DaemonRequest::TaskSubmit(SubmitTaskParams {
                     agent_id: None,
-                    session_id: Some(binding.session_id),
+                    session_id: Some(binding.session_id.clone()),
                     prompt: event.text.clone(),
                 }),
             )
@@ -244,7 +290,7 @@ impl ChannelRunner {
                     .and_then(|value| value.as_bool())
                     .unwrap_or(false);
                 let outbound = match self
-                    .handle_event(agent_id, &event, reset_requested, timeout_ms)
+                    .handle_event_with_driver(agent_id, driver, &event, reset_requested, timeout_ms)
                     .await
                 {
                     Ok(message) => message,
@@ -259,6 +305,179 @@ impl ChannelRunner {
         let shutdown_result = driver.shutdown().await;
         run_result?;
         shutdown_result
+    }
+
+    async fn handle_event_with_driver<D: ChannelDriver + Send>(
+        &self,
+        agent_id: &str,
+        driver: &mut D,
+        event: &InboundEvent,
+        reset_requested: bool,
+        timeout_ms: Option<u64>,
+    ) -> Result<OutboundMessage> {
+        let binding = self
+            .ensure_session(agent_id, &event.conversation, reset_requested)
+            .await?;
+        let stream_mode = driver.stream_mode();
+        let session_events = if stream_mode.streams_text() {
+            self.daemon
+                .subscribe_managed(RuntimeEventsSubscribeParams {
+                    agent_id: None,
+                    session_id: Some(binding.session_id.clone()),
+                })
+                .await
+                .ok()
+        } else {
+            None
+        };
+        let submitted = self.submit_with_binding(&binding, event).await?;
+        let task = self
+            .wait_for_task_with_progress(
+                driver,
+                event,
+                &binding,
+                &submitted,
+                session_events,
+                timeout_ms,
+            )
+            .await?;
+        Ok(enrich_outbound_for_event(task_to_outbound(&task), event))
+    }
+
+    async fn wait_for_task_with_progress<D: ChannelDriver + Send>(
+        &self,
+        driver: &mut D,
+        event: &InboundEvent,
+        binding: &ConversationBinding,
+        submitted: &TaskSnapshot,
+        mut session_events: Option<turin_daemon_client::ManagedEventStream>,
+        timeout_ms: Option<u64>,
+    ) -> Result<TaskSnapshot> {
+        let stream_mode = driver.stream_mode();
+        if stream_mode == ChannelStreamMode::Off {
+            return self
+                .daemon
+                .request_ok(
+                    None,
+                    turin_daemon_protocol::DaemonRequest::TaskWait(WaitTaskParams {
+                        request_id: submitted.request_id.clone(),
+                        timeout_ms,
+                    }),
+                )
+                .await;
+        }
+
+        if stream_mode.sends_typing() {
+            self.try_send_progress(driver, event, ChannelProgressUpdate::Typing)
+                .await;
+        }
+
+        let wait_task = self.daemon.request_ok(
+            None,
+            turin_daemon_protocol::DaemonRequest::TaskWait(WaitTaskParams {
+                request_id: submitted.request_id.clone(),
+                timeout_ms,
+            }),
+        );
+        tokio::pin!(wait_task);
+
+        let mut typing_tick = tokio::time::interval_at(
+            Instant::now() + Duration::from_secs(4),
+            Duration::from_secs(4),
+        );
+        typing_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+        let mut task_started = false;
+        let mut text_preview = String::new();
+        let mut last_flushed_chars = 0usize;
+        let mut last_flush_at = Instant::now();
+
+        loop {
+            tokio::select! {
+                result = &mut wait_task => {
+                    if stream_mode.streams_text()
+                        && text_preview.chars().count() > last_flushed_chars
+                    {
+                        self.try_send_progress(
+                            driver,
+                            event,
+                            ChannelProgressUpdate::StreamingText {
+                                text: text_preview.clone(),
+                            },
+                        )
+                        .await;
+                    }
+                    return result;
+                }
+                _ = typing_tick.tick(), if stream_mode.sends_typing() => {
+                    self.try_send_progress(driver, event, ChannelProgressUpdate::Typing).await;
+                }
+                event_result = next_managed_event(session_events.as_mut()), if session_events.is_some() => {
+                    let Ok(kernel_event) = event_result else {
+                        session_events = None;
+                        continue;
+                    };
+                    if kernel_event.data.get("session_id").and_then(|value| value.as_str()) != Some(binding.session_id.as_str()) {
+                        continue;
+                    }
+
+                    match kernel_event.event.as_str() {
+                        "task_start" if kernel_event.data.get("trace_id").and_then(|value| value.as_str()) == Some(submitted.trace_id.as_str()) => {
+                            task_started = true;
+                        }
+                        "message_delta" if task_started => {
+                            if let Some(delta) = kernel_event.data.get("content_delta").and_then(|value| value.as_str()) {
+                                text_preview.push_str(delta);
+                            }
+                            if should_flush_preview(
+                                stream_mode,
+                                &text_preview,
+                                last_flushed_chars,
+                                last_flush_at,
+                            ) {
+                                self.try_send_progress(
+                                    driver,
+                                    event,
+                                    ChannelProgressUpdate::StreamingText {
+                                        text: text_preview.clone(),
+                                    },
+                                )
+                                .await;
+                                last_flushed_chars = text_preview.chars().count();
+                                last_flush_at = Instant::now();
+                            }
+                        }
+                        "message_end" if task_started => {
+                            if text_preview.chars().count() > last_flushed_chars {
+                                self.try_send_progress(
+                                    driver,
+                                    event,
+                                    ChannelProgressUpdate::StreamingText {
+                                        text: text_preview.clone(),
+                                    },
+                                )
+                                .await;
+                                last_flushed_chars = text_preview.chars().count();
+                                last_flush_at = Instant::now();
+                            }
+                        }
+                        "task_complete" if kernel_event.data.get("trace_id").and_then(|value| value.as_str()) == Some(submitted.trace_id.as_str()) => {
+                            task_started = false;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    async fn try_send_progress<D: ChannelDriver + Send>(
+        &self,
+        driver: &mut D,
+        event: &InboundEvent,
+        update: ChannelProgressUpdate,
+    ) {
+        let _ = driver.send_progress(event, update).await;
     }
 
     pub async fn clear_binding(&self, key: &ChannelConversationKey) -> Result<()> {
@@ -293,6 +512,39 @@ fn task_to_outbound(task: &TaskSnapshot) -> OutboundMessage {
         OutboundMessage::text(format!("Turin error: {}", error))
     } else {
         OutboundMessage::text(format!("Task {} finished without output", task.request_id))
+    }
+}
+
+async fn next_managed_event(
+    stream: Option<&mut turin_daemon_client::ManagedEventStream>,
+) -> Result<turin_daemon_protocol::EventEnvelope> {
+    let stream = stream.context("managed event stream missing")?;
+    stream.next_event().await
+}
+
+fn should_flush_preview(
+    stream_mode: ChannelStreamMode,
+    text_preview: &str,
+    last_flushed_chars: usize,
+    last_flush_at: Instant,
+) -> bool {
+    let current_chars = text_preview.chars().count();
+    if current_chars <= last_flushed_chars {
+        return false;
+    }
+
+    let new_chars = current_chars.saturating_sub(last_flushed_chars);
+    match stream_mode {
+        ChannelStreamMode::Draft => {
+            new_chars >= 32 || last_flush_at.elapsed() >= Duration::from_millis(800)
+        }
+        ChannelStreamMode::Block => {
+            new_chars >= 160
+                || (new_chars >= 64
+                    && last_flush_at.elapsed() >= Duration::from_millis(1500)
+                    && (text_preview.ends_with('\n') || text_preview.ends_with(". ")))
+        }
+        _ => false,
     }
 }
 

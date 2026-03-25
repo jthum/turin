@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock as StdRwLock};
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
 use crate::kernel::config::TurinConfig;
-use crate::kernel::event::TaskTerminalStatus;
+use crate::kernel::event::{KernelEvent, TaskTerminalStatus};
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_manager::HarnessManager;
 use crate::kernel::policy::RuntimePolicyManager;
@@ -107,6 +107,8 @@ struct PendingTaskRecord {
 #[derive(Default)]
 pub(crate) struct RuntimeControl {
     current_session_id: StdRwLock<Option<String>>,
+    current_session_events:
+        StdRwLock<Option<tokio::sync::broadcast::Sender<(Option<i64>, KernelEvent)>>>,
     current_request_id: StdRwLock<Option<String>>,
     current_runtime_task_id: StdRwLock<Option<String>>,
     current_cancel_token: Mutex<Option<CancellationToken>>,
@@ -120,11 +122,24 @@ pub(crate) enum SessionResetRequest {
 }
 
 impl RuntimeControl {
-    fn set_current_session_id(&self, session_id: Option<String>) {
+    fn set_current_session(
+        &self,
+        session_id: Option<String>,
+        event_tx: Option<tokio::sync::broadcast::Sender<(Option<i64>, KernelEvent)>>,
+    ) {
         *self
             .current_session_id
             .write()
             .expect("runtime control session lock poisoned") = session_id;
+        *self
+            .current_session_events
+            .write()
+            .expect("runtime control session events lock poisoned") = event_tx;
+    }
+
+    #[cfg(test)]
+    fn set_current_session_id(&self, session_id: Option<String>) {
+        self.set_current_session(session_id, None);
     }
 
     fn current_session_id(&self) -> Option<String> {
@@ -132,6 +147,16 @@ impl RuntimeControl {
             .read()
             .expect("runtime control session lock poisoned")
             .clone()
+    }
+
+    fn subscribe_current_session_events(
+        &self,
+    ) -> Option<tokio::sync::broadcast::Receiver<(Option<i64>, KernelEvent)>> {
+        self.current_session_events
+            .read()
+            .expect("runtime control session events lock poisoned")
+            .as_ref()
+            .map(tokio::sync::broadcast::Sender::subscribe)
     }
 
     fn activate_task(

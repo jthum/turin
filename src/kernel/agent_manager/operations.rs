@@ -5,6 +5,7 @@ use std::sync::atomic::Ordering;
 use anyhow::{Context, Result};
 use tokio::sync::oneshot;
 
+use crate::kernel::event::KernelEvent;
 use crate::kernel::session::QueuedTask;
 
 use super::{
@@ -196,6 +197,23 @@ impl AgentManager {
             queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
             current_request_id: handle.control.current_request_id(),
         })
+    }
+
+    pub async fn subscribe_session_events(
+        &self,
+        session_id: &str,
+    ) -> Option<(
+        String,
+        tokio::sync::broadcast::Receiver<(Option<i64>, KernelEvent)>,
+    )> {
+        self.find_runtime_by_session(session_id)
+            .await
+            .and_then(|(runtime_key, handle)| {
+                handle
+                    .control
+                    .subscribe_current_session_events()
+                    .map(|receiver| (runtime_key.agent_id, receiver))
+            })
     }
 
     async fn submit_to_runtime(

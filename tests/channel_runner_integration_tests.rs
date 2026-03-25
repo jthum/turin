@@ -12,7 +12,9 @@ use turin_channel_core::{
     ChannelConversationKey, ChannelKind, ChannelMessageRef, ChannelUser, InboundEvent,
     OutboundMessage,
 };
-use turin_channel_runner::{ChannelDriver, ChannelRunner, RunnerConfig};
+use turin_channel_runner::{
+    ChannelDriver, ChannelProgressUpdate, ChannelRunner, ChannelStreamMode, RunnerConfig,
+};
 
 struct DaemonHarness {
     _tempdir: Arc<TempDir>,
@@ -24,7 +26,9 @@ struct DaemonHarness {
 struct MockDriver {
     events: VecDeque<InboundEvent>,
     sent: Arc<Mutex<Vec<OutboundMessage>>>,
+    progress: Arc<Mutex<Vec<String>>>,
     shutdown_called: Arc<Mutex<bool>>,
+    stream_mode: ChannelStreamMode,
 }
 
 impl DaemonHarness {
@@ -137,7 +141,16 @@ impl MockDriver {
         Self {
             events: events.into(),
             sent: Arc::new(Mutex::new(Vec::new())),
+            progress: Arc::new(Mutex::new(Vec::new())),
             shutdown_called: Arc::new(Mutex::new(false)),
+            stream_mode: ChannelStreamMode::Off,
+        }
+    }
+
+    fn with_stream_mode(events: Vec<InboundEvent>, stream_mode: ChannelStreamMode) -> Self {
+        Self {
+            stream_mode,
+            ..Self::new(events)
         }
     }
 }
@@ -158,6 +171,26 @@ impl ChannelDriver for MockDriver {
         message: OutboundMessage,
     ) -> Result<()> {
         self.sent.lock().expect("sent lock poisoned").push(message);
+        Ok(())
+    }
+
+    fn stream_mode(&self) -> ChannelStreamMode {
+        self.stream_mode
+    }
+
+    async fn send_progress(
+        &mut self,
+        _event: &InboundEvent,
+        update: ChannelProgressUpdate,
+    ) -> Result<()> {
+        let value = match update {
+            ChannelProgressUpdate::Typing => "typing".to_string(),
+            ChannelProgressUpdate::StreamingText { text } => format!("text:{text}"),
+        };
+        self.progress
+            .lock()
+            .expect("progress lock poisoned")
+            .push(value);
         Ok(())
     }
 
@@ -233,6 +266,30 @@ async fn channel_runner_reset_requests_start_fresh_session() -> Result<()> {
 
     assert_eq!(initial.session_id, reused.session_id);
     assert_ne!(initial.session_id, reset.session_id);
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn channel_runner_emits_progress_updates_for_opted_in_driver() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+    let runner = daemon.runner();
+    let mut driver = MockDriver::with_stream_mode(vec![sample_event()], ChannelStreamMode::Draft);
+    let progress = Arc::clone(&driver.progress);
+
+    runner
+        .run_driver("default", &mut driver, Some(5_000))
+        .await?;
+
+    let progress = progress.lock().expect("progress lock poisoned");
+    assert!(
+        progress.iter().any(|entry| entry == "typing"),
+        "progress log should contain typing updates: {progress:?}"
+    );
+    assert!(
+        progress.iter().any(|entry| entry.starts_with("text:PONG")),
+        "progress log should contain streamed assistant text: {progress:?}"
+    );
 
     daemon.stop().await
 }
