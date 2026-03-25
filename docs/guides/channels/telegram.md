@@ -223,8 +223,9 @@ If you emit a structured outbound payload, you can also control Telegram-specifi
 
 Formatting notes:
 
-- Turin automatically renders `CodeBlock` content as Telegram HTML `<pre>` blocks.
-- Plain text remains the default for normal text-only messages.
+- Turin now defaults Telegram text rendering to Telegram HTML parse mode.
+- Common Markdown-style agent output such as headings, bold/italic, inline code, links, lists, block quotes, and fenced code blocks is rendered into Telegram-safe HTML automatically.
+- `telegram_format = "plain"` disables that rendering and sends raw text instead.
 - Attachments are still rendered as text lines; media upload is not part of this adapter yet.
 
 ## 9. Validate With The Smoke Script

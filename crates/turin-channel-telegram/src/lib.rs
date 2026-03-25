@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::collections::VecDeque;
@@ -876,24 +877,7 @@ fn resolve_render_mode(message: &OutboundMessage) -> TelegramRenderMode {
     {
         return TelegramRenderMode::PlainText;
     }
-    if message
-        .metadata
-        .get("telegram_format")
-        .and_then(|value| value.as_str())
-        .is_some_and(|value| value.eq_ignore_ascii_case("html"))
-        || message
-            .metadata
-            .get("telegram_parse_mode")
-            .and_then(|value| value.as_str())
-            .is_some_and(|value| value.eq_ignore_ascii_case("html"))
-        || message
-            .blocks
-            .iter()
-            .any(|block| matches!(block, MessageBlock::CodeBlock { .. }))
-    {
-        return TelegramRenderMode::Html;
-    }
-    TelegramRenderMode::PlainText
+    TelegramRenderMode::Html
 }
 
 fn render_text_blocks(blocks: &[MessageBlock]) -> String {
@@ -965,16 +949,234 @@ fn render_html_chunks(message: &OutboundMessage) -> Vec<String> {
 
 fn render_html_segments_for_block(block: &MessageBlock) -> Vec<String> {
     match block {
-        MessageBlock::Text { text } => {
-            let escaped = escape_html(text.trim());
-            if escaped.is_empty() {
-                Vec::new()
-            } else {
-                split_plain_segment(&escaped)
-            }
-        }
+        MessageBlock::Text { text } => render_markdown_segments(text),
         MessageBlock::CodeBlock { code, .. } => split_wrapped_segment(code, "<pre>", "</pre>"),
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MarkdownListState {
+    ordered: bool,
+    next_index: u64,
+}
+
+fn render_markdown_segments(markdown: &str) -> Vec<String> {
+    let trimmed = markdown.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TABLES);
+    options.insert(Options::ENABLE_TASKLISTS);
+
+    let parser = Parser::new_ext(trimmed, options);
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut blockquote_depth = 0usize;
+    let mut list_stack: Vec<MarkdownListState> = Vec::new();
+    let mut code_block: Option<String> = None;
+
+    for event in parser {
+        match event {
+            Event::Start(tag) => match tag {
+                Tag::Paragraph => {}
+                Tag::Heading { .. } => {
+                    ensure_prefix(&mut current, blockquote_depth);
+                    current.push_str("<b>");
+                }
+                Tag::BlockQuote(_) => {
+                    blockquote_depth = blockquote_depth.saturating_add(1);
+                }
+                Tag::List(start) => {
+                    list_stack.push(MarkdownListState {
+                        ordered: start.is_some(),
+                        next_index: start.unwrap_or(1),
+                    });
+                }
+                Tag::Item => {
+                    flush_rich_segment(&mut segments, &mut current);
+                    current.push_str(&blockquote_prefix(blockquote_depth));
+                    if let Some(state) = list_stack.last_mut() {
+                        if state.ordered {
+                            current.push_str(&format!("{}. ", state.next_index));
+                            state.next_index = state.next_index.saturating_add(1);
+                        } else {
+                            current.push_str("• ");
+                        }
+                    }
+                }
+                Tag::Emphasis => {
+                    ensure_prefix(&mut current, blockquote_depth);
+                    current.push_str("<i>");
+                }
+                Tag::Strong => {
+                    ensure_prefix(&mut current, blockquote_depth);
+                    current.push_str("<b>");
+                }
+                Tag::Strikethrough => {
+                    ensure_prefix(&mut current, blockquote_depth);
+                    current.push_str("<s>");
+                }
+                Tag::Link { dest_url, .. } => {
+                    ensure_prefix(&mut current, blockquote_depth);
+                    current.push_str("<a href=\"");
+                    current.push_str(&escape_html(dest_url.as_ref()));
+                    current.push_str("\">");
+                }
+                Tag::CodeBlock(kind) => {
+                    flush_rich_segment(&mut segments, &mut current);
+                    let mut rendered = String::new();
+                    if let CodeBlockKind::Fenced(language) = kind {
+                        let language = language.trim();
+                        if !language.is_empty() {
+                            rendered.push_str(language);
+                            rendered.push('\n');
+                        }
+                    }
+                    code_block = Some(rendered);
+                }
+                _ => {}
+            },
+            Event::End(tag) => match tag {
+                TagEnd::Paragraph => {
+                    if list_stack.is_empty() {
+                        flush_rich_segment(&mut segments, &mut current);
+                    }
+                }
+                TagEnd::Heading(_) => {
+                    current.push_str("</b>");
+                    flush_rich_segment(&mut segments, &mut current);
+                }
+                TagEnd::BlockQuote(_) => {
+                    flush_rich_segment(&mut segments, &mut current);
+                    blockquote_depth = blockquote_depth.saturating_sub(1);
+                }
+                TagEnd::List(_) => {
+                    flush_rich_segment(&mut segments, &mut current);
+                    list_stack.pop();
+                }
+                TagEnd::Item => {
+                    flush_rich_segment(&mut segments, &mut current);
+                }
+                TagEnd::Emphasis => current.push_str("</i>"),
+                TagEnd::Strong => current.push_str("</b>"),
+                TagEnd::Strikethrough => current.push_str("</s>"),
+                TagEnd::Link => current.push_str("</a>"),
+                TagEnd::CodeBlock => {
+                    if let Some(rendered) = code_block.take() {
+                        segments.extend(split_wrapped_segment(&rendered, "<pre>", "</pre>"));
+                    }
+                }
+                _ => {}
+            },
+            Event::Text(text) => {
+                if let Some(code) = code_block.as_mut() {
+                    code.push_str(text.as_ref());
+                } else {
+                    ensure_prefix(&mut current, blockquote_depth);
+                    current.push_str(&escape_html(text.as_ref()));
+                }
+            }
+            Event::Code(text) => {
+                ensure_prefix(&mut current, blockquote_depth);
+                current.push_str("<code>");
+                current.push_str(&escape_html(text.as_ref()));
+                current.push_str("</code>");
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                if let Some(code) = code_block.as_mut() {
+                    code.push('\n');
+                } else {
+                    ensure_prefix(&mut current, blockquote_depth);
+                    current.push('\n');
+                }
+            }
+            Event::Rule => {
+                flush_rich_segment(&mut segments, &mut current);
+                segments.push("────────".to_string());
+            }
+            Event::TaskListMarker(checked) => {
+                ensure_prefix(&mut current, blockquote_depth);
+                current.push_str(if checked { "[x] " } else { "[ ] " });
+            }
+            Event::Html(html) | Event::InlineHtml(html) => {
+                if let Some(code) = code_block.as_mut() {
+                    code.push_str(html.as_ref());
+                } else {
+                    ensure_prefix(&mut current, blockquote_depth);
+                    current.push_str(&escape_html(html.as_ref()));
+                }
+            }
+            Event::InlineMath(text) | Event::DisplayMath(text) => {
+                ensure_prefix(&mut current, blockquote_depth);
+                current.push_str(&escape_html(text.as_ref()));
+            }
+            Event::FootnoteReference(reference) => {
+                ensure_prefix(&mut current, blockquote_depth);
+                current.push('[');
+                current.push_str(&escape_html(reference.as_ref()));
+                current.push(']');
+            }
+        }
+    }
+
+    flush_rich_segment(&mut segments, &mut current);
+    pack_segments(segments)
+}
+
+fn ensure_prefix(current: &mut String, blockquote_depth: usize) {
+    if current.is_empty() {
+        current.push_str(&blockquote_prefix(blockquote_depth));
+    }
+}
+
+fn blockquote_prefix(depth: usize) -> String {
+    "&gt; ".repeat(depth)
+}
+
+fn flush_rich_segment(segments: &mut Vec<String>, current: &mut String) {
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        segments.extend(split_rich_segment(trimmed));
+    }
+    current.clear();
+}
+
+fn split_rich_segment(content: &str) -> Vec<String> {
+    if content.chars().count() <= TELEGRAM_MESSAGE_MAX_LEN {
+        return vec![content.to_string()];
+    }
+
+    let mut out = Vec::new();
+    let mut current = String::new();
+    for line in content.lines() {
+        let tentative = if current.is_empty() {
+            line.to_string()
+        } else {
+            format!("{current}\n{line}")
+        };
+        if tentative.chars().count() > TELEGRAM_MESSAGE_MAX_LEN {
+            if !current.is_empty() {
+                out.push(current.clone());
+                current.clear();
+            }
+            if line.chars().count() > TELEGRAM_MESSAGE_MAX_LEN {
+                out.extend(split_plain_segment(line));
+            } else {
+                current = line.to_string();
+            }
+        } else {
+            current = tentative;
+        }
+    }
+
+    if !current.is_empty() {
+        out.push(current);
+    }
+
+    out
 }
 
 fn split_plain_segment(content: &str) -> Vec<String> {
@@ -1404,6 +1606,32 @@ mod tests {
                 .is_some_and(|text| text.contains("<pre>") && text.contains("fn main()")),
             "payload should render Telegram HTML code block: {}",
             payloads[0]
+        );
+    }
+
+    #[test]
+    fn text_messages_render_markdown_as_html_by_default() {
+        let payloads = telegram_batches_from_message(
+            "-10012345",
+            None,
+            &OutboundMessage::text(
+                "# Heading\n\n**bold** and `code`\n\n- first\n- second\n\n[site](https://example.com)",
+            ),
+        )
+        .expect("render telegram payloads");
+
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0]["parse_mode"], "HTML");
+        let text = payloads[0]["text"]
+            .as_str()
+            .expect("telegram text should be a string");
+        assert!(text.contains("<b>Heading</b>"), "payload text: {text}");
+        assert!(text.contains("<b>bold</b>"), "payload text: {text}");
+        assert!(text.contains("<code>code</code>"), "payload text: {text}");
+        assert!(text.contains("• first"), "payload text: {text}");
+        assert!(
+            text.contains("<a href=\"https://example.com\">site</a>"),
+            "payload text: {text}"
         );
     }
 
