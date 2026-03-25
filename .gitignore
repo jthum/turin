@@ -8,7 +8,13 @@ Cargo.lock
 .turin/*.db
 .turin/*.db-journal
 .turin/*.db-wal
+.turin/daemon.log
+.turin/harness-live/
+.turin/live-local/
+.turin/channels/
 /harnesses/
+/channels/
+ui-profiles.toml
 run.log
 turin.toml
 
