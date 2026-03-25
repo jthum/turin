@@ -285,6 +285,33 @@ struct LiveTranscriptState {
     awaiting_reply_for: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct TokenUsageTotals {
+    input_tokens: u64,
+    output_tokens: u64,
+}
+
+impl TokenUsageTotals {
+    fn total_tokens(self) -> u64 {
+        self.input_tokens + self.output_tokens
+    }
+
+    fn record(&mut self, input_tokens: u64, output_tokens: u64) {
+        self.input_tokens = self.input_tokens.saturating_add(input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(output_tokens);
+    }
+
+    fn has_data(self) -> bool {
+        self.input_tokens > 0 || self.output_tokens > 0
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct SessionTokenUsageSummary {
+    total: TokenUsageTotals,
+    turns: BTreeMap<u32, TokenUsageTotals>,
+}
+
 #[derive(Debug, Clone)]
 struct SearchHit {
     kind: &'static str,
@@ -1267,16 +1294,6 @@ fn render_chat_center(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let header_height = if app.current_prompt_context_summary().is_some() {
-        4
-    } else {
-        3
-    };
-    let layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(header_height), Constraint::Min(6)])
-        .split(inner);
-
     let mut header_lines = vec![
         Line::from(vec![
             Span::styled("Session: ", Style::default().fg(Color::Gray)),
@@ -1308,6 +1325,13 @@ fn render_chat_center(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout
                 "hidden"
             }),
         ]),
+        Line::from(vec![
+            Span::styled("Tokens: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                app.current_chat_token_usage_label(),
+                Style::default().fg(Color::Rgb(168, 176, 186)),
+            ),
+        ]),
     ];
     if let Some(summary) = app.current_prompt_context_summary() {
         header_lines.push(Line::from(vec![
@@ -1315,6 +1339,14 @@ fn render_chat_center(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout
             Span::styled(summary, Style::default().fg(Color::LightBlue)),
         ]));
     }
+
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(header_lines.len() as u16),
+            Constraint::Min(6),
+        ])
+        .split(inner);
 
     let header = Paragraph::new(header_lines).wrap(Wrap { trim: true });
     frame.render_widget(header, layout[0]);
@@ -3447,22 +3479,16 @@ impl TuiApp {
             .live_transcripts
             .get(session_id)
             .map(|state| &state.completed_turn_thinking);
+        let token_usage = self.session_token_usage(session_id);
         if let Some(detail) = self.dashboard.session_detail(session_id) {
             for (index, message) in detail.messages.iter().enumerate() {
                 let content = message_content_text(&message.content)
                     .unwrap_or_else(|| compact_json(&message.content, 120));
-                self.push_message_block(
-                    &mut lines,
-                    message.role.as_str(),
-                    Some(format!("turn {}", message.turn_index)),
-                    &content,
-                );
-
                 if let Some(thinking) = completed_thinking
                     .and_then(|turns| turns.get(&message.turn_index))
                     .filter(|_| {
                         message_has_renderable_assistant_text(message)
-                            && assistant_turn_message_is_last(detail, index)
+                            && assistant_turn_message_is_first(detail, index)
                     })
                 {
                     self.push_thinking_preview_block(
@@ -3472,12 +3498,35 @@ impl TuiApp {
                         true,
                     );
                 }
+
+                let token_footer = token_usage
+                    .as_ref()
+                    .and_then(|usage| usage.turns.get(&message.turn_index).copied())
+                    .filter(|usage| {
+                        message_has_renderable_assistant_text(message)
+                            && assistant_turn_message_is_last(detail, index)
+                            && usage.has_data()
+                    })
+                    .map(token_usage_footer_line);
+                self.push_message_block(
+                    &mut lines,
+                    message.role.as_str(),
+                    Some(format!("turn {}", message.turn_index)),
+                    &content,
+                    token_footer,
+                );
             }
         }
 
         if let Some(state) = self.live_transcripts.get(session_id) {
             for prompt in &state.pending_user_messages {
-                self.push_message_block(&mut lines, "user", Some("pending".to_string()), prompt);
+                self.push_message_block(
+                    &mut lines,
+                    "user",
+                    Some("pending".to_string()),
+                    prompt,
+                    None,
+                );
             }
 
             if self.settings.chat.show_thinking
@@ -3500,6 +3549,7 @@ impl TuiApp {
                     "assistant",
                     Some("streaming".to_string()),
                     &state.assistant_preview,
+                    None,
                 );
             }
 
@@ -3529,6 +3579,7 @@ impl TuiApp {
         role: &str,
         status: Option<String>,
         content: &str,
+        footer: Option<Line<'static>>,
     ) {
         let (label, color, body_style) = self.chat_role_descriptor(role);
         let heading = match status {
@@ -3551,6 +3602,9 @@ impl TuiApp {
                 body_prefix.to_string(),
                 body_style,
             )));
+        }
+        if let Some(footer) = footer {
+            lines.push(footer);
         }
         lines.push(Line::default());
     }
@@ -3717,6 +3771,21 @@ impl TuiApp {
             .find(|message| message.role == "user")
             .and_then(|message| message_content_text(&message.content))
             .map(|text| excerpt_multiline(&text, 2, 120))
+    }
+
+    fn current_chat_token_usage_label(&self) -> String {
+        let Some(session_id) = self.current_chat_session_id() else {
+            return "n/a".to_string();
+        };
+        self.session_token_usage(session_id)
+            .filter(|usage| usage.total.has_data())
+            .map(|usage| format_token_usage_totals(usage.total))
+            .unwrap_or_else(|| "loading…".to_string())
+    }
+
+    fn session_token_usage(&self, session_id: &str) -> Option<SessionTokenUsageSummary> {
+        let detail = self.dashboard.session_detail(session_id)?;
+        Some(token_usage_from_detail(detail))
     }
 
     fn sync_pending_user_messages_from_detail(
@@ -4558,6 +4627,71 @@ fn message_has_renderable_assistant_text(
         && message_content_text(&message.content).is_some_and(|text| !text.trim().is_empty())
 }
 
+fn token_usage_from_detail(
+    detail: &turin_control_client::SessionDetail,
+) -> SessionTokenUsageSummary {
+    let mut usage = SessionTokenUsageSummary::default();
+    let mut current_turn_index = None;
+
+    for event in &detail.events {
+        match event.event_type.as_str() {
+            "turn_start" => {
+                current_turn_index = turn_index_from_event_payload(&event.payload);
+            }
+            "message_end" => {
+                let input_tokens = payload_u64(&event.payload, "input_tokens");
+                let output_tokens = payload_u64(&event.payload, "output_tokens");
+                if input_tokens == 0 && output_tokens == 0 {
+                    continue;
+                }
+                usage.total.record(input_tokens, output_tokens);
+                if let Some(turn_index) = current_turn_index {
+                    usage
+                        .turns
+                        .entry(turn_index)
+                        .or_default()
+                        .record(input_tokens, output_tokens);
+                }
+            }
+            "turn_end" => {
+                current_turn_index = None;
+            }
+            "session_end" if !usage.total.has_data() => {
+                usage.total.input_tokens = payload_u64(&event.payload, "total_input_tokens");
+                usage.total.output_tokens = payload_u64(&event.payload, "total_output_tokens");
+            }
+            _ => {}
+        }
+    }
+
+    usage
+}
+
+fn turn_index_from_event_payload(payload: &Value) -> Option<u32> {
+    payload
+        .get("turn_index")
+        .and_then(|value| value.as_u64())
+        .map(|value| value as u32)
+}
+
+fn payload_u64(payload: &Value, key: &str) -> u64 {
+    payload
+        .get(key)
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0)
+}
+
+fn assistant_turn_message_is_first(
+    detail: &turin_control_client::SessionDetail,
+    message_index: usize,
+) -> bool {
+    let message = &detail.messages[message_index];
+    detail.messages.iter().take(message_index).all(|candidate| {
+        candidate.turn_index != message.turn_index
+            || !message_has_renderable_assistant_text(candidate)
+    })
+}
+
 fn assistant_turn_message_is_last(
     detail: &turin_control_client::SessionDetail,
     message_index: usize,
@@ -4621,6 +4755,36 @@ fn trim_lines_to_budget(lines: &mut Vec<Line<'static>>, budget_bytes: usize) {
     *lines = kept;
 }
 
+fn format_token_usage_totals(usage: TokenUsageTotals) -> String {
+    format!(
+        "{} total · {} in / {} out",
+        format_integer_with_commas(usage.total_tokens()),
+        format_integer_with_commas(usage.input_tokens),
+        format_integer_with_commas(usage.output_tokens)
+    )
+}
+
+fn token_usage_footer_line(usage: TokenUsageTotals) -> Line<'static> {
+    Line::from(Span::styled(
+        format!("↳ Tokens {}", format_token_usage_totals(usage)),
+        Style::default()
+            .fg(Color::Rgb(128, 136, 148))
+            .add_modifier(Modifier::DIM),
+    ))
+}
+
+fn format_integer_with_commas(value: u64) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, ch) in digits.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out.chars().rev().collect()
+}
+
 fn connection_kind_label(kind: ConnectionKind) -> &'static str {
     match kind {
         ConnectionKind::Local => "local",
@@ -4680,8 +4844,12 @@ fn profile_draft_auth_label(mode: ConnectionProfileDraftAuthMode) -> &'static st
 #[cfg(test)]
 mod tests {
     use super::{
-        cursor_line_col, excerpt_multiline, nth_char_byte_index, slice_chars, split_input_lines,
-        wrap_text_chunk,
+        cursor_line_col, excerpt_multiline, format_integer_with_commas, nth_char_byte_index,
+        slice_chars, split_input_lines, token_usage_from_detail, wrap_text_chunk,
+    };
+    use serde_json::json;
+    use turin_control_client::{
+        SessionDetail, SessionEventDetail, SessionSummary, SessionToolExecutionDetail,
     };
 
     #[test]
@@ -4733,5 +4901,66 @@ mod tests {
             excerpt_multiline("alpha\nbeta\ngamma", 2, 80),
             "alpha / beta"
         );
+    }
+
+    #[test]
+    fn token_usage_from_detail_tracks_totals_per_turn() {
+        let detail = SessionDetail {
+            session: SessionSummary {
+                internal_id: 1,
+                session_id: "s_1".to_string(),
+                agent_id: "default".to_string(),
+                metadata: None,
+                created_at: "2026-03-25T00:00:00Z".to_string(),
+            },
+            events: vec![
+                SessionEventDetail {
+                    id: 1,
+                    event_type: "turn_start".to_string(),
+                    payload: json!({"turn_index": 0}),
+                    created_at: "2026-03-25T00:00:01Z".to_string(),
+                },
+                SessionEventDetail {
+                    id: 2,
+                    event_type: "message_end".to_string(),
+                    payload: json!({"input_tokens": 12, "output_tokens": 34}),
+                    created_at: "2026-03-25T00:00:02Z".to_string(),
+                },
+                SessionEventDetail {
+                    id: 3,
+                    event_type: "turn_end".to_string(),
+                    payload: json!({"turn_index": 0}),
+                    created_at: "2026-03-25T00:00:03Z".to_string(),
+                },
+                SessionEventDetail {
+                    id: 4,
+                    event_type: "turn_start".to_string(),
+                    payload: json!({"turn_index": 1}),
+                    created_at: "2026-03-25T00:00:04Z".to_string(),
+                },
+                SessionEventDetail {
+                    id: 5,
+                    event_type: "message_end".to_string(),
+                    payload: json!({"input_tokens": 5, "output_tokens": 8}),
+                    created_at: "2026-03-25T00:00:05Z".to_string(),
+                },
+            ],
+            messages: Vec::new(),
+            tool_executions: Vec::<SessionToolExecutionDetail>::new(),
+        };
+
+        let usage = token_usage_from_detail(&detail);
+        assert_eq!(usage.total.input_tokens, 17);
+        assert_eq!(usage.total.output_tokens, 42);
+        assert_eq!(usage.turns.get(&0).unwrap().total_tokens(), 46);
+        assert_eq!(usage.turns.get(&1).unwrap().total_tokens(), 13);
+    }
+
+    #[test]
+    fn format_integer_with_commas_groups_thousands() {
+        assert_eq!(format_integer_with_commas(0), "0");
+        assert_eq!(format_integer_with_commas(12), "12");
+        assert_eq!(format_integer_with_commas(1_234), "1,234");
+        assert_eq!(format_integer_with_commas(12_345_678), "12,345,678");
     }
 }
