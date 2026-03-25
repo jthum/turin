@@ -235,6 +235,7 @@ struct LiveTranscriptState {
     thinking_preview: String,
     recent_tool_calls: VecDeque<String>,
     recent_events: VecDeque<String>,
+    awaiting_reply: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1265,6 +1266,7 @@ impl TuiApp {
                 }
             }
             UiUpdate::SessionDetail(detail) => {
+                self.sync_pending_user_messages_from_detail(&detail.session.session_id, detail);
                 if self.session_detail_has_committed_reply(detail) {
                     self.clear_live_transcript_for(&detail.session.session_id);
                     self.clear_pending_messages_for(&detail.session.session_id);
@@ -1272,6 +1274,9 @@ impl TuiApp {
                     self.detail_last_requested_at
                         .remove(&detail.session.session_id);
                 } else {
+                    if let Some(state) = self.live_transcripts.get_mut(&detail.session.session_id) {
+                        state.awaiting_reply = true;
+                    }
                     self.requested_session_detail = None;
                 }
             }
@@ -2156,6 +2161,7 @@ impl TuiApp {
     fn clear_pending_messages_for(&mut self, session_id: &str) {
         if let Some(state) = self.live_transcripts.get_mut(session_id) {
             state.pending_user_messages.clear();
+            state.awaiting_reply = false;
         }
     }
 
@@ -2171,6 +2177,7 @@ impl TuiApp {
         );
         state.assistant_preview.clear();
         state.thinking_preview.clear();
+        state.awaiting_reply = true;
         self.dashboard.session_details.remove(session_id);
         self.requested_session_detail = None;
         self.detail_retry_until.insert(
@@ -2899,6 +2906,19 @@ impl TuiApp {
                     &state.assistant_preview,
                 );
             }
+
+            if state.awaiting_reply
+                && state.assistant_preview.trim().is_empty()
+                && state.thinking_preview.trim().is_empty()
+            {
+                lines.push(Line::from(Span::styled(
+                    format!("{} Thinking…", spinner_frame()),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::default());
+            }
         }
 
         if lines.is_empty() {
@@ -2994,7 +3014,7 @@ impl TuiApp {
             .find(|session| session.session_id == session_id)
             .is_some_and(|session| session.active_tasks > 0 || session.queued_tasks > 0)
             || self.live_transcripts.get(session_id).is_some_and(|state| {
-                !state.pending_user_messages.is_empty()
+                state.awaiting_reply
                     || !state.assistant_preview.is_empty()
                     || !state.thinking_preview.is_empty()
             })
@@ -3015,6 +3035,34 @@ impl TuiApp {
             .find(|message| message.role == "user")
             .and_then(|message| message_content_text(&message.content))
             .map(|text| excerpt_multiline(&text, 2, 120))
+    }
+
+    fn sync_pending_user_messages_from_detail(
+        &mut self,
+        session_id: &str,
+        detail: &turin_control_client::SessionDetail,
+    ) {
+        let persisted_last_user = detail
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == "user")
+            .and_then(|message| message_content_text(&message.content));
+
+        let Some(state) = self.live_transcripts.get_mut(session_id) else {
+            return;
+        };
+        let Some(persisted_last_user) = persisted_last_user else {
+            return;
+        };
+
+        if state
+            .pending_user_messages
+            .back()
+            .is_some_and(|pending| pending.trim() == persisted_last_user.trim())
+        {
+            state.pending_user_messages.pop_back();
+        }
     }
 
     fn current_thinking_text(&self) -> String {
