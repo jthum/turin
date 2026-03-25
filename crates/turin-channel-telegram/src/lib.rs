@@ -31,7 +31,8 @@ pub struct TelegramChannelDriverConfig {
     pub start_from_latest: bool,
     pub ignore_bot_messages: bool,
     pub stream_mode: ChannelStreamMode,
-    pub stream_include_thinking: bool,
+    pub stream_thinking: bool,
+    pub persist_thinking: bool,
 }
 
 impl TelegramChannelDriverConfig {
@@ -170,12 +171,23 @@ impl TelegramChannelDriverConfig {
                 .transpose()?
                 .unwrap_or(true),
             stream_mode: read_stream_mode(settings.get("stream_mode"))?,
-            stream_include_thinking: settings
-                .get("stream_include_thinking")
+            stream_thinking: settings
+                .get("stream_thinking")
                 .map(|value| {
                     value.as_bool().ok_or_else(|| {
                         anyhow!(
-                            "[telegram_config_invalid_stream_include_thinking] Telegram channel setting 'stream_include_thinking' must be a boolean"
+                            "[telegram_config_invalid_stream_thinking] Telegram channel setting 'stream_thinking' must be a boolean"
+                        )
+                    })
+                })
+                .transpose()?
+                .unwrap_or(false),
+            persist_thinking: settings
+                .get("persist_thinking")
+                .map(|value| {
+                    value.as_bool().ok_or_else(|| {
+                        anyhow!(
+                            "[telegram_config_invalid_persist_thinking] Telegram channel setting 'persist_thinking' must be a boolean"
                         )
                     })
                 })
@@ -843,8 +855,12 @@ impl ChannelDriver for TelegramChannelDriver {
         self.config.stream_mode
     }
 
-    fn stream_include_thinking(&self) -> bool {
-        self.config.stream_mode.streams_text() && self.config.stream_include_thinking
+    fn stream_thinking(&self) -> bool {
+        self.config.stream_mode.streams_text() && self.config.stream_thinking
+    }
+
+    fn persist_thinking(&self) -> bool {
+        self.config.persist_thinking
     }
 
     async fn send_progress(
@@ -1194,17 +1210,27 @@ fn render_telegram_message(message: &OutboundMessage) -> Result<TelegramRendered
         .get("telegram_disable_notification")
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
+    let final_thinking = message
+        .metadata
+        .get("channel_final_thinking")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
 
     let mut chunks = match render_mode {
         TelegramRenderMode::PlainText => {
-            let mut chunks = split_for_telegram_message(render_text_blocks(&message.blocks));
+            let mut rendered = render_text_blocks(&message.blocks);
+            if let Some(thinking) = final_thinking {
+                rendered = prepend_final_thinking_text(&rendered, thinking);
+            }
+            let mut chunks = split_for_telegram_message(rendered);
             let attachment_lines = render_attachment_lines(&message.attachments);
             if !attachment_lines.is_empty() {
                 chunks.extend(split_for_telegram_message(attachment_lines));
             }
             chunks
         }
-        TelegramRenderMode::Html => render_html_chunks(message),
+        TelegramRenderMode::Html => render_html_chunks(message, final_thinking),
     };
 
     if chunks.is_empty() {
@@ -1272,8 +1298,13 @@ fn render_attachment_lines(attachments: &[ChannelAttachment]) -> String {
     lines.join("\n")
 }
 
-fn render_html_chunks(message: &OutboundMessage) -> Vec<String> {
+fn render_html_chunks(message: &OutboundMessage, final_thinking: Option<&str>) -> Vec<String> {
     let mut segments = Vec::new();
+    if let Some(thinking) = final_thinking {
+        segments.push("<i>Thinking</i>".to_string());
+        segments.extend(split_wrapped_segment(thinking, "<pre>", "</pre>"));
+        segments.push("<i>Reply</i>".to_string());
+    }
     for block in &message.blocks {
         segments.extend(render_html_segments_for_block(block));
     }
@@ -1302,6 +1333,15 @@ fn render_html_chunks(message: &OutboundMessage) -> Vec<String> {
     }
 
     pack_segments(segments)
+}
+
+fn prepend_final_thinking_text(rendered: &str, thinking: &str) -> String {
+    let trimmed = rendered.trim();
+    if trimmed.is_empty() {
+        format!("Thinking:\n{}\n", thinking)
+    } else {
+        format!("Thinking:\n{}\n\nReply:\n{}", thinking, trimmed)
+    }
 }
 
 fn render_html_segments_for_block(block: &MessageBlock) -> Vec<String> {
@@ -1983,7 +2023,8 @@ mod tests {
             start_from_latest: false,
             ignore_bot_messages: true,
             stream_mode: ChannelStreamMode::Off,
-            stream_include_thinking: false,
+            stream_thinking: false,
+            persist_thinking: false,
         }
     }
 
@@ -2203,6 +2244,42 @@ mod tests {
     fn stream_preview_returns_text_only_when_no_thinking_is_present() {
         let preview = render_stream_preview("Partial answer", None);
         assert_eq!(preview, "Partial answer");
+    }
+
+    #[test]
+    fn final_message_can_include_persisted_thinking() {
+        let mut message = OutboundMessage::text("Final answer");
+        message.metadata.insert(
+            "channel_final_thinking".to_string(),
+            serde_json::json!("Step 1\nStep 2"),
+        );
+
+        let payloads = telegram_batches_from_message("-10012345", None, &message)
+            .expect("render telegram payloads");
+        let text = payloads[0]["text"].as_str().expect("telegram text payload");
+        assert!(text.contains("Thinking"));
+        assert!(text.contains("<pre>"));
+        assert!(text.contains("Step 1"));
+        assert!(text.contains("Reply"));
+        assert!(text.contains("Final answer"));
+    }
+
+    #[test]
+    fn config_supports_preferred_thinking_setting_aliases() {
+        unsafe {
+            std::env::set_var("TELEGRAM_BOT_TOKEN", "token");
+        }
+        let config = TelegramChannelDriverConfig::from_settings(&serde_json::json!({
+            "token_env": "TELEGRAM_BOT_TOKEN",
+            "chat_id": 498502840,
+            "stream_mode": "block",
+            "stream_thinking": true,
+            "persist_thinking": true
+        }))
+        .expect("telegram config should parse");
+
+        assert!(config.stream_thinking);
+        assert!(config.persist_thinking);
     }
 
     #[test]

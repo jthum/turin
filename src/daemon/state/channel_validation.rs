@@ -142,7 +142,8 @@ fn validate_telegram_settings(map: &serde_json::Map<String, serde_json::Value>) 
     for key in [
         "start_from_latest",
         "ignore_bot_messages",
-        "stream_include_thinking",
+        "stream_thinking",
+        "persist_thinking",
     ] {
         if let Some(value) = map.get(key)
             && !value.is_boolean()
@@ -325,16 +326,30 @@ mod tests {
     }
 
     #[test]
-    fn telegram_stream_include_thinking_must_be_boolean() {
+    fn telegram_stream_thinking_must_be_boolean() {
         let error = validate_channel_settings(
             "telegram",
             &json!({
                 "token_env": "TELEGRAM_BOT_TOKEN",
                 "chat_id": -100123,
-                "stream_include_thinking": "yes"
+                "stream_thinking": "yes"
             }),
         )
-        .expect_err("non-boolean stream_include_thinking should fail");
-        assert!(error.to_string().contains("stream_include_thinking"));
+        .expect_err("non-boolean stream_thinking should fail");
+        assert!(error.to_string().contains("stream_thinking"));
+    }
+
+    #[test]
+    fn telegram_persist_thinking_must_be_boolean() {
+        let error = validate_channel_settings(
+            "telegram",
+            &json!({
+                "token_env": "TELEGRAM_BOT_TOKEN",
+                "chat_id": -100123,
+                "persist_thinking": "yes"
+            }),
+        )
+        .expect_err("non-boolean persist_thinking should fail");
+        assert!(error.to_string().contains("persist_thinking"));
     }
 }

@@ -471,7 +471,8 @@ async fn telegram_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
             start_from_latest: false,
             ignore_bot_messages: true,
             stream_mode: turin_channel_runner::ChannelStreamMode::Off,
-            stream_include_thinking: false,
+            stream_thinking: false,
+            persist_thinking: false,
         },
         shutdown_rx,
     )?;
@@ -571,7 +572,8 @@ async fn telegram_channel_driver_retries_transient_poll_and_send_failures() -> R
             start_from_latest: false,
             ignore_bot_messages: true,
             stream_mode: turin_channel_runner::ChannelStreamMode::Off,
-            stream_include_thinking: false,
+            stream_thinking: false,
+            persist_thinking: false,
         },
         shutdown_rx,
     )?;
@@ -646,7 +648,8 @@ async fn telegram_channel_driver_streams_progress_before_final_message() -> Resu
             start_from_latest: false,
             ignore_bot_messages: true,
             stream_mode: turin_channel_runner::ChannelStreamMode::Draft,
-            stream_include_thinking: false,
+            stream_thinking: false,
+            persist_thinking: false,
         },
         shutdown_rx,
     )?;
@@ -739,7 +742,8 @@ async fn telegram_progress_preview_can_include_thinking_text() -> Result<()> {
             start_from_latest: false,
             ignore_bot_messages: true,
             stream_mode: turin_channel_runner::ChannelStreamMode::Draft,
-            stream_include_thinking: true,
+            stream_thinking: true,
+            persist_thinking: false,
         },
         shutdown_rx,
     )?;

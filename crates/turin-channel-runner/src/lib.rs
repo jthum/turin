@@ -123,7 +123,11 @@ pub trait ChannelDriver {
         ChannelStreamMode::Off
     }
 
-    fn stream_include_thinking(&self) -> bool {
+    fn stream_thinking(&self) -> bool {
+        false
+    }
+
+    fn persist_thinking(&self) -> bool {
         false
     }
 
@@ -326,7 +330,7 @@ impl ChannelRunner {
             .ensure_session(agent_id, &event.conversation, reset_requested)
             .await?;
         let stream_mode = driver.stream_mode();
-        let session_events = if stream_mode.streams_text() || driver.stream_include_thinking() {
+        let session_events = if stream_mode.streams_text() || driver.stream_thinking() {
             self.daemon
                 .subscribe_managed(RuntimeEventsSubscribeParams {
                     agent_id: None,
@@ -338,7 +342,7 @@ impl ChannelRunner {
             None
         };
         let submitted = self.submit_with_binding(&binding, event).await?;
-        let task = self
+        let (task, final_thinking) = self
             .wait_for_task_with_progress(
                 driver,
                 event,
@@ -348,7 +352,11 @@ impl ChannelRunner {
                 timeout_ms,
             )
             .await?;
-        Ok(enrich_outbound_for_event(task_to_outbound(&task), event))
+        let outbound = task_to_outbound(&task);
+        Ok(enrich_outbound_for_event(
+            attach_final_thinking(outbound, final_thinking),
+            event,
+        ))
     }
 
     async fn wait_for_task_with_progress<D: ChannelDriver + Send>(
@@ -359,11 +367,13 @@ impl ChannelRunner {
         submitted: &TaskSnapshot,
         mut session_events: Option<turin_daemon_client::ManagedEventStream>,
         timeout_ms: Option<u64>,
-    ) -> Result<TaskSnapshot> {
+    ) -> Result<(TaskSnapshot, Option<String>)> {
         let stream_mode = driver.stream_mode();
-        let include_thinking = driver.stream_include_thinking();
+        let stream_thinking = driver.stream_thinking();
+        let persist_thinking = driver.persist_thinking();
+        let capture_thinking = stream_thinking || persist_thinking;
         if stream_mode == ChannelStreamMode::Off {
-            return self
+            let task = self
                 .daemon
                 .request_ok(
                     None,
@@ -372,7 +382,8 @@ impl ChannelRunner {
                         timeout_ms,
                     }),
                 )
-                .await;
+                .await?;
+            return Ok((task, None));
         }
 
         if stream_mode.sends_typing() {
@@ -405,19 +416,21 @@ impl ChannelRunner {
             tokio::select! {
                 result = &mut wait_task => {
                     if stream_mode.streams_text()
-                        && preview_char_count(&text_preview, include_thinking.then_some(thinking_preview.as_str())) > last_flushed_chars
+                        && preview_char_count(&text_preview, stream_thinking.then_some(thinking_preview.as_str())) > last_flushed_chars
                     {
                         self.try_send_progress(
                             driver,
                             event,
                             ChannelProgressUpdate::StreamingPreview {
                                 text: text_preview.clone(),
-                                thinking: preview_thinking(include_thinking, &thinking_preview),
+                                thinking: preview_thinking(stream_thinking, &thinking_preview),
                             },
                         )
                         .await;
                     }
-                    return result;
+                    let task = result?;
+                    let final_thinking = preview_thinking(capture_thinking, &thinking_preview);
+                    return Ok((task, final_thinking));
                 }
                 _ = typing_tick.tick(), if stream_mode.sends_typing() => {
                     self.try_send_progress(driver, event, ChannelProgressUpdate::Typing).await;
@@ -442,7 +455,7 @@ impl ChannelRunner {
                             if should_flush_preview(
                                 stream_mode,
                                 &text_preview,
-                                include_thinking.then_some(thinking_preview.as_str()),
+                                stream_thinking.then_some(thinking_preview.as_str()),
                                 last_flushed_chars,
                                 last_flush_at,
                             ) {
@@ -451,25 +464,25 @@ impl ChannelRunner {
                                     event,
                                     ChannelProgressUpdate::StreamingPreview {
                                         text: text_preview.clone(),
-                                        thinking: preview_thinking(include_thinking, &thinking_preview),
+                                        thinking: preview_thinking(stream_thinking, &thinking_preview),
                                     },
                                 )
                                 .await;
                                 last_flushed_chars = preview_char_count(
                                     &text_preview,
-                                    include_thinking.then_some(thinking_preview.as_str()),
+                                    stream_thinking.then_some(thinking_preview.as_str()),
                                 );
                                 last_flush_at = Instant::now();
                             }
                         }
-                        "thinking_delta" if task_started && include_thinking => {
+                        "thinking_delta" if task_started && capture_thinking => {
                             if let Some(delta) = kernel_event.data.get("thinking").and_then(|value| value.as_str()) {
                                 thinking_preview.push_str(delta);
                             }
                             if should_flush_preview(
                                 stream_mode,
                                 &text_preview,
-                                Some(thinking_preview.as_str()),
+                                stream_thinking.then_some(thinking_preview.as_str()),
                                 last_flushed_chars,
                                 last_flush_at,
                             ) {
@@ -478,13 +491,13 @@ impl ChannelRunner {
                                     event,
                                     ChannelProgressUpdate::StreamingPreview {
                                         text: text_preview.clone(),
-                                        thinking: preview_thinking(include_thinking, &thinking_preview),
+                                        thinking: preview_thinking(stream_thinking, &thinking_preview),
                                     },
                                 )
                                 .await;
                                 last_flushed_chars = preview_char_count(
                                     &text_preview,
-                                    Some(thinking_preview.as_str()),
+                                    stream_thinking.then_some(thinking_preview.as_str()),
                                 );
                                 last_flush_at = Instant::now();
                             }
@@ -492,20 +505,20 @@ impl ChannelRunner {
                         "message_end" if task_started => {
                             if preview_char_count(
                                 &text_preview,
-                                include_thinking.then_some(thinking_preview.as_str()),
+                                stream_thinking.then_some(thinking_preview.as_str()),
                             ) > last_flushed_chars {
                                 self.try_send_progress(
                                     driver,
                                     event,
                                     ChannelProgressUpdate::StreamingPreview {
                                         text: text_preview.clone(),
-                                        thinking: preview_thinking(include_thinking, &thinking_preview),
+                                        thinking: preview_thinking(stream_thinking, &thinking_preview),
                                     },
                                 )
                                 .await;
                                 last_flushed_chars = preview_char_count(
                                     &text_preview,
-                                    include_thinking.then_some(thinking_preview.as_str()),
+                                    stream_thinking.then_some(thinking_preview.as_str()),
                                 );
                                 last_flush_at = Instant::now();
                             }
@@ -627,6 +640,23 @@ fn enrich_outbound_for_event(
             message_id.clone(),
         );
     }
+    outbound
+}
+
+fn attach_final_thinking(
+    mut outbound: OutboundMessage,
+    thinking: Option<String>,
+) -> OutboundMessage {
+    let Some(thinking) = thinking.map(|value| value.trim().to_string()) else {
+        return outbound;
+    };
+    if thinking.is_empty() {
+        return outbound;
+    }
+    outbound.metadata.insert(
+        "channel_final_thinking".to_string(),
+        Value::String(thinking),
+    );
     outbound
 }
 
