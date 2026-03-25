@@ -3,8 +3,8 @@ use async_trait::async_trait;
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use std::collections::VecDeque;
-use std::time::Duration;
+use std::collections::{HashMap, VecDeque};
+use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tokio::time::sleep;
 use tracing::warn;
@@ -12,7 +12,7 @@ use turin_channel_core::{
     ChannelAttachment, ChannelCapabilities, ChannelConversationKey, ChannelKind, ChannelMessageRef,
     ChannelUser, InboundEvent, MessageBlock, OutboundMessage,
 };
-use turin_channel_runner::ChannelDriver;
+use turin_channel_runner::{ChannelDriver, ChannelProgressUpdate, ChannelStreamMode};
 
 const DEFAULT_BASE_URL: &str = "https://api.telegram.org";
 const TELEGRAM_MESSAGE_MAX_LEN: usize = 4_096;
@@ -30,6 +30,7 @@ pub struct TelegramChannelDriverConfig {
     pub max_updates_per_poll: u8,
     pub start_from_latest: bool,
     pub ignore_bot_messages: bool,
+    pub stream_mode: ChannelStreamMode,
 }
 
 impl TelegramChannelDriverConfig {
@@ -167,6 +168,7 @@ impl TelegramChannelDriverConfig {
                 })
                 .transpose()?
                 .unwrap_or(true),
+            stream_mode: read_stream_mode(settings.get("stream_mode"))?,
         })
     }
 }
@@ -180,6 +182,9 @@ pub struct TelegramChannelDriver {
     next_update_offset: Option<i64>,
     initialized: bool,
     consecutive_poll_failures: u32,
+    progress_states: HashMap<String, TelegramProgressState>,
+    last_chat_action_at: HashMap<String, Instant>,
+    next_draft_id: i64,
 }
 
 impl TelegramChannelDriver {
@@ -215,6 +220,9 @@ impl TelegramChannelDriver {
             next_update_offset: None,
             initialized: false,
             consecutive_poll_failures: 0,
+            progress_states: HashMap::new(),
+            last_chat_action_at: HashMap::new(),
+            next_draft_id: 1,
         })
     }
 
@@ -282,7 +290,6 @@ impl TelegramChannelDriver {
             .clone();
         let message_thread_id = resolve_message_thread_id(conversation)?;
         let payloads = telegram_batches_from_message(&chat_id, message_thread_id, message)?;
-
         for payload in payloads {
             let _: TelegramSentMessage = self
                 .request_with_retry("sendMessage", &payload)
@@ -290,6 +297,229 @@ impl TelegramChannelDriver {
                 .map_err(TelegramApiError::into_anyhow)?;
         }
         Ok(())
+    }
+
+    async fn send_chat_action(&mut self, event: &InboundEvent) -> Result<()> {
+        let key = progress_key(&event.conversation)?;
+        let now = Instant::now();
+        if self
+            .last_chat_action_at
+            .get(&key)
+            .is_some_and(|previous| now.duration_since(*previous) < Duration::from_secs(4))
+        {
+            return Ok(());
+        }
+
+        let chat_id = conversation_chat_id(&self.config.chat_id, &event.conversation);
+        let message_thread_id = resolve_message_thread_id(&event.conversation)?;
+        let mut payload = serde_json::Map::new();
+        payload.insert("chat_id".to_string(), serde_json::json!(chat_id));
+        payload.insert("action".to_string(), serde_json::json!("typing"));
+        if let Some(message_thread_id) = message_thread_id {
+            payload.insert(
+                "message_thread_id".to_string(),
+                serde_json::json!(message_thread_id),
+            );
+        }
+
+        let _: bool = self
+            .request_with_retry("sendChatAction", &serde_json::Value::Object(payload))
+            .await
+            .map_err(TelegramApiError::into_anyhow)?;
+        self.last_chat_action_at.insert(key, now);
+        Ok(())
+    }
+
+    async fn send_progress_text(&mut self, event: &InboundEvent, text: &str) -> Result<()> {
+        let preview = stream_preview_text(text);
+        if preview.is_empty() {
+            return Ok(());
+        }
+
+        let key = progress_key(&event.conversation)?;
+        let chat_id = conversation_chat_id(&self.config.chat_id, &event.conversation);
+        let message_thread_id = resolve_message_thread_id(&event.conversation)?;
+        let reply_to_message_id = event
+            .metadata
+            .get("telegram_message_id")
+            .and_then(|value| value.as_i64())
+            .or_else(|| {
+                event
+                    .metadata
+                    .get("telegram_message_id")
+                    .and_then(|value| value.as_str())
+                    .and_then(|value| value.parse::<i64>().ok())
+            });
+
+        let existing_state = self.progress_states.get(&key).cloned();
+        let next_state = match existing_state {
+            Some(TelegramProgressState {
+                sink: TelegramProgressSink::Draft { draft_id },
+            }) => {
+                self.send_message_draft(&chat_id, message_thread_id, draft_id, &preview)
+                    .await?;
+                Some(TelegramProgressState {
+                    sink: TelegramProgressSink::Draft { draft_id },
+                })
+            }
+            Some(TelegramProgressState {
+                sink: TelegramProgressSink::Placeholder { message_id },
+            }) => {
+                self.edit_stream_placeholder(&chat_id, message_id, &preview)
+                    .await?;
+                Some(TelegramProgressState {
+                    sink: TelegramProgressSink::Placeholder { message_id },
+                })
+            }
+            None => {
+                self.start_progress_sink(&chat_id, message_thread_id, reply_to_message_id, &preview)
+                    .await?
+            }
+        };
+
+        if let Some(state) = next_state {
+            self.progress_states.insert(key, state);
+        } else {
+            self.progress_states.remove(&key);
+        }
+        Ok(())
+    }
+
+    async fn start_progress_sink(
+        &mut self,
+        chat_id: &str,
+        message_thread_id: Option<i64>,
+        reply_to_message_id: Option<i64>,
+        preview: &str,
+    ) -> Result<Option<TelegramProgressState>> {
+        if self.config.stream_mode == ChannelStreamMode::Draft && chat_id_is_private(chat_id) {
+            let draft_id = self.allocate_draft_id();
+            match self
+                .send_message_draft(chat_id, message_thread_id, draft_id, preview)
+                .await
+            {
+                Ok(()) => {
+                    return Ok(Some(TelegramProgressState {
+                        sink: TelegramProgressSink::Draft { draft_id },
+                    }));
+                }
+                Err(err) => {
+                    warn!(error = %err, "Telegram draft streaming failed; falling back to placeholder edits");
+                }
+            }
+        }
+
+        let payload = telegram_payload(
+            chat_id,
+            message_thread_id,
+            preview.to_string(),
+            None,
+            reply_to_message_id,
+            true,
+            false,
+        );
+        let sent: TelegramSentMessage = self
+            .request_with_retry("sendMessage", &payload)
+            .await
+            .map_err(TelegramApiError::into_anyhow)?;
+        Ok(Some(TelegramProgressState {
+            sink: TelegramProgressSink::Placeholder {
+                message_id: sent.message_id,
+            },
+        }))
+    }
+
+    async fn send_message_draft(
+        &self,
+        chat_id: &str,
+        message_thread_id: Option<i64>,
+        draft_id: i64,
+        preview: &str,
+    ) -> Result<()> {
+        let mut payload = serde_json::Map::new();
+        payload.insert("chat_id".to_string(), serde_json::json!(chat_id));
+        payload.insert("draft_id".to_string(), serde_json::json!(draft_id));
+        payload.insert("text".to_string(), serde_json::json!(preview));
+        if let Some(message_thread_id) = message_thread_id {
+            payload.insert(
+                "message_thread_id".to_string(),
+                serde_json::json!(message_thread_id),
+            );
+        }
+        let _: bool = self
+            .request_with_retry("sendMessageDraft", &serde_json::Value::Object(payload))
+            .await
+            .map_err(TelegramApiError::into_anyhow)?;
+        Ok(())
+    }
+
+    async fn edit_stream_placeholder(
+        &self,
+        chat_id: &str,
+        message_id: i64,
+        preview: &str,
+    ) -> Result<()> {
+        let payload = telegram_edit_payload(chat_id, message_id, preview.to_string(), None, true);
+        let _: TelegramSentMessage = self
+            .request_with_retry("editMessageText", &payload)
+            .await
+            .map_err(TelegramApiError::into_anyhow)?;
+        Ok(())
+    }
+
+    async fn send_final_message(
+        &mut self,
+        conversation: &ChannelConversationKey,
+        message: &OutboundMessage,
+    ) -> Result<()> {
+        let key = progress_key(conversation)?;
+        let progress_state = self.progress_states.remove(&key);
+        let chat_id = conversation_chat_id(&self.config.chat_id, conversation);
+        let message_thread_id = resolve_message_thread_id(conversation)?;
+        let payloads = telegram_batches_from_message(&chat_id, message_thread_id, message)?;
+
+        if let Some(TelegramProgressState {
+            sink: TelegramProgressSink::Placeholder { message_id },
+        }) = progress_state
+            && let Some((first, rest)) = payloads.split_first()
+        {
+            let payload = telegram_edit_payload(
+                &chat_id,
+                message_id,
+                first["text"].as_str().unwrap_or_default().to_string(),
+                first["parse_mode"].as_str(),
+                first["disable_web_page_preview"].as_bool().unwrap_or(true),
+            );
+            match self
+                .request_with_retry::<TelegramSentMessage>("editMessageText", &payload)
+                .await
+            {
+                Ok(_) => {
+                    for payload in rest {
+                        let _: TelegramSentMessage = self
+                            .request_with_retry("sendMessage", payload)
+                            .await
+                            .map_err(TelegramApiError::into_anyhow)?;
+                    }
+                    return Ok(());
+                }
+                Err(error) => {
+                    warn!(
+                        error_code = %error.code,
+                        error = %error.message,
+                        "Telegram placeholder finalization failed; sending final message normally"
+                    );
+                }
+            }
+        }
+
+        self.send_batches(conversation, message).await
+    }
+
+    fn allocate_draft_id(&mut self) -> i64 {
+        let draft_id = self.next_draft_id.max(1);
+        self.next_draft_id = self.next_draft_id.saturating_add(1).max(1);
+        draft_id
     }
 
     fn advance_offset(&mut self, updates: &[TelegramUpdate]) {
@@ -589,7 +819,24 @@ impl ChannelDriver for TelegramChannelDriver {
         conversation: &ChannelConversationKey,
         message: OutboundMessage,
     ) -> Result<()> {
-        self.send_batches(conversation, &message).await
+        self.send_final_message(conversation, &message).await
+    }
+
+    fn stream_mode(&self) -> ChannelStreamMode {
+        self.config.stream_mode
+    }
+
+    async fn send_progress(
+        &mut self,
+        event: &InboundEvent,
+        update: ChannelProgressUpdate,
+    ) -> Result<()> {
+        match update {
+            ChannelProgressUpdate::Typing => self.send_chat_action(event).await,
+            ChannelProgressUpdate::StreamingText { text } => {
+                self.send_progress_text(event, &text).await
+            }
+        }
     }
 
     async fn shutdown(&mut self) -> Result<()> {
@@ -710,8 +957,18 @@ struct TelegramChat {
 
 #[derive(Debug, Clone, Deserialize)]
 struct TelegramSentMessage {
-    #[serde(rename = "message_id")]
-    _message_id: i64,
+    message_id: i64,
+}
+
+#[derive(Debug, Clone)]
+struct TelegramProgressState {
+    sink: TelegramProgressSink,
+}
+
+#[derive(Debug, Clone)]
+enum TelegramProgressSink {
+    Draft { draft_id: i64 },
+    Placeholder { message_id: i64 },
 }
 
 fn read_required_string<'a>(
@@ -764,6 +1021,61 @@ fn read_chat_id(value: Option<&serde_json::Value>) -> Result<String> {
     }
 
     Ok(text.to_string())
+}
+
+fn read_stream_mode(value: Option<&serde_json::Value>) -> Result<ChannelStreamMode> {
+    let Some(value) = value else {
+        return Ok(ChannelStreamMode::Off);
+    };
+    let mode = value.as_str().ok_or_else(|| {
+        anyhow!(
+            "[telegram_config_invalid_stream_mode] Telegram channel setting 'stream_mode' must be a string"
+        )
+    })?;
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "off" => Ok(ChannelStreamMode::Off),
+        "typing" => Ok(ChannelStreamMode::Typing),
+        "draft" => Ok(ChannelStreamMode::Draft),
+        "block" => Ok(ChannelStreamMode::Block),
+        _ => anyhow::bail!(
+            "[telegram_config_invalid_stream_mode] Telegram channel setting 'stream_mode' must be one of: off, typing, draft, block"
+        ),
+    }
+}
+
+fn progress_key(conversation: &ChannelConversationKey) -> Result<String> {
+    serde_json::to_string(conversation)
+        .with_context(|| "[telegram_progress_key_invalid] Failed to serialize conversation key")
+}
+
+fn conversation_chat_id(default_chat_id: &str, conversation: &ChannelConversationKey) -> String {
+    conversation
+        .room_id
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| default_chat_id.to_string())
+}
+
+fn chat_id_is_private(chat_id: &str) -> bool {
+    !chat_id.trim_start().starts_with('-')
+}
+
+fn stream_preview_text(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::new();
+    for ch in trimmed.chars() {
+        if out.chars().count() >= TELEGRAM_MESSAGE_MAX_LEN.saturating_sub(1) {
+            out.push('…');
+            break;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 fn resolve_message_thread_id(conversation: &ChannelConversationKey) -> Result<Option<i64>> {
@@ -1497,6 +1809,27 @@ fn telegram_payload(
     serde_json::Value::Object(payload)
 }
 
+fn telegram_edit_payload(
+    chat_id: &str,
+    message_id: i64,
+    text: String,
+    parse_mode: Option<&str>,
+    disable_web_page_preview: bool,
+) -> serde_json::Value {
+    let mut payload = serde_json::Map::new();
+    payload.insert("chat_id".to_string(), serde_json::json!(chat_id));
+    payload.insert("message_id".to_string(), serde_json::json!(message_id));
+    payload.insert("text".to_string(), serde_json::json!(text));
+    payload.insert(
+        "disable_web_page_preview".to_string(),
+        serde_json::json!(disable_web_page_preview),
+    );
+    if let Some(parse_mode) = parse_mode {
+        payload.insert("parse_mode".to_string(), serde_json::json!(parse_mode));
+    }
+    serde_json::Value::Object(payload)
+}
+
 fn metadata_i64(
     metadata: &serde_json::Map<String, serde_json::Value>,
     key: &str,
@@ -1560,6 +1893,9 @@ fn classify_api_error(method: &str, status_code: u16, description: &str) -> Stri
                 "telegram_send_failed".to_string()
             }
         }
+        "sendMessageDraft" => "telegram_send_draft_failed".to_string(),
+        "editMessageText" => "telegram_edit_message_failed".to_string(),
+        "sendChatAction" => "telegram_chat_action_failed".to_string(),
         _ => "telegram_api_failed".to_string(),
     }
 }
@@ -1573,6 +1909,9 @@ fn is_retriable_api_error(code: &str, status_code: u16) -> bool {
                 | "telegram_http_decode_failed"
                 | "telegram_rate_limited"
                 | "telegram_send_failed"
+                | "telegram_send_draft_failed"
+                | "telegram_edit_message_failed"
+                | "telegram_chat_action_failed"
                 | "telegram_get_updates_failed"
         )
 }
@@ -1598,6 +1937,7 @@ mod tests {
             max_updates_per_poll: 25,
             start_from_latest: false,
             ignore_bot_messages: true,
+            stream_mode: ChannelStreamMode::Off,
         }
     }
 
@@ -1789,9 +2129,7 @@ mod tests {
         let payloads = telegram_batches_from_message(
             "-10012345",
             None,
-            &OutboundMessage::text(
-                "| Name | Value |\n| --- | --- |\n| alpha | 1 |\n| beta | 22 |",
-            ),
+            &OutboundMessage::text("| Name | Value |\n| --- | --- |\n| alpha | 1 |\n| beta | 22 |"),
         )
         .expect("render telegram payloads");
 

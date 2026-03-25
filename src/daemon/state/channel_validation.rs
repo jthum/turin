@@ -147,6 +147,20 @@ fn validate_telegram_settings(map: &serde_json::Map<String, serde_json::Value>) 
         }
     }
 
+    if let Some(value) = map.get("stream_mode") {
+        let Some(mode) = value.as_str() else {
+            anyhow::bail!("telegram channel setting 'stream_mode' must be a string");
+        };
+        if !matches!(
+            mode.trim().to_ascii_lowercase().as_str(),
+            "off" | "typing" | "draft" | "block"
+        ) {
+            anyhow::bail!(
+                "telegram channel setting 'stream_mode' must be one of: off, typing, draft, block"
+            );
+        }
+    }
+
     if let Some(value) = map.get("poll_timeout_secs") {
         let Some(timeout) = value.as_u64() else {
             anyhow::bail!(
@@ -290,5 +304,19 @@ mod tests {
         )
         .expect_err("too-large poll timeout should fail");
         assert!(error.to_string().contains("poll_timeout_secs"));
+    }
+
+    #[test]
+    fn telegram_stream_mode_must_be_known() {
+        let error = validate_channel_settings(
+            "telegram",
+            &json!({
+                "token_env": "TELEGRAM_BOT_TOKEN",
+                "chat_id": -100123,
+                "stream_mode": "invalid"
+            }),
+        )
+        .expect_err("invalid stream mode should fail");
+        assert!(error.to_string().contains("stream_mode"));
     }
 }

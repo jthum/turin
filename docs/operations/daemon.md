@@ -325,6 +325,7 @@ Discord runtime behavior notes:
   - `poll_timeout_secs` (default `30`, maximum `50`)
   - `poll_interval_ms` (default `250`)
   - `max_updates_per_poll`
+  - `stream_mode` (`off`, `typing`, `draft`, `block`)
   - `workspace_id`
   - `start_from_latest`
   - `ignore_bot_messages`
@@ -338,6 +339,9 @@ Telegram runtime behavior notes:
 - Telegram replies default to `reply_to_message_id=<inbound message id>` when the inbound event came from Telegram and no explicit override is set.
 - Outbound text is chunked to Telegram-safe message sizes.
 - Code blocks render with Telegram HTML `<pre>` formatting by default.
+- `stream_mode = typing` sends Telegram typing actions while a task is running.
+- `stream_mode = draft` streams partial previews and then sends the final formatted reply.
+- `stream_mode = block` streams less frequently than `draft`, using chunkier preview updates.
 
 Telegram outbound metadata keys:
 

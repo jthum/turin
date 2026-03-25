@@ -23,14 +23,22 @@ struct DaemonHarness {
 struct TelegramMockServer {
     base_url: String,
     sent_messages: Arc<Mutex<Vec<serde_json::Value>>>,
+    requests: Arc<Mutex<Vec<TelegramRequestRecord>>>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     join: JoinHandle<Result<()>>,
+}
+
+#[derive(Debug, Clone)]
+struct TelegramRequestRecord {
+    method: String,
+    body: serde_json::Value,
 }
 
 struct TelegramMockState {
     get_updates_responses: VecDeque<serde_json::Value>,
     send_message_responses: VecDeque<serde_json::Value>,
     sent_messages: Vec<serde_json::Value>,
+    requests: Vec<TelegramRequestRecord>,
 }
 
 impl DaemonHarness {
@@ -147,12 +155,15 @@ impl TelegramMockServer {
         let addr = listener.local_addr()?;
         let base_url = format!("http://{}", addr);
         let sent_messages = Arc::new(Mutex::new(Vec::new()));
+        let requests = Arc::new(Mutex::new(Vec::new()));
         let state = Arc::new(Mutex::new(TelegramMockState {
             get_updates_responses: get_updates_responses.into(),
             send_message_responses: send_message_responses.into(),
             sent_messages: Vec::new(),
+            requests: Vec::new(),
         }));
         let sent_messages_for_task = Arc::clone(&sent_messages);
+        let requests_for_task = Arc::clone(&requests);
         let state_for_task = Arc::clone(&state);
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
 
@@ -167,7 +178,7 @@ impl TelegramMockServer {
                     accepted = listener.accept() => {
                         let (mut stream, _) = accepted?;
                         let (path, body) = read_http_request(&mut stream).await?;
-                        let response = handle_telegram_request(&path, body, &state_for_task, &sent_messages_for_task)?;
+                        let response = handle_telegram_request(&path, body, &state_for_task, &sent_messages_for_task, &requests_for_task)?;
                         write_http_response(&mut stream, &response).await?;
                     }
                 }
@@ -178,6 +189,7 @@ impl TelegramMockServer {
         Ok(Self {
             base_url,
             sent_messages,
+            requests,
             shutdown_tx,
             join,
         })
@@ -197,8 +209,21 @@ fn handle_telegram_request(
     body: serde_json::Value,
     state: &Arc<Mutex<TelegramMockState>>,
     sent_messages: &Arc<Mutex<Vec<serde_json::Value>>>,
+    requests: &Arc<Mutex<Vec<TelegramRequestRecord>>>,
 ) -> Result<serde_json::Value> {
     let method = path.rsplit('/').next().unwrap_or_default();
+    let record = TelegramRequestRecord {
+        method: method.to_string(),
+        body: body.clone(),
+    };
+    {
+        let mut guard = state.lock().expect("telegram mock state lock poisoned");
+        guard.requests.push(record.clone());
+    }
+    requests
+        .lock()
+        .expect("telegram mock requests lock poisoned")
+        .push(record);
     match method {
         "getUpdates" => {
             let response = state
@@ -228,6 +253,20 @@ fn handle_telegram_request(
                 .push(body.clone());
             Ok(response)
         }
+        "sendMessageDraft" => Ok(json!({
+            "ok": true,
+            "result": true
+        })),
+        "editMessageText" => Ok(json!({
+            "ok": true,
+            "result": {
+                "message_id": 1
+            }
+        })),
+        "sendChatAction" => Ok(json!({
+            "ok": true,
+            "result": true
+        })),
         _ => Ok(json!({
             "ok": false,
             "error_code": 404,
@@ -396,6 +435,7 @@ async fn telegram_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
             max_updates_per_poll: 10,
             start_from_latest: false,
             ignore_bot_messages: true,
+            stream_mode: turin_channel_runner::ChannelStreamMode::Off,
         },
         shutdown_rx,
     )?;
@@ -494,6 +534,7 @@ async fn telegram_channel_driver_retries_transient_poll_and_send_failures() -> R
             max_updates_per_poll: 10,
             start_from_latest: false,
             ignore_bot_messages: true,
+            stream_mode: turin_channel_runner::ChannelStreamMode::Off,
         },
         shutdown_rx,
     )?;
@@ -518,6 +559,120 @@ async fn telegram_channel_driver_retries_transient_poll_and_send_failures() -> R
     assert!(
         outbound_count >= 1,
         "telegram channel did not recover from transient failures"
+    );
+
+    let _ = shutdown_tx.send(true);
+    let _ = timeout(Duration::from_secs(5), run)
+        .await
+        .context("timed out waiting for telegram channel runner shutdown")??;
+
+    server.stop().await?;
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn telegram_channel_driver_streams_progress_before_final_message() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+    let runner = daemon.runner();
+    let server = TelegramMockServer::start_with_responses(
+        vec![json!({
+            "ok": true,
+            "result": [sample_update(498502840, None, "Say pong")]
+        })],
+        vec![json!({
+            "ok": true,
+            "result": {
+                "message_id": 5,
+                "chat": {
+                    "id": 498502840_i64,
+                    "first_name": "Jayadeep",
+                    "type": "private"
+                },
+                "date": 1774430415_i64,
+                "text": "PONG"
+            }
+        })],
+    )
+    .await?;
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let mut driver = TelegramChannelDriver::from_config(
+        "telegram-test",
+        TelegramChannelDriverConfig {
+            base_url: server.base_url.clone(),
+            workspace_id: "telegram".to_string(),
+            chat_id: "498502840".to_string(),
+            token: "test-token".to_string(),
+            poll_timeout_secs: 0,
+            poll_interval: Duration::from_millis(25),
+            max_updates_per_poll: 10,
+            start_from_latest: false,
+            ignore_bot_messages: true,
+            stream_mode: turin_channel_runner::ChannelStreamMode::Draft,
+        },
+        shutdown_rx,
+    )?;
+
+    let run =
+        tokio::spawn(async move { runner.run_driver("default", &mut driver, Some(5_000)).await });
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        let methods = server
+            .requests
+            .lock()
+            .expect("telegram mock requests lock poisoned")
+            .iter()
+            .map(|request| request.method.clone())
+            .collect::<Vec<_>>();
+        if methods.iter().any(|method| method == "sendMessage")
+            && methods
+                .iter()
+                .any(|method| method == "sendMessageDraft" || method == "editMessageText")
+            && methods.iter().any(|method| method == "sendChatAction")
+        {
+            break;
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
+
+    let methods = server
+        .requests
+        .lock()
+        .expect("telegram mock requests lock poisoned")
+        .iter()
+        .map(|request| request.method.clone())
+        .collect::<Vec<_>>();
+    assert!(
+        methods.iter().any(|method| method == "sendChatAction"),
+        "expected typing action in request log: {methods:?}"
+    );
+    assert!(
+        methods
+            .iter()
+            .any(|method| method == "sendMessageDraft" || method == "editMessageText"),
+        "expected streaming preview request in request log: {methods:?}"
+    );
+    assert!(
+        methods.iter().any(|method| method == "sendMessage"),
+        "expected final sendMessage in request log: {methods:?}"
+    );
+    let draft_or_edit = server
+        .requests
+        .lock()
+        .expect("telegram mock requests lock poisoned")
+        .iter()
+        .find(|request| request.method == "sendMessageDraft" || request.method == "editMessageText")
+        .cloned()
+        .context("expected draft or edit request")?;
+    assert!(
+        draft_or_edit
+            .body
+            .get("text")
+            .and_then(|value| value.as_str())
+            .is_some_and(|text| text.contains("PONG")),
+        "expected streamed preview text in request body: {:?}",
+        draft_or_edit.body
     );
 
     let _ = shutdown_tx.send(true);

@@ -146,6 +146,7 @@ turin daemon channel create telegram-ops \
   --setting chat_id=-1001234567890 \
   --setting poll_timeout_secs=10 \
   --setting poll_interval_ms=250 \
+  --setting stream_mode=typing \
   --setting start_from_latest=true \
   --setting ignore_bot_messages=true \
   --setting workspace_id=telegram
@@ -157,6 +158,7 @@ Setting notes:
 - `chat_id`: required numeric Telegram chat id
 - `poll_timeout_secs`: long-poll timeout, default `30`, maximum `50`
 - `poll_interval_ms`: delay between empty polls, default `250`
+- `stream_mode`: `off`, `typing`, `draft`, or `block`; default `off`
 - `start_from_latest`: skip old queued updates at startup
 - `ignore_bot_messages`: ignore bot-authored inbound messages
 - `workspace_id`: optional routing namespace label
@@ -200,6 +202,7 @@ token_env = "TELEGRAM_BOT_TOKEN"
 chat_id = -1001234567890
 poll_timeout_secs = 10
 poll_interval_ms = 250
+stream_mode = "typing"
 start_from_latest = true
 ignore_bot_messages = true
 workspace_id = "telegram"
@@ -228,6 +231,14 @@ Formatting notes:
 - Markdown tables are rendered as aligned monospaced text inside Telegram `<pre>` blocks.
 - `telegram_format = "plain"` disables that rendering and sends raw text instead.
 - Attachments are still rendered as text lines; media upload is not part of this adapter yet.
+
+Streaming notes:
+
+- `stream_mode = "off"` keeps the old behavior: no typing indicator and only a final reply.
+- `stream_mode = "typing"` sends Telegram `typing` actions while Turin is working, then sends the final reply.
+- `stream_mode = "draft"` streams a partial preview while the response is being generated. Turin prefers Telegram draft streaming in private chats and falls back to a bot-authored placeholder message plus edits when drafts are unavailable.
+- `stream_mode = "block"` is like `draft`, but updates less frequently and favors chunkier preview steps over every small delta.
+- Final replies still use the normal Telegram HTML renderer even when preview streaming is enabled.
 
 ## 9. Validate With The Smoke Script
 
