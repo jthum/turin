@@ -960,6 +960,14 @@ struct MarkdownListState {
     next_index: u64,
 }
 
+#[derive(Debug, Default, Clone)]
+struct MarkdownTableState {
+    rows: Vec<Vec<String>>,
+    current_row: Vec<String>,
+    current_cell: String,
+    header_rows: usize,
+}
+
 fn render_markdown_segments(markdown: &str) -> Vec<String> {
     let trimmed = markdown.trim();
     if trimmed.is_empty() {
@@ -977,6 +985,7 @@ fn render_markdown_segments(markdown: &str) -> Vec<String> {
     let mut blockquote_depth = 0usize;
     let mut list_stack: Vec<MarkdownListState> = Vec::new();
     let mut code_block: Option<String> = None;
+    let mut table_state: Option<MarkdownTableState> = None;
 
     for event in parser {
         match event {
@@ -1020,10 +1029,28 @@ fn render_markdown_segments(markdown: &str) -> Vec<String> {
                     current.push_str("<s>");
                 }
                 Tag::Link { dest_url, .. } => {
+                    if table_state.is_some() {
+                        continue;
+                    }
                     ensure_prefix(&mut current, blockquote_depth);
                     current.push_str("<a href=\"");
                     current.push_str(&escape_html(dest_url.as_ref()));
                     current.push_str("\">");
+                }
+                Tag::Table(_) => {
+                    flush_rich_segment(&mut segments, &mut current);
+                    table_state = Some(MarkdownTableState::default());
+                }
+                Tag::TableHead => {}
+                Tag::TableRow => {
+                    if let Some(table) = table_state.as_mut() {
+                        table.current_row.clear();
+                    }
+                }
+                Tag::TableCell => {
+                    if let Some(table) = table_state.as_mut() {
+                        table.current_cell.clear();
+                    }
                 }
                 Tag::CodeBlock(kind) => {
                     flush_rich_segment(&mut segments, &mut current);
@@ -1063,7 +1090,42 @@ fn render_markdown_segments(markdown: &str) -> Vec<String> {
                 TagEnd::Emphasis => current.push_str("</i>"),
                 TagEnd::Strong => current.push_str("</b>"),
                 TagEnd::Strikethrough => current.push_str("</s>"),
-                TagEnd::Link => current.push_str("</a>"),
+                TagEnd::Table => {
+                    if let Some(table) = table_state.take() {
+                        let rendered = render_markdown_table(&table);
+                        if !rendered.trim().is_empty() {
+                            segments.extend(split_wrapped_segment(&rendered, "<pre>", "</pre>"));
+                        }
+                    }
+                }
+                TagEnd::TableHead => {
+                    if let Some(table) = table_state.as_mut() {
+                        if !table.current_row.is_empty() {
+                            table.rows.push(std::mem::take(&mut table.current_row));
+                        }
+                        table.header_rows = table.rows.len();
+                    }
+                }
+                TagEnd::TableRow => {
+                    if let Some(table) = table_state.as_mut()
+                        && !table.current_row.is_empty()
+                    {
+                        table.rows.push(std::mem::take(&mut table.current_row));
+                    }
+                }
+                TagEnd::TableCell => {
+                    if let Some(table) = table_state.as_mut() {
+                        table
+                            .current_row
+                            .push(normalize_table_cell(&table.current_cell));
+                        table.current_cell.clear();
+                    }
+                }
+                TagEnd::Link => {
+                    if table_state.is_none() {
+                        current.push_str("</a>");
+                    }
+                }
                 TagEnd::CodeBlock => {
                     if let Some(rendered) = code_block.take() {
                         segments.extend(split_wrapped_segment(&rendered, "<pre>", "</pre>"));
@@ -1074,20 +1136,30 @@ fn render_markdown_segments(markdown: &str) -> Vec<String> {
             Event::Text(text) => {
                 if let Some(code) = code_block.as_mut() {
                     code.push_str(text.as_ref());
+                } else if let Some(table) = table_state.as_mut() {
+                    table.current_cell.push_str(text.as_ref());
                 } else {
                     ensure_prefix(&mut current, blockquote_depth);
                     current.push_str(&escape_html(text.as_ref()));
                 }
             }
             Event::Code(text) => {
-                ensure_prefix(&mut current, blockquote_depth);
-                current.push_str("<code>");
-                current.push_str(&escape_html(text.as_ref()));
-                current.push_str("</code>");
+                if let Some(table) = table_state.as_mut() {
+                    table.current_cell.push_str(text.as_ref());
+                } else {
+                    ensure_prefix(&mut current, blockquote_depth);
+                    current.push_str("<code>");
+                    current.push_str(&escape_html(text.as_ref()));
+                    current.push_str("</code>");
+                }
             }
             Event::SoftBreak | Event::HardBreak => {
                 if let Some(code) = code_block.as_mut() {
                     code.push('\n');
+                } else if let Some(table) = table_state.as_mut() {
+                    if !table.current_cell.ends_with(' ') && !table.current_cell.is_empty() {
+                        table.current_cell.push(' ');
+                    }
                 } else {
                     ensure_prefix(&mut current, blockquote_depth);
                     current.push('\n');
@@ -1098,26 +1170,44 @@ fn render_markdown_segments(markdown: &str) -> Vec<String> {
                 segments.push("────────".to_string());
             }
             Event::TaskListMarker(checked) => {
-                ensure_prefix(&mut current, blockquote_depth);
-                current.push_str(if checked { "[x] " } else { "[ ] " });
+                if let Some(table) = table_state.as_mut() {
+                    table
+                        .current_cell
+                        .push_str(if checked { "[x] " } else { "[ ] " });
+                } else {
+                    ensure_prefix(&mut current, blockquote_depth);
+                    current.push_str(if checked { "[x] " } else { "[ ] " });
+                }
             }
             Event::Html(html) | Event::InlineHtml(html) => {
                 if let Some(code) = code_block.as_mut() {
                     code.push_str(html.as_ref());
+                } else if let Some(table) = table_state.as_mut() {
+                    table.current_cell.push_str(html.as_ref());
                 } else {
                     ensure_prefix(&mut current, blockquote_depth);
                     current.push_str(&escape_html(html.as_ref()));
                 }
             }
             Event::InlineMath(text) | Event::DisplayMath(text) => {
-                ensure_prefix(&mut current, blockquote_depth);
-                current.push_str(&escape_html(text.as_ref()));
+                if let Some(table) = table_state.as_mut() {
+                    table.current_cell.push_str(text.as_ref());
+                } else {
+                    ensure_prefix(&mut current, blockquote_depth);
+                    current.push_str(&escape_html(text.as_ref()));
+                }
             }
             Event::FootnoteReference(reference) => {
-                ensure_prefix(&mut current, blockquote_depth);
-                current.push('[');
-                current.push_str(&escape_html(reference.as_ref()));
-                current.push(']');
+                if let Some(table) = table_state.as_mut() {
+                    table.current_cell.push('[');
+                    table.current_cell.push_str(reference.as_ref());
+                    table.current_cell.push(']');
+                } else {
+                    ensure_prefix(&mut current, blockquote_depth);
+                    current.push('[');
+                    current.push_str(&escape_html(reference.as_ref()));
+                    current.push(']');
+                }
             }
         }
     }
@@ -1142,6 +1232,65 @@ fn flush_rich_segment(segments: &mut Vec<String>, current: &mut String) {
         segments.extend(split_rich_segment(trimmed));
     }
     current.clear();
+}
+
+fn normalize_table_cell(cell: &str) -> String {
+    cell.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn render_markdown_table(table: &MarkdownTableState) -> String {
+    if table.rows.is_empty() {
+        return String::new();
+    }
+
+    let column_count = table.rows.iter().map(Vec::len).max().unwrap_or(0);
+    if column_count == 0 {
+        return String::new();
+    }
+
+    let mut widths = vec![0usize; column_count];
+    for row in &table.rows {
+        for (index, cell) in row.iter().enumerate() {
+            widths[index] = widths[index].max(cell.chars().count());
+        }
+    }
+
+    let format_row = |row: &[String]| {
+        let mut out = String::from("|");
+        for (index, width) in widths.iter().enumerate() {
+            let cell = row.get(index).map(String::as_str).unwrap_or("");
+            out.push(' ');
+            out.push_str(cell);
+            let padding = width.saturating_sub(cell.chars().count());
+            if padding > 0 {
+                out.push_str(&" ".repeat(padding));
+            }
+            out.push(' ');
+            out.push('|');
+        }
+        out
+    };
+
+    let separator = {
+        let mut out = String::from("|");
+        for width in &widths {
+            out.push(' ');
+            out.push_str(&"-".repeat((*width).max(3)));
+            out.push(' ');
+            out.push('|');
+        }
+        out
+    };
+
+    let mut lines = Vec::new();
+    for (index, row) in table.rows.iter().enumerate() {
+        lines.push(format_row(row));
+        if table.header_rows > 0 && index + 1 == table.header_rows {
+            lines.push(separator.clone());
+        }
+    }
+
+    lines.join("\n")
 }
 
 fn split_rich_segment(content: &str) -> Vec<String> {
@@ -1633,6 +1782,28 @@ mod tests {
             text.contains("<a href=\"https://example.com\">site</a>"),
             "payload text: {text}"
         );
+    }
+
+    #[test]
+    fn markdown_tables_render_as_preformatted_blocks() {
+        let payloads = telegram_batches_from_message(
+            "-10012345",
+            None,
+            &OutboundMessage::text(
+                "| Name | Value |\n| --- | --- |\n| alpha | 1 |\n| beta | 22 |",
+            ),
+        )
+        .expect("render telegram payloads");
+
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0]["parse_mode"], "HTML");
+        let text = payloads[0]["text"]
+            .as_str()
+            .expect("telegram text should be a string");
+        assert!(text.contains("<pre>"), "payload text: {text}");
+        assert!(text.contains("| Name  | Value |"), "payload text: {text}");
+        assert!(text.contains("| alpha | 1     |"), "payload text: {text}");
+        assert!(text.contains("| beta  | 22    |"), "payload text: {text}");
     }
 
     #[test]

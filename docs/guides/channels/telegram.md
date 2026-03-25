@@ -225,6 +225,7 @@ Formatting notes:
 
 - Turin now defaults Telegram text rendering to Telegram HTML parse mode.
 - Common Markdown-style agent output such as headings, bold/italic, inline code, links, lists, block quotes, and fenced code blocks is rendered into Telegram-safe HTML automatically.
+- Markdown tables are rendered as aligned monospaced text inside Telegram `<pre>` blocks.
 - `telegram_format = "plain"` disables that rendering and sends raw text instead.
 - Attachments are still rendered as text lines; media upload is not part of this adapter yet.
 
