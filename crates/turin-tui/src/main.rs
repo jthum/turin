@@ -26,7 +26,8 @@ use std::io::stdout;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use turin_control_client::{
-    AgentRuntime, AgentSummary, ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession,
+    AgentRuntime, AgentSummary, ApprovedChannelRoom, ChannelAccessState, ChannelRuntime,
+    ChannelSummary, ConnectionKind, LiveSession, PendingChannelRoom,
     SessionSearchHit as PersistedSessionSearchHit, SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::{EventEnvelope, SessionSearchHitKind, SessionSearchScope};
@@ -270,6 +271,7 @@ struct TuiApp {
     input_cursor: usize,
     requested_stream_session: Option<String>,
     requested_session_detail: Option<String>,
+    requested_channel_access: Option<String>,
     search_query: String,
     search_scope: SearchScope,
     persisted_search_hits: Vec<PersistedSessionSearchHit>,
@@ -284,6 +286,7 @@ struct TuiApp {
     events_follow_latest: bool,
     paused_events: Vec<EventEnvelope>,
     live_transcripts: BTreeMap<String, LiveTranscriptState>,
+    channel_access: BTreeMap<String, ChannelAccessState>,
     pending_chat_prompt: Option<PendingChatPrompt>,
     detail_retry_until: BTreeMap<String, Instant>,
     detail_last_requested_at: BTreeMap<String, Instant>,
@@ -291,6 +294,7 @@ struct TuiApp {
     focused_chat_turn: Option<(String, u32)>,
     pending_chat_turn_jump: Option<(String, u32)>,
     focused_search_context: Option<(String, SearchChatContext)>,
+    channel_access_index: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -343,6 +347,18 @@ impl TokenUsageTotals {
 struct SessionTokenUsageSummary {
     total: TokenUsageTotals,
     turns: BTreeMap<u32, TokenUsageTotals>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChannelAccessEntryKind {
+    Pending,
+    Approved,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ChannelAccessEntryRef {
+    kind: ChannelAccessEntryKind,
+    index: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -591,6 +607,7 @@ fn run_app(
 
         app.ensure_chat_session_stream_loaded(&controller.command_tx)?;
         app.ensure_session_detail_loaded(&controller.command_tx)?;
+        app.ensure_channel_access_loaded(&controller.command_tx)?;
 
         if event::poll(Duration::from_millis(16)).context("Failed to poll terminal events")? {
             loop {
@@ -619,6 +636,7 @@ fn run_app(
 
         app.ensure_chat_session_stream_loaded(&controller.command_tx)?;
         app.ensure_session_detail_loaded(&controller.command_tx)?;
+        app.ensure_channel_access_loaded(&controller.command_tx)?;
 
         terminal.draw(|frame| render(frame, app))?;
     }
@@ -740,6 +758,8 @@ fn handle_key(
             app.move_recent_draft_selection(-1)
         }
         KeyCode::Char(']') if app.tab == TabKind::Connections => app.move_recent_draft_selection(1),
+        KeyCode::Char('[') if app.tab == TabKind::Channels => app.move_channel_access_selection(-1),
+        KeyCode::Char(']') if app.tab == TabKind::Channels => app.move_channel_access_selection(1),
         KeyCode::Char('R') if app.tab == TabKind::Connections => app.load_selected_recent_draft(),
         KeyCode::Char('/') if app.tab == TabKind::Tasks => app.start_edit_task_filter(),
         KeyCode::Char('/') if app.tab == TabKind::Channels => app.start_edit_channel_filter(),
@@ -751,6 +771,15 @@ fn handle_key(
         KeyCode::Char('F') if app.tab == TabKind::Tasks => app.clear_task_filter(),
         KeyCode::Char('F') if app.tab == TabKind::Channels => app.clear_channel_filter(),
         KeyCode::Char('F') if app.tab == TabKind::Events => app.clear_event_filter(),
+        KeyCode::Char('a') if app.tab == TabKind::Channels => {
+            app.approve_selected_channel_room(command_tx)?
+        }
+        KeyCode::Char('x') if app.tab == TabKind::Channels => {
+            app.reject_selected_channel_room(command_tx)?
+        }
+        KeyCode::Char('v') if app.tab == TabKind::Channels => {
+            app.revoke_selected_channel_room(command_tx)?
+        }
         KeyCode::Char('z') if app.tab == TabKind::Events => app.toggle_events_paused(),
         KeyCode::Char('f') if app.tab == TabKind::Events => app.toggle_events_follow_latest(),
         KeyCode::Char('G') if app.tab == TabKind::Events => app.jump_latest_event(),
@@ -1584,6 +1613,7 @@ impl TuiApp {
             input_cursor: 0,
             requested_stream_session: None,
             requested_session_detail: None,
+            requested_channel_access: None,
             search_query: String::new(),
             search_scope: SearchScope::All,
             persisted_search_hits: Vec::new(),
@@ -1598,6 +1628,7 @@ impl TuiApp {
             events_follow_latest: true,
             paused_events: Vec::new(),
             live_transcripts: BTreeMap::new(),
+            channel_access: BTreeMap::new(),
             pending_chat_prompt: None,
             detail_retry_until: BTreeMap::new(),
             detail_last_requested_at: BTreeMap::new(),
@@ -1605,6 +1636,7 @@ impl TuiApp {
             focused_chat_turn: None,
             pending_chat_turn_jump: None,
             focused_search_context: None,
+            channel_access_index: 0,
         };
         app.events_follow_latest = app.settings.chat.follow_latest;
         app.initialize_chat_session();
@@ -1637,6 +1669,10 @@ impl TuiApp {
                     }
                     self.requested_session_detail = None;
                 }
+            }
+            UiUpdate::ChannelAccess { channel_id, access } => {
+                self.channel_access
+                    .insert(channel_id.clone(), access.as_ref().clone());
             }
             UiUpdate::Snapshot(snapshot) => {
                 if self.chat_session_id.is_none() {
@@ -1703,6 +1739,8 @@ impl TuiApp {
         self.session_index = clamp_index(self.session_index, self.dashboard.sessions.len());
         self.task_index = clamp_index(self.task_index, self.filtered_tasks().len());
         self.channel_index = clamp_index(self.channel_index, self.filtered_channels().len());
+        self.channel_access_index =
+            clamp_index(self.channel_access_index, self.channel_access_entries().len());
         self.event_index = clamp_index(self.event_index, self.filtered_events().len());
         self.settings_index = clamp_index(self.settings_index, self.settings_items().len());
         self.chat_sidebar_index =
@@ -2246,6 +2284,56 @@ impl TuiApp {
 
     fn selected_channel(&self) -> Option<ChannelSummary> {
         self.filtered_channels().get(self.channel_index).cloned()
+    }
+
+    fn selected_channel_access(&self) -> Option<&ChannelAccessState> {
+        self.selected_channel()
+            .as_ref()
+            .and_then(|channel| self.channel_access.get(&channel.id))
+    }
+
+    fn channel_access_entries(&self) -> Vec<ChannelAccessEntryRef> {
+        let Some(access) = self.selected_channel_access() else {
+            return Vec::new();
+        };
+        let mut entries = Vec::with_capacity(access.pending_rooms.len() + access.approved_rooms.len());
+        for index in 0..access.pending_rooms.len() {
+            entries.push(ChannelAccessEntryRef {
+                kind: ChannelAccessEntryKind::Pending,
+                index,
+            });
+        }
+        for index in 0..access.approved_rooms.len() {
+            entries.push(ChannelAccessEntryRef {
+                kind: ChannelAccessEntryKind::Approved,
+                index,
+            });
+        }
+        entries
+    }
+
+    fn selected_channel_access_entry(&self) -> Option<ChannelAccessEntryRef> {
+        self.channel_access_entries()
+            .get(self.channel_access_index)
+            .copied()
+    }
+
+    fn selected_pending_channel_room(&self) -> Option<&PendingChannelRoom> {
+        let entry = self.selected_channel_access_entry()?;
+        if entry.kind != ChannelAccessEntryKind::Pending {
+            return None;
+        }
+        self.selected_channel_access()
+            .and_then(|access| access.pending_rooms.get(entry.index))
+    }
+
+    fn selected_approved_channel_room(&self) -> Option<&ApprovedChannelRoom> {
+        let entry = self.selected_channel_access_entry()?;
+        if entry.kind != ChannelAccessEntryKind::Approved {
+            return None;
+        }
+        self.selected_channel_access()
+            .and_then(|access| access.approved_rooms.get(entry.index))
     }
 
     fn activate_search_result(
@@ -3044,6 +3132,88 @@ impl TuiApp {
         self.channel_filter.clear();
         self.clamp_selection();
         self.dashboard.record_info("Cleared the channel filter");
+    }
+
+    fn move_channel_access_selection(&mut self, delta: isize) {
+        let len = self.channel_access_entries().len();
+        if len == 0 {
+            self.channel_access_index = 0;
+            return;
+        }
+        let index = self.channel_access_index as isize + delta;
+        self.channel_access_index = index.clamp(0, (len.saturating_sub(1)) as isize) as usize;
+    }
+
+    fn approve_selected_channel_room(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
+        let Some(channel) = self.selected_channel() else {
+            self.dashboard.record_error("No channel is currently selected");
+            return Ok(());
+        };
+        let Some(room) = self.selected_pending_channel_room() else {
+            self.dashboard
+                .record_error("Select a pending room before approving it");
+            return Ok(());
+        };
+        send_command(
+            command_tx,
+            OperatorCommand::ApproveChannelRoom {
+                channel_id: channel.id,
+                workspace_id: room.room.workspace_id.clone(),
+                room_id: room.room.room_id.clone(),
+                thread_id: room.room.thread_id.clone(),
+            },
+        )
+    }
+
+    fn reject_selected_channel_room(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
+        let Some(channel) = self.selected_channel() else {
+            self.dashboard.record_error("No channel is currently selected");
+            return Ok(());
+        };
+        let Some(room) = self.selected_pending_channel_room() else {
+            self.dashboard
+                .record_error("Select a pending room before rejecting it");
+            return Ok(());
+        };
+        send_command(
+            command_tx,
+            OperatorCommand::RejectChannelRoom {
+                channel_id: channel.id,
+                workspace_id: room.room.workspace_id.clone(),
+                room_id: room.room.room_id.clone(),
+                thread_id: room.room.thread_id.clone(),
+            },
+        )
+    }
+
+    fn revoke_selected_channel_room(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
+        let Some(channel) = self.selected_channel() else {
+            self.dashboard.record_error("No channel is currently selected");
+            return Ok(());
+        };
+        let Some(room) = self.selected_approved_channel_room() else {
+            self.dashboard
+                .record_error("Select an approved room before revoking it");
+            return Ok(());
+        };
+        send_command(
+            command_tx,
+            OperatorCommand::RevokeChannelRoom {
+                channel_id: channel.id,
+                workspace_id: room.room.workspace_id.clone(),
+                room_id: room.room.room_id.clone(),
+                thread_id: room.room.thread_id.clone(),
+            },
+        )
     }
 
     fn clear_event_filter(&mut self) {
@@ -4624,15 +4794,18 @@ impl TuiApp {
                 .filtered_channels()
                 .iter()
                 .map(|channel| {
+                    let access = self.channel_access.get(&channel.id);
                     ListItem::new(format!(
-                        "{}  {}  {}",
+                        "{}  {}  {}  pending:{} approved:{}",
                         channel.id,
                         channel.kind,
                         if channel.enabled {
                             "enabled"
                         } else {
                             "disabled"
-                        }
+                        },
+                        access.map(|state| state.pending_rooms.len()).unwrap_or(0),
+                        access.map(|state| state.approved_rooms.len()).unwrap_or(0),
                     ))
                 })
                 .collect(),
@@ -4848,10 +5021,25 @@ impl TuiApp {
                 .selected_channel()
                 .map(|channel| {
                     let runtime = self.channel_runtime(&channel.id);
+                    let access = self.channel_access.get(&channel.id);
+                    let selected_entry = self.selected_channel_access_entry().and_then(|entry| {
+                        access.map(|access| match entry.kind {
+                            ChannelAccessEntryKind::Pending => serde_json::json!({
+                                "kind": "pending",
+                                "entry": access.pending_rooms.get(entry.index),
+                            }),
+                            ChannelAccessEntryKind::Approved => serde_json::json!({
+                                "kind": "approved",
+                                "entry": access.approved_rooms.get(entry.index),
+                            }),
+                        })
+                    });
                     pretty_json(&serde_json::json!({
                         "filter": self.channel_filter,
                         "channel": channel,
                         "runtime": runtime,
+                        "access": access,
+                        "selected_access_entry": selected_entry,
                     }))
                 })
                 .unwrap_or_else(|| "No channels available.".to_string()),
@@ -4901,7 +5089,9 @@ impl TuiApp {
             TabKind::LiveSessions => "p or Enter prompts | c cancel session | x kill session",
             TabKind::Sessions => "e or Enter resumes the selected stored session",
             TabKind::Tasks => "/ edit filter | F clear filter | c cancels the selected task",
-            TabKind::Channels => "/ edit filter | F clear filter | channel view is read-only",
+            TabKind::Channels => {
+                "/ edit filter | F clear filter | [ / ] select access room | a approve pending | x reject pending | v revoke approved"
+            }
             TabKind::Events => {
                 "/ edit filter | F clear filter | z pause | f follow latest | G latest"
             }
@@ -5003,6 +5193,39 @@ impl TuiApp {
         send_command(
             command_tx,
             OperatorCommand::LoadSessionDetail { session_id },
+        )
+    }
+
+    fn ensure_channel_access_loaded(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
+        if self.tab != TabKind::Channels {
+            self.requested_channel_access = None;
+            return Ok(());
+        }
+
+        let Some(channel) = self.selected_channel() else {
+            self.requested_channel_access = None;
+            return Ok(());
+        };
+
+        if self.channel_access.contains_key(&channel.id) {
+            self.requested_channel_access = Some(channel.id.clone());
+            return Ok(());
+        }
+
+        if self.requested_channel_access.as_deref() == Some(channel.id.as_str())
+        {
+            return Ok(());
+        }
+
+        self.requested_channel_access = Some(channel.id.clone());
+        send_command(
+            command_tx,
+            OperatorCommand::LoadChannelAccess {
+                channel_id: channel.id,
+            },
         )
     }
 

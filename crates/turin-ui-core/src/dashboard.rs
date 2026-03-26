@@ -178,6 +178,7 @@ impl DashboardState {
         match update {
             UiUpdate::Snapshot(snapshot) => self.apply_snapshot(*snapshot),
             UiUpdate::SessionDetail(detail) => self.record_session_detail(*detail),
+            UiUpdate::ChannelAccess { .. } => {}
             UiUpdate::SearchResults { .. } => {}
             UiUpdate::Event(event) => self.record_event(event),
             UiUpdate::SessionEvent(_) => {}

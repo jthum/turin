@@ -5,10 +5,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use turin_daemon_client::DaemonClient;
 use turin_daemon_protocol::{
-    DaemonHandshake, DaemonRequest, EntityIdParams, EventEnvelope, NoParams, OpenSessionParams,
-    RequestEnvelope, ResponseEnvelope, ResumeSessionParams, RuntimeEventsSubscribeParams,
-    SessionIdParams, SessionListParams, SessionSearchHitKind, SessionSearchParams,
-    SessionSearchScope, SessionTitleParams, SubmitTaskParams, TaskIdParams, WaitTaskParams,
+    ChannelAccessParams, ChannelAccessRoomParams, DaemonHandshake, DaemonRequest, EntityIdParams,
+    EventEnvelope, NoParams, OpenSessionParams, RequestEnvelope, ResponseEnvelope,
+    ResumeSessionParams, RuntimeEventsSubscribeParams, SessionIdParams, SessionListParams,
+    SessionSearchHitKind, SessionSearchParams, SessionSearchScope, SessionTitleParams,
+    SubmitTaskParams, TaskIdParams, WaitTaskParams,
 };
 use turin_remote_client::RemoteClient;
 
@@ -202,6 +203,39 @@ pub struct ChannelRuntime {
     pub last_transition_unix_ms: u64,
     pub last_started_unix_ms: Option<u64>,
     pub last_stopped_unix_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelAccessRoom {
+    pub channel: String,
+    pub workspace_id: String,
+    pub room_id: Option<String>,
+    pub thread_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovedChannelRoom {
+    pub room: ChannelAccessRoom,
+    pub approved_at_unix_secs: u64,
+    pub approved_by_user_id: Option<String>,
+    pub approved_by_username: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingChannelRoom {
+    pub room: ChannelAccessRoom,
+    pub first_seen_unix_secs: u64,
+    pub last_seen_unix_secs: u64,
+    pub sample_user_id: Option<String>,
+    pub sample_username: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ChannelAccessState {
+    #[serde(default)]
+    pub approved_rooms: Vec<ApprovedChannelRoom>,
+    #[serde(default)]
+    pub pending_rooms: Vec<PendingChannelRoom>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -634,6 +668,73 @@ impl ControlClient {
             None,
             DaemonRequest::ChannelStatus(EntityIdParams {
                 id: channel_id.to_string(),
+            }),
+        )
+        .await
+    }
+
+    pub async fn channel_access(&self, channel_id: &str) -> Result<ChannelAccessState> {
+        self.request_ok(
+            None,
+            DaemonRequest::ChannelAccessGet(ChannelAccessParams {
+                id: channel_id.to_string(),
+            }),
+        )
+        .await
+    }
+
+    pub async fn approve_channel_room(
+        &self,
+        channel_id: &str,
+        workspace_id: &str,
+        room_id: Option<&str>,
+        thread_id: &str,
+    ) -> Result<ChannelAccessState> {
+        self.request_ok(
+            None,
+            DaemonRequest::ChannelAccessApprove(ChannelAccessRoomParams {
+                id: channel_id.to_string(),
+                workspace_id: workspace_id.to_string(),
+                room_id: room_id.map(str::to_string),
+                thread_id: thread_id.to_string(),
+            }),
+        )
+        .await
+    }
+
+    pub async fn reject_channel_room(
+        &self,
+        channel_id: &str,
+        workspace_id: &str,
+        room_id: Option<&str>,
+        thread_id: &str,
+    ) -> Result<ChannelAccessState> {
+        self.request_ok(
+            None,
+            DaemonRequest::ChannelAccessReject(ChannelAccessRoomParams {
+                id: channel_id.to_string(),
+                workspace_id: workspace_id.to_string(),
+                room_id: room_id.map(str::to_string),
+                thread_id: thread_id.to_string(),
+            }),
+        )
+        .await
+    }
+
+    pub async fn revoke_channel_room(
+        &self,
+        channel_id: &str,
+        workspace_id: &str,
+        room_id: Option<&str>,
+        thread_id: &str,
+    ) -> Result<ChannelAccessState> {
+        self.request_ok(
+            None,
+            DaemonRequest::ChannelAccessRevoke(ChannelAccessRoomParams {
+                id: channel_id.to_string(),
+                workspace_id: workspace_id.to_string(),
+                room_id: room_id.map(str::to_string),
+                thread_id: thread_id.to_string(),
             }),
         )
         .await
