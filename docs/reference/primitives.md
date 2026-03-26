@@ -215,6 +215,70 @@ Notes:
 
 ## System Globals
 
+### `tool`
+
+Harness-declared virtual tools.
+
+- `tool.declare(name, spec) -> nil`
+- `tool.call(name, args?) -> call_descriptor`
+- `tool.sequence({ call_descriptor, ... }) -> sequence_descriptor`
+
+`spec` shape:
+
+```lua
+{
+  description = "Play an audio file with mpg123",
+  params = {
+    filename = { type = "string", required = true }
+  },
+  handler = function(args)
+    return tool.call("shell_exec", {
+      command = "mpg123 " .. shell.quote(args.filename)
+    })
+  end
+}
+```
+
+Alternative full-schema form:
+
+```lua
+{
+  description = "Lookup a structured value",
+  input_schema = {
+    type = "object",
+    properties = {
+      query = { type = "string" }
+    },
+    required = { "query" }
+  },
+  handler = function(args)
+    return tool.call("read_file", { path = args.query })
+  end
+}
+```
+
+Notes:
+
+- `tool.declare(...)` can only be called during harness load
+- `params` is normalized into JSON Schema internally
+- declared tools are exposed to the model in the normal provider tool list
+- handlers execute in the harness VM and return nested tool-call descriptors for Turin to execute afterward
+- handlers can use `runtime.*`, DX helpers, memory, KV, DB, and policy checks to decide what to dispatch
+- handlers do not currently await nested tool results inline
+- nested virtual-tool dispatch is not supported yet
+
+### `shell`
+
+- `shell.quote(text) -> string`
+
+Returns a POSIX-safe single-quoted shell fragment.
+
+Example:
+
+```lua
+local cmd = "mpg123 " .. shell.quote(args.filename)
+```
+
 ## `fs`
 
 Filesystem helpers scoped to `harness.fs_root` (default: workspace root).

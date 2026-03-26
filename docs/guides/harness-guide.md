@@ -70,6 +70,56 @@ function on_tool_call(call)
 end
 ```
 
+## Declared Virtual Tools
+
+Harnesses can now declare model-visible tools without adding new native Rust tools.
+
+Use this when the agent should see a domain-specific tool name such as `play_song`, `lookup_ticket`, or `summarize_log_bundle`, while Turin still executes the underlying essential tools.
+
+Example:
+
+```lua
+tool.declare("play_song", {
+  description = "Play an audio file with mpg123",
+  params = {
+    filename = { type = "string", required = true }
+  },
+  handler = function(args)
+    return tool.call("shell_exec", {
+      command = "mpg123 " .. shell.quote(args.filename)
+    })
+  end
+})
+```
+
+Multiple native calls are supported:
+
+```lua
+tool.declare("read_pair", {
+  description = "Read two files in order",
+  params = {
+    first = { type = "string", required = true },
+    second = { type = "string", required = true }
+  },
+  handler = function(args)
+    return tool.sequence({
+      tool.call("read_file", { path = args.first }),
+      tool.call("read_file", { path = args.second })
+    })
+  end
+})
+```
+
+Notes:
+
+- `tool.declare(...)` is load-time only, just like `use(...)` and `watch(...)`
+- `params` is sugar that Turin normalizes into JSON Schema before sending the tool to the provider
+- `input_schema = {...}` is still available when you need the full JSON Schema shape directly
+- handlers run in the normal harness environment, so they can use `runtime.*`, DX helpers, memory, KV, and policy checks to decide which native calls to return
+- handlers currently return `tool.call(...)` / `tool.sequence(...)` descriptors; they do not await nested tool results inline
+- `on_tool_call` / `on_tool_result` governance still applies to the outer virtual tool and to the nested native calls it dispatches
+- nested virtual-to-virtual dispatch is intentionally not supported yet
+
 ## Writing With the DX Layer
 
 Turin now ships a first-party DX layer for harness authors.
