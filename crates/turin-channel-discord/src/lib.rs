@@ -45,17 +45,14 @@ pub struct DiscordChannelDriverConfig {
     pub ignore_bot_messages: bool,
 }
 
+pub fn validate_settings(settings: &serde_json::Value) -> Result<()> {
+    parse_settings(settings).map(|_| ())
+}
+
 impl DiscordChannelDriverConfig {
     pub fn from_settings(settings: &serde_json::Value) -> Result<Self> {
-        let settings = settings
-            .as_object()
-            .ok_or_else(|| anyhow!("Discord channel settings must be a JSON object"))?;
-
-        let token_env = settings
-            .get("token_env")
-            .and_then(|v| v.as_str())
-            .filter(|v| !v.trim().is_empty())
-            .ok_or_else(|| anyhow!("[discord_config_missing_token_env] Discord channel setting 'token_env' is required"))?;
+        let settings = parse_settings(settings)?;
+        let token_env = settings.token_env.as_str();
         let token = std::env::var(token_env).map_err(|_| {
             anyhow!(
                 "[discord_auth_missing_token] Discord bot token env var '{}' is not set for channel adapter",
@@ -63,70 +60,219 @@ impl DiscordChannelDriverConfig {
             )
         })?;
 
-        let channel_id = settings
-            .get("channel_id")
-            .and_then(|v| v.as_str())
-            .filter(|v| !v.trim().is_empty())
-            .ok_or_else(|| anyhow!("[discord_config_missing_channel_id] Discord channel setting 'channel_id' is required"))?
-            .to_string();
+        Ok(Self {
+            base_url: settings.base_url,
+            gateway_url: settings.gateway_url,
+            transport_mode: settings.transport_mode,
+            gateway_intents: settings.gateway_intents,
+            workspace_id: settings.workspace_id,
+            room_id: settings.room_id,
+            channel_id: settings.channel_id,
+            token,
+            poll_interval: Duration::from_millis(settings.poll_interval_ms),
+            max_messages_per_poll: settings.max_messages_per_poll,
+            start_from_latest: settings.start_from_latest,
+            ignore_bot_messages: settings.ignore_bot_messages,
+        })
+    }
+}
 
-        let poll_interval_ms = settings
-            .get("poll_interval_ms")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1_000)
-            .max(100);
-        let max_messages_per_poll = settings
-            .get("max_messages_per_poll")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(25)
-            .clamp(1, 100) as u16;
+#[derive(Debug, Clone)]
+struct DiscordChannelSettings {
+    token_env: String,
+    base_url: String,
+    gateway_url: String,
+    transport_mode: DiscordTransportMode,
+    gateway_intents: u64,
+    workspace_id: String,
+    room_id: Option<String>,
+    channel_id: String,
+    poll_interval_ms: u64,
+    max_messages_per_poll: u16,
+    start_from_latest: bool,
+    ignore_bot_messages: bool,
+}
 
-        let transport_mode = parse_transport_mode(
+fn parse_settings(settings: &serde_json::Value) -> Result<DiscordChannelSettings> {
+    let settings = settings
+        .as_object()
+        .ok_or_else(|| anyhow!("Discord channel settings must be a JSON object"))?;
+
+    let token_env = read_required_non_empty_string(
+        settings,
+        "token_env",
+        "[discord_config_missing_token_env] Discord channel setting 'token_env' is required",
+        "[discord_config_invalid_token_env] Discord channel setting 'token_env' must not be empty",
+    )?
+    .to_string();
+    let channel_id = read_required_non_empty_string(
+        settings,
+        "channel_id",
+        "[discord_config_missing_channel_id] Discord channel setting 'channel_id' is required",
+        "[discord_config_invalid_channel_id] Discord channel setting 'channel_id' must not be empty",
+    )?
+    .to_string();
+
+    let poll_interval_ms = match settings.get("poll_interval_ms") {
+        None => 1_000,
+        Some(value) => {
+            let interval = value.as_u64().ok_or_else(|| {
+                anyhow!(
+                    "[discord_config_invalid_poll_interval] Discord channel setting 'poll_interval_ms' must be a positive integer"
+                )
+            })?;
+            if interval < 100 {
+                anyhow::bail!(
+                    "[discord_config_invalid_poll_interval] Discord channel setting 'poll_interval_ms' must be >= 100"
+                );
+            }
+            interval
+        }
+    };
+
+    let max_messages_per_poll = match settings.get("max_messages_per_poll") {
+        None => 25,
+        Some(value) => {
+            let max = value.as_u64().ok_or_else(|| {
+                anyhow!(
+                    "[discord_config_invalid_max_messages] Discord channel setting 'max_messages_per_poll' must be a positive integer"
+                )
+            })?;
+            if !(1..=100).contains(&max) {
+                anyhow::bail!(
+                    "[discord_config_invalid_max_messages] Discord channel setting 'max_messages_per_poll' must be in 1..=100"
+                );
+            }
+            max as u16
+        }
+    };
+
+    let gateway_intents = match settings.get("gateway_intents") {
+        None => DEFAULT_GATEWAY_INTENTS,
+        Some(value) => {
+            let intents = value.as_u64().ok_or_else(|| {
+                anyhow!(
+                    "[discord_config_invalid_gateway_intents] Discord channel setting 'gateway_intents' must be a positive integer"
+                )
+            })?;
+            if intents == 0 {
+                anyhow::bail!(
+                    "[discord_config_invalid_gateway_intents] Discord channel setting 'gateway_intents' must be > 0"
+                );
+            }
+            intents
+        }
+    };
+
+    Ok(DiscordChannelSettings {
+        token_env,
+        base_url: read_optional_non_empty_string(settings, "base_url", DEFAULT_BASE_URL)?
+            .trim_end_matches('/')
+            .to_string(),
+        gateway_url: read_optional_non_empty_string(settings, "gateway_url", DEFAULT_GATEWAY_URL)?
+            .to_string(),
+        transport_mode: parse_transport_mode(
             settings
                 .get("transport")
-                .and_then(|value| value.as_str())
-                .or(Some("gateway")),
-        )?;
+                .map(|value| {
+                    value.as_str().ok_or_else(|| {
+                        anyhow!(
+                            "[discord_config_invalid_transport] Discord channel setting 'transport' must be a string"
+                        )
+                    })
+                })
+                .transpose()?,
+        )?,
+        gateway_intents,
+        workspace_id: read_optional_non_empty_string(settings, "workspace_id", "discord")?
+            .to_string(),
+        room_id: read_optional_string(settings, "room_id")?,
+        channel_id,
+        poll_interval_ms,
+        max_messages_per_poll,
+        start_from_latest: read_optional_bool(settings, "start_from_latest", true)?,
+        ignore_bot_messages: read_optional_bool(settings, "ignore_bot_messages", true)?,
+    })
+}
 
-        Ok(Self {
-            base_url: settings
-                .get("base_url")
-                .and_then(|v| v.as_str())
-                .unwrap_or(DEFAULT_BASE_URL)
-                .trim_end_matches('/')
-                .to_string(),
-            gateway_url: settings
-                .get("gateway_url")
-                .and_then(|v| v.as_str())
-                .unwrap_or(DEFAULT_GATEWAY_URL)
-                .to_string(),
-            transport_mode,
-            gateway_intents: settings
-                .get("gateway_intents")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(DEFAULT_GATEWAY_INTENTS),
-            workspace_id: settings
-                .get("workspace_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("discord")
-                .to_string(),
-            room_id: settings
-                .get("room_id")
-                .and_then(|v| v.as_str())
-                .map(std::string::ToString::to_string),
-            channel_id,
-            token,
-            poll_interval: Duration::from_millis(poll_interval_ms),
-            max_messages_per_poll,
-            start_from_latest: settings
-                .get("start_from_latest")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true),
-            ignore_bot_messages: settings
-                .get("ignore_bot_messages")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true),
-        })
+fn read_required_non_empty_string<'a>(
+    settings: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    missing_message: &str,
+    empty_message: &str,
+) -> Result<&'a str> {
+    let value = settings
+        .get(key)
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| anyhow!(missing_message.to_string()))?;
+    if value.trim().is_empty() {
+        anyhow::bail!(empty_message.to_string());
+    }
+    Ok(value)
+}
+
+fn read_optional_non_empty_string<'a>(
+    settings: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    default: &'a str,
+) -> Result<&'a str> {
+    match settings.get(key) {
+        None => Ok(default),
+        Some(value) => {
+            let text = value.as_str().ok_or_else(|| {
+                anyhow!(
+                    "Discord channel setting '{}' must be a string",
+                    key
+                )
+            })?;
+            if text.trim().is_empty() {
+                anyhow::bail!(
+                    "Discord channel setting '{}' must not be empty",
+                    key
+                );
+            }
+            Ok(text)
+        }
+    }
+}
+
+fn read_optional_string(
+    settings: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<Option<String>> {
+    match settings.get(key) {
+        None => Ok(None),
+        Some(value) => {
+            let text = value.as_str().ok_or_else(|| {
+                anyhow!(
+                    "Discord channel setting '{}' must be a string",
+                    key
+                )
+            })?;
+            if text.trim().is_empty() {
+                anyhow::bail!(
+                    "Discord channel setting '{}' must not be empty",
+                    key
+                );
+            }
+            Ok(Some(text.to_string()))
+        }
+    }
+}
+
+fn read_optional_bool(
+    settings: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    default: bool,
+) -> Result<bool> {
+    match settings.get(key) {
+        None => Ok(default),
+        Some(value) => value.as_bool().ok_or_else(|| {
+            anyhow!(
+                "Discord channel setting '{}' must be a boolean",
+                key
+            )
+        }),
     }
 }
 
@@ -1233,6 +1379,28 @@ mod tests {
     fn parse_transport_mode_rejects_invalid_value() {
         let error = parse_transport_mode(Some("unknown")).expect_err("transport should fail");
         assert!(error.to_string().contains("Invalid Discord transport"));
+    }
+
+    #[test]
+    fn validate_settings_rejects_small_poll_interval() {
+        let error = validate_settings(&serde_json::json!({
+            "token_env": "DISCORD_TOKEN",
+            "channel_id": "123",
+            "poll_interval_ms": 10
+        }))
+        .expect_err("too-small poll interval should fail");
+        assert!(error.to_string().contains("poll_interval_ms"));
+    }
+
+    #[test]
+    fn validate_settings_rejects_zero_gateway_intents() {
+        let error = validate_settings(&serde_json::json!({
+            "token_env": "DISCORD_TOKEN",
+            "channel_id": "123",
+            "gateway_intents": 0
+        }))
+        .expect_err("zero gateway intents should fail");
+        assert!(error.to_string().contains("gateway_intents"));
     }
 
     #[test]

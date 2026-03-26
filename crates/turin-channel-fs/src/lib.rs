@@ -21,6 +21,10 @@ pub struct FsChannelDriverConfig {
     pub poll_interval: Duration,
 }
 
+pub fn validate_settings(channel_dir: &Path, settings: &serde_json::Value) -> Result<()> {
+    FsChannelDriverConfig::from_settings(channel_dir, settings).map(|_| ())
+}
+
 impl FsChannelDriverConfig {
     pub fn from_settings(channel_dir: &Path, settings: &serde_json::Value) -> Result<Self> {
         let settings = settings
@@ -32,11 +36,18 @@ impl FsChannelDriverConfig {
         let processed_dir = resolve_dir(channel_dir, settings.get("processed_dir"), "processed")?;
         let failed_dir = resolve_dir(channel_dir, settings.get("failed_dir"), "failed")?;
 
-        let poll_interval_ms = settings
-            .get("poll_interval_ms")
-            .and_then(|value| value.as_u64())
-            .unwrap_or(250)
-            .max(10);
+        let poll_interval_ms = match settings.get("poll_interval_ms") {
+            None => 250,
+            Some(value) => {
+                let interval = value.as_u64().ok_or_else(|| {
+                    anyhow!("FS channel setting 'poll_interval_ms' must be a positive integer")
+                })?;
+                if interval < 10 {
+                    anyhow::bail!("FS channel setting 'poll_interval_ms' must be >= 10");
+                }
+                interval
+            }
+        };
 
         Ok(Self {
             inbox_dir,
@@ -227,6 +238,9 @@ fn resolve_dir(
             let raw = value
                 .as_str()
                 .ok_or_else(|| anyhow!("Path setting must be a string"))?;
+            if raw.trim().is_empty() {
+                anyhow::bail!("Path setting must not be empty");
+            }
             let path = Path::new(raw);
             if path.is_absolute() {
                 Ok(path.to_path_buf())
@@ -362,5 +376,19 @@ mod tests {
         let file = files.next_entry().await.unwrap().unwrap();
         let raw = tokio::fs::read_to_string(file.path()).await.unwrap();
         assert!(raw.contains("pong"));
+    }
+
+    #[test]
+    fn validate_settings_rejects_too_small_poll_interval() {
+        let dir = tempdir().unwrap();
+        let channel_dir = dir.path().join("channel");
+        let error = validate_settings(
+            &channel_dir,
+            &serde_json::json!({
+                "poll_interval_ms": 1,
+            }),
+        )
+        .expect_err("too-small poll interval should fail");
+        assert!(error.to_string().contains("poll_interval_ms"));
     }
 }

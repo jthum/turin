@@ -36,18 +36,14 @@ pub struct TelegramChannelDriverConfig {
     pub persist_thinking: bool,
 }
 
+pub fn validate_settings(settings: &serde_json::Value) -> Result<()> {
+    parse_settings(settings).map(|_| ())
+}
+
 impl TelegramChannelDriverConfig {
     pub fn from_settings(settings: &serde_json::Value) -> Result<Self> {
-        let settings = settings
-            .as_object()
-            .ok_or_else(|| anyhow!("Telegram channel settings must be a JSON object"))?;
-
-        let token_env = read_required_string(
-            settings,
-            "token_env",
-            "[telegram_config_missing_token_env] Telegram channel setting 'token_env' is required",
-            "[telegram_config_invalid_token_env] Telegram channel setting 'token_env' must not be empty",
-        )?;
+        let settings = parse_settings(settings)?;
+        let token_env = settings.token_env.as_str();
         let token = std::env::var(token_env).map_err(|_| {
             anyhow!(
                 "[telegram_auth_missing_token] Telegram bot token env var '{}' is not set for channel adapter",
@@ -55,146 +51,20 @@ impl TelegramChannelDriverConfig {
             )
         })?;
 
-        let chat_ids = read_chat_ids(settings).map_err(|err| {
-            anyhow!(
-                "[telegram_config_missing_chat_id] Telegram channel setting 'chat_id' or 'chat_ids' is required: {}",
-                err
-            )
-        })?;
-
-        let poll_timeout_secs = match settings.get("poll_timeout_secs") {
-            None => 30,
-            Some(value) => {
-                let timeout = value.as_u64().ok_or_else(|| {
-                    anyhow!(
-                        "[telegram_config_invalid_poll_timeout] Telegram channel setting 'poll_timeout_secs' must be a non-negative integer"
-                    )
-                })?;
-                if timeout > 50 {
-                    anyhow::bail!(
-                        "[telegram_config_invalid_poll_timeout] Telegram channel setting 'poll_timeout_secs' must be <= 50"
-                    );
-                }
-                timeout
-            }
-        };
-
-        let poll_interval_ms = match settings.get("poll_interval_ms") {
-            None => 250,
-            Some(value) => {
-                let interval = value.as_u64().ok_or_else(|| {
-                    anyhow!(
-                        "[telegram_config_invalid_poll_interval] Telegram channel setting 'poll_interval_ms' must be a positive integer"
-                    )
-                })?;
-                if interval < 25 {
-                    anyhow::bail!(
-                        "[telegram_config_invalid_poll_interval] Telegram channel setting 'poll_interval_ms' must be >= 25"
-                    );
-                }
-                interval
-            }
-        };
-
-        let max_updates_per_poll = match settings.get("max_updates_per_poll") {
-            None => 25,
-            Some(value) => {
-                let max = value.as_u64().ok_or_else(|| {
-                    anyhow!(
-                        "[telegram_config_invalid_max_updates] Telegram channel setting 'max_updates_per_poll' must be a positive integer"
-                    )
-                })?;
-                if !(1..=100).contains(&max) {
-                    anyhow::bail!(
-                        "[telegram_config_invalid_max_updates] Telegram channel setting 'max_updates_per_poll' must be in 1..=100"
-                    );
-                }
-                max as u8
-            }
-        };
-
         Ok(Self {
-            base_url: settings
-                .get("base_url")
-                .map(|value| {
-                    value.as_str().ok_or_else(|| {
-                        anyhow!(
-                            "[telegram_config_invalid_base_url] Telegram channel setting 'base_url' must be a string"
-                        )
-                    })
-                })
-                .transpose()?
-                .unwrap_or(DEFAULT_BASE_URL)
-                .trim_end_matches('/')
-                .to_string(),
-            workspace_id: settings
-                .get("workspace_id")
-                .map(|value| {
-                    let text = value.as_str().ok_or_else(|| {
-                        anyhow!(
-                            "[telegram_config_invalid_workspace_id] Telegram channel setting 'workspace_id' must be a string"
-                        )
-                    })?;
-                    if text.trim().is_empty() {
-                        anyhow::bail!(
-                            "[telegram_config_invalid_workspace_id] Telegram channel setting 'workspace_id' must not be empty"
-                        );
-                    }
-                    Ok::<String, anyhow::Error>(text.to_string())
-                })
-                .transpose()?
-                .unwrap_or_else(|| "telegram".to_string()),
-            chat_ids,
+            base_url: settings.base_url,
+            workspace_id: settings.workspace_id,
+            chat_ids: settings.chat_ids,
             token,
-            poll_timeout_secs,
-            poll_interval: Duration::from_millis(poll_interval_ms),
-            max_updates_per_poll,
-            start_from_latest: settings
-                .get("start_from_latest")
-                .map(|value| {
-                    value.as_bool().ok_or_else(|| {
-                        anyhow!(
-                            "[telegram_config_invalid_start_from_latest] Telegram channel setting 'start_from_latest' must be a boolean"
-                        )
-                    })
-                })
-                .transpose()?
-                .unwrap_or(true),
-            ignore_bot_messages: settings
-                .get("ignore_bot_messages")
-                .map(|value| {
-                    value.as_bool().ok_or_else(|| {
-                        anyhow!(
-                            "[telegram_config_invalid_ignore_bot_messages] Telegram channel setting 'ignore_bot_messages' must be a boolean"
-                        )
-                    })
-                })
-                .transpose()?
-                .unwrap_or(true),
-            respond_mode: read_respond_mode(settings.get("respond_mode"))?,
-            stream_mode: read_stream_mode(settings.get("stream_mode"))?,
-            stream_thinking: settings
-                .get("stream_thinking")
-                .map(|value| {
-                    value.as_bool().ok_or_else(|| {
-                        anyhow!(
-                            "[telegram_config_invalid_stream_thinking] Telegram channel setting 'stream_thinking' must be a boolean"
-                        )
-                    })
-                })
-                .transpose()?
-                .unwrap_or(false),
-            persist_thinking: settings
-                .get("persist_thinking")
-                .map(|value| {
-                    value.as_bool().ok_or_else(|| {
-                        anyhow!(
-                            "[telegram_config_invalid_persist_thinking] Telegram channel setting 'persist_thinking' must be a boolean"
-                        )
-                    })
-                })
-                .transpose()?
-                .unwrap_or(false),
+            poll_timeout_secs: settings.poll_timeout_secs,
+            poll_interval: Duration::from_millis(settings.poll_interval_ms),
+            max_updates_per_poll: settings.max_updates_per_poll,
+            start_from_latest: settings.start_from_latest,
+            ignore_bot_messages: settings.ignore_bot_messages,
+            respond_mode: settings.respond_mode,
+            stream_mode: settings.stream_mode,
+            stream_thinking: settings.stream_thinking,
+            persist_thinking: settings.persist_thinking,
         })
     }
 
@@ -208,6 +78,179 @@ impl TelegramChannelDriverConfig {
     fn allows_chat_id(&self, chat_id: &str) -> bool {
         self.chat_ids.iter().any(|allowed| allowed == chat_id)
     }
+}
+
+#[derive(Debug, Clone)]
+struct TelegramChannelSettings {
+    token_env: String,
+    base_url: String,
+    workspace_id: String,
+    chat_ids: Vec<String>,
+    poll_timeout_secs: u64,
+    poll_interval_ms: u64,
+    max_updates_per_poll: u8,
+    start_from_latest: bool,
+    ignore_bot_messages: bool,
+    respond_mode: TelegramRespondMode,
+    stream_mode: ChannelStreamMode,
+    stream_thinking: bool,
+    persist_thinking: bool,
+}
+
+fn parse_settings(settings: &serde_json::Value) -> Result<TelegramChannelSettings> {
+    let settings = settings
+        .as_object()
+        .ok_or_else(|| anyhow!("Telegram channel settings must be a JSON object"))?;
+
+    let token_env = read_required_string(
+        settings,
+        "token_env",
+        "[telegram_config_missing_token_env] Telegram channel setting 'token_env' is required",
+        "[telegram_config_invalid_token_env] Telegram channel setting 'token_env' must not be empty",
+    )?
+    .to_string();
+
+    let chat_ids = read_chat_ids(settings).map_err(|err| {
+        anyhow!(
+            "[telegram_config_missing_chat_id] Telegram channel setting 'chat_id' or 'chat_ids' is required: {}",
+            err
+        )
+    })?;
+
+    let poll_timeout_secs = match settings.get("poll_timeout_secs") {
+        None => 30,
+        Some(value) => {
+            let timeout = value.as_u64().ok_or_else(|| {
+                anyhow!(
+                    "[telegram_config_invalid_poll_timeout] Telegram channel setting 'poll_timeout_secs' must be a non-negative integer"
+                )
+            })?;
+            if timeout > 50 {
+                anyhow::bail!(
+                    "[telegram_config_invalid_poll_timeout] Telegram channel setting 'poll_timeout_secs' must be <= 50"
+                );
+            }
+            timeout
+        }
+    };
+
+    let poll_interval_ms = match settings.get("poll_interval_ms") {
+        None => 250,
+        Some(value) => {
+            let interval = value.as_u64().ok_or_else(|| {
+                anyhow!(
+                    "[telegram_config_invalid_poll_interval] Telegram channel setting 'poll_interval_ms' must be a positive integer"
+                )
+            })?;
+            if interval < 25 {
+                anyhow::bail!(
+                    "[telegram_config_invalid_poll_interval] Telegram channel setting 'poll_interval_ms' must be >= 25"
+                );
+            }
+            interval
+        }
+    };
+
+    let max_updates_per_poll = match settings.get("max_updates_per_poll") {
+        None => 25,
+        Some(value) => {
+            let max = value.as_u64().ok_or_else(|| {
+                anyhow!(
+                    "[telegram_config_invalid_max_updates] Telegram channel setting 'max_updates_per_poll' must be a positive integer"
+                )
+            })?;
+            if !(1..=100).contains(&max) {
+                anyhow::bail!(
+                    "[telegram_config_invalid_max_updates] Telegram channel setting 'max_updates_per_poll' must be in 1..=100"
+                );
+            }
+            max as u8
+        }
+    };
+
+    Ok(TelegramChannelSettings {
+        token_env,
+        base_url: settings
+            .get("base_url")
+            .map(|value| {
+                value.as_str().ok_or_else(|| {
+                    anyhow!(
+                        "[telegram_config_invalid_base_url] Telegram channel setting 'base_url' must be a string"
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(DEFAULT_BASE_URL)
+            .trim_end_matches('/')
+            .to_string(),
+        workspace_id: settings
+            .get("workspace_id")
+            .map(|value| {
+                let text = value.as_str().ok_or_else(|| {
+                    anyhow!(
+                        "[telegram_config_invalid_workspace_id] Telegram channel setting 'workspace_id' must be a string"
+                    )
+                })?;
+                if text.trim().is_empty() {
+                    anyhow::bail!(
+                        "[telegram_config_invalid_workspace_id] Telegram channel setting 'workspace_id' must not be empty"
+                    );
+                }
+                Ok::<String, anyhow::Error>(text.to_string())
+            })
+            .transpose()?
+            .unwrap_or_else(|| "telegram".to_string()),
+        chat_ids,
+        poll_timeout_secs,
+        poll_interval_ms,
+        max_updates_per_poll,
+        start_from_latest: settings
+            .get("start_from_latest")
+            .map(|value| {
+                value.as_bool().ok_or_else(|| {
+                    anyhow!(
+                        "[telegram_config_invalid_start_from_latest] Telegram channel setting 'start_from_latest' must be a boolean"
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(true),
+        ignore_bot_messages: settings
+            .get("ignore_bot_messages")
+            .map(|value| {
+                value.as_bool().ok_or_else(|| {
+                    anyhow!(
+                        "[telegram_config_invalid_ignore_bot_messages] Telegram channel setting 'ignore_bot_messages' must be a boolean"
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(true),
+        respond_mode: read_respond_mode(settings.get("respond_mode"))?,
+        stream_mode: read_stream_mode(settings.get("stream_mode"))?,
+        stream_thinking: settings
+            .get("stream_thinking")
+            .map(|value| {
+                value.as_bool().ok_or_else(|| {
+                    anyhow!(
+                        "[telegram_config_invalid_stream_thinking] Telegram channel setting 'stream_thinking' must be a boolean"
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(false),
+        persist_thinking: settings
+            .get("persist_thinking")
+            .map(|value| {
+                value.as_bool().ok_or_else(|| {
+                    anyhow!(
+                        "[telegram_config_invalid_persist_thinking] Telegram channel setting 'persist_thinking' must be a boolean"
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(false),
+    })
 }
 
 pub struct TelegramChannelDriver {
@@ -2738,6 +2781,16 @@ mod tests {
         assert_eq!(config.respond_mode, TelegramRespondMode::MentionsOrReplies);
         assert!(config.stream_thinking);
         assert!(config.persist_thinking);
+    }
+
+    #[test]
+    fn validate_settings_does_not_require_live_token_env() {
+        validate_settings(&serde_json::json!({
+            "token_env": "TELEGRAM_TOKEN_NOT_SET_FOR_VALIDATION",
+            "chat_ids": [498502840],
+            "respond_mode": "mentions_or_replies"
+        }))
+        .expect("settings validation should not require the token env var to exist");
     }
 
     #[test]

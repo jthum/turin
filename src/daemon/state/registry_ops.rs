@@ -350,9 +350,12 @@ impl DaemonState {
             anyhow::bail!("Channel kind cannot be empty");
         }
         self.ensure_channel_agent_exists(&input.agent_id)?;
-        super::channel_validation::validate_channel_settings(&input.kind, &input.settings)?;
-
         let channel_dir = self.watch_paths().channels_dir.join(&input.id);
+        super::channel_validation::validate_channel_settings(
+            &input.kind,
+            &channel_dir,
+            &input.settings,
+        )?;
         if channel_dir.exists() {
             anyhow::bail!("Channel '{}' already exists", input.id);
         }
@@ -414,7 +417,11 @@ impl DaemonState {
         }
         let settings_value = serde_json::to_value(file.extra.clone())
             .context("Failed to serialize channel settings for validation")?;
-        super::channel_validation::validate_channel_settings(&file.kind, &settings_value)?;
+        super::channel_validation::validate_channel_settings(
+            &file.kind,
+            &channel_dir,
+            &settings_value,
+        )?;
 
         write_channel_file(&channel_dir, &file)?;
         self.rescan().await?;
