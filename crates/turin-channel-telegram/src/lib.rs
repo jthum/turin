@@ -128,7 +128,7 @@ fn parse_settings(
 
     let chat_ids = match read_chat_ids(settings) {
         Ok(ids) => ids,
-        Err(err) if allow_unconfigured_chats => Vec::new(),
+        Err(_) if allow_unconfigured_chats => Vec::new(),
         Err(err) => {
             return Err(anyhow!(
                 "[telegram_config_missing_chat_id] Telegram channel setting 'chat_id' or 'chat_ids' is required: {}",
