@@ -141,6 +141,9 @@ impl TabKind {
 enum SearchScope {
     All,
     Sessions,
+    Messages,
+    Tools,
+    SessionEvents,
     Agents,
     Tasks,
     Channels,
@@ -152,6 +155,9 @@ impl SearchScope {
         match self {
             Self::All => "All",
             Self::Sessions => "Sessions",
+            Self::Messages => "Messages",
+            Self::Tools => "Tool Calls",
+            Self::SessionEvents => "Session Events",
             Self::Agents => "Agents",
             Self::Tasks => "Tasks",
             Self::Channels => "Channels",
@@ -162,7 +168,10 @@ impl SearchScope {
     fn next(self) -> Self {
         match self {
             Self::All => Self::Sessions,
-            Self::Sessions => Self::Agents,
+            Self::Sessions => Self::Messages,
+            Self::Messages => Self::Tools,
+            Self::Tools => Self::SessionEvents,
+            Self::SessionEvents => Self::Agents,
             Self::Agents => Self::Tasks,
             Self::Tasks => Self::Channels,
             Self::Channels => Self::Events,
@@ -2956,7 +2965,7 @@ impl TuiApp {
 
         let mut hits = Vec::new();
 
-        if matches!(self.search_scope, SearchScope::All | SearchScope::Sessions) {
+        if self.persisted_search_scope().is_some() {
             for hit in &self.persisted_search_hits {
                 let label = if let Some(title) = hit.title.as_deref() {
                     title.to_string()
@@ -3177,7 +3186,11 @@ impl TuiApp {
 
     fn persisted_search_scope(&self) -> Option<SessionSearchScope> {
         match self.search_scope {
-            SearchScope::All | SearchScope::Sessions => Some(SessionSearchScope::All),
+            SearchScope::All => Some(SessionSearchScope::All),
+            SearchScope::Sessions => Some(SessionSearchScope::Sessions),
+            SearchScope::Messages => Some(SessionSearchScope::Messages),
+            SearchScope::Tools => Some(SessionSearchScope::ToolExecutions),
+            SearchScope::SessionEvents => Some(SessionSearchScope::Events),
             SearchScope::Agents
             | SearchScope::Tasks
             | SearchScope::Channels
