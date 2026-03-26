@@ -384,8 +384,7 @@ mod tests {
 
     #[test]
     fn search_excerpt_centers_query_when_possible() {
-        let text =
-            "prefix context before the actual match lands on compiler panic in src/main.rs";
+        let text = "prefix context before the actual match lands on compiler panic in src/main.rs";
         let excerpt = excerpt_search_text(text, "compiler", 28);
         assert!(excerpt.contains("compiler"));
         assert!(excerpt.starts_with('…'));

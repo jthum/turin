@@ -152,9 +152,7 @@ impl RuntimeControl {
             .clone()
     }
 
-    fn subscribe_current_session_events(
-        &self,
-    ) -> Option<SessionEventReceiver> {
+    fn subscribe_current_session_events(&self) -> Option<SessionEventReceiver> {
         self.current_session_events
             .read()
             .expect("runtime control session events lock poisoned")

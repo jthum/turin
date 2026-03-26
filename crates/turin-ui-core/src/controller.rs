@@ -1540,12 +1540,7 @@ fn spawn_command_task(
             } = &command
             {
                 match client
-                    .search_sessions(
-                        query.as_str(),
-                        *scope,
-                        limit.saturating_add(1),
-                        *offset,
-                    )
+                    .search_sessions(query.as_str(), *scope, limit.saturating_add(1), *offset)
                     .await
                 {
                     Ok(mut hits) => {

@@ -219,17 +219,11 @@ fn read_optional_non_empty_string<'a>(
     match settings.get(key) {
         None => Ok(default),
         Some(value) => {
-            let text = value.as_str().ok_or_else(|| {
-                anyhow!(
-                    "Discord channel setting '{}' must be a string",
-                    key
-                )
-            })?;
+            let text = value
+                .as_str()
+                .ok_or_else(|| anyhow!("Discord channel setting '{}' must be a string", key))?;
             if text.trim().is_empty() {
-                anyhow::bail!(
-                    "Discord channel setting '{}' must not be empty",
-                    key
-                );
+                anyhow::bail!("Discord channel setting '{}' must not be empty", key);
             }
             Ok(text)
         }
@@ -243,17 +237,11 @@ fn read_optional_string(
     match settings.get(key) {
         None => Ok(None),
         Some(value) => {
-            let text = value.as_str().ok_or_else(|| {
-                anyhow!(
-                    "Discord channel setting '{}' must be a string",
-                    key
-                )
-            })?;
+            let text = value
+                .as_str()
+                .ok_or_else(|| anyhow!("Discord channel setting '{}' must be a string", key))?;
             if text.trim().is_empty() {
-                anyhow::bail!(
-                    "Discord channel setting '{}' must not be empty",
-                    key
-                );
+                anyhow::bail!("Discord channel setting '{}' must not be empty", key);
             }
             Ok(Some(text.to_string()))
         }
@@ -267,12 +255,9 @@ fn read_optional_bool(
 ) -> Result<bool> {
     match settings.get(key) {
         None => Ok(default),
-        Some(value) => value.as_bool().ok_or_else(|| {
-            anyhow!(
-                "Discord channel setting '{}' must be a boolean",
-                key
-            )
-        }),
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| anyhow!("Discord channel setting '{}' must be a boolean", key)),
     }
 }
 

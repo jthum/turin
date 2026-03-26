@@ -3259,12 +3259,11 @@ impl TuiApp {
                         event_type: hit.event_type.clone(),
                     },
                 });
-                let rank = i32::try_from(hit.score)
-                    .unwrap_or(if hit.score.is_negative() {
-                        i32::MIN
-                    } else {
-                        i32::MAX
-                    });
+                let rank = i32::try_from(hit.score).unwrap_or(if hit.score.is_negative() {
+                    i32::MIN
+                } else {
+                    i32::MAX
+                });
                 hits.push(SearchHit {
                     kind,
                     label: line_label,
@@ -3908,7 +3907,11 @@ impl TuiApp {
             .chat
             .transcript_memory_budget_bytes
             .max(16 * 1024);
-        trim_transcript_lines_to_budget(&mut lines, budget, self.focused_chat_turn_for_session(session_id));
+        trim_transcript_lines_to_budget(
+            &mut lines,
+            budget,
+            self.focused_chat_turn_for_session(session_id),
+        );
         let lines = wrap_transcript_lines_for_width(lines, viewport_width.max(1));
 
         let total_lines = lines.len();
@@ -3920,8 +3923,8 @@ impl TuiApp {
                 .position(|line| line.turn_index == Some(pending_turn))
         {
             let target_top = target_index.saturating_sub(2);
-            let scroll_from_bottom = total_lines
-                .saturating_sub(visible_lines.saturating_add(target_top));
+            let scroll_from_bottom =
+                total_lines.saturating_sub(visible_lines.saturating_add(target_top));
             self.chat_scroll_lines = scroll_from_bottom.min(u16::MAX as usize) as u16;
             self.pending_chat_turn_jump = None;
         }
@@ -5445,10 +5448,7 @@ fn trim_transcript_lines_to_budget(
             .iter()
             .position(|line| line.turn_index == Some(focused_turn))
     {
-        let line_costs = lines
-            .iter()
-            .map(transcript_line_cost)
-            .collect::<Vec<_>>();
+        let line_costs = lines.iter().map(transcript_line_cost).collect::<Vec<_>>();
         let mut start = focus_index;
         while start > 0 && lines[start - 1].turn_index == Some(focused_turn) {
             start -= 1;
