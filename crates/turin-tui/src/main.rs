@@ -332,6 +332,7 @@ struct SearchHit {
     label: String,
     summary: String,
     detail: String,
+    rank: i32,
     action: SearchAction,
 }
 
@@ -947,6 +948,7 @@ fn handle_input_mode(
                     Ok(value) if value >= 16 * 1024 => {
                         app.settings.chat.transcript_memory_budget_bytes = value;
                         app.chat_scroll_lines = 0;
+                        app.persist_settings_quietly();
                         app.dashboard.record_info(format!(
                             "Updated transcript memory budget to {} bytes",
                             value
@@ -958,6 +960,7 @@ fn handle_input_mode(
                 },
                 Some(InputMode::EditUserLabel) => {
                     app.settings.chat.user_label = input;
+                    app.persist_settings_quietly();
                     app.dashboard
                         .record_info("Updated the UI-only user label for chat rendering");
                 }
@@ -3040,11 +3043,14 @@ impl TuiApp {
                         })),
                     ),
                 };
+                let rank = search_rank(&query, &[&line_label, &hit.summary, &hit.snippet])
+                    .unwrap_or_default();
                 hits.push(SearchHit {
                     kind,
                     label: line_label,
                     summary: hit.summary.clone(),
                     detail,
+                    rank,
                     action: SearchAction::OpenChatSession {
                         session_id: hit.session_id.clone(),
                     },
@@ -3074,6 +3080,15 @@ impl TuiApp {
                         &agent.provider,
                         &agent.harness_ref,
                     ],
+                ) && let Some(rank) = search_rank(
+                    &query,
+                    &[
+                        &summary,
+                        &agent.id,
+                        &agent.model,
+                        &agent.provider,
+                        &agent.harness_ref,
+                    ],
                 ) {
                     hits.push(SearchHit {
                         kind: "agent",
@@ -3084,6 +3099,7 @@ impl TuiApp {
                             "agent": agent,
                             "runtime": runtime,
                         })),
+                        rank,
                         action: SearchAction::FocusAgent {
                             agent_id: agent.id.clone(),
                         },
@@ -3105,6 +3121,16 @@ impl TuiApp {
                         task.error.as_deref().unwrap_or(""),
                         task.output.as_deref().unwrap_or(""),
                     ],
+                ) && let Some(rank) = search_rank(
+                    &query,
+                    &[
+                        &summary,
+                        &task.request_id,
+                        &task.agent_id,
+                        &task.state,
+                        task.error.as_deref().unwrap_or(""),
+                        task.output.as_deref().unwrap_or(""),
+                    ],
                 ) {
                     hits.push(SearchHit {
                         kind: "task",
@@ -3114,6 +3140,7 @@ impl TuiApp {
                             "type": "task",
                             "task": task,
                         })),
+                        rank,
                         action: SearchAction::FocusTask {
                             request_id: task.request_id.clone(),
                         },
@@ -3127,6 +3154,9 @@ impl TuiApp {
                 let runtime = self.channel_runtime(&channel.id);
                 let summary = format!("{} [{}] {}", channel.id, channel.kind, channel.agent_id);
                 if search_match(
+                    &query,
+                    &[&summary, &channel.id, &channel.kind, &channel.agent_id],
+                ) && let Some(rank) = search_rank(
                     &query,
                     &[&summary, &channel.id, &channel.kind, &channel.agent_id],
                 ) {
@@ -3143,6 +3173,7 @@ impl TuiApp {
                             "channel": channel,
                             "runtime": runtime,
                         })),
+                        rank,
                         action: SearchAction::FocusChannel {
                             channel_id: channel.id.clone(),
                         },
@@ -3155,7 +3186,9 @@ impl TuiApp {
             for event in self.event_source().iter().rev() {
                 let payload =
                     serde_json::to_string(&event.data).unwrap_or_else(|_| "{}".to_string());
-                if search_match(&query, &[&event.event, &payload]) {
+                if search_match(&query, &[&event.event, &payload])
+                    && let Some(rank) = search_rank(&query, &[&event.event, &payload])
+                {
                     hits.push(SearchHit {
                         kind: "event",
                         label: event.event.clone(),
@@ -3164,6 +3197,7 @@ impl TuiApp {
                             "type": "event",
                             "event": event,
                         })),
+                        rank,
                         action: SearchAction::FocusEvent {
                             event_name: event.event.clone(),
                             created_at: event
@@ -3176,6 +3210,14 @@ impl TuiApp {
                 }
             }
         }
+
+        hits.sort_by(|left, right| {
+            right
+                .rank
+                .cmp(&left.rank)
+                .then_with(|| left.kind.cmp(right.kind))
+                .then_with(|| left.label.cmp(&right.label))
+        });
 
         hits
     }
@@ -3315,6 +3357,7 @@ impl TuiApp {
         self.settings.layout.left_pane = self.settings.layout.left_pane.next();
         self.chat_sidebar_index = 0;
         self.clamp_selection();
+        self.persist_settings_quietly();
         self.dashboard.record_info(format!(
             "Chat left pane is now {}",
             self.settings.layout.left_pane.title()
@@ -3323,6 +3366,7 @@ impl TuiApp {
 
     fn cycle_right_chat_pane(&mut self) {
         self.settings.layout.right_pane = self.settings.layout.right_pane.next();
+        self.persist_settings_quietly();
         self.dashboard.record_info(format!(
             "Chat right pane is now {}",
             self.settings.layout.right_pane.title()
@@ -3331,6 +3375,7 @@ impl TuiApp {
 
     fn toggle_show_thinking(&mut self) {
         self.settings.chat.show_thinking = !self.settings.chat.show_thinking;
+        self.persist_settings_quietly();
         self.dashboard.record_info(format!(
             "Thinking pane is now {}",
             if self.settings.chat.show_thinking {
@@ -3393,6 +3438,7 @@ impl TuiApp {
 
     fn toggle_streaming_preview(&mut self) {
         self.settings.chat.show_streaming_preview = !self.settings.chat.show_streaming_preview;
+        self.persist_settings_quietly();
         self.dashboard.record_info(format!(
             "Streaming preview is now {}",
             if self.settings.chat.show_streaming_preview {
@@ -3408,6 +3454,7 @@ impl TuiApp {
         if self.settings.chat.follow_latest {
             self.chat_scroll_lines = 0;
         }
+        self.persist_settings_quietly();
         self.dashboard.record_info(format!(
             "Chat follow-latest is now {}",
             if self.settings.chat.follow_latest {
@@ -3449,6 +3496,13 @@ impl TuiApp {
             Err(err) => self
                 .dashboard
                 .record_error(format!("Failed to save TUI settings: {err}")),
+        }
+    }
+
+    fn persist_settings_quietly(&mut self) {
+        if let Err(err) = save_settings(&self.settings_path, &self.settings) {
+            self.dashboard
+                .record_error(format!("Failed to persist TUI settings: {err}"));
         }
     }
 
@@ -4642,6 +4696,32 @@ fn search_match(query: &str, haystacks: &[&str]) -> bool {
     haystacks
         .iter()
         .any(|value| value.to_ascii_lowercase().contains(query))
+}
+
+fn search_rank(query: &str, haystacks: &[&str]) -> Option<i32> {
+    let mut best: Option<i32> = None;
+    for (index, value) in haystacks.iter().enumerate() {
+        let normalized = value.trim().to_ascii_lowercase();
+        if normalized.is_empty() {
+            continue;
+        }
+        let field_weight = match index {
+            0 => 140,
+            1 => 90,
+            _ => 50,
+        };
+        let score = if normalized == query {
+            field_weight + 120
+        } else if normalized.starts_with(query) {
+            field_weight + 80
+        } else if normalized.contains(query) {
+            field_weight + 40
+        } else {
+            continue;
+        };
+        best = Some(best.map_or(score, |current| current.max(score)));
+    }
+    best
 }
 
 fn message_content_text(value: &Value) -> Option<String> {
