@@ -11,7 +11,7 @@ use tracing::{info, warn};
 
 use crate::display;
 use crate::harness::verdict::Verdict;
-use crate::harness::virtual_tools::VirtualToolPlan;
+use crate::harness::virtual_tools::{VirtualToolNestedResult, VirtualToolPlan};
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::governance::{GovernanceSubject, tool_capability_name};
@@ -294,22 +294,51 @@ impl ExecutionHost {
                     }
                 },
                 ExecutionArtifact::VirtualPlan(plan) => {
+                    let result_handler_key = plan.result_handler_key.clone();
                     match self.build_virtual_pending_tool_calls(session, &tc.id, plan) {
                         Ok(pending_virtual_calls) => {
                             let nested_records = self
                                 .execute_tool_calls_hidden(session, tool_ctx, pending_virtual_calls)
                                 .await;
                             if session.cancel_token.is_cancelled() {
+                                if let Some(ref key) = result_handler_key {
+                                    self.discard_virtual_result_handler(session, key);
+                                }
                                 content = "Virtual tool execution cancelled".to_string();
                                 is_error = true;
                             } else {
-                                let (aggregated, nested_error) =
-                                    self.aggregate_virtual_tool_records(&nested_records);
-                                content = aggregated;
-                                is_error = is_error || nested_error;
+                                let nested_results =
+                                    self.virtual_tool_nested_results(&nested_records);
+                                let nested_error =
+                                    nested_results.iter().any(|record| record.is_error);
+                                if let Some(ref key) = result_handler_key {
+                                    match self.invoke_virtual_result_handler(
+                                        session,
+                                        key,
+                                        &nested_results,
+                                        nested_error,
+                                    ) {
+                                        Ok(output) => {
+                                            content = output.content;
+                                            is_error = output.is_error;
+                                        }
+                                        Err(err) => {
+                                            content = format!("Error: {}", err);
+                                            is_error = true;
+                                        }
+                                    }
+                                } else {
+                                    let (aggregated, nested_error) =
+                                        self.aggregate_virtual_tool_records(&nested_records);
+                                    content = aggregated;
+                                    is_error = is_error || nested_error;
+                                }
                             }
                         }
                         Err(err) => {
+                            if let Some(ref key) = result_handler_key {
+                                self.discard_virtual_result_handler(session, key);
+                            }
                             content = format!("Error: {}", err);
                             is_error = true;
                         }
@@ -403,6 +432,56 @@ impl ExecutionHost {
             .join("\n\n");
 
         (combined, any_error)
+    }
+
+    fn virtual_tool_nested_results(
+        &self,
+        records: &[FinalToolRecord],
+    ) -> Vec<VirtualToolNestedResult> {
+        records
+            .iter()
+            .map(|record| VirtualToolNestedResult {
+                id: record.id.clone(),
+                name: record.name.clone(),
+                args: record.args.clone(),
+                verdict: record.verdict.clone(),
+                duration_ms: record.duration_ms,
+                content: record.content.clone(),
+                is_error: record.is_error,
+            })
+            .collect()
+    }
+
+    fn invoke_virtual_result_handler(
+        &self,
+        session: &SessionState,
+        key: &str,
+        nested_results: &[VirtualToolNestedResult],
+        nested_error: bool,
+    ) -> Result<crate::harness::virtual_tools::VirtualToolResultOutput> {
+        let payload = if nested_results.len() == 1 {
+            serde_json::to_value(&nested_results[0])?
+        } else {
+            serde_json::to_value(nested_results)?
+        };
+        let runtime = self.runtime_for_session(session);
+        let harness = runtime.lock_engine();
+        if let Some(ref engine) = *harness {
+            engine.invoke_virtual_tool_result_handler(key, payload, nested_error)
+        } else {
+            anyhow::bail!(
+                "virtual tool result handler '{}' could not access harness engine",
+                key
+            );
+        }
+    }
+
+    fn discard_virtual_result_handler(&self, session: &SessionState, key: &str) {
+        let runtime = self.runtime_for_session(session);
+        let harness = runtime.lock_engine();
+        if let Some(ref engine) = *harness {
+            let _ = engine.discard_virtual_tool_result_handler(key);
+        }
     }
 
     async fn finalize_tool_records(

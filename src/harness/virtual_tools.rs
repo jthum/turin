@@ -29,6 +29,24 @@ pub struct VirtualToolCall {
 #[derive(Debug, Clone, PartialEq)]
 pub struct VirtualToolPlan {
     pub calls: Vec<VirtualToolCall>,
+    pub result_handler_key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VirtualToolNestedResult {
+    pub id: String,
+    pub name: String,
+    pub args: Value,
+    pub verdict: String,
+    pub duration_ms: u64,
+    pub content: String,
+    pub is_error: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VirtualToolResultOutput {
+    pub content: String,
+    pub is_error: bool,
 }
 
 fn default_call_args() -> Value {
@@ -158,10 +176,15 @@ pub fn parse_handler_plan(value: &Value) -> Result<VirtualToolPlan> {
     let Some(kind) = value.get("__kind").and_then(Value::as_str) else {
         bail!("virtual tool handler must return tool.call(...) or tool.sequence(...)");
     };
+    let result_handler_key = value
+        .get("__result_handler_key")
+        .and_then(Value::as_str)
+        .map(str::to_string);
 
     match kind {
         "tool_call" => Ok(VirtualToolPlan {
             calls: vec![parse_virtual_call(value)?],
+            result_handler_key,
         }),
         "tool_sequence" => {
             let calls = value
@@ -175,9 +198,39 @@ pub fn parse_handler_plan(value: &Value) -> Result<VirtualToolPlan> {
             for call in calls {
                 parsed.push(parse_virtual_call(call)?);
             }
-            Ok(VirtualToolPlan { calls: parsed })
+            Ok(VirtualToolPlan {
+                calls: parsed,
+                result_handler_key,
+            })
         }
         other => bail!("unknown virtual tool handler result kind '{}'", other),
+    }
+}
+
+pub fn parse_result_handler_output(
+    value: &Value,
+    default_is_error: bool,
+) -> Result<VirtualToolResultOutput> {
+    match value {
+        Value::String(content) => Ok(VirtualToolResultOutput {
+            content: content.clone(),
+            is_error: default_is_error,
+        }),
+        Value::Object(map) => {
+            let content = map
+                .get("content")
+                .and_then(Value::as_str)
+                .context("virtual tool result handler object must include a string content field")?
+                .to_string();
+            let is_error = map
+                .get("is_error")
+                .and_then(Value::as_bool)
+                .unwrap_or(default_is_error);
+            Ok(VirtualToolResultOutput { content, is_error })
+        }
+        _ => bail!(
+            "virtual tool result handler must return a string or {{ content = ..., is_error? = ... }}"
+        ),
     }
 }
 
@@ -274,15 +327,18 @@ mod tests {
     fn handler_plan_supports_single_and_sequence_shapes() {
         let single = parse_handler_plan(&json!({
             "__kind": "tool_call",
+            "__result_handler_key": "cb_single",
             "name": "shell_exec",
             "args": { "command": "echo hi" }
         }))
         .unwrap();
         assert_eq!(single.calls.len(), 1);
         assert_eq!(single.calls[0].name, "shell_exec");
+        assert_eq!(single.result_handler_key.as_deref(), Some("cb_single"));
 
         let seq = parse_handler_plan(&json!({
             "__kind": "tool_sequence",
+            "__result_handler_key": "cb_seq",
             "calls": [
                 { "__kind": "tool_call", "name": "read_file", "args": { "path": "a.txt" } },
                 { "__kind": "tool_call", "name": "read_file", "args": { "path": "b.txt" } }
@@ -291,6 +347,7 @@ mod tests {
         .unwrap();
         assert_eq!(seq.calls.len(), 2);
         assert_eq!(seq.calls[1].name, "read_file");
+        assert_eq!(seq.result_handler_key.as_deref(), Some("cb_seq"));
     }
 
     #[test]
@@ -298,5 +355,36 @@ mod tests {
         assert_eq!(shell_quote(""), "''");
         assert_eq!(shell_quote("plain text"), "'plain text'");
         assert_eq!(shell_quote("a'b"), "'a'\"'\"'b'");
+    }
+
+    #[test]
+    fn result_handler_string_uses_default_error() {
+        let out = parse_result_handler_output(&json!("wrapped"), true).unwrap();
+        assert_eq!(
+            out,
+            VirtualToolResultOutput {
+                content: "wrapped".to_string(),
+                is_error: true,
+            }
+        );
+    }
+
+    #[test]
+    fn result_handler_object_can_override_error() {
+        let out = parse_result_handler_output(
+            &json!({
+                "content": "ok",
+                "is_error": false
+            }),
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            VirtualToolResultOutput {
+                content: "ok".to_string(),
+                is_error: false,
+            }
+        );
     }
 }

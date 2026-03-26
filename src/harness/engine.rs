@@ -13,8 +13,10 @@ use tracing::error;
 use crate::display;
 use crate::harness::globals::{self, HarnessAppData};
 use crate::harness::stdlib::tool_bindings;
-use crate::harness::virtual_tools::{DeclaredVirtualTool, VirtualToolPlan};
 use crate::harness::verdict::{Verdict, compose_verdicts};
+use crate::harness::virtual_tools::{
+    DeclaredVirtualTool, VirtualToolPlan, VirtualToolResultOutput,
+};
 
 fn format_lua_error(e: &mlua::Error) -> String {
     let err_str = e.to_string();
@@ -731,6 +733,19 @@ impl HarnessEngine {
         tool_bindings::invoke_declared_virtual_tool(&self.lua, name, args)
     }
 
+    pub fn invoke_virtual_tool_result_handler(
+        &self,
+        key: &str,
+        payload: serde_json::Value,
+        default_is_error: bool,
+    ) -> Result<VirtualToolResultOutput> {
+        tool_bindings::invoke_virtual_result_handler(&self.lua, key, payload, default_is_error)
+    }
+
+    pub fn discard_virtual_tool_result_handler(&self, key: &str) -> Result<()> {
+        tool_bindings::discard_virtual_result_handler(&self.lua, key)
+    }
+
     pub fn set_loading_phase(&self, is_loading: bool) {
         set_loading_phase(&self.lua, is_loading);
     }
@@ -1043,7 +1058,10 @@ mod tests {
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, "play_song");
         assert_eq!(tools[0].description, "Play an audio file");
-        assert_eq!(tools[0].input_schema["properties"]["filename"]["type"], "string");
+        assert_eq!(
+            tools[0].input_schema["properties"]["filename"]["type"],
+            "string"
+        );
     }
 
     #[test]
@@ -1088,6 +1106,66 @@ mod tests {
         assert_eq!(plan.calls[0].name, "shell_exec");
         assert_eq!(plan.calls[0].args["command"], "mpg123 'one.mp3'");
         assert_eq!(plan.calls[1].args["command"], "mpg123 'two.mp3'");
+    }
+
+    #[test]
+    fn test_engine_invokes_virtual_tool_result_handler() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("main.lua"),
+            r#"
+            tool.declare("read_note_wrapped", {
+                description = "Read and wrap a note",
+                params = {
+                    path = { type = "string", required = true }
+                },
+                handler = function(args)
+                    return tool.call("read_file", { path = args.path }, function(result)
+                        return {
+                            content = "wrapped: " .. result.content,
+                            is_error = result.is_error
+                        }
+                    end)
+                end
+            })
+            "#,
+        )
+        .unwrap();
+
+        let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+        engine.load_dir(dir.path()).unwrap();
+
+        let plan = engine
+            .invoke_virtual_tool(
+                "read_note_wrapped",
+                serde_json::json!({ "path": "note.txt" }),
+            )
+            .unwrap()
+            .unwrap();
+
+        let handler_key = plan
+            .result_handler_key
+            .clone()
+            .expect("expected result handler key");
+
+        let output = engine
+            .invoke_virtual_tool_result_handler(
+                &handler_key,
+                serde_json::json!({
+                    "id": "tc_1",
+                    "name": "read_file",
+                    "args": { "path": "note.txt" },
+                    "verdict": "allow",
+                    "duration_ms": 2,
+                    "content": "hello",
+                    "is_error": false
+                }),
+                false,
+            )
+            .unwrap();
+
+        assert_eq!(output.content, "wrapped: hello");
+        assert!(!output.is_error);
     }
 
     #[test]

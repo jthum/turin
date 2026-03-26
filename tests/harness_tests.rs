@@ -390,7 +390,11 @@ async fn test_virtual_tool_is_exposed_and_executes_native_call() -> Result<()> {
         .await?;
 
     assert!(
-        seen_tools.lock().unwrap().iter().any(|tool| tool == "read_note"),
+        seen_tools
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|tool| tool == "read_note"),
         "expected virtual tool to be exposed to provider request tools"
     );
 
@@ -520,6 +524,123 @@ async fn test_virtual_tool_sequence_aggregates_multiple_native_calls() -> Result
     let aggregated_result = aggregated_result.expect("expected aggregated virtual tool output");
     assert!(aggregated_result.contains("first file"));
     assert!(aggregated_result.contains("second file"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_virtual_tool_sequence_callback_shapes_outer_result() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+    std::fs::write(tmp.path().join("one.txt"), "first file")?;
+    std::fs::write(tmp.path().join("two.txt"), "second file")?;
+
+    std::fs::write(
+        harness_dir.join("main.lua"),
+        r#"
+        tool.declare("summarize_pair", {
+            description = "Read two files and summarize them",
+            params = {
+                first = { type = "string", required = true },
+                second = { type = "string", required = true }
+            },
+            handler = function(args)
+                return tool.sequence({
+                    tool.call("read_file", { path = args.first }),
+                    tool.call("read_file", { path = args.second })
+                }, function(results)
+                    return {
+                        content = "Combined: " .. results[1].content .. " | " .. results[2].content,
+                        is_error = results[1].is_error or results[2].is_error
+                    }
+                end)
+            end
+        })
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "You are a test assistant.".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 5,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: None,
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(
+            "mock",
+            Arc::new(VirtualToolProvider {
+                tool_name: "summarize_pair".to_string(),
+                tool_args: serde_json::json!({ "first": "one.txt", "second": "two.txt" }),
+                seen_tools: Arc::new(std::sync::Mutex::new(Vec::new())),
+                stage: Arc::new(std::sync::Mutex::new(0)),
+            }),
+        ),
+    );
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Summarize both files".to_string()))
+        .await?;
+
+    let mut shaped_result = None;
+    for msg in &session.history {
+        for content in &msg.content {
+            if let InferenceContent::ToolResult { content, .. } = content
+                && content.contains("Combined: first file | second file")
+            {
+                shaped_result = Some(content.clone());
+            }
+        }
+    }
+
+    assert_eq!(
+        shaped_result.as_deref(),
+        Some("Combined: first file | second file")
+    );
 
     Ok(())
 }
