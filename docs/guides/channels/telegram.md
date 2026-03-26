@@ -17,6 +17,8 @@ Current Phase 8 scope:
 - outbound replies with automatic reply threading to the source message
 - Telegram HTML rendering for code blocks
 - deterministic routing by Telegram chat and forum topic
+- one Turin Telegram channel can watch one or many Telegram chats
+- configurable group trigger policy (`all`, `mentions`, `replies`, `mentions_or_replies`)
 - daemon-managed lifecycle (`create`, `enable`, `disable`, `update`, `status`)
 
 Current non-goals:
@@ -42,9 +44,16 @@ export TELEGRAM_BOT_TOKEN="123456789:replace-me"
 
 Turin reads the token from `token_env`, so you can use a different env var name if you prefer.
 
-## 2. Decide Which Telegram Surface You Want
+## 2. Decide Which Telegram Surfaces You Want
 
-Turin’s `chat_id` is a numeric Telegram chat identifier. The setup differs slightly by chat type.
+Turin’s `chat_id` is a numeric Telegram chat identifier. A Telegram channel can watch:
+
+- one chat via `chat_id`
+- many chats via `chat_ids`
+
+That means you do not need one Turin channel per Telegram group unless you want different agent/harness settings per group.
+
+The setup differs slightly by chat type.
 
 ### Direct bot chat
 
@@ -61,6 +70,15 @@ If you want the bot to receive ordinary group messages, disable privacy mode in 
 3. Choose `Disable`.
 
 If privacy mode stays enabled, Telegram may only deliver commands, replies, and mentions instead of normal text traffic.
+
+Turin can also enforce its own group trigger policy with `respond_mode`:
+
+- `all`: respond to any non-empty message in configured non-private chats
+- `mentions`: respond only when the bot is explicitly mentioned
+- `replies`: respond only when a message replies to the bot
+- `mentions_or_replies`: respond when either of the above is true
+
+For shared groups, `mentions_or_replies` is usually the right setting.
 
 ### Channel
 
@@ -117,6 +135,8 @@ Typical values:
 - direct chats: positive integer
 - groups/channels/supergroups: negative integer, often starting with `-100`
 
+If you want one Turin Telegram channel to handle several groups plus your DM, collect all of those ids and use `chat_ids`.
+
 If you do not see the chat you expect:
 
 - make sure you sent a fresh test message after adding the bot
@@ -143,11 +163,13 @@ turin daemon channel create telegram-ops \
   --kind telegram \
   --agent default \
   --setting token_env=TELEGRAM_BOT_TOKEN \
-  --setting chat_id=-1001234567890 \
+  --setting chat_ids=-1001234567890,-100987654321,498502840 \
   --setting poll_timeout_secs=10 \
   --setting poll_interval_ms=250 \
-  --setting stream_mode=typing \
-  --setting stream_include_thinking=false \
+  --setting respond_mode=mentions_or_replies \
+  --setting stream_mode=block \
+  --setting stream_thinking=false \
+  --setting persist_thinking=false \
   --setting start_from_latest=true \
   --setting ignore_bot_messages=true \
   --setting workspace_id=telegram
@@ -156,11 +178,14 @@ turin daemon channel create telegram-ops \
 Setting notes:
 
 - `token_env`: required env var containing the bot token
-- `chat_id`: required numeric Telegram chat id
+- `chat_id`: single numeric Telegram chat id
+- `chat_ids`: optional list of numeric Telegram chat ids, or a comma-separated string of ids
+- `respond_mode`: `all`, `mentions`, `replies`, or `mentions_or_replies`; default `all`
 - `poll_timeout_secs`: long-poll timeout, default `30`, maximum `50`
 - `poll_interval_ms`: delay between empty polls, default `250`
 - `stream_mode`: `off`, `typing`, `draft`, or `block`; default `off`
-- `stream_include_thinking`: optional boolean, default `false`; when enabled, `draft`/`block` previews can include streamed model thinking if the provider emits thinking deltas
+- `stream_thinking`: optional boolean, default `false`; when enabled, `draft`/`block` previews can include streamed model thinking if the provider emits thinking deltas
+- `persist_thinking`: optional boolean, default `false`; when enabled, final Telegram replies keep the thinking block above the answer
 - `start_from_latest`: skip old queued updates at startup
 - `ignore_bot_messages`: ignore bot-authored inbound messages
 - `workspace_id`: optional routing namespace label
@@ -201,11 +226,13 @@ kind = "telegram"
 agent_id = "default"
 idle_ttl_secs = 600
 token_env = "TELEGRAM_BOT_TOKEN"
-chat_id = -1001234567890
+chat_ids = [-1001234567890, -100987654321, 498502840]
 poll_timeout_secs = 10
 poll_interval_ms = 250
-stream_mode = "typing"
-stream_include_thinking = false
+respond_mode = "mentions_or_replies"
+stream_mode = "block"
+stream_thinking = false
+persist_thinking = false
 start_from_latest = true
 ignore_bot_messages = true
 workspace_id = "telegram"
@@ -241,7 +268,8 @@ Streaming notes:
 - `stream_mode = "typing"` sends Telegram `typing` actions while Turin is working, then sends the final reply.
 - `stream_mode = "draft"` streams a partial preview while the response is being generated. Turin prefers Telegram draft streaming in private chats and falls back to a bot-authored placeholder message plus edits when drafts are unavailable.
 - `stream_mode = "block"` is like `draft`, but updates less frequently and favors chunkier preview steps over every small delta.
-- `stream_include_thinking = true` is an additional opt-in. When paired with `draft` or `block`, preview messages can include streamed model thinking before or alongside the partial answer. It has no visible effect with `off` or `typing`.
+- `stream_thinking = true` is an additional opt-in. When paired with `draft` or `block`, preview messages can include streamed model thinking before or alongside the partial answer. It has no visible effect with `off` or `typing`.
+- `persist_thinking = true` keeps the model thinking in the final Telegram reply, rendered as a separate preformatted block above the answer.
 - Thinking previews only appear when the selected model/provider actually emits thinking deltas.
 - Final replies still use the normal Telegram HTML renderer even when preview streaming is enabled.
 
@@ -302,6 +330,7 @@ Likely causes:
 - privacy mode is still enabled
 - the bot was added but no new message was sent afterward
 - the channel is pointed at the wrong `chat_id`
+- `respond_mode` is set to `mentions`, `replies`, or `mentions_or_replies`, and the test message did not match that policy
 
 ### No updates arrive from a channel
 

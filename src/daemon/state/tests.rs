@@ -443,6 +443,34 @@ async fn channel_create_and_update_accept_valid_telegram_settings() -> Result<()
 }
 
 #[tokio::test]
+async fn channel_create_accepts_multi_chat_telegram_settings() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let mut state = DaemonState::load(&config_path).await?;
+
+    let created = state
+        .create_channel(CreateChannelInput {
+            id: "telegram-multi".to_string(),
+            kind: "telegram".to_string(),
+            agent_id: "default".to_string(),
+            idle_ttl_secs: Some(600),
+            enabled: false,
+            settings: json!({
+                "token_env": "TELEGRAM_BOT_TOKEN",
+                "chat_ids": [-100123456, -100654321],
+                "respond_mode": "mentions_or_replies",
+            }),
+        })
+        .await?;
+
+    assert_eq!(created.id, "telegram-multi");
+    assert_eq!(created.settings["chat_ids"], json!([-100123456, -100654321]));
+    assert_eq!(created.settings["respond_mode"], "mentions_or_replies");
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn channel_create_rejects_invalid_telegram_settings() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;

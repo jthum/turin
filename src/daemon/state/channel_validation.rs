@@ -123,10 +123,7 @@ fn validate_telegram_settings(map: &serde_json::Map<String, serde_json::Value>) 
         anyhow::bail!("telegram channel setting 'token_env' must not be empty");
     }
 
-    validate_telegram_chat_id(
-        map.get("chat_id")
-            .ok_or_else(|| anyhow!("telegram channel setting 'chat_id' is required"))?,
-    )?;
+    validate_telegram_chat_targets(map)?;
 
     for key in ["base_url", "workspace_id"] {
         if let Some(value) = map.get(key) {
@@ -166,6 +163,20 @@ fn validate_telegram_settings(map: &serde_json::Map<String, serde_json::Value>) 
         }
     }
 
+    if let Some(value) = map.get("respond_mode") {
+        let Some(mode) = value.as_str() else {
+            anyhow::bail!("telegram channel setting 'respond_mode' must be a string");
+        };
+        if !matches!(
+            mode.trim().to_ascii_lowercase().as_str(),
+            "all" | "mentions" | "replies" | "mentions_or_replies"
+        ) {
+            anyhow::bail!(
+                "telegram channel setting 'respond_mode' must be one of: all, mentions, replies, mentions_or_replies"
+            );
+        }
+    }
+
     if let Some(value) = map.get("poll_timeout_secs") {
         let Some(timeout) = value.as_u64() else {
             anyhow::bail!(
@@ -198,6 +209,47 @@ fn validate_telegram_settings(map: &serde_json::Map<String, serde_json::Value>) 
     }
 
     Ok(())
+}
+
+fn validate_telegram_chat_targets(map: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
+    if let Some(value) = map.get("chat_ids") {
+        match value {
+            serde_json::Value::Array(values) => {
+                if values.is_empty() {
+                    anyhow::bail!(
+                        "telegram channel setting 'chat_ids' must contain at least one numeric chat id"
+                    );
+                }
+                for item in values {
+                    validate_telegram_chat_id(item)?;
+                }
+                return Ok(());
+            }
+            serde_json::Value::String(text) => {
+                let mut count = 0usize;
+                for item in text.split(',').map(str::trim).filter(|item| !item.is_empty()) {
+                    validate_telegram_chat_id(&serde_json::Value::String(item.to_string()))?;
+                    count = count.saturating_add(1);
+                }
+                if count == 0 {
+                    anyhow::bail!(
+                        "telegram channel setting 'chat_ids' must contain at least one numeric chat id"
+                    );
+                }
+                return Ok(());
+            }
+            _ => {
+                anyhow::bail!(
+                    "telegram channel setting 'chat_ids' must be an array or comma-separated string"
+                );
+            }
+        }
+    }
+
+    validate_telegram_chat_id(
+        map.get("chat_id")
+            .ok_or_else(|| anyhow!("telegram channel setting 'chat_id' or 'chat_ids' is required"))?,
+    )
 }
 
 fn validate_telegram_chat_id(value: &serde_json::Value) -> Result<()> {
@@ -298,6 +350,31 @@ mod tests {
     }
 
     #[test]
+    fn telegram_chat_ids_array_is_valid() {
+        validate_channel_settings(
+            "telegram",
+            &json!({
+                "token_env": "TELEGRAM_BOT_TOKEN",
+                "chat_ids": [-100123, -100456]
+            }),
+        )
+        .expect("chat_ids array should be accepted");
+    }
+
+    #[test]
+    fn telegram_chat_ids_string_must_not_be_empty() {
+        let error = validate_channel_settings(
+            "telegram",
+            &json!({
+                "token_env": "TELEGRAM_BOT_TOKEN",
+                "chat_ids": "   "
+            }),
+        )
+        .expect_err("empty chat_ids string should fail");
+        assert!(error.to_string().contains("chat_ids"));
+    }
+
+    #[test]
     fn telegram_poll_timeout_must_be_bounded() {
         let error = validate_channel_settings(
             "telegram",
@@ -351,5 +428,19 @@ mod tests {
         )
         .expect_err("non-boolean persist_thinking should fail");
         assert!(error.to_string().contains("persist_thinking"));
+    }
+
+    #[test]
+    fn telegram_respond_mode_must_be_known() {
+        let error = validate_channel_settings(
+            "telegram",
+            &json!({
+                "token_env": "TELEGRAM_BOT_TOKEN",
+                "chat_id": -100123,
+                "respond_mode": "everyone"
+            }),
+        )
+        .expect_err("invalid respond_mode should fail");
+        assert!(error.to_string().contains("respond_mode"));
     }
 }

@@ -1484,6 +1484,35 @@ async fn daemon_channel_create_rejects_invalid_telegram_settings() -> Result<()>
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn daemon_channel_create_accepts_multi_chat_telegram_settings() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+
+    let created = result_value(
+        daemon
+            .request(DaemonRequest::ChannelCreate(
+                turin::daemon::protocol::CreateChannelParams {
+                    id: "telegram-multi".to_string(),
+                    kind: "telegram".to_string(),
+                    agent_id: "default".to_string(),
+                    idle_ttl_secs: Some(600),
+                    enabled: false,
+                    settings: Some(serde_json::json!({
+                        "token_env": "TELEGRAM_BOT_TOKEN",
+                        "chat_ids": [-100123456, -100654321],
+                        "respond_mode": "mentions_or_replies",
+                    })),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(created["id"], "telegram-multi");
+    assert_eq!(created["settings"]["chat_ids"], serde_json::json!([-100123456, -100654321]));
+    assert_eq!(created["settings"]["respond_mode"], "mentions_or_replies");
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn daemon_telegram_channel_reports_failed_runtime_when_token_is_missing() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
 

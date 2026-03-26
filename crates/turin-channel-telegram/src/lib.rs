@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tokio::time::sleep;
@@ -23,13 +23,14 @@ const MAX_API_REQUEST_ATTEMPTS: u32 = 5;
 pub struct TelegramChannelDriverConfig {
     pub base_url: String,
     pub workspace_id: String,
-    pub chat_id: String,
+    pub chat_ids: Vec<String>,
     pub token: String,
     pub poll_timeout_secs: u64,
     pub poll_interval: Duration,
     pub max_updates_per_poll: u8,
     pub start_from_latest: bool,
     pub ignore_bot_messages: bool,
+    pub respond_mode: TelegramRespondMode,
     pub stream_mode: ChannelStreamMode,
     pub stream_thinking: bool,
     pub persist_thinking: bool,
@@ -54,9 +55,9 @@ impl TelegramChannelDriverConfig {
             )
         })?;
 
-        let chat_id = read_chat_id(settings.get("chat_id")).map_err(|err| {
+        let chat_ids = read_chat_ids(settings).map_err(|err| {
             anyhow!(
-                "[telegram_config_missing_chat_id] Telegram channel setting 'chat_id' is required: {}",
+                "[telegram_config_missing_chat_id] Telegram channel setting 'chat_id' or 'chat_ids' is required: {}",
                 err
             )
         })?;
@@ -143,7 +144,7 @@ impl TelegramChannelDriverConfig {
                 })
                 .transpose()?
                 .unwrap_or_else(|| "telegram".to_string()),
-            chat_id,
+            chat_ids,
             token,
             poll_timeout_secs,
             poll_interval: Duration::from_millis(poll_interval_ms),
@@ -170,6 +171,7 @@ impl TelegramChannelDriverConfig {
                 })
                 .transpose()?
                 .unwrap_or(true),
+            respond_mode: read_respond_mode(settings.get("respond_mode"))?,
             stream_mode: read_stream_mode(settings.get("stream_mode"))?,
             stream_thinking: settings
                 .get("stream_thinking")
@@ -195,6 +197,17 @@ impl TelegramChannelDriverConfig {
                 .unwrap_or(false),
         })
     }
+
+    fn primary_chat_id(&self) -> &str {
+        self.chat_ids
+            .first()
+            .map(String::as_str)
+            .unwrap_or_default()
+    }
+
+    fn allows_chat_id(&self, chat_id: &str) -> bool {
+        self.chat_ids.iter().any(|allowed| allowed == chat_id)
+    }
 }
 
 pub struct TelegramChannelDriver {
@@ -209,6 +222,7 @@ pub struct TelegramChannelDriver {
     progress_states: HashMap<String, TelegramProgressState>,
     last_chat_action_at: HashMap<String, Instant>,
     next_draft_id: i64,
+    bot_identity: Option<TelegramBotIdentity>,
 }
 
 impl TelegramChannelDriver {
@@ -247,6 +261,7 @@ impl TelegramChannelDriver {
             progress_states: HashMap::new(),
             last_chat_action_at: HashMap::new(),
             next_draft_id: 1,
+            bot_identity: None,
         })
     }
 
@@ -306,12 +321,7 @@ impl TelegramChannelDriver {
         conversation: &ChannelConversationKey,
         message: &OutboundMessage,
     ) -> Result<()> {
-        let chat_id = conversation
-            .room_id
-            .as_ref()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or(&self.config.chat_id)
-            .clone();
+        let chat_id = conversation_chat_id(self.config.primary_chat_id(), conversation);
         let message_thread_id = resolve_message_thread_id(conversation)?;
         let payloads = telegram_batches_from_message(&chat_id, message_thread_id, message)?;
         for payload in payloads {
@@ -334,7 +344,7 @@ impl TelegramChannelDriver {
             return Ok(());
         }
 
-        let chat_id = conversation_chat_id(&self.config.chat_id, &event.conversation);
+        let chat_id = conversation_chat_id(self.config.primary_chat_id(), &event.conversation);
         let message_thread_id = resolve_message_thread_id(&event.conversation)?;
         let mut payload = serde_json::Map::new();
         payload.insert("chat_id".to_string(), serde_json::json!(chat_id));
@@ -366,7 +376,7 @@ impl TelegramChannelDriver {
         }
 
         let key = progress_key(&event.conversation)?;
-        let chat_id = conversation_chat_id(&self.config.chat_id, &event.conversation);
+        let chat_id = conversation_chat_id(self.config.primary_chat_id(), &event.conversation);
         let message_thread_id = resolve_message_thread_id(&event.conversation)?;
         let reply_to_message_id = event
             .metadata
@@ -503,7 +513,7 @@ impl TelegramChannelDriver {
     ) -> Result<()> {
         let key = progress_key(conversation)?;
         let progress_state = self.progress_states.remove(&key);
-        let chat_id = conversation_chat_id(&self.config.chat_id, conversation);
+        let chat_id = conversation_chat_id(self.config.primary_chat_id(), conversation);
         let message_thread_id = resolve_message_thread_id(conversation)?;
         let payloads = telegram_batches_from_message(&chat_id, message_thread_id, message)?;
 
@@ -559,7 +569,8 @@ impl TelegramChannelDriver {
 
     fn normalize_update(&self, update: TelegramUpdate) -> Option<InboundEvent> {
         let message = update.message.or(update.channel_post)?;
-        if message.chat.id.to_string() != self.config.chat_id {
+        let chat_id = message.chat.id.to_string();
+        if !self.config.allows_chat_id(&chat_id) {
             return None;
         }
 
@@ -569,10 +580,12 @@ impl TelegramChannelDriver {
             return None;
         }
 
+        if !self.should_accept_message(&message) {
+            return None;
+        }
+
         let text = message
-            .text
-            .as_ref()
-            .or(message.caption.as_ref())
+            .body_text()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())?;
 
@@ -580,7 +593,7 @@ impl TelegramChannelDriver {
         let thread_id = message
             .message_thread_id
             .map(|value| value.to_string())
-            .unwrap_or_else(|| self.config.chat_id.clone());
+            .unwrap_or_else(|| chat_id.clone());
 
         let mut metadata = serde_json::Map::new();
         metadata.insert(
@@ -601,11 +614,15 @@ impl TelegramChannelDriver {
                 serde_json::json!(message_thread_id),
             );
         }
+        metadata.insert(
+            "telegram_chat_type".to_string(),
+            serde_json::json!(message.chat.chat_type),
+        );
 
         let conversation = ChannelConversationKey {
             channel: ChannelKind::Telegram,
             workspace_id: self.config.workspace_id.clone(),
-            room_id: Some(self.config.chat_id.clone()),
+            room_id: Some(chat_id),
             thread_id,
             user_id: Some(user.id.clone()),
         };
@@ -621,6 +638,77 @@ impl TelegramChannelDriver {
             attachments: Vec::new(),
             metadata,
         })
+    }
+
+    fn should_accept_message(&self, message: &TelegramMessage) -> bool {
+        if message.chat.is_private() {
+            return true;
+        }
+
+        match self.config.respond_mode {
+            TelegramRespondMode::All => true,
+            TelegramRespondMode::Mentions => self.message_mentions_bot(message),
+            TelegramRespondMode::Replies => self.message_replies_to_bot(message),
+            TelegramRespondMode::MentionsOrReplies => {
+                self.message_mentions_bot(message) || self.message_replies_to_bot(message)
+            }
+        }
+    }
+
+    fn message_mentions_bot(&self, message: &TelegramMessage) -> bool {
+        let Some(identity) = self.bot_identity.as_ref() else {
+            return false;
+        };
+        let Some(username) = identity.username.as_deref() else {
+            return false;
+        };
+        let Some(body) = message.body_text() else {
+            return false;
+        };
+        let mention = format!("@{}", username);
+
+        for entity in message.body_entities() {
+            match entity.kind.as_str() {
+                "mention" => {
+                    let Some(slice) = utf16_slice(body, entity.offset, entity.length) else {
+                        continue;
+                    };
+                    if slice.eq_ignore_ascii_case(&mention) {
+                        return true;
+                    }
+                }
+                "text_mention" => {
+                    if entity.user.as_ref().map(|user| user.id) == Some(identity.id) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        false
+    }
+
+    fn message_replies_to_bot(&self, message: &TelegramMessage) -> bool {
+        let Some(replied) = message.reply_to_message.as_deref() else {
+            return false;
+        };
+        let Some(identity) = self.bot_identity.as_ref() else {
+            return false;
+        };
+
+        if replied.from.as_ref().map(|user| user.id) == Some(identity.id) {
+            return true;
+        }
+
+        replied
+            .from
+            .as_ref()
+            .and_then(|user| user.username.as_deref())
+            .zip(identity.username.as_deref())
+            .is_some_and(|(reply_username, bot_username)| {
+                reply_username.eq_ignore_ascii_case(bot_username)
+            })
     }
 
     async fn api_request_once<T: DeserializeOwned>(
@@ -760,6 +848,19 @@ impl TelegramChannelDriver {
         );
         self.sleep_or_shutdown(delay).await
     }
+
+    async fn ensure_bot_identity(&mut self) -> std::result::Result<(), TelegramApiError> {
+        if self.bot_identity.is_some() || !self.config.respond_mode.requires_bot_identity() {
+            return Ok(());
+        }
+
+        let bot: TelegramUser = self.request_with_retry("getMe", &serde_json::json!({})).await?;
+        self.bot_identity = Some(TelegramBotIdentity {
+            id: bot.id,
+            username: bot.username.map(|username| username.to_ascii_lowercase()),
+        });
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -787,6 +888,18 @@ impl ChannelDriver for TelegramChannelDriver {
             }
 
             if !self.initialized {
+                match self.ensure_bot_identity().await {
+                    Ok(()) => {
+                        self.consecutive_poll_failures = 0;
+                    }
+                    Err(error) if error.retriable => {
+                        if self.handle_transient_poll_error("getMe", error).await {
+                            return Ok(None);
+                        }
+                        continue;
+                    }
+                    Err(error) => return Err(error.into_anyhow()),
+                }
                 if self.config.start_from_latest {
                     match self.skip_pending_updates().await {
                         Ok(()) => {
@@ -937,7 +1050,13 @@ struct TelegramMessage {
     #[serde(default)]
     caption: Option<String>,
     #[serde(default)]
+    entities: Vec<TelegramMessageEntity>,
+    #[serde(default)]
+    caption_entities: Vec<TelegramMessageEntity>,
+    #[serde(default)]
     message_thread_id: Option<i64>,
+    #[serde(default)]
+    reply_to_message: Option<Box<TelegramMessage>>,
 }
 
 impl TelegramMessage {
@@ -967,6 +1086,18 @@ impl TelegramMessage {
             username: chat.username.clone(),
         })
     }
+
+    fn body_text(&self) -> Option<&String> {
+        self.text.as_ref().or(self.caption.as_ref())
+    }
+
+    fn body_entities(&self) -> &[TelegramMessageEntity] {
+        if self.text.is_some() {
+            &self.entities
+        } else {
+            &self.caption_entities
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -983,8 +1114,20 @@ struct TelegramUser {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct TelegramMessageEntity {
+    #[serde(rename = "type")]
+    kind: String,
+    offset: usize,
+    length: usize,
+    #[serde(default)]
+    user: Option<TelegramUser>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct TelegramChat {
     id: i64,
+    #[serde(rename = "type")]
+    chat_type: String,
     #[serde(default)]
     title: Option<String>,
     #[serde(default)]
@@ -993,9 +1136,35 @@ struct TelegramChat {
     first_name: Option<String>,
 }
 
+impl TelegramChat {
+    fn is_private(&self) -> bool {
+        self.chat_type == "private"
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct TelegramSentMessage {
     message_id: i64,
+}
+
+#[derive(Debug, Clone)]
+struct TelegramBotIdentity {
+    id: i64,
+    username: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TelegramRespondMode {
+    All,
+    Mentions,
+    Replies,
+    MentionsOrReplies,
+}
+
+impl TelegramRespondMode {
+    fn requires_bot_identity(self) -> bool {
+        !matches!(self, Self::All)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1061,6 +1230,60 @@ fn read_chat_id(value: Option<&serde_json::Value>) -> Result<String> {
     Ok(text.to_string())
 }
 
+fn read_chat_ids(settings: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<String>> {
+    if let Some(value) = settings.get("chat_ids") {
+        return read_chat_id_list(value);
+    }
+
+    Ok(vec![read_chat_id(settings.get("chat_id"))?])
+}
+
+fn read_chat_id_list(value: &serde_json::Value) -> Result<Vec<String>> {
+    let mut ids = Vec::new();
+    match value {
+        serde_json::Value::Array(values) => {
+            for item in values {
+                ids.push(read_chat_id(Some(item))?);
+            }
+        }
+        serde_json::Value::String(text) => {
+            for item in text.split(',') {
+                ids.push(read_chat_id(Some(&serde_json::Value::String(
+                    item.trim().to_string(),
+                )))?);
+            }
+        }
+        _ => ids.push(read_chat_id(Some(value))?),
+    }
+
+    let mut seen = HashSet::new();
+    ids.retain(|id| seen.insert(id.clone()));
+    if ids.is_empty() {
+        anyhow::bail!("chat_ids must include at least one numeric chat id");
+    }
+    Ok(ids)
+}
+
+fn read_respond_mode(value: Option<&serde_json::Value>) -> Result<TelegramRespondMode> {
+    let Some(value) = value else {
+        return Ok(TelegramRespondMode::All);
+    };
+    let mode = value.as_str().ok_or_else(|| {
+        anyhow!(
+            "[telegram_config_invalid_respond_mode] Telegram channel setting 'respond_mode' must be a string"
+        )
+    })?;
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "all" => Ok(TelegramRespondMode::All),
+        "mentions" => Ok(TelegramRespondMode::Mentions),
+        "replies" => Ok(TelegramRespondMode::Replies),
+        "mentions_or_replies" => Ok(TelegramRespondMode::MentionsOrReplies),
+        _ => anyhow::bail!(
+            "[telegram_config_invalid_respond_mode] Telegram channel setting 'respond_mode' must be one of: all, mentions, replies, mentions_or_replies"
+        ),
+    }
+}
+
 fn read_stream_mode(value: Option<&serde_json::Value>) -> Result<ChannelStreamMode> {
     let Some(value) = value else {
         return Ok(ChannelStreamMode::Off);
@@ -1093,6 +1316,42 @@ fn conversation_chat_id(default_chat_id: &str, conversation: &ChannelConversatio
         .filter(|value| !value.trim().is_empty())
         .cloned()
         .unwrap_or_else(|| default_chat_id.to_string())
+}
+
+fn utf16_slice(text: &str, offset: usize, length: usize) -> Option<&str> {
+    let end = offset.saturating_add(length);
+    let mut utf16_index = 0usize;
+    let mut start_byte = None;
+    let mut end_byte = None;
+
+    for (byte_index, ch) in text.char_indices() {
+        if utf16_index == offset {
+            start_byte = Some(byte_index);
+        }
+        if utf16_index == end {
+            end_byte = Some(byte_index);
+            break;
+        }
+
+        utf16_index = utf16_index.saturating_add(ch.len_utf16());
+
+        if utf16_index == offset {
+            start_byte = Some(byte_index + ch.len_utf8());
+        }
+        if utf16_index == end {
+            end_byte = Some(byte_index + ch.len_utf8());
+            break;
+        }
+    }
+
+    if offset == utf16_index && start_byte.is_none() {
+        start_byte = Some(text.len());
+    }
+    if end == utf16_index && end_byte.is_none() {
+        end_byte = Some(text.len());
+    }
+
+    Some(&text[start_byte?..end_byte?])
 }
 
 fn chat_id_is_private(chat_id: &str) -> bool {
@@ -2015,13 +2274,14 @@ mod tests {
         TelegramChannelDriverConfig {
             base_url: DEFAULT_BASE_URL.to_string(),
             workspace_id: "telegram".to_string(),
-            chat_id: "-10012345".to_string(),
+            chat_ids: vec!["-10012345".to_string()],
             token: "token".to_string(),
             poll_timeout_secs: 30,
             poll_interval: Duration::from_millis(250),
             max_updates_per_poll: 25,
             start_from_latest: false,
             ignore_bot_messages: true,
+            respond_mode: TelegramRespondMode::All,
             stream_mode: ChannelStreamMode::Off,
             stream_thinking: false,
             persist_thinking: false,
@@ -2042,6 +2302,7 @@ mod tests {
                 message_id: 99,
                 chat: TelegramChat {
                     id: -10012345,
+                    chat_type: "supergroup".to_string(),
                     title: Some("Ops".to_string()),
                     username: None,
                     first_name: None,
@@ -2056,7 +2317,10 @@ mod tests {
                 sender_chat: None,
                 text: Some("hello".to_string()),
                 caption: None,
+                entities: Vec::new(),
+                caption_entities: Vec::new(),
                 message_thread_id: None,
+                reply_to_message: None,
             }),
             channel_post: None,
         };
@@ -2077,6 +2341,7 @@ mod tests {
                 message_id: 100,
                 chat: TelegramChat {
                     id: -10012345,
+                    chat_type: "supergroup".to_string(),
                     title: Some("Ops".to_string()),
                     username: None,
                     first_name: None,
@@ -2091,7 +2356,10 @@ mod tests {
                 sender_chat: None,
                 text: Some("topic ping".to_string()),
                 caption: None,
+                entities: Vec::new(),
+                caption_entities: Vec::new(),
                 message_thread_id: Some(444),
+                reply_to_message: None,
             }),
             channel_post: None,
         };
@@ -2110,6 +2378,7 @@ mod tests {
                 message_id: 101,
                 chat: TelegramChat {
                     id: -10012345,
+                    chat_type: "supergroup".to_string(),
                     title: Some("Ops".to_string()),
                     username: None,
                     first_name: None,
@@ -2124,12 +2393,198 @@ mod tests {
                 sender_chat: None,
                 text: Some("ignore me".to_string()),
                 caption: None,
+                entities: Vec::new(),
+                caption_entities: Vec::new(),
                 message_thread_id: None,
+                reply_to_message: None,
             }),
             channel_post: None,
         };
 
         assert!(driver.normalize_update(update).is_none());
+    }
+
+    #[test]
+    fn normalize_accepts_updates_from_any_configured_chat_id() {
+        let mut config = config();
+        config.chat_ids.push("-10099999".to_string());
+        let (_tx, rx) = watch::channel(false);
+        let driver = TelegramChannelDriver::from_config("telegram-runtime", config, rx).unwrap();
+        let update = TelegramUpdate {
+            update_id: 4,
+            message: Some(TelegramMessage {
+                message_id: 102,
+                chat: TelegramChat {
+                    id: -10099999,
+                    chat_type: "supergroup".to_string(),
+                    title: Some("Second Ops".to_string()),
+                    username: None,
+                    first_name: None,
+                },
+                from: Some(TelegramUser {
+                    id: 10,
+                    is_bot: Some(false),
+                    first_name: Some("Rei".to_string()),
+                    last_name: None,
+                    username: Some("rei".to_string()),
+                }),
+                sender_chat: None,
+                text: Some("hello second room".to_string()),
+                caption: None,
+                entities: Vec::new(),
+                caption_entities: Vec::new(),
+                message_thread_id: None,
+                reply_to_message: None,
+            }),
+            channel_post: None,
+        };
+
+        let event = driver.normalize_update(update).expect("normalized event");
+        assert_eq!(event.conversation.room_id.as_deref(), Some("-10099999"));
+        assert_eq!(event.conversation.thread_id, "-10099999");
+    }
+
+    #[test]
+    fn normalize_mentions_only_requires_explicit_bot_mention_in_groups() {
+        let mut config = config();
+        config.respond_mode = TelegramRespondMode::Mentions;
+        let (_tx, rx) = watch::channel(false);
+        let mut driver = TelegramChannelDriver::from_config("telegram-runtime", config, rx).unwrap();
+        driver.bot_identity = Some(TelegramBotIdentity {
+            id: 42,
+            username: Some("turin_bot".to_string()),
+        });
+
+        let update_without_mention = TelegramUpdate {
+            update_id: 5,
+            message: Some(TelegramMessage {
+                message_id: 103,
+                chat: TelegramChat {
+                    id: -10012345,
+                    chat_type: "supergroup".to_string(),
+                    title: Some("Ops".to_string()),
+                    username: None,
+                    first_name: None,
+                },
+                from: Some(TelegramUser {
+                    id: 11,
+                    is_bot: Some(false),
+                    first_name: Some("Nora".to_string()),
+                    last_name: None,
+                    username: Some("nora".to_string()),
+                }),
+                sender_chat: None,
+                text: Some("hello there".to_string()),
+                caption: None,
+                entities: Vec::new(),
+                caption_entities: Vec::new(),
+                message_thread_id: None,
+                reply_to_message: None,
+            }),
+            channel_post: None,
+        };
+        assert!(driver.normalize_update(update_without_mention).is_none());
+
+        let update_with_mention = TelegramUpdate {
+            update_id: 6,
+            message: Some(TelegramMessage {
+                message_id: 104,
+                chat: TelegramChat {
+                    id: -10012345,
+                    chat_type: "supergroup".to_string(),
+                    title: Some("Ops".to_string()),
+                    username: None,
+                    first_name: None,
+                },
+                from: Some(TelegramUser {
+                    id: 11,
+                    is_bot: Some(false),
+                    first_name: Some("Nora".to_string()),
+                    last_name: None,
+                    username: Some("nora".to_string()),
+                }),
+                sender_chat: None,
+                text: Some("@turin_bot hello there".to_string()),
+                caption: None,
+                entities: vec![TelegramMessageEntity {
+                    kind: "mention".to_string(),
+                    offset: 0,
+                    length: 10,
+                    user: None,
+                }],
+                caption_entities: Vec::new(),
+                message_thread_id: None,
+                reply_to_message: None,
+            }),
+            channel_post: None,
+        };
+        assert!(driver.normalize_update(update_with_mention).is_some());
+    }
+
+    #[test]
+    fn normalize_replies_mode_accepts_replies_to_the_bot() {
+        let mut config = config();
+        config.respond_mode = TelegramRespondMode::Replies;
+        let (_tx, rx) = watch::channel(false);
+        let mut driver = TelegramChannelDriver::from_config("telegram-runtime", config, rx).unwrap();
+        driver.bot_identity = Some(TelegramBotIdentity {
+            id: 42,
+            username: Some("turin_bot".to_string()),
+        });
+
+        let update = TelegramUpdate {
+            update_id: 7,
+            message: Some(TelegramMessage {
+                message_id: 105,
+                chat: TelegramChat {
+                    id: -10012345,
+                    chat_type: "supergroup".to_string(),
+                    title: Some("Ops".to_string()),
+                    username: None,
+                    first_name: None,
+                },
+                from: Some(TelegramUser {
+                    id: 12,
+                    is_bot: Some(false),
+                    first_name: Some("Ira".to_string()),
+                    last_name: None,
+                    username: Some("ira".to_string()),
+                }),
+                sender_chat: None,
+                text: Some("following up".to_string()),
+                caption: None,
+                entities: Vec::new(),
+                caption_entities: Vec::new(),
+                message_thread_id: None,
+                reply_to_message: Some(Box::new(TelegramMessage {
+                    message_id: 1000,
+                    chat: TelegramChat {
+                        id: -10012345,
+                        chat_type: "supergroup".to_string(),
+                        title: Some("Ops".to_string()),
+                        username: None,
+                        first_name: None,
+                    },
+                    from: Some(TelegramUser {
+                        id: 42,
+                        is_bot: Some(true),
+                        first_name: Some("Turin".to_string()),
+                        last_name: None,
+                        username: Some("turin_bot".to_string()),
+                    }),
+                    sender_chat: None,
+                    text: Some("prior answer".to_string()),
+                    caption: None,
+                    entities: Vec::new(),
+                    caption_entities: Vec::new(),
+                    message_thread_id: None,
+                    reply_to_message: None,
+                })),
+            }),
+            channel_post: None,
+        };
+
+        assert!(driver.normalize_update(update).is_some());
     }
 
     #[test]
@@ -2265,19 +2720,22 @@ mod tests {
     }
 
     #[test]
-    fn config_supports_preferred_thinking_setting_aliases() {
+    fn config_supports_chat_lists_and_telegram_stream_settings() {
         unsafe {
             std::env::set_var("TELEGRAM_BOT_TOKEN", "token");
         }
         let config = TelegramChannelDriverConfig::from_settings(&serde_json::json!({
             "token_env": "TELEGRAM_BOT_TOKEN",
-            "chat_id": 498502840,
+            "chat_ids": [498502840, -10012345],
+            "respond_mode": "mentions_or_replies",
             "stream_mode": "block",
             "stream_thinking": true,
             "persist_thinking": true
         }))
         .expect("telegram config should parse");
 
+        assert_eq!(config.chat_ids, vec!["498502840", "-10012345"]);
+        assert_eq!(config.respond_mode, TelegramRespondMode::MentionsOrReplies);
         assert!(config.stream_thinking);
         assert!(config.persist_thinking);
     }

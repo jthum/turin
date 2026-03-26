@@ -284,15 +284,17 @@ async fn channel_runner_emits_progress_updates_for_opted_in_driver() -> Result<(
         .run_driver("default", &mut driver, Some(5_000))
         .await?;
 
-    let progress = progress.lock().expect("progress lock poisoned");
-    assert!(
-        progress.iter().any(|entry| entry == "typing"),
-        "progress log should contain typing updates: {progress:?}"
-    );
-    assert!(
-        progress.iter().any(|entry| entry.starts_with("text:PONG")),
-        "progress log should contain streamed assistant text: {progress:?}"
-    );
+    {
+        let progress = progress.lock().expect("progress lock poisoned");
+        assert!(
+            progress.iter().any(|entry| entry == "typing"),
+            "progress log should contain typing updates: {progress:?}"
+        );
+        assert!(
+            progress.iter().any(|entry| entry.starts_with("text:PONG")),
+            "progress log should contain streamed assistant text: {progress:?}"
+        );
+    }
 
     daemon.stop().await
 }
