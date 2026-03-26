@@ -24,6 +24,7 @@ pub struct TelegramChannelDriverConfig {
     pub base_url: String,
     pub workspace_id: String,
     pub chat_ids: Vec<String>,
+    pub accept_all_chats: bool,
     pub token: String,
     pub poll_timeout_secs: u64,
     pub poll_interval: Duration,
@@ -36,13 +37,19 @@ pub struct TelegramChannelDriverConfig {
     pub persist_thinking: bool,
 }
 
-pub fn validate_settings(settings: &serde_json::Value) -> Result<()> {
-    parse_settings(settings).map(|_| ())
+pub fn validate_settings(
+    settings: &serde_json::Value,
+    allow_unconfigured_chats: bool,
+) -> Result<()> {
+    parse_settings(settings, allow_unconfigured_chats).map(|_| ())
 }
 
 impl TelegramChannelDriverConfig {
-    pub fn from_settings(settings: &serde_json::Value) -> Result<Self> {
-        let settings = parse_settings(settings)?;
+    pub fn from_settings(
+        settings: &serde_json::Value,
+        allow_unconfigured_chats: bool,
+    ) -> Result<Self> {
+        let settings = parse_settings(settings, allow_unconfigured_chats)?;
         let token_env = settings.token_env.as_str();
         let token = std::env::var(token_env).map_err(|_| {
             anyhow!(
@@ -55,6 +62,7 @@ impl TelegramChannelDriverConfig {
             base_url: settings.base_url,
             workspace_id: settings.workspace_id,
             chat_ids: settings.chat_ids,
+            accept_all_chats: settings.accept_all_chats,
             token,
             poll_timeout_secs: settings.poll_timeout_secs,
             poll_interval: Duration::from_millis(settings.poll_interval_ms),
@@ -95,9 +103,13 @@ struct TelegramChannelSettings {
     stream_mode: ChannelStreamMode,
     stream_thinking: bool,
     persist_thinking: bool,
+    accept_all_chats: bool,
 }
 
-fn parse_settings(settings: &serde_json::Value) -> Result<TelegramChannelSettings> {
+fn parse_settings(
+    settings: &serde_json::Value,
+    allow_unconfigured_chats: bool,
+) -> Result<TelegramChannelSettings> {
     let settings = settings
         .as_object()
         .ok_or_else(|| anyhow!("Telegram channel settings must be a JSON object"))?;
@@ -110,12 +122,16 @@ fn parse_settings(settings: &serde_json::Value) -> Result<TelegramChannelSetting
     )?
     .to_string();
 
-    let chat_ids = read_chat_ids(settings).map_err(|err| {
-        anyhow!(
-            "[telegram_config_missing_chat_id] Telegram channel setting 'chat_id' or 'chat_ids' is required: {}",
-            err
-        )
-    })?;
+    let chat_ids = match read_chat_ids(settings) {
+        Ok(ids) => ids,
+        Err(err) if allow_unconfigured_chats => Vec::new(),
+        Err(err) => {
+            return Err(anyhow!(
+                "[telegram_config_missing_chat_id] Telegram channel setting 'chat_id' or 'chat_ids' is required: {}",
+                err
+            ));
+        }
+    };
 
     let poll_timeout_secs = match settings.get("poll_timeout_secs") {
         None => 30,
@@ -250,6 +266,7 @@ fn parse_settings(settings: &serde_json::Value) -> Result<TelegramChannelSetting
             })
             .transpose()?
             .unwrap_or(false),
+        accept_all_chats: allow_unconfigured_chats,
     })
 }
 
@@ -273,8 +290,10 @@ impl TelegramChannelDriver {
         channel_runtime_id: impl Into<String>,
         settings: &serde_json::Value,
         shutdown_rx: watch::Receiver<bool>,
+        allow_unconfigured_chats: bool,
     ) -> Result<Self> {
-        let config = TelegramChannelDriverConfig::from_settings(settings)?;
+        let config =
+            TelegramChannelDriverConfig::from_settings(settings, allow_unconfigured_chats)?;
         Self::from_config(channel_runtime_id, config, shutdown_rx)
     }
 
@@ -613,7 +632,7 @@ impl TelegramChannelDriver {
     fn normalize_update(&self, update: TelegramUpdate) -> Option<InboundEvent> {
         let message = update.message.or(update.channel_post)?;
         let chat_id = message.chat.id.to_string();
-        if !self.config.allows_chat_id(&chat_id) {
+        if !self.config.accept_all_chats && !self.config.allows_chat_id(&chat_id) {
             return None;
         }
 
@@ -897,7 +916,9 @@ impl TelegramChannelDriver {
             return Ok(());
         }
 
-        let bot: TelegramUser = self.request_with_retry("getMe", &serde_json::json!({})).await?;
+        let bot: TelegramUser = self
+            .request_with_retry("getMe", &serde_json::json!({}))
+            .await?;
         self.bot_identity = Some(TelegramBotIdentity {
             id: bot.id,
             username: bot.username.map(|username| username.to_ascii_lowercase()),
@@ -2318,6 +2339,7 @@ mod tests {
             base_url: DEFAULT_BASE_URL.to_string(),
             workspace_id: "telegram".to_string(),
             chat_ids: vec!["-10012345".to_string()],
+            accept_all_chats: false,
             token: "token".to_string(),
             poll_timeout_secs: 30,
             poll_interval: Duration::from_millis(250),
@@ -2492,7 +2514,8 @@ mod tests {
         let mut config = config();
         config.respond_mode = TelegramRespondMode::Mentions;
         let (_tx, rx) = watch::channel(false);
-        let mut driver = TelegramChannelDriver::from_config("telegram-runtime", config, rx).unwrap();
+        let mut driver =
+            TelegramChannelDriver::from_config("telegram-runtime", config, rx).unwrap();
         driver.bot_identity = Some(TelegramBotIdentity {
             id: 42,
             username: Some("turin_bot".to_string()),
@@ -2569,7 +2592,8 @@ mod tests {
         let mut config = config();
         config.respond_mode = TelegramRespondMode::Replies;
         let (_tx, rx) = watch::channel(false);
-        let mut driver = TelegramChannelDriver::from_config("telegram-runtime", config, rx).unwrap();
+        let mut driver =
+            TelegramChannelDriver::from_config("telegram-runtime", config, rx).unwrap();
         driver.bot_identity = Some(TelegramBotIdentity {
             id: 42,
             username: Some("turin_bot".to_string()),
@@ -2767,14 +2791,17 @@ mod tests {
         unsafe {
             std::env::set_var("TELEGRAM_BOT_TOKEN", "token");
         }
-        let config = TelegramChannelDriverConfig::from_settings(&serde_json::json!({
-            "token_env": "TELEGRAM_BOT_TOKEN",
-            "chat_ids": [498502840, -10012345],
-            "respond_mode": "mentions_or_replies",
-            "stream_mode": "block",
-            "stream_thinking": true,
-            "persist_thinking": true
-        }))
+        let config = TelegramChannelDriverConfig::from_settings(
+            &serde_json::json!({
+                "token_env": "TELEGRAM_BOT_TOKEN",
+                "chat_ids": [498502840, -10012345],
+                "respond_mode": "mentions_or_replies",
+                "stream_mode": "block",
+                "stream_thinking": true,
+                "persist_thinking": true
+            }),
+            false,
+        )
         .expect("telegram config should parse");
 
         assert_eq!(config.chat_ids, vec!["498502840", "-10012345"]);
@@ -2785,12 +2812,27 @@ mod tests {
 
     #[test]
     fn validate_settings_does_not_require_live_token_env() {
-        validate_settings(&serde_json::json!({
-            "token_env": "TELEGRAM_TOKEN_NOT_SET_FOR_VALIDATION",
-            "chat_ids": [498502840],
-            "respond_mode": "mentions_or_replies"
-        }))
+        validate_settings(
+            &serde_json::json!({
+                "token_env": "TELEGRAM_TOKEN_NOT_SET_FOR_VALIDATION",
+                "chat_ids": [498502840],
+                "respond_mode": "mentions_or_replies"
+            }),
+            false,
+        )
         .expect("settings validation should not require the token env var to exist");
+    }
+
+    #[test]
+    fn validate_settings_allows_missing_chat_ids_when_unconfigured_chats_are_enabled() {
+        validate_settings(
+            &serde_json::json!({
+                "token_env": "TELEGRAM_TOKEN_NOT_SET_FOR_VALIDATION",
+                "respond_mode": "mentions_or_replies"
+            }),
+            true,
+        )
+        .expect("discovery mode should allow telegram channels without explicit chat ids");
     }
 
     #[test]

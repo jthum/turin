@@ -130,7 +130,9 @@ base_url = "PONG"
             turin_daemon_client::DaemonClient::new(&self.endpoint),
             RunnerConfig {
                 state_path: self.workspace_root.join(".turin/channel-bindings.json"),
+                access_state_path: self.workspace_root.join(".turin/channel-access.json"),
                 idle_ttl: Some(Duration::from_secs(600)),
+                access_policy: Default::default(),
             },
         )
     }
@@ -465,6 +467,7 @@ async fn telegram_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
             base_url: server.base_url.clone(),
             workspace_id: "telegram".to_string(),
             chat_ids: vec!["-100777".to_string()],
+            accept_all_chats: false,
             token: "test-token".to_string(),
             poll_timeout_secs: 0,
             poll_interval: Duration::from_millis(25),
@@ -567,6 +570,7 @@ async fn telegram_channel_driver_retries_transient_poll_and_send_failures() -> R
             base_url: server.base_url.clone(),
             workspace_id: "telegram".to_string(),
             chat_ids: vec!["-100777".to_string()],
+            accept_all_chats: false,
             token: "test-token".to_string(),
             poll_timeout_secs: 0,
             poll_interval: Duration::from_millis(25),
@@ -644,6 +648,7 @@ async fn telegram_channel_driver_streams_progress_before_final_message() -> Resu
             base_url: server.base_url.clone(),
             workspace_id: "telegram".to_string(),
             chat_ids: vec!["498502840".to_string()],
+            accept_all_chats: false,
             token: "test-token".to_string(),
             poll_timeout_secs: 0,
             poll_interval: Duration::from_millis(25),
@@ -739,6 +744,7 @@ async fn telegram_progress_preview_can_include_thinking_text() -> Result<()> {
             base_url: server.base_url.clone(),
             workspace_id: "telegram".to_string(),
             chat_ids: vec!["498502840".to_string()],
+            accept_all_chats: false,
             token: "test-token".to_string(),
             poll_timeout_secs: 0,
             poll_interval: Duration::from_millis(25),

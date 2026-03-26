@@ -2,13 +2,13 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 use tokio::time::{Instant, MissedTickBehavior};
 use turin_channel_core::{
-    ChannelCapabilities, ChannelConversationKey, ChannelKind, ConversationBinding, InboundEvent,
-    OutboundMessage, RoutingDecision, decide_routing,
+    ChannelCapabilities, ChannelConversationKey, ChannelKind, ChannelUser, ConversationBinding,
+    InboundEvent, OutboundMessage, RoutingDecision, decide_routing,
 };
 use turin_daemon_client::DaemonClient;
 use turin_daemon_protocol::{
@@ -19,12 +19,169 @@ use turin_daemon_protocol::{
 #[derive(Debug, Clone)]
 pub struct RunnerConfig {
     pub state_path: PathBuf,
+    pub access_state_path: PathBuf,
     pub idle_ttl: Option<Duration>,
+    pub access_policy: ChannelAccessPolicy,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct BindingFile {
     bindings: HashMap<String, ConversationBinding>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PairingMode {
+    Off,
+    Pending,
+    Auto,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelAccessPolicy {
+    pub pairing_mode: PairingMode,
+    pub allowed_user_ids: HashSet<String>,
+    pub allowed_usernames: HashSet<String>,
+}
+
+impl Default for ChannelAccessPolicy {
+    fn default() -> Self {
+        Self {
+            pairing_mode: PairingMode::Off,
+            allowed_user_ids: HashSet::new(),
+            allowed_usernames: HashSet::new(),
+        }
+    }
+}
+
+impl ChannelAccessPolicy {
+    pub fn from_settings(settings: &Value) -> Result<Self> {
+        let map = settings
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("Channel settings must be a JSON object"))?;
+        let pairing_mode = parse_pairing_mode(map.get("pairing_mode"))?;
+        Ok(Self {
+            pairing_mode,
+            allowed_user_ids: parse_string_set(map.get("allowed_user_ids"), "allowed_user_ids")?,
+            allowed_usernames: parse_string_set(map.get("allowed_usernames"), "allowed_usernames")?,
+        })
+    }
+
+    pub fn validate_settings(settings: &Value) -> Result<()> {
+        Self::from_settings(settings).map(|_| ())
+    }
+
+    pub fn requires_unconfigured_inbound(&self) -> bool {
+        !matches!(self.pairing_mode, PairingMode::Off)
+    }
+
+    fn allows_user(&self, user: &ChannelUser) -> bool {
+        if self.allowed_user_ids.is_empty() && self.allowed_usernames.is_empty() {
+            return true;
+        }
+
+        self.allowed_user_ids.contains(&user.id)
+            || user.username.as_ref().is_some_and(|username| {
+                self.allowed_usernames
+                    .contains(&username.to_ascii_lowercase())
+            })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelRoomRef {
+    pub channel: ChannelKind,
+    pub workspace_id: String,
+    pub room_id: Option<String>,
+    pub thread_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApprovedRoomView {
+    pub room: ChannelRoomRef,
+    pub approved_at_unix_secs: u64,
+    pub approved_by_user_id: Option<String>,
+    pub approved_by_username: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingRoomView {
+    pub room: ChannelRoomRef,
+    pub first_seen_unix_secs: u64,
+    pub last_seen_unix_secs: u64,
+    pub sample_user_id: Option<String>,
+    pub sample_username: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelAccessSnapshot {
+    pub approved_rooms: Vec<ApprovedRoomView>,
+    pub pending_rooms: Vec<PendingRoomView>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct AccessStateFile {
+    #[serde(default)]
+    approved_rooms: HashMap<String, ApprovedRoom>,
+    #[serde(default)]
+    pending_rooms: HashMap<String, PendingRoom>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ApprovedRoom {
+    room: ChannelRoomKey,
+    approved_at_unix_secs: u64,
+    approved_by_user_id: Option<String>,
+    approved_by_username: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PendingRoom {
+    room: ChannelRoomKey,
+    first_seen_unix_secs: u64,
+    last_seen_unix_secs: u64,
+    sample_user_id: Option<String>,
+    sample_username: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct ChannelRoomKey {
+    channel: ChannelKind,
+    workspace_id: String,
+    room_id: Option<String>,
+    thread_id: String,
+}
+
+impl From<&ChannelConversationKey> for ChannelRoomKey {
+    fn from(value: &ChannelConversationKey) -> Self {
+        Self {
+            channel: value.channel.clone(),
+            workspace_id: value.workspace_id.clone(),
+            room_id: value.room_id.clone(),
+            thread_id: value.thread_id.clone(),
+        }
+    }
+}
+
+impl From<&ChannelRoomKey> for ChannelRoomRef {
+    fn from(value: &ChannelRoomKey) -> Self {
+        Self {
+            channel: value.channel.clone(),
+            workspace_id: value.workspace_id.clone(),
+            room_id: value.room_id.clone(),
+            thread_id: value.thread_id.clone(),
+        }
+    }
+}
+
+impl From<&ChannelRoomRef> for ChannelRoomKey {
+    fn from(value: &ChannelRoomRef) -> Self {
+        Self {
+            channel: value.channel.clone(),
+            workspace_id: value.workspace_id.clone(),
+            room_id: value.room_id.clone(),
+            thread_id: value.thread_id.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -103,6 +260,90 @@ impl FileBindingStore {
     }
 }
 
+pub struct FileAccessStateStore {
+    path: PathBuf,
+}
+
+impl FileAccessStateStore {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    async fn load(&self) -> Result<AccessStateFile> {
+        if !self.path.exists() {
+            return Ok(AccessStateFile::default());
+        }
+        let raw = tokio::fs::read_to_string(&self.path)
+            .await
+            .with_context(|| format!("Failed to read '{}'", self.path.display()))?;
+        serde_json::from_str(&raw)
+            .with_context(|| format!("Failed to parse '{}'", self.path.display()))
+    }
+
+    async fn save(&self, state: &AccessStateFile) -> Result<()> {
+        if let Some(parent) = self.path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let tmp = self.path.with_extension("json.tmp");
+        let body = serde_json::to_string_pretty(state)?;
+        tokio::fs::write(&tmp, body).await?;
+        tokio::fs::rename(&tmp, &self.path).await?;
+        Ok(())
+    }
+
+    pub async fn snapshot(&self) -> Result<ChannelAccessSnapshot> {
+        let state = self.load().await?;
+        Ok(channel_access_snapshot(&state))
+    }
+
+    pub async fn approve(
+        &self,
+        room: &ChannelRoomRef,
+        approved_by_user_id: Option<String>,
+        approved_by_username: Option<String>,
+    ) -> Result<ChannelAccessSnapshot> {
+        let mut state = self.load().await?;
+        let room_key = ChannelRoomKey::from(room);
+        let serialized_room = serialize_room_key(&room_key)?;
+        state.pending_rooms.remove(&serialized_room);
+        state.approved_rooms.insert(
+            serialized_room,
+            ApprovedRoom {
+                room: room_key,
+                approved_at_unix_secs: unix_secs(SystemTime::now()),
+                approved_by_user_id,
+                approved_by_username,
+            },
+        );
+        self.save(&state).await?;
+        Ok(channel_access_snapshot(&state))
+    }
+
+    pub async fn reject_pending(&self, room: &ChannelRoomRef) -> Result<ChannelAccessSnapshot> {
+        let mut state = self.load().await?;
+        state
+            .pending_rooms
+            .remove(&serialize_room_key(&ChannelRoomKey::from(room))?);
+        self.save(&state).await?;
+        Ok(channel_access_snapshot(&state))
+    }
+
+    pub async fn revoke(&self, room: &ChannelRoomRef) -> Result<ChannelAccessSnapshot> {
+        let mut state = self.load().await?;
+        state
+            .approved_rooms
+            .remove(&serialize_room_key(&ChannelRoomKey::from(room))?);
+        self.save(&state).await?;
+        Ok(channel_access_snapshot(&state))
+    }
+}
+
+enum EventAccessDecision {
+    Allow,
+    Pending { notify: bool },
+    Ignore,
+}
+
 #[async_trait]
 pub trait ChannelDriver {
     fn kind(&self) -> ChannelKind;
@@ -145,7 +386,9 @@ pub trait ChannelDriver {
 pub struct ChannelRunner {
     daemon: DaemonClient,
     bindings: FileBindingStore,
+    access_state: FileAccessStateStore,
     idle_ttl: Option<Duration>,
+    access_policy: ChannelAccessPolicy,
 }
 
 impl ChannelRunner {
@@ -153,7 +396,9 @@ impl ChannelRunner {
         Self {
             daemon,
             bindings: FileBindingStore::new(config.state_path),
+            access_state: FileAccessStateStore::new(config.access_state_path),
             idle_ttl: config.idle_ttl,
+            access_policy: config.access_policy,
         }
     }
 
@@ -287,6 +532,66 @@ impl ChannelRunner {
         Ok(enrich_outbound_for_event(task_to_outbound(&task), event))
     }
 
+    async fn authorize_event(&self, event: &InboundEvent) -> Result<EventAccessDecision> {
+        if !self.access_policy.allows_user(&event.user) {
+            return Ok(EventAccessDecision::Ignore);
+        }
+
+        if matches!(self.access_policy.pairing_mode, PairingMode::Off) {
+            return Ok(EventAccessDecision::Allow);
+        }
+
+        let room = ChannelRoomKey::from(&event.conversation);
+        let room_key = serialize_room_key(&room)?;
+        let mut state = self.access_state.load().await?;
+        if state.approved_rooms.contains_key(&room_key) {
+            return Ok(EventAccessDecision::Allow);
+        }
+
+        match self.access_policy.pairing_mode {
+            PairingMode::Off => Ok(EventAccessDecision::Allow),
+            PairingMode::Auto => {
+                let now = SystemTime::now();
+                state.approved_rooms.insert(
+                    room_key.clone(),
+                    ApprovedRoom {
+                        room,
+                        approved_at_unix_secs: unix_secs(now),
+                        approved_by_user_id: Some(event.user.id.clone()),
+                        approved_by_username: event.user.username.clone(),
+                    },
+                );
+                state.pending_rooms.remove(&room_key);
+                self.access_state.save(&state).await?;
+                Ok(EventAccessDecision::Allow)
+            }
+            PairingMode::Pending => {
+                let now_secs = unix_secs(SystemTime::now());
+                let notify = match state.pending_rooms.get_mut(&room_key) {
+                    Some(existing) => {
+                        existing.last_seen_unix_secs = now_secs;
+                        false
+                    }
+                    None => {
+                        state.pending_rooms.insert(
+                            room_key,
+                            PendingRoom {
+                                room,
+                                first_seen_unix_secs: now_secs,
+                                last_seen_unix_secs: now_secs,
+                                sample_user_id: Some(event.user.id.clone()),
+                                sample_username: event.user.username.clone(),
+                            },
+                        );
+                        true
+                    }
+                };
+                self.access_state.save(&state).await?;
+                Ok(EventAccessDecision::Pending { notify })
+            }
+        }
+    }
+
     pub async fn run_driver<D: ChannelDriver + Send>(
         &self,
         agent_id: &str,
@@ -295,6 +600,18 @@ impl ChannelRunner {
     ) -> Result<()> {
         let run_result = async {
             while let Some(event) = driver.next_event().await? {
+                match self.authorize_event(&event).await? {
+                    EventAccessDecision::Allow => {}
+                    EventAccessDecision::Ignore => continue,
+                    EventAccessDecision::Pending { notify } => {
+                        if notify {
+                            driver
+                                .send(&event.conversation, pending_approval_message())
+                                .await?;
+                        }
+                        continue;
+                    }
+                }
                 let reset_requested = event
                     .metadata
                     .get("reset_session")
@@ -563,6 +880,133 @@ fn serialize_binding_key(key: &ChannelConversationKey) -> Result<String> {
     Ok(serde_json::to_string(key)?)
 }
 
+fn serialize_room_key(key: &ChannelRoomKey) -> Result<String> {
+    Ok(serde_json::to_string(key)?)
+}
+
+fn channel_access_snapshot(state: &AccessStateFile) -> ChannelAccessSnapshot {
+    let mut approved_rooms: Vec<_> = state
+        .approved_rooms
+        .values()
+        .map(|room| ApprovedRoomView {
+            room: ChannelRoomRef::from(&room.room),
+            approved_at_unix_secs: room.approved_at_unix_secs,
+            approved_by_user_id: room.approved_by_user_id.clone(),
+            approved_by_username: room.approved_by_username.clone(),
+        })
+        .collect();
+    approved_rooms.sort_by(|left, right| {
+        left.room
+            .workspace_id
+            .cmp(&right.room.workspace_id)
+            .then_with(|| left.room.room_id.cmp(&right.room.room_id))
+            .then_with(|| left.room.thread_id.cmp(&right.room.thread_id))
+    });
+
+    let mut pending_rooms: Vec<_> = state
+        .pending_rooms
+        .values()
+        .map(|room| PendingRoomView {
+            room: ChannelRoomRef::from(&room.room),
+            first_seen_unix_secs: room.first_seen_unix_secs,
+            last_seen_unix_secs: room.last_seen_unix_secs,
+            sample_user_id: room.sample_user_id.clone(),
+            sample_username: room.sample_username.clone(),
+        })
+        .collect();
+    pending_rooms.sort_by(|left, right| {
+        left.room
+            .workspace_id
+            .cmp(&right.room.workspace_id)
+            .then_with(|| left.room.room_id.cmp(&right.room.room_id))
+            .then_with(|| left.room.thread_id.cmp(&right.room.thread_id))
+    });
+
+    ChannelAccessSnapshot {
+        approved_rooms,
+        pending_rooms,
+    }
+}
+
+fn parse_pairing_mode(value: Option<&Value>) -> Result<PairingMode> {
+    let Some(value) = value else {
+        return Ok(PairingMode::Off);
+    };
+    let mode = value
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("channel setting 'pairing_mode' must be a string"))?;
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "off" => Ok(PairingMode::Off),
+        "pending" => Ok(PairingMode::Pending),
+        "auto" => Ok(PairingMode::Auto),
+        _ => anyhow::bail!("channel setting 'pairing_mode' must be one of: off, pending, auto"),
+    }
+}
+
+fn parse_string_set(value: Option<&Value>, key: &str) -> Result<HashSet<String>> {
+    let mut out = HashSet::new();
+    let Some(value) = value else {
+        return Ok(out);
+    };
+
+    match value {
+        Value::Array(values) => {
+            for item in values {
+                let text = item.as_str().ok_or_else(|| {
+                    anyhow::anyhow!("channel setting '{}' must be an array of strings", key)
+                })?;
+                let normalized = normalize_string_item(text).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "channel setting '{}' must not contain empty string values",
+                        key
+                    )
+                })?;
+                out.insert(normalized);
+            }
+        }
+        Value::String(text) => {
+            for item in text.split(',') {
+                let normalized = normalize_string_item(item).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "channel setting '{}' must not contain empty string values",
+                        key
+                    )
+                })?;
+                out.insert(normalized);
+            }
+        }
+        _ => {
+            anyhow::bail!(
+                "channel setting '{}' must be a string or array of strings",
+                key
+            );
+        }
+    }
+
+    Ok(out)
+}
+
+fn normalize_string_item(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_ascii_lowercase())
+    }
+}
+
+fn pending_approval_message() -> OutboundMessage {
+    OutboundMessage::text(
+        "This conversation is pending approval. Turin will not respond here until the operator approves this room.",
+    )
+}
+
+fn unix_secs(time: SystemTime) -> u64 {
+    time.duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
 fn task_to_outbound(task: &TaskSnapshot) -> OutboundMessage {
     if let Some(output) = task.output.as_ref() {
         if let Some(structured) = try_parse_structured_outbound(output) {
@@ -735,6 +1179,185 @@ mod tests {
         store.save(&map).await.unwrap();
         let loaded = store.load().await.unwrap();
         assert_eq!(loaded.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn file_access_state_store_round_trips() {
+        let dir = tempdir().unwrap();
+        let store = FileAccessStateStore::new(dir.path().join("access.json"));
+        let room = ChannelRoomKey::from(&sample_key());
+        let key = serialize_room_key(&room).unwrap();
+        let mut state = AccessStateFile::default();
+        state.approved_rooms.insert(
+            key,
+            ApprovedRoom {
+                room,
+                approved_at_unix_secs: 1,
+                approved_by_user_id: Some("user".into()),
+                approved_by_username: Some("owner".into()),
+            },
+        );
+        store.save(&state).await.unwrap();
+        let loaded = store.load().await.unwrap();
+        assert_eq!(loaded.approved_rooms.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn file_access_state_store_manages_public_snapshot() {
+        let dir = tempdir().unwrap();
+        let store = FileAccessStateStore::new(dir.path().join("access.json"));
+        let room = ChannelRoomRef {
+            channel: ChannelKind::Telegram,
+            workspace_id: "telegram".into(),
+            room_id: Some("-100123".into()),
+            thread_id: "-100123".into(),
+        };
+
+        let snapshot = store
+            .approve(&room, Some("owner".into()), Some("jay".into()))
+            .await
+            .unwrap();
+        assert_eq!(snapshot.approved_rooms.len(), 1);
+        assert!(snapshot.pending_rooms.is_empty());
+
+        let snapshot = store.reject_pending(&room).await.unwrap();
+        assert_eq!(snapshot.approved_rooms.len(), 1);
+        assert!(snapshot.pending_rooms.is_empty());
+
+        let snapshot = store.revoke(&room).await.unwrap();
+        assert!(snapshot.approved_rooms.is_empty());
+    }
+
+    #[test]
+    fn access_policy_parses_pairing_and_allowlists() {
+        let policy = ChannelAccessPolicy::from_settings(&serde_json::json!({
+            "pairing_mode": "auto",
+            "allowed_user_ids": ["123", "456"],
+            "allowed_usernames": "alice,bob"
+        }))
+        .expect("policy should parse");
+        assert_eq!(policy.pairing_mode, PairingMode::Auto);
+        assert!(policy.allowed_user_ids.contains("123"));
+        assert!(policy.allowed_usernames.contains("alice"));
+        assert!(policy.allowed_usernames.contains("bob"));
+    }
+
+    fn test_runner(dir: &tempfile::TempDir, policy: ChannelAccessPolicy) -> ChannelRunner {
+        ChannelRunner::new(
+            turin_daemon_client::DaemonClient::new(dir.path().join("dummy.sock")),
+            RunnerConfig {
+                state_path: dir.path().join("bindings.json"),
+                access_state_path: dir.path().join("access.json"),
+                idle_ttl: Some(Duration::from_secs(600)),
+                access_policy: policy,
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn authorize_event_records_pending_rooms_once() {
+        let dir = tempdir().unwrap();
+        let runner = test_runner(
+            &dir,
+            ChannelAccessPolicy {
+                pairing_mode: PairingMode::Pending,
+                ..Default::default()
+            },
+        );
+        let event = InboundEvent {
+            conversation: sample_key(),
+            message: ChannelMessageRef {
+                conversation: sample_key(),
+                message_id: "m1".into(),
+            },
+            user: ChannelUser {
+                id: "u1".into(),
+                display_name: Some("User".into()),
+                username: Some("user".into()),
+            },
+            text: "hello".into(),
+            attachments: vec![],
+            metadata: Default::default(),
+        };
+
+        assert!(matches!(
+            runner.authorize_event(&event).await.unwrap(),
+            EventAccessDecision::Pending { notify: true }
+        ));
+        assert!(matches!(
+            runner.authorize_event(&event).await.unwrap(),
+            EventAccessDecision::Pending { notify: false }
+        ));
+    }
+
+    #[tokio::test]
+    async fn authorize_event_auto_approves_allowed_senders() {
+        let dir = tempdir().unwrap();
+        let runner = test_runner(
+            &dir,
+            ChannelAccessPolicy {
+                pairing_mode: PairingMode::Auto,
+                allowed_user_ids: HashSet::from(["u1".to_string()]),
+                allowed_usernames: HashSet::new(),
+            },
+        );
+        let event = InboundEvent {
+            conversation: sample_key(),
+            message: ChannelMessageRef {
+                conversation: sample_key(),
+                message_id: "m1".into(),
+            },
+            user: ChannelUser {
+                id: "u1".into(),
+                display_name: Some("User".into()),
+                username: Some("user".into()),
+            },
+            text: "hello".into(),
+            attachments: vec![],
+            metadata: Default::default(),
+        };
+
+        assert!(matches!(
+            runner.authorize_event(&event).await.unwrap(),
+            EventAccessDecision::Allow
+        ));
+        assert!(matches!(
+            runner.authorize_event(&event).await.unwrap(),
+            EventAccessDecision::Allow
+        ));
+    }
+
+    #[tokio::test]
+    async fn authorize_event_ignores_unlisted_senders() {
+        let dir = tempdir().unwrap();
+        let runner = test_runner(
+            &dir,
+            ChannelAccessPolicy {
+                pairing_mode: PairingMode::Auto,
+                allowed_user_ids: HashSet::from(["owner".to_string()]),
+                allowed_usernames: HashSet::new(),
+            },
+        );
+        let event = InboundEvent {
+            conversation: sample_key(),
+            message: ChannelMessageRef {
+                conversation: sample_key(),
+                message_id: "m1".into(),
+            },
+            user: ChannelUser {
+                id: "intruder".into(),
+                display_name: Some("Intruder".into()),
+                username: Some("intruder".into()),
+            },
+            text: "hello".into(),
+            attachments: vec![],
+            metadata: Default::default(),
+        };
+
+        assert!(matches!(
+            runner.authorize_event(&event).await.unwrap(),
+            EventAccessDecision::Ignore
+        ));
     }
 
     #[test]

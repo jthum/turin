@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
+use turin_channel_core::ChannelKind;
+use turin_channel_runner::{ChannelAccessSnapshot, ChannelRoomRef, FileAccessStateStore};
 
 use super::{
     AgentDetail, ChannelDetail, CreateAgentInput, CreateChannelInput, DaemonState, DaemonStatus,
@@ -344,17 +346,101 @@ impl DaemonState {
         ))
     }
 
+    pub async fn channel_access_snapshot(
+        &self,
+        channel_id: &str,
+    ) -> Result<Option<ChannelAccessSnapshot>> {
+        let Some(_) = self.channel_detail(channel_id) else {
+            return Ok(None);
+        };
+        let store = FileAccessStateStore::new(self.channel_access_state_path(channel_id));
+        Ok(Some(store.snapshot().await?))
+    }
+
+    pub async fn approve_channel_room(
+        &self,
+        channel_id: &str,
+        workspace_id: String,
+        room_id: Option<String>,
+        thread_id: String,
+    ) -> Result<Option<ChannelAccessSnapshot>> {
+        let Some(channel) = self.channel_detail(channel_id) else {
+            return Ok(None);
+        };
+        let store = FileAccessStateStore::new(self.channel_access_state_path(channel_id));
+        let snapshot = store
+            .approve(
+                &ChannelRoomRef {
+                    channel: parse_channel_kind(&channel.kind),
+                    workspace_id,
+                    room_id,
+                    thread_id,
+                },
+                None,
+                Some("operator".to_string()),
+            )
+            .await?;
+        Ok(Some(snapshot))
+    }
+
+    pub async fn reject_channel_room(
+        &self,
+        channel_id: &str,
+        workspace_id: String,
+        room_id: Option<String>,
+        thread_id: String,
+    ) -> Result<Option<ChannelAccessSnapshot>> {
+        let Some(channel) = self.channel_detail(channel_id) else {
+            return Ok(None);
+        };
+        let store = FileAccessStateStore::new(self.channel_access_state_path(channel_id));
+        let snapshot = store
+            .reject_pending(&ChannelRoomRef {
+                channel: parse_channel_kind(&channel.kind),
+                workspace_id,
+                room_id,
+                thread_id,
+            })
+            .await?;
+        Ok(Some(snapshot))
+    }
+
+    pub async fn revoke_channel_room(
+        &self,
+        channel_id: &str,
+        workspace_id: String,
+        room_id: Option<String>,
+        thread_id: String,
+    ) -> Result<Option<ChannelAccessSnapshot>> {
+        let Some(channel) = self.channel_detail(channel_id) else {
+            return Ok(None);
+        };
+        let store = FileAccessStateStore::new(self.channel_access_state_path(channel_id));
+        let snapshot = store
+            .revoke(&ChannelRoomRef {
+                channel: parse_channel_kind(&channel.kind),
+                workspace_id,
+                room_id,
+                thread_id,
+            })
+            .await?;
+        Ok(Some(snapshot))
+    }
+
     pub async fn create_channel(&mut self, input: CreateChannelInput) -> Result<ChannelDetail> {
         super::helpers::validate_channel_id(&input.id)?;
         if input.kind.trim().is_empty() {
             anyhow::bail!("Channel kind cannot be empty");
         }
         self.ensure_channel_agent_exists(&input.agent_id)?;
+        let access_policy =
+            turin_channel_runner::ChannelAccessPolicy::from_settings(&input.settings)?;
         let channel_dir = self.watch_paths().channels_dir.join(&input.id);
         super::channel_validation::validate_channel_settings(
             &input.kind,
             &channel_dir,
             &input.settings,
+            &access_policy,
         )?;
         if channel_dir.exists() {
             anyhow::bail!("Channel '{}' already exists", input.id);
@@ -417,10 +503,13 @@ impl DaemonState {
         }
         let settings_value = serde_json::to_value(file.extra.clone())
             .context("Failed to serialize channel settings for validation")?;
+        let access_policy =
+            turin_channel_runner::ChannelAccessPolicy::from_settings(&settings_value)?;
         super::channel_validation::validate_channel_settings(
             &file.kind,
             &channel_dir,
             &settings_value,
+            &access_policy,
         )?;
 
         write_channel_file(&channel_dir, &file)?;
@@ -474,5 +563,22 @@ impl DaemonState {
             return Ok(());
         }
         anyhow::bail!("Channel agent '{}' does not exist", agent_id)
+    }
+
+    fn channel_access_state_path(&self, channel_id: &str) -> PathBuf {
+        PathBuf::from(&self.bootstrap_config.kernel.workspace_root)
+            .join(".turin")
+            .join("channels")
+            .join(format!("{channel_id}-access.json"))
+    }
+}
+
+fn parse_channel_kind(kind: &str) -> ChannelKind {
+    match kind.trim().to_ascii_lowercase().as_str() {
+        "discord" => ChannelKind::Discord,
+        "telegram" => ChannelKind::Telegram,
+        "slack" => ChannelKind::Slack,
+        "matrix" => ChannelKind::Matrix,
+        other => ChannelKind::Other(other.to_string()),
     }
 }

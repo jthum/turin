@@ -279,11 +279,18 @@ impl ChannelRuntimeManager {
                 let binding_state = workspace_root
                     .join(".turin/channels")
                     .join(format!("{}-bindings.json", channel.id));
+                let access_state = workspace_root
+                    .join(".turin/channels")
+                    .join(format!("{}-access.json", channel.id));
+                let access_policy =
+                    turin_channel_runner::ChannelAccessPolicy::from_settings(&channel.settings)?;
                 let runner = turin_channel_runner::ChannelRunner::new(
                     daemon,
                     turin_channel_runner::RunnerConfig {
                         state_path: binding_state,
+                        access_state_path: access_state,
                         idle_ttl: channel.idle_ttl_secs.map(Duration::from_secs),
+                        access_policy,
                     },
                 );
 
@@ -369,11 +376,18 @@ impl ChannelRuntimeManager {
                 let binding_state = workspace_root
                     .join(".turin/channels")
                     .join(format!("{}-bindings.json", channel.id));
+                let access_state = workspace_root
+                    .join(".turin/channels")
+                    .join(format!("{}-access.json", channel.id));
+                let access_policy =
+                    turin_channel_runner::ChannelAccessPolicy::from_settings(&channel.settings)?;
                 let runner = turin_channel_runner::ChannelRunner::new(
                     daemon,
                     turin_channel_runner::RunnerConfig {
                         state_path: binding_state,
+                        access_state_path: access_state,
                         idle_ttl: channel.idle_ttl_secs.map(Duration::from_secs),
+                        access_policy,
                     },
                 );
 
@@ -461,11 +475,19 @@ impl ChannelRuntimeManager {
                 let binding_state = workspace_root
                     .join(".turin/channels")
                     .join(format!("{}-bindings.json", channel.id));
+                let access_state = workspace_root
+                    .join(".turin/channels")
+                    .join(format!("{}-access.json", channel.id));
+                let access_policy =
+                    turin_channel_runner::ChannelAccessPolicy::from_settings(&channel.settings)?;
+                let allow_unconfigured_chats = access_policy.requires_unconfigured_inbound();
                 let runner = turin_channel_runner::ChannelRunner::new(
                     daemon,
                     turin_channel_runner::RunnerConfig {
                         state_path: binding_state,
+                        access_state_path: access_state,
                         idle_ttl: channel.idle_ttl_secs.map(Duration::from_secs),
+                        access_policy,
                     },
                 );
 
@@ -473,6 +495,7 @@ impl ChannelRuntimeManager {
                     &channel.id,
                     &channel.settings,
                     shutdown_rx,
+                    allow_unconfigured_chats,
                 )
                 .await
                 .with_context(|| {

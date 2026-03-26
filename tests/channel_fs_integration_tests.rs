@@ -102,7 +102,9 @@ base_url = "PONG"
             turin_daemon_client::DaemonClient::new(&self.endpoint),
             RunnerConfig {
                 state_path: self.workspace_root.join(".turin/channel-bindings.json"),
+                access_state_path: self.workspace_root.join(".turin/channel-access.json"),
                 idle_ttl: Some(Duration::from_secs(600)),
+                access_policy: Default::default(),
             },
         )
     }

@@ -464,8 +464,63 @@ async fn channel_create_accepts_multi_chat_telegram_settings() -> Result<()> {
         .await?;
 
     assert_eq!(created.id, "telegram-multi");
-    assert_eq!(created.settings["chat_ids"], json!([-100123456, -100654321]));
+    assert_eq!(
+        created.settings["chat_ids"],
+        json!([-100123456, -100654321])
+    );
     assert_eq!(created.settings["respond_mode"], "mentions_or_replies");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn channel_access_snapshot_and_approval_are_filesystem_backed() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let mut state = DaemonState::load(&config_path).await?;
+
+    state
+        .create_channel(CreateChannelInput {
+            id: "telegram".to_string(),
+            kind: "telegram".to_string(),
+            agent_id: "default".to_string(),
+            idle_ttl_secs: Some(600),
+            enabled: true,
+            settings: json!({
+                "token_env": "TELEGRAM_BOT_TOKEN",
+                "pairing_mode": "auto",
+            }),
+        })
+        .await?;
+
+    let snapshot = state
+        .channel_access_snapshot("telegram")
+        .await?
+        .expect("channel exists");
+    assert!(snapshot.pending_rooms.is_empty());
+    assert!(snapshot.approved_rooms.is_empty());
+
+    let snapshot = state
+        .approve_channel_room(
+            "telegram",
+            "telegram".to_string(),
+            Some("-100123456".to_string()),
+            "-100123456".to_string(),
+        )
+        .await?
+        .expect("channel exists");
+    assert_eq!(snapshot.approved_rooms.len(), 1);
+
+    let snapshot = state
+        .revoke_channel_room(
+            "telegram",
+            "telegram".to_string(),
+            Some("-100123456".to_string()),
+            "-100123456".to_string(),
+        )
+        .await?
+        .expect("channel exists");
+    assert!(snapshot.approved_rooms.is_empty());
 
     Ok(())
 }

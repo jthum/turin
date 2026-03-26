@@ -57,6 +57,7 @@ turin-types = { path = "crates/turin-types" }
 turin-local-ipc = { path = "crates/turin-local-ipc" }
 turin-daemon-protocol = { path = "crates/turin-daemon-protocol" }
 turin-daemon-client = { path = "crates/turin-daemon-client" }
+turin-channel-core = { path = "crates/turin-channel-core" }
 turin-channel-runner = { path = "crates/turin-channel-runner" }
 turin-channel-fs = { path = "crates/turin-channel-fs" }
 turin-channel-discord = { path = "crates/turin-channel-discord" }
