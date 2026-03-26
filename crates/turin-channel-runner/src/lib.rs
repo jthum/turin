@@ -39,16 +39,18 @@ pub enum PairingMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelAccessPolicy {
     pub pairing_mode: PairingMode,
-    pub allowed_user_ids: HashSet<String>,
-    pub allowed_usernames: HashSet<String>,
+    pub pairing_users: HashSet<String>,
+    pub allowed_users: HashSet<String>,
+    pub banned_users: HashSet<String>,
 }
 
 impl Default for ChannelAccessPolicy {
     fn default() -> Self {
         Self {
             pairing_mode: PairingMode::Off,
-            allowed_user_ids: HashSet::new(),
-            allowed_usernames: HashSet::new(),
+            pairing_users: HashSet::new(),
+            allowed_users: HashSet::new(),
+            banned_users: HashSet::new(),
         }
     }
 }
@@ -61,8 +63,9 @@ impl ChannelAccessPolicy {
         let pairing_mode = parse_pairing_mode(map.get("pairing_mode"))?;
         Ok(Self {
             pairing_mode,
-            allowed_user_ids: parse_string_set(map.get("allowed_user_ids"), "allowed_user_ids")?,
-            allowed_usernames: parse_string_set(map.get("allowed_usernames"), "allowed_usernames")?,
+            pairing_users: parse_string_set(map.get("pairing_users"), "pairing_users")?,
+            allowed_users: parse_string_set(map.get("allowed_users"), "allowed_users")?,
+            banned_users: parse_string_set(map.get("banned_users"), "banned_users")?,
         })
     }
 
@@ -74,16 +77,30 @@ impl ChannelAccessPolicy {
         !matches!(self.pairing_mode, PairingMode::Off)
     }
 
-    fn allows_user(&self, user: &ChannelUser) -> bool {
-        if self.allowed_user_ids.is_empty() && self.allowed_usernames.is_empty() {
-            return true;
-        }
+    fn matches_any<D: ChannelDriver>(
+        &self,
+        driver: &D,
+        selectors: &HashSet<String>,
+        user: &ChannelUser,
+    ) -> bool {
+        selectors
+            .iter()
+            .any(|selector| driver.user_matches_selector(selector, user))
+    }
 
-        self.allowed_user_ids.contains(&user.id)
-            || user.username.as_ref().is_some_and(|username| {
-                self.allowed_usernames
-                    .contains(&username.to_ascii_lowercase())
-            })
+    fn is_banned<D: ChannelDriver>(&self, driver: &D, user: &ChannelUser) -> bool {
+        !self.banned_users.is_empty() && self.matches_any(driver, &self.banned_users, user)
+    }
+
+    fn allows_pairing<D: ChannelDriver>(&self, driver: &D, user: &ChannelUser) -> bool {
+        self.pairing_users.is_empty() || self.matches_any(driver, &self.pairing_users, user)
+    }
+
+    fn allows_interaction<D: ChannelDriver>(&self, driver: &D, user: &ChannelUser) -> bool {
+        if self.is_banned(driver, user) {
+            return false;
+        }
+        self.allowed_users.is_empty() || self.matches_any(driver, &self.allowed_users, user)
     }
 }
 
@@ -348,6 +365,8 @@ enum EventAccessDecision {
 pub trait ChannelDriver {
     fn kind(&self) -> ChannelKind;
 
+    fn user_matches_selector(&self, selector: &str, user: &ChannelUser) -> bool;
+
     fn capabilities(&self) -> ChannelCapabilities {
         ChannelCapabilities::default()
     }
@@ -532,20 +551,40 @@ impl ChannelRunner {
         Ok(enrich_outbound_for_event(task_to_outbound(&task), event))
     }
 
-    async fn authorize_event(&self, event: &InboundEvent) -> Result<EventAccessDecision> {
-        if !self.access_policy.allows_user(&event.user) {
-            return Ok(EventAccessDecision::Ignore);
-        }
-
+    async fn authorize_event<D: ChannelDriver + Send>(
+        &self,
+        driver: &D,
+        event: &InboundEvent,
+    ) -> Result<EventAccessDecision> {
         if matches!(self.access_policy.pairing_mode, PairingMode::Off) {
-            return Ok(EventAccessDecision::Allow);
+            return Ok(
+                if self.access_policy.allows_interaction(driver, &event.user) {
+                    EventAccessDecision::Allow
+                } else {
+                    EventAccessDecision::Ignore
+                },
+            );
         }
 
         let room = ChannelRoomKey::from(&event.conversation);
         let room_key = serialize_room_key(&room)?;
         let mut state = self.access_state.load().await?;
         if state.approved_rooms.contains_key(&room_key) {
-            return Ok(EventAccessDecision::Allow);
+            return Ok(
+                if self.access_policy.allows_interaction(driver, &event.user) {
+                    EventAccessDecision::Allow
+                } else {
+                    EventAccessDecision::Ignore
+                },
+            );
+        }
+
+        if self.access_policy.is_banned(driver, &event.user) {
+            return Ok(EventAccessDecision::Ignore);
+        }
+
+        if !self.access_policy.allows_pairing(driver, &event.user) {
+            return Ok(EventAccessDecision::Ignore);
         }
 
         match self.access_policy.pairing_mode {
@@ -600,7 +639,7 @@ impl ChannelRunner {
     ) -> Result<()> {
         let run_result = async {
             while let Some(event) = driver.next_event().await? {
-                match self.authorize_event(&event).await? {
+                match self.authorize_event(driver, &event).await? {
                     EventAccessDecision::Allow => {}
                     EventAccessDecision::Ignore => continue,
                     EventAccessDecision::Pending { notify } => {
@@ -991,7 +1030,7 @@ fn normalize_string_item(text: &str) -> Option<String> {
     if trimmed.is_empty() {
         None
     } else {
-        Some(trimmed.to_ascii_lowercase())
+        Some(trimmed.to_string())
     }
 }
 
@@ -1156,6 +1195,44 @@ mod tests {
     use tempfile::tempdir;
     use turin_channel_core::{ChannelKind, ChannelMessageRef, ChannelUser, MessageBlock};
 
+    struct TestDriver;
+
+    #[async_trait::async_trait]
+    impl ChannelDriver for TestDriver {
+        fn kind(&self) -> ChannelKind {
+            ChannelKind::Other("test".into())
+        }
+
+        fn user_matches_selector(&self, selector: &str, user: &ChannelUser) -> bool {
+            let selector = selector.trim();
+            if selector.is_empty() {
+                return false;
+            }
+            let selector = selector.strip_prefix('@').unwrap_or(selector);
+            user.id == selector
+                || user
+                    .username
+                    .as_ref()
+                    .is_some_and(|username| username.eq_ignore_ascii_case(selector))
+        }
+
+        async fn next_event(&mut self) -> Result<Option<InboundEvent>> {
+            Ok(None)
+        }
+
+        async fn send(
+            &mut self,
+            _conversation: &ChannelConversationKey,
+            _message: OutboundMessage,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        async fn shutdown(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
     fn sample_key() -> ChannelConversationKey {
         ChannelConversationKey {
             channel: ChannelKind::Discord,
@@ -1229,17 +1306,20 @@ mod tests {
     }
 
     #[test]
-    fn access_policy_parses_pairing_and_allowlists() {
+    fn access_policy_parses_pairing_allowed_and_banned_users() {
         let policy = ChannelAccessPolicy::from_settings(&serde_json::json!({
             "pairing_mode": "auto",
-            "allowed_user_ids": ["123", "456"],
-            "allowed_usernames": "alice,bob"
+            "pairing_users": ["123", "@owner"],
+            "allowed_users": "friend1,friend2",
+            "banned_users": ["intruder"]
         }))
         .expect("policy should parse");
         assert_eq!(policy.pairing_mode, PairingMode::Auto);
-        assert!(policy.allowed_user_ids.contains("123"));
-        assert!(policy.allowed_usernames.contains("alice"));
-        assert!(policy.allowed_usernames.contains("bob"));
+        assert!(policy.pairing_users.contains("123"));
+        assert!(policy.pairing_users.contains("@owner"));
+        assert!(policy.allowed_users.contains("friend1"));
+        assert!(policy.allowed_users.contains("friend2"));
+        assert!(policy.banned_users.contains("intruder"));
     }
 
     fn test_runner(dir: &tempfile::TempDir, policy: ChannelAccessPolicy) -> ChannelRunner {
@@ -1279,26 +1359,27 @@ mod tests {
             attachments: vec![],
             metadata: Default::default(),
         };
+        let driver = TestDriver;
 
         assert!(matches!(
-            runner.authorize_event(&event).await.unwrap(),
+            runner.authorize_event(&driver, &event).await.unwrap(),
             EventAccessDecision::Pending { notify: true }
         ));
         assert!(matches!(
-            runner.authorize_event(&event).await.unwrap(),
+            runner.authorize_event(&driver, &event).await.unwrap(),
             EventAccessDecision::Pending { notify: false }
         ));
     }
 
     #[tokio::test]
-    async fn authorize_event_auto_approves_allowed_senders() {
+    async fn authorize_event_auto_approves_pairing_users() {
         let dir = tempdir().unwrap();
         let runner = test_runner(
             &dir,
             ChannelAccessPolicy {
                 pairing_mode: PairingMode::Auto,
-                allowed_user_ids: HashSet::from(["u1".to_string()]),
-                allowed_usernames: HashSet::new(),
+                pairing_users: HashSet::from(["u1".to_string()]),
+                ..Default::default()
             },
         );
         let event = InboundEvent {
@@ -1316,26 +1397,27 @@ mod tests {
             attachments: vec![],
             metadata: Default::default(),
         };
+        let driver = TestDriver;
 
         assert!(matches!(
-            runner.authorize_event(&event).await.unwrap(),
+            runner.authorize_event(&driver, &event).await.unwrap(),
             EventAccessDecision::Allow
         ));
         assert!(matches!(
-            runner.authorize_event(&event).await.unwrap(),
+            runner.authorize_event(&driver, &event).await.unwrap(),
             EventAccessDecision::Allow
         ));
     }
 
     #[tokio::test]
-    async fn authorize_event_ignores_unlisted_senders() {
+    async fn authorize_event_ignores_senders_not_allowed_to_pair() {
         let dir = tempdir().unwrap();
         let runner = test_runner(
             &dir,
             ChannelAccessPolicy {
                 pairing_mode: PairingMode::Auto,
-                allowed_user_ids: HashSet::from(["owner".to_string()]),
-                allowed_usernames: HashSet::new(),
+                pairing_users: HashSet::from(["owner".to_string()]),
+                ..Default::default()
             },
         );
         let event = InboundEvent {
@@ -1353,9 +1435,209 @@ mod tests {
             attachments: vec![],
             metadata: Default::default(),
         };
+        let driver = TestDriver;
 
         assert!(matches!(
-            runner.authorize_event(&event).await.unwrap(),
+            runner.authorize_event(&driver, &event).await.unwrap(),
+            EventAccessDecision::Ignore
+        ));
+    }
+
+    #[tokio::test]
+    async fn authorize_event_allows_open_interaction_after_pairing() {
+        let dir = tempdir().unwrap();
+        let runner = test_runner(
+            &dir,
+            ChannelAccessPolicy {
+                pairing_mode: PairingMode::Auto,
+                pairing_users: HashSet::from(["owner".to_string()]),
+                ..Default::default()
+            },
+        );
+        let driver = TestDriver;
+
+        let owner_event = InboundEvent {
+            conversation: sample_key(),
+            message: ChannelMessageRef {
+                conversation: sample_key(),
+                message_id: "m1".into(),
+            },
+            user: ChannelUser {
+                id: "owner".into(),
+                display_name: Some("Owner".into()),
+                username: Some("jay".into()),
+            },
+            text: "pair room".into(),
+            attachments: vec![],
+            metadata: Default::default(),
+        };
+
+        let friend_event = InboundEvent {
+            conversation: sample_key(),
+            message: ChannelMessageRef {
+                conversation: sample_key(),
+                message_id: "m2".into(),
+            },
+            user: ChannelUser {
+                id: "friend".into(),
+                display_name: Some("Friend".into()),
+                username: Some("friend".into()),
+            },
+            text: "hello".into(),
+            attachments: vec![],
+            metadata: Default::default(),
+        };
+
+        assert!(matches!(
+            runner.authorize_event(&driver, &owner_event).await.unwrap(),
+            EventAccessDecision::Allow
+        ));
+        assert!(matches!(
+            runner
+                .authorize_event(&driver, &friend_event)
+                .await
+                .unwrap(),
+            EventAccessDecision::Allow
+        ));
+    }
+
+    #[tokio::test]
+    async fn authorize_event_applies_allowed_users_after_pairing() {
+        let dir = tempdir().unwrap();
+        let runner = test_runner(
+            &dir,
+            ChannelAccessPolicy {
+                pairing_mode: PairingMode::Auto,
+                pairing_users: HashSet::from(["owner".to_string()]),
+                allowed_users: HashSet::from(["friend".to_string()]),
+                ..Default::default()
+            },
+        );
+        let driver = TestDriver;
+
+        let owner_event = InboundEvent {
+            conversation: sample_key(),
+            message: ChannelMessageRef {
+                conversation: sample_key(),
+                message_id: "m1".into(),
+            },
+            user: ChannelUser {
+                id: "owner".into(),
+                display_name: Some("Owner".into()),
+                username: Some("jay".into()),
+            },
+            text: "pair room".into(),
+            attachments: vec![],
+            metadata: Default::default(),
+        };
+
+        let intruder_event = InboundEvent {
+            conversation: sample_key(),
+            message: ChannelMessageRef {
+                conversation: sample_key(),
+                message_id: "m2".into(),
+            },
+            user: ChannelUser {
+                id: "intruder".into(),
+                display_name: Some("Intruder".into()),
+                username: Some("intruder".into()),
+            },
+            text: "hello".into(),
+            attachments: vec![],
+            metadata: Default::default(),
+        };
+
+        let friend_event = InboundEvent {
+            conversation: sample_key(),
+            message: ChannelMessageRef {
+                conversation: sample_key(),
+                message_id: "m3".into(),
+            },
+            user: ChannelUser {
+                id: "friend".into(),
+                display_name: Some("Friend".into()),
+                username: Some("friend".into()),
+            },
+            text: "hello".into(),
+            attachments: vec![],
+            metadata: Default::default(),
+        };
+
+        assert!(matches!(
+            runner.authorize_event(&driver, &owner_event).await.unwrap(),
+            EventAccessDecision::Allow
+        ));
+        assert!(matches!(
+            runner
+                .authorize_event(&driver, &intruder_event)
+                .await
+                .unwrap(),
+            EventAccessDecision::Ignore
+        ));
+        assert!(matches!(
+            runner
+                .authorize_event(&driver, &friend_event)
+                .await
+                .unwrap(),
+            EventAccessDecision::Allow
+        ));
+    }
+
+    #[tokio::test]
+    async fn authorize_event_banned_users_override_approval() {
+        let dir = tempdir().unwrap();
+        let runner = test_runner(
+            &dir,
+            ChannelAccessPolicy {
+                pairing_mode: PairingMode::Auto,
+                pairing_users: HashSet::from(["owner".to_string()]),
+                banned_users: HashSet::from(["friend".to_string()]),
+                ..Default::default()
+            },
+        );
+        let driver = TestDriver;
+
+        let owner_event = InboundEvent {
+            conversation: sample_key(),
+            message: ChannelMessageRef {
+                conversation: sample_key(),
+                message_id: "m1".into(),
+            },
+            user: ChannelUser {
+                id: "owner".into(),
+                display_name: Some("Owner".into()),
+                username: Some("jay".into()),
+            },
+            text: "pair room".into(),
+            attachments: vec![],
+            metadata: Default::default(),
+        };
+
+        let friend_event = InboundEvent {
+            conversation: sample_key(),
+            message: ChannelMessageRef {
+                conversation: sample_key(),
+                message_id: "m2".into(),
+            },
+            user: ChannelUser {
+                id: "friend".into(),
+                display_name: Some("Friend".into()),
+                username: Some("friend".into()),
+            },
+            text: "hello".into(),
+            attachments: vec![],
+            metadata: Default::default(),
+        };
+
+        assert!(matches!(
+            runner.authorize_event(&driver, &owner_event).await.unwrap(),
+            EventAccessDecision::Allow
+        ));
+        assert!(matches!(
+            runner
+                .authorize_event(&driver, &friend_event)
+                .await
+                .unwrap(),
             EventAccessDecision::Ignore
         ));
     }

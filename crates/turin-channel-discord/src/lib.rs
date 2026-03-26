@@ -904,6 +904,19 @@ impl ChannelDriver for DiscordChannelDriver {
         ChannelKind::Discord
     }
 
+    fn user_matches_selector(&self, selector: &str, user: &ChannelUser) -> bool {
+        let selector = selector.trim();
+        if selector.is_empty() {
+            return false;
+        }
+        let selector = selector.strip_prefix('@').unwrap_or(selector);
+        user.id == selector
+            || user
+                .username
+                .as_ref()
+                .is_some_and(|username| username.eq_ignore_ascii_case(selector))
+    }
+
     fn capabilities(&self) -> ChannelCapabilities {
         ChannelCapabilities {
             rich_formatting: true,
