@@ -98,6 +98,81 @@ impl InferenceProvider for HeaderCaptureProvider {
     }
 }
 
+struct VirtualToolProvider {
+    tool_name: String,
+    tool_args: serde_json::Value,
+    seen_tools: Arc<std::sync::Mutex<Vec<String>>>,
+    stage: Arc<std::sync::Mutex<u32>>,
+}
+
+impl InferenceProvider for VirtualToolProvider {
+    fn stream<'a>(
+        &'a self,
+        request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+        let seen_tools = self.seen_tools.clone();
+        let stage = self.stage.clone();
+        let tool_name = self.tool_name.clone();
+        let tool_args = self.tool_args.clone();
+        Box::pin(async move {
+            let tool_names = request
+                .tools
+                .as_ref()
+                .map(|tools| tools.iter().map(|tool| tool.name.clone()).collect())
+                .unwrap_or_default();
+            *seen_tools.lock().unwrap() = tool_names;
+
+            let current_stage = {
+                let mut lock = stage.lock().unwrap();
+                let current = *lock;
+                *lock += 1;
+                current
+            };
+
+            let events = if current_stage == 0 {
+                vec![
+                    Ok(InferenceEvent::MessageStart {
+                        role: "assistant".to_string(),
+                        model: "mock-model".to_string(),
+                        provider_id: "mock".to_string(),
+                    }),
+                    Ok(InferenceEvent::ToolCallStart {
+                        id: "virtual-call-id".to_string(),
+                        name: tool_name,
+                    }),
+                    Ok(InferenceEvent::ToolCallDelta {
+                        delta: tool_args.to_string(),
+                    }),
+                    Ok(InferenceEvent::MessageEnd {
+                        input_tokens: 8,
+                        output_tokens: 5,
+                        stop_reason: None,
+                    }),
+                ]
+            } else {
+                vec![
+                    Ok(InferenceEvent::MessageStart {
+                        role: "assistant".to_string(),
+                        model: "mock-model".to_string(),
+                        provider_id: "mock".to_string(),
+                    }),
+                    Ok(InferenceEvent::MessageDelta {
+                        content: "done".to_string(),
+                    }),
+                    Ok(InferenceEvent::MessageEnd {
+                        input_tokens: 4,
+                        output_tokens: 2,
+                        stop_reason: None,
+                    }),
+                ]
+            };
+
+            Ok(Box::pin(stream::iter(events)) as InferenceStream)
+        })
+    }
+}
+
 #[tokio::test]
 async fn test_harness_rejection() -> Result<()> {
     let tmp = tempdir()?;
@@ -219,6 +294,232 @@ async fn test_harness_rejection() -> Result<()> {
     );
 
     kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_virtual_tool_is_exposed_and_executes_native_call() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+    std::fs::write(tmp.path().join("note.txt"), "hello from virtual tool")?;
+
+    std::fs::write(
+        harness_dir.join("main.lua"),
+        r#"
+        tool.declare("read_note", {
+            description = "Read a note from the workspace",
+            params = {
+                path = { type = "string", required = true }
+            },
+            handler = function(args)
+                return tool.call("read_file", { path = args.path })
+            end
+        })
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "You are a test assistant.".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 5,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: None,
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let seen_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let stage = Arc::new(std::sync::Mutex::new(0));
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(
+            "mock",
+            Arc::new(VirtualToolProvider {
+                tool_name: "read_note".to_string(),
+                tool_args: serde_json::json!({ "path": "note.txt" }),
+                seen_tools: seen_tools.clone(),
+                stage,
+            }),
+        ),
+    );
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Read the note".to_string()))
+        .await?;
+
+    assert!(
+        seen_tools.lock().unwrap().iter().any(|tool| tool == "read_note"),
+        "expected virtual tool to be exposed to provider request tools"
+    );
+
+    let mut found_virtual_result = false;
+    for msg in &session.history {
+        for content in &msg.content {
+            if let InferenceContent::ToolResult { content, .. } = content
+                && content.contains("hello from virtual tool")
+            {
+                found_virtual_result = true;
+            }
+        }
+    }
+
+    assert!(
+        found_virtual_result,
+        "expected virtual tool result content to reach the outer tool result history"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_virtual_tool_sequence_aggregates_multiple_native_calls() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+    std::fs::write(tmp.path().join("one.txt"), "first file")?;
+    std::fs::write(tmp.path().join("two.txt"), "second file")?;
+
+    std::fs::write(
+        harness_dir.join("main.lua"),
+        r#"
+        tool.declare("read_pair", {
+            description = "Read two files in order",
+            params = {
+                first = { type = "string", required = true },
+                second = { type = "string", required = true }
+            },
+            handler = function(args)
+                return tool.sequence({
+                    tool.call("read_file", { path = args.first }),
+                    tool.call("read_file", { path = args.second })
+                })
+            end
+        })
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "You are a test assistant.".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 5,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: None,
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(
+            "mock",
+            Arc::new(VirtualToolProvider {
+                tool_name: "read_pair".to_string(),
+                tool_args: serde_json::json!({ "first": "one.txt", "second": "two.txt" }),
+                seen_tools: Arc::new(std::sync::Mutex::new(Vec::new())),
+                stage: Arc::new(std::sync::Mutex::new(0)),
+            }),
+        ),
+    );
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Read both files".to_string()))
+        .await?;
+
+    let mut aggregated_result = None;
+    for msg in &session.history {
+        for content in &msg.content {
+            if let InferenceContent::ToolResult { content, .. } = content
+                && content.contains("Call 1: read_file [ok]")
+            {
+                aggregated_result = Some(content.clone());
+            }
+        }
+    }
+
+    let aggregated_result = aggregated_result.expect("expected aggregated virtual tool output");
+    assert!(aggregated_result.contains("first file"));
+    assert!(aggregated_result.contains("second file"));
 
     Ok(())
 }

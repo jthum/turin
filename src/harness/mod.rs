@@ -3,4 +3,5 @@ pub mod dx;
 pub mod engine;
 pub mod globals;
 pub mod stdlib;
+pub mod virtual_tools;
 pub mod verdict;

@@ -3,21 +3,24 @@ mod result_hooks;
 
 use anyhow::Result;
 use futures::future::join_all;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+use std::future::Future;
+use std::pin::Pin;
 use std::time::Instant;
 use tracing::{info, warn};
 
 use crate::display;
 use crate::harness::verdict::Verdict;
+use crate::harness::virtual_tools::VirtualToolPlan;
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::execution_host::ExecutionHost;
+use crate::kernel::governance::{GovernanceSubject, tool_capability_name};
 use crate::kernel::session::SessionState;
 use crate::tools::{ToolContext, ToolEffect, ToolError, ToolOutput};
 
 use super::super::PendingToolCall;
 use super::super::event::{AuditEvent, KernelEvent};
 use super::TurnOutcome;
-use crate::kernel::governance::{GovernanceSubject, tool_capability_name};
 
 #[derive(Debug, Clone)]
 struct FinalToolRecord {
@@ -31,6 +34,11 @@ struct FinalToolRecord {
     emit_exec_start: bool,
 }
 
+enum ExecutionArtifact {
+    Native(ToolEffect),
+    VirtualPlan(VirtualToolPlan),
+}
+
 impl ExecutionHost {
     /// Phase 1-3 of tool execution: verdict evaluation, parallel execution, side effects, and result collection.
     pub(super) async fn execute_tool_calls(
@@ -42,6 +50,7 @@ impl ExecutionHost {
         if session.cancel_token.is_cancelled() {
             return Ok(TurnOutcome::Cancelled);
         }
+
         let (immediate_records, validated_calls) =
             self.evaluate_pending_tool_calls(session, &pending_tool_calls);
         let final_by_id = self
@@ -50,10 +59,35 @@ impl ExecutionHost {
         if session.cancel_token.is_cancelled() {
             return Ok(TurnOutcome::Cancelled);
         }
-        self.finalize_tool_results(session, &pending_tool_calls, final_by_id)
-            .await;
 
+        self.finalize_tool_records(session, &pending_tool_calls, final_by_id, true)
+            .await;
         Ok(TurnOutcome::Continue)
+    }
+
+    fn execute_tool_calls_hidden<'a>(
+        &'a mut self,
+        session: &'a mut SessionState,
+        tool_ctx: &'a ToolContext,
+        pending_tool_calls: Vec<PendingToolCall>,
+    ) -> Pin<Box<dyn Future<Output = Vec<FinalToolRecord>> + Send + 'a>> {
+        Box::pin(async move {
+            if session.cancel_token.is_cancelled() {
+                return Vec::new();
+            }
+
+            let (immediate_records, validated_calls) =
+                self.evaluate_pending_tool_calls(session, &pending_tool_calls);
+            let final_by_id = self
+                .execute_validated_tool_calls(session, tool_ctx, validated_calls, immediate_records)
+                .await;
+            if session.cancel_token.is_cancelled() {
+                return Vec::new();
+            }
+
+            self.finalize_tool_records(session, &pending_tool_calls, final_by_id, false)
+                .await
+        })
     }
 
     fn evaluate_pending_tool_calls(
@@ -141,9 +175,11 @@ impl ExecutionHost {
 
         let kernel = &*self;
         let active_agent_id = session.identity.agent_id().to_string();
+        let runtime = self.runtime_for_session(session);
         let futures = validated_calls.into_iter().map(|(tc, verdict)| {
             let tool_ctx = tool_ctx.clone();
             let active_agent_id = active_agent_id.clone();
+            let runtime = runtime.clone();
             async move {
                 let verdict_str = verdict.to_string();
                 let final_args = match verdict {
@@ -155,34 +191,57 @@ impl ExecutionHost {
                 };
 
                 let start = Instant::now();
-                let effect_res = if let Some(capability) = tool_capability_name(&tc.name) {
-                    let subject = GovernanceSubject::for_agent(active_agent_id.as_str());
-                    match kernel
-                        .governance_manager
-                        .require_capability_for_subject(&subject, capability)
-                    {
-                        Ok(()) => {
-                            kernel
+                let effect_res = if kernel.tool_registry.get(&tc.name).is_some() {
+                    if let Some(capability) = tool_capability_name(&tc.name) {
+                        let subject = GovernanceSubject::for_agent(active_agent_id.as_str());
+                        match kernel
+                            .governance_manager
+                            .require_capability_for_subject(&subject, capability)
+                        {
+                            Ok(()) => kernel
                                 .tool_registry
                                 .execute(&tc.name, final_args.clone(), &tool_ctx)
                                 .await
+                                .map(ExecutionArtifact::Native),
+                            Err(err) => Err(ToolError::PermissionDenied(err)),
                         }
-                        Err(err) => Err(ToolError::PermissionDenied(err)),
+                    } else {
+                        kernel
+                            .tool_registry
+                            .execute(&tc.name, final_args.clone(), &tool_ctx)
+                            .await
+                            .map(ExecutionArtifact::Native)
                     }
                 } else {
-                    kernel
-                        .tool_registry
-                        .execute(&tc.name, final_args.clone(), &tool_ctx)
-                        .await
+                    let plan_res = {
+                        let harness = runtime.lock_engine();
+                        if let Some(ref engine) = *harness {
+                            engine.invoke_virtual_tool(&tc.name, final_args.clone())
+                        } else {
+                            Ok(None)
+                        }
+                    };
+
+                    match plan_res {
+                        Ok(Some(plan)) => Ok(ExecutionArtifact::VirtualPlan(plan)),
+                        Ok(None) => Err(ToolError::ExecutionError(format!(
+                            "Unknown tool: {}",
+                            tc.name
+                        ))),
+                        Err(err) => Err(ToolError::ExecutionError(format!(
+                            "Virtual tool '{}' failed: {}",
+                            tc.name, err
+                        ))),
+                    }
                 };
                 let duration_ms = start.elapsed().as_millis() as u64;
 
                 let is_error = effect_res.is_err();
                 let effect = effect_res.unwrap_or_else(|e| {
-                    ToolEffect::Output(ToolOutput {
+                    ExecutionArtifact::Native(ToolEffect::Output(ToolOutput {
                         content: format!("Error: {}", e),
                         metadata: serde_json::Value::Null,
-                    })
+                    }))
                 });
 
                 (tc, final_args, verdict_str, duration_ms, effect, is_error)
@@ -204,30 +263,54 @@ impl ExecutionHost {
         for (tc, final_args, verdict_str, duration_ms, effect, mut is_error) in execution_results {
             let content;
             match effect {
-                ToolEffect::Output(o) => {
-                    content = o.content;
-                }
-                ToolEffect::EnqueuePlan {
-                    title,
-                    tasks,
-                    clear_existing,
-                } => {
-                    let (plan_content, plan_error) = self
-                        .handle_plan_submission(session, &title, tasks, clear_existing)
-                        .await;
-                    content = plan_content;
-                    is_error = is_error || plan_error;
-                }
-                ToolEffect::SpawnMcp { command, args } => {
-                    match self.spawn_mcp_server(&command, &args).await {
-                        Ok(count) => {
-                            content = format!(
-                                "Successfully connected to MCP server. Loaded {} new tools.",
-                                count
-                            );
+                ExecutionArtifact::Native(effect) => match effect {
+                    ToolEffect::Output(o) => {
+                        content = o.content;
+                    }
+                    ToolEffect::EnqueuePlan {
+                        title,
+                        tasks,
+                        clear_existing,
+                    } => {
+                        let (plan_content, plan_error) = self
+                            .handle_plan_submission(session, &title, tasks, clear_existing)
+                            .await;
+                        content = plan_content;
+                        is_error = is_error || plan_error;
+                    }
+                    ToolEffect::SpawnMcp { command, args } => {
+                        match self.spawn_mcp_server(&command, &args).await {
+                            Ok(count) => {
+                                content = format!(
+                                    "Successfully connected to MCP server. Loaded {} new tools.",
+                                    count
+                                );
+                            }
+                            Err(e) => {
+                                content = format!("Failed to connect to MCP server: {}", e);
+                                is_error = true;
+                            }
                         }
-                        Err(e) => {
-                            content = format!("Failed to connect to MCP server: {}", e);
+                    }
+                },
+                ExecutionArtifact::VirtualPlan(plan) => {
+                    match self.build_virtual_pending_tool_calls(session, &tc.id, plan) {
+                        Ok(pending_virtual_calls) => {
+                            let nested_records = self
+                                .execute_tool_calls_hidden(session, tool_ctx, pending_virtual_calls)
+                                .await;
+                            if session.cancel_token.is_cancelled() {
+                                content = "Virtual tool execution cancelled".to_string();
+                                is_error = true;
+                            } else {
+                                let (aggregated, nested_error) =
+                                    self.aggregate_virtual_tool_records(&nested_records);
+                                content = aggregated;
+                                is_error = is_error || nested_error;
+                            }
+                        }
+                        Err(err) => {
+                            content = format!("Error: {}", err);
                             is_error = true;
                         }
                     }
@@ -252,13 +335,85 @@ impl ExecutionHost {
         final_by_id
     }
 
-    async fn finalize_tool_results(
+    fn build_virtual_pending_tool_calls(
+        &self,
+        session: &SessionState,
+        parent_tool_call_id: &str,
+        plan: VirtualToolPlan,
+    ) -> Result<Vec<PendingToolCall>> {
+        let declared_tool_names: BTreeSet<String> = {
+            let runtime = self.runtime_for_session(session);
+            let harness = runtime.lock_engine();
+            if let Some(ref engine) = *harness {
+                engine
+                    .declared_virtual_tools()?
+                    .into_iter()
+                    .map(|tool| tool.name)
+                    .collect()
+            } else {
+                BTreeSet::new()
+            }
+        };
+
+        let mut out = Vec::with_capacity(plan.calls.len());
+        for (index, call) in plan.calls.into_iter().enumerate() {
+            if declared_tool_names.contains(&call.name) {
+                anyhow::bail!(
+                    "virtual tool handlers cannot call other virtual tools yet ('{}')",
+                    call.name
+                );
+            }
+
+            out.push(PendingToolCall {
+                id: format!("{}::vt{}", parent_tool_call_id, index + 1),
+                name: call.name,
+                args: call.args,
+            });
+        }
+        Ok(out)
+    }
+
+    fn aggregate_virtual_tool_records(&self, records: &[FinalToolRecord]) -> (String, bool) {
+        if records.is_empty() {
+            return (
+                "Virtual tool completed without producing any nested tool output.".to_string(),
+                false,
+            );
+        }
+
+        let any_error = records.iter().any(|record| record.is_error);
+        if records.len() == 1 {
+            return (records[0].content.clone(), any_error);
+        }
+
+        let combined = records
+            .iter()
+            .enumerate()
+            .map(|(index, record)| {
+                let status = if record.is_error { "error" } else { "ok" };
+                format!(
+                    "Call {}: {} [{}]\n{}",
+                    index + 1,
+                    record.name,
+                    status,
+                    record.content
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        (combined, any_error)
+    }
+
+    async fn finalize_tool_records(
         &mut self,
         session: &mut SessionState,
         pending_tool_calls: &[PendingToolCall],
         mut final_by_id: HashMap<String, FinalToolRecord>,
-    ) {
+        publish_to_history: bool,
+    ) -> Vec<FinalToolRecord> {
         let mut tool_results: Vec<InferenceContent> = Vec::new();
+        let mut finalized_records = Vec::new();
         let ansi_stdout = display::stdout_ansi();
 
         for tc in pending_tool_calls {
@@ -328,49 +483,57 @@ impl ExecutionHost {
                 );
             }
 
-            tool_results.push(InferenceContent::ToolResult {
-                tool_use_id: record.id,
-                content: record.content,
-                is_error: record.is_error,
-            });
+            if publish_to_history {
+                tool_results.push(InferenceContent::ToolResult {
+                    tool_use_id: record.id.clone(),
+                    content: record.content.clone(),
+                    is_error: record.is_error,
+                });
+            }
+
+            finalized_records.push(record);
         }
 
-        session.history.push(InferenceMessage {
-            role: InferenceRole::Tool,
-            content: tool_results.clone(),
-            tool_call_id: None,
-        });
+        if publish_to_history && !tool_results.is_empty() {
+            session.history.push(InferenceMessage {
+                role: InferenceRole::Tool,
+                content: tool_results.clone(),
+                tool_call_id: None,
+            });
 
-        if let Ok(store) = self.store_manager.get_default().await {
-            let result_content: Vec<serde_json::Value> = tool_results
-                .iter()
-                .map(|r| match r {
-                    InferenceContent::ToolResult {
-                        tool_use_id,
-                        content,
-                        is_error,
-                    } => {
-                        serde_json::json!({
-                            "type": "tool_result",
-                            "tool_use_id": tool_use_id,
-                            "content": content,
-                            "is_error": is_error
-                        })
-                    }
-                    _ => serde_json::json!({}),
-                })
-                .collect();
-            if let Some(iid) = session.internal_id {
-                let _ = store
-                    .insert_message(
-                        iid,
-                        session.turn_index,
-                        "tool_result",
-                        &serde_json::Value::Array(result_content),
-                        None,
-                    )
-                    .await;
+            if let Ok(store) = self.store_manager.get_default().await {
+                let result_content: Vec<serde_json::Value> = tool_results
+                    .iter()
+                    .map(|r| match r {
+                        InferenceContent::ToolResult {
+                            tool_use_id,
+                            content,
+                            is_error,
+                        } => {
+                            serde_json::json!({
+                                "type": "tool_result",
+                                "tool_use_id": tool_use_id,
+                                "content": content,
+                                "is_error": is_error
+                            })
+                        }
+                        _ => serde_json::json!({}),
+                    })
+                    .collect();
+                if let Some(iid) = session.internal_id {
+                    let _ = store
+                        .insert_message(
+                            iid,
+                            session.turn_index,
+                            "tool_result",
+                            &serde_json::Value::Array(result_content),
+                            None,
+                        )
+                        .await;
+                }
             }
         }
+
+        finalized_records
     }
 }

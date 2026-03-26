@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::pin::Pin;
 
 use anyhow::{Context, Result};
@@ -67,6 +68,32 @@ impl ExecutionHost {
                 .unwrap_or(0),
             request_options_override: RequestOptionsOverride::default(),
         })
+    }
+
+    fn tool_definitions_for_session(&self, session: &SessionState) -> Result<Vec<serde_json::Value>> {
+        let mut tools = self.tool_registry.tool_definitions();
+        let mut seen_names: BTreeSet<String> = tools
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(|value| value.as_str()))
+            .map(ToOwned::to_owned)
+            .collect();
+
+        let runtime = self.runtime_for_session(session);
+        let harness = runtime.lock_engine();
+        if let Some(ref engine) = *harness {
+            for tool in engine.declared_virtual_tools()? {
+                if !seen_names.insert(tool.name.clone()) {
+                    warn!(
+                        tool = %tool.name,
+                        "Skipping harness-declared virtual tool because a tool with that name already exists"
+                    );
+                    continue;
+                }
+                tools.push(tool.tool_definition());
+            }
+        }
+
+        Ok(tools)
     }
 
     fn emit_turn_start_and_gate(&self, session: &mut SessionState, turn_ctx: &TurnContext) -> bool {
@@ -208,7 +235,7 @@ impl ExecutionHost {
                 )
             })?;
 
-        let tools = self.tool_registry.tool_definitions();
+        let tools = self.tool_definitions_for_session(session)?;
         let options = provider::InferenceOptions {
             max_tokens: None,
             temperature: None,

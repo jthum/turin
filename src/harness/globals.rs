@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 use crate::harness::dx;
 use crate::harness::stdlib::{
     agent_bindings, memory_kv_bindings, runtime_bindings, session_user_aliases, system_globals,
+    tool_bindings,
 };
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
@@ -89,6 +90,7 @@ pub fn register_globals(lua: &Lua, app_data: HarnessAppData) -> LuaResult<()> {
     memory_kv_bindings::register_kv_module(lua, &app_data)?;
     session_user_aliases::register_session_user_aliases(lua, &app_data)?;
     agent_bindings::register_agent_bindings(lua, &app_data)?;
+    tool_bindings::register_tool_globals(lua)?;
     system_globals::register_import_global(lua)?;
     dx::register_dx_globals(lua, &app_data)?;
 

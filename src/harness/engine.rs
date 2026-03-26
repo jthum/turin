@@ -12,6 +12,8 @@ use tracing::error;
 
 use crate::display;
 use crate::harness::globals::{self, HarnessAppData};
+use crate::harness::stdlib::tool_bindings;
+use crate::harness::virtual_tools::{DeclaredVirtualTool, VirtualToolPlan};
 use crate::harness::verdict::{Verdict, compose_verdicts};
 
 fn format_lua_error(e: &mlua::Error) -> String {
@@ -717,6 +719,18 @@ impl HarnessEngine {
         explicit_watch_roots(&self.lua)
     }
 
+    pub fn declared_virtual_tools(&self) -> Result<Vec<DeclaredVirtualTool>> {
+        tool_bindings::declared_virtual_tools(&self.lua)
+    }
+
+    pub fn invoke_virtual_tool(
+        &self,
+        name: &str,
+        args: serde_json::Value,
+    ) -> Result<Option<VirtualToolPlan>> {
+        tool_bindings::invoke_declared_virtual_tool(&self.lua, name, args)
+    }
+
     pub fn set_loading_phase(&self, is_loading: bool) {
         set_loading_phase(&self.lua, is_loading);
     }
@@ -999,6 +1013,81 @@ mod tests {
             verdict,
             Verdict::Reject("Blocked by safety harness".to_string())
         );
+    }
+
+    #[test]
+    fn test_engine_collects_declared_virtual_tools() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("main.lua"),
+            r#"
+            tool.declare("play_song", {
+                description = "Play an audio file",
+                params = {
+                    filename = { type = "string", required = true }
+                },
+                handler = function(args)
+                    return tool.call("shell_exec", {
+                        command = "mpg123 " .. shell.quote(args.filename)
+                    })
+                end
+            })
+            "#,
+        )
+        .unwrap();
+
+        let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+        engine.load_dir(dir.path()).unwrap();
+
+        let tools = engine.declared_virtual_tools().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "play_song");
+        assert_eq!(tools[0].description, "Play an audio file");
+        assert_eq!(tools[0].input_schema["properties"]["filename"]["type"], "string");
+    }
+
+    #[test]
+    fn test_engine_invokes_virtual_tool_handler_sequence() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("main.lua"),
+            r#"
+            tool.declare("play_playlist", {
+                description = "Play multiple songs",
+                params = {
+                    first = { type = "string", required = true },
+                    second = { type = "string", required = true }
+                },
+                handler = function(args)
+                    return tool.sequence({
+                        tool.call("shell_exec", {
+                            command = "mpg123 " .. shell.quote(args.first)
+                        }),
+                        tool.call("shell_exec", {
+                            command = "mpg123 " .. shell.quote(args.second)
+                        })
+                    })
+                end
+            })
+            "#,
+        )
+        .unwrap();
+
+        let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+        engine.load_dir(dir.path()).unwrap();
+
+        let plan = engine
+            .invoke_virtual_tool(
+                "play_playlist",
+                serde_json::json!({ "first": "one.mp3", "second": "two.mp3" }),
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(plan.calls.len(), 2);
+        assert_eq!(plan.calls[0].name, "shell_exec");
+        assert_eq!(plan.calls[0].args["command"], "mpg123 'one.mp3'");
+        assert_eq!(plan.calls[1].args["command"], "mpg123 'two.mp3'");
     }
 
     #[test]

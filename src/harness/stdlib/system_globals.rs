@@ -149,7 +149,7 @@ fn use_module(lua: &Lua, name: &str, opts: Option<Table>, is_scoped_call: bool) 
     Ok(())
 }
 
-fn ensure_load_time(lua: &Lua, op_name: &str) -> LuaResult<()> {
+pub(crate) fn ensure_load_time(lua: &Lua, op_name: &str) -> LuaResult<()> {
     if !is_loading_phase(lua) {
         return Err(mlua::Error::runtime(format!(
             "{}(...) can only be called during harness load",
