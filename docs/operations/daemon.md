@@ -268,8 +268,9 @@ rather than replacing the whole settings table.
 Channels can also use generic runner-level access control settings such as:
 
 - `pairing_mode = off | pending | auto`
-- `allowed_user_ids = [...]`
-- `allowed_usernames = [...]`
+- `pairing_users = [...]`
+- `allowed_users = [...]`
+- `banned_users = [...]`
 
 Those settings are enforced before a message is routed into a Turin session, which is why they live in the shared channel runner rather than in a harness script.
 

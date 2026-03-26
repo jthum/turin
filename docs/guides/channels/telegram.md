@@ -19,7 +19,7 @@ Current Phase 8 scope:
 - deterministic routing by Telegram chat and forum topic
 - one Turin Telegram channel can watch one or many Telegram chats
 - generic pairing modes for chat discovery (`off`, `pending`, `auto`)
-- sender allowlists (`allowed_user_ids`, `allowed_usernames`)
+- generic sender access policies (`pairing_users`, `allowed_users`, `banned_users`)
 - configurable group trigger policy (`all`, `mentions`, `replies`, `mentions_or_replies`)
 - daemon-managed lifecycle (`create`, `enable`, `disable`, `update`, `status`)
 
@@ -157,25 +157,37 @@ If you do not see the chat you expect:
 
 ## 5. Pairing And Sender Access Control
 
-Telegram chat ids solve explicit allowlisting, but they are not a good general-user onboarding path on their own. Turin now supports two generic alternatives through the shared channel runner:
+Telegram chat ids solve explicit room allowlisting, but they are not a good general-user onboarding path on their own. Turin now supports two generic alternatives through the shared channel runner:
 
-- `pairing_mode = "auto"`: unknown rooms are approved automatically the first time an allowed sender reaches them
+- `pairing_mode = "auto"`: unknown rooms are approved automatically the first time an eligible sender reaches them
 - `pairing_mode = "pending"`: unknown rooms are recorded as pending and Turin replies with a pending-approval notice until the operator approves them
 
-The sender allowlist is independent of the room allowlist:
+Sender access is split into three separate concerns:
 
-- `allowed_user_ids`: strongest option; Telegram numeric user ids are stable and not spoofable through normal bot traffic
-- `allowed_usernames`: convenience option; useful, but weaker than user ids because usernames can change
+- `pairing_users`: who is allowed to auto-pair or register new rooms when `pairing_mode` is `auto` or `pending`
+- `allowed_users`: who may interact inside already-approved rooms; when omitted or empty, any sender in an approved room may interact
+- `banned_users`: explicit deny list; this overrides `allowed_users`
 
-Telegram Bot API does not expose private email addresses or phone numbers for arbitrary users, so those are not realistic allowlist keys here.
+For Telegram, selectors are simple strings interpreted by the Telegram adapter:
 
-If you enable `pairing_mode = "auto"` without any sender allowlist, Turin will approve the first sender who reaches a new room. That is convenient for private testing and risky for public groups.
+- numeric string: matched against Telegram user id
+- non-numeric string: matched against Telegram username
+- `@username` also works as a convenience form
+
+Telegram Bot API does not expose private email addresses or phone numbers for arbitrary users, so those are not realistic selector types here.
+
+If you enable `pairing_mode = "auto"` without `pairing_users`, Turin will approve the first sender who reaches a new room. That is convenient for private testing and risky for public groups.
 
 Practical recommendations:
 
 - personal bot across several groups:
   - `pairing_mode = "auto"`
-  - `allowed_user_ids = [498502840]`
+  - `pairing_users = [498502840]`
+  - `respond_mode = "mentions_or_replies"`
+- personal bot that only you can pair, but everyone in approved rooms can use:
+  - `pairing_mode = "auto"`
+  - `pairing_users = [498502840]`
+  - omit `allowed_users`
   - `respond_mode = "mentions_or_replies"`
 - shared bot in a controlled team group:
   - explicit `chat_ids`
@@ -208,7 +220,7 @@ turin daemon channel create telegram-ops \
   --setting poll_interval_ms=250 \
   --setting respond_mode=mentions_or_replies \
   --setting pairing_mode=auto \
-  --setting allowed_user_ids=498502840 \
+  --setting pairing_users=498502840 \
   --setting stream_mode=block \
   --setting stream_thinking=false \
   --setting persist_thinking=false \
@@ -223,8 +235,9 @@ Setting notes:
 - `chat_id`: single numeric Telegram chat id
 - `chat_ids`: optional list of numeric Telegram chat ids, or a comma-separated string of ids
 - `pairing_mode`: `off`, `pending`, or `auto`; default `off`
-- `allowed_user_ids`: optional list of stable sender ids, or a comma-separated string of ids
-- `allowed_usernames`: optional list of usernames, or a comma-separated string of usernames
+- `pairing_users`: optional list of senders who may admit/pair new rooms; accepts Telegram user ids or usernames
+- `allowed_users`: optional list of senders who may interact in approved rooms; empty means any sender in an approved room
+- `banned_users`: optional list of senders who are always denied; overrides `allowed_users`
 - `respond_mode`: `all`, `mentions`, `replies`, or `mentions_or_replies`; default `all`
 - `poll_timeout_secs`: long-poll timeout, default `30`, maximum `50`
 - `poll_interval_ms`: delay between empty polls, default `250`
@@ -283,7 +296,7 @@ agent_id = "default"
 idle_ttl_secs = 600
 token_env = "TELEGRAM_BOT_TOKEN"
 pairing_mode = "auto"
-allowed_user_ids = ["498502840"]
+pairing_users = ["498502840"]
 poll_timeout_secs = 10
 poll_interval_ms = 250
 respond_mode = "mentions_or_replies"
@@ -394,7 +407,8 @@ Likely causes:
 - the bot was added but no new message was sent afterward
 - the channel is pointed at the wrong `chat_id`
 - pairing is `off` and the group is not in `chat_ids`
-- the sender is not in `allowed_user_ids` / `allowed_usernames`
+- the sender is not allowed by `pairing_users` or `allowed_users`
+- the sender is explicitly denied by `banned_users`
 - `respond_mode` is set to `mentions`, `replies`, or `mentions_or_replies`, and the test message did not match that policy
 
 ### No updates arrive from a channel
