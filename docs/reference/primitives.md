@@ -268,7 +268,8 @@ Notes:
 - each result object includes `id`, `name`, `args`, `verdict`, `duration_ms`, `content`, and `is_error`
 - callbacks must return either a string or `{ content = "...", is_error = bool? }`
 - handlers do not currently await nested tool results inline; callbacks run after Turin completes the nested native tool execution
-- nested virtual-tool dispatch is not supported yet
+- virtual tools may call other virtual tools
+- Turin rejects recursive virtual-tool chains and enforces a max virtual nesting depth of `8`
 
 ### `shell`
 

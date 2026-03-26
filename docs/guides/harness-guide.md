@@ -133,6 +133,32 @@ tool.declare("summarize_pair", {
 })
 ```
 
+Virtual tools can also call other virtual tools:
+
+```lua
+tool.declare("read_note", {
+  description = "Read a note from disk",
+  params = {
+    path = { type = "string", required = true }
+  },
+  handler = function(args)
+    return tool.call("read_file", { path = args.path })
+  end
+})
+
+tool.declare("read_note_wrapped", {
+  description = "Read a note through another virtual tool",
+  params = {
+    path = { type = "string", required = true }
+  },
+  handler = function(args)
+    return tool.call("read_note", { path = args.path }, function(result)
+      return "wrapped: " .. result.content
+    end)
+  end
+})
+```
+
 Notes:
 
 - `tool.declare(...)` is load-time only, just like `use(...)` and `watch(...)`
@@ -142,7 +168,8 @@ Notes:
 - `tool.call(...)` and `tool.sequence(...)` accept an optional callback that receives structured nested results after execution
 - handlers still do not await nested tool results inline; result callbacks run after Turin finishes the nested native tool execution
 - `on_tool_call` / `on_tool_result` governance still applies to the outer virtual tool and to the nested native calls it dispatches
-- nested virtual-to-virtual dispatch is intentionally not supported yet
+- virtual tools can call other virtual tools
+- Turin rejects recursive virtual-tool chains and enforces a max virtual nesting depth of `8`
 
 ## Writing With the DX Layer
 
