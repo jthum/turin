@@ -273,6 +273,11 @@ Channels can also use generic runner-level access control settings such as:
 - `banned_users = [...]`
 - `task_timeout_ms = 0 | <positive integer milliseconds>`
 
+Some channel adapters also support `session_scope`, for example:
+
+- Telegram: `user | thread | room`
+- Discord: `user | thread`
+
 Those settings are enforced before a message is routed into a Turin session, which is why they live in the shared channel runner rather than in a harness script.
 
 `kind = "fs"` is currently available as the first built-in adapter:

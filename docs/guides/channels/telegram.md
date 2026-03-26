@@ -196,7 +196,28 @@ Practical recommendations:
   - `pairing_mode = "pending"`
   - then inspect/approve with `turin daemon channel access ...`
 
-## 6. Create The Turin Channel
+## 6. Session Scope
+
+Telegram now supports configurable session scopes:
+
+- `user`: default; each sender gets an independent session inside the chat or topic
+- `thread`: one shared session per Telegram topic/thread; all senders in that thread share context
+- `room`: one shared session for the whole chat; all senders and all topics in that chat share context
+
+This setting controls session routing, not room approval:
+
+- pairing and access control still happen at the room level
+- session scope only changes which inbound messages reuse the same Turin session
+
+When `session_scope` is `thread` or `room`, Turin adds sender attribution to the prompt before it reaches the model, so the shared session still knows who said what.
+
+Practical recommendations:
+
+- personal bot in a group: `session_scope = "user"`
+- shared bot per topic/forum thread: `session_scope = "thread"`
+- one shared bot for a small group chat: `session_scope = "room"`
+
+## 7. Create The Turin Channel
 
 Create the channel with the daemon CLI:
 
@@ -219,6 +240,7 @@ turin daemon channel create telegram-ops \
   --setting poll_timeout_secs=10 \
   --setting poll_interval_ms=250 \
   --setting respond_mode=mentions_or_replies \
+  --setting session_scope=user \
   --setting pairing_mode=auto \
   --setting pairing_users=498502840 \
   --setting stream_mode=block \
@@ -239,6 +261,7 @@ Setting notes:
 - `allowed_users`: optional list of senders who may interact in approved rooms; empty means any sender in an approved room
 - `banned_users`: optional list of senders who are always denied; overrides `allowed_users`
 - `respond_mode`: `all`, `mentions`, `replies`, or `mentions_or_replies`; default `all`
+- `session_scope`: `user`, `thread`, or `room`; default `user`
 - `poll_timeout_secs`: long-poll timeout, default `30`, maximum `50`
 - `poll_interval_ms`: delay between empty polls, default `250`
 - `task_timeout_ms`: optional Turin task wait timeout for this channel; `0` or omitted means wait indefinitely

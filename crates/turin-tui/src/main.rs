@@ -791,6 +791,9 @@ fn handle_key(
         KeyCode::Char('m') if app.tab == TabKind::Channels => {
             app.cycle_selected_channel_pairing_mode(command_tx)?
         }
+        KeyCode::Char('s') if app.tab == TabKind::Channels => {
+            app.cycle_selected_channel_session_scope(command_tx)?
+        }
         KeyCode::Char('o') if app.tab == TabKind::Channels => {
             app.cycle_selected_channel_respond_mode(command_tx)?
         }
@@ -2458,6 +2461,11 @@ impl TuiApp {
         self.selected_channel_string_setting("respond_mode")
     }
 
+    fn selected_channel_session_scope(&self) -> String {
+        self.selected_channel_string_setting("session_scope")
+            .unwrap_or_else(|| "user".to_string())
+    }
+
     fn channel_access_entries(&self) -> Vec<ChannelAccessEntryRef> {
         let Some(access) = self.selected_channel_access() else {
             return Vec::new();
@@ -2663,6 +2671,48 @@ impl TuiApp {
             OperatorCommand::UpdateChannelSettings {
                 channel_id: channel.id,
                 settings: serde_json::json!({ "respond_mode": next }),
+            },
+        )
+    }
+
+    fn cycle_selected_channel_session_scope(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
+        let Some(channel) = self.selected_channel() else {
+            self.dashboard
+                .record_error("No channel is currently selected");
+            return Ok(());
+        };
+        if self.selected_channel_detail().is_none() {
+            self.dashboard
+                .record_error("Channel detail is still loading; try again in a moment");
+            return Ok(());
+        }
+
+        let next = match channel.kind.as_str() {
+            "telegram" => match self.selected_channel_session_scope().as_str() {
+                "user" => "thread",
+                "thread" => "room",
+                _ => "user",
+            },
+            "discord" => match self.selected_channel_session_scope().as_str() {
+                "thread" => "user",
+                _ => "thread",
+            },
+            _ => {
+                self.dashboard.record_error(
+                    "Session scope cycling is currently exposed for Telegram and Discord channels",
+                );
+                return Ok(());
+            }
+        };
+
+        send_command(
+            command_tx,
+            OperatorCommand::UpdateChannelSettings {
+                channel_id: channel.id,
+                settings: serde_json::json!({ "session_scope": next }),
             },
         )
     }
@@ -5434,6 +5484,10 @@ impl TuiApp {
         let respond_mode = detail
             .and_then(|detail| detail.settings.get("respond_mode"))
             .and_then(|value| value.as_str());
+        let session_scope = detail
+            .and_then(|detail| detail.settings.get("session_scope"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("user");
 
         let selected_room = match self.selected_channel_access_entry() {
             Some(entry) => match entry.kind {
@@ -5503,6 +5557,7 @@ impl TuiApp {
                 "Respond mode: {}",
                 respond_mode.unwrap_or("<channel default>")
             ),
+            format!("Session scope: {}", session_scope),
             String::new(),
             format!(
                 "Access state: {} pending, {} approved",
@@ -5511,7 +5566,7 @@ impl TuiApp {
             ),
             selected_room.unwrap_or_else(|| "Selected room: none".to_string()),
             String::new(),
-            "Actions: m pairing mode  p pairing users  u allowed users  b banned users  o respond mode".to_string(),
+            "Actions: m pairing mode  s session scope  p pairing users  u allowed users  b banned users  o respond mode".to_string(),
             "Room actions: [ / ] select room  a approve  x reject  v revoke".to_string(),
         ]
         .join("\n")

@@ -290,7 +290,7 @@ The desktop app exposes those as inline filter fields inside the Tasks, Channels
 The TUI exposes them as keyboard actions:
 
 - Tasks: `/` edits the task filter, `F` clears it
-- Channels: `/` edits the channel filter, `F` clears it, `[` / `]` move across discovered access entries, `m` cycles `pairing_mode`, `p` edits `pairing_users`, `u` edits `allowed_users`, `b` edits `banned_users`, `o` cycles Telegram `respond_mode`, `a` approves pending rooms, `x` rejects pending rooms, and `v` revokes approved rooms
+- Channels: `/` edits the channel filter, `F` clears it, `[` / `]` move across discovered access entries, `m` cycles `pairing_mode`, `s` cycles `session_scope`, `p` edits `pairing_users`, `u` edits `allowed_users`, `b` edits `banned_users`, `o` cycles Telegram `respond_mode`, `a` approves pending rooms, `x` rejects pending rooms, and `v` revokes approved rooms
 - Events: `/` edits the event filter, `F` clears it
 
 For high-volume event streams, both clients also support:
