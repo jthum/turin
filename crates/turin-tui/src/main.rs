@@ -286,6 +286,7 @@ struct TuiApp {
     detail_last_requested_at: BTreeMap<String, Instant>,
     inline_thinking_expanded: bool,
     focused_chat_turn: Option<(String, u32)>,
+    pending_chat_turn_jump: Option<(String, u32)>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -298,6 +299,19 @@ struct LiveTranscriptState {
     recent_events: VecDeque<String>,
     awaiting_reply: bool,
     awaiting_reply_for: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct TranscriptLine {
+    line: Line<'static>,
+    turn_index: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+struct TranscriptBlockMeta {
+    status: Option<String>,
+    focused_turn: bool,
+    turn_index: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1390,7 +1404,7 @@ fn render_chat_sidebar(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::l
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-fn render_chat_center(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
+fn render_chat_center(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::layout::Rect) {
     let block = pane_block("Chat");
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -1537,6 +1551,7 @@ impl TuiApp {
             detail_last_requested_at: BTreeMap::new(),
             inline_thinking_expanded: false,
             focused_chat_turn: None,
+            pending_chat_turn_jump: None,
         };
         app.events_follow_latest = app.settings.chat.follow_latest;
         app.initialize_chat_session();
@@ -2199,9 +2214,11 @@ impl TuiApp {
                         turn,
                     )
                 });
+                self.pending_chat_turn_jump = self.focused_chat_turn.clone();
             }
             SearchAction::FocusAgent { agent_id } => {
                 self.focused_chat_turn = None;
+                self.pending_chat_turn_jump = None;
                 if let Some(index) = self
                     .dashboard
                     .agents()
@@ -2214,6 +2231,7 @@ impl TuiApp {
             }
             SearchAction::FocusTask { request_id } => {
                 self.focused_chat_turn = None;
+                self.pending_chat_turn_jump = None;
                 let filtered = self.filtered_tasks();
                 if let Some(index) = filtered
                     .iter()
@@ -2225,6 +2243,7 @@ impl TuiApp {
             }
             SearchAction::FocusChannel { channel_id } => {
                 self.focused_chat_turn = None;
+                self.pending_chat_turn_jump = None;
                 let filtered = self.filtered_channels();
                 if let Some(index) = filtered.iter().position(|channel| channel.id == channel_id) {
                     self.channel_index = index;
@@ -2236,6 +2255,7 @@ impl TuiApp {
                 created_at,
             } => {
                 self.focused_chat_turn = None;
+                self.pending_chat_turn_jump = None;
                 let filtered = self.filtered_events();
                 if let Some(index) = filtered.iter().position(|event| {
                     event.event == event_name
@@ -2339,6 +2359,7 @@ impl TuiApp {
         {
             if self.chat_session_id.as_deref() != Some(session_id) {
                 self.focused_chat_turn = None;
+                self.pending_chat_turn_jump = None;
             }
             self.chat_session_id = Some(session_id.to_string());
             if self.settings.chat.follow_latest {
@@ -2627,6 +2648,7 @@ impl TuiApp {
         self.detail_last_requested_at.remove(session_id);
         self.chat_session_id = Some(session_id.to_string());
         self.chat_scroll_lines = 0;
+        self.pending_chat_turn_jump = None;
     }
 
     fn input_len_chars(&self) -> usize {
@@ -3609,6 +3631,7 @@ impl TuiApp {
     fn scroll_chat(&mut self, delta_from_bottom: i16) {
         let next = self.chat_scroll_lines as i16 + delta_from_bottom;
         self.chat_scroll_lines = next.max(0) as u16;
+        self.pending_chat_turn_jump = None;
         if self.chat_scroll_lines > 0 {
             self.settings.chat.follow_latest = false;
         }
@@ -3616,6 +3639,7 @@ impl TuiApp {
 
     fn jump_chat_latest(&mut self) {
         self.chat_scroll_lines = 0;
+        self.pending_chat_turn_jump = None;
         self.settings.chat.follow_latest = true;
         self.dashboard
             .record_info("Chat view jumped back to the latest output");
@@ -3623,6 +3647,7 @@ impl TuiApp {
 
     fn jump_chat_oldest(&mut self) {
         self.chat_scroll_lines = u16::MAX / 2;
+        self.pending_chat_turn_jump = None;
         self.settings.chat.follow_latest = false;
         self.dashboard
             .record_info("Chat view jumped toward the oldest loaded transcript lines");
@@ -3714,7 +3739,7 @@ impl TuiApp {
     }
 
     fn chat_transcript_text(
-        &self,
+        &mut self,
         viewport_height: usize,
         viewport_width: usize,
     ) -> (Text<'static>, u16) {
@@ -3736,20 +3761,32 @@ impl TuiApp {
             .chat
             .transcript_memory_budget_bytes
             .max(16 * 1024);
-        trim_lines_to_budget(&mut lines, budget);
-        let lines = wrap_lines_for_width(lines, viewport_width.max(1));
+        trim_transcript_lines_to_budget(&mut lines, budget, self.focused_chat_turn_for_session(session_id));
+        let lines = wrap_transcript_lines_for_width(lines, viewport_width.max(1));
 
         let total_lines = lines.len();
         let visible_lines = viewport_height.max(1);
+        if let Some((pending_session_id, pending_turn)) = self.pending_chat_turn_jump.clone()
+            && pending_session_id == session_id
+            && let Some(target_index) = lines
+                .iter()
+                .position(|line| line.turn_index == Some(pending_turn))
+        {
+            let target_top = target_index.saturating_sub(2);
+            let scroll_from_bottom = total_lines
+                .saturating_sub(visible_lines.saturating_add(target_top));
+            self.chat_scroll_lines = scroll_from_bottom.min(u16::MAX as usize) as u16;
+            self.pending_chat_turn_jump = None;
+        }
         let scroll_from_top = total_lines
             .saturating_sub(visible_lines.saturating_add(self.chat_scroll_lines as usize));
         (
-            Text::from(lines),
+            Text::from(lines.into_iter().map(|line| line.line).collect::<Vec<_>>()),
             scroll_from_top.min(u16::MAX as usize) as u16,
         )
     }
 
-    fn build_transcript_lines(&self, session_id: &str) -> Vec<Line<'static>> {
+    fn build_transcript_lines(&self, session_id: &str) -> Vec<TranscriptLine> {
         let mut lines = Vec::new();
         let focused_turn = self.focused_chat_turn_for_session(session_id);
         let completed_thinking = self
@@ -3773,6 +3810,7 @@ impl TuiApp {
                         thinking,
                         self.inline_thinking_expanded,
                         true,
+                        Some(message.turn_index),
                     );
                 }
 
@@ -3788,10 +3826,13 @@ impl TuiApp {
                 self.push_message_block(
                     &mut lines,
                     message.role.as_str(),
-                    Some(format!("turn {}", message.turn_index)),
                     &content,
                     token_footer,
-                    focused_turn == Some(message.turn_index),
+                    TranscriptBlockMeta {
+                        status: Some(format!("turn {}", message.turn_index)),
+                        focused_turn: focused_turn == Some(message.turn_index),
+                        turn_index: Some(message.turn_index),
+                    },
                 );
             }
         }
@@ -3801,10 +3842,13 @@ impl TuiApp {
                 self.push_message_block(
                     &mut lines,
                     "user",
-                    Some("pending".to_string()),
                     prompt,
                     None,
-                    false,
+                    TranscriptBlockMeta {
+                        status: Some("pending".to_string()),
+                        focused_turn: false,
+                        turn_index: None,
+                    },
                 );
             }
 
@@ -3817,6 +3861,7 @@ impl TuiApp {
                     &state.thinking_preview,
                     self.inline_thinking_expanded,
                     false,
+                    None,
                 );
             }
 
@@ -3826,10 +3871,13 @@ impl TuiApp {
                 self.push_message_block(
                     &mut lines,
                     "assistant",
-                    Some("streaming".to_string()),
                     &state.assistant_preview,
                     None,
-                    false,
+                    TranscriptBlockMeta {
+                        status: Some("streaming".to_string()),
+                        focused_turn: false,
+                        turn_index: None,
+                    },
                 );
             }
 
@@ -3837,31 +3885,44 @@ impl TuiApp {
                 && state.assistant_preview.trim().is_empty()
                 && state.thinking_preview.trim().is_empty()
             {
-                lines.push(Line::from(Span::styled(
-                    format!("{} Thinking…", spinner_frame()),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                )));
-                lines.push(Line::default());
+                lines.push(TranscriptLine {
+                    line: Line::from(Span::styled(
+                        format!("{} Thinking…", spinner_frame()),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    turn_index: None,
+                });
+                lines.push(TranscriptLine {
+                    line: Line::default(),
+                    turn_index: None,
+                });
             }
         }
 
         if lines.is_empty() {
-            lines.push(Line::from("No transcript has been loaded yet."));
+            lines.push(TranscriptLine {
+                line: Line::from("No transcript has been loaded yet."),
+                turn_index: None,
+            });
         }
         lines
     }
 
     fn push_message_block(
         &self,
-        lines: &mut Vec<Line<'static>>,
+        lines: &mut Vec<TranscriptLine>,
         role: &str,
-        status: Option<String>,
         content: &str,
         footer: Option<Line<'static>>,
-        focused_turn: bool,
+        meta: TranscriptBlockMeta,
     ) {
+        let TranscriptBlockMeta {
+            status,
+            focused_turn,
+            turn_index,
+        } = meta;
         let (label, color, body_style) = self.chat_role_descriptor(role);
         let heading = match (status, focused_turn) {
             (Some(status), true) => format!("── {label} · {status} · match"),
@@ -3881,49 +3942,65 @@ impl TuiApp {
         } else {
             body_style
         };
-        lines.push(Line::from(Span::styled(heading, heading_style)));
+        lines.push(TranscriptLine {
+            line: Line::from(Span::styled(heading, heading_style)),
+            turn_index,
+        });
         let body_prefix = "│ ";
         for body_line in content.lines() {
-            lines.push(Line::from(Span::styled(
-                format!("{body_prefix}{body_line}"),
-                body_style,
-            )));
+            lines.push(TranscriptLine {
+                line: Line::from(Span::styled(
+                    format!("{body_prefix}{body_line}"),
+                    body_style,
+                )),
+                turn_index,
+            });
         }
         if content.is_empty() {
-            lines.push(Line::from(Span::styled(
-                body_prefix.to_string(),
-                body_style,
-            )));
+            lines.push(TranscriptLine {
+                line: Line::from(Span::styled(body_prefix.to_string(), body_style)),
+                turn_index,
+            });
         }
         if let Some(footer) = footer {
-            lines.push(footer);
+            lines.push(TranscriptLine {
+                line: footer,
+                turn_index,
+            });
         }
-        lines.push(Line::default());
+        lines.push(TranscriptLine {
+            line: Line::default(),
+            turn_index,
+        });
     }
 
     fn push_thinking_preview_block(
         &self,
-        lines: &mut Vec<Line<'static>>,
+        lines: &mut Vec<TranscriptLine>,
         thinking: &str,
         expanded: bool,
         persisted: bool,
+        turn_index: Option<u32>,
     ) {
-        lines.push(Line::from(Span::styled(
-            if persisted {
-                if expanded {
-                    "·· Thinking"
+        lines.push(TranscriptLine {
+            line: Line::from(Span::styled(
+                if persisted {
+                    if expanded {
+                        "·· Thinking"
+                    } else {
+                        "·· Thinking (collapsed, press t to expand)"
+                    }
+                } else if expanded {
+                    "·· Thinking preview"
                 } else {
-                    "·· Thinking (collapsed, press t to expand)"
-                }
-            } else if expanded {
-                "·· Thinking preview"
-            } else {
-                "·· Thinking preview (press t to expand)"
-            },
-            Style::default()
-                .fg(Color::Rgb(132, 144, 160))
-                .add_modifier(Modifier::ITALIC | Modifier::DIM),
-        )));
+                    "·· Thinking preview (press t to expand)"
+                },
+                Style::default()
+                    .fg(Color::Rgb(132, 144, 160))
+                    .add_modifier(Modifier::ITALIC | Modifier::DIM),
+            )),
+            turn_index,
+        });
 
         let preview_lines = if expanded {
             thinking
@@ -3941,20 +4018,26 @@ impl TuiApp {
         };
 
         if preview_lines.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "› reasoning stream active",
-                Style::default()
-                    .fg(Color::Rgb(110, 122, 138))
-                    .add_modifier(Modifier::DIM),
-            )));
-        } else {
-            for line in preview_lines {
-                lines.push(Line::from(Span::styled(
-                    format!("› {}", excerpt(line, 140)),
+            lines.push(TranscriptLine {
+                line: Line::from(Span::styled(
+                    "› reasoning stream active",
                     Style::default()
                         .fg(Color::Rgb(110, 122, 138))
                         .add_modifier(Modifier::DIM),
-                )));
+                )),
+                turn_index,
+            });
+        } else {
+            for line in preview_lines {
+                lines.push(TranscriptLine {
+                    line: Line::from(Span::styled(
+                        format!("› {}", excerpt(line, 140)),
+                        Style::default()
+                            .fg(Color::Rgb(110, 122, 138))
+                            .add_modifier(Modifier::DIM),
+                    )),
+                    turn_index,
+                });
             }
         }
 
@@ -3965,21 +4048,30 @@ impl TuiApp {
                 .count()
                 > 2
         {
-            lines.push(Line::from(Span::styled(
-                "  … more available in the Thinking pane or via t",
-                Style::default()
-                    .fg(Color::Rgb(96, 108, 124))
-                    .add_modifier(Modifier::DIM),
-            )));
+            lines.push(TranscriptLine {
+                line: Line::from(Span::styled(
+                    "  … more available in the Thinking pane or via t",
+                    Style::default()
+                        .fg(Color::Rgb(96, 108, 124))
+                        .add_modifier(Modifier::DIM),
+                )),
+                turn_index,
+            });
         } else {
-            lines.push(Line::from(Span::styled(
-                "  full stream available in the Thinking pane",
-                Style::default()
-                    .fg(Color::Rgb(96, 108, 124))
-                    .add_modifier(Modifier::DIM),
-            )));
+            lines.push(TranscriptLine {
+                line: Line::from(Span::styled(
+                    "  full stream available in the Thinking pane",
+                    Style::default()
+                        .fg(Color::Rgb(96, 108, 124))
+                        .add_modifier(Modifier::DIM),
+                )),
+                turn_index,
+            });
         }
-        lines.push(Line::default());
+        lines.push(TranscriptLine {
+            line: Line::default(),
+            turn_index,
+        });
     }
 
     fn chat_role_descriptor(&self, role: &str) -> (String, Color, Style) {
@@ -4721,26 +4813,37 @@ fn split_input_lines(value: &str) -> Vec<String> {
     lines
 }
 
-fn wrap_lines_for_width(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
+fn wrap_transcript_lines_for_width(
+    lines: Vec<TranscriptLine>,
+    width: usize,
+) -> Vec<TranscriptLine> {
     let width = width.max(1);
     let mut wrapped = Vec::new();
     for line in lines {
         let style = line
+            .line
             .spans
             .first()
             .map(|span| span.style)
-            .unwrap_or(line.style);
+            .unwrap_or(line.line.style);
         let text = line
+            .line
             .spans
             .iter()
             .map(|span| span.content.as_ref())
             .collect::<String>();
         if text.is_empty() {
-            wrapped.push(Line::default());
+            wrapped.push(TranscriptLine {
+                line: Line::default(),
+                turn_index: line.turn_index,
+            });
             continue;
         }
         for chunk in wrap_text_chunk(&text, width) {
-            wrapped.push(Line::from(Span::styled(chunk, style)));
+            wrapped.push(TranscriptLine {
+                line: Line::from(Span::styled(chunk, style)),
+                turn_index: line.turn_index,
+            });
         }
     }
     wrapped
@@ -5103,11 +5206,74 @@ fn push_bounded_line(queue: &mut VecDeque<String>, value: String, max_items: usi
     }
 }
 
-fn trim_lines_to_budget(lines: &mut Vec<Line<'static>>, budget_bytes: usize) {
+fn trim_transcript_lines_to_budget(
+    lines: &mut Vec<TranscriptLine>,
+    budget_bytes: usize,
+    focused_turn: Option<u32>,
+) {
+    if let Some(focused_turn) = focused_turn
+        && let Some(focus_index) = lines
+            .iter()
+            .position(|line| line.turn_index == Some(focused_turn))
+    {
+        let line_costs = lines
+            .iter()
+            .map(transcript_line_cost)
+            .collect::<Vec<_>>();
+        let mut start = focus_index;
+        while start > 0 && lines[start - 1].turn_index == Some(focused_turn) {
+            start -= 1;
+        }
+        let mut end = focus_index + 1;
+        while end < lines.len() && lines[end].turn_index == Some(focused_turn) {
+            end += 1;
+        }
+
+        let mut total = line_costs[start..end].iter().sum::<usize>();
+        let mut next_before = start;
+        let mut next_after = end;
+        let mut bias_before = true;
+
+        while total < budget_bytes && (next_before > 0 || next_after < lines.len()) {
+            let mut added = false;
+            if bias_before
+                && next_before > 0
+                && total.saturating_add(line_costs[next_before - 1]) <= budget_bytes
+            {
+                next_before -= 1;
+                total = total.saturating_add(line_costs[next_before]);
+                added = true;
+            }
+            if next_after < lines.len()
+                && total.saturating_add(line_costs[next_after]) <= budget_bytes
+            {
+                total = total.saturating_add(line_costs[next_after]);
+                next_after += 1;
+                added = true;
+            }
+            if !bias_before
+                && next_before > 0
+                && total.saturating_add(line_costs[next_before - 1]) <= budget_bytes
+            {
+                next_before -= 1;
+                total = total.saturating_add(line_costs[next_before]);
+                added = true;
+            }
+            if !added {
+                break;
+            }
+            bias_before = !bias_before;
+        }
+
+        *lines = lines[next_before..next_after].to_vec();
+        return;
+    }
+
     let mut total = 0usize;
     let mut kept = Vec::new();
     for line in lines.iter().rev() {
         let line_text = line
+            .line
             .spans
             .iter()
             .map(|span| span.content.as_ref())
@@ -5120,6 +5286,15 @@ fn trim_lines_to_budget(lines: &mut Vec<Line<'static>>, budget_bytes: usize) {
     }
     kept.reverse();
     *lines = kept;
+}
+
+fn transcript_line_cost(line: &TranscriptLine) -> usize {
+    line.line
+        .spans
+        .iter()
+        .map(|span| span.content.len())
+        .sum::<usize>()
+        + 1
 }
 
 fn format_token_usage_totals(usage: TokenUsageTotals) -> String {
