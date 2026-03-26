@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use futures::stream::{Stream, StreamExt};
 use std::pin::Pin;
 use std::time::Duration;
+use tokio::time::sleep;
 
 use crate::kernel::config::ProviderConfig;
 use crate::kernel::event::{KernelEvent, StreamEvent};
@@ -332,24 +333,57 @@ impl InferenceProvider for MockProvider {
         _request: InferenceRequest,
         _options: Option<RequestOptions>,
     ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
-        let content = self.response.clone();
+        let (delay, content) = parse_mock_stream_response(&self.response);
         Box::pin(async move {
-            let events = vec![
-                Ok(InferenceEvent::MessageStart {
-                    role: "assistant".to_string(),
-                    model: "mock-model".to_string(),
-                    provider_id: "mock".to_string(),
-                }),
-                Ok(InferenceEvent::MessageDelta { content }),
-                Ok(InferenceEvent::MessageEnd {
-                    input_tokens: 10,
-                    output_tokens: 5,
-                    stop_reason: None,
-                }),
-            ];
-            Ok(Box::pin(futures::stream::iter(events)) as InferenceStream)
+            let stream = futures::stream::unfold(
+                (0u8, delay, content),
+                |(step, delay, content)| async move {
+                    match step {
+                        0 => Some((
+                            Ok(InferenceEvent::MessageStart {
+                                role: "assistant".to_string(),
+                                model: "mock-model".to_string(),
+                                provider_id: "mock".to_string(),
+                            }),
+                            (1, delay, content),
+                        )),
+                        1 => {
+                            if !delay.is_zero() {
+                                sleep(delay).await;
+                            }
+                            Some((
+                                Ok(InferenceEvent::MessageDelta { content }),
+                                (2, delay, String::new()),
+                            ))
+                        }
+                        2 => Some((
+                            Ok(InferenceEvent::MessageEnd {
+                                input_tokens: 10,
+                                output_tokens: 5,
+                                stop_reason: None,
+                            }),
+                            (3, delay, content),
+                        )),
+                        _ => None,
+                    }
+                },
+            );
+            Ok(Box::pin(stream) as InferenceStream)
         })
     }
+}
+
+fn parse_mock_stream_response(raw: &str) -> (Duration, String) {
+    let Some(rest) = raw.strip_prefix("delay_ms=") else {
+        return (Duration::ZERO, raw.to_string());
+    };
+    let Some((delay_ms, content)) = rest.split_once(';') else {
+        return (Duration::ZERO, raw.to_string());
+    };
+    let Ok(delay_ms) = delay_ms.trim().parse::<u64>() else {
+        return (Duration::ZERO, raw.to_string());
+    };
+    (Duration::from_millis(delay_ms), content.to_string())
 }
 
 #[cfg(test)]

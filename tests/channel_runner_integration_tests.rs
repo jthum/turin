@@ -31,8 +31,18 @@ struct MockDriver {
     stream_mode: ChannelStreamMode,
 }
 
+struct RecordingDriver {
+    events: VecDeque<InboundEvent>,
+    sent: Arc<Mutex<Vec<(String, Instant)>>>,
+    shutdown_called: Arc<Mutex<bool>>,
+}
+
 impl DaemonHarness {
     async fn start() -> Result<Self> {
+        Self::start_with_mock_response("PONG").await
+    }
+
+    async fn start_with_mock_response(mock_response: &str) -> Result<Self> {
         let tempdir = Arc::new(tempfile::tempdir()?);
         let workspace_root = tempdir.path().join("workspace");
         let harness_dir = workspace_root.join(".turin/harnesses");
@@ -66,11 +76,12 @@ fs_root = "."
 
 [providers.mock]
 type = "mock"
-base_url = "PONG"
+base_url = "{mock_response}"
 "#,
             workspace_root = workspace_root.display(),
             database_path = workspace_root.join("test.db").display(),
             harness_directory = harness_dir.display(),
+            mock_response = mock_response,
         );
         std::fs::write(&config_path, config_toml)?;
         let endpoint = workspace_root.join(".turin/daemon.sock");
@@ -157,6 +168,16 @@ impl MockDriver {
     }
 }
 
+impl RecordingDriver {
+    fn new(events: Vec<InboundEvent>) -> Self {
+        Self {
+            events: events.into(),
+            sent: Arc::new(Mutex::new(Vec::new())),
+            shutdown_called: Arc::new(Mutex::new(false)),
+        }
+    }
+}
+
 #[async_trait]
 impl ChannelDriver for MockDriver {
     fn kind(&self) -> ChannelKind {
@@ -217,6 +238,52 @@ impl ChannelDriver for MockDriver {
     }
 }
 
+#[async_trait]
+impl ChannelDriver for RecordingDriver {
+    fn kind(&self) -> ChannelKind {
+        ChannelKind::Telegram
+    }
+
+    fn user_matches_selector(&self, selector: &str, user: &ChannelUser) -> bool {
+        let selector = selector.trim();
+        if selector.is_empty() {
+            return false;
+        }
+        user.id == selector
+            || user
+                .username
+                .as_ref()
+                .is_some_and(|username| username.eq_ignore_ascii_case(selector))
+    }
+
+    async fn next_event(&mut self) -> Result<Option<InboundEvent>> {
+        Ok(self.events.pop_front())
+    }
+
+    async fn send(
+        &mut self,
+        _conversation: &ChannelConversationKey,
+        message: OutboundMessage,
+    ) -> Result<()> {
+        let reply_to = message
+            .metadata
+            .get("telegram_reply_to_message_id")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        self.sent
+            .lock()
+            .expect("sent lock poisoned")
+            .push((reply_to, Instant::now()));
+        Ok(())
+    }
+
+    async fn shutdown(&mut self) -> Result<()> {
+        *self.shutdown_called.lock().expect("shutdown lock poisoned") = true;
+        Ok(())
+    }
+}
+
 fn sample_event() -> InboundEvent {
     let conversation = ChannelConversationKey {
         channel: ChannelKind::Discord,
@@ -239,6 +306,36 @@ fn sample_event() -> InboundEvent {
         text: "Say pong".into(),
         attachments: vec![],
         metadata: Default::default(),
+    }
+}
+
+fn sample_telegram_event(thread_id: &str, user_id: &str, message_id: &str) -> InboundEvent {
+    let conversation = ChannelConversationKey {
+        channel: ChannelKind::Telegram,
+        workspace_id: "telegram".into(),
+        room_id: Some("group-1".into()),
+        thread_id: thread_id.into(),
+        user_id: Some(user_id.into()),
+    };
+    let mut metadata = serde_json::Map::new();
+    metadata.insert(
+        "telegram_message_id".into(),
+        serde_json::Value::String(message_id.into()),
+    );
+    InboundEvent {
+        message: ChannelMessageRef {
+            conversation: conversation.clone(),
+            message_id: message_id.into(),
+        },
+        conversation,
+        user: ChannelUser {
+            id: user_id.into(),
+            display_name: Some(format!("User {user_id}")),
+            username: Some(format!("user_{user_id}")),
+        },
+        text: "Say pong".into(),
+        attachments: vec![],
+        metadata,
     }
 }
 
@@ -309,6 +406,62 @@ async fn channel_runner_emits_progress_updates_for_opted_in_driver() -> Result<(
             "progress log should contain streamed assistant text: {progress:?}"
         );
     }
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn channel_runner_processes_different_conversations_in_parallel() -> Result<()> {
+    let daemon = DaemonHarness::start_with_mock_response("delay_ms=600;PONG").await?;
+    let runner = daemon.runner();
+    let event_a = sample_telegram_event("thread-a", "user-a", "msg-a");
+    let event_b = sample_telegram_event("thread-b", "user-b", "msg-b");
+    let mut driver = RecordingDriver::new(vec![event_a, event_b]);
+    let sent = Arc::clone(&driver.sent);
+    let started_at = Instant::now();
+
+    runner
+        .run_driver("default", &mut driver, Some(5_000))
+        .await?;
+
+    let elapsed = started_at.elapsed();
+    {
+        let sent = sent.lock().expect("sent lock poisoned");
+        assert_eq!(sent.len(), 2);
+    }
+    assert!(
+        elapsed < Duration::from_millis(1_050),
+        "different conversations should overlap, elapsed={elapsed:?}"
+    );
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn channel_runner_serializes_same_conversation_events() -> Result<()> {
+    let daemon = DaemonHarness::start_with_mock_response("delay_ms=600;PONG").await?;
+    let runner = daemon.runner();
+    let event_a = sample_telegram_event("thread-a", "user-a", "msg-a");
+    let event_b = sample_telegram_event("thread-a", "user-a", "msg-b");
+    let mut driver = RecordingDriver::new(vec![event_a, event_b]);
+    let sent = Arc::clone(&driver.sent);
+    let started_at = Instant::now();
+
+    runner
+        .run_driver("default", &mut driver, Some(5_000))
+        .await?;
+
+    let elapsed = started_at.elapsed();
+    {
+        let sent = sent.lock().expect("sent lock poisoned");
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[0].0, "msg-a");
+        assert_eq!(sent[1].0, "msg-b");
+    }
+    assert!(
+        elapsed >= Duration::from_millis(1_050),
+        "same conversation should stay serialized, elapsed={elapsed:?}"
+    );
 
     daemon.stop().await
 }
