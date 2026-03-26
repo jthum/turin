@@ -220,8 +220,8 @@ Notes:
 Harness-declared virtual tools.
 
 - `tool.declare(name, spec) -> nil`
-- `tool.call(name, args?) -> call_descriptor`
-- `tool.sequence({ call_descriptor, ... }) -> sequence_descriptor`
+- `tool.call(name, args?, callback?) -> call_descriptor`
+- `tool.sequence({ call_descriptor, ... }, callback?) -> sequence_descriptor`
 
 `spec` shape:
 
@@ -264,7 +264,10 @@ Notes:
 - declared tools are exposed to the model in the normal provider tool list
 - handlers execute in the harness VM and return nested tool-call descriptors for Turin to execute afterward
 - handlers can use `runtime.*`, DX helpers, memory, KV, DB, and policy checks to decide what to dispatch
-- handlers do not currently await nested tool results inline
+- `callback` is optional; for `tool.call(...)` it receives one result object, and for `tool.sequence(...)` it receives an array of result objects
+- each result object includes `id`, `name`, `args`, `verdict`, `duration_ms`, `content`, and `is_error`
+- callbacks must return either a string or `{ content = "...", is_error = bool? }`
+- handlers do not currently await nested tool results inline; callbacks run after Turin completes the nested native tool execution
 - nested virtual-tool dispatch is not supported yet
 
 ### `shell`

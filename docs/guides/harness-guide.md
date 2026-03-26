@@ -110,13 +110,37 @@ tool.declare("read_pair", {
 })
 ```
 
+Nested tool results can now be post-processed in Lua:
+
+```lua
+tool.declare("summarize_pair", {
+  description = "Read two files and summarize them",
+  params = {
+    first = { type = "string", required = true },
+    second = { type = "string", required = true }
+  },
+  handler = function(args)
+    return tool.sequence({
+      tool.call("read_file", { path = args.first }),
+      tool.call("read_file", { path = args.second })
+    }, function(results)
+      return {
+        content = "Combined: " .. results[1].content .. " | " .. results[2].content,
+        is_error = results[1].is_error or results[2].is_error
+      }
+    end)
+  end
+})
+```
+
 Notes:
 
 - `tool.declare(...)` is load-time only, just like `use(...)` and `watch(...)`
 - `params` is sugar that Turin normalizes into JSON Schema before sending the tool to the provider
 - `input_schema = {...}` is still available when you need the full JSON Schema shape directly
 - handlers run in the normal harness environment, so they can use `runtime.*`, DX helpers, memory, KV, and policy checks to decide which native calls to return
-- handlers currently return `tool.call(...)` / `tool.sequence(...)` descriptors; they do not await nested tool results inline
+- `tool.call(...)` and `tool.sequence(...)` accept an optional callback that receives structured nested results after execution
+- handlers still do not await nested tool results inline; result callbacks run after Turin finishes the nested native tool execution
 - `on_tool_call` / `on_tool_result` governance still applies to the outer virtual tool and to the nested native calls it dispatches
 - nested virtual-to-virtual dispatch is intentionally not supported yet
 
