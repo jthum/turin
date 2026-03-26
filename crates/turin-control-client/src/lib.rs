@@ -9,7 +9,7 @@ use turin_daemon_protocol::{
     EventEnvelope, NoParams, OpenSessionParams, RequestEnvelope, ResponseEnvelope,
     ResumeSessionParams, RuntimeEventsSubscribeParams, SessionIdParams, SessionListParams,
     SessionSearchHitKind, SessionSearchParams, SessionSearchScope, SessionTitleParams,
-    SubmitTaskParams, TaskIdParams, WaitTaskParams,
+    SubmitTaskParams, TaskIdParams, UpdateChannelParams, WaitTaskParams,
 };
 use turin_remote_client::RemoteClient;
 
@@ -658,6 +658,24 @@ impl ControlClient {
             None,
             DaemonRequest::ChannelGet(EntityIdParams {
                 id: channel_id.to_string(),
+            }),
+        )
+        .await
+    }
+
+    pub async fn update_channel_settings(
+        &self,
+        channel_id: &str,
+        settings: Value,
+    ) -> Result<ChannelDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::ChannelUpdate(UpdateChannelParams {
+                id: channel_id.to_string(),
+                kind: None,
+                agent_id: None,
+                idle_ttl_secs: None,
+                settings: Some(settings),
             }),
         )
         .await

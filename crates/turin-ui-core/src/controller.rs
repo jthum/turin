@@ -11,7 +11,8 @@ use tokio::runtime::Handle;
 use tokio::sync::{mpsc, watch};
 use tokio::time;
 use turin_control_client::{
-    ChannelAccessState, ConnectionSpec, ControlClient, SessionDetail, SessionSearchHit,
+    ChannelAccessState, ChannelDetail, ConnectionSpec, ControlClient, SessionDetail,
+    SessionSearchHit,
 };
 use turin_daemon_protocol::{EventEnvelope, RuntimeEventsSubscribeParams, SessionSearchScope};
 
@@ -43,6 +44,10 @@ pub struct UiController {
 pub enum UiUpdate {
     Snapshot(Box<DashboardSnapshot>),
     SessionDetail(Box<SessionDetail>),
+    ChannelDetail {
+        channel_id: String,
+        detail: Box<ChannelDetail>,
+    },
     ChannelAccess {
         channel_id: String,
         access: Box<ChannelAccessState>,
@@ -75,6 +80,9 @@ pub enum OperatorCommand {
         session_id: String,
     },
     LoadChannelAccess {
+        channel_id: String,
+    },
+    LoadChannelDetail {
         channel_id: String,
     },
     SearchSessions {
@@ -120,6 +128,10 @@ pub enum OperatorCommand {
         workspace_id: String,
         room_id: Option<String>,
         thread_id: String,
+    },
+    UpdateChannelSettings {
+        channel_id: String,
+        settings: serde_json::Value,
     },
     CancelTask {
         request_id: String,
@@ -1581,6 +1593,28 @@ fn spawn_command_task(
                 continue;
             }
 
+            if let OperatorCommand::LoadChannelDetail { channel_id } = &command {
+                match client.get_channel(channel_id.as_str()).await {
+                    Ok(detail) => {
+                        if tx
+                            .send(UiUpdate::ChannelDetail {
+                                channel_id: channel_id.clone(),
+                                detail: Box::new(detail),
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+
             if let OperatorCommand::SearchSessions {
                 query,
                 scope,
@@ -1749,6 +1783,41 @@ fn spawn_command_task(
                 continue;
             }
 
+            if let OperatorCommand::UpdateChannelSettings {
+                channel_id,
+                settings,
+            } = &command
+            {
+                match client
+                    .update_channel_settings(channel_id.as_str(), settings.clone())
+                    .await
+                {
+                    Ok(detail) => {
+                        if tx
+                            .send(UiUpdate::ChannelDetail {
+                                channel_id: channel_id.clone(),
+                                detail: Box::new(detail),
+                            })
+                            .is_err()
+                            || tx
+                                .send(UiUpdate::Info(format!(
+                                    "Updated settings for channel {}",
+                                    channel_id
+                                )))
+                                .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+
             match execute_operator_command(&client, command).await {
                 Ok(message) => {
                     if tx.send(UiUpdate::Info(message)).is_err() {
@@ -1807,6 +1876,7 @@ pub async fn execute_operator_command(
         }
         OperatorCommand::LoadSessionDetail { .. } => Ok("Loaded session detail".to_string()),
         OperatorCommand::LoadChannelAccess { .. } => Ok("Loaded channel access".to_string()),
+        OperatorCommand::LoadChannelDetail { .. } => Ok("Loaded channel detail".to_string()),
         OperatorCommand::SearchSessions { .. } => {
             Ok("Loaded persisted session search results".to_string())
         }
@@ -1867,12 +1937,7 @@ pub async fn execute_operator_command(
             thread_id,
         } => {
             let access = client
-                .approve_channel_room(
-                    &channel_id,
-                    &workspace_id,
-                    room_id.as_deref(),
-                    &thread_id,
-                )
+                .approve_channel_room(&channel_id, &workspace_id, room_id.as_deref(), &thread_id)
                 .await?;
             Ok(format!(
                 "Approved room {} for channel {} ({} approved total)",
@@ -1888,12 +1953,7 @@ pub async fn execute_operator_command(
             thread_id,
         } => {
             let access = client
-                .reject_channel_room(
-                    &channel_id,
-                    &workspace_id,
-                    room_id.as_deref(),
-                    &thread_id,
-                )
+                .reject_channel_room(&channel_id, &workspace_id, room_id.as_deref(), &thread_id)
                 .await?;
             Ok(format!(
                 "Rejected pending room {} for channel {} ({} pending remain)",
@@ -1909,12 +1969,7 @@ pub async fn execute_operator_command(
             thread_id,
         } => {
             let access = client
-                .revoke_channel_room(
-                    &channel_id,
-                    &workspace_id,
-                    room_id.as_deref(),
-                    &thread_id,
-                )
+                .revoke_channel_room(&channel_id, &workspace_id, room_id.as_deref(), &thread_id)
                 .await?;
             Ok(format!(
                 "Revoked room {} for channel {} ({} approved remain)",
@@ -1922,6 +1977,9 @@ pub async fn execute_operator_command(
                 channel_id,
                 access.approved_rooms.len()
             ))
+        }
+        OperatorCommand::UpdateChannelSettings { channel_id, .. } => {
+            Ok(format!("Updated settings for channel {}", channel_id))
         }
         OperatorCommand::CancelTask { request_id } => {
             let task = client.cancel_task(&request_id).await?;

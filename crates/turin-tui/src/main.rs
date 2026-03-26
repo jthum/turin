@@ -26,8 +26,8 @@ use std::io::stdout;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use turin_control_client::{
-    AgentRuntime, AgentSummary, ApprovedChannelRoom, ChannelAccessState, ChannelRuntime,
-    ChannelSummary, ConnectionKind, LiveSession, PendingChannelRoom,
+    AgentRuntime, AgentSummary, ApprovedChannelRoom, ChannelAccessState, ChannelDetail,
+    ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession, PendingChannelRoom,
     SessionSearchHit as PersistedSessionSearchHit, SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::{EventEnvelope, SessionSearchHitKind, SessionSearchScope};
@@ -212,6 +212,15 @@ enum InputMode {
     EditSessionTitle {
         session_id: String,
     },
+    EditChannelPairingUsers {
+        channel_id: String,
+    },
+    EditChannelAllowedUsers {
+        channel_id: String,
+    },
+    EditChannelBannedUsers {
+        channel_id: String,
+    },
     EditTranscriptBudget,
     EditUserLabel,
 }
@@ -272,6 +281,7 @@ struct TuiApp {
     requested_stream_session: Option<String>,
     requested_session_detail: Option<String>,
     requested_channel_access: Option<String>,
+    requested_channel_detail: Option<String>,
     search_query: String,
     search_scope: SearchScope,
     persisted_search_hits: Vec<PersistedSessionSearchHit>,
@@ -287,6 +297,7 @@ struct TuiApp {
     paused_events: Vec<EventEnvelope>,
     live_transcripts: BTreeMap<String, LiveTranscriptState>,
     channel_access: BTreeMap<String, ChannelAccessState>,
+    channel_details: BTreeMap<String, ChannelDetail>,
     pending_chat_prompt: Option<PendingChatPrompt>,
     detail_retry_until: BTreeMap<String, Instant>,
     detail_last_requested_at: BTreeMap<String, Instant>,
@@ -608,6 +619,7 @@ fn run_app(
         app.ensure_chat_session_stream_loaded(&controller.command_tx)?;
         app.ensure_session_detail_loaded(&controller.command_tx)?;
         app.ensure_channel_access_loaded(&controller.command_tx)?;
+        app.ensure_channel_detail_loaded(&controller.command_tx)?;
 
         if event::poll(Duration::from_millis(16)).context("Failed to poll terminal events")? {
             loop {
@@ -637,6 +649,7 @@ fn run_app(
         app.ensure_chat_session_stream_loaded(&controller.command_tx)?;
         app.ensure_session_detail_loaded(&controller.command_tx)?;
         app.ensure_channel_access_loaded(&controller.command_tx)?;
+        app.ensure_channel_detail_loaded(&controller.command_tx)?;
 
         terminal.draw(|frame| render(frame, app))?;
     }
@@ -773,6 +786,19 @@ fn handle_key(
         KeyCode::Char('F') if app.tab == TabKind::Events => app.clear_event_filter(),
         KeyCode::Char('a') if app.tab == TabKind::Channels => {
             app.approve_selected_channel_room(command_tx)?
+        }
+        KeyCode::Char('b') if app.tab == TabKind::Channels => app.start_edit_channel_banned_users(),
+        KeyCode::Char('m') if app.tab == TabKind::Channels => {
+            app.cycle_selected_channel_pairing_mode(command_tx)?
+        }
+        KeyCode::Char('o') if app.tab == TabKind::Channels => {
+            app.cycle_selected_channel_respond_mode(command_tx)?
+        }
+        KeyCode::Char('p') if app.tab == TabKind::Channels => {
+            app.start_edit_channel_pairing_users()
+        }
+        KeyCode::Char('u') if app.tab == TabKind::Channels => {
+            app.start_edit_channel_allowed_users()
         }
         KeyCode::Char('x') if app.tab == TabKind::Channels => {
             app.reject_selected_channel_room(command_tx)?
@@ -948,6 +974,9 @@ fn handle_input_mode(
                 && !matches!(
                     app.input_mode.as_ref(),
                     Some(InputMode::EditSessionTitle { .. })
+                        | Some(InputMode::EditChannelPairingUsers { .. })
+                        | Some(InputMode::EditChannelAllowedUsers { .. })
+                        | Some(InputMode::EditChannelBannedUsers { .. })
                 )
             {
                 let message = match app.input_mode.as_ref() {
@@ -964,6 +993,15 @@ fn handle_input_mode(
                     Some(InputMode::EditUserLabel) => "User label cannot be empty",
                     Some(InputMode::EditSessionTitle { .. }) => {
                         "Blank title will clear the current session title"
+                    }
+                    Some(InputMode::EditChannelPairingUsers { .. }) => {
+                        "Blank value clears pairing users"
+                    }
+                    Some(InputMode::EditChannelAllowedUsers { .. }) => {
+                        "Blank value clears allowed users"
+                    }
+                    Some(InputMode::EditChannelBannedUsers { .. }) => {
+                        "Blank value clears banned users"
                     }
                     Some(InputMode::EditTaskFilter)
                     | Some(InputMode::EditChannelFilter)
@@ -1061,6 +1099,30 @@ fn handle_input_mode(
                             session_id,
                             title: (!title.is_empty()).then_some(title),
                         },
+                    )?;
+                }
+                Some(InputMode::EditChannelPairingUsers { channel_id }) => {
+                    app.update_channel_selector_setting(
+                        command_tx,
+                        &channel_id,
+                        "pairing_users",
+                        &input,
+                    )?;
+                }
+                Some(InputMode::EditChannelAllowedUsers { channel_id }) => {
+                    app.update_channel_selector_setting(
+                        command_tx,
+                        &channel_id,
+                        "allowed_users",
+                        &input,
+                    )?;
+                }
+                Some(InputMode::EditChannelBannedUsers { channel_id }) => {
+                    app.update_channel_selector_setting(
+                        command_tx,
+                        &channel_id,
+                        "banned_users",
+                        &input,
                     )?;
                 }
                 Some(InputMode::ConfirmDiscard { .. }) => {}
@@ -1261,6 +1323,10 @@ fn render_left_panel(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::lay
         render_search_panel(frame, app, area);
         return;
     }
+    if app.tab == TabKind::Channels {
+        render_channels_panel(frame, app, area);
+        return;
+    }
 
     let title = match app.tab {
         TabKind::Chat => "Chat",
@@ -1289,6 +1355,68 @@ fn render_left_panel(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::lay
         .highlight_symbol(">> ")
         .block(pane_block(title));
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn render_channels_panel(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::layout::Rect) {
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(8), Constraint::Min(8)])
+        .split(area);
+
+    let channel_items: Vec<_> = app
+        .filtered_channels()
+        .iter()
+        .map(|channel| {
+            let access = app.channel_access.get(&channel.id);
+            ListItem::new(format!(
+                "{}  {}  {}  pending:{} approved:{}",
+                channel.id,
+                channel.kind,
+                if channel.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
+                access.map(|state| state.pending_rooms.len()).unwrap_or(0),
+                access.map(|state| state.approved_rooms.len()).unwrap_or(0),
+            ))
+        })
+        .collect();
+    let mut channel_state = ListState::default();
+    if !channel_items.is_empty() {
+        channel_state.select(Some(
+            app.channel_index.min(channel_items.len().saturating_sub(1)),
+        ));
+    }
+    let channels = List::new(channel_items)
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(28, 56, 73))
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol(">> ")
+        .block(pane_block("Channels"));
+    frame.render_stateful_widget(channels, sections[0], &mut channel_state);
+
+    let room_items = app.channel_access_list_items();
+    let mut room_state = ListState::default();
+    if !room_items.is_empty() {
+        room_state.select(Some(
+            app.channel_access_index
+                .min(room_items.len().saturating_sub(1)),
+        ));
+    }
+    let rooms = List::new(room_items)
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(28, 56, 73))
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol(">> ")
+        .block(pane_block("Rooms"));
+    frame.render_stateful_widget(rooms, sections[1], &mut room_state);
 }
 
 fn render_search_panel(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::layout::Rect) {
@@ -1614,6 +1742,7 @@ impl TuiApp {
             requested_stream_session: None,
             requested_session_detail: None,
             requested_channel_access: None,
+            requested_channel_detail: None,
             search_query: String::new(),
             search_scope: SearchScope::All,
             persisted_search_hits: Vec::new(),
@@ -1629,6 +1758,7 @@ impl TuiApp {
             paused_events: Vec::new(),
             live_transcripts: BTreeMap::new(),
             channel_access: BTreeMap::new(),
+            channel_details: BTreeMap::new(),
             pending_chat_prompt: None,
             detail_retry_until: BTreeMap::new(),
             detail_last_requested_at: BTreeMap::new(),
@@ -1673,6 +1803,10 @@ impl TuiApp {
             UiUpdate::ChannelAccess { channel_id, access } => {
                 self.channel_access
                     .insert(channel_id.clone(), access.as_ref().clone());
+            }
+            UiUpdate::ChannelDetail { channel_id, detail } => {
+                self.channel_details
+                    .insert(channel_id.clone(), detail.as_ref().clone());
             }
             UiUpdate::Snapshot(snapshot) => {
                 if self.chat_session_id.is_none() {
@@ -1739,8 +1873,10 @@ impl TuiApp {
         self.session_index = clamp_index(self.session_index, self.dashboard.sessions.len());
         self.task_index = clamp_index(self.task_index, self.filtered_tasks().len());
         self.channel_index = clamp_index(self.channel_index, self.filtered_channels().len());
-        self.channel_access_index =
-            clamp_index(self.channel_access_index, self.channel_access_entries().len());
+        self.channel_access_index = clamp_index(
+            self.channel_access_index,
+            self.channel_access_entries().len(),
+        );
         self.event_index = clamp_index(self.event_index, self.filtered_events().len());
         self.settings_index = clamp_index(self.settings_index, self.settings_items().len());
         self.chat_sidebar_index =
@@ -2286,17 +2422,48 @@ impl TuiApp {
         self.filtered_channels().get(self.channel_index).cloned()
     }
 
+    fn selected_channel_detail(&self) -> Option<&ChannelDetail> {
+        self.selected_channel()
+            .as_ref()
+            .and_then(|channel| self.channel_details.get(&channel.id))
+    }
+
     fn selected_channel_access(&self) -> Option<&ChannelAccessState> {
         self.selected_channel()
             .as_ref()
             .and_then(|channel| self.channel_access.get(&channel.id))
     }
 
+    fn selected_channel_settings(&self) -> Option<&serde_json::Map<String, Value>> {
+        self.selected_channel_detail()?.settings.as_object()
+    }
+
+    fn selected_channel_string_list(&self, key: &str) -> Vec<String> {
+        channel_setting_string_list(self.selected_channel_settings(), key)
+    }
+
+    fn selected_channel_string_setting(&self, key: &str) -> Option<String> {
+        self.selected_channel_settings()
+            .and_then(|settings| settings.get(key))
+            .and_then(|value| value.as_str())
+            .map(ToString::to_string)
+    }
+
+    fn selected_channel_pairing_mode(&self) -> String {
+        self.selected_channel_string_setting("pairing_mode")
+            .unwrap_or_else(|| "off".to_string())
+    }
+
+    fn selected_channel_respond_mode(&self) -> Option<String> {
+        self.selected_channel_string_setting("respond_mode")
+    }
+
     fn channel_access_entries(&self) -> Vec<ChannelAccessEntryRef> {
         let Some(access) = self.selected_channel_access() else {
             return Vec::new();
         };
-        let mut entries = Vec::with_capacity(access.pending_rooms.len() + access.approved_rooms.len());
+        let mut entries =
+            Vec::with_capacity(access.pending_rooms.len() + access.approved_rooms.len());
         for index in 0..access.pending_rooms.len() {
             entries.push(ChannelAccessEntryRef {
                 kind: ChannelAccessEntryKind::Pending,
@@ -2310,6 +2477,44 @@ impl TuiApp {
             });
         }
         entries
+    }
+
+    fn channel_access_list_items(&self) -> Vec<ListItem<'static>> {
+        let Some(access) = self.selected_channel_access() else {
+            return vec![ListItem::new("No access entries loaded.")];
+        };
+        let mut items =
+            Vec::with_capacity(access.pending_rooms.len() + access.approved_rooms.len());
+
+        for room in &access.pending_rooms {
+            let label = format!(
+                "pending  {}  by {}",
+                channel_room_label(&room.room.room_id, &room.room.thread_id),
+                room.sample_username
+                    .as_deref()
+                    .or(room.sample_user_id.as_deref())
+                    .unwrap_or("unknown"),
+            );
+            items.push(ListItem::new(label));
+        }
+
+        for room in &access.approved_rooms {
+            let label = format!(
+                "approved  {}  by {}",
+                channel_room_label(&room.room.room_id, &room.room.thread_id),
+                room.approved_by_username
+                    .as_deref()
+                    .or(room.approved_by_user_id.as_deref())
+                    .unwrap_or("operator"),
+            );
+            items.push(ListItem::new(label));
+        }
+
+        if items.is_empty() {
+            items.push(ListItem::new("No pending or approved rooms yet."));
+        }
+
+        items
     }
 
     fn selected_channel_access_entry(&self) -> Option<ChannelAccessEntryRef> {
@@ -2334,6 +2539,149 @@ impl TuiApp {
         }
         self.selected_channel_access()
             .and_then(|access| access.approved_rooms.get(entry.index))
+    }
+
+    fn start_edit_channel_pairing_users(&mut self) {
+        let Some(channel) = self.selected_channel() else {
+            self.dashboard
+                .record_error("No channel is currently selected");
+            return;
+        };
+        if self.selected_channel_detail().is_none() {
+            self.dashboard
+                .record_error("Channel detail is still loading; try again in a moment");
+            return;
+        }
+        let initial = self
+            .selected_channel_string_list("pairing_users")
+            .join(", ");
+        self.begin_input_mode(
+            InputMode::EditChannelPairingUsers {
+                channel_id: channel.id,
+            },
+            initial,
+        );
+    }
+
+    fn start_edit_channel_allowed_users(&mut self) {
+        let Some(channel) = self.selected_channel() else {
+            self.dashboard
+                .record_error("No channel is currently selected");
+            return;
+        };
+        if self.selected_channel_detail().is_none() {
+            self.dashboard
+                .record_error("Channel detail is still loading; try again in a moment");
+            return;
+        }
+        let initial = self
+            .selected_channel_string_list("allowed_users")
+            .join(", ");
+        self.begin_input_mode(
+            InputMode::EditChannelAllowedUsers {
+                channel_id: channel.id,
+            },
+            initial,
+        );
+    }
+
+    fn start_edit_channel_banned_users(&mut self) {
+        let Some(channel) = self.selected_channel() else {
+            self.dashboard
+                .record_error("No channel is currently selected");
+            return;
+        };
+        if self.selected_channel_detail().is_none() {
+            self.dashboard
+                .record_error("Channel detail is still loading; try again in a moment");
+            return;
+        }
+        let initial = self.selected_channel_string_list("banned_users").join(", ");
+        self.begin_input_mode(
+            InputMode::EditChannelBannedUsers {
+                channel_id: channel.id,
+            },
+            initial,
+        );
+    }
+
+    fn cycle_selected_channel_pairing_mode(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
+        let Some(channel) = self.selected_channel() else {
+            self.dashboard
+                .record_error("No channel is currently selected");
+            return Ok(());
+        };
+        if self.selected_channel_detail().is_none() {
+            self.dashboard
+                .record_error("Channel detail is still loading; try again in a moment");
+            return Ok(());
+        }
+        let next = match self.selected_channel_pairing_mode().as_str() {
+            "off" => "pending",
+            "pending" => "auto",
+            _ => "off",
+        };
+        send_command(
+            command_tx,
+            OperatorCommand::UpdateChannelSettings {
+                channel_id: channel.id,
+                settings: serde_json::json!({ "pairing_mode": next }),
+            },
+        )
+    }
+
+    fn cycle_selected_channel_respond_mode(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
+        let Some(channel) = self.selected_channel() else {
+            self.dashboard
+                .record_error("No channel is currently selected");
+            return Ok(());
+        };
+        if self.selected_channel_detail().is_none() {
+            self.dashboard
+                .record_error("Channel detail is still loading; try again in a moment");
+            return Ok(());
+        }
+        if channel.kind != "telegram" {
+            self.dashboard
+                .record_error("Respond mode is currently only exposed for Telegram channels");
+            return Ok(());
+        }
+        let next = match self.selected_channel_respond_mode().as_deref() {
+            Some("mentions") => "replies",
+            Some("replies") => "mentions_or_replies",
+            Some("mentions_or_replies") => "all",
+            _ => "mentions",
+        };
+        send_command(
+            command_tx,
+            OperatorCommand::UpdateChannelSettings {
+                channel_id: channel.id,
+                settings: serde_json::json!({ "respond_mode": next }),
+            },
+        )
+    }
+
+    fn update_channel_selector_setting(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+        channel_id: &str,
+        key: &str,
+        input: &str,
+    ) -> Result<()> {
+        let selectors = parse_selector_list_input(input);
+        send_command(
+            command_tx,
+            OperatorCommand::UpdateChannelSettings {
+                channel_id: channel_id.to_string(),
+                settings: serde_json::json!({ key: selectors }),
+            },
+        )
     }
 
     fn activate_search_result(
@@ -2894,6 +3242,9 @@ impl TuiApp {
             Some(InputMode::EditEventFilter) => "Event Filter",
             Some(InputMode::EditSearchQuery) => "Search Query",
             Some(InputMode::EditSessionTitle { .. }) => "Session Title",
+            Some(InputMode::EditChannelPairingUsers { .. }) => "Pairing Users",
+            Some(InputMode::EditChannelAllowedUsers { .. }) => "Allowed Users",
+            Some(InputMode::EditChannelBannedUsers { .. }) => "Banned Users",
             Some(InputMode::EditTranscriptBudget) => "Transcript Budget",
             Some(InputMode::EditUserLabel) => "User Label",
             None => "Help",
@@ -2961,6 +3312,15 @@ impl TuiApp {
             }
             Some(InputMode::EditSessionTitle { .. }) => {
                 "Enter updates the current session title. Submit a blank value to clear it. Esc cancels.".to_string()
+            }
+            Some(InputMode::EditChannelPairingUsers { .. }) => {
+                "Enter updates pairing users as a comma-separated list. Submit a blank value to clear it. Esc cancels.".to_string()
+            }
+            Some(InputMode::EditChannelAllowedUsers { .. }) => {
+                "Enter updates allowed users as a comma-separated list. Submit a blank value to clear it. Esc cancels.".to_string()
+            }
+            Some(InputMode::EditChannelBannedUsers { .. }) => {
+                "Enter updates banned users as a comma-separated list. Submit a blank value to clear it. Esc cancels.".to_string()
             }
             Some(InputMode::EditTranscriptBudget) => {
                 "Enter updates transcript memory budget in bytes (minimum 16384). Esc cancels."
@@ -3149,7 +3509,8 @@ impl TuiApp {
         command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
     ) -> Result<()> {
         let Some(channel) = self.selected_channel() else {
-            self.dashboard.record_error("No channel is currently selected");
+            self.dashboard
+                .record_error("No channel is currently selected");
             return Ok(());
         };
         let Some(room) = self.selected_pending_channel_room() else {
@@ -3173,7 +3534,8 @@ impl TuiApp {
         command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
     ) -> Result<()> {
         let Some(channel) = self.selected_channel() else {
-            self.dashboard.record_error("No channel is currently selected");
+            self.dashboard
+                .record_error("No channel is currently selected");
             return Ok(());
         };
         let Some(room) = self.selected_pending_channel_room() else {
@@ -3197,7 +3559,8 @@ impl TuiApp {
         command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
     ) -> Result<()> {
         let Some(channel) = self.selected_channel() else {
-            self.dashboard.record_error("No channel is currently selected");
+            self.dashboard
+                .record_error("No channel is currently selected");
             return Ok(());
         };
         let Some(room) = self.selected_approved_channel_room() else {
@@ -5019,29 +5382,7 @@ impl TuiApp {
                 .unwrap_or_else(|| "No tasks available.".to_string()),
             TabKind::Channels => self
                 .selected_channel()
-                .map(|channel| {
-                    let runtime = self.channel_runtime(&channel.id);
-                    let access = self.channel_access.get(&channel.id);
-                    let selected_entry = self.selected_channel_access_entry().and_then(|entry| {
-                        access.map(|access| match entry.kind {
-                            ChannelAccessEntryKind::Pending => serde_json::json!({
-                                "kind": "pending",
-                                "entry": access.pending_rooms.get(entry.index),
-                            }),
-                            ChannelAccessEntryKind::Approved => serde_json::json!({
-                                "kind": "approved",
-                                "entry": access.approved_rooms.get(entry.index),
-                            }),
-                        })
-                    });
-                    pretty_json(&serde_json::json!({
-                        "filter": self.channel_filter,
-                        "channel": channel,
-                        "runtime": runtime,
-                        "access": access,
-                        "selected_access_entry": selected_entry,
-                    }))
-                })
+                .map(|channel| self.channel_detail_text(&channel))
                 .unwrap_or_else(|| "No channels available.".to_string()),
             TabKind::Events => self
                 .selected_event()
@@ -5073,6 +5414,109 @@ impl TuiApp {
         }
     }
 
+    fn channel_detail_text(&self, channel: &ChannelSummary) -> String {
+        let runtime = self.channel_runtime(&channel.id);
+        let detail = self.channel_details.get(&channel.id);
+        let access = self.channel_access.get(&channel.id);
+        let pairing_mode = detail
+            .and_then(|detail| detail.settings.get("pairing_mode"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("off");
+        let pairing_users = detail
+            .map(|detail| channel_setting_string_list(detail.settings.as_object(), "pairing_users"))
+            .unwrap_or_default();
+        let allowed_users = detail
+            .map(|detail| channel_setting_string_list(detail.settings.as_object(), "allowed_users"))
+            .unwrap_or_default();
+        let banned_users = detail
+            .map(|detail| channel_setting_string_list(detail.settings.as_object(), "banned_users"))
+            .unwrap_or_default();
+        let respond_mode = detail
+            .and_then(|detail| detail.settings.get("respond_mode"))
+            .and_then(|value| value.as_str());
+
+        let selected_room = match self.selected_channel_access_entry() {
+            Some(entry) => match entry.kind {
+                ChannelAccessEntryKind::Pending => access
+                    .and_then(|access| access.pending_rooms.get(entry.index))
+                    .map(|room| {
+                        format!(
+                            "Pending room {}  sample sender: {}",
+                            channel_room_label(&room.room.room_id, &room.room.thread_id),
+                            room.sample_username
+                                .as_deref()
+                                .or(room.sample_user_id.as_deref())
+                                .unwrap_or("unknown")
+                        )
+                    }),
+                ChannelAccessEntryKind::Approved => access
+                    .and_then(|access| access.approved_rooms.get(entry.index))
+                    .map(|room| {
+                        format!(
+                            "Approved room {}  approved by: {}",
+                            channel_room_label(&room.room.room_id, &room.room.thread_id),
+                            room.approved_by_username
+                                .as_deref()
+                                .or(room.approved_by_user_id.as_deref())
+                                .unwrap_or("operator")
+                        )
+                    }),
+            },
+            None => None,
+        };
+
+        [
+            format!("Channel: {}", channel.id),
+            format!("Kind: {}  Agent: {}", channel.kind, channel.agent_id),
+            format!("Enabled: {}", channel.enabled),
+            format!(
+                "Runtime: {}",
+                runtime.map(|runtime| runtime.state.as_str()).unwrap_or("unknown")
+            ),
+            String::new(),
+            format!("Pairing mode: {}", pairing_mode),
+            format!(
+                "Pairing users: {}",
+                if pairing_users.is_empty() {
+                    "any sender may pair".to_string()
+                } else {
+                    pairing_users.join(", ")
+                }
+            ),
+            format!(
+                "Allowed users: {}",
+                if allowed_users.is_empty() {
+                    "any sender in approved rooms".to_string()
+                } else {
+                    allowed_users.join(", ")
+                }
+            ),
+            format!(
+                "Banned users: {}",
+                if banned_users.is_empty() {
+                    "none".to_string()
+                } else {
+                    banned_users.join(", ")
+                }
+            ),
+            format!(
+                "Respond mode: {}",
+                respond_mode.unwrap_or("<channel default>")
+            ),
+            String::new(),
+            format!(
+                "Access state: {} pending, {} approved",
+                access.map(|state| state.pending_rooms.len()).unwrap_or(0),
+                access.map(|state| state.approved_rooms.len()).unwrap_or(0),
+            ),
+            selected_room.unwrap_or_else(|| "Selected room: none".to_string()),
+            String::new(),
+            "Actions: m pairing mode  p pairing users  u allowed users  b banned users  o respond mode".to_string(),
+            "Room actions: [ / ] select room  a approve  x reject  v revoke".to_string(),
+        ]
+        .join("\n")
+    }
+
     fn help_text(&self) -> String {
         let shared = "0-9 switch views | Tab cycle | arrows/j/k move | r refresh | q quit";
         let scoped = match self.tab {
@@ -5090,7 +5534,7 @@ impl TuiApp {
             TabKind::Sessions => "e or Enter resumes the selected stored session",
             TabKind::Tasks => "/ edit filter | F clear filter | c cancels the selected task",
             TabKind::Channels => {
-                "/ edit filter | F clear filter | [ / ] select access room | a approve pending | x reject pending | v revoke approved"
+                "/ edit filter | F clear filter | [ / ] select access room | m cycle pairing | p/u/b edit pairing/allowed/banned users | o cycle respond mode | a approve pending | x reject pending | v revoke approved"
             }
             TabKind::Events => {
                 "/ edit filter | F clear filter | z pause | f follow latest | G latest"
@@ -5215,8 +5659,7 @@ impl TuiApp {
             return Ok(());
         }
 
-        if self.requested_channel_access.as_deref() == Some(channel.id.as_str())
-        {
+        if self.requested_channel_access.as_deref() == Some(channel.id.as_str()) {
             return Ok(());
         }
 
@@ -5224,6 +5667,38 @@ impl TuiApp {
         send_command(
             command_tx,
             OperatorCommand::LoadChannelAccess {
+                channel_id: channel.id,
+            },
+        )
+    }
+
+    fn ensure_channel_detail_loaded(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
+        if self.tab != TabKind::Channels {
+            self.requested_channel_detail = None;
+            return Ok(());
+        }
+
+        let Some(channel) = self.selected_channel() else {
+            self.requested_channel_detail = None;
+            return Ok(());
+        };
+
+        if self.channel_details.contains_key(&channel.id) {
+            self.requested_channel_detail = Some(channel.id.clone());
+            return Ok(());
+        }
+
+        if self.requested_channel_detail.as_deref() == Some(channel.id.as_str()) {
+            return Ok(());
+        }
+
+        self.requested_channel_detail = Some(channel.id.clone());
+        send_command(
+            command_tx,
+            OperatorCommand::LoadChannelDetail {
                 channel_id: channel.id,
             },
         )
@@ -5366,6 +5841,46 @@ fn slice_chars(value: &str, start: usize, end: usize) -> String {
         .skip(start)
         .take(end.saturating_sub(start))
         .collect()
+}
+
+fn channel_setting_string_list(
+    settings: Option<&serde_json::Map<String, Value>>,
+    key: &str,
+) -> Vec<String> {
+    let Some(value) = settings.and_then(|settings| settings.get(key)) else {
+        return Vec::new();
+    };
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .filter_map(|item| item.as_str())
+            .map(ToString::to_string)
+            .collect(),
+        Value::String(text) => text
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToString::to_string)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn parse_selector_list_input(input: &str) -> Vec<String> {
+    input
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn channel_room_label(room_id: &Option<String>, thread_id: &str) -> String {
+    match room_id.as_deref() {
+        Some(room_id) if room_id != thread_id => format!("{room_id} / {thread_id}"),
+        Some(room_id) => room_id.to_string(),
+        None => thread_id.to_string(),
+    }
 }
 
 fn clamp_index(index: usize, len: usize) -> usize {
