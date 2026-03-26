@@ -121,6 +121,7 @@ impl DaemonState {
                 let title = super::helpers::session_title_from_metadata(row.metadata.as_deref());
                 SessionSearchHit {
                     kind: row.kind,
+                    score: row.score,
                     session_id: super::helpers::format_uuid_bytes_simple(&row.public_id),
                     agent_id: row.agent_id,
                     title,
@@ -129,8 +130,8 @@ impl DaemonState {
                     role: row.role,
                     tool_name: row.tool_name,
                     event_type: row.event_type,
-                    summary: summarize_search_hit(&row.match_text),
-                    snippet: excerpt_search_text(&row.match_text, 220),
+                    summary: summarize_search_hit(&row.match_text, query),
+                    snippet: excerpt_search_text(&row.match_text, query, 220),
                 }
             })
             .collect())
@@ -330,17 +331,71 @@ impl DaemonState {
     }
 }
 
-fn summarize_search_hit(text: &str) -> String {
-    excerpt_search_text(text, 72)
+fn summarize_search_hit(text: &str, query: &str) -> String {
+    excerpt_search_text(text, query, 72)
 }
 
-fn excerpt_search_text(text: &str, max_chars: usize) -> String {
+fn excerpt_search_text(text: &str, query: &str, max_chars: usize) -> String {
     let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let trimmed = collapsed.trim();
     if trimmed.chars().count() <= max_chars {
-        trimmed.to_string()
-    } else {
+        return trimmed.to_string();
+    }
+
+    let normalized_query = query.trim().to_ascii_lowercase();
+    if normalized_query.is_empty() {
         let excerpt = trimmed.chars().take(max_chars).collect::<String>();
-        format!("{excerpt}…")
+        return format!("{excerpt}…");
+    }
+
+    let lower_trimmed = trimmed.to_ascii_lowercase();
+    if let Some(byte_index) = lower_trimmed.find(&normalized_query) {
+        let match_start = trimmed[..byte_index].chars().count();
+        let match_len = normalized_query.chars().count();
+        let context_before = max_chars / 3;
+        let context_after = max_chars.saturating_sub(context_before + match_len);
+        let start = match_start.saturating_sub(context_before);
+        let end = (match_start + match_len + context_after).min(trimmed.chars().count());
+        let mut excerpt = slice_chars(trimmed, start, end).trim().to_string();
+        if start > 0 {
+            excerpt = format!("…{excerpt}");
+        }
+        if end < trimmed.chars().count() {
+            excerpt.push('…');
+        }
+        return excerpt;
+    }
+
+    let excerpt = trimmed.chars().take(max_chars).collect::<String>();
+    format!("{excerpt}…")
+}
+
+fn slice_chars(value: &str, start: usize, end: usize) -> String {
+    value
+        .chars()
+        .skip(start)
+        .take(end.saturating_sub(start))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::excerpt_search_text;
+
+    #[test]
+    fn search_excerpt_centers_query_when_possible() {
+        let text =
+            "prefix context before the actual match lands on compiler panic in src/main.rs";
+        let excerpt = excerpt_search_text(text, "compiler", 28);
+        assert!(excerpt.contains("compiler"));
+        assert!(excerpt.starts_with('…'));
+        assert!(excerpt.ends_with('…'));
+    }
+
+    #[test]
+    fn search_excerpt_falls_back_to_prefix_without_query() {
+        let text = "alpha beta gamma delta epsilon";
+        let excerpt = excerpt_search_text(text, "", 12);
+        assert_eq!(excerpt, "alpha beta g…");
     }
 }

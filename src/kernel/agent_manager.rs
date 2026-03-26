@@ -23,6 +23,10 @@ use tokio::sync::{Notify, RwLock, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+pub(crate) type SessionEventRecord = (Option<i64>, KernelEvent);
+pub(crate) type SessionEventSender = tokio::sync::broadcast::Sender<SessionEventRecord>;
+pub(crate) type SessionEventReceiver = tokio::sync::broadcast::Receiver<SessionEventRecord>;
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PeerAgentTaskResult {
     pub request_id: String,
@@ -107,8 +111,7 @@ struct PendingTaskRecord {
 #[derive(Default)]
 pub(crate) struct RuntimeControl {
     current_session_id: StdRwLock<Option<String>>,
-    current_session_events:
-        StdRwLock<Option<tokio::sync::broadcast::Sender<(Option<i64>, KernelEvent)>>>,
+    current_session_events: StdRwLock<Option<SessionEventSender>>,
     current_request_id: StdRwLock<Option<String>>,
     current_runtime_task_id: StdRwLock<Option<String>>,
     current_cancel_token: Mutex<Option<CancellationToken>>,
@@ -125,7 +128,7 @@ impl RuntimeControl {
     fn set_current_session(
         &self,
         session_id: Option<String>,
-        event_tx: Option<tokio::sync::broadcast::Sender<(Option<i64>, KernelEvent)>>,
+        event_tx: Option<SessionEventSender>,
     ) {
         *self
             .current_session_id
@@ -151,12 +154,12 @@ impl RuntimeControl {
 
     fn subscribe_current_session_events(
         &self,
-    ) -> Option<tokio::sync::broadcast::Receiver<(Option<i64>, KernelEvent)>> {
+    ) -> Option<SessionEventReceiver> {
         self.current_session_events
             .read()
             .expect("runtime control session events lock poisoned")
             .as_ref()
-            .map(tokio::sync::broadcast::Sender::subscribe)
+            .map(SessionEventSender::subscribe)
     }
 
     fn activate_task(

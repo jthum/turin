@@ -306,6 +306,7 @@ pub struct SessionActionResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSearchHit {
     pub kind: SessionSearchHitKind,
+    pub score: i64,
     pub session_id: String,
     pub agent_id: String,
     pub title: Option<String>,

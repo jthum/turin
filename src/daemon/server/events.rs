@@ -14,6 +14,7 @@ use crate::daemon::protocol::{
     DaemonRequest, EventEnvelope, RequestEnvelope, ResponseEnvelope, RuntimeEventsSubscribeParams,
 };
 use crate::daemon::state::{DaemonRuntimeSnapshot, DaemonState, DaemonStatus};
+use crate::kernel::agent_manager::SessionEventReceiver;
 use crate::kernel::event::KernelEvent;
 
 use super::dispatch::{build_runtime_snapshot, classify_registry_issue, emit_event};
@@ -23,6 +24,8 @@ struct EventFilter {
     agent_id: Option<String>,
     session_id: Option<String>,
 }
+
+type ScopedSessionEventStream = (String, String, SessionEventReceiver);
 
 pub(super) async fn stream_events(
     request: RequestEnvelope,
@@ -217,11 +220,7 @@ async fn write_event(writer: &mut LocalIpcWriteHalf, event: &EventEnvelope) -> R
 }
 
 async fn next_session_kernel_event(
-    session_event_rx: &mut Option<(
-        String,
-        String,
-        broadcast::Receiver<(Option<i64>, KernelEvent)>,
-    )>,
+    session_event_rx: &mut Option<ScopedSessionEventStream>,
 ) -> Option<std::result::Result<EventEnvelope, broadcast::error::RecvError>> {
     let (agent_id, session_id, rx) = session_event_rx.as_mut()?;
     Some(

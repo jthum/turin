@@ -3150,8 +3150,12 @@ impl TuiApp {
                         })),
                     ),
                 };
-                let rank = search_rank(&query, &[&line_label, &hit.summary, &hit.snippet])
-                    .unwrap_or_default();
+                let rank = i32::try_from(hit.score)
+                    .unwrap_or(if hit.score.is_negative() {
+                        i32::MIN
+                    } else {
+                        i32::MAX
+                    });
                 hits.push(SearchHit {
                     kind,
                     label: line_label,

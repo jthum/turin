@@ -28,6 +28,7 @@ pub struct StateStore {
 #[derive(Debug, Clone)]
 pub struct SessionSearchRow {
     pub kind: SessionSearchHitKind,
+    pub score: i64,
     pub public_id: Vec<u8>,
     pub agent_id: String,
     pub metadata: Option<String>,
@@ -295,6 +296,12 @@ impl StateStore {
             clauses.push(
                 r#"
                 SELECT 'session' AS kind,
+                       CASE
+                           WHEN LOWER(s.agent_id) = ?2 THEN 1200
+                           WHEN LOWER(COALESCE(s.metadata, '')) LIKE (?2 || '%') THEN 1120
+                           WHEN LOWER(s.agent_id) LIKE (?2 || '%') THEN 1080
+                           ELSE 980
+                       END AS score,
                        s.id AS sort_id,
                        s.public_id,
                        s.agent_id,
@@ -318,6 +325,11 @@ impl StateStore {
             clauses.push(
                 r#"
                 SELECT 'message' AS kind,
+                       CASE
+                           WHEN LOWER(m.role) = ?2 THEN 860
+                           WHEN instr(LOWER(m.content), ?2) = 1 THEN 820
+                           ELSE 740
+                       END AS score,
                        m.id AS sort_id,
                        s.public_id,
                        s.agent_id,
@@ -342,6 +354,13 @@ impl StateStore {
             clauses.push(
                 r#"
                 SELECT 'tool_execution' AS kind,
+                       CASE
+                           WHEN LOWER(t.tool_name) = ?2 THEN 900
+                           WHEN LOWER(t.tool_name) LIKE (?2 || '%') THEN 860
+                           WHEN instr(LOWER(COALESCE(t.args, '')), ?2) = 1 THEN 760
+                           WHEN instr(LOWER(COALESCE(t.output, '')), ?2) = 1 THEN 740
+                           ELSE 700
+                       END AS score,
                        t.id AS sort_id,
                        s.public_id,
                        s.agent_id,
@@ -370,6 +389,11 @@ impl StateStore {
             clauses.push(
                 r#"
                 SELECT 'event' AS kind,
+                       CASE
+                           WHEN LOWER(e.event_type) = ?2 THEN 820
+                           WHEN LOWER(e.event_type) LIKE (?2 || '%') THEN 780
+                           ELSE 680
+                       END AS score,
                        e.id AS sort_id,
                        s.public_id,
                        s.agent_id,
@@ -398,8 +422,8 @@ impl StateStore {
             FROM (
                 {}
             ) search_hits
-            ORDER BY created_at DESC, sort_id DESC
-            LIMIT ?2 OFFSET ?3
+            ORDER BY score DESC, created_at DESC, sort_id DESC
+            LIMIT ?3 OFFSET ?4
             "#,
             clauses.join("\nUNION ALL\n")
         );
@@ -407,7 +431,10 @@ impl StateStore {
         let conn = self.connect().await?;
         let needle = format!("%{normalized}%");
         let mut rows = conn
-            .query(&sql, turso::params![needle, limit as i64, offset as i64])
+            .query(
+                &sql,
+                turso::params![needle, normalized, limit as i64, offset as i64],
+            )
             .await
             .context("Failed to search persisted session history")?;
 
@@ -422,15 +449,16 @@ impl StateStore {
             };
             hits.push(SessionSearchRow {
                 kind,
-                public_id: row.get::<Vec<u8>>(2)?,
-                agent_id: row.get::<String>(3)?,
-                metadata: row.get::<Option<String>>(4)?,
-                created_at: row.get::<String>(5)?,
-                turn_index: row.get::<Option<i64>>(6)?.map(|value| value as u32),
-                role: row.get::<Option<String>>(7)?,
-                tool_name: row.get::<Option<String>>(8)?,
-                event_type: row.get::<Option<String>>(9)?,
-                match_text: row.get::<String>(10)?,
+                score: row.get::<i64>(1)?,
+                public_id: row.get::<Vec<u8>>(3)?,
+                agent_id: row.get::<String>(4)?,
+                metadata: row.get::<Option<String>>(5)?,
+                created_at: row.get::<String>(6)?,
+                turn_index: row.get::<Option<i64>>(7)?.map(|value| value as u32),
+                role: row.get::<Option<String>>(8)?,
+                tool_name: row.get::<Option<String>>(9)?,
+                event_type: row.get::<Option<String>>(10)?,
+                match_text: row.get::<String>(11)?,
             });
         }
 
@@ -988,6 +1016,15 @@ mod tests {
             title_hits
                 .iter()
                 .any(|hit| hit.kind == SessionSearchHitKind::Session)
+        );
+
+        let ranked_hits = store
+            .search_session_history("compiler", SessionSearchScope::All, 16, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            ranked_hits.first().map(|hit| hit.kind),
+            Some(SessionSearchHitKind::Session)
         );
 
         let message_hits = store
