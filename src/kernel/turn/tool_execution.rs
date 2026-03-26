@@ -22,6 +22,8 @@ use super::super::PendingToolCall;
 use super::super::event::{AuditEvent, KernelEvent};
 use super::TurnOutcome;
 
+const MAX_VIRTUAL_TOOL_DEPTH: usize = 8;
+
 #[derive(Debug, Clone)]
 struct FinalToolRecord {
     id: String,
@@ -54,7 +56,13 @@ impl ExecutionHost {
         let (immediate_records, validated_calls) =
             self.evaluate_pending_tool_calls(session, &pending_tool_calls);
         let final_by_id = self
-            .execute_validated_tool_calls(session, tool_ctx, validated_calls, immediate_records)
+            .execute_validated_tool_calls(
+                session,
+                tool_ctx,
+                validated_calls,
+                immediate_records,
+                Vec::new(),
+            )
             .await;
         if session.cancel_token.is_cancelled() {
             return Ok(TurnOutcome::Cancelled);
@@ -70,6 +78,7 @@ impl ExecutionHost {
         session: &'a mut SessionState,
         tool_ctx: &'a ToolContext,
         pending_tool_calls: Vec<PendingToolCall>,
+        virtual_stack: Vec<String>,
     ) -> Pin<Box<dyn Future<Output = Vec<FinalToolRecord>> + Send + 'a>> {
         Box::pin(async move {
             if session.cancel_token.is_cancelled() {
@@ -79,7 +88,13 @@ impl ExecutionHost {
             let (immediate_records, validated_calls) =
                 self.evaluate_pending_tool_calls(session, &pending_tool_calls);
             let final_by_id = self
-                .execute_validated_tool_calls(session, tool_ctx, validated_calls, immediate_records)
+                .execute_validated_tool_calls(
+                    session,
+                    tool_ctx,
+                    validated_calls,
+                    immediate_records,
+                    virtual_stack,
+                )
                 .await;
             if session.cancel_token.is_cancelled() {
                 return Vec::new();
@@ -162,6 +177,7 @@ impl ExecutionHost {
         tool_ctx: &ToolContext,
         validated_calls: Vec<(PendingToolCall, Verdict)>,
         immediate_records: Vec<FinalToolRecord>,
+        virtual_stack: Vec<String>,
     ) -> HashMap<String, FinalToolRecord> {
         for (tc, _) in &validated_calls {
             self.persist_event(
@@ -295,10 +311,23 @@ impl ExecutionHost {
                 },
                 ExecutionArtifact::VirtualPlan(plan) => {
                     let result_handler_key = plan.result_handler_key.clone();
-                    match self.build_virtual_pending_tool_calls(session, &tc.id, plan) {
+                    let mut next_virtual_stack = virtual_stack.clone();
+                    next_virtual_stack.push(tc.name.clone());
+
+                    match self.build_virtual_pending_tool_calls(
+                        session,
+                        &tc.id,
+                        plan,
+                        &next_virtual_stack,
+                    ) {
                         Ok(pending_virtual_calls) => {
                             let nested_records = self
-                                .execute_tool_calls_hidden(session, tool_ctx, pending_virtual_calls)
+                                .execute_tool_calls_hidden(
+                                    session,
+                                    tool_ctx,
+                                    pending_virtual_calls,
+                                    next_virtual_stack,
+                                )
                                 .await;
                             if session.cancel_token.is_cancelled() {
                                 if let Some(ref key) = result_handler_key {
@@ -369,6 +398,7 @@ impl ExecutionHost {
         session: &SessionState,
         parent_tool_call_id: &str,
         plan: VirtualToolPlan,
+        current_virtual_stack: &[String],
     ) -> Result<Vec<PendingToolCall>> {
         let declared_tool_names: BTreeSet<String> = {
             let runtime = self.runtime_for_session(session);
@@ -387,10 +417,20 @@ impl ExecutionHost {
         let mut out = Vec::with_capacity(plan.calls.len());
         for (index, call) in plan.calls.into_iter().enumerate() {
             if declared_tool_names.contains(&call.name) {
-                anyhow::bail!(
-                    "virtual tool handlers cannot call other virtual tools yet ('{}')",
-                    call.name
-                );
+                if current_virtual_stack.iter().any(|name| name == &call.name) {
+                    let mut chain = current_virtual_stack.to_vec();
+                    chain.push(call.name.clone());
+                    anyhow::bail!("virtual tool recursion detected: {}", chain.join(" -> "));
+                }
+                if current_virtual_stack.len() >= MAX_VIRTUAL_TOOL_DEPTH {
+                    let mut chain = current_virtual_stack.to_vec();
+                    chain.push(call.name.clone());
+                    anyhow::bail!(
+                        "virtual tool nesting depth exceeded (max {}): {}",
+                        MAX_VIRTUAL_TOOL_DEPTH,
+                        chain.join(" -> ")
+                    );
+                }
             }
 
             out.push(PendingToolCall {

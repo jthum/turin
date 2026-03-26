@@ -646,6 +646,368 @@ async fn test_virtual_tool_sequence_callback_shapes_outer_result() -> Result<()>
 }
 
 #[tokio::test]
+async fn test_virtual_tool_can_call_another_virtual_tool() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+    std::fs::write(
+        tmp.path().join("note.txt"),
+        "hello from nested virtual tool",
+    )?;
+
+    std::fs::write(
+        harness_dir.join("main.lua"),
+        r#"
+        tool.declare("read_note", {
+            description = "Read a note from disk",
+            params = {
+                path = { type = "string", required = true }
+            },
+            handler = function(args)
+                return tool.call("read_file", { path = args.path })
+            end
+        })
+
+        tool.declare("read_note_wrapped", {
+            description = "Read a note through another virtual tool",
+            params = {
+                path = { type = "string", required = true }
+            },
+            handler = function(args)
+                return tool.call("read_note", { path = args.path }, function(result)
+                    return "wrapped: " .. result.content
+                end)
+            end
+        })
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "You are a test assistant.".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 5,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: None,
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(
+            "mock",
+            Arc::new(VirtualToolProvider {
+                tool_name: "read_note_wrapped".to_string(),
+                tool_args: serde_json::json!({ "path": "note.txt" }),
+                seen_tools: Arc::new(std::sync::Mutex::new(Vec::new())),
+                stage: Arc::new(std::sync::Mutex::new(0)),
+            }),
+        ),
+    );
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Read the wrapped note".to_string()))
+        .await?;
+
+    let mut wrapped_result = None;
+    for msg in &session.history {
+        for content in &msg.content {
+            if let InferenceContent::ToolResult { content, .. } = content
+                && content.contains("wrapped: hello from nested virtual tool")
+            {
+                wrapped_result = Some(content.clone());
+            }
+        }
+    }
+
+    assert_eq!(
+        wrapped_result.as_deref(),
+        Some("wrapped: hello from nested virtual tool")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_virtual_tool_recursion_is_rejected() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    std::fs::write(
+        harness_dir.join("main.lua"),
+        r#"
+        tool.declare("loop_a", {
+            description = "Loop entry A",
+            params = {
+                path = { type = "string", required = true }
+            },
+            handler = function(args)
+                return tool.call("loop_b", { path = args.path })
+            end
+        })
+
+        tool.declare("loop_b", {
+            description = "Loop entry B",
+            params = {
+                path = { type = "string", required = true }
+            },
+            handler = function(args)
+                return tool.call("loop_a", { path = args.path })
+            end
+        })
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "You are a test assistant.".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 5,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: None,
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(
+            "mock",
+            Arc::new(VirtualToolProvider {
+                tool_name: "loop_a".to_string(),
+                tool_args: serde_json::json!({ "path": "note.txt" }),
+                seen_tools: Arc::new(std::sync::Mutex::new(Vec::new())),
+                stage: Arc::new(std::sync::Mutex::new(0)),
+            }),
+        ),
+    );
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Trigger recursion".to_string()))
+        .await?;
+
+    let mut recursion_error = None;
+    for msg in &session.history {
+        for content in &msg.content {
+            if let InferenceContent::ToolResult { content, .. } = content
+                && content.contains("virtual tool recursion detected")
+            {
+                recursion_error = Some(content.clone());
+            }
+        }
+    }
+
+    let recursion_error = recursion_error.expect("expected recursion error result");
+    assert!(recursion_error.contains("loop_a -> loop_b -> loop_a"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_virtual_tool_depth_limit_is_enforced() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+    std::fs::write(tmp.path().join("note.txt"), "depth test")?;
+
+    let mut harness_code = String::new();
+    for index in 1..=9 {
+        if index < 9 {
+            harness_code.push_str(&format!(
+                r#"
+tool.declare("tool_{index}", {{
+  description = "Depth test tool {index}",
+  params = {{
+    path = {{ type = "string", required = true }}
+  }},
+  handler = function(args)
+    return tool.call("tool_{next}", {{ path = args.path }})
+  end
+}})
+"#,
+                next = index + 1
+            ));
+        } else {
+            harness_code.push_str(
+                r#"
+tool.declare("tool_9", {
+  description = "Depth test tool 9",
+  params = {
+    path = { type = "string", required = true }
+  },
+  handler = function(args)
+    return tool.call("read_file", { path = args.path })
+  end
+})
+"#,
+            );
+        }
+    }
+    std::fs::write(harness_dir.join("main.lua"), harness_code)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "You are a test assistant.".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 5,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: None,
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(
+            "mock",
+            Arc::new(VirtualToolProvider {
+                tool_name: "tool_1".to_string(),
+                tool_args: serde_json::json!({ "path": "note.txt" }),
+                seen_tools: Arc::new(std::sync::Mutex::new(Vec::new())),
+                stage: Arc::new(std::sync::Mutex::new(0)),
+            }),
+        ),
+    );
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Trigger depth overflow".to_string()))
+        .await?;
+
+    let mut depth_error = None;
+    for msg in &session.history {
+        for content in &msg.content {
+            if let InferenceContent::ToolResult { content, .. } = content
+                && content.contains("virtual tool nesting depth exceeded")
+            {
+                depth_error = Some(content.clone());
+            }
+        }
+    }
+
+    let depth_error = depth_error.expect("expected depth limit error result");
+    assert!(depth_error.contains("max 8"));
+    assert!(depth_error.contains("tool_1 -> tool_2 -> tool_3"));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_governed_tool_fallback.db");
