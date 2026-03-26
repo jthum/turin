@@ -459,6 +459,66 @@ async fn handle_daemon_channel_command(command: DaemonChannelCommands) -> Result
             )
             .await
         }
+        DaemonChannelCommands::Access { id, args } => {
+            commands::daemon::run_channel_access(&args.config.config, &id, args.json).await
+        }
+        DaemonChannelCommands::Approve {
+            id,
+            workspace_id,
+            room_id,
+            thread_id,
+            args,
+        } => {
+            commands::daemon::run_channel_approve(
+                &args.config.config,
+                serde_json::json!({
+                    "id": id,
+                    "workspace_id": workspace_id,
+                    "room_id": room_id,
+                    "thread_id": thread_id,
+                }),
+                args.json,
+            )
+            .await
+        }
+        DaemonChannelCommands::Reject {
+            id,
+            workspace_id,
+            room_id,
+            thread_id,
+            args,
+        } => {
+            commands::daemon::run_channel_reject(
+                &args.config.config,
+                serde_json::json!({
+                    "id": id,
+                    "workspace_id": workspace_id,
+                    "room_id": room_id,
+                    "thread_id": thread_id,
+                }),
+                args.json,
+            )
+            .await
+        }
+        DaemonChannelCommands::Revoke {
+            id,
+            workspace_id,
+            room_id,
+            thread_id,
+            args,
+        } => {
+            commands::daemon::run_channel_revoke(
+                &args.config.config,
+                serde_json::json!({
+                    "id": id,
+                    "workspace_id": workspace_id,
+                    "room_id": room_id,
+                    "thread_id": thread_id,
+                }),
+                args.json,
+            )
+            .await
+        }
         DaemonChannelCommands::Delete { id, args } => {
             commands::daemon::run_channel_delete(&args.config.config, &id, args.json).await
         }

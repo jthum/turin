@@ -248,6 +248,10 @@ turin daemon channel issues fs-local
 turin daemon channel enable fs-local
 turin daemon channel disable fs-local
 turin daemon channel update fs-local --idle-ttl-secs 900 --setting poll_interval_ms=50
+turin daemon channel access telegram-ops
+turin daemon channel approve telegram-ops --workspace-id telegram --room-id -1001234567890 --thread-id -1001234567890
+turin daemon channel reject telegram-ops --workspace-id telegram --room-id -1001234567890 --thread-id -1001234567890
+turin daemon channel revoke telegram-ops --workspace-id telegram --room-id -1001234567890 --thread-id -1001234567890
 turin daemon channel delete fs-local
 ```
 
@@ -260,6 +264,14 @@ For known channel kinds (`fs`, `discord`, `telegram`), settings are validated on
 
 `channel.update --setting ...` performs a partial merge into existing settings
 rather than replacing the whole settings table.
+
+Channels can also use generic runner-level access control settings such as:
+
+- `pairing_mode = off | pending | auto`
+- `allowed_user_ids = [...]`
+- `allowed_usernames = [...]`
+
+Those settings are enforced before a message is routed into a Turin session, which is why they live in the shared channel runner rather than in a harness script.
 
 `kind = "fs"` is currently available as the first built-in adapter:
 

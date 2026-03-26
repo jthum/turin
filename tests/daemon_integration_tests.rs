@@ -1506,8 +1506,81 @@ async fn daemon_channel_create_accepts_multi_chat_telegram_settings() -> Result<
             .await?,
     );
     assert_eq!(created["id"], "telegram-multi");
-    assert_eq!(created["settings"]["chat_ids"], serde_json::json!([-100123456, -100654321]));
+    assert_eq!(
+        created["settings"]["chat_ids"],
+        serde_json::json!([-100123456, -100654321])
+    );
     assert_eq!(created["settings"]["respond_mode"], "mentions_or_replies");
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_channel_access_commands_manage_pairing_state() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+
+    let created = result_value(
+        daemon
+            .request(DaemonRequest::ChannelCreate(
+                turin::daemon::protocol::CreateChannelParams {
+                    id: "telegram-pairing".to_string(),
+                    kind: "telegram".to_string(),
+                    agent_id: "default".to_string(),
+                    idle_ttl_secs: Some(600),
+                    enabled: false,
+                    settings: Some(serde_json::json!({
+                        "token_env": "TELEGRAM_BOT_TOKEN",
+                        "pairing_mode": "pending",
+                        "respond_mode": "mentions_or_replies",
+                    })),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(created["id"], "telegram-pairing");
+
+    let empty = result_value(
+        daemon
+            .request(DaemonRequest::ChannelAccessGet(
+                turin::daemon::protocol::ChannelAccessParams {
+                    id: "telegram-pairing".to_string(),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(empty["approved_rooms"], serde_json::json!([]));
+    assert_eq!(empty["pending_rooms"], serde_json::json!([]));
+
+    let approved = result_value(
+        daemon
+            .request(DaemonRequest::ChannelAccessApprove(
+                turin::daemon::protocol::ChannelAccessRoomParams {
+                    id: "telegram-pairing".to_string(),
+                    workspace_id: "telegram".to_string(),
+                    room_id: Some("-100123456".to_string()),
+                    thread_id: "-100123456".to_string(),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(
+        approved["approved_rooms"].as_array().map(|v| v.len()),
+        Some(1)
+    );
+
+    let revoked = result_value(
+        daemon
+            .request(DaemonRequest::ChannelAccessRevoke(
+                turin::daemon::protocol::ChannelAccessRoomParams {
+                    id: "telegram-pairing".to_string(),
+                    workspace_id: "telegram".to_string(),
+                    room_id: Some("-100123456".to_string()),
+                    thread_id: "-100123456".to_string(),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(revoked["approved_rooms"], serde_json::json!([]));
 
     daemon.stop().await
 }

@@ -2,7 +2,8 @@ use serde_json::json;
 
 use crate::daemon::protocol::ErrorCode;
 use crate::daemon::protocol::{
-    CreateChannelParams, EntityIdParams, NoParams, ResponseEnvelope, UpdateChannelParams,
+    ChannelAccessParams, ChannelAccessRoomParams, CreateChannelParams, EntityIdParams, NoParams,
+    ResponseEnvelope, UpdateChannelParams,
 };
 use crate::daemon::state::{CreateChannelInput, UpdateChannelInput};
 
@@ -189,6 +190,98 @@ pub(super) async fn update(
         return internal_error(response.id, err);
     }
     response
+}
+
+pub(super) async fn access_get(
+    id: Option<String>,
+    params: ChannelAccessParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard.channel_access_snapshot(&params.id).await {
+        Ok(Some(snapshot)) => serialize_response(id, snapshot, "channel access state"),
+        Ok(None) => not_found_error(
+            id,
+            ErrorCode::ChannelNotFound,
+            format!("Channel '{}' not found", params.id),
+        ),
+        Err(err) => internal_error(id, err),
+    }
+}
+
+pub(super) async fn access_approve(
+    id: Option<String>,
+    params: ChannelAccessRoomParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard
+        .approve_channel_room(
+            &params.id,
+            params.workspace_id,
+            params.room_id,
+            params.thread_id,
+        )
+        .await
+    {
+        Ok(Some(snapshot)) => serialize_response(id, snapshot, "channel access state"),
+        Ok(None) => not_found_error(
+            id,
+            ErrorCode::ChannelNotFound,
+            format!("Channel '{}' not found", params.id),
+        ),
+        Err(err) => validation_error(id, err),
+    }
+}
+
+pub(super) async fn access_reject(
+    id: Option<String>,
+    params: ChannelAccessRoomParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard
+        .reject_channel_room(
+            &params.id,
+            params.workspace_id,
+            params.room_id,
+            params.thread_id,
+        )
+        .await
+    {
+        Ok(Some(snapshot)) => serialize_response(id, snapshot, "channel access state"),
+        Ok(None) => not_found_error(
+            id,
+            ErrorCode::ChannelNotFound,
+            format!("Channel '{}' not found", params.id),
+        ),
+        Err(err) => validation_error(id, err),
+    }
+}
+
+pub(super) async fn access_revoke(
+    id: Option<String>,
+    params: ChannelAccessRoomParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard
+        .revoke_channel_room(
+            &params.id,
+            params.workspace_id,
+            params.room_id,
+            params.thread_id,
+        )
+        .await
+    {
+        Ok(Some(snapshot)) => serialize_response(id, snapshot, "channel access state"),
+        Ok(None) => not_found_error(
+            id,
+            ErrorCode::ChannelNotFound,
+            format!("Channel '{}' not found", params.id),
+        ),
+        Err(err) => validation_error(id, err),
+    }
 }
 
 pub(super) async fn delete(

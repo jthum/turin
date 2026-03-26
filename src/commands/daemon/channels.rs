@@ -102,3 +102,85 @@ pub async fn run_channel_delete(
     let response = send_request(config_path, "channel.delete", json!({ "id": channel_id })).await?;
     print_response(response, json_output)
 }
+
+pub async fn run_channel_access(
+    config_path: &std::path::Path,
+    channel_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(
+        config_path,
+        "channel.access.get",
+        json!({ "id": channel_id }),
+    )
+    .await?;
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let access: ChannelAccessView = decode_result(response)?;
+    print_channel_access(channel_id, &access);
+    Ok(())
+}
+
+pub async fn run_channel_approve(
+    config_path: &std::path::Path,
+    params: Value,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "channel.access.approve", params).await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_channel_reject(
+    config_path: &std::path::Path,
+    params: Value,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "channel.access.reject", params).await?;
+    print_response(response, json_output)
+}
+
+pub async fn run_channel_revoke(
+    config_path: &std::path::Path,
+    params: Value,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(config_path, "channel.access.revoke", params).await?;
+    print_response(response, json_output)
+}
+
+fn print_channel_access(channel_id: &str, access: &ChannelAccessView) {
+    println!("Channel '{}' access", channel_id);
+    println!("  pending:  {}", access.pending_rooms.len());
+    for room in &access.pending_rooms {
+        println!(
+            "    - {} workspace={} room={} thread={} sample_user={} first_seen={} last_seen={}",
+            room.room.channel,
+            room.room.workspace_id,
+            room.room.room_id.as_deref().unwrap_or("-"),
+            room.room.thread_id,
+            room.sample_username
+                .as_deref()
+                .or(room.sample_user_id.as_deref())
+                .unwrap_or("-"),
+            room.first_seen_unix_secs,
+            room.last_seen_unix_secs,
+        );
+    }
+    println!("  approved: {}", access.approved_rooms.len());
+    for room in &access.approved_rooms {
+        println!(
+            "    - {} workspace={} room={} thread={} approved_by={} approved_at={}",
+            room.room.channel,
+            room.room.workspace_id,
+            room.room.room_id.as_deref().unwrap_or("-"),
+            room.room.thread_id,
+            room.approved_by_username
+                .as_deref()
+                .or(room.approved_by_user_id.as_deref())
+                .unwrap_or("-"),
+            room.approved_at_unix_secs,
+        );
+    }
+}

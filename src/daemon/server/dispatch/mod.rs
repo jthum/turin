@@ -103,6 +103,16 @@ pub(super) async fn dispatch(
         DaemonRequest::ChannelEnable(params) => channel::enable(id, params, &context).await,
         DaemonRequest::ChannelDisable(params) => channel::disable(id, params, &context).await,
         DaemonRequest::ChannelUpdate(params) => channel::update(id, params, &context).await,
+        DaemonRequest::ChannelAccessGet(params) => channel::access_get(id, params, &context).await,
+        DaemonRequest::ChannelAccessApprove(params) => {
+            channel::access_approve(id, params, &context).await
+        }
+        DaemonRequest::ChannelAccessReject(params) => {
+            channel::access_reject(id, params, &context).await
+        }
+        DaemonRequest::ChannelAccessRevoke(params) => {
+            channel::access_revoke(id, params, &context).await
+        }
         DaemonRequest::ChannelDelete(params) => channel::delete(id, params, &context).await,
     }
 }

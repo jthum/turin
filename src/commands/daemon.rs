@@ -151,6 +151,37 @@ struct ChannelRuntimeView {
 }
 
 #[derive(Debug, Deserialize)]
+struct ChannelAccessRoomView {
+    channel: String,
+    workspace_id: String,
+    room_id: Option<String>,
+    thread_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApprovedRoomView {
+    room: ChannelAccessRoomView,
+    approved_at_unix_secs: u64,
+    approved_by_user_id: Option<String>,
+    approved_by_username: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PendingRoomView {
+    room: ChannelAccessRoomView,
+    first_seen_unix_secs: u64,
+    last_seen_unix_secs: u64,
+    sample_user_id: Option<String>,
+    sample_username: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelAccessView {
+    approved_rooms: Vec<ApprovedRoomView>,
+    pending_rooms: Vec<PendingRoomView>,
+}
+
+#[derive(Debug, Deserialize)]
 struct TaskStatusView {
     request_id: String,
     agent_id: String,

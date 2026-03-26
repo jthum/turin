@@ -587,6 +587,61 @@ pub(crate) enum DaemonChannelCommands {
         #[command(flatten)]
         args: DaemonOutputArgs,
     },
+    /// Show pending and approved access state for one channel
+    Access {
+        /// Channel ID
+        id: String,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
+    /// Approve one discovered room/thread for a channel
+    Approve {
+        /// Channel ID
+        id: String,
+        /// Channel workspace identifier
+        #[arg(long)]
+        workspace_id: String,
+        /// Optional room identifier when the channel distinguishes room and thread
+        #[arg(long)]
+        room_id: Option<String>,
+        /// Thread identifier used by the channel conversation key
+        #[arg(long)]
+        thread_id: String,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
+    /// Reject one pending room/thread for a channel
+    Reject {
+        /// Channel ID
+        id: String,
+        /// Channel workspace identifier
+        #[arg(long)]
+        workspace_id: String,
+        /// Optional room identifier when the channel distinguishes room and thread
+        #[arg(long)]
+        room_id: Option<String>,
+        /// Thread identifier used by the channel conversation key
+        #[arg(long)]
+        thread_id: String,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
+    /// Revoke one previously approved room/thread for a channel
+    Revoke {
+        /// Channel ID
+        id: String,
+        /// Channel workspace identifier
+        #[arg(long)]
+        workspace_id: String,
+        /// Optional room identifier when the channel distinguishes room and thread
+        #[arg(long)]
+        room_id: Option<String>,
+        /// Thread identifier used by the channel conversation key
+        #[arg(long)]
+        thread_id: String,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
     /// Delete one daemon-managed channel directory
     Delete {
         /// Channel ID

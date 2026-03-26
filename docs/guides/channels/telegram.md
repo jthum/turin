@@ -18,6 +18,8 @@ Current Phase 8 scope:
 - Telegram HTML rendering for code blocks
 - deterministic routing by Telegram chat and forum topic
 - one Turin Telegram channel can watch one or many Telegram chats
+- generic pairing modes for chat discovery (`off`, `pending`, `auto`)
+- sender allowlists (`allowed_user_ids`, `allowed_usernames`)
 - configurable group trigger policy (`all`, `mentions`, `replies`, `mentions_or_replies`)
 - daemon-managed lifecycle (`create`, `enable`, `disable`, `update`, `status`)
 
@@ -50,6 +52,7 @@ Turin’s `chat_id` is a numeric Telegram chat identifier. A Telegram channel ca
 
 - one chat via `chat_id`
 - many chats via `chat_ids`
+- zero preconfigured chats when pairing mode is enabled
 
 That means you do not need one Turin channel per Telegram group unless you want different agent/harness settings per group.
 
@@ -115,6 +118,14 @@ If `url` is non-empty, the bot is still configured for webhook delivery.
 
 ## 4. Discover The Numeric `chat_id`
 
+If you are using explicit allowlisting with `chat_id` or `chat_ids`, you need the numeric ids up front.
+
+If you are using pairing mode instead:
+
+- `pairing_mode = "auto"` lets Turin discover new chats automatically
+- `pairing_mode = "pending"` records unknown chats and holds them for operator approval
+- with either pairing mode, you can omit `chat_id` and `chat_ids`
+
 After sending a test message or post in the target chat, fetch recent updates:
 
 ```bash
@@ -144,7 +155,36 @@ If you do not see the chat you expect:
 - make sure the bot is an admin if you are targeting a channel
 - make sure no webhook is still active
 
-## 5. Create The Turin Channel
+## 5. Pairing And Sender Access Control
+
+Telegram chat ids solve explicit allowlisting, but they are not a good general-user onboarding path on their own. Turin now supports two generic alternatives through the shared channel runner:
+
+- `pairing_mode = "auto"`: unknown rooms are approved automatically the first time an allowed sender reaches them
+- `pairing_mode = "pending"`: unknown rooms are recorded as pending and Turin replies with a pending-approval notice until the operator approves them
+
+The sender allowlist is independent of the room allowlist:
+
+- `allowed_user_ids`: strongest option; Telegram numeric user ids are stable and not spoofable through normal bot traffic
+- `allowed_usernames`: convenience option; useful, but weaker than user ids because usernames can change
+
+Telegram Bot API does not expose private email addresses or phone numbers for arbitrary users, so those are not realistic allowlist keys here.
+
+If you enable `pairing_mode = "auto"` without any sender allowlist, Turin will approve the first sender who reaches a new room. That is convenient for private testing and risky for public groups.
+
+Practical recommendations:
+
+- personal bot across several groups:
+  - `pairing_mode = "auto"`
+  - `allowed_user_ids = [498502840]`
+  - `respond_mode = "mentions_or_replies"`
+- shared bot in a controlled team group:
+  - explicit `chat_ids`
+  - `respond_mode = "mentions_or_replies"`
+- cautious rollout into unknown groups:
+  - `pairing_mode = "pending"`
+  - then inspect/approve with `turin daemon channel access ...`
+
+## 6. Create The Turin Channel
 
 Create the channel with the daemon CLI:
 
@@ -167,6 +207,8 @@ turin daemon channel create telegram-ops \
   --setting poll_timeout_secs=10 \
   --setting poll_interval_ms=250 \
   --setting respond_mode=mentions_or_replies \
+  --setting pairing_mode=auto \
+  --setting allowed_user_ids=498502840 \
   --setting stream_mode=block \
   --setting stream_thinking=false \
   --setting persist_thinking=false \
@@ -180,6 +222,9 @@ Setting notes:
 - `token_env`: required env var containing the bot token
 - `chat_id`: single numeric Telegram chat id
 - `chat_ids`: optional list of numeric Telegram chat ids, or a comma-separated string of ids
+- `pairing_mode`: `off`, `pending`, or `auto`; default `off`
+- `allowed_user_ids`: optional list of stable sender ids, or a comma-separated string of ids
+- `allowed_usernames`: optional list of usernames, or a comma-separated string of usernames
 - `respond_mode`: `all`, `mentions`, `replies`, or `mentions_or_replies`; default `all`
 - `poll_timeout_secs`: long-poll timeout, default `30`, maximum `50`
 - `poll_interval_ms`: delay between empty polls, default `250`
@@ -191,7 +236,18 @@ Setting notes:
 - `workspace_id`: optional routing namespace label
 - `base_url`: optional override for Telegram-compatible endpoints or tests
 
-## 6. Verify Runtime Status
+When `pairing_mode` is `pending`, inspect and manage discovered rooms with:
+
+```bash
+turin daemon channel access telegram-ops
+turin daemon channel approve telegram-ops --workspace-id telegram --room-id -1001234567890 --thread-id -1001234567890
+turin daemon channel reject telegram-ops --workspace-id telegram --room-id -1001234567890 --thread-id -1001234567890
+turin daemon channel revoke telegram-ops --workspace-id telegram --room-id -1001234567890 --thread-id -1001234567890
+```
+
+`approve` moves a room from pending to approved. `reject` clears a pending room without approving it. `revoke` removes a previously approved room.
+
+## 7. Verify Runtime Status
 
 Check whether the runtime reached `running`:
 
@@ -214,7 +270,7 @@ turin daemon channel status telegram-ops --json
 
 The normalized `last_error_code` is especially useful for fast diagnosis.
 
-## 7. Equivalent `channel.toml`
+## 8. Equivalent `channel.toml`
 
 The daemon stores channel settings under `channels/<id>/channel.toml`.
 
@@ -226,7 +282,8 @@ kind = "telegram"
 agent_id = "default"
 idle_ttl_secs = 600
 token_env = "TELEGRAM_BOT_TOKEN"
-chat_ids = [-1001234567890, -100987654321, 498502840]
+pairing_mode = "auto"
+allowed_user_ids = ["498502840"]
 poll_timeout_secs = 10
 poll_interval_ms = 250
 respond_mode = "mentions_or_replies"
@@ -240,7 +297,13 @@ workspace_id = "telegram"
 
 You can manage this file directly through the filesystem or via `turin daemon channel ...` commands.
 
-## 8. Outbound Reply And Formatting Behavior
+If you prefer explicit room allowlisting instead of pairing, replace the pairing settings with:
+
+```toml
+chat_ids = [-1001234567890, -100987654321, 498502840]
+```
+
+## 9. Outbound Reply And Formatting Behavior
 
 Turin now defaults Telegram responses to replying to the inbound Telegram message when the inbound event includes `telegram_message_id`.
 
@@ -273,7 +336,7 @@ Streaming notes:
 - Thinking previews only appear when the selected model/provider actually emits thinking deltas.
 - Final replies still use the normal Telegram HTML renderer even when preview streaming is enabled.
 
-## 9. Validate With The Smoke Script
+## 10. Validate With The Smoke Script
 
 For a quick live validation against the real Telegram Bot API:
 
@@ -330,6 +393,8 @@ Likely causes:
 - privacy mode is still enabled
 - the bot was added but no new message was sent afterward
 - the channel is pointed at the wrong `chat_id`
+- pairing is `off` and the group is not in `chat_ids`
+- the sender is not in `allowed_user_ids` / `allowed_usernames`
 - `respond_mode` is set to `mentions`, `replies`, or `mentions_or_replies`, and the test message did not match that policy
 
 ### No updates arrive from a channel

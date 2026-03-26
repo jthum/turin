@@ -106,6 +106,20 @@ pub struct UpdateChannelParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ChannelAccessParams {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ChannelAccessRoomParams {
+    pub id: String,
+    pub workspace_id: String,
+    #[serde(default)]
+    pub room_id: Option<String>,
+    pub thread_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BindHarnessParams {
     pub id: String,
     pub harness_id: String,
@@ -295,6 +309,14 @@ pub enum DaemonRequest {
     ChannelDisable(EntityIdParams),
     #[serde(rename = "channel.update")]
     ChannelUpdate(UpdateChannelParams),
+    #[serde(rename = "channel.access.get")]
+    ChannelAccessGet(ChannelAccessParams),
+    #[serde(rename = "channel.access.approve")]
+    ChannelAccessApprove(ChannelAccessRoomParams),
+    #[serde(rename = "channel.access.reject")]
+    ChannelAccessReject(ChannelAccessRoomParams),
+    #[serde(rename = "channel.access.revoke")]
+    ChannelAccessRevoke(ChannelAccessRoomParams),
     #[serde(rename = "channel.delete")]
     ChannelDelete(EntityIdParams),
 }
