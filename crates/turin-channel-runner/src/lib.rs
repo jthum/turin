@@ -574,7 +574,7 @@ impl ChannelRunner {
                 turin_daemon_protocol::DaemonRequest::TaskSubmit(SubmitTaskParams {
                     agent_id: None,
                     session_id: Some(binding.session_id.clone()),
-                    prompt: event.text.clone(),
+                    prompt: event.prompt_text(),
                 }),
             )
             .await
@@ -1463,7 +1463,9 @@ fn try_parse_structured_outbound(raw: &str) -> Option<OutboundMessage> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
-    use turin_channel_core::{ChannelKind, ChannelMessageRef, ChannelUser, MessageBlock};
+    use turin_channel_core::{
+        ChannelKind, ChannelMessageRef, ChannelSessionScope, ChannelUser, MessageBlock,
+    };
 
     struct TestDriver;
 
@@ -1642,6 +1644,7 @@ mod tests {
                 display_name: Some("User".into()),
                 username: Some("user".into()),
             },
+            session_scope: ChannelSessionScope::User,
             text: "hello".into(),
             attachments: vec![],
             metadata: Default::default(),
@@ -1680,6 +1683,7 @@ mod tests {
                 display_name: Some("User".into()),
                 username: Some("user".into()),
             },
+            session_scope: ChannelSessionScope::User,
             text: "hello".into(),
             attachments: vec![],
             metadata: Default::default(),
@@ -1718,6 +1722,7 @@ mod tests {
                 display_name: Some("Intruder".into()),
                 username: Some("intruder".into()),
             },
+            session_scope: ChannelSessionScope::User,
             text: "hello".into(),
             attachments: vec![],
             metadata: Default::default(),
@@ -1754,6 +1759,7 @@ mod tests {
                 display_name: Some("Owner".into()),
                 username: Some("jay".into()),
             },
+            session_scope: ChannelSessionScope::User,
             text: "pair room".into(),
             attachments: vec![],
             metadata: Default::default(),
@@ -1770,6 +1776,7 @@ mod tests {
                 display_name: Some("Friend".into()),
                 username: Some("friend".into()),
             },
+            session_scope: ChannelSessionScope::User,
             text: "hello".into(),
             attachments: vec![],
             metadata: Default::default(),
@@ -1813,6 +1820,7 @@ mod tests {
                 display_name: Some("Owner".into()),
                 username: Some("jay".into()),
             },
+            session_scope: ChannelSessionScope::User,
             text: "pair room".into(),
             attachments: vec![],
             metadata: Default::default(),
@@ -1829,6 +1837,7 @@ mod tests {
                 display_name: Some("Intruder".into()),
                 username: Some("intruder".into()),
             },
+            session_scope: ChannelSessionScope::User,
             text: "hello".into(),
             attachments: vec![],
             metadata: Default::default(),
@@ -1845,6 +1854,7 @@ mod tests {
                 display_name: Some("Friend".into()),
                 username: Some("friend".into()),
             },
+            session_scope: ChannelSessionScope::User,
             text: "hello".into(),
             attachments: vec![],
             metadata: Default::default(),
@@ -1895,6 +1905,7 @@ mod tests {
                 display_name: Some("Owner".into()),
                 username: Some("jay".into()),
             },
+            session_scope: ChannelSessionScope::User,
             text: "pair room".into(),
             attachments: vec![],
             metadata: Default::default(),
@@ -1911,6 +1922,7 @@ mod tests {
                 display_name: Some("Friend".into()),
                 username: Some("friend".into()),
             },
+            session_scope: ChannelSessionScope::User,
             text: "hello".into(),
             attachments: vec![],
             metadata: Default::default(),
@@ -1943,6 +1955,7 @@ mod tests {
                 display_name: Some("User".into()),
                 username: Some("user".into()),
             },
+            session_scope: ChannelSessionScope::User,
             text: "hello".into(),
             attachments: vec![],
             metadata: Default::default(),
@@ -2023,6 +2036,7 @@ mod tests {
                 display_name: Some("User One".into()),
                 username: Some("user1".into()),
             },
+            session_scope: ChannelSessionScope::User,
             text: "hello".into(),
             attachments: vec![],
             metadata,
@@ -2054,6 +2068,7 @@ mod tests {
                 display_name: Some("User One".into()),
                 username: Some("user1".into()),
             },
+            session_scope: ChannelSessionScope::User,
             text: "hello".into(),
             attachments: vec![],
             metadata: event_metadata,
@@ -2090,6 +2105,7 @@ mod tests {
                 display_name: Some("User One".into()),
                 username: Some("user1".into()),
             },
+            session_scope: ChannelSessionScope::User,
             text: "hello".into(),
             attachments: vec![],
             metadata: event_metadata,

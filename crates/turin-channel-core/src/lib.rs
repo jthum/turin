@@ -30,6 +30,21 @@ impl ChannelConversationKey {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelSessionScope {
+    #[default]
+    User,
+    Thread,
+    Room,
+}
+
+impl ChannelSessionScope {
+    pub fn is_shared(self) -> bool {
+        !matches!(self, Self::User)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChannelMessageRef {
     pub conversation: ChannelConversationKey,
@@ -90,11 +105,40 @@ pub struct InboundEvent {
     pub conversation: ChannelConversationKey,
     pub message: ChannelMessageRef,
     pub user: ChannelUser,
+    #[serde(default)]
+    pub session_scope: ChannelSessionScope,
     pub text: String,
     #[serde(default)]
     pub attachments: Vec<ChannelAttachment>,
     #[serde(default)]
     pub metadata: serde_json::Map<String, serde_json::Value>,
+}
+
+impl InboundEvent {
+    pub fn prompt_text(&self) -> String {
+        if !self.session_scope.is_shared() {
+            return self.text.clone();
+        }
+
+        format!("[Message from {}]\n{}", self.user.prompt_label(), self.text)
+    }
+}
+
+impl ChannelUser {
+    pub fn prompt_label(&self) -> String {
+        match (self.display_name.as_deref(), self.username.as_deref()) {
+            (Some(display_name), Some(username))
+                if !display_name.trim().is_empty()
+                    && !username.trim().is_empty()
+                    && !display_name.eq_ignore_ascii_case(username) =>
+            {
+                format!("{display_name} (@{username})")
+            }
+            (Some(display_name), _) if !display_name.trim().is_empty() => display_name.to_string(),
+            (_, Some(username)) if !username.trim().is_empty() => format!("@{username}"),
+            _ => self.id.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -234,5 +278,28 @@ mod tests {
         };
         let value = serde_json::to_value(&message).expect("serialize outbound message");
         assert_eq!(value["blocks"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn shared_scope_prompt_includes_sender_label() {
+        let key = key();
+        let event = InboundEvent {
+            conversation: key.clone(),
+            message: ChannelMessageRef {
+                conversation: key,
+                message_id: "m-1".into(),
+            },
+            user: ChannelUser {
+                id: "user-4".into(),
+                display_name: Some("Jay".into()),
+                username: Some("jthum".into()),
+            },
+            session_scope: ChannelSessionScope::Thread,
+            text: "hello".into(),
+            attachments: vec![],
+            metadata: serde_json::Map::new(),
+        };
+
+        assert_eq!(event.prompt_text(), "[Message from Jay (@jthum)]\nhello");
     }
 }

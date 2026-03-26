@@ -9,8 +9,9 @@ use tokio::sync::watch;
 use tokio::time::sleep;
 use tracing::warn;
 use turin_channel_core::{
-    ChannelAttachment, ChannelCapabilities, ChannelConversationKey, ChannelKind, ChannelMessageRef,
-    ChannelUser, InboundEvent, MessageBlock, OutboundMessage,
+    ChannelAttachment, ChannelCapabilities, ChannelConversationKey, ChannelKind,
+    ChannelMessageRef, ChannelSessionScope, ChannelUser, InboundEvent, MessageBlock,
+    OutboundMessage,
 };
 use turin_channel_runner::{ChannelDriver, ChannelProgressUpdate, ChannelStreamMode};
 
@@ -32,6 +33,7 @@ pub struct TelegramChannelDriverConfig {
     pub start_from_latest: bool,
     pub ignore_bot_messages: bool,
     pub respond_mode: TelegramRespondMode,
+    pub session_scope: ChannelSessionScope,
     pub stream_mode: ChannelStreamMode,
     pub stream_thinking: bool,
     pub persist_thinking: bool,
@@ -70,6 +72,7 @@ impl TelegramChannelDriverConfig {
             start_from_latest: settings.start_from_latest,
             ignore_bot_messages: settings.ignore_bot_messages,
             respond_mode: settings.respond_mode,
+            session_scope: settings.session_scope,
             stream_mode: settings.stream_mode,
             stream_thinking: settings.stream_thinking,
             persist_thinking: settings.persist_thinking,
@@ -100,6 +103,7 @@ struct TelegramChannelSettings {
     start_from_latest: bool,
     ignore_bot_messages: bool,
     respond_mode: TelegramRespondMode,
+    session_scope: ChannelSessionScope,
     stream_mode: ChannelStreamMode,
     stream_thinking: bool,
     persist_thinking: bool,
@@ -243,6 +247,7 @@ fn parse_settings(
             .transpose()?
             .unwrap_or(true),
         respond_mode: read_respond_mode(settings.get("respond_mode"))?,
+        session_scope: read_telegram_session_scope(settings.get("session_scope"))?,
         stream_mode: read_stream_mode(settings.get("stream_mode"))?,
         stream_thinking: settings
             .get("stream_thinking")
@@ -652,7 +657,7 @@ impl TelegramChannelDriver {
             .filter(|value| !value.is_empty())?;
 
         let user = message.channel_user()?;
-        let thread_id = message
+        let scoped_thread_id = message
             .message_thread_id
             .map(|value| value.to_string())
             .unwrap_or_else(|| chat_id.clone());
@@ -684,9 +689,15 @@ impl TelegramChannelDriver {
         let conversation = ChannelConversationKey {
             channel: ChannelKind::Telegram,
             workspace_id: self.config.workspace_id.clone(),
-            room_id: Some(chat_id),
-            thread_id,
-            user_id: Some(user.id.clone()),
+            room_id: Some(chat_id.clone()),
+            thread_id: match self.config.session_scope {
+                ChannelSessionScope::User | ChannelSessionScope::Thread => scoped_thread_id,
+                ChannelSessionScope::Room => chat_id,
+            },
+            user_id: match self.config.session_scope {
+                ChannelSessionScope::User => Some(user.id.clone()),
+                ChannelSessionScope::Thread | ChannelSessionScope::Room => None,
+            },
         };
 
         Some(InboundEvent {
@@ -696,6 +707,7 @@ impl TelegramChannelDriver {
             },
             conversation,
             user,
+            session_scope: self.config.session_scope,
             text,
             attachments: Vec::new(),
             metadata,
@@ -1357,6 +1369,25 @@ fn read_respond_mode(value: Option<&serde_json::Value>) -> Result<TelegramRespon
         "mentions_or_replies" => Ok(TelegramRespondMode::MentionsOrReplies),
         _ => anyhow::bail!(
             "[telegram_config_invalid_respond_mode] Telegram channel setting 'respond_mode' must be one of: all, mentions, replies, mentions_or_replies"
+        ),
+    }
+}
+
+fn read_telegram_session_scope(value: Option<&serde_json::Value>) -> Result<ChannelSessionScope> {
+    let Some(value) = value else {
+        return Ok(ChannelSessionScope::User);
+    };
+    let scope = value.as_str().ok_or_else(|| {
+        anyhow!(
+            "[telegram_config_invalid_session_scope] Telegram channel setting 'session_scope' must be a string"
+        )
+    })?;
+    match scope.trim().to_ascii_lowercase().as_str() {
+        "user" => Ok(ChannelSessionScope::User),
+        "thread" => Ok(ChannelSessionScope::Thread),
+        "room" => Ok(ChannelSessionScope::Room),
+        _ => anyhow::bail!(
+            "[telegram_config_invalid_session_scope] Telegram channel setting 'session_scope' must be one of: user, thread, room"
         ),
     }
 }
@@ -2360,6 +2391,7 @@ mod tests {
             start_from_latest: false,
             ignore_bot_messages: true,
             respond_mode: TelegramRespondMode::All,
+            session_scope: ChannelSessionScope::User,
             stream_mode: ChannelStreamMode::Off,
             stream_thinking: false,
             persist_thinking: false,
@@ -2445,6 +2477,88 @@ mod tests {
         let event = driver.normalize_update(update).expect("normalized event");
         assert_eq!(event.conversation.thread_id, "444");
         assert_eq!(event.metadata["telegram_message_thread_id"], 444);
+    }
+
+    #[test]
+    fn normalize_thread_scope_shares_topic_across_users() {
+        let mut config = config();
+        config.session_scope = ChannelSessionScope::Thread;
+        let (_tx, rx) = watch::channel(false);
+        let driver = TelegramChannelDriver::from_config("telegram-runtime", config, rx).unwrap();
+        let update = TelegramUpdate {
+            update_id: 2,
+            message: Some(TelegramMessage {
+                message_id: 100,
+                chat: TelegramChat {
+                    id: -10012345,
+                    chat_type: "supergroup".to_string(),
+                    title: Some("Ops".to_string()),
+                    username: None,
+                    first_name: None,
+                },
+                from: Some(TelegramUser {
+                    id: 8,
+                    is_bot: Some(false),
+                    first_name: Some("Mia".to_string()),
+                    last_name: None,
+                    username: Some("mia".to_string()),
+                }),
+                sender_chat: None,
+                text: Some("topic ping".to_string()),
+                caption: None,
+                entities: Vec::new(),
+                caption_entities: Vec::new(),
+                message_thread_id: Some(444),
+                reply_to_message: None,
+            }),
+            channel_post: None,
+        };
+
+        let event = driver.normalize_update(update).expect("normalized event");
+        assert_eq!(event.session_scope, ChannelSessionScope::Thread);
+        assert_eq!(event.conversation.thread_id, "444");
+        assert_eq!(event.conversation.user_id, None);
+    }
+
+    #[test]
+    fn normalize_room_scope_collapses_topics_and_users() {
+        let mut config = config();
+        config.session_scope = ChannelSessionScope::Room;
+        let (_tx, rx) = watch::channel(false);
+        let driver = TelegramChannelDriver::from_config("telegram-runtime", config, rx).unwrap();
+        let update = TelegramUpdate {
+            update_id: 2,
+            message: Some(TelegramMessage {
+                message_id: 100,
+                chat: TelegramChat {
+                    id: -10012345,
+                    chat_type: "supergroup".to_string(),
+                    title: Some("Ops".to_string()),
+                    username: None,
+                    first_name: None,
+                },
+                from: Some(TelegramUser {
+                    id: 8,
+                    is_bot: Some(false),
+                    first_name: Some("Mia".to_string()),
+                    last_name: None,
+                    username: Some("mia".to_string()),
+                }),
+                sender_chat: None,
+                text: Some("topic ping".to_string()),
+                caption: None,
+                entities: Vec::new(),
+                caption_entities: Vec::new(),
+                message_thread_id: Some(444),
+                reply_to_message: None,
+            }),
+            channel_post: None,
+        };
+
+        let event = driver.normalize_update(update).expect("normalized event");
+        assert_eq!(event.session_scope, ChannelSessionScope::Room);
+        assert_eq!(event.conversation.thread_id, "-10012345");
+        assert_eq!(event.conversation.user_id, None);
     }
 
     #[test]
@@ -2846,6 +2960,20 @@ mod tests {
             true,
         )
         .expect("discovery mode should allow telegram channels without explicit chat ids");
+    }
+
+    #[test]
+    fn validate_settings_rejects_invalid_session_scope() {
+        let error = validate_settings(
+            &serde_json::json!({
+                "token_env": "TELEGRAM_TOKEN_NOT_SET_FOR_VALIDATION",
+                "chat_ids": [498502840],
+                "session_scope": "guild"
+            }),
+            false,
+        )
+        .expect_err("invalid session scope rejected");
+        assert!(error.to_string().contains("session_scope"));
     }
 
     #[test]

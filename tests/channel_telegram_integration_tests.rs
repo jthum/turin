@@ -11,7 +11,8 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, timeout};
 use turin_channel_core::{
-    ChannelConversationKey, ChannelKind, ChannelMessageRef, ChannelUser, InboundEvent,
+    ChannelConversationKey, ChannelKind, ChannelMessageRef, ChannelSessionScope, ChannelUser,
+    InboundEvent,
 };
 use turin_channel_runner::{ChannelDriver, ChannelProgressUpdate};
 use turin_channel_runner::{ChannelRunner, RunnerConfig};
@@ -398,6 +399,7 @@ fn sample_inbound_event(chat_id: i64, text: &str) -> InboundEvent {
             display_name: Some("Nina".to_string()),
             username: Some("nina".to_string()),
         },
+        session_scope: ChannelSessionScope::User,
         text: text.to_string(),
         attachments: Vec::new(),
         metadata: json!({
@@ -475,6 +477,7 @@ async fn telegram_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
             start_from_latest: false,
             ignore_bot_messages: true,
             respond_mode: turin_channel_telegram::TelegramRespondMode::All,
+            session_scope: ChannelSessionScope::User,
             stream_mode: turin_channel_runner::ChannelStreamMode::Off,
             stream_thinking: false,
             persist_thinking: false,
@@ -578,6 +581,7 @@ async fn telegram_channel_driver_retries_transient_poll_and_send_failures() -> R
             start_from_latest: false,
             ignore_bot_messages: true,
             respond_mode: turin_channel_telegram::TelegramRespondMode::All,
+            session_scope: ChannelSessionScope::User,
             stream_mode: turin_channel_runner::ChannelStreamMode::Off,
             stream_thinking: false,
             persist_thinking: false,
@@ -656,6 +660,7 @@ async fn telegram_channel_driver_streams_progress_before_final_message() -> Resu
             start_from_latest: false,
             ignore_bot_messages: true,
             respond_mode: turin_channel_telegram::TelegramRespondMode::All,
+            session_scope: ChannelSessionScope::User,
             stream_mode: turin_channel_runner::ChannelStreamMode::Draft,
             stream_thinking: false,
             persist_thinking: false,
@@ -752,6 +757,7 @@ async fn telegram_progress_preview_can_include_thinking_text() -> Result<()> {
             start_from_latest: false,
             ignore_bot_messages: true,
             respond_mode: turin_channel_telegram::TelegramRespondMode::All,
+            session_scope: ChannelSessionScope::User,
             stream_mode: turin_channel_runner::ChannelStreamMode::Draft,
             stream_thinking: true,
             persist_thinking: false,

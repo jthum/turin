@@ -9,8 +9,8 @@ use tempfile::TempDir;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, timeout};
 use turin_channel_core::{
-    ChannelConversationKey, ChannelKind, ChannelMessageRef, ChannelUser, InboundEvent,
-    OutboundMessage,
+    ChannelConversationKey, ChannelKind, ChannelMessageRef, ChannelSessionScope, ChannelUser,
+    InboundEvent, OutboundMessage,
 };
 use turin_channel_runner::{
     ChannelDriver, ChannelProgressUpdate, ChannelRunner, ChannelStreamMode, RunnerConfig,
@@ -303,6 +303,7 @@ fn sample_event() -> InboundEvent {
             display_name: Some("User One".into()),
             username: Some("user1".into()),
         },
+        session_scope: ChannelSessionScope::User,
         text: "Say pong".into(),
         attachments: vec![],
         metadata: Default::default(),
@@ -333,6 +334,7 @@ fn sample_telegram_event(thread_id: &str, user_id: &str, message_id: &str) -> In
             display_name: Some(format!("User {user_id}")),
             username: Some(format!("user_{user_id}")),
         },
+        session_scope: ChannelSessionScope::User,
         text: "Say pong".into(),
         attachments: vec![],
         metadata,

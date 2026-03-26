@@ -7,8 +7,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::watch;
 use tokio::time::sleep;
 use turin_channel_core::{
-    ChannelAttachment, ChannelConversationKey, ChannelKind, ChannelMessageRef, ChannelUser,
-    InboundEvent, OutboundMessage,
+    ChannelAttachment, ChannelConversationKey, ChannelKind, ChannelMessageRef, ChannelSessionScope,
+    ChannelUser, InboundEvent, OutboundMessage,
 };
 use turin_channel_runner::ChannelDriver;
 
@@ -125,6 +125,7 @@ impl FsChannelDriver {
             },
             conversation: parsed.conversation,
             user: parsed.user,
+            session_scope: parsed.session_scope,
             text: parsed.text,
             attachments: parsed.attachments,
             metadata: parsed.metadata,
@@ -224,6 +225,8 @@ struct FsInboundMessage {
     #[serde(default)]
     message_id: Option<String>,
     user: ChannelUser,
+    #[serde(default)]
+    session_scope: ChannelSessionScope,
     text: String,
     #[serde(default)]
     attachments: Vec<ChannelAttachment>,

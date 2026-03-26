@@ -10,8 +10,9 @@ use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use turin_channel_core::{
-    ChannelAttachment, ChannelCapabilities, ChannelConversationKey, ChannelKind, ChannelMessageRef,
-    ChannelUser, InboundEvent, MessageBlock, OutboundMessage,
+    ChannelAttachment, ChannelCapabilities, ChannelConversationKey, ChannelKind,
+    ChannelMessageRef, ChannelSessionScope, ChannelUser, InboundEvent, MessageBlock,
+    OutboundMessage,
 };
 use turin_channel_runner::ChannelDriver;
 
@@ -43,6 +44,7 @@ pub struct DiscordChannelDriverConfig {
     pub max_messages_per_poll: u16,
     pub start_from_latest: bool,
     pub ignore_bot_messages: bool,
+    pub session_scope: ChannelSessionScope,
 }
 
 pub fn validate_settings(settings: &serde_json::Value) -> Result<()> {
@@ -73,6 +75,7 @@ impl DiscordChannelDriverConfig {
             max_messages_per_poll: settings.max_messages_per_poll,
             start_from_latest: settings.start_from_latest,
             ignore_bot_messages: settings.ignore_bot_messages,
+            session_scope: settings.session_scope,
         })
     }
 }
@@ -91,6 +94,7 @@ struct DiscordChannelSettings {
     max_messages_per_poll: u16,
     start_from_latest: bool,
     ignore_bot_messages: bool,
+    session_scope: ChannelSessionScope,
 }
 
 fn parse_settings(settings: &serde_json::Value) -> Result<DiscordChannelSettings> {
@@ -192,6 +196,7 @@ fn parse_settings(settings: &serde_json::Value) -> Result<DiscordChannelSettings
         max_messages_per_poll,
         start_from_latest: read_optional_bool(settings, "start_from_latest", true)?,
         ignore_bot_messages: read_optional_bool(settings, "ignore_bot_messages", true)?,
+        session_scope: read_discord_session_scope(settings.get("session_scope"))?,
     })
 }
 
@@ -258,6 +263,24 @@ fn read_optional_bool(
         Some(value) => value
             .as_bool()
             .ok_or_else(|| anyhow!("Discord channel setting '{}' must be a boolean", key)),
+    }
+}
+
+fn read_discord_session_scope(value: Option<&serde_json::Value>) -> Result<ChannelSessionScope> {
+    let Some(value) = value else {
+        return Ok(ChannelSessionScope::User);
+    };
+    let scope = value.as_str().ok_or_else(|| {
+        anyhow!(
+            "[discord_config_invalid_session_scope] Discord channel setting 'session_scope' must be a string"
+        )
+    })?;
+    match scope.trim().to_ascii_lowercase().as_str() {
+        "user" => Ok(ChannelSessionScope::User),
+        "thread" => Ok(ChannelSessionScope::Thread),
+        _ => anyhow::bail!(
+            "[discord_config_invalid_session_scope] Discord channel setting 'session_scope' must be one of: user, thread"
+        ),
     }
 }
 
@@ -667,7 +690,10 @@ impl DiscordChannelDriver {
             workspace_id: self.config.workspace_id.clone(),
             room_id,
             thread_id: message.channel_id.clone(),
-            user_id: Some(message.author.id.clone()),
+            user_id: match self.config.session_scope {
+                ChannelSessionScope::User => Some(message.author.id.clone()),
+                ChannelSessionScope::Thread | ChannelSessionScope::Room => None,
+            },
         };
 
         let mut metadata = serde_json::Map::new();
@@ -697,6 +723,7 @@ impl DiscordChannelDriver {
                 display_name: message.author.global_name,
                 username: Some(message.author.username),
             },
+            session_scope: self.config.session_scope,
             text: message.content,
             attachments,
             metadata,
@@ -1402,6 +1429,17 @@ mod tests {
     }
 
     #[test]
+    fn validate_settings_rejects_unsupported_room_session_scope() {
+        let error = validate_settings(&serde_json::json!({
+            "token_env": "DISCORD_TOKEN",
+            "channel_id": "123",
+            "session_scope": "room"
+        }))
+        .expect_err("room scope rejected for discord");
+        assert!(error.to_string().contains("session_scope"));
+    }
+
+    #[test]
     fn render_outbound_preserves_code_blocks() {
         let batch = render_outbound_messages(OutboundMessage {
             blocks: vec![
@@ -1475,6 +1513,7 @@ mod tests {
             max_messages_per_poll: 10,
             start_from_latest: true,
             ignore_bot_messages: true,
+            session_scope: ChannelSessionScope::User,
         };
         let (_tx, rx) = watch::channel(false);
         let mut driver = DiscordChannelDriver {
@@ -1524,6 +1563,7 @@ mod tests {
             max_messages_per_poll: 10,
             start_from_latest: true,
             ignore_bot_messages: false,
+            session_scope: ChannelSessionScope::User,
         };
         let (_tx, rx) = watch::channel(false);
         let mut driver = DiscordChannelDriver {
@@ -1558,5 +1598,59 @@ mod tests {
 
         assert!(driver.normalize_message(message.clone()).is_some());
         assert!(driver.normalize_message(message).is_none());
+    }
+
+    #[test]
+    fn normalize_thread_scope_shares_channel_across_users() {
+        let config = DiscordChannelDriverConfig {
+            base_url: DEFAULT_BASE_URL.to_string(),
+            gateway_url: DEFAULT_GATEWAY_URL.to_string(),
+            transport_mode: DiscordTransportMode::Gateway,
+            gateway_intents: DEFAULT_GATEWAY_INTENTS,
+            workspace_id: "discord".to_string(),
+            room_id: None,
+            channel_id: "123".to_string(),
+            token: "token".to_string(),
+            poll_interval: Duration::from_millis(250),
+            max_messages_per_poll: 10,
+            start_from_latest: true,
+            ignore_bot_messages: false,
+            session_scope: ChannelSessionScope::Thread,
+        };
+        let (_tx, rx) = watch::channel(false);
+        let mut driver = DiscordChannelDriver {
+            channel_runtime_id: "discord-runtime".to_string(),
+            config,
+            client: reqwest::Client::new(),
+            shutdown_rx: rx,
+            backlog: VecDeque::new(),
+            last_seen_message_id: None,
+            initialized: false,
+            gateway: None,
+            last_gateway_seq: None,
+            gateway_session_id: None,
+            resume_gateway_url: None,
+            seen_message_ids: VecDeque::new(),
+            seen_message_set: HashSet::new(),
+            reconnect_attempts: 0,
+        };
+        let message = DiscordMessage {
+            id: "1".to_string(),
+            channel_id: "123".to_string(),
+            guild_id: Some("guild".to_string()),
+            content: "hello".to_string(),
+            author: DiscordAuthor {
+                id: "user".to_string(),
+                username: "user".to_string(),
+                global_name: None,
+                bot: Some(false),
+            },
+            attachments: Vec::new(),
+        };
+
+        let event = driver.normalize_message(message).expect("normalized event");
+        assert_eq!(event.session_scope, ChannelSessionScope::Thread);
+        assert_eq!(event.conversation.thread_id, "123");
+        assert_eq!(event.conversation.user_id, None);
     }
 }
