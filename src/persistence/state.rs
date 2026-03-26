@@ -11,6 +11,7 @@
 
 use anyhow::{Context, Result};
 use std::sync::Arc;
+use turin_daemon_protocol::{SessionSearchHitKind, SessionSearchScope};
 use turso::{Connection, Database};
 
 use super::schema::*;
@@ -22,6 +23,20 @@ use super::schema::*;
 #[derive(Clone)]
 pub struct StateStore {
     pub(crate) db: Arc<Database>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionSearchRow {
+    pub kind: SessionSearchHitKind,
+    pub public_id: Vec<u8>,
+    pub agent_id: String,
+    pub metadata: Option<String>,
+    pub created_at: String,
+    pub turn_index: Option<u32>,
+    pub role: Option<String>,
+    pub tool_name: Option<String>,
+    pub event_type: Option<String>,
+    pub match_text: String,
 }
 
 impl StateStore {
@@ -234,6 +249,192 @@ impl StateStore {
         } else {
             Ok(None)
         }
+    }
+
+    /// Update or clear the user-visible title stored in session metadata.
+    pub async fn update_session_title(
+        &self,
+        public_id: uuid::Uuid,
+        title: Option<&str>,
+    ) -> Result<Option<SessionRow>> {
+        let Some(mut row) = self.get_session_row_by_public_id(public_id).await? else {
+            return Ok(None);
+        };
+
+        let metadata = update_session_title_metadata(row.metadata.as_deref(), title)?;
+        let conn = self.connect().await?;
+        let public_id_bytes = public_id.into_bytes().to_vec();
+        conn.execute(
+            "UPDATE sessions SET metadata = ?1 WHERE public_id = ?2",
+            turso::params![metadata.clone(), public_id_bytes],
+        )
+        .await
+        .context("Failed to update session metadata title")?;
+        row.metadata = metadata;
+        Ok(Some(row))
+    }
+
+    /// Search persisted session history across sessions, messages, tool calls, and events.
+    pub async fn search_session_history(
+        &self,
+        query: &str,
+        scope: SessionSearchScope,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<SessionSearchRow>> {
+        let normalized = query.trim().to_ascii_lowercase();
+        if normalized.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut clauses = Vec::new();
+        if matches!(
+            scope,
+            SessionSearchScope::All | SessionSearchScope::Sessions
+        ) {
+            clauses.push(
+                r#"
+                SELECT 'session' AS kind,
+                       s.id AS sort_id,
+                       s.public_id,
+                       s.agent_id,
+                       s.metadata,
+                       s.created_at,
+                       NULL AS turn_index,
+                       NULL AS role,
+                       NULL AS tool_name,
+                       NULL AS event_type,
+                       COALESCE(s.metadata, s.agent_id) AS match_text
+                FROM sessions s
+                WHERE LOWER(s.agent_id) LIKE ?1
+                   OR LOWER(COALESCE(s.metadata, '')) LIKE ?1
+                "#,
+            );
+        }
+        if matches!(
+            scope,
+            SessionSearchScope::All | SessionSearchScope::Messages
+        ) {
+            clauses.push(
+                r#"
+                SELECT 'message' AS kind,
+                       m.id AS sort_id,
+                       s.public_id,
+                       s.agent_id,
+                       s.metadata,
+                       m.created_at,
+                       m.turn_index,
+                       m.role,
+                       NULL AS tool_name,
+                       NULL AS event_type,
+                       m.content AS match_text
+                FROM messages m
+                JOIN sessions s ON s.id = m.session_id
+                WHERE LOWER(m.content) LIKE ?1
+                   OR LOWER(m.role) LIKE ?1
+                "#,
+            );
+        }
+        if matches!(
+            scope,
+            SessionSearchScope::All | SessionSearchScope::ToolExecutions
+        ) {
+            clauses.push(
+                r#"
+                SELECT 'tool_execution' AS kind,
+                       t.id AS sort_id,
+                       s.public_id,
+                       s.agent_id,
+                       s.metadata,
+                       t.created_at,
+                       t.turn_index,
+                       NULL AS role,
+                       t.tool_name,
+                       NULL AS event_type,
+                       TRIM(
+                           t.tool_name || ' ' ||
+                           COALESCE(t.args, '') || ' ' ||
+                           COALESCE(t.output, '') || ' ' ||
+                           COALESCE(t.verdict, '')
+                       ) AS match_text
+                FROM tool_executions t
+                JOIN sessions s ON s.id = t.session_id
+                WHERE LOWER(t.tool_name) LIKE ?1
+                   OR LOWER(COALESCE(t.args, '')) LIKE ?1
+                   OR LOWER(COALESCE(t.output, '')) LIKE ?1
+                   OR LOWER(COALESCE(t.verdict, '')) LIKE ?1
+                "#,
+            );
+        }
+        if matches!(scope, SessionSearchScope::All | SessionSearchScope::Events) {
+            clauses.push(
+                r#"
+                SELECT 'event' AS kind,
+                       e.id AS sort_id,
+                       s.public_id,
+                       s.agent_id,
+                       s.metadata,
+                       e.created_at,
+                       NULL AS turn_index,
+                       NULL AS role,
+                       NULL AS tool_name,
+                       e.event_type,
+                       e.payload AS match_text
+                FROM events e
+                JOIN sessions s ON s.id = e.session_id
+                WHERE LOWER(e.event_type) LIKE ?1
+                   OR LOWER(e.payload) LIKE ?1
+                "#,
+            );
+        }
+
+        if clauses.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let sql = format!(
+            r#"
+            SELECT *
+            FROM (
+                {}
+            ) search_hits
+            ORDER BY created_at DESC, sort_id DESC
+            LIMIT ?2 OFFSET ?3
+            "#,
+            clauses.join("\nUNION ALL\n")
+        );
+
+        let conn = self.connect().await?;
+        let needle = format!("%{normalized}%");
+        let mut rows = conn
+            .query(&sql, turso::params![needle, limit as i64, offset as i64])
+            .await
+            .context("Failed to search persisted session history")?;
+
+        let mut hits = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let kind = match row.get::<String>(0)?.as_str() {
+                "session" => SessionSearchHitKind::Session,
+                "message" => SessionSearchHitKind::Message,
+                "tool_execution" => SessionSearchHitKind::ToolExecution,
+                "event" => SessionSearchHitKind::Event,
+                other => anyhow::bail!("Unexpected persisted search hit kind '{}'", other),
+            };
+            hits.push(SessionSearchRow {
+                kind,
+                public_id: row.get::<Vec<u8>>(2)?,
+                agent_id: row.get::<String>(3)?,
+                metadata: row.get::<Option<String>>(4)?,
+                created_at: row.get::<String>(5)?,
+                turn_index: row.get::<Option<i64>>(6)?.map(|value| value as u32),
+                role: row.get::<Option<String>>(7)?,
+                tool_name: row.get::<Option<String>>(8)?,
+                event_type: row.get::<Option<String>>(9)?,
+                match_text: row.get::<String>(10)?,
+            });
+        }
+
+        Ok(hits)
     }
 
     // ─── Event Log ───────────────────────────────────────────────
@@ -509,6 +710,39 @@ impl StateStore {
     }
 }
 
+fn update_session_title_metadata(
+    metadata: Option<&str>,
+    title: Option<&str>,
+) -> Result<Option<String>> {
+    let mut object = match metadata {
+        Some(raw) => match serde_json::from_str::<serde_json::Value>(raw).ok() {
+            Some(serde_json::Value::Object(map)) => map,
+            _ => serde_json::Map::new(),
+        },
+        None => serde_json::Map::new(),
+    };
+
+    match title.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(title) => {
+            object.insert(
+                "title".to_string(),
+                serde_json::Value::String(title.to_string()),
+            );
+        }
+        None => {
+            object.remove("title");
+        }
+    }
+
+    if object.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(serde_json::to_string(&serde_json::Value::Object(
+            object,
+        ))?))
+    }
+}
+
 // ─── Tests ───────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -656,6 +890,135 @@ mod tests {
         assert_eq!(execs.len(), 1);
         assert!(execs[0].is_error);
         assert_eq!(execs[0].verdict, "reject");
+    }
+
+    #[tokio::test]
+    async fn test_update_session_title_preserves_other_metadata() {
+        let store = StateStore::open_memory().await.unwrap();
+        let public_id = uuid::Uuid::now_v7();
+        let metadata = json!({
+            "source": "test",
+            "title": "Original title",
+        });
+
+        store
+            .create_session(public_id, "default", Some(&metadata.to_string()))
+            .await
+            .unwrap();
+
+        let updated = store
+            .update_session_title(public_id, Some("Renamed session"))
+            .await
+            .unwrap()
+            .expect("session exists");
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(updated.metadata.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            parsed.get("title").and_then(|value| value.as_str()),
+            Some("Renamed session")
+        );
+        assert_eq!(
+            parsed.get("source").and_then(|value| value.as_str()),
+            Some("test")
+        );
+
+        let cleared = store
+            .update_session_title(public_id, None)
+            .await
+            .unwrap()
+            .expect("session exists");
+        let parsed: serde_json::Value =
+            serde_json::from_str(cleared.metadata.as_deref().unwrap()).unwrap();
+        assert!(parsed.get("title").is_none());
+        assert_eq!(
+            parsed.get("source").and_then(|value| value.as_str()),
+            Some("test")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_session_history_queries_messages_tools_events_and_titles() {
+        let store = StateStore::open_memory().await.unwrap();
+        let public_id = uuid::Uuid::now_v7();
+        let metadata = json!({ "title": "Compiler investigations" });
+        let session_id = store
+            .create_session(public_id, "default", Some(&metadata.to_string()))
+            .await
+            .unwrap();
+
+        store
+            .insert_message(
+                session_id,
+                3,
+                "user",
+                &json!([{"type": "text", "text": "Investigate the compiler panic in src/main.rs"}]),
+                None,
+            )
+            .await
+            .unwrap();
+        store
+            .insert_tool_execution(
+                session_id,
+                3,
+                "call_1",
+                "read_file",
+                &json!({"path": "src/main.rs"}),
+                Some("panic!(\"boom\")"),
+                false,
+                Some(12),
+                "allow",
+            )
+            .await
+            .unwrap();
+        store
+            .insert_event(
+                session_id,
+                "tool_call",
+                &json!({"tool_name": "read_file", "path": "src/main.rs"}),
+            )
+            .await
+            .unwrap();
+
+        let title_hits = store
+            .search_session_history("compiler", SessionSearchScope::Sessions, 16, 0)
+            .await
+            .unwrap();
+        assert!(
+            title_hits
+                .iter()
+                .any(|hit| hit.kind == SessionSearchHitKind::Session)
+        );
+
+        let message_hits = store
+            .search_session_history("panic", SessionSearchScope::Messages, 16, 0)
+            .await
+            .unwrap();
+        assert!(
+            message_hits
+                .iter()
+                .any(|hit| hit.kind == SessionSearchHitKind::Message)
+        );
+
+        let tool_hits = store
+            .search_session_history("read_file", SessionSearchScope::ToolExecutions, 16, 0)
+            .await
+            .unwrap();
+        assert!(
+            tool_hits
+                .iter()
+                .any(|hit| hit.kind == SessionSearchHitKind::ToolExecution)
+        );
+
+        let event_hits = store
+            .search_session_history("tool_call", SessionSearchScope::Events, 16, 0)
+            .await
+            .unwrap();
+        assert!(
+            event_hits
+                .iter()
+                .any(|hit| hit.kind == SessionSearchHitKind::Event)
+        );
     }
 
     #[tokio::test]

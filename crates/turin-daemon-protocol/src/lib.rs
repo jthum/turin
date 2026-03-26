@@ -159,6 +159,43 @@ pub struct SessionListParams {
     pub offset: usize,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionSearchScope {
+    All,
+    Sessions,
+    Messages,
+    ToolExecutions,
+    Events,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionSearchHitKind {
+    Session,
+    Message,
+    ToolExecution,
+    Event,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SessionSearchParams {
+    pub query: String,
+    #[serde(default)]
+    pub scope: Option<SessionSearchScope>,
+    #[serde(default = "default_search_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub offset: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SessionTitleParams {
+    pub session_id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "op", content = "params")]
 pub enum DaemonRequest {
@@ -214,12 +251,16 @@ pub enum DaemonRequest {
     SessionList(SessionListParams),
     #[serde(rename = "session.list_live")]
     SessionListLive(NoParams),
+    #[serde(rename = "session.search")]
+    SessionSearch(SessionSearchParams),
     #[serde(rename = "session.open")]
     SessionOpen(OpenSessionParams),
     #[serde(rename = "session.resume")]
     SessionResume(ResumeSessionParams),
     #[serde(rename = "session.get")]
     SessionGet(SessionIdParams),
+    #[serde(rename = "session.set_title")]
+    SessionSetTitle(SessionTitleParams),
     #[serde(rename = "session.cancel")]
     SessionCancel(SessionIdParams),
     #[serde(rename = "session.kill")]
@@ -379,6 +420,10 @@ fn default_enabled() -> bool {
 
 fn default_session_limit() -> usize {
     50
+}
+
+fn default_search_limit() -> usize {
+    64
 }
 
 #[cfg(test)]

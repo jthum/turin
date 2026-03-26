@@ -147,16 +147,16 @@ impl DashboardState {
     pub fn apply_snapshot(&mut self, snapshot: DashboardSnapshot) {
         let now = now_unix_ms();
         let mut retained_details = BTreeMap::new();
+        for session in &snapshot.sessions {
+            if let Some(mut detail) = self.session_details.remove(&session.session_id) {
+                detail.session.metadata = session.metadata.clone();
+                retained_details.insert(session.session_id.clone(), detail);
+            }
+        }
         for session_id in snapshot
             .live_sessions
             .iter()
             .map(|session| session.session_id.as_str())
-            .chain(
-                snapshot
-                    .sessions
-                    .iter()
-                    .map(|session| session.session_id.as_str()),
-            )
         {
             if let Some(detail) = self.session_details.remove(session_id) {
                 retained_details.insert(session_id.to_string(), detail);
@@ -178,6 +178,7 @@ impl DashboardState {
         match update {
             UiUpdate::Snapshot(snapshot) => self.apply_snapshot(*snapshot),
             UiUpdate::SessionDetail(detail) => self.record_session_detail(*detail),
+            UiUpdate::SearchResults { .. } => {}
             UiUpdate::Event(event) => self.record_event(event),
             UiUpdate::SessionEvent(_) => {}
             UiUpdate::RefreshTelemetry {

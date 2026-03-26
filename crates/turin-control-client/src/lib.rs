@@ -7,7 +7,8 @@ use turin_daemon_client::DaemonClient;
 use turin_daemon_protocol::{
     DaemonHandshake, DaemonRequest, EntityIdParams, EventEnvelope, NoParams, OpenSessionParams,
     RequestEnvelope, ResponseEnvelope, ResumeSessionParams, RuntimeEventsSubscribeParams,
-    SessionIdParams, SessionListParams, SubmitTaskParams, TaskIdParams, WaitTaskParams,
+    SessionIdParams, SessionListParams, SessionSearchHitKind, SessionSearchParams,
+    SessionSearchScope, SessionTitleParams, SubmitTaskParams, TaskIdParams, WaitTaskParams,
 };
 use turin_remote_client::RemoteClient;
 
@@ -302,6 +303,26 @@ pub struct SessionActionResult {
     pub action: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSearchHit {
+    pub kind: SessionSearchHitKind,
+    pub session_id: String,
+    pub agent_id: String,
+    pub title: Option<String>,
+    pub created_at: String,
+    pub turn_index: Option<u32>,
+    pub role: Option<String>,
+    pub tool_name: Option<String>,
+    pub event_type: Option<String>,
+    pub summary: String,
+    pub snippet: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionSearchResultList {
+    hits: Vec<SessionSearchHit>,
+}
+
 pub enum ManagedEventStream {
     Local(turin_daemon_client::ManagedEventStream),
     Remote(turin_remote_client::ManagedRemoteEventStream),
@@ -441,6 +462,42 @@ impl ControlClient {
             None,
             DaemonRequest::SessionGet(SessionIdParams {
                 session_id: session_id.to_string(),
+            }),
+        )
+        .await
+    }
+
+    pub async fn search_sessions(
+        &self,
+        query: &str,
+        scope: SessionSearchScope,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<SessionSearchHit>> {
+        let response: SessionSearchResultList = self
+            .request_ok(
+                None,
+                DaemonRequest::SessionSearch(SessionSearchParams {
+                    query: query.to_string(),
+                    scope: Some(scope),
+                    limit,
+                    offset,
+                }),
+            )
+            .await?;
+        Ok(response.hits)
+    }
+
+    pub async fn set_session_title(
+        &self,
+        session_id: &str,
+        title: Option<String>,
+    ) -> Result<SessionSummary> {
+        self.request_ok(
+            None,
+            DaemonRequest::SessionSetTitle(SessionTitleParams {
+                session_id: session_id.to_string(),
+                title,
             }),
         )
         .await

@@ -10,8 +10,8 @@ use tokio::runtime::Builder;
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, watch};
 use tokio::time;
-use turin_control_client::{ConnectionSpec, ControlClient, SessionDetail};
-use turin_daemon_protocol::{EventEnvelope, RuntimeEventsSubscribeParams};
+use turin_control_client::{ConnectionSpec, ControlClient, SessionDetail, SessionSearchHit};
+use turin_daemon_protocol::{EventEnvelope, RuntimeEventsSubscribeParams, SessionSearchScope};
 
 use crate::{DashboardSnapshot, DashboardState};
 
@@ -41,9 +41,17 @@ pub struct UiController {
 pub enum UiUpdate {
     Snapshot(Box<DashboardSnapshot>),
     SessionDetail(Box<SessionDetail>),
+    SearchResults {
+        query: String,
+        scope: SessionSearchScope,
+        hits: Vec<SessionSearchHit>,
+    },
     Event(EventEnvelope),
     SessionEvent(EventEnvelope),
-    RefreshTelemetry { duration_ms: u64, success: bool },
+    RefreshTelemetry {
+        duration_ms: u64,
+        success: bool,
+    },
     Error(String),
     Info(String),
 }
@@ -51,14 +59,41 @@ pub enum UiUpdate {
 #[derive(Debug, Clone)]
 pub enum OperatorCommand {
     Refresh,
-    FocusSessionStream { session_id: Option<String> },
-    LoadSessionDetail { session_id: String },
-    OpenSession { agent_id: String },
-    ResumeSession { session_id: String },
-    SubmitPrompt { session_id: String, prompt: String },
-    CancelSession { session_id: String },
-    KillSession { session_id: String },
-    CancelTask { request_id: String },
+    FocusSessionStream {
+        session_id: Option<String>,
+    },
+    LoadSessionDetail {
+        session_id: String,
+    },
+    SearchSessions {
+        query: String,
+        scope: SessionSearchScope,
+        limit: usize,
+        offset: usize,
+    },
+    OpenSession {
+        agent_id: String,
+    },
+    ResumeSession {
+        session_id: String,
+    },
+    SetSessionTitle {
+        session_id: String,
+        title: Option<String>,
+    },
+    SubmitPrompt {
+        session_id: String,
+        prompt: String,
+    },
+    CancelSession {
+        session_id: String,
+    },
+    KillSession {
+        session_id: String,
+    },
+    CancelTask {
+        request_id: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -1494,6 +1529,38 @@ fn spawn_command_task(
                 continue;
             }
 
+            if let OperatorCommand::SearchSessions {
+                query,
+                scope,
+                limit,
+                offset,
+            } = &command
+            {
+                match client
+                    .search_sessions(query.as_str(), *scope, *limit, *offset)
+                    .await
+                {
+                    Ok(hits) => {
+                        if tx
+                            .send(UiUpdate::SearchResults {
+                                query: query.clone(),
+                                scope: *scope,
+                                hits,
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+
             match execute_operator_command(&client, command).await {
                 Ok(message) => {
                     if tx.send(UiUpdate::Info(message)).is_err() {
@@ -1551,6 +1618,9 @@ pub async fn execute_operator_command(
             Ok("Updated focused session stream".to_string())
         }
         OperatorCommand::LoadSessionDetail { .. } => Ok("Loaded session detail".to_string()),
+        OperatorCommand::SearchSessions { .. } => {
+            Ok("Loaded persisted session search results".to_string())
+        }
         OperatorCommand::OpenSession { agent_id } => {
             let session = client.open_session(&agent_id, None).await?;
             Ok(format!(
@@ -1563,6 +1633,19 @@ pub async fn execute_operator_command(
             Ok(format!(
                 "Resumed session {} into live slot {}",
                 session.session_id, session.slot_id
+            ))
+        }
+        OperatorCommand::SetSessionTitle { session_id, title } => {
+            let session = client.set_session_title(&session_id, title.clone()).await?;
+            let title = session
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("title"))
+                .and_then(|value| value.as_str())
+                .unwrap_or("cleared");
+            Ok(format!(
+                "Updated session {} title to {}",
+                session.session_id, title
             ))
         }
         OperatorCommand::SubmitPrompt { session_id, prompt } => {

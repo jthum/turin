@@ -1,4 +1,5 @@
 use serde::Serialize;
+use turin_daemon_protocol::SessionSearchHitKind;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentDetail {
@@ -81,4 +82,19 @@ pub struct SessionDetail {
     pub events: Vec<SessionEventDetail>,
     pub messages: Vec<SessionMessageDetail>,
     pub tool_executions: Vec<SessionToolExecutionDetail>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionSearchHit {
+    pub kind: SessionSearchHitKind,
+    pub session_id: String,
+    pub agent_id: String,
+    pub title: Option<String>,
+    pub created_at: String,
+    pub turn_index: Option<u32>,
+    pub role: Option<String>,
+    pub tool_name: Option<String>,
+    pub event_type: Option<String>,
+    pub summary: String,
+    pub snippet: String,
 }

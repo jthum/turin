@@ -2,10 +2,11 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
+use turin_daemon_protocol::SessionSearchScope;
 
 use super::{
-    DaemonState, SessionDetail, SessionEventDetail, SessionMessageDetail, SessionSummary,
-    SessionToolExecutionDetail,
+    DaemonState, SessionDetail, SessionEventDetail, SessionMessageDetail, SessionSearchHit,
+    SessionSummary, SessionToolExecutionDetail,
 };
 use crate::kernel::agent_manager::{AgentStatusSnapshot, TaskStatusSnapshot};
 use crate::kernel::event::KernelEvent;
@@ -100,6 +101,38 @@ impl DaemonState {
         Ok(rows
             .iter()
             .map(super::helpers::session_summary_from_row)
+            .collect())
+    }
+
+    pub async fn search_sessions(
+        &self,
+        query: &str,
+        scope: SessionSearchScope,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<SessionSearchHit>> {
+        let store = self.kernel.store_manager().get_default().await?;
+        let rows = store
+            .search_session_history(query, scope, limit, offset)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let title = super::helpers::session_title_from_metadata(row.metadata.as_deref());
+                SessionSearchHit {
+                    kind: row.kind,
+                    session_id: super::helpers::format_uuid_bytes_simple(&row.public_id),
+                    agent_id: row.agent_id,
+                    title,
+                    created_at: row.created_at,
+                    turn_index: row.turn_index,
+                    role: row.role,
+                    tool_name: row.tool_name,
+                    event_type: row.event_type,
+                    summary: summarize_search_hit(&row.match_text),
+                    snippet: excerpt_search_text(&row.match_text, 220),
+                }
+            })
             .collect())
     }
 
@@ -208,6 +241,20 @@ impl DaemonState {
         }))
     }
 
+    pub async fn set_session_title(
+        &self,
+        session_id: &str,
+        title: Option<&str>,
+    ) -> Result<Option<SessionSummary>> {
+        let public_id = uuid::Uuid::parse_str(session_id)
+            .map_err(|_| anyhow!("Invalid session id '{}'", session_id))?;
+        let store = self.kernel.store_manager().get_default().await?;
+        let updated = store.update_session_title(public_id, title).await?;
+        Ok(updated
+            .as_ref()
+            .map(super::helpers::session_summary_from_row))
+    }
+
     pub async fn cancel_session(&self, session_id: &str) -> Result<serde_json::Value> {
         let (agent_id, session_id) = self
             .kernel
@@ -280,5 +327,20 @@ impl DaemonState {
                 })
             })
             .collect()
+    }
+}
+
+fn summarize_search_hit(text: &str) -> String {
+    excerpt_search_text(text, 72)
+}
+
+fn excerpt_search_text(text: &str, max_chars: usize) -> String {
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = collapsed.trim();
+    if trimmed.chars().count() <= max_chars {
+        trimmed.to_string()
+    } else {
+        let excerpt = trimmed.chars().take(max_chars).collect::<String>();
+        format!("{excerpt}…")
     }
 }

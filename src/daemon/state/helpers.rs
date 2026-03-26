@@ -160,7 +160,7 @@ pub(super) fn session_summary_from_row(
     }
 }
 
-fn format_uuid_bytes_simple(bytes: &[u8]) -> String {
+pub(super) fn format_uuid_bytes_simple(bytes: &[u8]) -> String {
     uuid::Uuid::from_slice(bytes)
         .map(|uuid| uuid.simple().to_string())
         .unwrap_or_else(|_| {
@@ -175,6 +175,16 @@ fn format_uuid_bytes_simple(bytes: &[u8]) -> String {
 
 pub(super) fn parse_json_or_string(raw: &str) -> serde_json::Value {
     serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
+}
+
+pub(super) fn session_title_from_metadata(metadata: Option<&str>) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(metadata?).ok()?;
+    value
+        .get("title")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
 }
 
 pub(super) fn issue_path_is_under(issue_path: &str, root: &Path) -> bool {

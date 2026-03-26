@@ -27,9 +27,9 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use turin_control_client::{
     AgentRuntime, AgentSummary, ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession,
-    SessionSummary, TaskStatus,
+    SessionSearchHit as PersistedSessionSearchHit, SessionSummary, TaskStatus,
 };
-use turin_daemon_protocol::EventEnvelope;
+use turin_daemon_protocol::{EventEnvelope, SessionSearchHitKind, SessionSearchScope};
 use turin_ui_core::{
     ConnectionDraftHistory, ConnectionOptions, ConnectionPreflightOutcome,
     ConnectionPreflightReport, ConnectionProfileActivityBook, ConnectionProfileAuth,
@@ -199,6 +199,9 @@ enum InputMode {
     EditChannelFilter,
     EditEventFilter,
     EditSearchQuery,
+    EditSessionTitle {
+        session_id: String,
+    },
     EditTranscriptBudget,
     EditUserLabel,
 }
@@ -260,6 +263,8 @@ struct TuiApp {
     requested_session_detail: Option<String>,
     search_query: String,
     search_scope: SearchScope,
+    persisted_search_hits: Vec<PersistedSessionSearchHit>,
+    search_loading: bool,
     task_filter: String,
     channel_filter: String,
     event_filter: String,
@@ -328,12 +333,6 @@ enum SearchAction {
     },
     FocusAgent {
         agent_id: String,
-    },
-    FocusLiveSession {
-        session_id: String,
-    },
-    FocusStoredSession {
-        session_id: String,
     },
     FocusTask {
         request_id: String,
@@ -634,8 +633,8 @@ fn handle_key(
         KeyCode::Char('v') if app.tab == TabKind::Chat => app.toggle_streaming_preview(),
         KeyCode::Char('f') if app.tab == TabKind::Chat => app.toggle_chat_follow_latest(),
         KeyCode::Char('l') if app.tab == TabKind::Connections => app.reload_profiles(),
-        KeyCode::Char('m') if app.tab == TabKind::Search => app.cycle_search_scope(),
-        KeyCode::Char('F') if app.tab == TabKind::Search => app.clear_search_query(),
+        KeyCode::Char('m') if app.tab == TabKind::Search => app.cycle_search_scope(command_tx)?,
+        KeyCode::Char('F') if app.tab == TabKind::Search => app.clear_search_query(command_tx)?,
         KeyCode::Char('v') if app.tab == TabKind::Connections => {
             app.load_current_connection_into_draft()
         }
@@ -644,6 +643,14 @@ fn handle_key(
         }
         KeyCode::Char('P') if app.tab == TabKind::Connections => app.preflight_selected_profile(),
         KeyCode::Char('T') if app.tab == TabKind::Connections => app.preflight_draft(),
+        KeyCode::Char('T')
+            if matches!(
+                app.tab,
+                TabKind::Chat | TabKind::Search | TabKind::LiveSessions | TabKind::Sessions
+            ) =>
+        {
+            app.start_edit_session_title()
+        }
         KeyCode::Char('E') if app.tab == TabKind::Connections => {
             app.ensure_local_daemon_for_draft()
         }
@@ -858,7 +865,12 @@ fn handle_input_mode(
         KeyCode::Delete => app.delete_input_right(),
         KeyCode::Enter => {
             let input = app.input.trim().to_string();
-            if input.is_empty() {
+            if input.is_empty()
+                && !matches!(
+                    app.input_mode.as_ref(),
+                    Some(InputMode::EditSessionTitle { .. })
+                )
+            {
                 let message = match app.input_mode.as_ref() {
                     Some(InputMode::SubmitPrompt { .. }) => "Prompt cannot be empty",
                     Some(InputMode::SaveProfile { .. })
@@ -871,6 +883,9 @@ fn handle_input_mode(
                     }
                     Some(InputMode::EditSearchQuery) => "Search query cannot be empty",
                     Some(InputMode::EditUserLabel) => "User label cannot be empty",
+                    Some(InputMode::EditSessionTitle { .. }) => {
+                        "Blank title will clear the current session title"
+                    }
                     Some(InputMode::EditTaskFilter)
                     | Some(InputMode::EditChannelFilter)
                     | Some(InputMode::EditEventFilter) => "Use Esc to clear the filter",
@@ -953,7 +968,18 @@ fn handle_input_mode(
                     app.search_query = input;
                     app.search_index = 0;
                     app.tab = TabKind::Search;
+                    app.refresh_persisted_search(command_tx)?;
                     app.dashboard.record_info("Updated the search query");
+                }
+                Some(InputMode::EditSessionTitle { session_id }) => {
+                    let title = input.trim().to_string();
+                    send_command(
+                        command_tx,
+                        OperatorCommand::SetSessionTitle {
+                            session_id,
+                            title: (!title.is_empty()).then_some(title),
+                        },
+                    )?;
                 }
                 Some(InputMode::ConfirmDiscard { .. }) => {}
                 Some(InputMode::ConfirmDelete { .. }) => {}
@@ -1422,6 +1448,8 @@ impl TuiApp {
             requested_session_detail: None,
             search_query: String::new(),
             search_scope: SearchScope::All,
+            persisted_search_hits: Vec::new(),
+            search_loading: false,
             task_filter: String::new(),
             channel_filter: String::new(),
             event_filter: String::new(),
@@ -1481,7 +1509,20 @@ impl TuiApp {
                 }
                 self.maybe_activate_pending_chat_prompt(snapshot);
             }
-            UiUpdate::RefreshTelemetry { .. } | UiUpdate::Error(_) | UiUpdate::Info(_) => {}
+            UiUpdate::SearchResults { query, scope, hits } => {
+                if query.trim() == self.search_query.trim()
+                    && Some(*scope) == self.persisted_search_scope()
+                {
+                    self.persisted_search_hits = hits.clone();
+                    self.search_loading = false;
+                }
+            }
+            UiUpdate::RefreshTelemetry { .. } | UiUpdate::Info(_) => {}
+            UiUpdate::Error(_) => {
+                if self.search_loading {
+                    self.search_loading = false;
+                }
+            }
         }
 
         if !matches!(&update, UiUpdate::SessionEvent(_)) {
@@ -2080,30 +2121,6 @@ impl TuiApp {
                 }
                 self.tab = TabKind::Agents;
             }
-            SearchAction::FocusLiveSession { session_id } => {
-                self.chat_session_id = Some(session_id.clone());
-                if let Some(index) = self
-                    .dashboard
-                    .live_sessions
-                    .iter()
-                    .position(|session| session.session_id == session_id)
-                {
-                    self.live_session_index = index;
-                }
-                self.tab = TabKind::Chat;
-            }
-            SearchAction::FocusStoredSession { session_id } => {
-                self.chat_session_id = Some(session_id.clone());
-                if let Some(index) = self
-                    .dashboard
-                    .sessions
-                    .iter()
-                    .position(|session| session.session_id == session_id)
-                {
-                    self.session_index = index;
-                }
-                self.tab = TabKind::Chat;
-            }
             SearchAction::FocusTask { request_id } => {
                 let filtered = self.filtered_tasks();
                 if let Some(index) = filtered
@@ -2323,6 +2340,10 @@ impl TuiApp {
     }
 
     fn session_label(&self, session_id: &str, fallback_agent: Option<&str>) -> String {
+        if let Some(title) = self.session_title(session_id) {
+            return title;
+        }
+
         if let Some(detail) = self.dashboard.session_detail(session_id)
             && let Some(summary) = detail
                 .messages
@@ -2350,6 +2371,19 @@ impl TuiApp {
             .or(fallback_agent)
             .unwrap_or("session");
         format!("{agent_id}:{}", tail(session_id, 8))
+    }
+
+    fn session_title(&self, session_id: &str) -> Option<String> {
+        self.dashboard
+            .session_detail(session_id)
+            .and_then(|detail| session_metadata_title(detail.session.metadata.as_ref()))
+            .or_else(|| {
+                self.dashboard
+                    .sessions
+                    .iter()
+                    .find(|session| session.session_id == session_id)
+                    .and_then(|session| session_metadata_title(session.metadata.as_ref()))
+            })
     }
 
     fn apply_live_event(&mut self, event: &EventEnvelope) {
@@ -2573,6 +2607,7 @@ impl TuiApp {
             Some(InputMode::EditChannelFilter) => "Channel Filter",
             Some(InputMode::EditEventFilter) => "Event Filter",
             Some(InputMode::EditSearchQuery) => "Search Query",
+            Some(InputMode::EditSessionTitle { .. }) => "Session Title",
             Some(InputMode::EditTranscriptBudget) => "Transcript Budget",
             Some(InputMode::EditUserLabel) => "User Label",
             None => "Help",
@@ -2637,6 +2672,9 @@ impl TuiApp {
             }
             Some(InputMode::EditSearchQuery) => {
                 "Enter updates the global search query. Esc cancels.".to_string()
+            }
+            Some(InputMode::EditSessionTitle { .. }) => {
+                "Enter updates the current session title. Submit a blank value to clear it. Esc cancels.".to_string()
             }
             Some(InputMode::EditTranscriptBudget) => {
                 "Enter updates transcript memory budget in bytes (minimum 16384). Esc cancels."
@@ -2919,116 +2957,89 @@ impl TuiApp {
         let mut hits = Vec::new();
 
         if matches!(self.search_scope, SearchScope::All | SearchScope::Sessions) {
-            for session in &self.dashboard.live_sessions {
-                let label = self.session_label(&session.session_id, Some(&session.agent_id));
-                let summary = format!(
-                    "{} [{}] active:{} queued:{}",
-                    label, session.slot_id, session.active_tasks, session.queued_tasks
-                );
-                if search_match(&query, &[&summary, &session.session_id, &session.agent_id]) {
-                    hits.push(SearchHit {
-                        kind: "live_session",
-                        label: summary,
-                        summary: session.session_id.clone(),
-                        detail: pretty_json(&serde_json::json!({
-                            "type": "live_session",
-                            "session_id": session.session_id,
-                            "agent_id": session.agent_id,
-                            "slot_id": session.slot_id,
-                            "active_tasks": session.active_tasks,
-                            "queued_tasks": session.queued_tasks,
-                        })),
-                        action: SearchAction::FocusLiveSession {
-                            session_id: session.session_id.clone(),
-                        },
-                    });
-                }
-
-                if let Some(detail) = self.dashboard.session_detail(&session.session_id) {
-                    for message in &detail.messages {
-                        let content = message_content_text(&message.content)
-                            .unwrap_or_else(|| compact_json(&message.content, 160));
-                        if search_match(&query, &[&content]) {
-                            hits.push(SearchHit {
-                                kind: "message",
-                                label: format!(
-                                    "{} · {} · turn {}",
-                                    label, message.role, message.turn_index
-                                ),
-                                summary: excerpt_multiline(&content, 2, 120),
-                                detail: pretty_json(&serde_json::json!({
-                                    "type": "session_message",
-                                    "session_id": session.session_id,
-                                    "role": message.role,
-                                    "turn_index": message.turn_index,
-                                    "created_at": message.created_at,
-                                    "content": content,
-                                })),
-                                action: SearchAction::OpenChatSession {
-                                    session_id: session.session_id.clone(),
-                                },
-                            });
-                        }
-                    }
-                }
-            }
-
-            for session in &self.dashboard.sessions {
-                let label = self.session_label(&session.session_id, Some(&session.agent_id));
-                let summary = format!("{} [{}]", label, session.created_at);
-                if search_match(
-                    &query,
-                    &[
-                        &summary,
-                        &session.session_id,
-                        &session.agent_id,
-                        &session.created_at,
-                    ],
-                ) {
-                    hits.push(SearchHit {
-                        kind: "session",
-                        label: summary,
-                        summary: session.session_id.clone(),
-                        detail: pretty_json(&serde_json::json!({
+            for hit in &self.persisted_search_hits {
+                let label = if let Some(title) = hit.title.as_deref() {
+                    title.to_string()
+                } else {
+                    self.session_label(&hit.session_id, Some(&hit.agent_id))
+                };
+                let (kind, line_label, detail) = match hit.kind {
+                    SessionSearchHitKind::Session => (
+                        "session",
+                        format!("{label} [{}]", hit.created_at),
+                        pretty_json(&serde_json::json!({
                             "type": "session",
-                            "session_id": session.session_id,
-                            "agent_id": session.agent_id,
-                            "created_at": session.created_at,
-                            "detail_loaded": self.dashboard.session_detail(&session.session_id).is_some(),
+                            "session_id": hit.session_id,
+                            "agent_id": hit.agent_id,
+                            "title": hit.title,
+                            "created_at": hit.created_at,
                         })),
-                        action: SearchAction::FocusStoredSession {
-                            session_id: session.session_id.clone(),
-                        },
-                    });
-                }
-
-                if let Some(detail) = self.dashboard.session_detail(&session.session_id) {
-                    for message in &detail.messages {
-                        let content = message_content_text(&message.content)
-                            .unwrap_or_else(|| compact_json(&message.content, 160));
-                        if search_match(&query, &[&content]) {
-                            hits.push(SearchHit {
-                                kind: "message",
-                                label: format!(
-                                    "{} · {} · turn {}",
-                                    label, message.role, message.turn_index
-                                ),
-                                summary: excerpt_multiline(&content, 2, 120),
-                                detail: pretty_json(&serde_json::json!({
-                                    "type": "session_message",
-                                    "session_id": session.session_id,
-                                    "role": message.role,
-                                    "turn_index": message.turn_index,
-                                    "created_at": message.created_at,
-                                    "content": content,
-                                })),
-                                action: SearchAction::OpenChatSession {
-                                    session_id: session.session_id.clone(),
-                                },
-                            });
-                        }
-                    }
-                }
+                    ),
+                    SessionSearchHitKind::Message => (
+                        "message",
+                        format!(
+                            "{} · {} · turn {}",
+                            label,
+                            hit.role.as_deref().unwrap_or("message"),
+                            hit.turn_index.unwrap_or(0)
+                        ),
+                        pretty_json(&serde_json::json!({
+                            "type": "session_message",
+                            "session_id": hit.session_id,
+                            "agent_id": hit.agent_id,
+                            "title": hit.title,
+                            "role": hit.role,
+                            "turn_index": hit.turn_index,
+                            "created_at": hit.created_at,
+                            "content": hit.snippet,
+                        })),
+                    ),
+                    SessionSearchHitKind::ToolExecution => (
+                        "tool",
+                        format!(
+                            "{} · {} · turn {}",
+                            label,
+                            hit.tool_name.as_deref().unwrap_or("tool"),
+                            hit.turn_index.unwrap_or(0)
+                        ),
+                        pretty_json(&serde_json::json!({
+                            "type": "tool_execution",
+                            "session_id": hit.session_id,
+                            "agent_id": hit.agent_id,
+                            "title": hit.title,
+                            "tool_name": hit.tool_name,
+                            "turn_index": hit.turn_index,
+                            "created_at": hit.created_at,
+                            "content": hit.snippet,
+                        })),
+                    ),
+                    SessionSearchHitKind::Event => (
+                        "event",
+                        format!(
+                            "{} · {}",
+                            label,
+                            hit.event_type.as_deref().unwrap_or("event")
+                        ),
+                        pretty_json(&serde_json::json!({
+                            "type": "session_event",
+                            "session_id": hit.session_id,
+                            "agent_id": hit.agent_id,
+                            "title": hit.title,
+                            "event_type": hit.event_type,
+                            "created_at": hit.created_at,
+                            "content": hit.snippet,
+                        })),
+                    ),
+                };
+                hits.push(SearchHit {
+                    kind,
+                    label: line_label,
+                    summary: hit.summary.clone(),
+                    detail,
+                    action: SearchAction::OpenChatSession {
+                        session_id: hit.session_id.clone(),
+                    },
+                });
             }
         }
 
@@ -3164,6 +3175,43 @@ impl TuiApp {
         self.search_hits().get(self.search_index).cloned()
     }
 
+    fn persisted_search_scope(&self) -> Option<SessionSearchScope> {
+        match self.search_scope {
+            SearchScope::All | SearchScope::Sessions => Some(SessionSearchScope::All),
+            SearchScope::Agents
+            | SearchScope::Tasks
+            | SearchScope::Channels
+            | SearchScope::Events => None,
+        }
+    }
+
+    fn refresh_persisted_search(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
+        let query = self.search_query.trim().to_string();
+        self.persisted_search_hits.clear();
+        self.search_loading = false;
+
+        let Some(scope) = self.persisted_search_scope() else {
+            return Ok(());
+        };
+        if query.is_empty() {
+            return Ok(());
+        }
+
+        self.search_loading = true;
+        send_command(
+            command_tx,
+            OperatorCommand::SearchSessions {
+                query,
+                scope,
+                limit: 64,
+                offset: 0,
+            },
+        )
+    }
+
     fn start_duplicate_profile_input(&mut self, make_default: bool) {
         let Some(source_name) = self.selected_profile().map(|profile| profile.name.clone()) else {
             self.dashboard
@@ -3296,18 +3344,38 @@ impl TuiApp {
         self.begin_input_mode(InputMode::EditSearchQuery, self.search_query.clone());
     }
 
-    fn cycle_search_scope(&mut self) {
-        self.search_scope = self.search_scope.next();
-        self.search_index = 0;
-        self.dashboard
-            .record_info(format!("Search scope is now {}", self.search_scope.title()));
+    fn start_edit_session_title(&mut self) {
+        let Some(session_id) = self.current_detail_session_id() else {
+            self.dashboard
+                .record_error("No session is currently selected for titling");
+            return;
+        };
+        let initial = self.session_title(&session_id).unwrap_or_default();
+        self.begin_input_mode(InputMode::EditSessionTitle { session_id }, initial);
     }
 
-    fn clear_search_query(&mut self) {
+    fn cycle_search_scope(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
+        self.search_scope = self.search_scope.next();
+        self.search_index = 0;
+        self.refresh_persisted_search(command_tx)?;
+        self.dashboard
+            .record_info(format!("Search scope is now {}", self.search_scope.title()));
+        Ok(())
+    }
+
+    fn clear_search_query(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
         self.search_query.clear();
         self.search_index = 0;
+        self.refresh_persisted_search(command_tx)?;
         self.dashboard
             .record_info("Cleared the global search query");
+        Ok(())
     }
 
     fn toggle_streaming_preview(&mut self) {
@@ -3942,6 +4010,14 @@ impl TuiApp {
                 .search_hits()
                 .into_iter()
                 .map(|hit| ListItem::new(format!("[{}] {}  {}", hit.kind, hit.label, hit.summary)))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .chain(
+                    (self.search_loading
+                        && !self.search_query.trim().is_empty()
+                        && self.search_hits().is_empty())
+                    .then(|| ListItem::new("Searching persisted session history…")),
+                )
                 .collect(),
             TabKind::Connections => self
                 .profile_catalog
@@ -4079,8 +4155,11 @@ impl TuiApp {
                         "query": self.search_query,
                         "scope": self.search_scope.title(),
                         "result_count": self.search_hits().len(),
+                        "search_loading": self.search_loading,
                         "note": if self.search_query.trim().is_empty() {
-                            "Use / to enter a query. Search currently covers loaded Turin state and loaded session detail."
+                            "Use / to enter a query. Search covers persisted session history plus loaded runtime state for agents, tasks, channels, and live events."
+                        } else if self.search_loading {
+                            "Persisted session history search is still loading."
                         } else {
                             "No search hits for the current query."
                         }
@@ -4306,9 +4385,7 @@ impl TuiApp {
         match self.tab {
             TabKind::Chat => self.current_chat_session_id().map(str::to_string),
             TabKind::Search => self.selected_search_hit().and_then(|hit| match hit.action {
-                SearchAction::OpenChatSession { session_id }
-                | SearchAction::FocusLiveSession { session_id }
-                | SearchAction::FocusStoredSession { session_id } => Some(session_id),
+                SearchAction::OpenChatSession { session_id } => Some(session_id),
                 _ => None,
             }),
             TabKind::LiveSessions => self
@@ -4573,6 +4650,15 @@ fn message_content_text(value: &Value) -> Option<String> {
         }
     }
     None
+}
+
+fn session_metadata_title(metadata: Option<&Value>) -> Option<String> {
+    metadata?
+        .get("title")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
 }
 
 fn excerpt(value: &str, max_chars: usize) -> String {
