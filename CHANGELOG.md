@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-03-26
+
+### Added
+- **Telegram Operator UX**
+  - Added Telegram reply rendering with HTML formatting, readable table fallbacks, typing and streaming modes, and opt-in thinking previews with persisted final-message reasoning blocks.
+  - Added multi-chat Telegram channels, pairing and room approval flows, sender access control, configurable reply trigger modes, configurable session scopes, and indefinite per-channel task waits by default.
+- **Chat-First TUI**
+  - Added a chat-first `turin-tui` experience with live transcript streaming, optional thinking display, running and per-turn token usage, transcript search, session titles, and layout/settings persistence.
+  - Added first-class persisted search across sessions, messages, tool calls, and session events, plus richer hit ranking, pagination, turn jumps, and contextual inspector behavior.
+- **Channel Access And Routing**
+  - Added generic channel pairing/access state with daemon approval/reject/revoke commands and matching TUI controls.
+  - Added per-conversation parallel channel handling so unrelated conversations in the same channel no longer block each other.
+
+### Changed
+- **Channel Architecture**
+  - Moved channel-specific settings validation into the channel crates themselves, keeping the daemon as a thin dispatcher.
+  - Renamed channel access settings around the clearer `pairing_users` / `allowed_users` / `banned_users` model.
+  - Added generic `session_scope` routing, with Telegram supporting `user`, `thread`, and `room`, and Discord supporting `user` and `thread`.
+- **Streaming Surfaces**
+  - The daemon now relays live session stream events so channels and UI clients can consume assistant deltas, tool activity, and optional reasoning as the turn runs.
+
+### Fixed
+- **Telegram Reliability**
+  - Fixed Telegram `sendMessage` response decoding, long-running task timeout behavior, and several reply rendering edge cases that previously caused dropped or malformed responses.
+
 ## [0.25.0] - 2026-03-19
 
 ### Added
