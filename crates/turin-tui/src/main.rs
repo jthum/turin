@@ -290,6 +290,7 @@ struct TuiApp {
     inline_thinking_expanded: bool,
     focused_chat_turn: Option<(String, u32)>,
     pending_chat_turn_jump: Option<(String, u32)>,
+    focused_search_context: Option<(String, SearchChatContext)>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -354,11 +355,29 @@ struct SearchHit {
     action: SearchAction,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchChatContextKind {
+    Session,
+    Message,
+    ToolExecution,
+    SessionEvent,
+}
+
+#[derive(Debug, Clone)]
+struct SearchChatContext {
+    kind: SearchChatContextKind,
+    label: String,
+    summary: String,
+    tool_name: Option<String>,
+    event_type: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 enum SearchAction {
     OpenChatSession {
         session_id: String,
         focus_turn: Option<u32>,
+        context: Option<SearchChatContext>,
     },
     FocusAgent {
         agent_id: String,
@@ -1478,6 +1497,12 @@ fn render_chat_center(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::la
             Span::styled(summary, Style::default().fg(Color::LightBlue)),
         ]));
     }
+    if let Some(summary) = app.current_search_context_summary() {
+        header_lines.push(Line::from(vec![
+            Span::styled("Search hit: ", Style::default().fg(Color::Gray)),
+            Span::styled(summary, Style::default().fg(Color::Rgb(198, 208, 122))),
+        ]));
+    }
 
     let layout = Layout::default()
         .direction(Direction::Vertical)
@@ -1579,6 +1604,7 @@ impl TuiApp {
             inline_thinking_expanded: false,
             focused_chat_turn: None,
             pending_chat_turn_jump: None,
+            focused_search_context: None,
         };
         app.events_follow_latest = app.settings.chat.follow_latest;
         app.initialize_chat_session();
@@ -2236,6 +2262,7 @@ impl TuiApp {
             SearchAction::OpenChatSession {
                 session_id,
                 focus_turn,
+                context,
             } => {
                 self.chat_session_id = Some(session_id);
                 self.tab = TabKind::Chat;
@@ -2252,10 +2279,20 @@ impl TuiApp {
                     )
                 });
                 self.pending_chat_turn_jump = self.focused_chat_turn.clone();
+                self.focused_search_context = context.map(|context| {
+                    (
+                        self.chat_session_id
+                            .as_deref()
+                            .unwrap_or_default()
+                            .to_string(),
+                        context,
+                    )
+                });
             }
             SearchAction::FocusAgent { agent_id } => {
                 self.focused_chat_turn = None;
                 self.pending_chat_turn_jump = None;
+                self.focused_search_context = None;
                 if let Some(index) = self
                     .dashboard
                     .agents()
@@ -2269,6 +2306,7 @@ impl TuiApp {
             SearchAction::FocusTask { request_id } => {
                 self.focused_chat_turn = None;
                 self.pending_chat_turn_jump = None;
+                self.focused_search_context = None;
                 let filtered = self.filtered_tasks();
                 if let Some(index) = filtered
                     .iter()
@@ -2281,6 +2319,7 @@ impl TuiApp {
             SearchAction::FocusChannel { channel_id } => {
                 self.focused_chat_turn = None;
                 self.pending_chat_turn_jump = None;
+                self.focused_search_context = None;
                 let filtered = self.filtered_channels();
                 if let Some(index) = filtered.iter().position(|channel| channel.id == channel_id) {
                     self.channel_index = index;
@@ -2293,6 +2332,7 @@ impl TuiApp {
             } => {
                 self.focused_chat_turn = None;
                 self.pending_chat_turn_jump = None;
+                self.focused_search_context = None;
                 let filtered = self.filtered_events();
                 if let Some(index) = filtered.iter().position(|event| {
                     event.event == event_name
@@ -2397,6 +2437,7 @@ impl TuiApp {
             if self.chat_session_id.as_deref() != Some(session_id) {
                 self.focused_chat_turn = None;
                 self.pending_chat_turn_jump = None;
+                self.focused_search_context = None;
             }
             self.chat_session_id = Some(session_id.to_string());
             if self.settings.chat.follow_latest {
@@ -2686,6 +2727,7 @@ impl TuiApp {
         self.chat_session_id = Some(session_id.to_string());
         self.chat_scroll_lines = 0;
         self.pending_chat_turn_jump = None;
+        self.focused_search_context = None;
     }
 
     fn input_len_chars(&self) -> usize {
@@ -3187,6 +3229,36 @@ impl TuiApp {
                         })),
                     ),
                 };
+                let context = Some(match hit.kind {
+                    SessionSearchHitKind::Session => SearchChatContext {
+                        kind: SearchChatContextKind::Session,
+                        label: line_label.clone(),
+                        summary: hit.summary.clone(),
+                        tool_name: None,
+                        event_type: None,
+                    },
+                    SessionSearchHitKind::Message => SearchChatContext {
+                        kind: SearchChatContextKind::Message,
+                        label: line_label.clone(),
+                        summary: hit.summary.clone(),
+                        tool_name: None,
+                        event_type: None,
+                    },
+                    SessionSearchHitKind::ToolExecution => SearchChatContext {
+                        kind: SearchChatContextKind::ToolExecution,
+                        label: line_label.clone(),
+                        summary: hit.summary.clone(),
+                        tool_name: hit.tool_name.clone(),
+                        event_type: None,
+                    },
+                    SessionSearchHitKind::Event => SearchChatContext {
+                        kind: SearchChatContextKind::SessionEvent,
+                        label: line_label.clone(),
+                        summary: hit.summary.clone(),
+                        tool_name: None,
+                        event_type: hit.event_type.clone(),
+                    },
+                });
                 let rank = i32::try_from(hit.score)
                     .unwrap_or(if hit.score.is_negative() {
                         i32::MIN
@@ -3202,6 +3274,7 @@ impl TuiApp {
                     action: SearchAction::OpenChatSession {
                         session_id: hit.session_id.clone(),
                         focus_turn: hit.turn_index,
+                        context,
                     },
                 });
             }
@@ -4231,6 +4304,24 @@ impl TuiApp {
             .map(|text| excerpt_multiline(&text, 2, 120))
     }
 
+    fn current_search_context(&self) -> Option<&SearchChatContext> {
+        let session_id = self.current_chat_session_id()?;
+        self.focused_search_context
+            .as_ref()
+            .and_then(|(focused_session_id, context)| {
+                (focused_session_id == session_id).then_some(context)
+            })
+    }
+
+    fn current_search_context_summary(&self) -> Option<String> {
+        let context = self.current_search_context()?;
+        Some(format!(
+            "{} · {}",
+            context.label,
+            excerpt(&context.summary, 96)
+        ))
+    }
+
     fn current_chat_token_usage_label(&self) -> String {
         let Some(session_id) = self.current_chat_session_id() else {
             return "n/a".to_string();
@@ -4337,6 +4428,35 @@ impl TuiApp {
         };
         let mut lines = Vec::new();
         if let Some(detail) = self.dashboard.session_detail(session_id) {
+            if let Some(context) = self.current_search_context()
+                && context.kind == SearchChatContextKind::ToolExecution
+            {
+                let focused_turn = self.focused_chat_turn_for_session(session_id);
+                let matched = detail
+                    .tool_executions
+                    .iter()
+                    .filter(|tool| {
+                        focused_turn.is_none_or(|turn| tool.turn_index == turn)
+                            && context
+                                .tool_name
+                                .as_deref()
+                                .is_none_or(|tool_name| tool.tool_name == tool_name)
+                    })
+                    .map(|tool| {
+                        format!(
+                            "match · turn {} · {} · {} · {}ms",
+                            tool.turn_index,
+                            tool.tool_name,
+                            tool.verdict,
+                            tool.duration_ms.unwrap_or(0)
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                if !matched.is_empty() {
+                    lines.extend(matched);
+                    lines.push(String::new());
+                }
+            }
             for tool in detail.tool_executions.iter().rev().take(8).rev() {
                 lines.push(format!(
                     "{} · {} · {}ms",
@@ -4360,6 +4480,31 @@ impl TuiApp {
         let Some(session_id) = self.current_chat_session_id() else {
             return "No chat session selected.".to_string();
         };
+        if let Some(detail) = self.dashboard.session_detail(session_id)
+            && let Some(context) = self.current_search_context()
+            && context.kind == SearchChatContextKind::SessionEvent
+        {
+            let matched = detail
+                .events
+                .iter()
+                .filter(|event| {
+                    context
+                        .event_type
+                        .as_deref()
+                        .is_none_or(|event_type| event.event_type == event_type)
+                })
+                .map(|event| {
+                    format!(
+                        "match · {} · {}",
+                        event.event_type,
+                        compact_json(&event.payload, 96)
+                    )
+                })
+                .collect::<Vec<_>>();
+            if !matched.is_empty() {
+                return matched.join("\n");
+            }
+        }
         if let Some(state) = self.live_transcripts.get(session_id)
             && !state.recent_events.is_empty()
         {
@@ -4522,6 +4667,13 @@ impl TuiApp {
                 "follow_latest": self.settings.chat.follow_latest,
                 "user_label": self.settings.chat.user_label,
                 "transcript_budget_bytes": self.settings.chat.transcript_memory_budget_bytes,
+                "search_context": self.current_search_context().map(|context| serde_json::json!({
+                    "kind": format!("{:?}", context.kind),
+                    "label": context.label,
+                    "summary": context.summary,
+                    "tool_name": context.tool_name,
+                    "event_type": context.event_type,
+                })),
             })),
             TabKind::Search => self
                 .selected_search_hit()
