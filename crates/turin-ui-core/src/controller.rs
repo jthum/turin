@@ -44,6 +44,9 @@ pub enum UiUpdate {
     SearchResults {
         query: String,
         scope: SessionSearchScope,
+        offset: usize,
+        limit: usize,
+        has_more: bool,
         hits: Vec<SessionSearchHit>,
     },
     Event(EventEnvelope),
@@ -1537,14 +1540,26 @@ fn spawn_command_task(
             } = &command
             {
                 match client
-                    .search_sessions(query.as_str(), *scope, *limit, *offset)
+                    .search_sessions(
+                        query.as_str(),
+                        *scope,
+                        limit.saturating_add(1),
+                        *offset,
+                    )
                     .await
                 {
-                    Ok(hits) => {
+                    Ok(mut hits) => {
+                        let has_more = hits.len() > *limit;
+                        if has_more {
+                            hits.truncate(*limit);
+                        }
                         if tx
                             .send(UiUpdate::SearchResults {
                                 query: query.clone(),
                                 scope: *scope,
+                                offset: *offset,
+                                limit: *limit,
+                                has_more,
                                 hits,
                             })
                             .is_err()

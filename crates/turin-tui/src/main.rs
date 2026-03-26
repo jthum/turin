@@ -274,6 +274,9 @@ struct TuiApp {
     search_scope: SearchScope,
     persisted_search_hits: Vec<PersistedSessionSearchHit>,
     search_loading: bool,
+    search_offset: usize,
+    search_page_size: usize,
+    search_has_more: bool,
     task_filter: String,
     channel_filter: String,
     event_filter: String,
@@ -661,6 +664,8 @@ fn handle_key(
         KeyCode::Char('l') if app.tab == TabKind::Connections => app.reload_profiles(),
         KeyCode::Char('m') if app.tab == TabKind::Search => app.cycle_search_scope(command_tx)?,
         KeyCode::Char('F') if app.tab == TabKind::Search => app.clear_search_query(command_tx)?,
+        KeyCode::Char('[') if app.tab == TabKind::Search => app.prev_search_page(command_tx)?,
+        KeyCode::Char(']') if app.tab == TabKind::Search => app.next_search_page(command_tx)?,
         KeyCode::Char('v') if app.tab == TabKind::Connections => {
             app.load_current_connection_into_draft()
         }
@@ -995,6 +1000,7 @@ fn handle_input_mode(
                 Some(InputMode::EditSearchQuery) => {
                     app.search_query = input;
                     app.search_index = 0;
+                    app.search_offset = 0;
                     app.tab = TabKind::Search;
                     app.refresh_persisted_search(command_tx)?;
                     app.dashboard.record_info("Updated the search query");
@@ -1240,11 +1246,18 @@ fn render_left_panel(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::lay
 fn render_search_panel(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::layout::Rect) {
     let sections = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(4), Constraint::Min(6)])
+        .constraints([Constraint::Length(5), Constraint::Min(6)])
         .split(area);
 
     let (session_count, message_count, tool_count, session_event_count, other_count) =
         app.search_kind_counts();
+    let visible_results = app.search_hits().len();
+    let range_start = if visible_results == 0 {
+        0
+    } else {
+        app.search_offset + 1
+    };
+    let range_end = app.search_offset + visible_results;
     let summary = Paragraph::new(vec![
         Line::from(vec![
             Span::styled("Query: ", Style::default().fg(Color::Gray)),
@@ -1258,12 +1271,23 @@ fn render_search_panel(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::l
             Span::styled("Scope: ", Style::default().fg(Color::Gray)),
             Span::raw(app.search_scope.title()),
             Span::styled("  Results: ", Style::default().fg(Color::Gray)),
-            Span::raw(app.search_hits().len().to_string()),
+            Span::raw(visible_results.to_string()),
             if app.search_loading {
                 Span::styled("  loading…", Style::default().fg(Color::Yellow))
             } else {
                 Span::raw("")
             },
+        ]),
+        Line::from(vec![
+            Span::styled("Page: ", Style::default().fg(Color::Gray)),
+            Span::raw(format!(
+                "{}  [{}-{}]",
+                (app.search_offset / app.search_page_size) + 1,
+                range_start,
+                range_end
+            )),
+            Span::styled("  More: ", Style::default().fg(Color::Gray)),
+            Span::raw(if app.search_has_more { "yes" } else { "no" }),
         ]),
         Line::from(vec![
             Span::styled("Kinds: ", Style::default().fg(Color::Gray)),
@@ -1539,6 +1563,9 @@ impl TuiApp {
             search_scope: SearchScope::All,
             persisted_search_hits: Vec::new(),
             search_loading: false,
+            search_offset: 0,
+            search_page_size: 64,
+            search_has_more: false,
             task_filter: String::new(),
             channel_filter: String::new(),
             event_filter: String::new(),
@@ -1600,12 +1627,22 @@ impl TuiApp {
                 }
                 self.maybe_activate_pending_chat_prompt(snapshot);
             }
-            UiUpdate::SearchResults { query, scope, hits } => {
+            UiUpdate::SearchResults {
+                query,
+                scope,
+                offset,
+                limit,
+                has_more,
+                hits,
+            } => {
                 if query.trim() == self.search_query.trim()
                     && Some(*scope) == self.persisted_search_scope()
+                    && *offset == self.search_offset
+                    && *limit == self.search_page_size
                 {
                     self.persisted_search_hits = hits.clone();
                     self.search_loading = false;
+                    self.search_has_more = *has_more;
                 }
             }
             UiUpdate::RefreshTelemetry { .. } | UiUpdate::Info(_) => {}
@@ -3414,6 +3451,7 @@ impl TuiApp {
         let query = self.search_query.trim().to_string();
         self.persisted_search_hits.clear();
         self.search_loading = false;
+        self.search_has_more = false;
 
         let Some(scope) = self.persisted_search_scope() else {
             return Ok(());
@@ -3428,8 +3466,8 @@ impl TuiApp {
             OperatorCommand::SearchSessions {
                 query,
                 scope,
-                limit: 64,
-                offset: 0,
+                limit: self.search_page_size,
+                offset: self.search_offset,
             },
         )
     }
@@ -3585,6 +3623,7 @@ impl TuiApp {
     ) -> Result<()> {
         self.search_scope = self.search_scope.next();
         self.search_index = 0;
+        self.search_offset = 0;
         self.refresh_persisted_search(command_tx)?;
         self.dashboard
             .record_info(format!("Search scope is now {}", self.search_scope.title()));
@@ -3597,9 +3636,40 @@ impl TuiApp {
     ) -> Result<()> {
         self.search_query.clear();
         self.search_index = 0;
+        self.search_offset = 0;
         self.refresh_persisted_search(command_tx)?;
         self.dashboard
             .record_info("Cleared the global search query");
+        Ok(())
+    }
+
+    fn next_search_page(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
+        if !self.search_has_more {
+            self.dashboard
+                .record_info("Already on the last persisted search page");
+            return Ok(());
+        }
+        self.search_offset = self.search_offset.saturating_add(self.search_page_size);
+        self.search_index = 0;
+        self.refresh_persisted_search(command_tx)?;
+        Ok(())
+    }
+
+    fn prev_search_page(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
+        if self.search_offset == 0 {
+            self.dashboard
+                .record_info("Already on the first persisted search page");
+            return Ok(());
+        }
+        self.search_offset = self.search_offset.saturating_sub(self.search_page_size);
+        self.search_index = 0;
+        self.refresh_persisted_search(command_tx)?;
         Ok(())
     }
 
@@ -4473,6 +4543,9 @@ impl TuiApp {
                         "query": self.search_query,
                         "scope": self.search_scope.title(),
                         "result_count": self.search_hits().len(),
+                        "offset": self.search_offset,
+                        "page_size": self.search_page_size,
+                        "has_more": self.search_has_more,
                         "search_loading": self.search_loading,
                         "counts": {
                             "sessions": sessions,
@@ -4664,7 +4737,7 @@ impl TuiApp {
                 "Enter opens/resumes or prompts | p prompt | ,/. cycle panes | h thinking pane | t inline thinking | v preview | f follow-latest | PgUp/PgDn scroll | Home/End jump"
             }
             TabKind::Search => {
-                "/ edits query | m cycles scope | F clears query | Enter opens selected hit"
+                "/ edits query | m cycles scope | [ / ] page | F clears query | Enter opens selected hit"
             }
             TabKind::Connections => {
                 "Enter/s connect selected | C connect draft | T test draft | P test selected | E ensure draft local | S update selected | R load recent | [/ ] pick recent | v load current | b load selected | m/o cycle draft | t/g edit draft | a/A save as named | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
