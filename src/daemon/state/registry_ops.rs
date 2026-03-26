@@ -435,6 +435,7 @@ impl DaemonState {
         self.ensure_channel_agent_exists(&input.agent_id)?;
         let access_policy =
             turin_channel_runner::ChannelAccessPolicy::from_settings(&input.settings)?;
+        turin_channel_runner::task_timeout_ms_from_settings(&input.settings)?;
         let channel_dir = self.watch_paths().channels_dir.join(&input.id);
         super::channel_validation::validate_channel_settings(
             &input.kind,
@@ -505,6 +506,7 @@ impl DaemonState {
             .context("Failed to serialize channel settings for validation")?;
         let access_policy =
             turin_channel_runner::ChannelAccessPolicy::from_settings(&settings_value)?;
+        turin_channel_runner::task_timeout_ms_from_settings(&settings_value)?;
         super::channel_validation::validate_channel_settings(
             &file.kind,
             &channel_dir,

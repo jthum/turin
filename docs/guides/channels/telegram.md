@@ -241,6 +241,7 @@ Setting notes:
 - `respond_mode`: `all`, `mentions`, `replies`, or `mentions_or_replies`; default `all`
 - `poll_timeout_secs`: long-poll timeout, default `30`, maximum `50`
 - `poll_interval_ms`: delay between empty polls, default `250`
+- `task_timeout_ms`: optional Turin task wait timeout for this channel; `0` or omitted means wait indefinitely
 - `stream_mode`: `off`, `typing`, `draft`, or `block`; default `off`
 - `stream_thinking`: optional boolean, default `false`; when enabled, `draft`/`block` previews can include streamed model thinking if the provider emits thinking deltas
 - `persist_thinking`: optional boolean, default `false`; when enabled, final Telegram replies keep the thinking block above the answer

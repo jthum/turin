@@ -284,6 +284,8 @@ impl ChannelRuntimeManager {
                     .join(format!("{}-access.json", channel.id));
                 let access_policy =
                     turin_channel_runner::ChannelAccessPolicy::from_settings(&channel.settings)?;
+                let task_timeout_ms =
+                    turin_channel_runner::task_timeout_ms_from_settings(&channel.settings)?;
                 let runner = turin_channel_runner::ChannelRunner::new(
                     daemon,
                     turin_channel_runner::RunnerConfig {
@@ -318,7 +320,7 @@ impl ChannelRuntimeManager {
                 }
 
                 runner
-                    .run_driver(&channel.agent_id, &mut driver, Some(120_000))
+                    .run_driver(&channel.agent_id, &mut driver, task_timeout_ms)
                     .await
                     .with_context(|| format!("Channel '{}' runner failed", channel.id))
             }
@@ -381,6 +383,8 @@ impl ChannelRuntimeManager {
                     .join(format!("{}-access.json", channel.id));
                 let access_policy =
                     turin_channel_runner::ChannelAccessPolicy::from_settings(&channel.settings)?;
+                let task_timeout_ms =
+                    turin_channel_runner::task_timeout_ms_from_settings(&channel.settings)?;
                 let runner = turin_channel_runner::ChannelRunner::new(
                     daemon,
                     turin_channel_runner::RunnerConfig {
@@ -417,7 +421,7 @@ impl ChannelRuntimeManager {
                 }
 
                 runner
-                    .run_driver(&channel.agent_id, &mut driver, Some(120_000))
+                    .run_driver(&channel.agent_id, &mut driver, task_timeout_ms)
                     .await
                     .with_context(|| format!("Channel '{}' runner failed", channel.id))
             }
@@ -480,6 +484,8 @@ impl ChannelRuntimeManager {
                     .join(format!("{}-access.json", channel.id));
                 let access_policy =
                     turin_channel_runner::ChannelAccessPolicy::from_settings(&channel.settings)?;
+                let task_timeout_ms =
+                    turin_channel_runner::task_timeout_ms_from_settings(&channel.settings)?;
                 let allow_unconfigured_chats = access_policy.requires_unconfigured_inbound();
                 let runner = turin_channel_runner::ChannelRunner::new(
                     daemon,
@@ -518,7 +524,7 @@ impl ChannelRuntimeManager {
                 }
 
                 runner
-                    .run_driver(&channel.agent_id, &mut driver, Some(120_000))
+                    .run_driver(&channel.agent_id, &mut driver, task_timeout_ms)
                     .await
                     .with_context(|| format!("Channel '{}' runner failed", channel.id))
             }

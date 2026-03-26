@@ -104,6 +104,13 @@ impl ChannelAccessPolicy {
     }
 }
 
+pub fn task_timeout_ms_from_settings(settings: &Value) -> Result<Option<u64>> {
+    let map = settings
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("Channel settings must be a JSON object"))?;
+    read_task_timeout_ms(map.get("task_timeout_ms"))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChannelRoomRef {
     pub channel: ChannelKind,
@@ -982,6 +989,20 @@ fn parse_pairing_mode(value: Option<&Value>) -> Result<PairingMode> {
     }
 }
 
+fn read_task_timeout_ms(value: Option<&Value>) -> Result<Option<u64>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let timeout_ms = value
+        .as_u64()
+        .ok_or_else(|| anyhow::anyhow!("channel setting 'task_timeout_ms' must be a non-negative integer"))?;
+    if timeout_ms == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(timeout_ms))
+    }
+}
+
 fn parse_string_set(value: Option<&Value>, key: &str) -> Result<HashSet<String>> {
     let mut out = HashSet::new();
     let Some(value) = value else {
@@ -1320,6 +1341,23 @@ mod tests {
         assert!(policy.allowed_users.contains("friend1"));
         assert!(policy.allowed_users.contains("friend2"));
         assert!(policy.banned_users.contains("intruder"));
+    }
+
+    #[test]
+    fn task_timeout_ms_defaults_to_none_and_accepts_zero_as_unbounded() {
+        assert_eq!(
+            task_timeout_ms_from_settings(&serde_json::json!({})).unwrap(),
+            None
+        );
+        assert_eq!(
+            task_timeout_ms_from_settings(&serde_json::json!({ "task_timeout_ms": 0 })).unwrap(),
+            None
+        );
+        assert_eq!(
+            task_timeout_ms_from_settings(&serde_json::json!({ "task_timeout_ms": 45000 }))
+                .unwrap(),
+            Some(45_000)
+        );
     }
 
     fn test_runner(dir: &tempfile::TempDir, policy: ChannelAccessPolicy) -> ChannelRunner {
