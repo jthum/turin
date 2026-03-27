@@ -11,7 +11,9 @@ use tracing::{info, warn};
 
 use crate::display;
 use crate::harness::verdict::Verdict;
-use crate::harness::virtual_tools::{VirtualToolNestedResult, VirtualToolPlan};
+use crate::harness::virtual_tools::{
+    VirtualToolNestedResult, VirtualToolPlan, VirtualToolResultOutput, VirtualToolResultResolution,
+};
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::governance::{GovernanceSubject, tool_capability_name};
@@ -326,7 +328,7 @@ impl ExecutionHost {
                                     session,
                                     tool_ctx,
                                     pending_virtual_calls,
-                                    next_virtual_stack,
+                                    next_virtual_stack.clone(),
                                 )
                                 .await;
                             if session.cancel_token.is_cancelled() {
@@ -340,27 +342,53 @@ impl ExecutionHost {
                                     self.virtual_tool_nested_results(&nested_records);
                                 let nested_error =
                                     nested_results.iter().any(|record| record.is_error);
-                                if let Some(ref key) = result_handler_key {
+                                let default_output = if let Some(ref key) = result_handler_key {
                                     match self.invoke_virtual_result_handler(
                                         session,
                                         key,
                                         &nested_results,
                                         nested_error,
                                     ) {
-                                        Ok(output) => {
-                                            content = output.content;
-                                            is_error = output.is_error;
-                                        }
-                                        Err(err) => {
-                                            content = format!("Error: {}", err);
-                                            is_error = true;
-                                        }
+                                        Ok(resolution) => match resolution {
+                                            VirtualToolResultResolution::Output(output) => {
+                                                Ok(output)
+                                            }
+                                            VirtualToolResultResolution::Plan(next_plan) => {
+                                                Err(next_plan)
+                                            }
+                                        },
+                                        Err(err) => Ok(VirtualToolResultOutput {
+                                            content: format!("Error: {}", err),
+                                            is_error: true,
+                                        }),
                                     }
                                 } else {
                                     let (aggregated, nested_error) =
                                         self.aggregate_virtual_tool_records(&nested_records);
-                                    content = aggregated;
-                                    is_error = is_error || nested_error;
+                                    Ok(VirtualToolResultOutput {
+                                        content: aggregated,
+                                        is_error: is_error || nested_error,
+                                    })
+                                };
+
+                                match default_output {
+                                    Ok(output) => {
+                                        content = output.content;
+                                        is_error = output.is_error;
+                                    }
+                                    Err(next_plan) => {
+                                        let (next_content, next_is_error) = self
+                                            .execute_virtual_plan_hidden(
+                                                session,
+                                                tool_ctx,
+                                                format!("{}::cb", tc.id),
+                                                next_virtual_stack,
+                                                next_plan,
+                                            )
+                                            .await;
+                                        content = next_content;
+                                        is_error = next_is_error;
+                                    }
                                 }
                             }
                         }
@@ -498,7 +526,7 @@ impl ExecutionHost {
         key: &str,
         nested_results: &[VirtualToolNestedResult],
         nested_error: bool,
-    ) -> Result<crate::harness::virtual_tools::VirtualToolResultOutput> {
+    ) -> Result<VirtualToolResultResolution> {
         let payload = if nested_results.len() == 1 {
             serde_json::to_value(&nested_results[0])?
         } else {
@@ -514,6 +542,76 @@ impl ExecutionHost {
                 key
             );
         }
+    }
+
+    fn execute_virtual_plan_hidden<'a>(
+        &'a mut self,
+        session: &'a mut SessionState,
+        tool_ctx: &'a ToolContext,
+        tool_call_path: String,
+        current_virtual_stack: Vec<String>,
+        plan: VirtualToolPlan,
+    ) -> Pin<Box<dyn Future<Output = (String, bool)> + Send + 'a>> {
+        Box::pin(async move {
+            let result_handler_key = plan.result_handler_key.clone();
+            match self.build_virtual_pending_tool_calls(
+                session,
+                &tool_call_path,
+                plan,
+                &current_virtual_stack,
+            ) {
+                Ok(pending_virtual_calls) => {
+                    let nested_records = self
+                        .execute_tool_calls_hidden(
+                            session,
+                            tool_ctx,
+                            pending_virtual_calls,
+                            current_virtual_stack.clone(),
+                        )
+                        .await;
+                    if session.cancel_token.is_cancelled() {
+                        if let Some(ref key) = result_handler_key {
+                            self.discard_virtual_result_handler(session, key);
+                        }
+                        return ("Virtual tool execution cancelled".to_string(), true);
+                    }
+
+                    let nested_results = self.virtual_tool_nested_results(&nested_records);
+                    let nested_error = nested_results.iter().any(|record| record.is_error);
+                    if let Some(ref key) = result_handler_key {
+                        match self.invoke_virtual_result_handler(
+                            session,
+                            key,
+                            &nested_results,
+                            nested_error,
+                        ) {
+                            Ok(VirtualToolResultResolution::Output(output)) => {
+                                (output.content, output.is_error)
+                            }
+                            Ok(VirtualToolResultResolution::Plan(next_plan)) => {
+                                self.execute_virtual_plan_hidden(
+                                    session,
+                                    tool_ctx,
+                                    format!("{}::cb", tool_call_path),
+                                    current_virtual_stack,
+                                    next_plan,
+                                )
+                                .await
+                            }
+                            Err(err) => (format!("Error: {}", err), true),
+                        }
+                    } else {
+                        self.aggregate_virtual_tool_records(&nested_records)
+                    }
+                }
+                Err(err) => {
+                    if let Some(ref key) = result_handler_key {
+                        self.discard_virtual_result_handler(session, key);
+                    }
+                    (format!("Error: {}", err), true)
+                }
+            }
+        })
     }
 
     fn discard_virtual_result_handler(&self, session: &SessionState, key: &str) {

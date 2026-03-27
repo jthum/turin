@@ -1008,6 +1008,129 @@ tool.declare("tool_9", {
 }
 
 #[tokio::test]
+async fn test_virtual_tool_callback_can_return_follow_up_plan() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+    std::fs::write(tmp.path().join("pointer.txt"), "note.txt")?;
+    std::fs::write(
+        tmp.path().join("note.txt"),
+        "resolved through callback plan",
+    )?;
+
+    std::fs::write(
+        harness_dir.join("main.lua"),
+        r#"
+        tool.declare("read_note", {
+            description = "Read a note from disk",
+            params = {
+                path = { type = "string", required = true }
+            },
+            handler = function(args)
+                return tool.call("read_file", { path = args.path })
+            end
+        })
+
+        tool.declare("resolve_pointer", {
+            description = "Resolve a pointer file and read the final note",
+            params = {
+                pointer = { type = "string", required = true }
+            },
+            handler = function(args)
+                return tool.call("read_file", { path = args.pointer }, function(result)
+                    return tool.call("read_note", { path = result.content })
+                end)
+            end
+        })
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "You are a test assistant.".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 5,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: None,
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(
+            "mock",
+            Arc::new(VirtualToolProvider {
+                tool_name: "resolve_pointer".to_string(),
+                tool_args: serde_json::json!({ "pointer": "pointer.txt" }),
+                seen_tools: Arc::new(std::sync::Mutex::new(Vec::new())),
+                stage: Arc::new(std::sync::Mutex::new(0)),
+            }),
+        ),
+    );
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Resolve the pointer".to_string()))
+        .await?;
+
+    let mut resolved_result = None;
+    for msg in &session.history {
+        for content in &msg.content {
+            if let InferenceContent::ToolResult { content, .. } = content
+                && content.contains("resolved through callback plan")
+            {
+                resolved_result = Some(content.clone());
+            }
+        }
+    }
+
+    assert_eq!(
+        resolved_result.as_deref(),
+        Some("resolved through callback plan")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_governed_tool_fallback.db");

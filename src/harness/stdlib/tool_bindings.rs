@@ -3,7 +3,7 @@ use mlua::{Function, Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::stdlib::system_globals::ensure_load_time;
 use crate::harness::virtual_tools::{
-    DeclaredVirtualTool, VirtualToolPlan, VirtualToolResultOutput, normalize_tool_declaration,
+    DeclaredVirtualTool, VirtualToolPlan, VirtualToolResultResolution, normalize_tool_declaration,
     parse_handler_plan, parse_result_handler_output, shell_quote,
 };
 
@@ -177,7 +177,7 @@ pub(crate) fn invoke_virtual_result_handler(
     key: &str,
     payload: serde_json::Value,
     default_is_error: bool,
-) -> Result<VirtualToolResultOutput> {
+) -> Result<VirtualToolResultResolution> {
     let registry = ensure_result_handler_registry(lua)?;
     let callback = match registry.get::<Value>(key)? {
         Value::Nil => anyhow::bail!("virtual tool result handler '{}' was not found", key),

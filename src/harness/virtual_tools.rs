@@ -49,6 +49,12 @@ pub struct VirtualToolResultOutput {
     pub is_error: bool,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum VirtualToolResultResolution {
+    Output(VirtualToolResultOutput),
+    Plan(VirtualToolPlan),
+}
+
 fn default_call_args() -> Value {
     Value::Object(Map::new())
 }
@@ -210,12 +216,21 @@ pub fn parse_handler_plan(value: &Value) -> Result<VirtualToolPlan> {
 pub fn parse_result_handler_output(
     value: &Value,
     default_is_error: bool,
-) -> Result<VirtualToolResultOutput> {
+) -> Result<VirtualToolResultResolution> {
+    if let Some(kind) = value.get("__kind").and_then(Value::as_str)
+        && matches!(kind, "tool_call" | "tool_sequence")
+    {
+        return Ok(VirtualToolResultResolution::Plan(parse_handler_plan(
+            value,
+        )?));
+    }
+
     match value {
         Value::String(content) => Ok(VirtualToolResultOutput {
             content: content.clone(),
             is_error: default_is_error,
-        }),
+        }
+        .into()),
         Value::Object(map) => {
             let content = map
                 .get("content")
@@ -226,11 +241,17 @@ pub fn parse_result_handler_output(
                 .get("is_error")
                 .and_then(Value::as_bool)
                 .unwrap_or(default_is_error);
-            Ok(VirtualToolResultOutput { content, is_error })
+            Ok(VirtualToolResultOutput { content, is_error }.into())
         }
         _ => bail!(
-            "virtual tool result handler must return a string or {{ content = ..., is_error? = ... }}"
+            "virtual tool result handler must return tool.call(...), tool.sequence(...), a string, or {{ content = ..., is_error? = ... }}"
         ),
+    }
+}
+
+impl From<VirtualToolResultOutput> for VirtualToolResultResolution {
+    fn from(value: VirtualToolResultOutput) -> Self {
+        Self::Output(value)
     }
 }
 
@@ -362,10 +383,10 @@ mod tests {
         let out = parse_result_handler_output(&json!("wrapped"), true).unwrap();
         assert_eq!(
             out,
-            VirtualToolResultOutput {
+            VirtualToolResultResolution::Output(VirtualToolResultOutput {
                 content: "wrapped".to_string(),
                 is_error: true,
-            }
+            })
         );
     }
 
@@ -381,10 +402,33 @@ mod tests {
         .unwrap();
         assert_eq!(
             out,
-            VirtualToolResultOutput {
+            VirtualToolResultResolution::Output(VirtualToolResultOutput {
                 content: "ok".to_string(),
                 is_error: false,
-            }
+            })
+        );
+    }
+
+    #[test]
+    fn result_handler_can_return_follow_up_plan() {
+        let out = parse_result_handler_output(
+            &json!({
+                "__kind": "tool_call",
+                "name": "read_file",
+                "args": { "path": "next.txt" }
+            }),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            VirtualToolResultResolution::Plan(VirtualToolPlan {
+                calls: vec![VirtualToolCall {
+                    name: "read_file".to_string(),
+                    args: json!({ "path": "next.txt" }),
+                }],
+                result_handler_key: None,
+            })
         );
     }
 }

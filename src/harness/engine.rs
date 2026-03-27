@@ -15,7 +15,7 @@ use crate::harness::globals::{self, HarnessAppData};
 use crate::harness::stdlib::tool_bindings;
 use crate::harness::verdict::{Verdict, compose_verdicts};
 use crate::harness::virtual_tools::{
-    DeclaredVirtualTool, VirtualToolPlan, VirtualToolResultOutput,
+    DeclaredVirtualTool, VirtualToolPlan, VirtualToolResultResolution,
 };
 
 fn format_lua_error(e: &mlua::Error) -> String {
@@ -738,7 +738,7 @@ impl HarnessEngine {
         key: &str,
         payload: serde_json::Value,
         default_is_error: bool,
-    ) -> Result<VirtualToolResultOutput> {
+    ) -> Result<VirtualToolResultResolution> {
         tool_bindings::invoke_virtual_result_handler(&self.lua, key, payload, default_is_error)
     }
 
@@ -1164,8 +1164,15 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(output.content, "wrapped: hello");
-        assert!(!output.is_error);
+        assert_eq!(
+            output,
+            VirtualToolResultResolution::Output(
+                crate::harness::virtual_tools::VirtualToolResultOutput {
+                    content: "wrapped: hello".to_string(),
+                    is_error: false,
+                }
+            )
+        );
     }
 
     #[test]
