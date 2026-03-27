@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Virtual tools are exposed to providers in the normal tool list, executed through the governed/audited tool pipeline, and can fan out into multiple native tool calls.
   - Added optional result callbacks on `tool.call(...)` and `tool.sequence(...)` so handlers can inspect nested native tool outputs and shape the final outer virtual-tool result.
   - Added virtual-to-virtual composition with recursion detection and a bounded nesting depth.
+  - Added callback follow-up plans, so result callbacks can return another `tool.call(...)` or `tool.sequence(...)` instead of only final content.
 
 ## [0.26.0] - 2026-03-26
 

@@ -266,7 +266,11 @@ Notes:
 - handlers can use `runtime.*`, DX helpers, memory, KV, DB, and policy checks to decide what to dispatch
 - `callback` is optional; for `tool.call(...)` it receives one result object, and for `tool.sequence(...)` it receives an array of result objects
 - each result object includes `id`, `name`, `args`, `verdict`, `duration_ms`, `content`, and `is_error`
-- callbacks must return either a string or `{ content = "...", is_error = bool? }`
+- callbacks may return:
+  - a string
+  - `{ content = "...", is_error = bool? }`
+  - `tool.call(...)`
+  - `tool.sequence(...)`
 - handlers do not currently await nested tool results inline; callbacks run after Turin completes the nested native tool execution
 - virtual tools may call other virtual tools
 - Turin rejects recursive virtual-tool chains and enforces a max virtual nesting depth of `8`

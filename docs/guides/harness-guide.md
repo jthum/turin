@@ -159,6 +159,22 @@ tool.declare("read_note_wrapped", {
 })
 ```
 
+Result callbacks can also return a follow-up plan:
+
+```lua
+tool.declare("resolve_pointer", {
+  description = "Resolve a pointer file and read the final note",
+  params = {
+    pointer = { type = "string", required = true }
+  },
+  handler = function(args)
+    return tool.call("read_file", { path = args.pointer }, function(result)
+      return tool.call("read_note", { path = result.content })
+    end)
+  end
+})
+```
+
 Notes:
 
 - `tool.declare(...)` is load-time only, just like `use(...)` and `watch(...)`
@@ -166,6 +182,7 @@ Notes:
 - `input_schema = {...}` is still available when you need the full JSON Schema shape directly
 - handlers run in the normal harness environment, so they can use `runtime.*`, DX helpers, memory, KV, and policy checks to decide which native calls to return
 - `tool.call(...)` and `tool.sequence(...)` accept an optional callback that receives structured nested results after execution
+- callbacks may return final content or another `tool.call(...)` / `tool.sequence(...)` follow-up plan
 - handlers still do not await nested tool results inline; result callbacks run after Turin finishes the nested native tool execution
 - `on_tool_call` / `on_tool_result` governance still applies to the outer virtual tool and to the nested native calls it dispatches
 - virtual tools can call other virtual tools
