@@ -91,6 +91,7 @@ pub(super) async fn create(
             harness: params.harness,
             idle_grace_secs: params.idle_grace_secs,
             enabled: params.enabled,
+            tool_selection: params.tool_selection,
         })
         .await
     {
@@ -174,6 +175,7 @@ pub(super) async fn update(
                 thinking: params.thinking,
                 mode: params.mode,
                 idle_grace_secs: params.idle_grace_secs,
+                tool_selection: params.tool_selection,
             },
         )
         .await

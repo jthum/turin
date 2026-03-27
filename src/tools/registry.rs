@@ -55,6 +55,23 @@ impl ToolRegistry {
             .collect()
     }
 
+    pub fn tool_definitions_filtered(
+        &self,
+        allowed_tools: &std::collections::BTreeSet<String>,
+    ) -> Vec<serde_json::Value> {
+        self.tools
+            .values()
+            .filter(|tool| allowed_tools.contains(tool.name()))
+            .map(|tool| {
+                serde_json::json!({
+                    "name": tool.name(),
+                    "description": tool.description(),
+                    "input_schema": tool.parameters_schema(),
+                })
+            })
+            .collect()
+    }
+
     /// Execute a tool by name with the given arguments.
     pub async fn execute(
         &self,
@@ -62,6 +79,12 @@ impl ToolRegistry {
         args: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<super::ToolEffect, super::ToolError> {
+        if !ctx.is_native_tool_allowed(name) {
+            return Err(super::ToolError::PermissionDenied(format!(
+                "Tool '{}' is not enabled for this turn",
+                name
+            )));
+        }
         let tool = self
             .get(name)
             .ok_or_else(|| super::ToolError::ExecutionError(format!("Unknown tool: {}", name)))?;
@@ -110,6 +133,40 @@ mod tests {
             assert!(def.get("description").is_some());
             assert!(def.get("input_schema").is_some());
         }
+    }
+
+    #[tokio::test]
+    async fn filtered_definitions_and_execution_respect_allowed_set() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(builtins::ReadFileTool)).unwrap();
+        registry
+            .register(Box::new(builtins::WriteFileTool))
+            .unwrap();
+
+        let allowed = std::collections::BTreeSet::from(["read_file".to_string()]);
+        let defs = registry.tool_definitions_filtered(&allowed);
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0]["name"], "read_file");
+
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolContext {
+            workspace_root: dir.path().to_path_buf(),
+            session_id: "test".into(),
+            agent_id: "default".into(),
+            store_manager: None,
+            embedding_provider: None,
+            allowed_native_tools: std::sync::Arc::new(allowed),
+        };
+
+        let err = registry
+            .execute(
+                "write_file",
+                serde_json::json!({ "path": "x.txt", "content": "hi" }),
+                &ctx,
+            )
+            .await
+            .expect_err("write_file should be denied when excluded");
+        assert!(matches!(err, super::super::ToolError::PermissionDenied(_)));
     }
 
     #[test]

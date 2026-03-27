@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 use crate::inference::provider::InferenceMessage;
 use crate::kernel::event::KernelEvent;
 use crate::kernel::identity::RuntimeIdentity;
+use turin_types::ToolSelectionConfig;
 
 /// One queued unit of work to be executed by the kernel.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -15,6 +16,8 @@ pub struct QueuedTask {
     pub plan_id: Option<String>,
     pub title: Option<String>,
     pub prompt: String,
+    #[serde(default)]
+    pub tool_selection: Option<ToolSelectionConfig>,
     #[serde(default = "new_trace_id")]
     pub trace_id: String,
 }
@@ -26,6 +29,7 @@ impl QueuedTask {
             plan_id: None,
             title: None,
             prompt: prompt.into(),
+            tool_selection: None,
             trace_id: new_trace_id(),
         }
     }
@@ -40,6 +44,7 @@ impl QueuedTask {
             plan_id: Some(plan_id.into()),
             title,
             prompt: prompt.into(),
+            tool_selection: None,
             trace_id: new_trace_id(),
         }
     }

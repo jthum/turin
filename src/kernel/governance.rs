@@ -851,7 +851,7 @@ fn profile_name(profile: &GovernanceProfile) -> &'static str {
 pub(crate) fn tool_capability_name(tool_name: &str) -> Option<&'static str> {
     match tool_name {
         "read_file" => Some("fs.read"),
-        "write_file" | "edit_file" => Some("fs.write"),
+        "write_file" | "edit_file" | "apply_patch" => Some("fs.write"),
         "shell_exec" => Some("shell.exec"),
         _ => None,
     }
@@ -960,6 +960,7 @@ mod tests {
         assert_eq!(tool_capability_name("read_file"), Some("fs.read"));
         assert_eq!(tool_capability_name("write_file"), Some("fs.write"));
         assert_eq!(tool_capability_name("edit_file"), Some("fs.write"));
+        assert_eq!(tool_capability_name("apply_patch"), Some("fs.write"));
         assert_eq!(tool_capability_name("shell_exec"), Some("shell.exec"));
         assert_eq!(tool_capability_name("submit_plan"), None);
     }

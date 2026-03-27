@@ -74,6 +74,7 @@ async fn build_openclaw_fixture(
     config.agents.insert(
         "planner".to_string(),
         AgentConfig {
+            tool_selection: Default::default(),
             id: "planner".to_string(),
             model: "mock-model".to_string(),
             provider: "mock_planner".to_string(),
@@ -87,6 +88,7 @@ async fn build_openclaw_fixture(
     config.agents.insert(
         "reviewer".to_string(),
         AgentConfig {
+            tool_selection: Default::default(),
             id: "reviewer".to_string(),
             model: "mock-model".to_string(),
             provider: "mock_reviewer".to_string(),
@@ -149,6 +151,7 @@ async fn build_full_coding_harness_fixture(
     config.agents.insert(
         "planner".to_string(),
         AgentConfig {
+            tool_selection: Default::default(),
             id: "planner".to_string(),
             model: "mock-model".to_string(),
             provider: "mock_planner".to_string(),
@@ -162,6 +165,7 @@ async fn build_full_coding_harness_fixture(
     config.agents.insert(
         "reviewer".to_string(),
         AgentConfig {
+            tool_selection: Default::default(),
             id: "reviewer".to_string(),
             model: "mock-model".to_string(),
             provider: "mock_reviewer".to_string(),
@@ -224,6 +228,7 @@ async fn build_bug_triage_fixture(
     config.agents.insert(
         "triager".to_string(),
         AgentConfig {
+            tool_selection: Default::default(),
             id: "triager".to_string(),
             model: "mock-model".to_string(),
             provider: "mock_triager".to_string(),
@@ -237,6 +242,7 @@ async fn build_bug_triage_fixture(
     config.agents.insert(
         "responder".to_string(),
         AgentConfig {
+            tool_selection: Default::default(),
             id: "responder".to_string(),
             model: "mock-model".to_string(),
             provider: "mock_responder".to_string(),
@@ -302,6 +308,7 @@ async fn build_release_manager_fixture(
     config.agents.insert(
         "readiness_reviewer".to_string(),
         AgentConfig {
+            tool_selection: Default::default(),
             id: "readiness_reviewer".to_string(),
             model: "mock-model".to_string(),
             provider: "mock_reviewer".to_string(),
@@ -315,6 +322,7 @@ async fn build_release_manager_fixture(
     config.agents.insert(
         "changelog_writer".to_string(),
         AgentConfig {
+            tool_selection: Default::default(),
             id: "changelog_writer".to_string(),
             model: "mock-model".to_string(),
             provider: "mock_changelog".to_string(),
@@ -377,6 +385,7 @@ async fn build_docs_team_fixture(
     config.agents.insert(
         "docs_reviewer".to_string(),
         AgentConfig {
+            tool_selection: Default::default(),
             id: "docs_reviewer".to_string(),
             model: "mock-model".to_string(),
             provider: "mock_reviewer".to_string(),
@@ -390,6 +399,7 @@ async fn build_docs_team_fixture(
     config.agents.insert(
         "draft_writer".to_string(),
         AgentConfig {
+            tool_selection: Default::default(),
             id: "draft_writer".to_string(),
             model: "mock-model".to_string(),
             provider: "mock_draft".to_string(),
@@ -752,6 +762,7 @@ async fn test_governed_peer_review_example() -> Result<()> {
     config.agents.insert(
         "reviewer".to_string(),
         AgentConfig {
+            tool_selection: Default::default(),
             id: "reviewer".to_string(),
             model: "mock-model".to_string(),
             provider: "mock_review".to_string(),
@@ -1250,6 +1261,7 @@ async fn test_delegated_peer_capabilities_example() -> Result<()> {
     config.agents.insert(
         "reviewer".to_string(),
         AgentConfig {
+            tool_selection: Default::default(),
             id: "reviewer".to_string(),
             model: "mock-model".to_string(),
             provider: "mock_review".to_string(),

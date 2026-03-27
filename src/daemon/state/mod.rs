@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
+use turin_types::ToolSelectionConfig;
 
 use crate::daemon::channels::ChannelRuntimeSnapshot;
 use crate::daemon::registry::{
@@ -72,6 +73,7 @@ pub struct CreateAgentInput {
     pub harness: Option<String>,
     pub idle_grace_secs: Option<u64>,
     pub enabled: bool,
+    pub tool_selection: ToolSelectionConfig,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -82,6 +84,7 @@ pub struct UpdateAgentInput {
     pub thinking: Option<ThinkingConfig>,
     pub mode: Option<AgentMode>,
     pub idle_grace_secs: Option<u64>,
+    pub tool_selection: Option<ToolSelectionConfig>,
 }
 
 #[derive(Debug, Clone)]

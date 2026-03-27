@@ -58,7 +58,9 @@ pub fn base_config(
     providers: HashMap<String, ProviderConfig>,
 ) -> TurinConfig {
     TurinConfig {
+        tool_selection: Default::default(),
         agent: AgentConfig {
+            tool_selection: Default::default(),
             id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: default_provider.to_string(),

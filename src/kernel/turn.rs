@@ -9,6 +9,8 @@ mod streaming;
 mod tool_execution;
 
 use anyhow::{Context, Result};
+use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::harness::context::RequestOptionsOverride;
@@ -25,6 +27,7 @@ pub(crate) struct TurnContext {
     pub trace_id: String,
     pub plan_id: Option<String>,
     pub task_turn_index: u32,
+    pub allowed_native_tools: Arc<BTreeSet<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

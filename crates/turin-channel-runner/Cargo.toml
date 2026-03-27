@@ -12,6 +12,7 @@ tokio = { version = "1.0", default-features = false, features = ["fs", "macros",
 turin-channel-core = { path = "../turin-channel-core" }
 turin-daemon-client = { path = "../turin-daemon-client" }
 turin-daemon-protocol = { path = "../turin-daemon-protocol" }
+turin-types = { path = "../turin-types" }
 
 [dev-dependencies]
 tempfile = "3.10"

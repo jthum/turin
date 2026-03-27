@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::sync::Arc;
 use tracing::{error, instrument, warn};
 
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
@@ -31,12 +32,19 @@ impl ExecutionHost {
 
         self.append_task_user_message(session, prompt);
 
+        let allowed_native_tools = Arc::new(crate::tools::policy::resolve_effective_native_tools(
+            &self.config,
+            session.identity.agent_id(),
+            task.tool_selection.as_ref(),
+        )?);
+
         let tool_ctx = ToolContext {
             workspace_root: std::path::PathBuf::from(&self.config.kernel.workspace_root),
             session_id: session_id.clone(),
             agent_id: session.identity.agent_id().to_string(),
             store_manager: Some(self.store_manager.clone()),
             embedding_provider: self.embedding_provider.clone(),
+            allowed_native_tools: Arc::clone(&allowed_native_tools),
         };
 
         self.persist_task_user_message(session, prompt).await;
@@ -135,6 +143,7 @@ impl ExecutionHost {
                 trace_id: task.trace_id.clone(),
                 plan_id: task.plan_id.clone(),
                 task_turn_index: task_turn_count,
+                allowed_native_tools: Arc::clone(&tool_ctx.allowed_native_tools),
             };
             let completed_turn = match self.execute_turn(session, tool_ctx, &turn_ctx).await {
                 Ok(outcome) => outcome,

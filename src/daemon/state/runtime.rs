@@ -11,6 +11,7 @@ use super::{
 use crate::kernel::agent_manager::{AgentStatusSnapshot, TaskStatusSnapshot};
 use crate::kernel::event::KernelEvent;
 use crate::kernel::session::QueuedTask;
+use turin_types::ToolSelectionConfig;
 
 impl DaemonState {
     pub async fn agent_runtime_status(
@@ -29,11 +30,16 @@ impl DaemonState {
         agent_id: Option<&str>,
         session_id: Option<&str>,
         prompt: String,
+        tool_selection: ToolSelectionConfig,
     ) -> Result<TaskStatusSnapshot> {
+        let mut task = QueuedTask::ad_hoc(prompt);
+        if !tool_selection.is_empty() {
+            task.tool_selection = Some(tool_selection);
+        }
         let request_id = if let Some(session_id) = session_id {
             self.kernel
                 .agent_manager()
-                .submit_to_session(session_id, QueuedTask::ad_hoc(prompt), None)
+                .submit_to_session(session_id, task, None)
                 .await?
         } else {
             let agent_id =
@@ -41,7 +47,7 @@ impl DaemonState {
             self.ensure_enabled_agent(agent_id)?;
             self.kernel
                 .agent_manager()
-                .submit(agent_id, QueuedTask::ad_hoc(prompt), None)
+                .submit(agent_id, task, None)
                 .await?
         };
         self.kernel

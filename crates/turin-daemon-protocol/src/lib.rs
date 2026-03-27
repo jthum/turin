@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
-use turin_types::{AgentMode, ThinkingConfig};
+use turin_types::{AgentMode, ThinkingConfig, ToolSelectionConfig};
 
 pub const DAEMON_PROTOCOL_VERSION: u32 = 1;
 pub const DAEMON_TRANSPORT_UNIX: &str = "unix";
@@ -53,6 +53,8 @@ pub struct CreateAgentParams {
     pub harness: Option<String>,
     #[serde(default)]
     pub idle_grace_secs: Option<u64>,
+    #[serde(default, flatten)]
+    pub tool_selection: ToolSelectionConfig,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
 }
@@ -77,6 +79,8 @@ pub struct UpdateAgentParams {
     pub mode: Option<AgentMode>,
     #[serde(default)]
     pub idle_grace_secs: Option<u64>,
+    #[serde(default)]
+    pub tool_selection: Option<ToolSelectionConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -132,6 +136,8 @@ pub struct SubmitTaskParams {
     #[serde(default)]
     pub session_id: Option<String>,
     pub prompt: String,
+    #[serde(default, flatten)]
+    pub tool_selection: ToolSelectionConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -461,6 +467,7 @@ mod tests {
                 agent_id: Some("writer".to_string()),
                 session_id: None,
                 prompt: "review this".to_string(),
+                tool_selection: Default::default(),
             }),
         );
 

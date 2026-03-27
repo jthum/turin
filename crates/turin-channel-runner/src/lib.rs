@@ -16,6 +16,7 @@ use turin_daemon_protocol::{
     OpenSessionParams, ResumeSessionParams, RuntimeEventsSubscribeParams, SubmitTaskParams,
     WaitTaskParams,
 };
+use turin_types::ToolSelectionConfig;
 
 #[derive(Debug, Clone)]
 pub struct RunnerConfig {
@@ -23,6 +24,7 @@ pub struct RunnerConfig {
     pub access_state_path: PathBuf,
     pub idle_ttl: Option<Duration>,
     pub access_policy: ChannelAccessPolicy,
+    pub tool_selection: ToolSelectionConfig,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -110,6 +112,16 @@ pub fn task_timeout_ms_from_settings(settings: &Value) -> Result<Option<u64>> {
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("Channel settings must be a JSON object"))?;
     read_task_timeout_ms(map.get("task_timeout_ms"))
+}
+
+pub fn tool_selection_from_settings(settings: &Value) -> Result<ToolSelectionConfig> {
+    let map = settings
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("Channel settings must be a JSON object"))?;
+    Ok(ToolSelectionConfig {
+        tools: parse_string_list(map.get("tools"), "tools")?,
+        tools_exclude: parse_string_vec(map.get("tools_exclude"), "tools_exclude")?,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -419,6 +431,7 @@ pub struct ChannelRunner {
     access_state: FileAccessStateStore,
     idle_ttl: Option<Duration>,
     access_policy: ChannelAccessPolicy,
+    tool_selection: ToolSelectionConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -479,6 +492,7 @@ impl ChannelRunner {
             access_state: FileAccessStateStore::new(config.access_state_path),
             idle_ttl: config.idle_ttl,
             access_policy: config.access_policy,
+            tool_selection: config.tool_selection,
         }
     }
 
@@ -575,6 +589,7 @@ impl ChannelRunner {
                     agent_id: None,
                     session_id: Some(binding.session_id.clone()),
                     prompt: event.prompt_text(),
+                    tool_selection: self.tool_selection.clone(),
                 }),
             )
             .await
@@ -1295,6 +1310,56 @@ fn parse_string_set(value: Option<&Value>, key: &str) -> Result<HashSet<String>>
     Ok(out)
 }
 
+fn parse_string_list(value: Option<&Value>, key: &str) -> Result<Option<Vec<String>>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    Ok(Some(parse_string_vec(Some(value), key)?))
+}
+
+fn parse_string_vec(value: Option<&Value>, key: &str) -> Result<Vec<String>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+
+    let mut out = Vec::new();
+    match value {
+        Value::Array(values) => {
+            for item in values {
+                let text = item.as_str().ok_or_else(|| {
+                    anyhow::anyhow!("channel setting '{}' must be an array of strings", key)
+                })?;
+                let normalized = normalize_string_item(text).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "channel setting '{}' must not contain empty string values",
+                        key
+                    )
+                })?;
+                out.push(normalized);
+            }
+        }
+        Value::String(text) => {
+            for item in text.split(',') {
+                let normalized = normalize_string_item(item).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "channel setting '{}' must not contain empty string values",
+                        key
+                    )
+                })?;
+                out.push(normalized);
+            }
+        }
+        _ => {
+            anyhow::bail!(
+                "channel setting '{}' must be a string or array of strings",
+                key
+            );
+        }
+    }
+
+    Ok(out)
+}
+
 fn normalize_string_item(text: &str) -> Option<String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -1611,6 +1676,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tool_selection_settings_parse_string_lists() {
+        let selection = tool_selection_from_settings(&serde_json::json!({
+            "tools": ["group:web", "read_file"],
+            "tools_exclude": "web_search"
+        }))
+        .unwrap();
+        assert_eq!(
+            selection.tools,
+            Some(vec!["group:web".to_string(), "read_file".to_string()])
+        );
+        assert_eq!(selection.tools_exclude, vec!["web_search".to_string()]);
+    }
+
     fn test_runner(dir: &tempfile::TempDir, policy: ChannelAccessPolicy) -> ChannelRunner {
         ChannelRunner::new(
             turin_daemon_client::DaemonClient::new(dir.path().join("dummy.sock")),
@@ -1619,6 +1698,7 @@ mod tests {
                 access_state_path: dir.path().join("access.json"),
                 idle_ttl: Some(Duration::from_secs(600)),
                 access_policy: policy,
+                tool_selection: Default::default(),
             },
         )
     }

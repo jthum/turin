@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use turin_types::ToolSelectionConfig;
 
 use crate::kernel::agent_manager::AgentManager;
 use crate::kernel::config::{AgentConfig, AgentMode, HarnessConfig, ThinkingConfig, TurinConfig};
@@ -121,6 +122,8 @@ pub(crate) struct AgentFileConfig {
     pub harness: Option<String>,
     #[serde(default)]
     pub idle_grace_secs: Option<u64>,
+    #[serde(default, flatten)]
+    pub tool_selection: ToolSelectionConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -434,6 +437,7 @@ fn scan_agent_dir(
         mode: parsed.mode.unwrap_or(bootstrap.agent.mode.clone()),
         harness: Some(harness_id.clone()),
         idle_grace_secs: parsed.idle_grace_secs,
+        tool_selection: parsed.tool_selection,
     };
 
     Ok(Some(DiscoveredAgent {

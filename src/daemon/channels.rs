@@ -284,6 +284,8 @@ impl ChannelRuntimeManager {
                     .join(format!("{}-access.json", channel.id));
                 let access_policy =
                     turin_channel_runner::ChannelAccessPolicy::from_settings(&channel.settings)?;
+                let tool_selection =
+                    turin_channel_runner::tool_selection_from_settings(&channel.settings)?;
                 let task_timeout_ms =
                     turin_channel_runner::task_timeout_ms_from_settings(&channel.settings)?;
                 let runner = turin_channel_runner::ChannelRunner::new(
@@ -293,6 +295,7 @@ impl ChannelRuntimeManager {
                         access_state_path: access_state,
                         idle_ttl: channel.idle_ttl_secs.map(Duration::from_secs),
                         access_policy,
+                        tool_selection,
                     },
                 );
 
@@ -383,6 +386,8 @@ impl ChannelRuntimeManager {
                     .join(format!("{}-access.json", channel.id));
                 let access_policy =
                     turin_channel_runner::ChannelAccessPolicy::from_settings(&channel.settings)?;
+                let tool_selection =
+                    turin_channel_runner::tool_selection_from_settings(&channel.settings)?;
                 let task_timeout_ms =
                     turin_channel_runner::task_timeout_ms_from_settings(&channel.settings)?;
                 let runner = turin_channel_runner::ChannelRunner::new(
@@ -392,6 +397,7 @@ impl ChannelRuntimeManager {
                         access_state_path: access_state,
                         idle_ttl: channel.idle_ttl_secs.map(Duration::from_secs),
                         access_policy,
+                        tool_selection,
                     },
                 );
 
@@ -484,6 +490,8 @@ impl ChannelRuntimeManager {
                     .join(format!("{}-access.json", channel.id));
                 let access_policy =
                     turin_channel_runner::ChannelAccessPolicy::from_settings(&channel.settings)?;
+                let tool_selection =
+                    turin_channel_runner::tool_selection_from_settings(&channel.settings)?;
                 let task_timeout_ms =
                     turin_channel_runner::task_timeout_ms_from_settings(&channel.settings)?;
                 let allow_unconfigured_chats = access_policy.requires_unconfigured_inbound();
@@ -494,6 +502,7 @@ impl ChannelRuntimeManager {
                         access_state_path: access_state,
                         idle_ttl: channel.idle_ttl_secs.map(Duration::from_secs),
                         access_policy,
+                        tool_selection,
                     },
                 );
 

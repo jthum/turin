@@ -55,6 +55,7 @@ async fn create_disable_and_delete_agent_updates_filesystem_state() -> Result<()
             harness: None,
             idle_grace_secs: None,
             enabled: true,
+            tool_selection: Default::default(),
         })
         .await?;
 
@@ -108,7 +109,12 @@ async fn submit_task_exposes_completed_result_and_blocks_rescan_while_active() -
     let mut state = DaemonState::load(&config_path).await?;
 
     let task = state
-        .submit_task(Some("default"), None, "Hello daemon".to_string())
+        .submit_task(
+            Some("default"),
+            None,
+            "Hello daemon".to_string(),
+            Default::default(),
+        )
         .await?;
     assert_eq!(task.agent_id, "default");
     assert!(matches!(task.state.as_str(), "queued" | "running"));
@@ -145,7 +151,12 @@ async fn wait_for_task_returns_terminal_result() -> Result<()> {
     let state = DaemonState::load(&config_path).await?;
 
     let task = state
-        .submit_task(Some("default"), None, "Hello wait".to_string())
+        .submit_task(
+            Some("default"),
+            None,
+            "Hello wait".to_string(),
+            Default::default(),
+        )
         .await?;
     let completed = state.wait_for_task(&task.request_id, Some(2_000)).await?;
     assert_eq!(completed.request_id, task.request_id);
@@ -162,7 +173,12 @@ async fn session_list_and_get_expose_persisted_session_details() -> Result<()> {
     let state = DaemonState::load(&config_path).await?;
 
     let task = state
-        .submit_task(Some("default"), None, "Hello session".to_string())
+        .submit_task(
+            Some("default"),
+            None,
+            "Hello session".to_string(),
+            Default::default(),
+        )
         .await?;
 
     let mut saw_completed = false;
@@ -214,6 +230,7 @@ async fn harness_reload_and_validate_are_targeted() -> Result<()> {
             harness: Some("shared".to_string()),
             idle_grace_secs: None,
             enabled: true,
+            tool_selection: Default::default(),
         })
         .await?;
     assert_eq!(agent.harness.as_deref(), Some("shared"));
@@ -568,6 +585,7 @@ async fn agent_can_bind_shared_harness_and_switch_back_to_local() -> Result<()> 
             harness: None,
             idle_grace_secs: None,
             enabled: true,
+            tool_selection: Default::default(),
         })
         .await?;
 
@@ -661,6 +679,7 @@ async fn bind_shared_harness_rejects_non_scaffold_local_harness() -> Result<()> 
             harness: None,
             idle_grace_secs: None,
             enabled: true,
+            tool_selection: Default::default(),
         })
         .await?;
 
@@ -702,6 +721,7 @@ async fn agent_runtime_status_reflects_live_runtime_state() -> Result<()> {
             harness: None,
             idle_grace_secs: None,
             enabled: false,
+            tool_selection: Default::default(),
         })
         .await?;
     assert!(!disabled.enabled);
@@ -729,7 +749,12 @@ async fn agent_runtime_status_reflects_live_runtime_state() -> Result<()> {
     assert!(!initial.running);
 
     let task = state
-        .submit_task(Some("default"), None, "Hello status".to_string())
+        .submit_task(
+            Some("default"),
+            None,
+            "Hello status".to_string(),
+            Default::default(),
+        )
         .await?;
     assert!(matches!(task.state.as_str(), "queued" | "running"));
 

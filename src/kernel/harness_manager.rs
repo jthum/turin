@@ -142,7 +142,9 @@ mod tests {
         );
 
         let config = TurinConfig {
+            tool_selection: Default::default(),
             agent: AgentConfig {
+                tool_selection: Default::default(),
                 id: "default".to_string(),
                 system_prompt: "Default".to_string(),
                 model: "mock-model".to_string(),
@@ -156,6 +158,7 @@ mod tests {
                 (
                     "writer".to_string(),
                     AgentConfig {
+                        tool_selection: Default::default(),
                         id: "writer".to_string(),
                         system_prompt: "Writer".to_string(),
                         model: "mock-model".to_string(),
@@ -169,6 +172,7 @@ mod tests {
                 (
                     "reviewer".to_string(),
                     AgentConfig {
+                        tool_selection: Default::default(),
                         id: "reviewer".to_string(),
                         system_prompt: "Reviewer".to_string(),
                         model: "mock-model".to_string(),

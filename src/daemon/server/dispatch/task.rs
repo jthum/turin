@@ -19,6 +19,7 @@ pub(super) async fn submit(
             params.agent_id.as_deref(),
             params.session_id.as_deref(),
             params.prompt,
+            params.tool_selection,
         )
         .await
     {

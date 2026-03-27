@@ -58,6 +58,7 @@ impl DaemonState {
             mode: input.mode,
             harness: input.harness,
             idle_grace_secs: input.idle_grace_secs,
+            tool_selection: input.tool_selection,
         };
         write_agent_file(&agent_dir, &file)?;
         self.rescan().await?;
@@ -106,6 +107,9 @@ impl DaemonState {
         }
         if let Some(idle_grace_secs) = input.idle_grace_secs {
             file.idle_grace_secs = Some(idle_grace_secs);
+        }
+        if let Some(tool_selection) = input.tool_selection {
+            file.tool_selection = tool_selection;
         }
 
         write_agent_file(&agent_dir, &file)?;
@@ -435,7 +439,13 @@ impl DaemonState {
         self.ensure_channel_agent_exists(&input.agent_id)?;
         let access_policy =
             turin_channel_runner::ChannelAccessPolicy::from_settings(&input.settings)?;
+        let tool_selection = turin_channel_runner::tool_selection_from_settings(&input.settings)?;
         turin_channel_runner::task_timeout_ms_from_settings(&input.settings)?;
+        crate::tools::policy::resolve_effective_native_tools(
+            self.kernel.config(),
+            &input.agent_id,
+            Some(&tool_selection),
+        )?;
         let channel_dir = self.watch_paths().channels_dir.join(&input.id);
         super::channel_validation::validate_channel_settings(
             &input.kind,
@@ -506,7 +516,13 @@ impl DaemonState {
             .context("Failed to serialize channel settings for validation")?;
         let access_policy =
             turin_channel_runner::ChannelAccessPolicy::from_settings(&settings_value)?;
+        let tool_selection = turin_channel_runner::tool_selection_from_settings(&settings_value)?;
         turin_channel_runner::task_timeout_ms_from_settings(&settings_value)?;
+        crate::tools::policy::resolve_effective_native_tools(
+            self.kernel.config(),
+            &file.agent_id,
+            Some(&tool_selection),
+        )?;
         super::channel_validation::validate_channel_settings(
             &file.kind,
             &channel_dir,

@@ -10,9 +10,8 @@ use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use turin_channel_core::{
-    ChannelAttachment, ChannelCapabilities, ChannelConversationKey, ChannelKind,
-    ChannelMessageRef, ChannelSessionScope, ChannelUser, InboundEvent, MessageBlock,
-    OutboundMessage,
+    ChannelAttachment, ChannelCapabilities, ChannelConversationKey, ChannelKind, ChannelMessageRef,
+    ChannelSessionScope, ChannelUser, InboundEvent, MessageBlock, OutboundMessage,
 };
 use turin_channel_runner::ChannelDriver;
 

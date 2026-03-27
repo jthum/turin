@@ -617,6 +617,7 @@ impl ControlClient {
                 agent_id,
                 session_id,
                 prompt,
+                tool_selection: Default::default(),
             }),
         )
         .await

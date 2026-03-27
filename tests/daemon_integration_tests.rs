@@ -282,6 +282,7 @@ async fn daemon_agent_crud_round_trip_over_endpoint() -> Result<()> {
                     harness: None,
                     idle_grace_secs: Some(45),
                     enabled: true,
+                    tool_selection: Default::default(),
                 },
             ))
             .await?,
@@ -311,6 +312,7 @@ async fn daemon_agent_crud_round_trip_over_endpoint() -> Result<()> {
                     thinking: None,
                     mode: None,
                     idle_grace_secs: Some(60),
+                    tool_selection: None,
                 },
             ))
             .await?,
@@ -387,6 +389,7 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
                     agent_id: None,
                     session_id: Some(live_session_id.clone()),
                     prompt: "Say pong".to_string(),
+                    tool_selection: Default::default(),
                 },
             ))
             .await?,
@@ -470,6 +473,7 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
                     agent_id: None,
                     session_id: Some(session_id.clone()),
                     prompt: "resume me".to_string(),
+                    tool_selection: Default::default(),
                 },
             ))
             .await?,
@@ -512,6 +516,7 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
                     agent_id: None,
                     session_id: Some(session_id.clone()),
                     prompt: "resume me again".to_string(),
+                    tool_selection: Default::default(),
                 },
             ))
             .await?,
@@ -576,6 +581,7 @@ async fn daemon_event_subscription_receives_snapshot_and_mutation() -> Result<()
                 harness: None,
                 idle_grace_secs: None,
                 enabled: true,
+                tool_selection: Default::default(),
             },
         ))
         .await?;
@@ -629,6 +635,7 @@ async fn daemon_managed_subscription_reconnects_after_restart() -> Result<()> {
                     harness: None,
                     idle_grace_secs: None,
                     enabled: true,
+                    tool_selection: Default::default(),
                 },
             ))
             .await?,
@@ -677,6 +684,7 @@ async fn daemon_managed_subscription_reconnects_after_restart() -> Result<()> {
                     harness: None,
                     idle_grace_secs: None,
                     enabled: true,
+                    tool_selection: Default::default(),
                 },
             ))
             .await?,
@@ -719,6 +727,7 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
                 harness: None,
                 idle_grace_secs: None,
                 enabled: true,
+                tool_selection: Default::default(),
             },
         ))
         .await?;
@@ -736,6 +745,7 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
                 harness: None,
                 idle_grace_secs: None,
                 enabled: true,
+                tool_selection: Default::default(),
             },
         ))
         .await?;
@@ -821,6 +831,7 @@ async fn daemon_session_subscription_receives_kernel_stream_events() -> Result<(
                     agent_id: None,
                     session_id: Some(session_id.clone()),
                     prompt: "Say pong".to_string(),
+                    tool_selection: Default::default(),
                 },
             ))
             .await?,
@@ -871,6 +882,7 @@ async fn daemon_event_subscription_scopes_initial_snapshot_and_includes_channel_
                 harness: None,
                 idle_grace_secs: None,
                 enabled: true,
+                tool_selection: Default::default(),
             },
         ))
         .await?;

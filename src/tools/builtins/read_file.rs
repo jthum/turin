@@ -82,6 +82,7 @@ mod tests {
             agent_id: "test-agent".to_string(),
             store_manager: None,
             embedding_provider: None,
+            allowed_native_tools: std::sync::Arc::new(crate::tools::policy::full_native_tool_set()),
         };
 
         let result = tool
@@ -106,6 +107,7 @@ mod tests {
             agent_id: "test-agent".to_string(),
             store_manager: None,
             embedding_provider: None,
+            allowed_native_tools: std::sync::Arc::new(crate::tools::policy::full_native_tool_set()),
         };
 
         let result = tool

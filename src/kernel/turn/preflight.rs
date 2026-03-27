@@ -51,7 +51,9 @@ impl ExecutionHost {
             return Ok(TurnPreflight::Rejected);
         }
 
-        let prepared = self.build_prepared_turn_stream(session, req).await?;
+        let prepared = self
+            .build_prepared_turn_stream(session, turn_ctx, req)
+            .await?;
         Ok(TurnPreflight::Ready(prepared))
     }
 
@@ -70,8 +72,14 @@ impl ExecutionHost {
         })
     }
 
-    fn tool_definitions_for_session(&self, session: &SessionState) -> Result<Vec<serde_json::Value>> {
-        let mut tools = self.tool_registry.tool_definitions();
+    fn tool_definitions_for_session(
+        &self,
+        session: &SessionState,
+        turn_ctx: &TurnContext,
+    ) -> Result<Vec<serde_json::Value>> {
+        let mut tools = self
+            .tool_registry
+            .tool_definitions_filtered(&turn_ctx.allowed_native_tools);
         let mut seen_names: BTreeSet<String> = tools
             .iter()
             .filter_map(|tool| tool.get("name").and_then(|value| value.as_str()))
@@ -215,6 +223,7 @@ impl ExecutionHost {
     async fn build_prepared_turn_stream(
         &mut self,
         session: &SessionState,
+        turn_ctx: &TurnContext,
         req: TurnRequestState,
     ) -> Result<PreparedTurnStream> {
         self.ensure_turn_provider_client(&req.provider_name)?;
@@ -235,7 +244,7 @@ impl ExecutionHost {
                 )
             })?;
 
-        let tools = self.tool_definitions_for_session(session)?;
+        let tools = self.tool_definitions_for_session(session, turn_ctx)?;
         let options = provider::InferenceOptions {
             max_tokens: None,
             temperature: None,

@@ -3,11 +3,13 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use turin_local_ipc::resolve_endpoint as resolve_local_ipc_endpoint;
 
-pub use turin_types::{AgentMode, ThinkingConfig};
+pub use turin_types::{AgentMode, ThinkingConfig, ToolSelectionConfig};
 
 /// Top-level Turin configuration, parsed from `turin.toml`.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct TurinConfig {
+    #[serde(default, flatten)]
+    pub tool_selection: ToolSelectionConfig,
     pub agent: AgentConfig,
     /// Optional map of additional peer agents that can be orchestrated by the `AgentManager`
     #[serde(default)]
@@ -75,6 +77,8 @@ pub struct AgentConfig {
     /// Optional idle shutdown grace period for peer runtimes.
     #[serde(default)]
     pub idle_grace_secs: Option<u64>,
+    #[serde(default, flatten)]
+    pub tool_selection: ToolSelectionConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -564,6 +568,15 @@ impl TurinConfig {
             }
         }
 
+        let _ = crate::tools::policy::resolve_root_tool_selection(&self.tool_selection)
+            .context("invalid top-level tool selection")?;
+        for (agent_id, _) in
+            std::iter::once((&self.agent.id, &self.agent)).chain(self.agents.iter())
+        {
+            let _ = crate::tools::policy::resolve_effective_native_tools(self, agent_id, None)
+                .with_context(|| format!("invalid tool selection for agent '{}'", agent_id))?;
+        }
+
         Ok(())
     }
 
@@ -648,6 +661,7 @@ impl Default for AgentConfig {
             mode: AgentMode::Auto,
             harness: None,
             idle_grace_secs: None,
+            tool_selection: ToolSelectionConfig::default(),
         }
     }
 }

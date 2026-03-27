@@ -1,10 +1,12 @@
 pub mod builtins;
 pub mod mcp;
+pub mod policy;
 pub mod provider;
 pub mod registry;
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -53,6 +55,8 @@ pub struct ToolContext {
     pub store_manager: Option<Arc<StoreManager>>,
     /// Optional embedding provider for tools that support semantic memory
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    /// Native tools enabled for the current turn after config delegation is resolved
+    pub allowed_native_tools: Arc<BTreeSet<String>>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -63,7 +67,17 @@ impl std::fmt::Debug for ToolContext {
             .field("agent_id", &self.agent_id)
             .field("store_manager", &self.store_manager.is_some())
             .field("embedding_provider", &self.embedding_provider.is_some())
+            .field(
+                "allowed_native_tool_count",
+                &self.allowed_native_tools.len(),
+            )
             .finish()
+    }
+}
+
+impl ToolContext {
+    pub fn is_native_tool_allowed(&self, name: &str) -> bool {
+        self.allowed_native_tools.contains(name)
     }
 }
 

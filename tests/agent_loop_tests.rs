@@ -126,7 +126,9 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
     );
 
     let config = TurinConfig {
+        tool_selection: Default::default(),
         agent: AgentConfig {
+            tool_selection: Default::default(),
             id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
@@ -323,7 +325,9 @@ async fn test_harness_observation() -> Result<()> {
     );
 
     let config = TurinConfig {
+        tool_selection: Default::default(),
         agent: AgentConfig {
+            tool_selection: Default::default(),
             id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
@@ -439,7 +443,9 @@ async fn test_nested_agent_spawning() -> Result<()> {
     );
 
     let config = TurinConfig {
+        tool_selection: Default::default(),
         agent: AgentConfig {
+            tool_selection: Default::default(),
             id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
@@ -563,7 +569,9 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
     );
 
     let config = TurinConfig {
+        tool_selection: Default::default(),
         agent: AgentConfig {
+            tool_selection: Default::default(),
             id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
@@ -652,7 +660,9 @@ async fn test_dynamic_mode_switching_stateless() -> Result<()> {
     );
 
     let config = TurinConfig {
+        tool_selection: Default::default(),
         agent: AgentConfig {
+            tool_selection: Default::default(),
             id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
