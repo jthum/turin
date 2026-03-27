@@ -42,6 +42,7 @@ struct TelegramRequestRecord {
 struct TelegramMockState {
     get_updates_responses: VecDeque<serde_json::Value>,
     send_message_responses: VecDeque<serde_json::Value>,
+    edit_message_responses: VecDeque<serde_json::Value>,
     sent_messages: Vec<serde_json::Value>,
     requests: Vec<TelegramRequestRecord>,
 }
@@ -158,6 +159,7 @@ impl TelegramMockServer {
     async fn start_with_responses(
         get_updates_responses: Vec<serde_json::Value>,
         send_message_responses: Vec<serde_json::Value>,
+        edit_message_responses: Vec<serde_json::Value>,
     ) -> Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
@@ -167,6 +169,7 @@ impl TelegramMockServer {
         let state = Arc::new(Mutex::new(TelegramMockState {
             get_updates_responses: get_updates_responses.into(),
             send_message_responses: send_message_responses.into(),
+            edit_message_responses: edit_message_responses.into(),
             sent_messages: Vec::new(),
             requests: Vec::new(),
         }));
@@ -265,12 +268,22 @@ fn handle_telegram_request(
             "ok": true,
             "result": true
         })),
-        "editMessageText" => Ok(json!({
-            "ok": true,
-            "result": {
-                "message_id": 1
-            }
-        })),
+        "editMessageText" => {
+            let response = state
+                .lock()
+                .expect("telegram mock state lock poisoned")
+                .edit_message_responses
+                .pop_front()
+                .unwrap_or_else(|| {
+                    json!({
+                        "ok": true,
+                        "result": {
+                            "message_id": 1
+                        }
+                    })
+                });
+            Ok(response)
+        }
         "sendChatAction" => Ok(json!({
             "ok": true,
             "result": true
@@ -460,6 +473,7 @@ async fn telegram_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
                 "text": "PONG"
             }
         })],
+        vec![],
     )
     .await?;
 
@@ -564,6 +578,7 @@ async fn telegram_channel_driver_retries_transient_poll_and_send_failures() -> R
                 "result": { "message_id": 2 }
             }),
         ],
+        vec![],
     )
     .await?;
 
@@ -643,6 +658,7 @@ async fn telegram_channel_driver_streams_progress_before_final_message() -> Resu
                 "text": "PONG"
             }
         })],
+        vec![],
     )
     .await?;
 
@@ -742,7 +758,7 @@ async fn telegram_channel_driver_streams_progress_before_final_message() -> Resu
 
 #[tokio::test(flavor = "multi_thread")]
 async fn telegram_progress_preview_can_include_thinking_text() -> Result<()> {
-    let server = TelegramMockServer::start_with_responses(vec![], vec![]).await?;
+    let server = TelegramMockServer::start_with_responses(vec![], vec![], vec![]).await?;
     let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let mut driver = TelegramChannelDriver::from_config(
         "telegram-test",
@@ -799,6 +815,83 @@ async fn telegram_progress_preview_can_include_thinking_text() -> Result<()> {
         preview.contains("Partial answer"),
         "preview text: {preview}"
     );
+
+    server.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn telegram_block_stream_finalization_ignores_not_modified_edit_errors() -> Result<()> {
+    let server = TelegramMockServer::start_with_responses(
+        vec![],
+        vec![json!({
+            "ok": true,
+            "result": {
+                "message_id": 11
+            }
+        })],
+        vec![json!({
+            "ok": false,
+            "error_code": 400,
+            "description": "Bad Request: message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message"
+        })],
+    )
+    .await?;
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let mut driver = TelegramChannelDriver::from_config(
+        "telegram-test",
+        TelegramChannelDriverConfig {
+            base_url: server.base_url.clone(),
+            workspace_id: "telegram".to_string(),
+            chat_ids: vec!["498502840".to_string()],
+            accept_all_chats: false,
+            token: "test-token".to_string(),
+            poll_timeout_secs: 0,
+            poll_interval: Duration::from_millis(25),
+            max_updates_per_poll: 10,
+            start_from_latest: false,
+            ignore_bot_messages: true,
+            respond_mode: turin_channel_telegram::TelegramRespondMode::All,
+            session_scope: ChannelSessionScope::User,
+            stream_mode: turin_channel_runner::ChannelStreamMode::Block,
+            stream_thinking: false,
+            persist_thinking: false,
+        },
+        shutdown_rx,
+    )?;
+
+    let event = sample_inbound_event(498502840, "Say pong");
+    driver
+        .send_progress(
+            &event,
+            ChannelProgressUpdate::StreamingPreview {
+                text: "PONG".to_string(),
+                thinking: None,
+            },
+        )
+        .await?;
+    driver
+        .send(
+            &event.conversation,
+            turin_channel_core::OutboundMessage::text("PONG"),
+        )
+        .await?;
+
+    let requests = server
+        .requests
+        .lock()
+        .expect("telegram mock requests lock poisoned")
+        .clone();
+    let send_count = requests
+        .iter()
+        .filter(|request| request.method == "sendMessage")
+        .count();
+    let edit_count = requests
+        .iter()
+        .filter(|request| request.method == "editMessageText")
+        .count();
+
+    assert_eq!(send_count, 1, "request log: {requests:#?}");
+    assert_eq!(edit_count, 1, "request log: {requests:#?}");
 
     server.stop().await
 }

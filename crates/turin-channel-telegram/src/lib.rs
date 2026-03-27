@@ -608,6 +608,15 @@ impl TelegramChannelDriver {
                     }
                     return Ok(());
                 }
+                Err(error) if error.is_message_not_modified() => {
+                    for payload in rest {
+                        let _: TelegramSentMessage = self
+                            .request_with_retry("sendMessage", payload)
+                            .await
+                            .map_err(TelegramApiError::into_anyhow)?;
+                    }
+                    return Ok(());
+                }
                 Err(error) => {
                     warn!(
                         error_code = %error.code,
@@ -874,8 +883,10 @@ impl TelegramChannelDriver {
             let description = envelope.description.clone().unwrap_or_else(|| body.clone());
             let error_code = envelope.error_code.unwrap_or(status.as_u16() as i64);
             let code = classify_api_error(method, status.as_u16(), &description);
+            let retriable = is_retriable_api_error(&code, status.as_u16())
+                && !is_not_modified_description(&description);
             return Err(TelegramApiError {
-                retriable: is_retriable_api_error(&code, status.as_u16()),
+                retriable,
                 retry_after: envelope
                     .parameters
                     .as_ref()
@@ -1146,6 +1157,10 @@ struct TelegramApiError {
 impl TelegramApiError {
     fn into_anyhow(self) -> anyhow::Error {
         anyhow!("[{}] {}", self.code, self.message)
+    }
+
+    fn is_message_not_modified(&self) -> bool {
+        self.code == "telegram_edit_message_failed" && is_not_modified_description(&self.message)
     }
 }
 
@@ -2400,6 +2415,12 @@ fn is_retriable_api_error(code: &str, status_code: u16) -> bool {
         )
 }
 
+fn is_not_modified_description(description: &str) -> bool {
+    description
+        .to_ascii_lowercase()
+        .contains("message is not modified")
+}
+
 fn retry_backoff(attempt: u32) -> Duration {
     let exponent = attempt.min(5);
     let millis = 250u64.saturating_mul(2u64.saturating_pow(exponent));
@@ -2992,6 +3013,17 @@ mod tests {
         assert!(text.contains("Step 1"));
         assert!(text.contains("Reply"));
         assert!(text.contains("Final answer"));
+    }
+
+    #[test]
+    fn telegram_api_error_recognizes_not_modified_edit_failures() {
+        let error = TelegramApiError {
+            code: "telegram_edit_message_failed".to_string(),
+            message: "Telegram editMessageText request failed with 400: Bad Request: message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message".to_string(),
+            retriable: false,
+            retry_after: None,
+        };
+        assert!(error.is_message_not_modified());
     }
 
     #[test]
