@@ -35,6 +35,7 @@ Current highlighted entries:
 - `library/blocks/release_readiness_checker/` — focused contract for blocker/risk-based release assessment
 - `library/blocks/docs_maintainer/` — focused contract for documentation drift analysis
 - `library/blocks/changelog_writer/` — focused contract for concise release-note drafting
+- `library/blocks/virtual_tool_patterns/` — reusable patterns for harness-declared virtual tools, callbacks, and composition
 - `library/blocks/governed_peer_review/` — temporary-grant peer review
 - `library/blocks/delegated_peer_capabilities/` — delegated-capability peer completion
 - `library/blocks/durable_journal/` — durable runtime DB journaling
