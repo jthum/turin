@@ -272,6 +272,7 @@ Notes:
   - `tool.call(...)`
   - `tool.sequence(...)`
 - handlers do not currently await nested tool results inline; callbacks run after Turin completes the nested native tool execution
+- declaration order does not matter; virtual tool names are resolved after harness load completes
 - virtual tools may call other virtual tools
 - Turin rejects recursive virtual-tool chains and enforces a max virtual nesting depth of `8`
 

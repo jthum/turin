@@ -768,6 +768,128 @@ async fn test_virtual_tool_can_call_another_virtual_tool() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_virtual_tool_can_forward_reference_later_declaration() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+    std::fs::write(
+        tmp.path().join("note.txt"),
+        "hello from forward referenced virtual tool",
+    )?;
+
+    std::fs::write(
+        harness_dir.join("main.lua"),
+        r#"
+        tool.declare("read_note_wrapped", {
+            description = "Read a note through a later-declared virtual tool",
+            params = {
+                path = { type = "string", required = true }
+            },
+            handler = function(args)
+                return tool.call("read_note", { path = args.path }, function(result)
+                    return "wrapped later: " .. result.content
+                end)
+            end
+        })
+
+        tool.declare("read_note", {
+            description = "Read a note from disk",
+            params = {
+                path = { type = "string", required = true }
+            },
+            handler = function(args)
+                return tool.call("read_file", { path = args.path })
+            end
+        })
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        agent: AgentConfig {
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "You are a test assistant.".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 5,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: None,
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(
+            "mock",
+            Arc::new(VirtualToolProvider {
+                tool_name: "read_note_wrapped".to_string(),
+                tool_args: serde_json::json!({ "path": "note.txt" }),
+                seen_tools: Arc::new(std::sync::Mutex::new(Vec::new())),
+                stage: Arc::new(std::sync::Mutex::new(0)),
+            }),
+        ),
+    );
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Read the later-declared note".to_string()))
+        .await?;
+
+    let mut wrapped_result = None;
+    for msg in &session.history {
+        for content in &msg.content {
+            if let InferenceContent::ToolResult { content, .. } = content
+                && content.contains("wrapped later: hello from forward referenced virtual tool")
+            {
+                wrapped_result = Some(content.clone());
+            }
+        }
+    }
+
+    assert_eq!(
+        wrapped_result.as_deref(),
+        Some("wrapped later: hello from forward referenced virtual tool")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_virtual_tool_recursion_is_rejected() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test.db");

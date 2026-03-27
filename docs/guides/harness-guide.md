@@ -185,6 +185,7 @@ Notes:
 - callbacks may return final content or another `tool.call(...)` / `tool.sequence(...)` follow-up plan
 - handlers still do not await nested tool results inline; result callbacks run after Turin finishes the nested native tool execution
 - `on_tool_call` / `on_tool_result` governance still applies to the outer virtual tool and to the nested native calls it dispatches
+- declaration order does not matter; virtual tool names are resolved after harness load completes
 - virtual tools can call other virtual tools
 - Turin rejects recursive virtual-tool chains and enforces a max virtual nesting depth of `8`
 
