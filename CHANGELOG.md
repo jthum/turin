@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added optional result callbacks on `tool.call(...)` and `tool.sequence(...)` so handlers can inspect nested native tool outputs and shape the final outer virtual-tool result.
   - Added virtual-to-virtual composition with recursion detection and a bounded nesting depth.
   - Added callback follow-up plans, so result callbacks can return another `tool.call(...)` or `tool.sequence(...)` instead of only final content.
+- **First-Class Built-In Web And Memory Tools**
+  - Added `web_fetch` for direct HTTP(S) retrieval with readable HTML text extraction, so normal browsing no longer depends on `shell_exec`.
+  - Added `web_search` for top web result discovery with titles, URLs, and snippets.
+  - Added `remember` and `recall` as first-class model-visible tool calls backed by Turin’s existing durable agent memory store.
 
 ## [0.26.0] - 2026-03-26
 

@@ -12,6 +12,9 @@ fn make_ctx(dir: &std::path::Path) -> ToolContext {
     ToolContext {
         workspace_root: dir.to_path_buf(),
         session_id: "test-session".to_string(),
+        agent_id: "test-agent".to_string(),
+        store_manager: None,
+        embedding_provider: None,
     }
 }
 

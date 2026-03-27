@@ -5,18 +5,25 @@
 //! - `write_file` — Create or overwrite a file
 //! - `edit_file` — Search-and-replace within a file
 //! - `shell_exec` — Execute a shell command
+//! - `web_fetch` — Fetch a URL and extract text content
+//! - `web_search` — Search the web and return top results
+//! - `remember` / `recall` — Store and search durable agent memory
 
 pub mod edit_file;
+mod memory_tools;
 pub mod read_file;
 pub mod shell_exec;
 mod submit_plan;
+mod web_tools;
 pub mod write_file;
 
 use crate::tools::mcp::BridgeMcp;
 pub use edit_file::EditFileTool;
+pub use memory_tools::{RecallTool, RememberTool};
 pub use read_file::ReadFileTool;
 pub use shell_exec::ShellExecTool;
 pub use submit_plan::SubmitPlanTool;
+pub use web_tools::{WebFetchTool, WebSearchTool};
 pub use write_file::WriteFileTool;
 
 use super::registry::ToolRegistry;
@@ -36,6 +43,18 @@ pub fn create_default_registry() -> ToolRegistry {
     registry
         .register(Box::new(ShellExecTool))
         .expect("Failed to register ShellExecTool");
+    registry
+        .register(Box::new(WebFetchTool))
+        .expect("Failed to register WebFetchTool");
+    registry
+        .register(Box::new(WebSearchTool))
+        .expect("Failed to register WebSearchTool");
+    registry
+        .register(Box::new(RememberTool))
+        .expect("Failed to register RememberTool");
+    registry
+        .register(Box::new(RecallTool))
+        .expect("Failed to register RecallTool");
     registry
         .register(Box::new(SubmitPlanTool))
         .expect("Failed to register SubmitPlanTool");

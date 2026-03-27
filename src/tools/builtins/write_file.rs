@@ -93,6 +93,9 @@ mod tests {
         let ctx = ToolContext {
             workspace_root: dir.path().to_path_buf(),
             session_id: "test".to_string(),
+            agent_id: "test-agent".to_string(),
+            store_manager: None,
+            embedding_provider: None,
         };
 
         let result = tool
@@ -119,6 +122,9 @@ mod tests {
         let ctx = ToolContext {
             workspace_root: dir.path().to_path_buf(),
             session_id: "test".to_string(),
+            agent_id: "test-agent".to_string(),
+            store_manager: None,
+            embedding_provider: None,
         };
 
         tool.execute(

@@ -54,6 +54,8 @@ Simple things should be simple. Powerful things should be possible.
 - **Top-level ergonomic aliases**:
   - `fs`, `json`, `time`, `log`, `import`, `import_scoped`, `use`, `use_scoped`, `watch`
   - `memory`, `kv`, `session`, `user`, `agent`
+- **Built-in model tool surface**:
+  - `read_file`, `write_file`, `edit_file`, `shell_exec`, `web_fetch`, `web_search`, `remember`, `recall`, `submit_plan`, `bridge_mcp`
 - **Multi-provider support** through normalized `InferenceProvider` clients (`anthropic`, `openai`, `mock`, compatible proxies)
 - **Provider-agnostic embeddings** with OpenAI-compatible local endpoint support
 - **Persistent state** for sessions, messages, events, tool executions, KV, and memory records

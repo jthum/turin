@@ -34,6 +34,9 @@ impl ExecutionHost {
         let tool_ctx = ToolContext {
             workspace_root: std::path::PathBuf::from(&self.config.kernel.workspace_root),
             session_id: session_id.clone(),
+            agent_id: session.identity.agent_id().to_string(),
+            store_manager: Some(self.store_manager.clone()),
+            embedding_provider: self.embedding_provider.clone(),
         };
 
         self.persist_task_user_message(session, prompt).await;

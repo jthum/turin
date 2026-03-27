@@ -6,6 +6,10 @@ pub mod registry;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
+
+use crate::inference::embeddings::EmbeddingProvider;
+use crate::persistence::manager::StoreManager;
 
 /// Output from a tool execution.
 #[derive(Debug, Clone)]
@@ -37,12 +41,30 @@ pub enum ToolError {
 }
 
 /// Context available to tools during execution.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ToolContext {
     /// Root directory for workspace-relative paths
     pub workspace_root: std::path::PathBuf,
     /// Current session ID
     pub session_id: String,
+    /// Active agent ID
+    pub agent_id: String,
+    /// Optional store manager for tools that use Turin persistence
+    pub store_manager: Option<Arc<StoreManager>>,
+    /// Optional embedding provider for tools that support semantic memory
+    pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+}
+
+impl std::fmt::Debug for ToolContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolContext")
+            .field("workspace_root", &self.workspace_root)
+            .field("session_id", &self.session_id)
+            .field("agent_id", &self.agent_id)
+            .field("store_manager", &self.store_manager.is_some())
+            .field("embedding_provider", &self.embedding_provider.is_some())
+            .finish()
+    }
 }
 
 /// The effect of a tool execution.
