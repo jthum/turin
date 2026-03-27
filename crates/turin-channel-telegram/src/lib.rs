@@ -9,9 +9,8 @@ use tokio::sync::watch;
 use tokio::time::sleep;
 use tracing::warn;
 use turin_channel_core::{
-    ChannelAttachment, ChannelCapabilities, ChannelConversationKey, ChannelKind,
-    ChannelMessageRef, ChannelSessionScope, ChannelUser, InboundEvent, MessageBlock,
-    OutboundMessage,
+    ChannelAttachment, ChannelCapabilities, ChannelConversationKey, ChannelKind, ChannelMessageRef,
+    ChannelSessionScope, ChannelUser, InboundEvent, MessageBlock, OutboundMessage,
 };
 use turin_channel_runner::{ChannelDriver, ChannelProgressUpdate, ChannelStreamMode};
 
@@ -721,10 +720,14 @@ impl TelegramChannelDriver {
 
         match self.config.respond_mode {
             TelegramRespondMode::All => true,
-            TelegramRespondMode::Mentions => self.message_mentions_bot(message),
+            TelegramRespondMode::Mentions => {
+                self.message_mentions_bot(message) || self.message_targets_bot_command(message)
+            }
             TelegramRespondMode::Replies => self.message_replies_to_bot(message),
             TelegramRespondMode::MentionsOrReplies => {
-                self.message_mentions_bot(message) || self.message_replies_to_bot(message)
+                self.message_mentions_bot(message)
+                    || self.message_targets_bot_command(message)
+                    || self.message_replies_to_bot(message)
             }
         }
     }
@@ -757,6 +760,35 @@ impl TelegramChannelDriver {
                     }
                 }
                 _ => {}
+            }
+        }
+
+        false
+    }
+
+    fn message_targets_bot_command(&self, message: &TelegramMessage) -> bool {
+        let Some(identity) = self.bot_identity.as_ref() else {
+            return false;
+        };
+        let Some(username) = identity.username.as_deref() else {
+            return false;
+        };
+        let Some(body) = message.body_text() else {
+            return false;
+        };
+
+        for entity in message.body_entities() {
+            if entity.kind != "bot_command" {
+                continue;
+            }
+            let Some(slice) = utf16_slice(body, entity.offset, entity.length) else {
+                continue;
+            };
+            let Some((_, target)) = slice.split_once('@') else {
+                continue;
+            };
+            if target.eq_ignore_ascii_case(username) {
+                return true;
             }
         }
 
@@ -2774,6 +2806,55 @@ mod tests {
                     message_thread_id: None,
                     reply_to_message: None,
                 })),
+            }),
+            channel_post: None,
+        };
+
+        assert!(driver.normalize_update(update).is_some());
+    }
+
+    #[test]
+    fn normalize_mentions_or_replies_accepts_addressed_bot_commands_in_groups() {
+        let mut config = config();
+        config.respond_mode = TelegramRespondMode::MentionsOrReplies;
+        let (_tx, rx) = watch::channel(false);
+        let mut driver =
+            TelegramChannelDriver::from_config("telegram-runtime", config, rx).unwrap();
+        driver.bot_identity = Some(TelegramBotIdentity {
+            id: 42,
+            username: Some("turin_bot".to_string()),
+        });
+
+        let update = TelegramUpdate {
+            update_id: 8,
+            message: Some(TelegramMessage {
+                message_id: 106,
+                chat: TelegramChat {
+                    id: -10012345,
+                    chat_type: "supergroup".to_string(),
+                    title: Some("Ops".to_string()),
+                    username: None,
+                    first_name: None,
+                },
+                from: Some(TelegramUser {
+                    id: 13,
+                    is_bot: Some(false),
+                    first_name: Some("Rin".to_string()),
+                    last_name: None,
+                    username: Some("rin".to_string()),
+                }),
+                sender_chat: None,
+                text: Some("/start@turin_bot".to_string()),
+                caption: None,
+                entities: vec![TelegramMessageEntity {
+                    kind: "bot_command".to_string(),
+                    offset: 0,
+                    length: 16,
+                    user: None,
+                }],
+                caption_entities: Vec::new(),
+                message_thread_id: None,
+                reply_to_message: None,
             }),
             channel_post: None,
         };
