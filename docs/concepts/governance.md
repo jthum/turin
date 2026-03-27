@@ -138,7 +138,7 @@ Usage:
 - `fs.read` and `fs.write` gate top-level harness `fs.*` calls.
 - Kernel built-in tool fallback maps:
   - `read_file` -> `fs.read`
-  - `write_file` / `edit_file` -> `fs.write`
+  - `write_file` / `edit_file` / `apply_patch` -> `fs.write`
   - `shell_exec` -> `shell.exec`
 
 ### Useful Wildcard Prefixes
@@ -429,7 +429,7 @@ Examples:
 High-risk built-in tools are also checked at execution time, including:
 
 - `read_file` -> `fs.read`
-- `write_file` / `edit_file` -> `fs.write`
+- `write_file` / `edit_file` / `apply_patch` -> `fs.write`
 - `shell_exec` -> `shell.exec`
 
 This prevents bypass if a model emits direct tool calls that do not pass through the stdlib.

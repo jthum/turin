@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `web_fetch` for direct HTTP(S) retrieval with readable HTML text extraction, so normal browsing no longer depends on `shell_exec`.
   - Added `web_search` for top web result discovery with titles, URLs, and snippets.
   - Added `remember` and `recall` as first-class model-visible tool calls backed by Turin’s existing durable agent memory store.
+- **Configurable Native Tool Surface**
+  - Added native tool allowlists at the runtime, agent, and channel layers via `tools` and `tools_exclude`.
+  - Added downward-only tool delegation, so `turin.toml` defines the maximum native tool surface and agents/channels can only further subset it.
+  - Added built-in tool groups such as `group:fs`, `group:web`, `group:shell`, `group:memory`, `group:planning`, `group:integration`, and `group:all`.
+  - Added the native `apply_patch` tool for structured multi-file surgical edits; it is available for opt-in configs but excluded from the default exposed built-in tool set.
 
 ## [0.26.0] - 2026-03-26
 

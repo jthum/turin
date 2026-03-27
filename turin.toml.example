@@ -1,12 +1,19 @@
 # Turin Example Configuration
 # Copy this file to turin.toml and customize for your runtime.
 
+# Optional global native tool ceiling for every agent and channel.
+# Defaults to Turin's standard built-in surface.
+# tools = ["group:web", "read_file"]
+# tools_exclude = ["shell_exec"]
+
 [agent]
 id = "default"
 system_prompt = "You are a helpful coding assistant."
 model = "claude-sonnet-4-20250514"   # or any configured provider model
 provider = "anthropic"               # key under [providers.*]
 mode = "auto"                        # auto | stateful | stateless
+# tools = ["group:web", "read_file"] # optional per-agent subset from the inherited parent set
+# tools_exclude = ["write_file"]      # optional per-agent exclusions
 # harness = "default"                        # optional explicit harness binding
 # idle_grace_secs = 60                       # optional peer runtime idle shutdown grace
 
@@ -23,6 +30,8 @@ mode = "auto"                        # auto | stateful | stateless
 # provider = "anthropic"
 # mode = "stateful"
 # harness = "reviewer"
+# tools = ["group:fs", "group:web"]
+# tools_exclude = ["shell_exec"]
 # idle_grace_secs = 120
 
 [kernel]

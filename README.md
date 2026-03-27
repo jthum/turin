@@ -55,7 +55,10 @@ Simple things should be simple. Powerful things should be possible.
   - `fs`, `json`, `time`, `log`, `import`, `import_scoped`, `use`, `use_scoped`, `watch`
   - `memory`, `kv`, `session`, `user`, `agent`
 - **Built-in model tool surface**:
-  - `read_file`, `write_file`, `edit_file`, `shell_exec`, `web_fetch`, `web_search`, `remember`, `recall`, `submit_plan`, `bridge_mcp`
+  - default exposed set: `read_file`, `write_file`, `edit_file`, `shell_exec`, `web_fetch`, `web_search`, `remember`, `recall`, `submit_plan`, `bridge_mcp`
+  - additional opt-in native tool: `apply_patch`
+- **Native tool delegation**:
+  - optional `tools` / `tools_exclude` allowlists at the runtime, agent, and channel layers with built-in shorthands such as `group:fs` and `group:web`
 - **Multi-provider support** through normalized `InferenceProvider` clients (`anthropic`, `openai`, `mock`, compatible proxies)
 - **Provider-agnostic embeddings** with OpenAI-compatible local endpoint support
 - **Persistent state** for sessions, messages, events, tool executions, KV, and memory records
@@ -129,6 +132,14 @@ target/release/turin harness test --response "HARNESS_TEST_OK"
 
 `turin init` is interactive when run in a terminal without `--yes`.
 
+Tool delegation notes:
+
+- `tools = [...]` means "from what I inherited, expose only these native tools"
+- `tools_exclude = [...]` means "from what I inherited, remove these native tools"
+- child configs cannot escalate past what the parent granted
+- current groups are `group:all`, `group:fs`, `group:shell`, `group:web`, `group:memory`, `group:planning`, and `group:integration`
+- `apply_patch` is available through explicit opt-in, for example `tools = ["group:fs"]`
+
 ### 4. Manual `turin.toml` path
 
 If you prefer hand-edited config, start from the example:
@@ -140,10 +151,18 @@ cp turin.toml.example turin.toml
 Minimal example:
 
 ```toml
+# Optional global native tool ceiling for every agent and channel.
+# Defaults to Turin's standard built-in surface.
+# tools = ["group:web", "read_file"]
+# tools_exclude = ["shell_exec"]
+
 [agent]
 system_prompt = "You are a helpful coding assistant."
 model = "claude-sonnet-4-20250514"
 provider = "anthropic"
+# Optional per-agent native tool subset from the inherited parent set.
+# tools = ["group:web", "read_file"]
+# tools_exclude = ["write_file"]
 
 [kernel]
 workspace_root = "."
@@ -165,6 +184,8 @@ directory = ".turin/harnesses"
 # model = "claude-sonnet-4-20250514"
 # provider = "anthropic"
 # harness = "reviewer"
+# tools = ["group:fs", "group:web"]
+# tools_exclude = ["shell_exec"]
 
 [providers.anthropic]
 type = "anthropic"
