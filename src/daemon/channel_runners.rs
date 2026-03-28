@@ -3,10 +3,10 @@ use std::process::Command;
 
 use anyhow::{Context, Result, anyhow};
 
-const TELEGRAM_RUNNER_BIN: &str = "turin-channel-telegram-runner";
-const DISCORD_RUNNER_BIN: &str = "turin-channel-discord-runner";
-const TELEGRAM_RUNNER_ENV: &str = "TURIN_CHANNEL_TELEGRAM_RUNNER_BIN";
-const DISCORD_RUNNER_ENV: &str = "TURIN_CHANNEL_DISCORD_RUNNER_BIN";
+const TELEGRAM_RUNNER_BIN: &str = "turin-channel-telegram";
+const DISCORD_RUNNER_BIN: &str = "turin-channel-discord";
+const TELEGRAM_RUNNER_ENV: &str = "TURIN_CHANNEL_TELEGRAM_BIN";
+const DISCORD_RUNNER_ENV: &str = "TURIN_CHANNEL_DISCORD_BIN";
 
 pub(crate) fn uses_external_runner(kind: &str) -> bool {
     matches!(kind, "discord" | "telegram")
@@ -151,11 +151,11 @@ mod tests {
     fn resolves_external_runner_names() {
         assert_eq!(
             external_runner_binary_name("telegram"),
-            Some("turin-channel-telegram-runner")
+            Some("turin-channel-telegram")
         );
         assert_eq!(
             external_runner_binary_name("discord"),
-            Some("turin-channel-discord-runner")
+            Some("turin-channel-discord")
         );
         assert_eq!(external_runner_binary_name("fs"), None);
     }

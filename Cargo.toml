@@ -12,8 +12,6 @@ members = [
     "crates/turin-channel-fs",
     "crates/turin-channel-discord",
     "crates/turin-channel-telegram",
-    "crates/turin-channel-discord-runner",
-    "crates/turin-channel-telegram-runner",
     "crates/turin-code-index",
     "crates/turin-map",
     "crates/turin-tui",

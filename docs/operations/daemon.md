@@ -361,8 +361,8 @@ When a channel is `enabled`, the daemon owns the runtime lifecycle:
 For sidecar-backed kinds (`discord`, `telegram`), the daemon resolves and starts the runner automatically. Resolution order is:
 
 1. explicit env override
-   - `TURIN_CHANNEL_DISCORD_RUNNER_BIN`
-   - `TURIN_CHANNEL_TELEGRAM_RUNNER_BIN`
+   - `TURIN_CHANNEL_DISCORD_BIN`
+   - `TURIN_CHANNEL_TELEGRAM_BIN`
 2. a sibling binary next to the running `turin` executable
 3. the binary name on `PATH`
 4. during source-checkout development, `cargo run -p <runner> -- ...` as a fallback

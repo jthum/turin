@@ -658,9 +658,9 @@ mod tests {
 
         let event_tx = broadcast::channel(8).0;
         let manager = ChannelRuntimeManager::new(temp.path().join("daemon.sock"), event_tx);
-        let previous = std::env::var_os("TURIN_CHANNEL_TELEGRAM_RUNNER_BIN");
+        let previous = std::env::var_os("TURIN_CHANNEL_TELEGRAM_BIN");
         unsafe {
-            std::env::set_var("TURIN_CHANNEL_TELEGRAM_RUNNER_BIN", &runner);
+            std::env::set_var("TURIN_CHANNEL_TELEGRAM_BIN", &runner);
         }
 
         manager
@@ -686,11 +686,11 @@ mod tests {
         manager.shutdown().await;
         if let Some(value) = previous {
             unsafe {
-                std::env::set_var("TURIN_CHANNEL_TELEGRAM_RUNNER_BIN", value);
+                std::env::set_var("TURIN_CHANNEL_TELEGRAM_BIN", value);
             }
         } else {
             unsafe {
-                std::env::remove_var("TURIN_CHANNEL_TELEGRAM_RUNNER_BIN");
+                std::env::remove_var("TURIN_CHANNEL_TELEGRAM_BIN");
             }
         }
     }

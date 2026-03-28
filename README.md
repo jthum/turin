@@ -99,7 +99,7 @@ cargo build --release
 cargo build --release -p turin-map
 
 # Optional: build channel sidecars if you want daemon-managed Telegram or Discord
-cargo build --release -p turin-channel-telegram-runner -p turin-channel-discord-runner
+cargo build --release -p turin-channel-telegram -p turin-channel-discord --bins
 ```
 
 ### 2. Try Turin with no API key
