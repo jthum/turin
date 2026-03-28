@@ -299,6 +299,7 @@ mod tests {
             store_manager: Some(std::sync::Arc::new(StoreManager::new(root))),
             embedding_provider: None,
             allowed_native_tools: std::sync::Arc::new(crate::tools::policy::full_native_tool_set()),
+            tool_settings: std::sync::Arc::new(turin_types::ToolSettingsConfig::default()),
         }
     }
 

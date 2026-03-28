@@ -205,6 +205,7 @@ async fn test_harness_rejection() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -336,6 +337,7 @@ async fn test_virtual_tool_is_exposed_and_executes_native_call() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -462,6 +464,7 @@ async fn test_virtual_tool_sequence_aggregates_multiple_native_calls() -> Result
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -580,6 +583,7 @@ async fn test_virtual_tool_sequence_callback_shapes_outer_result() -> Result<()>
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -704,6 +708,7 @@ async fn test_virtual_tool_can_call_another_virtual_tool() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -828,6 +833,7 @@ async fn test_virtual_tool_can_forward_reference_later_declaration() -> Result<(
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -949,6 +955,7 @@ async fn test_virtual_tool_recursion_is_rejected() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -1076,6 +1083,7 @@ tool.declare("tool_9", {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -1200,6 +1208,7 @@ async fn test_virtual_tool_callback_can_return_follow_up_plan() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -1303,6 +1312,7 @@ async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Resul
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -1473,6 +1483,7 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "orchestrator".to_string(),
@@ -1630,6 +1641,7 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "orchestrator".to_string(),
@@ -1783,6 +1795,7 @@ async fn test_agent_complete_applies_delegated_capability_ceiling() -> Result<()
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "orchestrator".to_string(),
@@ -1880,6 +1893,7 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -2089,6 +2103,7 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -2237,6 +2252,7 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -2393,6 +2409,7 @@ async fn test_runtime_cache_api_round_trip() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -2750,6 +2767,7 @@ async fn test_runtime_code_search_api_round_trip() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -2872,6 +2890,7 @@ async fn test_runtime_code_search_falls_back_without_embedding_provider() -> Res
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -3010,6 +3029,7 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -3164,6 +3184,7 @@ async fn test_import_scoped_tracks_imported_module_subject_and_root() -> Result<
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -3275,6 +3296,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_import() -> Result<()>
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -3398,6 +3420,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_use() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -3502,6 +3525,7 @@ async fn test_use_scoped_root_mismatch_fails_harness_init() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -3617,6 +3641,7 @@ async fn test_root_max_capabilities_applies_to_top_level_hooks() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -3732,6 +3757,7 @@ async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -3912,6 +3938,7 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "orchestrator".to_string(),
@@ -4105,6 +4132,7 @@ async fn test_runtime_governance_temporary_grants_issue_use_revoke() -> Result<(
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -4267,6 +4295,7 @@ async fn test_temporary_grant_ceiling_propagates_to_peer_submit() -> Result<()> 
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "orchestrator".to_string(),
@@ -4419,6 +4448,7 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -4566,6 +4596,7 @@ async fn test_use_scoped_capability_delegation_is_downward_only() -> Result<()> 
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -4713,6 +4744,7 @@ async fn test_nested_import_cannot_widen_import_delegation() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -4832,6 +4864,7 @@ async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> 
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -4970,6 +5003,7 @@ async fn test_runtime_db_api_and_context_glob() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -5109,6 +5143,7 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "orchestrator".to_string(),
@@ -5290,6 +5325,7 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
 
     let cfg = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -5552,6 +5588,7 @@ async fn test_runtime_agent_complete_preserves_nested_grant_context() -> Result<
 
     let cfg = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),

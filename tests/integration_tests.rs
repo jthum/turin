@@ -26,6 +26,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),

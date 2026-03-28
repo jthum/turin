@@ -12,6 +12,7 @@ Cargo.lock
 .turin/harness-live/
 .turin/live-local/
 .turin/channels/
+.turin/stores/
 /harnesses/
 /channels/
 ui-profiles.toml

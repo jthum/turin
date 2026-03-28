@@ -106,13 +106,13 @@ hyper-util = { version = "0.1", features = ["server", "http1", "tokio"] }
 sha1 = "0.10"
 tokio-tungstenite = { version = "0.24", default-features = false }
 url = "2.5"
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["brotli", "deflate", "gzip", "json", "rustls"] }
 scraper = "0.23"
 
 [dev-dependencies]
 tempfile = "3.10"
 proptest = "1.4"
-reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["brotli", "deflate", "gzip", "json", "stream", "rustls"] }
 turin-daemon-client = { path = "crates/turin-daemon-client" }
 turin-daemon-protocol = { path = "crates/turin-daemon-protocol" }
 turin-local-ipc = { path = "crates/turin-local-ipc" }

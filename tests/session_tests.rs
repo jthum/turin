@@ -34,6 +34,7 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
 
     TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -486,6 +487,7 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -638,6 +640,7 @@ async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -782,6 +785,7 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),
@@ -1047,6 +1051,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
 
     let config = TurinConfig {
         tool_selection: Default::default(),
+        tool_settings: Default::default(),
         agent: AgentConfig {
             tool_selection: Default::default(),
             id: "default".to_string(),

@@ -45,6 +45,7 @@ impl ExecutionHost {
             store_manager: Some(self.store_manager.clone()),
             embedding_provider: self.embedding_provider.clone(),
             allowed_native_tools: Arc::clone(&allowed_native_tools),
+            tool_settings: Arc::new(self.config.tool_settings.clone()),
         };
 
         self.persist_task_user_message(session, prompt).await;

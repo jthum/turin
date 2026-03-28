@@ -3,13 +3,15 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use turin_local_ipc::resolve_endpoint as resolve_local_ipc_endpoint;
 
-pub use turin_types::{AgentMode, ThinkingConfig, ToolSelectionConfig};
+pub use turin_types::{AgentMode, ThinkingConfig, ToolSelectionConfig, ToolSettingsConfig};
 
 /// Top-level Turin configuration, parsed from `turin.toml`.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct TurinConfig {
     #[serde(default, flatten)]
     pub tool_selection: ToolSelectionConfig,
+    #[serde(default)]
+    pub tool_settings: ToolSettingsConfig,
     pub agent: AgentConfig,
     /// Optional map of additional peer agents that can be orchestrated by the `AgentManager`
     #[serde(default)]
@@ -570,6 +572,8 @@ impl TurinConfig {
 
         let _ = crate::tools::policy::resolve_root_tool_selection(&self.tool_selection)
             .context("invalid top-level tool selection")?;
+        crate::tools::builtins::validate_tool_settings(&self.tool_settings)
+            .context("invalid top-level tool settings")?;
         for (agent_id, _) in
             std::iter::once((&self.agent.id, &self.agent)).chain(self.agents.iter())
         {

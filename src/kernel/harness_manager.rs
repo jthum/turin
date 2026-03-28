@@ -143,6 +143,7 @@ mod tests {
 
         let config = TurinConfig {
             tool_selection: Default::default(),
+            tool_settings: Default::default(),
             agent: AgentConfig {
                 tool_selection: Default::default(),
                 id: "default".to_string(),
