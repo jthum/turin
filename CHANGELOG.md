@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `remember` and `recall` as first-class model-visible tool calls backed by Turin’s existing durable agent memory store.
   - Added configurable browser-like `web_fetch` request headers under `[tools.web_fetch]`, including an overridable `user_agent`.
   - Added configurable `web_search` providers under `[tools.web_search]`, with support for `duckduckgo_html`, `tavily`, `brave`, and `searxng`.
+  - Extended `[tools.<name>]` behavior settings so agents and channels can override inherited tool behavior, not just the native tool surface.
 - **Configurable Native Tool Surface**
   - Added native tool delegation at the runtime, agent, and channel layers via `[tools].allow` and `[tools].exclude`.
   - Added downward-only tool delegation, so `turin.toml` defines the maximum native tool surface and agents/channels can only further subset it.

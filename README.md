@@ -147,6 +147,7 @@ Tool behavior notes:
 - `[tools.web_fetch]` controls browser-like fetch headers such as `user_agent`
 - `[tools.web_search].providers` controls ordered fallback across `duckduckgo_html`, `tavily`, `brave`, and `searxng`
 - API-backed search providers are configured with environment-variable references such as `api_key_env = "TAVILY_API_KEY"`
+- the same `[tools.<name>]` tables can also be used under `[agent.tools]`, `[agents.<id>.tools]`, and channel `settings.tools` to override inherited behavior
 
 ### 4. Manual `turin.toml` path
 
@@ -190,6 +191,9 @@ provider = "anthropic"
 # [agent.tools]
 # allow = ["group:web", "read_file"] # optional per-agent subset from the inherited parent set
 # exclude = ["write_file"]
+#
+# [agent.tools.web_fetch]
+# user_agent = "Mozilla/5.0 ..."
 
 [kernel]
 workspace_root = "."

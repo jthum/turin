@@ -39,6 +39,9 @@ mode = "auto"                        # auto | stateful | stateless
 # [agent.tools]
 # allow = ["group:web", "read_file"] # optional per-agent subset from the inherited parent set
 # exclude = ["write_file"]           # optional per-agent exclusions
+#
+# [agent.tools.web_fetch]
+# user_agent = "Mozilla/5.0 ..."
 
 # Optional extended thinking (provider/model dependent)
 # [agent.thinking]
@@ -58,6 +61,9 @@ mode = "auto"                        # auto | stateful | stateless
 # [agents.reviewer.tools]
 # allow = ["group:fs", "group:web"]
 # exclude = ["shell_exec"]
+#
+# [agents.reviewer.tools.web_search]
+# providers = ["duckduckgo_html"]
 
 [kernel]
 workspace_root = "."

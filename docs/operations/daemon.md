@@ -286,6 +286,10 @@ Channel tool selection is downward-only: channel `[tools].allow` and
 `[tools].exclude` can only subset the native tool surface already granted by
 `turin.toml` and the bound `agents/<id>/agent.toml`.
 
+Channel tool behavior can also override inherited defaults through nested
+`[tools.<name>]` tables in `channel.toml`, for example `[tools.web_fetch]` or
+`[tools.web_search]`.
+
 Supported native tool groups are:
 
 - `group:all`

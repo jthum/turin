@@ -32,11 +32,20 @@ impl ExecutionHost {
 
         self.append_task_user_message(session, prompt);
 
-        let allowed_native_tools = Arc::new(crate::tools::policy::resolve_effective_native_tools(
+        let effective_tools = crate::tools::policy::resolve_effective_tools_config(
             &self.config,
             session.identity.agent_id(),
-            task.tool_selection.as_ref(),
-        )?);
+            task.tools.as_ref(),
+        )?;
+        let allowed_native_tools = Arc::new(
+            effective_tools
+                .selection
+                .allow
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
+        );
 
         let tool_ctx = ToolContext {
             workspace_root: std::path::PathBuf::from(&self.config.kernel.workspace_root),
@@ -45,7 +54,7 @@ impl ExecutionHost {
             store_manager: Some(self.store_manager.clone()),
             embedding_provider: self.embedding_provider.clone(),
             allowed_native_tools: Arc::clone(&allowed_native_tools),
-            tools: Arc::new(self.config.tools.clone()),
+            tools: Arc::new(effective_tools),
         };
 
         self.persist_task_user_message(session, prompt).await;

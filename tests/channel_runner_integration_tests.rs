@@ -130,7 +130,7 @@ base_url = "{mock_response}"
                 access_state_path: self.workspace_root.join(".turin/channel-access.json"),
                 idle_ttl: Some(Duration::from_secs(600)),
                 access_policy: Default::default(),
-                tool_selection: Default::default(),
+                tools: Default::default(),
             },
         )
     }

@@ -55,7 +55,7 @@ async fn create_disable_and_delete_agent_updates_filesystem_state() -> Result<()
             harness: None,
             idle_grace_secs: None,
             enabled: true,
-            tool_selection: Default::default(),
+            tools: Default::default(),
         })
         .await?;
 
@@ -230,7 +230,7 @@ async fn harness_reload_and_validate_are_targeted() -> Result<()> {
             harness: Some("shared".to_string()),
             idle_grace_secs: None,
             enabled: true,
-            tool_selection: Default::default(),
+            tools: Default::default(),
         })
         .await?;
     assert_eq!(agent.harness.as_deref(), Some("shared"));
@@ -585,7 +585,7 @@ async fn agent_can_bind_shared_harness_and_switch_back_to_local() -> Result<()> 
             harness: None,
             idle_grace_secs: None,
             enabled: true,
-            tool_selection: Default::default(),
+            tools: Default::default(),
         })
         .await?;
 
@@ -679,7 +679,7 @@ async fn bind_shared_harness_rejects_non_scaffold_local_harness() -> Result<()> 
             harness: None,
             idle_grace_secs: None,
             enabled: true,
-            tool_selection: Default::default(),
+            tools: Default::default(),
         })
         .await?;
 
@@ -721,7 +721,7 @@ async fn agent_runtime_status_reflects_live_runtime_state() -> Result<()> {
             harness: None,
             idle_grace_secs: None,
             enabled: false,
-            tool_selection: Default::default(),
+            tools: Default::default(),
         })
         .await?;
     assert!(!disabled.enabled);

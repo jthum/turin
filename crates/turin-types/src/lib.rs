@@ -39,6 +39,12 @@ pub struct ToolsConfig {
     pub web_search: WebSearchToolSettings,
 }
 
+impl ToolsConfig {
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
 pub struct WebFetchToolSettings {
     #[serde(default)]

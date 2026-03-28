@@ -1,7 +1,10 @@
 use std::collections::BTreeSet;
 
 use anyhow::{Result, anyhow, bail};
-use turin_types::ToolSelectionConfig;
+use turin_types::{
+    BraveSearchToolSettings, SearxngSearchToolSettings, TavilySearchToolSettings,
+    ToolSelectionConfig, ToolsConfig, WebFetchToolSettings, WebSearchToolSettings,
+};
 
 use crate::kernel::config::{AgentConfig, TurinConfig};
 use crate::tools::builtins::{
@@ -104,14 +107,130 @@ pub fn resolve_effective_native_tools(
 ) -> Result<BTreeSet<String>> {
     let root = resolve_root_tool_selection(&config.tools.selection)?;
     let agent = agent_config(config, agent_id)?;
-    let agent_tools =
-        resolve_child_tool_selection(&root, &agent.tools, &format!("agent '{agent_id}'"))?;
+    let agent_tools = resolve_child_tool_selection(
+        &root,
+        &agent.tools.selection,
+        &format!("agent '{agent_id}'"),
+    )?;
     match channel_override {
         Some(selection) if !selection.is_empty() => {
             resolve_child_tool_selection(&agent_tools, selection, "channel/tool override")
         }
         _ => Ok(agent_tools),
     }
+}
+
+fn merge_web_fetch_tools(
+    parent: &WebFetchToolSettings,
+    child: &WebFetchToolSettings,
+) -> WebFetchToolSettings {
+    WebFetchToolSettings {
+        user_agent: child
+            .user_agent
+            .clone()
+            .or_else(|| parent.user_agent.clone()),
+        accept: child.accept.clone().or_else(|| parent.accept.clone()),
+        accept_language: child
+            .accept_language
+            .clone()
+            .or_else(|| parent.accept_language.clone()),
+        accept_encoding: child
+            .accept_encoding
+            .clone()
+            .or_else(|| parent.accept_encoding.clone()),
+    }
+}
+
+fn merge_brave_search_tools(
+    parent: &BraveSearchToolSettings,
+    child: &BraveSearchToolSettings,
+) -> BraveSearchToolSettings {
+    BraveSearchToolSettings {
+        api_key_env: child
+            .api_key_env
+            .clone()
+            .or_else(|| parent.api_key_env.clone()),
+        base_url: child.base_url.clone().or_else(|| parent.base_url.clone()),
+    }
+}
+
+fn merge_tavily_search_tools(
+    parent: &TavilySearchToolSettings,
+    child: &TavilySearchToolSettings,
+) -> TavilySearchToolSettings {
+    TavilySearchToolSettings {
+        api_key_env: child
+            .api_key_env
+            .clone()
+            .or_else(|| parent.api_key_env.clone()),
+        base_url: child.base_url.clone().or_else(|| parent.base_url.clone()),
+    }
+}
+
+fn merge_searxng_search_tools(
+    parent: &SearxngSearchToolSettings,
+    child: &SearxngSearchToolSettings,
+) -> SearxngSearchToolSettings {
+    SearxngSearchToolSettings {
+        base_url: child.base_url.clone().or_else(|| parent.base_url.clone()),
+    }
+}
+
+fn merge_web_search_tools(
+    parent: &WebSearchToolSettings,
+    child: &WebSearchToolSettings,
+) -> WebSearchToolSettings {
+    WebSearchToolSettings {
+        providers: child.providers.clone().or_else(|| parent.providers.clone()),
+        user_agent: child
+            .user_agent
+            .clone()
+            .or_else(|| parent.user_agent.clone()),
+        brave: merge_brave_search_tools(&parent.brave, &child.brave),
+        tavily: merge_tavily_search_tools(&parent.tavily, &child.tavily),
+        searxng: merge_searxng_search_tools(&parent.searxng, &child.searxng),
+    }
+}
+
+pub fn merge_tools_config(parent: &ToolsConfig, child: &ToolsConfig) -> ToolsConfig {
+    ToolsConfig {
+        selection: child.selection.clone(),
+        web_fetch: merge_web_fetch_tools(&parent.web_fetch, &child.web_fetch),
+        web_search: merge_web_search_tools(&parent.web_search, &child.web_search),
+    }
+}
+
+pub fn resolve_effective_tools_config(
+    config: &TurinConfig,
+    agent_id: &str,
+    channel_override: Option<&ToolsConfig>,
+) -> Result<ToolsConfig> {
+    let root = resolve_root_tool_selection(&config.tools.selection)?;
+    let agent = agent_config(config, agent_id)?;
+    let agent_tools = resolve_child_tool_selection(
+        &root,
+        &agent.tools.selection,
+        &format!("agent '{agent_id}'"),
+    )?;
+    let resolved = match channel_override {
+        Some(selection) if !selection.selection.is_empty() => resolve_child_tool_selection(
+            &agent_tools,
+            &selection.selection,
+            "channel/tool override",
+        )?,
+        _ => agent_tools,
+    };
+
+    let mut effective = merge_tools_config(&config.tools, &agent.tools);
+    if let Some(channel_override) = channel_override {
+        effective = merge_tools_config(&effective, channel_override);
+    }
+    effective.selection = ToolSelectionConfig {
+        allow: Some(resolved.iter().cloned().collect()),
+        exclude: Vec::new(),
+    };
+    crate::tools::builtins::validate_tools_config(&effective)?;
+    Ok(effective)
 }
 
 #[cfg(test)]
@@ -130,7 +249,7 @@ mod tests {
             },
         );
         config.tools.selection = root;
-        config.agent.tools = agent;
+        config.agent.tools.selection = agent;
         config
     }
 
@@ -176,5 +295,58 @@ mod tests {
         )
         .unwrap();
         assert_eq!(resolved, BTreeSet::from(["web_fetch".to_string()]));
+    }
+
+    #[test]
+    fn effective_tools_merge_root_agent_and_channel_behavior() {
+        let mut config = config_with_tools(
+            ToolSelectionConfig::default(),
+            ToolSelectionConfig::default(),
+        );
+        config.tools.web_fetch.user_agent = Some("root-agent".into());
+        config.tools.web_search.brave.api_key_env = Some("BRAVE_KEY".into());
+        config.agent.tools.web_fetch.user_agent = Some("agent-agent".into());
+        config.agent.tools.web_search.providers = Some(vec!["brave".into()]);
+
+        let mut channel = ToolsConfig::default();
+        channel.web_fetch.accept_language = Some("fr-FR,fr;q=0.9".into());
+
+        let resolved = resolve_effective_tools_config(&config, "default", Some(&channel)).unwrap();
+        assert_eq!(
+            resolved.web_fetch.user_agent.as_deref(),
+            Some("agent-agent")
+        );
+        assert_eq!(
+            resolved.web_fetch.accept_language.as_deref(),
+            Some("fr-FR,fr;q=0.9")
+        );
+        assert_eq!(
+            resolved.web_search.brave.api_key_env.as_deref(),
+            Some("BRAVE_KEY")
+        );
+        assert_eq!(
+            resolved.web_search.providers,
+            Some(vec!["brave".to_string()])
+        );
+    }
+
+    #[test]
+    fn effective_tools_validation_uses_merged_provider_settings() {
+        let mut config = config_with_tools(
+            ToolSelectionConfig::default(),
+            ToolSelectionConfig::default(),
+        );
+        config.tools.web_search.tavily.api_key_env = Some("TAVILY_KEY".into());
+        config.agent.tools.web_search.providers = Some(vec!["tavily".into()]);
+
+        let resolved = resolve_effective_tools_config(&config, "default", None).unwrap();
+        assert_eq!(
+            resolved.web_search.tavily.api_key_env.as_deref(),
+            Some("TAVILY_KEY")
+        );
+        assert_eq!(
+            resolved.web_search.providers,
+            Some(vec!["tavily".to_string()])
+        );
     }
 }

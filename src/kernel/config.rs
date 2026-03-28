@@ -78,7 +78,7 @@ pub struct AgentConfig {
     #[serde(default)]
     pub idle_grace_secs: Option<u64>,
     #[serde(default)]
-    pub tools: ToolSelectionConfig,
+    pub tools: ToolsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -568,15 +568,13 @@ impl TurinConfig {
             }
         }
 
-        let _ = crate::tools::policy::resolve_root_tool_selection(&self.tools.selection)
-            .context("invalid [tools].allow/[tools].exclude selection")?;
-        crate::tools::builtins::validate_tools_config(&self.tools)
-            .context("invalid [tools] configuration")?;
         for (agent_id, _) in
             std::iter::once((&self.agent.id, &self.agent)).chain(self.agents.iter())
         {
-            let _ = crate::tools::policy::resolve_effective_native_tools(self, agent_id, None)
-                .with_context(|| format!("invalid tool selection for agent '{}'", agent_id))?;
+            let _ = crate::tools::policy::resolve_effective_tools_config(self, agent_id, None)
+                .with_context(|| {
+                    format!("invalid [tools] configuration for agent '{}'", agent_id)
+                })?;
         }
 
         Ok(())
@@ -663,7 +661,7 @@ impl Default for AgentConfig {
             mode: AgentMode::Auto,
             harness: None,
             idle_grace_secs: None,
-            tools: ToolSelectionConfig::default(),
+            tools: ToolsConfig::default(),
         }
     }
 }
