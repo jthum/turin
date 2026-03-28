@@ -12,6 +12,8 @@ members = [
     "crates/turin-channel-fs",
     "crates/turin-channel-discord",
     "crates/turin-channel-telegram",
+    "crates/turin-channel-discord-runner",
+    "crates/turin-channel-telegram-runner",
     "crates/turin-code-index",
     "crates/turin-map",
     "crates/turin-tui",
@@ -23,7 +25,7 @@ resolver = "2"
 name = "turin"
 version = "0.26.0"
 edition = "2024"
-description = "A single-binary, event-driven LLM execution runtime with composable Lua harness scripts"
+description = "An event-driven LLM execution runtime with composable Lua harness scripts and auto-managed channel sidecars"
 
 [[bin]]
 name = "turin"
@@ -60,8 +62,6 @@ turin-daemon-client = { path = "crates/turin-daemon-client" }
 turin-channel-core = { path = "crates/turin-channel-core" }
 turin-channel-runner = { path = "crates/turin-channel-runner" }
 turin-channel-fs = { path = "crates/turin-channel-fs" }
-turin-channel-discord = { path = "crates/turin-channel-discord" }
-turin-channel-telegram = { path = "crates/turin-channel-telegram" }
 turin-code-index = { path = "crates/turin-code-index" }
 
 # Inference SDK family (unified provider layer)

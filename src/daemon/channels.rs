@@ -1,12 +1,15 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
+use tokio::process::Command;
 use tokio::sync::{Mutex, broadcast};
 
+use crate::daemon::channel_runners;
 use crate::daemon::protocol::EventEnvelope;
 use crate::daemon::registry::DiscoveredChannel;
 
@@ -165,7 +168,7 @@ impl ChannelRuntimeManager {
                     snapshot.directory = channel.directory.display().to_string();
                     snapshot.state = "unsupported".to_string();
                     snapshot.last_error = Some(format!(
-                        "No daemon-owned runner available for channel kind '{}' (supported: fs, discord, telegram)",
+                        "No built-in or external runner is available for channel kind '{}' (supported: fs, discord, telegram)",
                         channel.kind,
                     ));
                     snapshot.last_error_code = Some("channel_kind_unsupported".to_string());
@@ -365,50 +368,55 @@ impl ChannelRuntimeManager {
         );
     }
 
-    async fn start_discord_channel(&self, workspace_root: PathBuf, channel: DesiredChannel) {
+    async fn start_external_channel(&self, workspace_root: PathBuf, channel: DesiredChannel) {
         let endpoint = self.endpoint.clone();
         let event_tx = self.event_tx.clone();
         let inner = Arc::clone(&self.inner);
 
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
         let channel_id = channel.id.clone();
         let signature = channel.signature();
 
         let join = tokio::spawn(async move {
             let run_result = async {
-                let daemon = turin_daemon_client::DaemonClient::new(&endpoint);
-                let binding_state = workspace_root
-                    .join(".turin/channels")
-                    .join(format!("{}-bindings.json", channel.id));
-                let access_state = workspace_root
-                    .join(".turin/channels")
-                    .join(format!("{}-access.json", channel.id));
-                let access_policy =
-                    turin_channel_runner::ChannelAccessPolicy::from_settings(&channel.settings)?;
-                let tools = turin_channel_runner::tools_config_from_settings(&channel.settings)?;
-                let task_timeout_ms =
-                    turin_channel_runner::task_timeout_ms_from_settings(&channel.settings)?;
-                let runner = turin_channel_runner::ChannelRunner::new(
-                    daemon,
-                    turin_channel_runner::RunnerConfig {
-                        state_path: binding_state,
-                        access_state_path: access_state,
-                        idle_ttl: channel.idle_ttl_secs.map(Duration::from_secs),
-                        access_policy,
-                        tools,
-                    },
-                );
+                let runner_command =
+                    channel_runners::resolve_external_runner_command(&channel.kind)?;
+                let settings_json = serde_json::to_string(&channel.settings)
+                    .context("Failed to encode channel settings JSON")?;
+                let binding_state = binding_state_path(&workspace_root, &channel.id);
+                let access_state = access_state_path(&workspace_root, &channel.id);
 
-                let mut driver = turin_channel_discord::DiscordChannelDriver::from_settings(
-                    &channel.id,
-                    &channel.settings,
-                    shutdown_rx,
-                )
-                .await
-                .with_context(|| {
+                let mut child = Command::new(&runner_command.program);
+                for arg in &runner_command.args_prefix {
+                    child.arg(arg);
+                }
+                child
+                    .arg("run")
+                    .arg("--channel-id")
+                    .arg(&channel.id)
+                    .arg("--agent-id")
+                    .arg(&channel.agent_id)
+                    .arg("--daemon-endpoint")
+                    .arg(&endpoint)
+                    .arg("--bindings-path")
+                    .arg(&binding_state)
+                    .arg("--access-state-path")
+                    .arg(&access_state)
+                    .arg("--settings-json")
+                    .arg(&settings_json)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .kill_on_drop(true);
+                if let Some(idle_ttl_secs) = channel.idle_ttl_secs {
+                    child.arg("--idle-ttl-secs").arg(idle_ttl_secs.to_string());
+                }
+
+                let mut child = child.spawn().with_context(|| {
                     format!(
-                        "Failed to initialize discord channel driver '{}'",
-                        channel.id
+                        "Failed to spawn external {} runner '{}'",
+                        channel.kind,
+                        runner_command.display
                     )
                 })?;
 
@@ -424,115 +432,34 @@ impl ChannelRuntimeManager {
                     }
                 }
 
-                runner
-                    .run_driver(&channel.agent_id, &mut driver, task_timeout_ms)
-                    .await
-                    .with_context(|| format!("Channel '{}' runner failed", channel.id))
-            }
-            .await;
-
-            let mut guard = inner.lock().await;
-            if let Some(status) = guard.by_id.get_mut(&channel.id) {
-                match run_result {
-                    Ok(()) => {
-                        status.state = "stopped".to_string();
-                        status.last_error = None;
-                        status.last_error_code = None;
-                        status.last_transition_unix_ms = now_unix_ms();
-                        status.last_stopped_unix_ms = Some(status.last_transition_unix_ms);
-                        emit_runtime_update(&event_tx, status);
+                tokio::select! {
+                    status = child.wait() => {
+                        let status = status.with_context(|| {
+                            format!(
+                                "Failed waiting for external {} runner for channel '{}'",
+                                channel.kind,
+                                channel.id
+                            )
+                        })?;
+                        if status.success() {
+                            Ok(())
+                        } else {
+                            anyhow::bail!(
+                                "External {} runner for channel '{}' exited with status {}",
+                                channel.kind,
+                                channel.id,
+                                status
+                            );
+                        }
                     }
-                    Err(err) => {
-                        status.state = "failed".to_string();
-                        let error_text = format!("{:#}", err);
-                        status.last_error = Some(error_text.clone());
-                        status.last_error_code =
-                            Some(classify_runtime_error_code(&channel.kind, &error_text));
-                        status.failure_count = status.failure_count.saturating_add(1);
-                        status.last_transition_unix_ms = now_unix_ms();
-                        status.last_stopped_unix_ms = Some(status.last_transition_unix_ms);
-                        emit_runtime_update(&event_tx, status);
+                    changed = shutdown_rx.changed() => {
+                        if changed.is_ok() && *shutdown_rx.borrow() {
+                            let _ = child.start_kill();
+                            let _ = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
+                        }
+                        Ok(())
                     }
                 }
-            }
-        });
-
-        let mut guard = self.inner.lock().await;
-        guard.handles.insert(
-            channel_id,
-            RuntimeHandle {
-                signature,
-                shutdown_tx,
-                join,
-            },
-        );
-    }
-
-    async fn start_telegram_channel(&self, workspace_root: PathBuf, channel: DesiredChannel) {
-        let endpoint = self.endpoint.clone();
-        let event_tx = self.event_tx.clone();
-        let inner = Arc::clone(&self.inner);
-
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let channel_id = channel.id.clone();
-        let signature = channel.signature();
-
-        let join = tokio::spawn(async move {
-            let run_result = async {
-                let daemon = turin_daemon_client::DaemonClient::new(&endpoint);
-                let binding_state = workspace_root
-                    .join(".turin/channels")
-                    .join(format!("{}-bindings.json", channel.id));
-                let access_state = workspace_root
-                    .join(".turin/channels")
-                    .join(format!("{}-access.json", channel.id));
-                let access_policy =
-                    turin_channel_runner::ChannelAccessPolicy::from_settings(&channel.settings)?;
-                let tools = turin_channel_runner::tools_config_from_settings(&channel.settings)?;
-                let task_timeout_ms =
-                    turin_channel_runner::task_timeout_ms_from_settings(&channel.settings)?;
-                let allow_unconfigured_chats = access_policy.requires_unconfigured_inbound();
-                let runner = turin_channel_runner::ChannelRunner::new(
-                    daemon,
-                    turin_channel_runner::RunnerConfig {
-                        state_path: binding_state,
-                        access_state_path: access_state,
-                        idle_ttl: channel.idle_ttl_secs.map(Duration::from_secs),
-                        access_policy,
-                        tools,
-                    },
-                );
-
-                let mut driver = turin_channel_telegram::TelegramChannelDriver::from_settings(
-                    &channel.id,
-                    &channel.settings,
-                    shutdown_rx,
-                    allow_unconfigured_chats,
-                )
-                .await
-                .with_context(|| {
-                    format!(
-                        "Failed to initialize telegram channel driver '{}'",
-                        channel.id
-                    )
-                })?;
-
-                {
-                    let mut guard = inner.lock().await;
-                    if let Some(status) = guard.by_id.get_mut(&channel.id) {
-                        status.state = "running".to_string();
-                        status.last_error = None;
-                        status.last_error_code = None;
-                        status.last_transition_unix_ms = now_unix_ms();
-                        status.last_started_unix_ms = Some(status.last_transition_unix_ms);
-                        emit_runtime_update(&event_tx, status);
-                    }
-                }
-
-                runner
-                    .run_driver(&channel.agent_id, &mut driver, task_timeout_ms)
-                    .await
-                    .with_context(|| format!("Channel '{}' runner failed", channel.id))
             }
             .await;
 
@@ -576,8 +503,7 @@ impl ChannelRuntimeManager {
     async fn start_channel(&self, workspace_root: PathBuf, channel: DesiredChannel) {
         match channel.kind.as_str() {
             "fs" => self.start_fs_channel(workspace_root, channel).await,
-            "discord" => self.start_discord_channel(workspace_root, channel).await,
-            "telegram" => self.start_telegram_channel(workspace_root, channel).await,
+            "discord" | "telegram" => self.start_external_channel(workspace_root, channel).await,
             _ => {}
         }
     }
@@ -628,7 +554,19 @@ impl ChannelRuntimeManager {
 }
 
 fn is_supported_kind(kind: &str) -> bool {
-    matches!(kind, "fs" | "discord" | "telegram")
+    kind == "fs" || channel_runners::uses_external_runner(kind)
+}
+
+fn binding_state_path(workspace_root: &std::path::Path, channel_id: &str) -> PathBuf {
+    workspace_root
+        .join(".turin/channels")
+        .join(format!("{channel_id}-bindings.json"))
+}
+
+fn access_state_path(workspace_root: &std::path::Path, channel_id: &str) -> PathBuf {
+    workspace_root
+        .join(".turin/channels")
+        .join(format!("{channel_id}-access.json"))
 }
 
 fn emit_runtime_update(
@@ -690,5 +628,70 @@ fn extract_bracketed_error_code(error: &str) -> Option<String> {
         None
     } else {
         Some(code.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn external_channel_runner_process_is_supervised() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        fs::create_dir_all(workspace_root.join(".turin/channels")).unwrap();
+
+        let runner = temp.path().join("fake-telegram-runner.sh");
+        fs::write(
+            &runner,
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  sleep 30\n  exit 0\nfi\nexit 0\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&runner).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&runner, perms).unwrap();
+
+        let event_tx = broadcast::channel(8).0;
+        let manager = ChannelRuntimeManager::new(temp.path().join("daemon.sock"), event_tx);
+        let previous = std::env::var_os("TURIN_CHANNEL_TELEGRAM_RUNNER_BIN");
+        unsafe {
+            std::env::set_var("TURIN_CHANNEL_TELEGRAM_RUNNER_BIN", &runner);
+        }
+
+        manager
+            .sync(
+                workspace_root.clone(),
+                vec![DiscoveredChannel {
+                    id: "telegram-ops".to_string(),
+                    directory: workspace_root.join("channels/telegram-ops"),
+                    enabled: true,
+                    kind: "telegram".to_string(),
+                    agent_id: "default".to_string(),
+                    idle_ttl_secs: Some(60),
+                    extra: toml::Table::new(),
+                }],
+            )
+            .await
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let runtime = manager.get("telegram-ops").await.expect("runtime exists");
+        assert_eq!(runtime.state, "running");
+
+        manager.shutdown().await;
+        if let Some(value) = previous {
+            unsafe {
+                std::env::set_var("TURIN_CHANNEL_TELEGRAM_RUNNER_BIN", value);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("TURIN_CHANNEL_TELEGRAM_RUNNER_BIN");
+            }
+        }
     }
 }
