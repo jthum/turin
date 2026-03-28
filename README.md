@@ -59,6 +59,8 @@ Simple things should be simple. Powerful things should be possible.
   - additional opt-in native tool: `apply_patch`
 - **Native tool delegation**:
   - optional `tools` / `tools_exclude` allowlists at the runtime, agent, and channel layers with built-in shorthands such as `group:fs` and `group:web`
+- **Tool behavior settings**:
+  - optional global `tool_settings.*` config for request headers and `web_search` provider order without colliding with the native-tool allowlist
 - **Multi-provider support** through normalized `InferenceProvider` clients (`anthropic`, `openai`, `mock`, compatible proxies)
 - **Provider-agnostic embeddings** with OpenAI-compatible local endpoint support
 - **Persistent state** for sessions, messages, events, tool executions, KV, and memory records
@@ -140,6 +142,12 @@ Tool delegation notes:
 - current groups are `group:all`, `group:fs`, `group:shell`, `group:web`, `group:memory`, `group:planning`, and `group:integration`
 - `apply_patch` is available through explicit opt-in, for example `tools = ["group:fs"]`
 
+Tool behavior notes:
+
+- `tool_settings.web_fetch` controls browser-like fetch headers such as `user_agent`
+- `tool_settings.web_search.providers` controls ordered fallback across `duckduckgo_html`, `tavily`, `brave`, and `searxng`
+- API-backed search providers are configured with environment-variable references such as `api_key_env = "TAVILY_API_KEY"`
+
 ### 4. Manual `turin.toml` path
 
 If you prefer hand-edited config, start from the example:
@@ -155,6 +163,23 @@ Minimal example:
 # Defaults to Turin's standard built-in surface.
 # tools = ["group:web", "read_file"]
 # tools_exclude = ["shell_exec"]
+
+# Optional global tool behavior settings.
+# [tool_settings.web_fetch]
+# user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+#
+# [tool_settings.web_search]
+# providers = ["tavily", "duckduckgo_html"]
+# user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+#
+# [tool_settings.web_search.tavily]
+# api_key_env = "TAVILY_API_KEY"
+#
+# [tool_settings.web_search.brave]
+# api_key_env = "BRAVE_SEARCH_API_KEY"
+#
+# [tool_settings.web_search.searxng]
+# base_url = "http://localhost:8080"
 
 [agent]
 system_prompt = "You are a helpful coding assistant."

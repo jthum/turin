@@ -6,6 +6,26 @@
 # tools = ["group:web", "read_file"]
 # tools_exclude = ["shell_exec"]
 
+# Optional global tool behavior settings.
+# [tool_settings.web_fetch]
+# user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+# accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+# accept_language = "en-US,en;q=0.5"
+# accept_encoding = "gzip, deflate, br"
+#
+# [tool_settings.web_search]
+# providers = ["tavily", "duckduckgo_html"]
+# user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+#
+# [tool_settings.web_search.tavily]
+# api_key_env = "TAVILY_API_KEY"
+#
+# [tool_settings.web_search.brave]
+# api_key_env = "BRAVE_SEARCH_API_KEY"
+#
+# [tool_settings.web_search.searxng]
+# base_url = "http://localhost:8080"
+
 [agent]
 id = "default"
 system_prompt = "You are a helpful coding assistant."
