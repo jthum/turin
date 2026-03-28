@@ -1,11 +1,11 @@
 # Turin
 
-**A programmable, single-binary runtime for AI agents.**
+**A programmable runtime for AI agents.**
 
 Turin is a Rust runtime that separates inference from execution policy.
 The model proposes actions. The harness (Luau scripts) decides what is allowed. The kernel executes and persists everything.
 
-Turin is intentionally unopinionated about workflow and personality. It provides execution physics, persistence, tools, events, and a programmable harness surface so you can build radically different agents with the same binary.
+Turin is intentionally unopinionated about workflow and personality. It provides execution physics, persistence, tools, events, and a programmable harness surface so you can build radically different agents with the same runtime.
 
 ## What Turin Is (Current Baseline)
 
@@ -44,7 +44,8 @@ Simple things should be simple. Powerful things should be possible.
 
 ## Core Features
 
-- **Self-contained runtime binary** (`turin`) with no service dependencies beyond your configured provider and local SQLite/libSQL database
+- **Lean core runtime** (`turin`) with no required services beyond your configured provider and local SQLite/libSQL database
+- **Auto-managed channel sidecars** for network channels such as Telegram and Discord, so the daemon can support more adapters without bloating the core runtime binary
 - **Optional indexing companion** (`turin-map`) for code-search indexing without bloating the runtime execution path
 - **Harness scripting in Luau** for governance, workflows, context engineering, memory policies, and orchestration
 - **Canonical stdlib API**:
@@ -96,6 +97,9 @@ cargo build --release
 
 # Optional: build the code-indexing companion if you want runtime code search setup
 cargo build --release -p turin-map
+
+# Optional: build channel sidecars if you want daemon-managed Telegram or Discord
+cargo build --release -p turin-channel-telegram-runner -p turin-channel-discord-runner
 ```
 
 ### 2. Try Turin with no API key

@@ -307,14 +307,14 @@ turin daemon channel update telegram-ops \
   --setting tools='{"allow":["group:web","read_file"],"exclude":["web_search"]}'
 ```
 
-`kind = "fs"` is currently available as the first built-in adapter:
+`kind = "fs"` is currently available as a built-in adapter:
 
 - inbound messages are read from `<channel-dir>/inbox/*.json`
 - outbound messages are written to `<channel-dir>/outbox/*.json`
 - processed inbound files are moved to `<channel-dir>/processed/`
 - invalid inbound files are moved to `<channel-dir>/failed/`
 
-`kind = "discord"` is also available as a daemon-owned adapter:
+`kind = "discord"` is also available through a daemon-managed sidecar runner:
 
 - uses Discord Gateway (WebSocket) by default for low-latency inbound events
 - posts outbound responses back to Discord messages API
@@ -333,10 +333,39 @@ turin daemon channel update telegram-ops \
   - `gateway_intents`
   - `base_url`
 
+`kind = "telegram"` is also available through a daemon-managed sidecar runner:
+
+- uses Telegram Bot API long polling (`getUpdates`) for inbound events
+- accepts inbound text messages and posts outbound replies with `sendMessage`
+- routes forum-topic messages to stable Turin slots using Telegram `message_thread_id` when present
+- requires:
+  - `token_env` (environment variable containing a Telegram bot token)
+  - `chat_id` (Telegram numeric chat id to listen on and reply to)
+- optional settings:
+  - `poll_timeout_secs` (default `30`, maximum `50`)
+  - `poll_interval_ms` (default `250`)
+  - `max_updates_per_poll`
+  - `stream_mode` (`off`, `typing`, `draft`, `block`)
+  - `stream_thinking` (`true` / `false`)
+  - `persist_thinking` (`true` / `false`)
+  - `workspace_id`
+  - `start_from_latest`
+  - `ignore_bot_messages`
+  - `base_url`
+
 When a channel is `enabled`, the daemon owns the runtime lifecycle:
 - `channel.status <id>` reports live runtime status (`starting`, `running`, `stopped`, `failed`, `unsupported`)
 - `daemon.status` includes a `channel_runtimes` snapshot for control-plane visibility
 - channel runtime state updates automatically after channel/agent/harness/runtime changes and watcher rescans
+
+For sidecar-backed kinds (`discord`, `telegram`), the daemon resolves and starts the runner automatically. Resolution order is:
+
+1. explicit env override
+   - `TURIN_CHANNEL_DISCORD_RUNNER_BIN`
+   - `TURIN_CHANNEL_TELEGRAM_RUNNER_BIN`
+2. a sibling binary next to the running `turin` executable
+3. the binary name on `PATH`
+4. during source-checkout development, `cargo run -p <runner> -- ...` as a fallback
 
 Channel runtime events are also streamed via `runtime.events.subscribe`:
 - `channel.runtime.updated` for state transitions and error updates
@@ -359,25 +388,6 @@ Discord runtime behavior notes:
 - Duplicate inbound message IDs are suppressed across reconnect/replay windows.
 - Outbound responses support rich payloads (`content`, `embeds`, `components`, and local file attachments) with Discord-safe content chunking.
 
-`kind = "telegram"` is also available as a daemon-owned adapter:
-
-- uses Telegram Bot API long polling (`getUpdates`) for inbound events
-- accepts inbound text messages and posts outbound replies with `sendMessage`
-- routes forum-topic messages to stable Turin slots using Telegram `message_thread_id` when present
-- requires:
-  - `token_env` (environment variable containing a Telegram bot token)
-  - `chat_id` (Telegram numeric chat id to listen on and reply to)
-- optional settings:
-  - `poll_timeout_secs` (default `30`, maximum `50`)
-  - `poll_interval_ms` (default `250`)
-  - `max_updates_per_poll`
-  - `stream_mode` (`off`, `typing`, `draft`, `block`)
-  - `stream_include_thinking` (`true` / `false`)
-  - `workspace_id`
-  - `start_from_latest`
-  - `ignore_bot_messages`
-  - `base_url`
-
 Telegram runtime behavior notes:
 
 - The first pass is long-polling only; Turin does not auto-manage Telegram webhooks.
@@ -389,7 +399,8 @@ Telegram runtime behavior notes:
 - `stream_mode = typing` sends Telegram typing actions while a task is running.
 - `stream_mode = draft` streams partial previews and then sends the final formatted reply.
 - `stream_mode = block` streams less frequently than `draft`, using chunkier preview updates.
-- `stream_include_thinking = true` lets `draft`/`block` previews include streamed model thinking when the provider emits thinking deltas.
+- `stream_thinking = true` lets `draft`/`block` previews include streamed model thinking when the provider emits thinking deltas.
+- `persist_thinking = true` includes captured thinking in the final Telegram reply as a separate preformatted block.
 
 Telegram outbound metadata keys:
 

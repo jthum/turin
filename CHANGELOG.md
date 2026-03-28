@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **External Channel Runners**
+  - Added dedicated `turin-channel-telegram-runner` and `turin-channel-discord-runner` binaries.
+  - The daemon now auto-discovers and auto-starts those sidecars for enabled Telegram and Discord channels instead of linking their runtime adapters directly into the core `turin` binary.
+  - Added external-runner supervision in the daemon, including runtime state tracking and external settings validation for sidecar-backed channels.
 - **Harness-Declared Virtual Tools**
   - Added `tool.declare(...)` so harness scripts can publish domain-specific tools to the model without expanding the native Rust tool surface.
   - Added `tool.call(...)`, `tool.sequence(...)`, and `shell.quote(...)` helpers for harness-defined tool handlers.

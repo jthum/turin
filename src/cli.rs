@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::commands::scaffold::{GovernancePreset, HarnessTemplate, InitProvider};
 
-/// Turin: A single-binary, event-driven LLM execution runtime
+/// Turin: An event-driven LLM execution runtime
 #[derive(clap::Parser, Debug)]
 #[command(name = "turin", version, about)]
 pub(crate) struct Cli {
