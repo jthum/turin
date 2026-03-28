@@ -53,10 +53,9 @@ fn test_config(workspace_root: &std::path::Path, harness_dir: &std::path::Path) 
     );
 
     TurinConfig {
-        tool_selection: Default::default(),
-        tool_settings: Default::default(),
+        tools: Default::default(),
         agent: AgentConfig {
-            tool_selection: Default::default(),
+            tools: Default::default(),
             id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),

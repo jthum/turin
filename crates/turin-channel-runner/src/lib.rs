@@ -118,9 +118,15 @@ pub fn tool_selection_from_settings(settings: &Value) -> Result<ToolSelectionCon
     let map = settings
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("Channel settings must be a JSON object"))?;
+    let Some(tools) = map.get("tools") else {
+        return Ok(ToolSelectionConfig::default());
+    };
+    let tools = tools
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("'tools' settings must be a table/object"))?;
     Ok(ToolSelectionConfig {
-        tools: parse_string_list(map.get("tools"), "tools")?,
-        tools_exclude: parse_string_vec(map.get("tools_exclude"), "tools_exclude")?,
+        allow: parse_string_list(tools.get("allow"), "tools.allow")?,
+        exclude: parse_string_vec(tools.get("exclude"), "tools.exclude")?,
     })
 }
 
@@ -1679,15 +1685,17 @@ mod tests {
     #[test]
     fn tool_selection_settings_parse_string_lists() {
         let selection = tool_selection_from_settings(&serde_json::json!({
-            "tools": ["group:web", "read_file"],
-            "tools_exclude": "web_search"
+            "tools": {
+                "allow": ["group:web", "read_file"],
+                "exclude": "web_search"
+            }
         }))
         .unwrap();
         assert_eq!(
-            selection.tools,
+            selection.allow,
             Some(vec!["group:web".to_string(), "read_file".to_string()])
         );
-        assert_eq!(selection.tools_exclude, vec!["web_search".to_string()]);
+        assert_eq!(selection.exclude, vec!["web_search".to_string()]);
     }
 
     fn test_runner(dir: &tempfile::TempDir, policy: ChannelAccessPolicy) -> ChannelRunner {

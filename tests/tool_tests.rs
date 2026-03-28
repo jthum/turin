@@ -16,7 +16,7 @@ fn make_ctx(dir: &std::path::Path) -> ToolContext {
         store_manager: None,
         embedding_provider: None,
         allowed_native_tools: std::sync::Arc::new(turin::tools::policy::full_native_tool_set()),
-        tool_settings: std::sync::Arc::new(turin_types::ToolSettingsConfig::default()),
+        tools: std::sync::Arc::new(turin_types::ToolsConfig::default()),
     }
 }
 

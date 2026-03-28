@@ -437,7 +437,7 @@ fn scan_agent_dir(
         mode: parsed.mode.unwrap_or(bootstrap.agent.mode.clone()),
         harness: Some(harness_id.clone()),
         idle_grace_secs: parsed.idle_grace_secs,
-        tool_selection: parsed.tool_selection,
+        tools: parsed.tool_selection,
     };
 
     Ok(Some(DiscoveredAgent {

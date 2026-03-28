@@ -45,14 +45,14 @@ pub fn full_native_tool_set() -> BTreeSet<String> {
 }
 
 pub fn resolve_root_tool_selection(selection: &ToolSelectionConfig) -> Result<BTreeSet<String>> {
-    let mut current = if let Some(tools) = selection.tools.as_ref() {
-        expand_tool_selectors(tools)?
+    let mut current = if let Some(allow) = selection.allow.as_ref() {
+        expand_tool_selectors(allow)?
     } else {
         default_native_tool_set()
     };
     current.retain(|name| full_native_tool_set().contains(name));
-    if !selection.tools_exclude.is_empty() {
-        let excluded = expand_tool_selectors(&selection.tools_exclude)?;
+    if !selection.exclude.is_empty() {
+        let excluded = expand_tool_selectors(&selection.exclude)?;
         current.retain(|name| !excluded.contains(name));
     }
     Ok(current)
@@ -63,8 +63,8 @@ pub fn resolve_child_tool_selection(
     selection: &ToolSelectionConfig,
     scope: &str,
 ) -> Result<BTreeSet<String>> {
-    let mut current = if let Some(tools) = selection.tools.as_ref() {
-        let requested = expand_tool_selectors(tools)?;
+    let mut current = if let Some(allow) = selection.allow.as_ref() {
+        let requested = expand_tool_selectors(allow)?;
         let disallowed = requested.difference(parent).cloned().collect::<Vec<_>>();
         if !disallowed.is_empty() {
             bail!(
@@ -78,8 +78,8 @@ pub fn resolve_child_tool_selection(
         parent.clone()
     };
 
-    if !selection.tools_exclude.is_empty() {
-        let excluded = expand_tool_selectors(&selection.tools_exclude)?;
+    if !selection.exclude.is_empty() {
+        let excluded = expand_tool_selectors(&selection.exclude)?;
         current.retain(|name| !excluded.contains(name));
     }
 
@@ -102,10 +102,10 @@ pub fn resolve_effective_native_tools(
     agent_id: &str,
     channel_override: Option<&ToolSelectionConfig>,
 ) -> Result<BTreeSet<String>> {
-    let root = resolve_root_tool_selection(&config.tool_selection)?;
+    let root = resolve_root_tool_selection(&config.tools.selection)?;
     let agent = agent_config(config, agent_id)?;
     let agent_tools =
-        resolve_child_tool_selection(&root, &agent.tool_selection, &format!("agent '{agent_id}'"))?;
+        resolve_child_tool_selection(&root, &agent.tools, &format!("agent '{agent_id}'"))?;
     match channel_override {
         Some(selection) if !selection.is_empty() => {
             resolve_child_tool_selection(&agent_tools, selection, "channel/tool override")
@@ -129,8 +129,8 @@ mod tests {
                 ..crate::kernel::config::ProviderConfig::default()
             },
         );
-        config.tool_selection = root;
-        config.agent.tool_selection = agent;
+        config.tools.selection = root;
+        config.agent.tools = agent;
         config
     }
 
@@ -145,12 +145,12 @@ mod tests {
     fn child_cannot_expand_beyond_parent() {
         let config = config_with_tools(
             ToolSelectionConfig {
-                tools: Some(vec!["group:web".into()]),
-                tools_exclude: Vec::new(),
+                allow: Some(vec!["group:web".into()]),
+                exclude: Vec::new(),
             },
             ToolSelectionConfig {
-                tools: Some(vec!["shell_exec".into()]),
-                tools_exclude: Vec::new(),
+                allow: Some(vec!["shell_exec".into()]),
+                exclude: Vec::new(),
             },
         );
         let err = resolve_effective_native_tools(&config, "default", None).unwrap_err();
@@ -161,8 +161,8 @@ mod tests {
     fn channel_override_can_subset_agent_tools() {
         let config = config_with_tools(
             ToolSelectionConfig {
-                tools: Some(vec!["group:web".into(), "read_file".into()]),
-                tools_exclude: Vec::new(),
+                allow: Some(vec!["group:web".into(), "read_file".into()]),
+                exclude: Vec::new(),
             },
             ToolSelectionConfig::default(),
         );
@@ -170,8 +170,8 @@ mod tests {
             &config,
             "default",
             Some(&ToolSelectionConfig {
-                tools: Some(vec!["web_fetch".into()]),
-                tools_exclude: Vec::new(),
+                allow: Some(vec!["web_fetch".into()]),
+                exclude: Vec::new(),
             }),
         )
         .unwrap();

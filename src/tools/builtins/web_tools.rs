@@ -11,7 +11,7 @@ use reqwest::{Client, RequestBuilder};
 use scraper::{Html, Selector};
 use serde::Deserialize;
 use serde_json::Value;
-use turin_types::{ToolSettingsConfig, WebFetchToolSettings, WebSearchToolSettings};
+use turin_types::{ToolsConfig, WebFetchToolSettings, WebSearchToolSettings};
 use url::Url;
 
 use crate::tools::{Tool, ToolContext, ToolEffect, ToolError, ToolOutput, parse_args};
@@ -146,26 +146,26 @@ fn default_search_limit() -> usize {
     5
 }
 
-pub fn validate_tool_settings(settings: &ToolSettingsConfig) -> Result<()> {
+pub fn validate_tools_config(settings: &ToolsConfig) -> Result<()> {
     validate_optional_header_value(
         settings.web_fetch.user_agent.as_deref(),
-        "tool_settings.web_fetch.user_agent",
+        "tools.web_fetch.user_agent",
     )?;
     validate_optional_header_value(
         settings.web_fetch.accept.as_deref(),
-        "tool_settings.web_fetch.accept",
+        "tools.web_fetch.accept",
     )?;
     validate_optional_header_value(
         settings.web_fetch.accept_language.as_deref(),
-        "tool_settings.web_fetch.accept_language",
+        "tools.web_fetch.accept_language",
     )?;
     validate_optional_header_value(
         settings.web_fetch.accept_encoding.as_deref(),
-        "tool_settings.web_fetch.accept_encoding",
+        "tools.web_fetch.accept_encoding",
     )?;
     validate_optional_header_value(
         settings.web_search.user_agent.as_deref(),
-        "tool_settings.web_search.user_agent",
+        "tools.web_search.user_agent",
     )?;
 
     let providers = configured_search_providers(&settings.web_search)?;
@@ -173,15 +173,15 @@ pub fn validate_tool_settings(settings: &ToolSettingsConfig) -> Result<()> {
         match provider {
             WebSearchProvider::Brave => validate_api_key_env(
                 settings.web_search.brave.api_key_env.as_deref(),
-                "tool_settings.web_search.brave.api_key_env",
+                "tools.web_search.brave.api_key_env",
             )?,
             WebSearchProvider::Tavily => validate_api_key_env(
                 settings.web_search.tavily.api_key_env.as_deref(),
-                "tool_settings.web_search.tavily.api_key_env",
+                "tools.web_search.tavily.api_key_env",
             )?,
             WebSearchProvider::Searxng => validate_http_url_setting(
                 settings.web_search.searxng.base_url.as_deref(),
-                "tool_settings.web_search.searxng.base_url",
+                "tools.web_search.searxng.base_url",
             )?,
             WebSearchProvider::DuckDuckGoHtml => {}
         }
@@ -189,11 +189,11 @@ pub fn validate_tool_settings(settings: &ToolSettingsConfig) -> Result<()> {
 
     validate_optional_http_url(
         settings.web_search.brave.base_url.as_deref(),
-        "tool_settings.web_search.brave.base_url",
+        "tools.web_search.brave.base_url",
     )?;
     validate_optional_http_url(
         settings.web_search.tavily.base_url.as_deref(),
-        "tool_settings.web_search.tavily.base_url",
+        "tools.web_search.tavily.base_url",
     )?;
     Ok(())
 }
@@ -252,7 +252,7 @@ fn configured_search_providers(settings: &WebSearchToolSettings) -> Result<Vec<W
         None => providers.push(WebSearchProvider::DuckDuckGoHtml),
     }
     if providers.is_empty() {
-        bail!("tool_settings.web_search.providers must not be empty");
+        bail!("tools.web_search.providers must not be empty");
     }
     Ok(providers)
 }
@@ -708,7 +708,7 @@ impl Tool for WebFetchTool {
         let args: WebFetchArgs = parse_args(params)?;
         let url = validate_web_url(&args.url)?;
         let client = build_http_client(args.timeout_secs)?;
-        let request = apply_fetch_headers(client.get(url.clone()), &ctx.tool_settings.web_fetch)?;
+        let request = apply_fetch_headers(client.get(url.clone()), &ctx.tools.web_fetch)?;
         let response = request
             .send()
             .await
@@ -754,7 +754,7 @@ impl Tool for WebFetchTool {
                 "content_type": content_type,
                 "title": title,
                 "bytes": body.len(),
-                "user_agent": fetch_user_agent(&ctx.tool_settings.web_fetch),
+                "user_agent": fetch_user_agent(&ctx.tools.web_fetch),
             }),
         }))
     }
@@ -804,24 +804,23 @@ impl Tool for WebSearchTool {
 
         let limit = args.limit.clamp(1, 10);
         let client = build_http_client(args.timeout_secs)?;
-        let providers = configured_search_providers(&ctx.tool_settings.web_search)
+        let providers = configured_search_providers(&ctx.tools.web_search)
             .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
         let mut errors = Vec::new();
 
         for provider in providers.iter().copied() {
             let result = match provider {
                 WebSearchProvider::Brave => {
-                    search_brave(&client, &ctx.tool_settings.web_search, query, limit).await
+                    search_brave(&client, &ctx.tools.web_search, query, limit).await
                 }
                 WebSearchProvider::Tavily => {
-                    search_tavily(&client, &ctx.tool_settings.web_search, query, limit).await
+                    search_tavily(&client, &ctx.tools.web_search, query, limit).await
                 }
                 WebSearchProvider::Searxng => {
-                    search_searxng(&client, &ctx.tool_settings.web_search, query, limit).await
+                    search_searxng(&client, &ctx.tools.web_search, query, limit).await
                 }
                 WebSearchProvider::DuckDuckGoHtml => {
-                    search_duckduckgo_html(&client, &ctx.tool_settings.web_search, query, limit)
-                        .await
+                    search_duckduckgo_html(&client, &ctx.tools.web_search, query, limit).await
                 }
             };
 
@@ -978,21 +977,21 @@ mod tests {
     }
 
     #[test]
-    fn validate_tool_settings_rejects_unknown_search_provider() {
-        let mut settings = ToolSettingsConfig::default();
+    fn validate_tools_config_rejects_unknown_search_provider() {
+        let mut settings = ToolsConfig::default();
         settings.web_search.providers = Some(vec!["unknown".to_string()]);
-        let err = validate_tool_settings(&settings).unwrap_err();
+        let err = validate_tools_config(&settings).unwrap_err();
         assert!(err.to_string().contains("unknown web_search provider"));
     }
 
     #[test]
-    fn validate_tool_settings_requires_tavily_api_key_env_when_selected() {
-        let mut settings = ToolSettingsConfig::default();
+    fn validate_tools_config_requires_tavily_api_key_env_when_selected() {
+        let mut settings = ToolsConfig::default();
         settings.web_search.providers = Some(vec!["tavily".to_string()]);
-        let err = validate_tool_settings(&settings).unwrap_err();
+        let err = validate_tools_config(&settings).unwrap_err();
         assert!(
             err.to_string()
-                .contains("tool_settings.web_search.tavily.api_key_env")
+                .contains("tools.web_search.tavily.api_key_env")
         );
     }
 }

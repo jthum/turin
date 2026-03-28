@@ -413,7 +413,7 @@ mod tests {
             allowed_native_tools: std::sync::Arc::new(std::collections::BTreeSet::from([
                 "apply_patch".to_string(),
             ])),
-            tool_settings: std::sync::Arc::new(turin_types::ToolSettingsConfig::default()),
+            tools: std::sync::Arc::new(turin_types::ToolsConfig::default()),
         };
 
         let tool = ApplyPatchTool;
@@ -442,7 +442,7 @@ mod tests {
             allowed_native_tools: std::sync::Arc::new(std::collections::BTreeSet::from([
                 "apply_patch".to_string(),
             ])),
-            tool_settings: std::sync::Arc::new(turin_types::ToolSettingsConfig::default()),
+            tools: std::sync::Arc::new(turin_types::ToolsConfig::default()),
         };
 
         let tool = ApplyPatchTool;

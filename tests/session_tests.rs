@@ -33,10 +33,9 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
     );
 
     TurinConfig {
-        tool_selection: Default::default(),
-        tool_settings: Default::default(),
+        tools: Default::default(),
         agent: AgentConfig {
-            tool_selection: Default::default(),
+            tools: Default::default(),
             id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
@@ -473,7 +472,7 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
     agents.insert(
         "reviewer".to_string(),
         AgentConfig {
-            tool_selection: Default::default(),
+            tools: Default::default(),
             id: "reviewer".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
@@ -486,10 +485,9 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
     );
 
     let config = TurinConfig {
-        tool_selection: Default::default(),
-        tool_settings: Default::default(),
+        tools: Default::default(),
         agent: AgentConfig {
-            tool_selection: Default::default(),
+            tools: Default::default(),
             id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
@@ -626,7 +624,7 @@ async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
     agents.insert(
         "writer".to_string(),
         AgentConfig {
-            tool_selection: Default::default(),
+            tools: Default::default(),
             id: "writer".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
@@ -639,10 +637,9 @@ async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
     );
 
     let config = TurinConfig {
-        tool_selection: Default::default(),
-        tool_settings: Default::default(),
+        tools: Default::default(),
         agent: AgentConfig {
-            tool_selection: Default::default(),
+            tools: Default::default(),
             id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
@@ -771,7 +768,7 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
     agents.insert(
         "writer".to_string(),
         AgentConfig {
-            tool_selection: Default::default(),
+            tools: Default::default(),
             id: "writer".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
@@ -784,10 +781,9 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
     );
 
     let config = TurinConfig {
-        tool_selection: Default::default(),
-        tool_settings: Default::default(),
+        tools: Default::default(),
         agent: AgentConfig {
-            tool_selection: Default::default(),
+            tools: Default::default(),
             id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
@@ -1050,10 +1046,9 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
     );
 
     let config = TurinConfig {
-        tool_selection: Default::default(),
-        tool_settings: Default::default(),
+        tools: Default::default(),
         agent: AgentConfig {
-            tool_selection: Default::default(),
+            tools: Default::default(),
             id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),

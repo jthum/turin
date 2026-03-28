@@ -58,9 +58,9 @@ Simple things should be simple. Powerful things should be possible.
   - default exposed set: `read_file`, `write_file`, `edit_file`, `shell_exec`, `web_fetch`, `web_search`, `remember`, `recall`, `submit_plan`, `bridge_mcp`
   - additional opt-in native tool: `apply_patch`
 - **Native tool delegation**:
-  - optional `tools` / `tools_exclude` allowlists at the runtime, agent, and channel layers with built-in shorthands such as `group:fs` and `group:web`
+  - optional `[tools].allow` / `[tools].exclude` delegation at the runtime, agent, and channel layers with built-in shorthands such as `group:fs` and `group:web`
 - **Tool behavior settings**:
-  - optional global `tool_settings.*` config for request headers and `web_search` provider order without colliding with the native-tool allowlist
+  - optional global `[tools.<name>]` config for request headers and `web_search` provider order
 - **Multi-provider support** through normalized `InferenceProvider` clients (`anthropic`, `openai`, `mock`, compatible proxies)
 - **Provider-agnostic embeddings** with OpenAI-compatible local endpoint support
 - **Persistent state** for sessions, messages, events, tool executions, KV, and memory records
@@ -136,16 +136,16 @@ target/release/turin harness test --response "HARNESS_TEST_OK"
 
 Tool delegation notes:
 
-- `tools = [...]` means "from what I inherited, expose only these native tools"
-- `tools_exclude = [...]` means "from what I inherited, remove these native tools"
+- `[tools].allow = [...]` means "from what I inherited, expose only these native tools"
+- `[tools].exclude = [...]` means "from what I inherited, remove these native tools"
 - child configs cannot escalate past what the parent granted
 - current groups are `group:all`, `group:fs`, `group:shell`, `group:web`, `group:memory`, `group:planning`, and `group:integration`
-- `apply_patch` is available through explicit opt-in, for example `tools = ["group:fs"]`
+- `apply_patch` is available through explicit opt-in, for example `[tools] allow = ["group:fs"]`
 
 Tool behavior notes:
 
-- `tool_settings.web_fetch` controls browser-like fetch headers such as `user_agent`
-- `tool_settings.web_search.providers` controls ordered fallback across `duckduckgo_html`, `tavily`, `brave`, and `searxng`
+- `[tools.web_fetch]` controls browser-like fetch headers such as `user_agent`
+- `[tools.web_search].providers` controls ordered fallback across `duckduckgo_html`, `tavily`, `brave`, and `searxng`
 - API-backed search providers are configured with environment-variable references such as `api_key_env = "TAVILY_API_KEY"`
 
 ### 4. Manual `turin.toml` path
@@ -161,33 +161,35 @@ Minimal example:
 ```toml
 # Optional global native tool ceiling for every agent and channel.
 # Defaults to Turin's standard built-in surface.
-# tools = ["group:web", "read_file"]
-# tools_exclude = ["shell_exec"]
+# [tools]
+# allow = ["group:web", "read_file"]
+# exclude = ["shell_exec"]
 
 # Optional global tool behavior settings.
-# [tool_settings.web_fetch]
+# [tools.web_fetch]
 # user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 #
-# [tool_settings.web_search]
+# [tools.web_search]
 # providers = ["tavily", "duckduckgo_html"]
 # user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 #
-# [tool_settings.web_search.tavily]
+# [tools.web_search.tavily]
 # api_key_env = "TAVILY_API_KEY"
 #
-# [tool_settings.web_search.brave]
+# [tools.web_search.brave]
 # api_key_env = "BRAVE_SEARCH_API_KEY"
 #
-# [tool_settings.web_search.searxng]
+# [tools.web_search.searxng]
 # base_url = "http://localhost:8080"
 
 [agent]
 system_prompt = "You are a helpful coding assistant."
 model = "claude-sonnet-4-20250514"
 provider = "anthropic"
-# Optional per-agent native tool subset from the inherited parent set.
-# tools = ["group:web", "read_file"]
-# tools_exclude = ["write_file"]
+
+# [agent.tools]
+# allow = ["group:web", "read_file"] # optional per-agent subset from the inherited parent set
+# exclude = ["write_file"]
 
 [kernel]
 workspace_root = "."
@@ -209,8 +211,10 @@ directory = ".turin/harnesses"
 # model = "claude-sonnet-4-20250514"
 # provider = "anthropic"
 # harness = "reviewer"
-# tools = ["group:fs", "group:web"]
-# tools_exclude = ["shell_exec"]
+#
+# [agents.reviewer.tools]
+# allow = ["group:fs", "group:web"]
+# exclude = ["shell_exec"]
 
 [providers.anthropic]
 type = "anthropic"

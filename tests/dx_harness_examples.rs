@@ -275,7 +275,7 @@ async fn test_dx_fixture_peer_review_orchestrator() -> Result<()> {
     config.agents.insert(
         "reviewer".to_string(),
         AgentConfig {
-            tool_selection: Default::default(),
+            tools: Default::default(),
             id: "reviewer".to_string(),
             model: "mock-model".to_string(),
             provider: "mock_review".to_string(),
@@ -386,7 +386,7 @@ async fn test_dx_fixture_import_scoped_complete_delegate() -> Result<()> {
     config.agents.insert(
         "reviewer".to_string(),
         AgentConfig {
-            tool_selection: Default::default(),
+            tools: Default::default(),
             id: "reviewer".to_string(),
             model: "mock-model".to_string(),
             provider: "mock_review".to_string(),
@@ -510,7 +510,7 @@ async fn test_dx_fixture_peer_agent_denial() -> Result<()> {
     config.agents.insert(
         "blocked".to_string(),
         AgentConfig {
-            tool_selection: Default::default(),
+            tools: Default::default(),
             id: "blocked".to_string(),
             model: "mock-model".to_string(),
             provider: "mock_blocked".to_string(),
@@ -573,7 +573,7 @@ async fn test_dx_fixture_peer_complete_delegated_caps() -> Result<()> {
     config.agents.insert(
         "reviewer".to_string(),
         AgentConfig {
-            tool_selection: Default::default(),
+            tools: Default::default(),
             id: "reviewer".to_string(),
             model: "mock-model".to_string(),
             provider: "mock_review".to_string(),

@@ -26,7 +26,7 @@ pub use memory_tools::{RecallTool, RememberTool};
 pub use read_file::ReadFileTool;
 pub use shell_exec::ShellExecTool;
 pub use submit_plan::SubmitPlanTool;
-pub use web_tools::{WebFetchTool, WebSearchTool, validate_tool_settings};
+pub use web_tools::{WebFetchTool, WebSearchTool, validate_tools_config};
 pub use write_file::WriteFileTool;
 
 use super::registry::ToolRegistry;

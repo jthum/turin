@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use turin_types::ToolSettingsConfig;
+use turin_types::ToolsConfig;
 
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::persistence::manager::StoreManager;
@@ -58,8 +58,8 @@ pub struct ToolContext {
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     /// Native tools enabled for the current turn after config delegation is resolved
     pub allowed_native_tools: Arc<BTreeSet<String>>,
-    /// Global tool behavior settings resolved from Turin config
-    pub tool_settings: Arc<ToolSettingsConfig>,
+    /// Global tool configuration resolved from Turin config
+    pub tools: Arc<ToolsConfig>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -74,7 +74,7 @@ impl std::fmt::Debug for ToolContext {
                 "allowed_native_tool_count",
                 &self.allowed_native_tools.len(),
             )
-            .field("tool_settings", &self.tool_settings)
+            .field("tools", &self.tools)
             .finish()
     }
 }

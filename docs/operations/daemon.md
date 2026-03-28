@@ -271,8 +271,8 @@ Channels can also use generic runner-level access control settings such as:
 - `pairing_users = [...]`
 - `allowed_users = [...]`
 - `banned_users = [...]`
-- `tools = [...]`
-- `tools_exclude = [...]`
+- `[tools].allow = [...]`
+- `[tools].exclude = [...]`
 - `task_timeout_ms = 0 | <positive integer milliseconds>`
 
 Some channel adapters also support `session_scope`, for example:
@@ -282,9 +282,9 @@ Some channel adapters also support `session_scope`, for example:
 
 Those settings are enforced before a message is routed into a Turin session, which is why they live in the shared channel runner rather than in a harness script.
 
-Channel tool selection is downward-only: channel `tools` and `tools_exclude` can only
-subset the native tool surface already granted by `turin.toml` and the bound
-`agents/<id>/agent.toml`.
+Channel tool selection is downward-only: channel `[tools].allow` and
+`[tools].exclude` can only subset the native tool surface already granted by
+`turin.toml` and the bound `agents/<id>/agent.toml`.
 
 Supported native tool groups are:
 
@@ -300,8 +300,7 @@ Example:
 
 ```bash
 turin daemon channel update telegram-ops \
-  --setting tools='["group:web","read_file"]' \
-  --setting tools_exclude='["web_search"]'
+  --setting tools='{"allow":["group:web","read_file"],"exclude":["web_search"]}'
 ```
 
 `kind = "fs"` is currently available as the first built-in adapter:

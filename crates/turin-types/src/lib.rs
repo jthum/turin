@@ -18,19 +18,21 @@ pub struct ThinkingConfig {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
 pub struct ToolSelectionConfig {
     #[serde(default)]
-    pub tools: Option<Vec<String>>,
+    pub allow: Option<Vec<String>>,
     #[serde(default)]
-    pub tools_exclude: Vec<String>,
+    pub exclude: Vec<String>,
 }
 
 impl ToolSelectionConfig {
     pub fn is_empty(&self) -> bool {
-        self.tools.is_none() && self.tools_exclude.is_empty()
+        self.allow.is_none() && self.exclude.is_empty()
     }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
-pub struct ToolSettingsConfig {
+pub struct ToolsConfig {
+    #[serde(flatten)]
+    pub selection: ToolSelectionConfig,
     #[serde(default)]
     pub web_fetch: WebFetchToolSettings,
     #[serde(default)]
