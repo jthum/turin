@@ -74,6 +74,7 @@ async fn main() -> Result<()> {
 async fn run(args: RunArgs) -> Result<()> {
     let settings = parse_settings_json(&args.settings_json)?;
     let access_policy = ChannelAccessPolicy::from_settings(&settings)?;
+    let allow_unconfigured_rooms = access_policy.requires_unconfigured_inbound();
     let tools = turin_channel_runner::tools_config_from_settings(&settings)?;
     let task_timeout_ms = turin_channel_runner::task_timeout_ms_from_settings(&settings)?;
 
@@ -95,15 +96,19 @@ async fn run(args: RunArgs) -> Result<()> {
         },
     );
 
-    let mut driver =
-        RocketChatChannelDriver::from_settings(&args.channel_id, &settings, shutdown_rx)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to initialize Rocket.Chat channel driver '{}'",
-                    args.channel_id
-                )
-            })?;
+    let mut driver = RocketChatChannelDriver::from_settings(
+        &args.channel_id,
+        &settings,
+        allow_unconfigured_rooms,
+        shutdown_rx,
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "Failed to initialize Rocket.Chat channel driver '{}'",
+            args.channel_id
+        )
+    })?;
 
     daemon
         .channel_runner_hello(ChannelRunnerHelloParams {
@@ -129,8 +134,11 @@ async fn run(args: RunArgs) -> Result<()> {
 
 fn validate_settings(args: ValidateSettingsArgs) -> Result<()> {
     let settings = parse_settings_json(&args.settings_json)?;
-    ChannelAccessPolicy::validate_settings(&settings)?;
-    turin_channel_rocketchat::validate_settings(&settings)
+    let access_policy = ChannelAccessPolicy::from_settings(&settings)?;
+    turin_channel_rocketchat::validate_settings(
+        &settings,
+        access_policy.requires_unconfigured_inbound(),
+    )
 }
 
 fn describe() -> Result<()> {

@@ -3,8 +3,8 @@ use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde::Deserialize;
-use std::collections::{HashSet, VecDeque};
-use std::time::Duration;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
@@ -57,6 +57,7 @@ pub struct RocketChatChannelDriverConfig {
     pub websocket_url: String,
     pub transport_mode: RocketChatTransportMode,
     pub workspace_id: String,
+    pub accept_all_rooms: bool,
     pub room_id: Option<String>,
     pub room_name: Option<String>,
     pub user_id: String,
@@ -76,6 +77,7 @@ struct RocketChatChannelSettings {
     websocket_url: String,
     transport_mode: RocketChatTransportMode,
     workspace_id: String,
+    accept_all_rooms: bool,
     room_id: Option<String>,
     room_name: Option<String>,
     user_id: String,
@@ -91,12 +93,24 @@ struct RocketChatChannelSettings {
 struct RocketChatResolvedRoom {
     id: String,
     room_type: RocketChatRoomType,
+    name: Option<String>,
+    friendly_name: Option<String>,
+    latest_message: Option<RocketChatMessage>,
     latest_message_id: Option<String>,
     latest_message_ts: Option<String>,
 }
 
-pub fn validate_settings(settings: &serde_json::Value) -> Result<()> {
-    parse_settings(settings).map(|_| ())
+#[derive(Debug, Clone)]
+struct RocketChatRoomState {
+    room: RocketChatResolvedRoom,
+    cursor_ts: Option<String>,
+}
+
+pub fn validate_settings(
+    settings: &serde_json::Value,
+    allow_unconfigured_rooms: bool,
+) -> Result<()> {
+    parse_settings(settings, allow_unconfigured_rooms).map(|_| ())
 }
 
 pub fn start_auth_flow(
@@ -165,7 +179,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                 validate: None,
             }],
             instructions: Some(
-                "Create or choose a Rocket.Chat bot/user, copy its auth token and user ID, then point Turin at the target room."
+                "Create or choose a Rocket.Chat bot/user, copy its auth token and user ID, then choose whether Turin should pair new rooms dynamically or stay pinned to a specific room."
                     .to_string(),
             ),
             setup_url: Some("https://developer.rocket.chat/apidocs".to_string()),
@@ -202,29 +216,55 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
-                    key: "room_id".to_string(),
-                    label: Some("Room ID".to_string()),
+                    key: "workspace_id".to_string(),
+                    label: Some("Workspace ID".to_string()),
                     field_type: "text".to_string(),
-                    prompt: Some("Rocket.Chat room ID to connect Turin to".to_string()),
-                    help: Some(
-                        "Use the room ID for the public channel, private group, or DM that Turin should monitor."
-                            .to_string(),
-                    ),
-                    required: true,
+                    help: Some("Defaults to 'rocketchat' and is usually fine to leave alone.".to_string()),
+                    default: Some(serde_json::json!("rocketchat")),
+                    advanced: true,
                     target: Some(ChannelConfigTarget {
                         kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "room_id".to_string(),
+                        name: "workspace_id".to_string(),
                     }),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
-                    key: "workspace_id".to_string(),
-                    label: Some("Workspace ID".to_string()),
-                    field_type: "text".to_string(),
-                    default: Some(serde_json::json!("rocketchat")),
+                    key: "pairing_mode".to_string(),
+                    label: Some("Pairing Mode".to_string()),
+                    field_type: "select".to_string(),
+                    prompt: Some("How should new Rocket.Chat rooms and DMs be admitted?".to_string()),
+                    help: Some("Auto approves newly seen rooms from trusted senders; pending records them for manual approval.".to_string()),
+                    default: Some(serde_json::json!("auto")),
+                    options: vec![
+                        ChannelConfigFieldOption {
+                            value: "auto".to_string(),
+                            label: Some("Auto approve new rooms".to_string()),
+                        },
+                        ChannelConfigFieldOption {
+                            value: "pending".to_string(),
+                            label: Some("Require manual approval".to_string()),
+                        },
+                        ChannelConfigFieldOption {
+                            value: "off".to_string(),
+                            label: Some("Disable pairing".to_string()),
+                        },
+                    ],
                     target: Some(ChannelConfigTarget {
                         kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "workspace_id".to_string(),
+                        name: "pairing_mode".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+                ChannelConfigField {
+                    key: "pairing_users".to_string(),
+                    label: Some("Pairing Users".to_string()),
+                    field_type: "string_list".to_string(),
+                    prompt: Some("Optional usernames or IDs allowed to pair new Rocket.Chat rooms".to_string()),
+                    help: Some("Leave empty to allow any sender to trigger room pairing.".to_string()),
+                    advanced: true,
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "pairing_users".to_string(),
                     }),
                     ..ChannelConfigField::default()
                 },
@@ -262,6 +302,38 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     target: Some(ChannelConfigTarget {
                         kind: ChannelConfigTargetKind::ChannelSetting,
                         name: "websocket_url".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+                ChannelConfigField {
+                    key: "room_id".to_string(),
+                    label: Some("Room ID".to_string()),
+                    field_type: "text".to_string(),
+                    prompt: Some("Optional Rocket.Chat room ID filter".to_string()),
+                    help: Some(
+                        "Leave empty to let Turin discover rooms dynamically through pairing and approval. Set it to pin this channel to one specific room or DM."
+                            .to_string(),
+                    ),
+                    advanced: true,
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "room_id".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+                ChannelConfigField {
+                    key: "room_name".to_string(),
+                    label: Some("Room Name".to_string()),
+                    field_type: "text".to_string(),
+                    prompt: Some("Optional Rocket.Chat room name filter".to_string()),
+                    help: Some(
+                        "Alternative to room_id. Leave empty unless you want to pin Turin to a specific named room."
+                            .to_string(),
+                    ),
+                    advanced: true,
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "room_name".to_string(),
                     }),
                     ..ChannelConfigField::default()
                 },
@@ -320,7 +392,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     label: Some("Allowed Users".to_string()),
                     field_type: "string_list".to_string(),
                     prompt: Some("Optional usernames or IDs allowed to interact".to_string()),
-                    help: Some("Leave empty to allow any user in the configured room.".to_string()),
+                    help: Some("Leave empty to allow any user in approved rooms.".to_string()),
                     advanced: true,
                     target: Some(ChannelConfigTarget {
                         kind: ChannelConfigTargetKind::ChannelSetting,
@@ -387,8 +459,11 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
 }
 
 impl RocketChatChannelDriverConfig {
-    pub fn from_settings(settings: &serde_json::Value) -> Result<Self> {
-        let settings = parse_settings(settings)?;
+    pub fn from_settings(
+        settings: &serde_json::Value,
+        allow_unconfigured_rooms: bool,
+    ) -> Result<Self> {
+        let settings = parse_settings(settings, allow_unconfigured_rooms)?;
         let token = std::env::var(&settings.token_env).map_err(|_| {
             anyhow!(
                 "[rocketchat_auth_missing_token] Rocket.Chat auth token env var '{}' is not set for channel adapter",
@@ -401,6 +476,7 @@ impl RocketChatChannelDriverConfig {
             websocket_url: settings.websocket_url,
             transport_mode: settings.transport_mode,
             workspace_id: settings.workspace_id,
+            accept_all_rooms: settings.accept_all_rooms,
             room_id: settings.room_id,
             room_name: settings.room_name,
             user_id: settings.user_id,
@@ -420,12 +496,14 @@ pub struct RocketChatChannelDriver {
     client: Client,
     config: RocketChatChannelDriverConfig,
     shutdown_rx: watch::Receiver<bool>,
-    room: RocketChatResolvedRoom,
+    rooms: HashMap<String, RocketChatRoomState>,
     ws_stream: Option<RocketChatWsStream>,
+    realtime_subscribed_room_ids: HashSet<String>,
     backlog: VecDeque<InboundEvent>,
     seen_message_ids: HashSet<String>,
     seen_message_order: VecDeque<String>,
-    cursor_ts: Option<String>,
+    rooms_updated_since: Option<String>,
+    last_room_refresh: Option<Instant>,
     next_realtime_request_id: u64,
 }
 
@@ -433,58 +511,199 @@ impl RocketChatChannelDriver {
     pub async fn from_settings(
         channel_id: impl Into<String>,
         settings: &serde_json::Value,
+        allow_unconfigured_rooms: bool,
         shutdown_rx: watch::Receiver<bool>,
     ) -> Result<Self> {
-        let config = RocketChatChannelDriverConfig::from_settings(settings)?;
+        let config =
+            RocketChatChannelDriverConfig::from_settings(settings, allow_unconfigured_rooms)?;
         let client = Client::builder().build()?;
-        let room = fetch_room_info(&client, &config).await?;
 
         let mut driver = Self {
             channel_id: channel_id.into(),
             client,
             config,
             shutdown_rx,
-            room,
+            rooms: HashMap::new(),
             ws_stream: None,
+            realtime_subscribed_room_ids: HashSet::new(),
             backlog: VecDeque::new(),
             seen_message_ids: HashSet::new(),
             seen_message_order: VecDeque::new(),
-            cursor_ts: None,
+            rooms_updated_since: None,
+            last_room_refresh: None,
             next_realtime_request_id: 1,
         };
 
-        if driver.config.start_from_latest {
-            if let Some(message_id) = driver.room.latest_message_id.clone() {
-                driver.remember_message_id(message_id);
-            }
-            driver.cursor_ts = driver.room.latest_message_ts.clone();
-        } else if matches!(
-            driver.config.transport_mode,
-            RocketChatTransportMode::Realtime
-        ) {
+        driver.refresh_rooms(true).await?;
+        if !driver.config.start_from_latest
+            && matches!(
+                driver.config.transport_mode,
+                RocketChatTransportMode::Realtime
+            )
+        {
             driver.poll_messages().await?;
         }
 
         Ok(driver)
     }
 
+    async fn refresh_rooms(&mut self, initial: bool) -> Result<()> {
+        let update = fetch_rooms(
+            &self.client,
+            &self.config,
+            self.rooms_updated_since.as_deref(),
+        )
+        .await?;
+
+        for room_id in update.remove_room_ids {
+            self.rooms.remove(&room_id);
+            self.realtime_subscribed_room_ids.remove(&room_id);
+        }
+
+        for room in update.rooms {
+            if !self.room_matches_filters(&room) {
+                continue;
+            }
+            self.upsert_room(room, initial).await?;
+        }
+
+        if let Some(updated_since) = update.next_updated_since {
+            let should_replace = self
+                .rooms_updated_since
+                .as_deref()
+                .is_none_or(|current| current < updated_since.as_str());
+            if should_replace {
+                self.rooms_updated_since = Some(updated_since);
+            }
+        }
+        self.last_room_refresh = Some(Instant::now());
+
+        if initial && !self.config.accept_all_rooms && self.rooms.is_empty() {
+            anyhow::bail!(
+                "[rocketchat_room_not_found] Rocket.Chat could not find a room matching the configured room filter"
+            );
+        }
+
+        Ok(())
+    }
+
+    fn room_matches_filters(&self, room: &RocketChatResolvedRoom) -> bool {
+        if let Some(expected_room_id) = self.config.room_id.as_deref()
+            && room.id != expected_room_id
+        {
+            return false;
+        }
+        if let Some(expected_room_name) = self.config.room_name.as_deref() {
+            let matches = room
+                .name
+                .as_deref()
+                .is_some_and(|value| value.eq_ignore_ascii_case(expected_room_name))
+                || room
+                    .friendly_name
+                    .as_deref()
+                    .is_some_and(|value| value.eq_ignore_ascii_case(expected_room_name));
+            if !matches {
+                return false;
+            }
+        }
+        true
+    }
+
+    async fn upsert_room(&mut self, room: RocketChatResolvedRoom, initial: bool) -> Result<()> {
+        let room_id = room.id.clone();
+        if let Some(existing) = self.rooms.get_mut(&room_id) {
+            existing.room = room;
+            return Ok(());
+        }
+
+        let mut state = RocketChatRoomState {
+            room,
+            cursor_ts: None,
+        };
+        if initial && self.config.start_from_latest {
+            if let Some(message_id) = state.room.latest_message_id.clone() {
+                self.remember_message_id(message_id);
+            }
+            state.cursor_ts = state.room.latest_message_ts.clone();
+        }
+        self.rooms.insert(room_id.clone(), state);
+
+        if !initial {
+            if self.config.start_from_latest {
+                self.seed_new_room_from_latest(&room_id)?;
+            } else {
+                self.poll_room_messages(&room_id).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn seed_new_room_from_latest(&mut self, room_id: &str) -> Result<()> {
+        let Some(state) = self.rooms.get(room_id).cloned() else {
+            return Ok(());
+        };
+
+        if let Some(cursor_ts) = state.room.latest_message_ts.clone() {
+            self.update_room_cursor(room_id, cursor_ts);
+        }
+        if let Some(message_id) = state.room.latest_message_id.clone() {
+            self.remember_message_id(message_id);
+        }
+        if let Some(message) = state.room.latest_message.clone() {
+            if self.seen_message_ids.contains(&message.id) {
+                return Ok(());
+            }
+            self.remember_message_id(message.id.clone());
+            self.update_room_cursor(room_id, message.ts.clone());
+            if let Some(event) = self.message_to_event(&state.room, message)? {
+                self.backlog.push_back(event);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn update_room_cursor(&mut self, room_id: &str, cursor_ts: String) {
+        if let Some(state) = self.rooms.get_mut(room_id) {
+            state.cursor_ts = Some(cursor_ts);
+        }
+    }
+
     async fn poll_messages(&mut self) -> Result<()> {
+        self.refresh_rooms(false).await?;
+        self.poll_known_rooms().await
+    }
+
+    async fn poll_known_rooms(&mut self) -> Result<()> {
+        let mut room_ids: Vec<String> = self.rooms.keys().cloned().collect();
+        room_ids.sort();
+        for room_id in room_ids {
+            self.poll_room_messages(&room_id).await?;
+        }
+        Ok(())
+    }
+
+    async fn poll_room_messages(&mut self, room_id: &str) -> Result<()> {
+        let Some(state) = self.rooms.get(room_id).cloned() else {
+            return Ok(());
+        };
         let messages = fetch_room_messages(
             &self.client,
             &self.config,
-            &self.room,
-            self.cursor_ts.as_deref(),
+            &state.room,
+            state.cursor_ts.as_deref(),
         )
         .await?;
 
         for message in messages {
-            self.cursor_ts = Some(message.ts.clone());
+            self.update_room_cursor(room_id, message.ts.clone());
             if self.seen_message_ids.contains(&message.id) {
                 continue;
             }
             self.remember_message_id(message.id.clone());
 
-            let Some(event) = self.message_to_event(message)? else {
+            let Some(event) = self.message_to_event(&state.room, message)? else {
                 continue;
             };
             self.backlog.push_back(event);
@@ -493,7 +712,11 @@ impl RocketChatChannelDriver {
         Ok(())
     }
 
-    fn message_to_event(&self, message: RocketChatMessage) -> Result<Option<InboundEvent>> {
+    fn message_to_event(
+        &self,
+        room: &RocketChatResolvedRoom,
+        message: RocketChatMessage,
+    ) -> Result<Option<InboundEvent>> {
         if message.kind.is_some() {
             return Ok(None);
         }
@@ -509,7 +732,7 @@ impl RocketChatChannelDriver {
             return Ok(None);
         }
 
-        if !self.should_accept_message(&message, user) {
+        if !self.should_accept_message(room, &message, user) {
             return Ok(None);
         }
 
@@ -530,8 +753,8 @@ impl RocketChatChannelDriver {
         let conversation = ChannelConversationKey {
             channel: ChannelKind::new("rocketchat"),
             workspace_id: self.config.workspace_id.clone(),
-            room_id: Some(self.room.id.clone()),
-            thread_id: self.thread_id_for_message(&message),
+            room_id: Some(room.id.clone()),
+            thread_id: self.thread_id_for_message(room, &message),
             user_id: if matches!(self.config.session_scope, ChannelSessionScope::User) {
                 Some(user.id.clone())
             } else {
@@ -544,10 +767,7 @@ impl RocketChatChannelDriver {
             "rocketchat_message_id".to_string(),
             serde_json::json!(message.id),
         );
-        metadata.insert(
-            "rocketchat_room_id".to_string(),
-            serde_json::json!(self.room.id),
-        );
+        metadata.insert("rocketchat_room_id".to_string(), serde_json::json!(room.id));
         if let Some(tmid) = message.thread_root_id {
             metadata.insert("rocketchat_thread_id".to_string(), serde_json::json!(tmid));
         }
@@ -571,10 +791,11 @@ impl RocketChatChannelDriver {
 
     fn should_accept_message(
         &self,
+        room: &RocketChatResolvedRoom,
         message: &RocketChatMessage,
         user: &RocketChatMessageUser,
     ) -> bool {
-        if matches!(self.room.room_type, RocketChatRoomType::DirectMessage) {
+        if matches!(room.room_type, RocketChatRoomType::DirectMessage) {
             return user.id != self.config.user_id || !self.config.ignore_bot_messages;
         }
 
@@ -587,9 +808,13 @@ impl RocketChatChannelDriver {
         }
     }
 
-    fn thread_id_for_message(&self, message: &RocketChatMessage) -> String {
+    fn thread_id_for_message(
+        &self,
+        room: &RocketChatResolvedRoom,
+        message: &RocketChatMessage,
+    ) -> String {
         match self.config.session_scope {
-            ChannelSessionScope::Room => self.room.id.clone(),
+            ChannelSessionScope::Room => room.id.clone(),
             ChannelSessionScope::Thread => message
                 .thread_root_id
                 .clone()
@@ -597,7 +822,7 @@ impl RocketChatChannelDriver {
             ChannelSessionScope::User => message
                 .thread_root_id
                 .clone()
-                .unwrap_or_else(|| self.room.id.clone()),
+                .unwrap_or_else(|| room.id.clone()),
         }
     }
 
@@ -646,12 +871,13 @@ impl RocketChatChannelDriver {
 
         self.await_connected(&mut stream).await?;
         self.login_realtime(&mut stream).await?;
-        self.subscribe_room_messages(&mut stream).await?;
 
         self.ws_stream = Some(stream);
+        self.realtime_subscribed_room_ids.clear();
+        self.sync_realtime_subscriptions().await?;
 
-        if self.cursor_ts.is_some() {
-            self.poll_messages().await?;
+        if self.rooms.values().any(|state| state.cursor_ts.is_some()) {
+            self.poll_known_rooms().await?;
         }
 
         Ok(())
@@ -719,39 +945,37 @@ impl RocketChatChannelDriver {
         }
     }
 
-    async fn subscribe_room_messages(&mut self, stream: &mut RocketChatWsStream) -> Result<()> {
-        let request_id = self.next_request_id();
-        send_ws_json(
-            stream,
-            serde_json::json!({
-                "msg": "sub",
-                "id": request_id,
-                "name": "stream-room-messages",
-                "params": [self.room.id.clone(), false]
-            }),
-        )
-        .await
-        .context("[rocketchat_realtime_subscribe_send_failed] Failed to subscribe to Rocket.Chat room messages")?;
+    async fn sync_realtime_subscriptions(&mut self) -> Result<()> {
+        let Some(stream) = self.ws_stream.as_mut() else {
+            return Ok(());
+        };
 
-        loop {
-            let frame = read_ddp_frame(stream).await?;
-            match frame.msg.as_deref() {
-                Some("ready")
-                    if frame
-                        .subs
-                        .as_ref()
-                        .is_some_and(|subs| subs.iter().any(|sub| sub == &request_id)) =>
-                {
-                    return Ok(());
-                }
-                Some("nosub") if frame.id.as_deref() == Some(request_id.as_str()) => {
-                    anyhow::bail!(
-                        "[rocketchat_realtime_subscribe_failed] Rocket.Chat refused the room message subscription"
-                    );
-                }
-                _ => {}
+        let mut room_ids: Vec<String> = self.rooms.keys().cloned().collect();
+        room_ids.sort();
+        for room_id in room_ids {
+            if self.realtime_subscribed_room_ids.contains(&room_id) {
+                continue;
             }
+            let request_id = subscription_request_id(&room_id);
+            send_ws_json(
+                stream,
+                serde_json::json!({
+                    "msg": "sub",
+                    "id": request_id,
+                    "name": "stream-room-messages",
+                    "params": [room_id.clone(), false]
+                }),
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "[rocketchat_realtime_subscribe_send_failed] Failed to subscribe to Rocket.Chat room '{}'",
+                    room_id
+                )
+            })?;
+            self.realtime_subscribed_room_ids.insert(room_id);
         }
+        Ok(())
     }
 
     async fn next_realtime_event(&mut self) -> Result<Option<InboundEvent>> {
@@ -759,11 +983,12 @@ impl RocketChatChannelDriver {
             if let Err(err) = self.ensure_realtime_connected().await {
                 warn!(
                     channel_id = %self.channel_id,
-                    room_id = %self.room.id,
+                    room_count = self.rooms.len(),
                     error = %err,
                     "Rocket.Chat realtime connection failed"
                 );
                 self.ws_stream = None;
+                self.realtime_subscribed_room_ids.clear();
                 tokio::select! {
                     changed = self.shutdown_rx.changed() => {
                         if changed.is_ok() && *self.shutdown_rx.borrow() {
@@ -779,6 +1004,36 @@ impl RocketChatChannelDriver {
                 return Ok(Some(event));
             }
 
+            if self
+                .last_room_refresh
+                .is_none_or(|last| last.elapsed() >= self.config.poll_interval)
+            {
+                if let Err(err) = self.refresh_rooms(false).await {
+                    warn!(
+                        channel_id = %self.channel_id,
+                        error = %err,
+                        "Rocket.Chat room refresh failed"
+                    );
+                } else if let Err(err) = self.sync_realtime_subscriptions().await {
+                    warn!(
+                        channel_id = %self.channel_id,
+                        error = %err,
+                        "Rocket.Chat subscription sync failed"
+                    );
+                    self.ws_stream = None;
+                    self.realtime_subscribed_room_ids.clear();
+                    continue;
+                }
+                if let Some(event) = self.backlog.pop_front() {
+                    return Ok(Some(event));
+                }
+            }
+
+            let refresh_delay = self
+                .last_room_refresh
+                .map(|last| self.config.poll_interval.saturating_sub(last.elapsed()))
+                .unwrap_or(Duration::from_secs(0));
+
             let result = {
                 let stream = self
                     .ws_stream
@@ -791,6 +1046,7 @@ impl RocketChatChannelDriver {
                         }
                         Ok(None)
                     }
+                    _ = sleep(refresh_delay) => Ok(None),
                     frame = read_ddp_frame(stream) => frame.map(Some),
                 }
             };
@@ -805,11 +1061,11 @@ impl RocketChatChannelDriver {
                 Err(err) => {
                     warn!(
                         channel_id = %self.channel_id,
-                        room_id = %self.room.id,
                         error = %err,
                         "Rocket.Chat realtime stream failed; reconnecting"
                     );
                     self.ws_stream = None;
+                    self.realtime_subscribed_room_ids.clear();
                 }
             }
         }
@@ -819,6 +1075,18 @@ impl RocketChatChannelDriver {
         &mut self,
         frame: RocketChatDdpFrame,
     ) -> Result<Option<InboundEvent>> {
+        if frame.msg.as_deref() == Some("nosub") {
+            if let Some(room_id) = frame.id.as_deref().and_then(subscription_room_id) {
+                self.realtime_subscribed_room_ids.remove(room_id);
+                warn!(
+                    channel_id = %self.channel_id,
+                    room_id = room_id,
+                    "Rocket.Chat room subscription was rejected"
+                );
+            }
+            return Ok(None);
+        }
+
         if frame.msg.as_deref() != Some("changed")
             || frame.collection.as_deref() != Some("stream-room-messages")
         {
@@ -829,9 +1097,12 @@ impl RocketChatChannelDriver {
             Some(fields) => fields,
             None => return Ok(None),
         };
-        if fields.event_name.as_deref() != Some(self.room.id.as_str()) {
+        let Some(room_id) = fields.event_name.as_deref() else {
             return Ok(None);
-        }
+        };
+        let Some(room) = self.rooms.get(room_id).map(|state| state.room.clone()) else {
+            return Ok(None);
+        };
 
         let Some(raw_message) = fields.args.into_iter().next() else {
             return Ok(None);
@@ -839,12 +1110,12 @@ impl RocketChatChannelDriver {
         let message: RocketChatMessage = serde_json::from_value(raw_message).context(
             "[rocketchat_realtime_decode_message_failed] Failed to decode Rocket.Chat room message from realtime event",
         )?;
-        self.cursor_ts = Some(message.ts.clone());
+        self.update_room_cursor(room_id, message.ts.clone());
         if self.seen_message_ids.contains(&message.id) {
             return Ok(None);
         }
         self.remember_message_id(message.id.clone());
-        self.message_to_event(message)
+        self.message_to_event(&room, message)
     }
 }
 
@@ -895,7 +1166,7 @@ impl ChannelDriver for RocketChatChannelDriver {
             if let Err(err) = self.poll_messages().await {
                 warn!(
                     channel_id = %self.channel_id,
-                    room_id = %self.room.id,
+                    room_count = self.rooms.len(),
                     error = %err,
                     "Rocket.Chat polling failed"
                 );
@@ -967,6 +1238,7 @@ impl ChannelDriver for RocketChatChannelDriver {
 
     async fn shutdown(&mut self) -> Result<()> {
         self.ws_stream = None;
+        self.realtime_subscribed_room_ids.clear();
         Ok(())
     }
 }
@@ -1144,56 +1416,51 @@ async fn read_ddp_frame(stream: &mut RocketChatWsStream) -> Result<RocketChatDdp
     }
 }
 
-async fn fetch_room_info(
+async fn fetch_rooms(
     client: &Client,
     config: &RocketChatChannelDriverConfig,
-) -> Result<RocketChatResolvedRoom> {
+    updated_since: Option<&str>,
+) -> Result<RocketChatRoomsUpdate> {
     let mut request = client
-        .get(api_url(&config.base_url, "rooms.info"))
+        .get(api_url(&config.base_url, "rooms.get"))
         .header("X-Auth-Token", &config.token)
         .header("X-User-Id", &config.user_id);
 
-    if let Some(room_id) = &config.room_id {
-        request = request.query(&[("roomId", room_id)]);
-    } else if let Some(room_name) = &config.room_name {
-        request = request.query(&[("roomName", room_name)]);
-    } else {
-        anyhow::bail!(
-            "[rocketchat_config_missing_room] Rocket.Chat channel requires 'room_id' or 'room_name'"
-        );
+    if let Some(updated_since) = updated_since {
+        request = request.query(&[("updatedSince", updated_since)]);
     }
 
     let response = request
         .send()
         .await
-        .context("Failed to query Rocket.Chat room info")?;
+        .context("Failed to query Rocket.Chat rooms")?;
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     if !status.is_success() {
         anyhow::bail!(
-            "[rocketchat_room_info_failed] Rocket.Chat rooms.info failed with status {}: {}",
+            "[rocketchat_rooms_get_failed] Rocket.Chat rooms.get failed with status {}: {}",
             status,
             body
         );
     }
-    let parsed: RocketChatRoomInfoResponse =
-        serde_json::from_str(&body).context("Failed to decode Rocket.Chat room info response")?;
 
-    Ok(RocketChatResolvedRoom {
-        id: parsed.room.id,
-        room_type: RocketChatRoomType::parse(&parsed.room.kind)?,
-        latest_message_id: parsed
-            .room
-            .last_message
-            .as_ref()
-            .map(|message| message.id.clone()),
-        latest_message_ts: parsed.room.last_message_at.or_else(|| {
-            parsed
-                .room
-                .last_message
-                .as_ref()
-                .map(|message| message.ts.clone())
-        }),
+    let parsed: RocketChatRoomsResponse =
+        serde_json::from_str(&body).context("Failed to decode Rocket.Chat rooms.get response")?;
+    let next_updated_since = parsed
+        .update
+        .iter()
+        .filter_map(|room| room.updated_at.clone())
+        .max();
+    let rooms = parsed
+        .update
+        .into_iter()
+        .map(RocketChatResolvedRoom::try_from)
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(RocketChatRoomsUpdate {
+        rooms,
+        remove_room_ids: parsed.remove,
+        next_updated_since,
     })
 }
 
@@ -1248,7 +1515,10 @@ async fn fetch_room_messages(
     Ok(parsed.messages)
 }
 
-fn parse_settings(settings: &serde_json::Value) -> Result<RocketChatChannelSettings> {
+fn parse_settings(
+    settings: &serde_json::Value,
+    allow_unconfigured_rooms: bool,
+) -> Result<RocketChatChannelSettings> {
     let settings = settings
         .as_object()
         .ok_or_else(|| anyhow!("Rocket.Chat channel settings must be a JSON object"))?;
@@ -1280,9 +1550,11 @@ fn parse_settings(settings: &serde_json::Value) -> Result<RocketChatChannelSetti
     )?
     .map(ToString::to_string);
 
-    if room_id.is_none() && room_name.is_none() {
+    let accept_all_rooms = room_id.is_none() && room_name.is_none() && allow_unconfigured_rooms;
+
+    if room_id.is_none() && room_name.is_none() && !allow_unconfigured_rooms {
         anyhow::bail!(
-            "[rocketchat_config_missing_room] Rocket.Chat channel requires 'room_id' or 'room_name'"
+            "[rocketchat_config_missing_room] Rocket.Chat channel requires 'room_id' or 'room_name' unless pairing is enabled"
         );
     }
 
@@ -1333,6 +1605,7 @@ fn parse_settings(settings: &serde_json::Value) -> Result<RocketChatChannelSetti
         )?
         .unwrap_or("rocketchat")
         .to_string(),
+        accept_all_rooms,
         room_id,
         room_name,
         user_id,
@@ -1481,6 +1754,14 @@ fn default_websocket_url(base_url: &str) -> String {
     format!("ws://{}/websocket", base_url.trim_end_matches('/'))
 }
 
+fn subscription_request_id(room_id: &str) -> String {
+    format!("room:{room_id}")
+}
+
+fn subscription_room_id(request_id: &str) -> Option<&str> {
+    request_id.strip_prefix("room:")
+}
+
 impl RocketChatRoomType {
     fn parse(raw: &str) -> Result<Self> {
         match raw {
@@ -1495,9 +1776,43 @@ impl RocketChatRoomType {
     }
 }
 
+impl TryFrom<RocketChatRoomInfo> for RocketChatResolvedRoom {
+    type Error = anyhow::Error;
+
+    fn try_from(value: RocketChatRoomInfo) -> Result<Self> {
+        Ok(Self {
+            id: value.id,
+            room_type: RocketChatRoomType::parse(&value.kind)?,
+            name: value.name,
+            friendly_name: value.friendly_name,
+            latest_message_id: value
+                .last_message
+                .as_ref()
+                .map(|message| message.id.clone()),
+            latest_message_ts: value.last_message_at.or_else(|| {
+                value
+                    .last_message
+                    .as_ref()
+                    .map(|message| message.ts.clone())
+            }),
+            latest_message: value.last_message,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct RocketChatRoomsUpdate {
+    rooms: Vec<RocketChatResolvedRoom>,
+    remove_room_ids: Vec<String>,
+    next_updated_since: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
-struct RocketChatRoomInfoResponse {
-    room: RocketChatRoomInfo,
+struct RocketChatRoomsResponse {
+    #[serde(default)]
+    update: Vec<RocketChatRoomInfo>,
+    #[serde(default)]
+    remove: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1507,9 +1822,11 @@ struct RocketChatRoomInfo {
     #[serde(rename = "t")]
     kind: String,
     #[serde(rename = "name")]
-    _name: Option<String>,
+    name: Option<String>,
     #[serde(rename = "fname")]
-    _friendly_name: Option<String>,
+    friendly_name: Option<String>,
+    #[serde(rename = "_updatedAt")]
+    updated_at: Option<String>,
     #[serde(rename = "lm")]
     last_message_at: Option<String>,
     #[serde(rename = "lastMessage")]
@@ -1533,8 +1850,6 @@ struct RocketChatDdpFrame {
     #[serde(default)]
     fields: Option<RocketChatDdpChangedFields>,
     #[serde(default)]
-    subs: Option<Vec<String>>,
-    #[serde(default)]
     error: Option<serde_json::Value>,
     #[serde(default)]
     result: Option<serde_json::Value>,
@@ -1548,7 +1863,7 @@ struct RocketChatDdpChangedFields {
     args: Vec<serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct RocketChatMessage {
     #[serde(rename = "_id")]
     id: String,
@@ -1569,7 +1884,7 @@ struct RocketChatMessage {
     file: Option<RocketChatFileInfo>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct RocketChatMessageUser {
     #[serde(rename = "_id")]
     id: String,
@@ -1577,13 +1892,13 @@ struct RocketChatMessageUser {
     name: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct RocketChatMention {
     #[serde(rename = "_id")]
     id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct RocketChatApiAttachment {
     text: Option<String>,
     title: Option<String>,
@@ -1597,7 +1912,7 @@ struct RocketChatApiAttachment {
     video_url: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct RocketChatFileInfo {
     name: String,
     #[serde(rename = "type")]
@@ -1623,11 +1938,12 @@ mod tests {
             "user_id": "rbAXPnMktTFbNpwtJ",
             "room_id": "GENERAL123"
         });
-        let parsed = parse_settings(&settings).expect("settings parse");
+        let parsed = parse_settings(&settings, false).expect("settings parse");
         assert_eq!(parsed.base_url, DEFAULT_BASE_URL);
         assert_eq!(parsed.websocket_url, "ws://localhost:3000/websocket");
         assert_eq!(parsed.transport_mode, RocketChatTransportMode::Realtime);
         assert_eq!(parsed.workspace_id, "rocketchat");
+        assert!(!parsed.accept_all_rooms);
         assert_eq!(parsed.max_messages_per_poll, DEFAULT_MAX_MESSAGES_PER_POLL);
         assert_eq!(parsed.respond_mode, RocketChatRespondMode::Mentions);
         assert_eq!(parsed.session_scope, ChannelSessionScope::Thread);
@@ -1639,8 +1955,20 @@ mod tests {
             "token_env": "ROCKETCHAT_AUTH_TOKEN",
             "user_id": "rbAXPnMktTFbNpwtJ"
         });
-        let error = parse_settings(&settings).expect_err("missing room should fail");
+        let error = parse_settings(&settings, false).expect_err("missing room should fail");
         assert!(error.to_string().contains("room_id"));
+    }
+
+    #[test]
+    fn parse_settings_accepts_dynamic_room_discovery_when_pairing_enabled() {
+        let settings = serde_json::json!({
+            "token_env": "ROCKETCHAT_AUTH_TOKEN",
+            "user_id": "rbAXPnMktTFbNpwtJ"
+        });
+        let parsed = parse_settings(&settings, true).expect("settings parse");
+        assert!(parsed.accept_all_rooms);
+        assert!(parsed.room_id.is_none());
+        assert!(parsed.room_name.is_none());
     }
 
     #[test]
@@ -1665,6 +1993,7 @@ mod tests {
             websocket_url: default_websocket_url(DEFAULT_BASE_URL),
             transport_mode: RocketChatTransportMode::Realtime,
             workspace_id: "rocketchat".to_string(),
+            accept_all_rooms: false,
             room_id: Some("room1".to_string()),
             room_name: None,
             user_id: "bot".to_string(),
@@ -1681,19 +2010,31 @@ mod tests {
             client: Client::new(),
             config,
             shutdown_rx: watch::channel(false).1,
-            room: RocketChatResolvedRoom {
-                id: "room1".to_string(),
-                room_type: RocketChatRoomType::Channel,
-                latest_message_id: None,
-                latest_message_ts: None,
-            },
+            rooms: HashMap::from([(
+                "room1".to_string(),
+                RocketChatRoomState {
+                    room: RocketChatResolvedRoom {
+                        id: "room1".to_string(),
+                        room_type: RocketChatRoomType::Channel,
+                        name: Some("general".to_string()),
+                        friendly_name: Some("General".to_string()),
+                        latest_message: None,
+                        latest_message_id: None,
+                        latest_message_ts: None,
+                    },
+                    cursor_ts: None,
+                },
+            )]),
             ws_stream: None,
+            realtime_subscribed_room_ids: HashSet::new(),
             backlog: VecDeque::new(),
             seen_message_ids: HashSet::new(),
             seen_message_order: VecDeque::new(),
-            cursor_ts: None,
+            rooms_updated_since: None,
+            last_room_refresh: None,
             next_realtime_request_id: 1,
         };
+        let room = driver.rooms.get("room1").expect("room state").room.clone();
         let message = RocketChatMessage {
             id: "m1".to_string(),
             text: Some("hi".to_string()),
@@ -1709,7 +2050,7 @@ mod tests {
             attachments: vec![],
             file: None,
         };
-        assert_eq!(driver.thread_id_for_message(&message), "room1");
+        assert_eq!(driver.thread_id_for_message(&room, &message), "room1");
     }
 
     #[test]
