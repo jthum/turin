@@ -10,12 +10,13 @@ use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use turin_channel_core::{
-    ChannelAdapterManifest, ChannelAttachment, ChannelCapabilities, ChannelConfigField,
-    ChannelConfigFieldOption, ChannelConfigTarget, ChannelConfigTargetKind, ChannelConversationKey,
-    ChannelEnumSetting, ChannelIdentitySelectors, ChannelInstallManifest, ChannelKind,
-    ChannelMessageRef, ChannelRuntimeCapabilities, ChannelRuntimeManifest,
-    ChannelSecretRequirement, ChannelSessionScope, ChannelSetupManifest, ChannelUser, InboundEvent,
-    MessageBlock, OutboundMessage,
+    ChannelAdapterManifest, ChannelAttachment, ChannelAuthFlowPollRequest,
+    ChannelAuthFlowPollResponse, ChannelAuthFlowStartRequest, ChannelAuthFlowStartResponse,
+    ChannelCapabilities, ChannelConfigField, ChannelConfigFieldOption, ChannelConfigTarget,
+    ChannelConfigTargetKind, ChannelConversationKey, ChannelEnumSetting, ChannelIdentitySelectors,
+    ChannelInstallManifest, ChannelKind, ChannelMessageRef, ChannelRuntimeCapabilities,
+    ChannelRuntimeManifest, ChannelSecretRequirement, ChannelSessionScope, ChannelSetupManifest,
+    ChannelUser, InboundEvent, MessageBlock, OutboundMessage,
 };
 use turin_channel_runner::ChannelDriver;
 
@@ -54,9 +55,21 @@ pub fn validate_settings(settings: &serde_json::Value) -> Result<()> {
     parse_settings(settings).map(|_| ())
 }
 
+pub fn start_auth_flow(
+    _request: &ChannelAuthFlowStartRequest,
+) -> Result<ChannelAuthFlowStartResponse> {
+    anyhow::bail!("Discord does not expose manifest auth flows")
+}
+
+pub fn poll_auth_flow(
+    _request: &ChannelAuthFlowPollRequest,
+) -> Result<ChannelAuthFlowPollResponse> {
+    anyhow::bail!("Discord does not expose manifest auth flows")
+}
+
 pub fn adapter_manifest() -> ChannelAdapterManifest {
     ChannelAdapterManifest {
-        protocol_version: 1,
+        protocol_version: turin_channel_core::CHANNEL_ADAPTER_PROTOCOL_VERSION,
         kind: "discord".to_string(),
         display_name: "Discord".to_string(),
         runtime: ChannelRuntimeManifest {
@@ -141,6 +154,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     ..ChannelConfigField::default()
                 },
             ],
+            auth_flows: vec![],
         }),
         install: Some(ChannelInstallManifest {
             binary_name: Some("turin-channel-discord".to_string()),
@@ -1755,6 +1769,7 @@ mod tests {
     fn adapter_manifest_exposes_discord_enum_settings() {
         let manifest = adapter_manifest();
         assert_eq!(manifest.kind, "discord");
+        manifest.validate().expect("valid manifest");
         assert_eq!(
             manifest
                 .enum_setting("session_scope")

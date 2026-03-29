@@ -1,6 +1,8 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use std::time::{Duration, SystemTime};
 
+pub const CHANNEL_ADAPTER_PROTOCOL_VERSION: u32 = 2;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct ChannelKind(String);
@@ -229,6 +231,10 @@ impl ChannelAdapterManifest {
             &self.display_name
         }
     }
+
+    pub fn validate(&self) -> Result<(), String> {
+        validate_adapter_manifest(self)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -284,6 +290,8 @@ pub struct ChannelSetupManifest {
     pub validation_checks: Vec<ChannelValidationCheck>,
     #[serde(default)]
     pub config_fields: Vec<ChannelConfigField>,
+    #[serde(default)]
+    pub auth_flows: Vec<ChannelAuthFlow>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -373,6 +381,96 @@ pub struct ChannelFieldVisibilityRule {
     pub equals: serde_json::Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelAuthFlowKind {
+    OauthDeviceCode,
+    QrPairing,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelAuthFlow {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: ChannelAuthFlowKind,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub help: Option<String>,
+    #[serde(default)]
+    pub hint: Option<String>,
+    #[serde(default)]
+    pub advanced: bool,
+    #[serde(default)]
+    pub visible_if: Option<ChannelFieldVisibilityRule>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelAuthFlowResolvedValue {
+    pub target: ChannelConfigTarget,
+    pub value: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ChannelAuthFlowDisplay {
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub verification_uri: Option<String>,
+    #[serde(default)]
+    pub verification_uri_complete: Option<String>,
+    #[serde(default)]
+    pub user_code: Option<String>,
+    #[serde(default)]
+    pub qr_text: Option<String>,
+    #[serde(default)]
+    pub pairing_code: Option<String>,
+    #[serde(default)]
+    pub expires_in_secs: Option<u64>,
+    #[serde(default)]
+    pub poll_interval_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelAuthFlowStartRequest {
+    pub flow_id: String,
+    #[serde(default)]
+    pub current_settings: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelAuthFlowStartResponse {
+    pub session: serde_json::Value,
+    pub display: ChannelAuthFlowDisplay,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelAuthFlowPollRequest {
+    pub flow_id: String,
+    pub session: serde_json::Value,
+    #[serde(default)]
+    pub current_settings: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ChannelAuthFlowPollResponse {
+    Pending {
+        display: ChannelAuthFlowDisplay,
+    },
+    Complete {
+        #[serde(default)]
+        values: Vec<ChannelAuthFlowResolvedValue>,
+        #[serde(default)]
+        message: Option<String>,
+    },
+    Failed {
+        message: String,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ChannelInstallManifest {
     #[serde(default)]
@@ -380,7 +478,90 @@ pub struct ChannelInstallManifest {
 }
 
 fn default_channel_protocol_version() -> u32 {
-    1
+    CHANNEL_ADAPTER_PROTOCOL_VERSION
+}
+
+pub fn validate_adapter_manifest(manifest: &ChannelAdapterManifest) -> Result<(), String> {
+    ChannelKind::parse(&manifest.kind).map_err(|err| {
+        format!(
+            "adapter manifest kind '{}' is invalid: {}",
+            manifest.kind, err
+        )
+    })?;
+
+    if manifest.protocol_version != CHANNEL_ADAPTER_PROTOCOL_VERSION {
+        return Err(format!(
+            "adapter manifest for '{}' uses protocol_version={} but Turin expects {}",
+            manifest.kind, manifest.protocol_version, CHANNEL_ADAPTER_PROTOCOL_VERSION
+        ));
+    }
+
+    let mut enum_keys = std::collections::BTreeSet::new();
+    for setting in &manifest.runtime.enum_settings {
+        if setting.key.trim().is_empty() {
+            return Err(format!(
+                "adapter manifest for '{}' contains an enum setting with an empty key",
+                manifest.kind
+            ));
+        }
+        if !enum_keys.insert(setting.key.clone()) {
+            return Err(format!(
+                "adapter manifest for '{}' contains duplicate enum setting '{}'",
+                manifest.kind, setting.key
+            ));
+        }
+    }
+
+    if let Some(setup) = &manifest.setup {
+        let mut field_keys = std::collections::BTreeSet::new();
+        for field in &setup.config_fields {
+            if field.key.trim().is_empty() {
+                return Err(format!(
+                    "adapter manifest for '{}' contains a config field with an empty key",
+                    manifest.kind
+                ));
+            }
+            if !field_keys.insert(field.key.clone()) {
+                return Err(format!(
+                    "adapter manifest for '{}' contains duplicate config field '{}'",
+                    manifest.kind, field.key
+                ));
+            }
+        }
+
+        let mut flow_ids = std::collections::BTreeSet::new();
+        for flow in &setup.auth_flows {
+            if flow.id.trim().is_empty() {
+                return Err(format!(
+                    "adapter manifest for '{}' contains an auth flow with an empty id",
+                    manifest.kind
+                ));
+            }
+            if !flow_ids.insert(flow.id.clone()) {
+                return Err(format!(
+                    "adapter manifest for '{}' contains duplicate auth flow '{}'",
+                    manifest.kind, flow.id
+                ));
+            }
+        }
+
+        for secret in &setup.required_secrets {
+            if secret.name.trim().is_empty() {
+                return Err(format!(
+                    "adapter manifest for '{}' contains a secret with an empty name",
+                    manifest.kind
+                ));
+            }
+            if secret.env_var.trim().is_empty() {
+                return Err(format!(
+                    "adapter manifest for '{}' contains secret '{}' without env_var",
+                    manifest.kind, secret.name
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -547,5 +728,52 @@ mod tests {
     fn channel_kind_rejects_invalid_characters() {
         let err = ChannelKind::parse("telegram!").expect_err("invalid");
         assert!(err.contains("channel kind"));
+    }
+
+    #[test]
+    fn manifest_validation_rejects_wrong_protocol_version() {
+        let manifest = ChannelAdapterManifest {
+            protocol_version: CHANNEL_ADAPTER_PROTOCOL_VERSION + 1,
+            kind: "telegram".to_string(),
+            ..ChannelAdapterManifest::default()
+        };
+        let err = manifest.validate().expect_err("invalid protocol");
+        assert!(err.contains("protocol_version"));
+    }
+
+    #[test]
+    fn manifest_validation_rejects_duplicate_auth_flows() {
+        let manifest = ChannelAdapterManifest {
+            protocol_version: CHANNEL_ADAPTER_PROTOCOL_VERSION,
+            kind: "telegram".to_string(),
+            setup: Some(ChannelSetupManifest {
+                auth_flows: vec![
+                    ChannelAuthFlow {
+                        id: "pair".to_string(),
+                        kind: ChannelAuthFlowKind::QrPairing,
+                        label: None,
+                        prompt: None,
+                        help: None,
+                        hint: None,
+                        advanced: false,
+                        visible_if: None,
+                    },
+                    ChannelAuthFlow {
+                        id: "pair".to_string(),
+                        kind: ChannelAuthFlowKind::QrPairing,
+                        label: None,
+                        prompt: None,
+                        help: None,
+                        hint: None,
+                        advanced: false,
+                        visible_if: None,
+                    },
+                ],
+                ..ChannelSetupManifest::default()
+            }),
+            ..ChannelAdapterManifest::default()
+        };
+        let err = manifest.validate().expect_err("duplicate auth flow");
+        assert!(err.contains("duplicate auth flow"));
     }
 }

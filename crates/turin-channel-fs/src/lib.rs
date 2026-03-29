@@ -29,7 +29,7 @@ pub fn validate_settings(channel_dir: &Path, settings: &serde_json::Value) -> Re
 
 pub fn adapter_manifest() -> ChannelAdapterManifest {
     ChannelAdapterManifest {
-        protocol_version: 1,
+        protocol_version: turin_channel_core::CHANNEL_ADAPTER_PROTOCOL_VERSION,
         kind: "fs".to_string(),
         display_name: "Filesystem".to_string(),
         runtime: ChannelRuntimeManifest {
@@ -458,5 +458,12 @@ mod tests {
         )
         .expect_err("too-small poll interval should fail");
         assert!(error.to_string().contains("poll_interval_ms"));
+    }
+
+    #[test]
+    fn adapter_manifest_is_valid() {
+        let manifest = adapter_manifest();
+        assert_eq!(manifest.kind, "fs");
+        manifest.validate().expect("valid manifest");
     }
 }

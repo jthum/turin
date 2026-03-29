@@ -17,6 +17,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Init(InitArgs),
+    Doctor(DoctorArgs),
     #[command(subcommand)]
     Channels(ChannelsCommand),
 }
@@ -27,6 +28,12 @@ struct InitArgs {
     config: PathBuf,
     #[arg(long)]
     force: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+struct DoctorArgs {
+    #[arg(long, default_value = "turin.toml")]
+    config: PathBuf,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -67,6 +74,12 @@ async fn main() -> Result<()> {
             setup::run_init(setup::InitArgs {
                 config: args.config,
                 force: args.force,
+            })
+            .await
+        }
+        Command::Doctor(args) => {
+            setup::run_doctor(setup::DoctorArgs {
+                config: args.config,
             })
             .await
         }

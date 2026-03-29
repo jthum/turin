@@ -1,13 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use dialoguer::{Confirm, Input, MultiSelect, Password, Select};
+use dotenvy::from_path_iter;
 use serde::Serialize;
 use serde_json::Value;
 use turin_channel_core::{
-    ChannelAdapterManifest, ChannelConfigField, ChannelConfigTarget, ChannelConfigTargetKind,
-    ChannelFieldVisibilityRule, ChannelKind, ChannelSecretRequirement, ChannelValidationCheck,
+    ChannelAdapterManifest, ChannelAuthFlow, ChannelAuthFlowDisplay, ChannelAuthFlowPollRequest,
+    ChannelAuthFlowPollResponse, ChannelAuthFlowStartRequest, ChannelConfigField,
+    ChannelConfigTarget, ChannelConfigTargetKind, ChannelFieldVisibilityRule, ChannelKind,
+    ChannelSecretRequirement, ChannelValidationCheck,
 };
 use turin_control_client::{ConnectionSpec, ControlClient};
 
@@ -15,12 +19,20 @@ use crate::files::{
     ConfiguredChannel, PlannedWrite, config_dir, confirm_and_write, load_configured_channels,
     load_existing, merge_env_file, render_channel_file, resolve_channels_dir,
 };
-use crate::runner::{describe_external_runner, discover_external_runner_kinds};
+use crate::runner::{
+    describe_external_runner, discover_external_runner_kinds, poll_external_auth_flow,
+    start_external_auth_flow,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct InitArgs {
     pub(crate) config: PathBuf,
     pub(crate) force: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DoctorArgs {
+    pub(crate) config: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -188,6 +200,133 @@ pub(crate) async fn run_init(args: InitArgs) -> Result<()> {
     Ok(())
 }
 
+pub(crate) async fn run_doctor(args: DoctorArgs) -> Result<()> {
+    let config_path = args.config;
+    let mut issues = 0usize;
+
+    if config_path.is_file() {
+        println!("[ok] config: {}", config_path.display());
+    } else {
+        println!("[fail] config: '{}' does not exist", config_path.display());
+        issues += 1;
+    }
+
+    let configured_channels = load_configured_channels(&config_path)?;
+    if configured_channels.is_empty() {
+        println!("[warn] channels: no configured channels found");
+    } else {
+        println!("[ok] channels: {} configured", configured_channels.len());
+    }
+
+    let env_values = load_adjacent_env_values(&config_path)?;
+    for channel in &configured_channels {
+        match describe_external_runner(&channel.kind) {
+            Ok(manifest) => {
+                println!(
+                    "[ok] sidecar: {} ({})",
+                    manifest.display_name_or_kind(),
+                    channel.kind
+                );
+                if let Some(setup) = &manifest.setup {
+                    for secret in &setup.required_secrets {
+                        let present = std::env::var_os(&secret.env_var)
+                            .is_some_and(|value| !value.is_empty())
+                            || env_values
+                                .get(&secret.env_var)
+                                .is_some_and(|value| !value.is_empty());
+                        if present {
+                            println!(
+                                "[ok] secret: {} for channel '{}'",
+                                secret.env_var, channel.id
+                            );
+                        } else if secret.optional {
+                            println!(
+                                "[warn] secret: optional {} is not configured for channel '{}'",
+                                secret.env_var, channel.id
+                            );
+                        } else {
+                            println!(
+                                "[fail] secret: required {} is not configured for channel '{}'",
+                                secret.env_var, channel.id
+                            );
+                            issues += 1;
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                println!(
+                    "[fail] sidecar: kind '{}' for channel '{}' is not available: {}",
+                    channel.kind, channel.id, err
+                );
+                issues += 1;
+            }
+        }
+    }
+
+    match ControlClient::connect(&ConnectionSpec::LocalConfig {
+        config_path: config_path.clone(),
+    })
+    .await
+    {
+        Ok(client) => match client.status().await {
+            Ok(status) => {
+                println!("[ok] daemon: reachable at {}", status.endpoint);
+                let runtimes: BTreeMap<_, _> = status
+                    .channel_runtimes
+                    .into_iter()
+                    .map(|runtime| (runtime.id.clone(), runtime))
+                    .collect();
+                for channel in &configured_channels {
+                    match runtimes.get(&channel.id) {
+                        Some(runtime) if runtime.state == "running" => {
+                            println!("[ok] runtime: channel '{}' is running", channel.id);
+                        }
+                        Some(runtime) => {
+                            println!(
+                                "[warn] runtime: channel '{}' is {}{}",
+                                channel.id,
+                                runtime.state,
+                                runtime
+                                    .last_error
+                                    .as_deref()
+                                    .map(|error| format!(" ({error})"))
+                                    .unwrap_or_default()
+                            );
+                            if runtime.state == "failed" {
+                                issues += 1;
+                            }
+                        }
+                        None => {
+                            println!(
+                                "[warn] runtime: channel '{}' has no active runtime snapshot",
+                                channel.id
+                            );
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                println!("[warn] daemon: status unavailable: {err}");
+            }
+        },
+        Err(err) => {
+            println!(
+                "[warn] daemon: not reachable (start Turin with `turin daemon start --config {}`): {}",
+                config_path.display(),
+                err
+            );
+        }
+    }
+
+    if issues > 0 {
+        anyhow::bail!("doctor found {issues} blocking issue(s)");
+    }
+
+    println!("Doctor completed without blocking issues.");
+    Ok(())
+}
+
 pub(crate) async fn run_channels_list(args: ChannelsListArgs) -> Result<()> {
     let configured_channels = load_configured_channels(&args.config)?;
     let configured_by_kind = configured_channels_by_kind(&configured_channels);
@@ -317,6 +456,23 @@ pub(crate) async fn run_configure_channel(args: ConfigureChannelArgs) -> Result<
             validate_field(field, &value, validation).await?;
         }
         apply_target_value(target, value, &mut channel_settings, &mut env_updates)?;
+    }
+
+    for flow in &setup.auth_flows {
+        if flow.advanced && !advanced_enabled {
+            continue;
+        }
+        if !field_is_visible(flow.visible_if.as_ref(), &channel_settings) {
+            continue;
+        }
+        run_auth_flow(
+            kind.as_str(),
+            manifest.display_name_or_kind(),
+            flow,
+            &mut channel_settings,
+            &mut env_updates,
+        )
+        .await?;
     }
 
     let channel_path = resolve_channels_dir(&config_path)?
@@ -476,6 +632,119 @@ async fn capture_secret(
     }
 
     Ok(())
+}
+
+async fn run_auth_flow(
+    kind: &str,
+    display_name: &str,
+    flow: &ChannelAuthFlow,
+    channel_settings: &mut BTreeMap<String, Value>,
+    env_updates: &mut BTreeMap<String, String>,
+) -> Result<()> {
+    if let Some(help) = &flow.help {
+        println!("{help}");
+    }
+    if let Some(hint) = &flow.hint {
+        println!("Hint: {hint}");
+    }
+
+    let prompt = flow
+        .prompt
+        .clone()
+        .or_else(|| flow.label.clone())
+        .unwrap_or_else(|| flow.id.clone());
+    if !Confirm::new()
+        .with_prompt(format!("{display_name}: {prompt}?"))
+        .default(true)
+        .interact()?
+    {
+        anyhow::bail!("Skipped required auth flow '{}'", flow.id);
+    }
+
+    let start = start_external_auth_flow(
+        kind,
+        &ChannelAuthFlowStartRequest {
+            flow_id: flow.id.clone(),
+            current_settings: current_settings_value(channel_settings),
+        },
+    )?;
+    render_auth_flow_display(&start.display)?;
+
+    let session = start.session;
+    let mut poll_interval = start.display.poll_interval_secs.unwrap_or(5);
+
+    loop {
+        tokio::time::sleep(Duration::from_secs(poll_interval.max(1))).await;
+        match poll_external_auth_flow(
+            kind,
+            &ChannelAuthFlowPollRequest {
+                flow_id: flow.id.clone(),
+                session: session.clone(),
+                current_settings: current_settings_value(channel_settings),
+            },
+        )? {
+            ChannelAuthFlowPollResponse::Pending { display } => {
+                render_auth_flow_display(&display)?;
+                poll_interval = display.poll_interval_secs.unwrap_or(poll_interval);
+            }
+            ChannelAuthFlowPollResponse::Complete { values, message } => {
+                if let Some(message) = message {
+                    println!("{message}");
+                }
+                for resolved in values {
+                    apply_target_value(
+                        &resolved.target,
+                        resolved.value,
+                        channel_settings,
+                        env_updates,
+                    )?;
+                }
+                break;
+            }
+            ChannelAuthFlowPollResponse::Failed { message } => {
+                anyhow::bail!("Auth flow '{}' failed: {}", flow.id, message);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn render_auth_flow_display(display: &ChannelAuthFlowDisplay) -> Result<()> {
+    if let Some(message) = &display.message {
+        println!("{message}");
+    }
+    if let Some(uri) = &display.verification_uri {
+        println!("Verification URL: {uri}");
+    }
+    if let Some(uri) = &display.verification_uri_complete {
+        println!("Direct verification URL: {uri}");
+    }
+    if let Some(code) = &display.user_code {
+        println!("User code: {code}");
+    }
+    if let Some(code) = &display.pairing_code {
+        println!("Pairing code: {code}");
+    }
+    if let Some(qr_text) = &display.qr_text {
+        println!("Scan this QR code:");
+        if let Err(err) = qr2term::print_qr(qr_text) {
+            println!("Failed to render QR code cleanly: {err}");
+            println!("QR payload: {qr_text}");
+        }
+    }
+    if let Some(expires_in_secs) = display.expires_in_secs {
+        println!("This step expires in {} seconds.", expires_in_secs);
+    }
+    Ok(())
+}
+
+fn current_settings_value(settings: &BTreeMap<String, Value>) -> Value {
+    let object = settings
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    Value::Object(object)
 }
 
 async fn validate_field(
@@ -830,6 +1099,23 @@ fn value_as_validation_string(value: &Value) -> Option<String> {
         }
         _ => None,
     }
+}
+
+fn load_adjacent_env_values(config_path: &std::path::Path) -> Result<BTreeMap<String, String>> {
+    let env_path = config_dir(config_path).join(".env");
+    if !env_path.is_file() {
+        return Ok(BTreeMap::new());
+    }
+
+    let mut values = BTreeMap::new();
+    for item in from_path_iter(&env_path)
+        .with_context(|| format!("Failed to parse '{}'", env_path.display()))?
+    {
+        let (key, value) =
+            item.with_context(|| format!("Failed to parse '{}'", env_path.display()))?;
+        values.insert(key, value);
+    }
+    Ok(values)
 }
 
 fn yes_no(value: bool) -> String {

@@ -4,7 +4,11 @@ use std::process::Command;
 
 use anyhow::{Context, Result, anyhow};
 use serde_json::Value;
-use turin_channel_core::{ChannelAdapterManifest, ChannelKind};
+use turin_channel_core::{
+    ChannelAdapterManifest, ChannelAuthFlowPollRequest, ChannelAuthFlowPollResponse,
+    ChannelAuthFlowStartRequest, ChannelAuthFlowStartResponse, ChannelKind,
+    validate_adapter_manifest,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ExternalRunnerCommand {
@@ -34,6 +38,10 @@ pub(crate) fn resolve_external_runner_command(kind: &str) -> Result<ExternalRunn
         });
     }
 
+    if let Some(command) = resolve_workspace_runner_command(&binary_name) {
+        return Ok(command);
+    }
+
     let sibling_name = platform_binary_name(&binary_name);
     if let Ok(current_exe) = std::env::current_exe() {
         let mut candidates = Vec::new();
@@ -55,21 +63,6 @@ pub(crate) fn resolve_external_runner_command(kind: &str) -> Result<ExternalRunn
                 });
             }
         }
-    }
-
-    if let Some(cargo) = std::env::var_os("CARGO").filter(|value| !value.is_empty()) {
-        let package = binary_name.clone();
-        return Ok(ExternalRunnerCommand {
-            program: PathBuf::from(cargo),
-            args_prefix: vec![
-                "run".to_string(),
-                "-q".to_string(),
-                "-p".to_string(),
-                package.clone(),
-                "--".to_string(),
-            ],
-            display: format!("cargo run -q -p {package} --"),
-        });
     }
 
     let path = PathBuf::from(binary_name);
@@ -108,7 +101,72 @@ pub(crate) fn describe_external_runner(kind: &str) -> Result<ChannelAdapterManif
             kind
         );
     }
+    validate_adapter_manifest(&manifest)
+        .map_err(anyhow::Error::msg)
+        .context("Channel runner returned an invalid adapter manifest")?;
     Ok(manifest)
+}
+
+pub(crate) fn start_external_auth_flow(
+    kind: &str,
+    request: &ChannelAuthFlowStartRequest,
+) -> Result<ChannelAuthFlowStartResponse> {
+    let runner = resolve_external_runner_command(kind)?;
+    let request_json =
+        serde_json::to_string(request).context("Failed to encode auth flow start request")?;
+
+    let mut command = Command::new(&runner.program);
+    for arg in &runner.args_prefix {
+        command.arg(arg);
+    }
+    command
+        .arg("setup-auth-flow-start")
+        .arg("--request-json")
+        .arg(&request_json);
+
+    let output = command
+        .output()
+        .with_context(|| format!("Failed to launch '{}'", runner.display))?;
+
+    if !output.status.success() {
+        return Err(anyhow!(runner_output_detail(&output).unwrap_or_else(
+            || format!("runner exited with status {}", output.status)
+        )));
+    }
+
+    serde_json::from_slice(&output.stdout)
+        .context("Failed to decode auth flow start response from channel runner")
+}
+
+pub(crate) fn poll_external_auth_flow(
+    kind: &str,
+    request: &ChannelAuthFlowPollRequest,
+) -> Result<ChannelAuthFlowPollResponse> {
+    let runner = resolve_external_runner_command(kind)?;
+    let request_json =
+        serde_json::to_string(request).context("Failed to encode auth flow poll request")?;
+
+    let mut command = Command::new(&runner.program);
+    for arg in &runner.args_prefix {
+        command.arg(arg);
+    }
+    command
+        .arg("setup-auth-flow-poll")
+        .arg("--request-json")
+        .arg(&request_json);
+
+    let output = command
+        .output()
+        .with_context(|| format!("Failed to launch '{}'", runner.display))?;
+
+    if !output.status.success() {
+        return Err(anyhow!(runner_output_detail(&output).unwrap_or_else(
+            || format!("runner exited with status {}", output.status)
+        )));
+    }
+
+    serde_json::from_slice(&output.stdout)
+        .context("Failed to decode auth flow poll response from channel runner")
 }
 
 pub(crate) fn discover_external_runner_kinds() -> Vec<String> {
@@ -159,27 +217,7 @@ fn discover_runner_kinds_from_path(kinds: &mut BTreeSet<String>) {
 }
 
 fn discover_runner_kinds_from_workspace(kinds: &mut BTreeSet<String>) {
-    let Some(cargo) = std::env::var_os("CARGO").filter(|value| !value.is_empty()) else {
-        return;
-    };
-    let Some(manifest_path) = find_workspace_manifest_path() else {
-        return;
-    };
-
-    let output = match Command::new(cargo)
-        .arg("metadata")
-        .arg("--no-deps")
-        .arg("--format-version")
-        .arg("1")
-        .arg("--manifest-path")
-        .arg(&manifest_path)
-        .output()
-    {
-        Ok(output) if output.status.success() => output,
-        _ => return,
-    };
-
-    let Ok(metadata) = serde_json::from_slice::<Value>(&output.stdout) else {
+    let Some(metadata) = workspace_metadata() else {
         return;
     };
     let Some(packages) = metadata.get("packages").and_then(Value::as_array) else {
@@ -208,6 +246,75 @@ fn discover_runner_kinds_from_workspace(kinds: &mut BTreeSet<String>) {
             }
         }
     }
+}
+
+fn resolve_workspace_runner_command(binary_name: &str) -> Option<ExternalRunnerCommand> {
+    if !workspace_has_runner(binary_name) {
+        return None;
+    }
+
+    let cargo = std::env::var_os("CARGO").filter(|value| !value.is_empty())?;
+    Some(ExternalRunnerCommand {
+        program: PathBuf::from(cargo),
+        args_prefix: vec![
+            "run".to_string(),
+            "-q".to_string(),
+            "-p".to_string(),
+            binary_name.to_string(),
+            "--".to_string(),
+        ],
+        display: format!("cargo run -q -p {binary_name} --"),
+    })
+}
+
+fn workspace_has_runner(binary_name: &str) -> bool {
+    let Some(metadata) = workspace_metadata() else {
+        return false;
+    };
+    let Some(packages) = metadata.get("packages").and_then(Value::as_array) else {
+        return false;
+    };
+    for package in packages {
+        let Some(targets) = package.get("targets").and_then(Value::as_array) else {
+            continue;
+        };
+        for target in targets {
+            let Some(name) = target.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            if name != binary_name {
+                continue;
+            }
+            let Some(kinds_array) = target.get("kind").and_then(Value::as_array) else {
+                continue;
+            };
+            if kinds_array
+                .iter()
+                .any(|entry| entry.as_str().is_some_and(|kind| kind == "bin"))
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn workspace_metadata() -> Option<Value> {
+    let cargo = std::env::var_os("CARGO").filter(|value| !value.is_empty())?;
+    let manifest_path = find_workspace_manifest_path()?;
+    let output = Command::new(cargo)
+        .arg("metadata")
+        .arg("--no-deps")
+        .arg("--format-version")
+        .arg("1")
+        .arg("--manifest-path")
+        .arg(&manifest_path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    serde_json::from_slice::<Value>(&output.stdout).ok()
 }
 
 fn discover_runner_kinds_in_dir(dir: &Path, kinds: &mut BTreeSet<String>) {
@@ -279,6 +386,7 @@ fn normalize_env_component(kind: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use turin_channel_core::{ChannelAuthFlowPollResponse, ChannelAuthFlowStartRequest};
 
     #[test]
     fn derives_external_runner_names_from_kind() {
@@ -303,5 +411,67 @@ mod tests {
             Some("whatsapp".to_string())
         );
         assert_eq!(kind_from_binary_name("turin"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn auth_flow_commands_round_trip_through_runner() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runner = temp.path().join("fake-whatsapp-runner.sh");
+        std::fs::write(
+            &runner,
+            "#!/bin/sh\nif [ \"$1\" = \"setup-auth-flow-start\" ]; then\n  printf '%s\\n' '{\"session\":{\"ticket\":\"abc\"},\"display\":{\"message\":\"Scan the QR code\",\"qr_text\":\"otpauth://pair\"}}'\n  exit 0\nfi\nif [ \"$1\" = \"setup-auth-flow-poll\" ]; then\n  printf '%s\\n' '{\"state\":\"complete\",\"values\":[{\"target\":{\"kind\":\"channel_setting\",\"name\":\"session_id\"},\"value\":\"session-1\"}],\"message\":\"Pairing complete\"}'\n  exit 0\nfi\nexit 1\n",
+        )
+        .expect("script written");
+        let mut perms = std::fs::metadata(&runner).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&runner, perms).expect("permissions");
+
+        let previous = std::env::var_os("TURIN_CHANNEL_WHATSAPP_BIN");
+        unsafe {
+            std::env::set_var("TURIN_CHANNEL_WHATSAPP_BIN", &runner);
+        }
+
+        let start = start_external_auth_flow(
+            "whatsapp",
+            &ChannelAuthFlowStartRequest {
+                flow_id: "pair".to_string(),
+                current_settings: serde_json::json!({}),
+            },
+        )
+        .expect("start response");
+        assert_eq!(start.session["ticket"], "abc");
+        assert_eq!(start.display.message.as_deref(), Some("Scan the QR code"));
+
+        let poll = poll_external_auth_flow(
+            "whatsapp",
+            &turin_channel_core::ChannelAuthFlowPollRequest {
+                flow_id: "pair".to_string(),
+                session: start.session,
+                current_settings: serde_json::json!({}),
+            },
+        )
+        .expect("poll response");
+        match poll {
+            ChannelAuthFlowPollResponse::Complete { values, message } => {
+                assert_eq!(message.as_deref(), Some("Pairing complete"));
+                assert_eq!(values.len(), 1);
+                assert_eq!(values[0].target.name, "session_id");
+                assert_eq!(values[0].value, serde_json::json!("session-1"));
+            }
+            other => panic!("unexpected poll response: {other:?}"),
+        }
+
+        if let Some(value) = previous {
+            unsafe {
+                std::env::set_var("TURIN_CHANNEL_WHATSAPP_BIN", value);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("TURIN_CHANNEL_WHATSAPP_BIN");
+            }
+        }
     }
 }
