@@ -360,4 +360,23 @@ mod tests {
             }]
         );
     }
+
+    #[test]
+    fn render_channel_file_removes_null_settings_from_existing_doc() {
+        let mut settings = BTreeMap::new();
+        settings.insert("websocket_url".to_string(), serde_json::Value::Null);
+
+        let rendered = render_channel_file(
+            Some(
+                "enabled = true\nkind = \"rocketchat\"\nagent_id = \"default\"\nwebsocket_url = \"wss://chat.example.com/websocket\"\n",
+            ),
+            true,
+            "rocketchat",
+            "default",
+            &settings,
+        )
+        .expect("channel file rendered");
+
+        assert!(!rendered.contains("websocket_url"));
+    }
 }

@@ -475,8 +475,7 @@ pub(crate) async fn run_configure_channel(args: ConfigureChannelArgs) -> Result<
         .await?;
     }
 
-    let settings_value = serde_json::to_value(&channel_settings)
-        .context("Failed to encode configured channel settings for validation")?;
+    let settings_value = current_settings_value(&channel_settings);
     validate_external_runner_settings(kind.as_str(), &settings_value, &env_updates).with_context(
         || {
             format!(
@@ -627,6 +626,9 @@ async fn capture_secret(
     if secret_value.is_empty() && !secret.optional {
         anyhow::bail!("Secret '{}' must not be empty", secret.name);
     }
+    if secret_value.is_empty() {
+        return Ok(());
+    }
 
     if let Some(validation) = &secret.validate {
         validate_named_value(&secret.name, &secret_value, validation).await?;
@@ -753,6 +755,7 @@ fn render_auth_flow_display(display: &ChannelAuthFlowDisplay) -> Result<()> {
 fn current_settings_value(settings: &BTreeMap<String, Value>) -> Value {
     let object = settings
         .iter()
+        .filter(|(_, value)| !value.is_null())
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
     Value::Object(object)
@@ -763,6 +766,9 @@ async fn validate_field(
     value: &Value,
     validation: &ChannelValidationCheck,
 ) -> Result<()> {
+    if value.is_null() {
+        return Ok(());
+    }
     let raw = value_as_validation_string(value)
         .ok_or_else(|| anyhow!("Field '{}' cannot be validated as text", field.key))?;
     validate_named_value(&field.key, &raw, validation).await
@@ -920,7 +926,9 @@ fn prompt_field(field: &ChannelConfigField) -> Result<Value> {
     match field.field_type.as_str() {
         "text" => {
             let default = value_as_default_string(field.default.as_ref());
-            let mut input = Input::<String>::new().with_prompt(prompt);
+            let mut input = Input::<String>::new()
+                .with_prompt(prompt)
+                .allow_empty(!field.required);
             if let Some(default) = default {
                 input = input.default(default);
             }
@@ -928,7 +936,11 @@ fn prompt_field(field: &ChannelConfigField) -> Result<Value> {
             if field.required && value.trim().is_empty() {
                 anyhow::bail!("Field '{}' must not be empty", field.key);
             }
-            Ok(Value::String(value))
+            if value.trim().is_empty() {
+                Ok(Value::Null)
+            } else {
+                Ok(Value::String(value))
+            }
         }
         "secret" => {
             let value = Password::new()
@@ -938,7 +950,11 @@ fn prompt_field(field: &ChannelConfigField) -> Result<Value> {
             if field.required && value.trim().is_empty() {
                 anyhow::bail!("Field '{}' must not be empty", field.key);
             }
-            Ok(Value::String(value))
+            if value.trim().is_empty() {
+                Ok(Value::Null)
+            } else {
+                Ok(Value::String(value))
+            }
         }
         "boolean" => {
             let default = field
@@ -954,11 +970,16 @@ fn prompt_field(field: &ChannelConfigField) -> Result<Value> {
         }
         "number" => {
             let default = value_as_default_string(field.default.as_ref());
-            let mut input = Input::<String>::new().with_prompt(prompt);
+            let mut input = Input::<String>::new()
+                .with_prompt(prompt)
+                .allow_empty(field.default.is_none());
             if let Some(default) = default {
                 input = input.default(default);
             }
             let raw = input.interact_text()?;
+            if raw.trim().is_empty() {
+                return Ok(Value::Null);
+            }
             if raw.contains('.') {
                 let parsed: f64 = raw
                     .parse()
@@ -1032,12 +1053,16 @@ fn prompt_field(field: &ChannelConfigField) -> Result<Value> {
                 .as_ref()
                 .and_then(value_as_string_list)
                 .map(|items| items.join(", "));
-            let mut input =
-                Input::<String>::new().with_prompt(format!("{prompt} (comma-separated)"));
+            let mut input = Input::<String>::new()
+                .with_prompt(format!("{prompt} (comma-separated)"))
+                .allow_empty(true);
             if let Some(default) = default {
                 input = input.default(default);
             }
             let raw = input.interact_text()?;
+            if raw.trim().is_empty() {
+                return Ok(Value::Null);
+            }
             let values: Vec<String> = raw
                 .split(',')
                 .map(str::trim)
@@ -1058,10 +1083,18 @@ fn apply_target_value(
 ) -> Result<()> {
     match target.kind {
         ChannelConfigTargetKind::ChannelSetting => {
+            if value.is_null() {
+                channel_settings.insert(target.name.clone(), Value::Null);
+                return Ok(());
+            }
             channel_settings.insert(target.name.clone(), value);
             Ok(())
         }
         ChannelConfigTargetKind::EnvVar => {
+            if value.is_null() {
+                env_updates.remove(&target.name);
+                return Ok(());
+            }
             let value = value
                 .as_str()
                 .ok_or_else(|| anyhow!("Env-var target '{}' requires a string value", target.name))?
@@ -1231,5 +1264,24 @@ mod tests {
             ])
         );
         assert_eq!(grouped.get("discord"), Some(&vec!["discord".to_string()]));
+    }
+
+    #[test]
+    fn current_settings_value_omits_null_entries() {
+        let mut settings = BTreeMap::new();
+        settings.insert("websocket_url".to_string(), Value::Null);
+        settings.insert(
+            "respond_mode".to_string(),
+            Value::String("mentions".to_string()),
+        );
+
+        let rendered = current_settings_value(&settings);
+        let object = rendered.as_object().expect("object");
+
+        assert!(!object.contains_key("websocket_url"));
+        assert_eq!(
+            object.get("respond_mode"),
+            Some(&Value::String("mentions".to_string()))
+        );
     }
 }
