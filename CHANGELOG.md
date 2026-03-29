@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Rocket.Chat Channel**
-  - Added a new external `turin-channel-rocketchat` sidecar with manifest-driven setup, REST polling, room-aware routing, and Rocket.Chat message sending.
+  - Added a new external `turin-channel-rocketchat` sidecar with manifest-driven setup, realtime Rocket.Chat inbound delivery by default, polling fallback support, room-aware routing, and Rocket.Chat message sending.
   - Added `rocketchat` channel validation coverage in daemon state tests.
 - **Self-Describing Channel Metadata**
   - Expanded sidecar `describe` manifests to carry versioned runtime, setup, and install metadata instead of only enum settings.
