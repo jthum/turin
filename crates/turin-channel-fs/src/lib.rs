@@ -7,8 +7,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::watch;
 use tokio::time::sleep;
 use turin_channel_core::{
-    ChannelAttachment, ChannelConversationKey, ChannelKind, ChannelMessageRef, ChannelSessionScope,
-    ChannelUser, InboundEvent, OutboundMessage,
+    ChannelAdapterManifest, ChannelAttachment, ChannelConversationKey, ChannelKind,
+    ChannelMessageRef, ChannelSessionScope, ChannelUser, InboundEvent, OutboundMessage,
 };
 use turin_channel_runner::ChannelDriver;
 
@@ -23,6 +23,13 @@ pub struct FsChannelDriverConfig {
 
 pub fn validate_settings(channel_dir: &Path, settings: &serde_json::Value) -> Result<()> {
     FsChannelDriverConfig::from_settings(channel_dir, settings).map(|_| ())
+}
+
+pub fn adapter_manifest() -> ChannelAdapterManifest {
+    ChannelAdapterManifest {
+        kind: "fs".to_string(),
+        ..ChannelAdapterManifest::default()
+    }
 }
 
 impl FsChannelDriverConfig {

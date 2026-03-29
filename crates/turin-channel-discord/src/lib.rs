@@ -10,8 +10,9 @@ use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use turin_channel_core::{
-    ChannelAttachment, ChannelCapabilities, ChannelConversationKey, ChannelKind, ChannelMessageRef,
-    ChannelSessionScope, ChannelUser, InboundEvent, MessageBlock, OutboundMessage,
+    ChannelAdapterManifest, ChannelAttachment, ChannelCapabilities, ChannelConversationKey,
+    ChannelEnumSetting, ChannelKind, ChannelMessageRef, ChannelSessionScope, ChannelUser,
+    InboundEvent, MessageBlock, OutboundMessage,
 };
 use turin_channel_runner::ChannelDriver;
 
@@ -48,6 +49,16 @@ pub struct DiscordChannelDriverConfig {
 
 pub fn validate_settings(settings: &serde_json::Value) -> Result<()> {
     parse_settings(settings).map(|_| ())
+}
+
+pub fn adapter_manifest() -> ChannelAdapterManifest {
+    ChannelAdapterManifest {
+        kind: "discord".to_string(),
+        enum_settings: vec![ChannelEnumSetting {
+            key: "session_scope".to_string(),
+            options: vec!["user".to_string(), "thread".to_string()],
+        }],
+    }
 }
 
 impl DiscordChannelDriverConfig {
@@ -1651,5 +1662,18 @@ mod tests {
         assert_eq!(event.session_scope, ChannelSessionScope::Thread);
         assert_eq!(event.conversation.thread_id, "123");
         assert_eq!(event.conversation.user_id, None);
+    }
+
+    #[test]
+    fn adapter_manifest_exposes_discord_enum_settings() {
+        let manifest = adapter_manifest();
+        assert_eq!(manifest.kind, "discord");
+        assert_eq!(
+            manifest
+                .enum_setting("session_scope")
+                .expect("session scope setting")
+                .options,
+            vec!["user", "thread"]
+        );
     }
 }

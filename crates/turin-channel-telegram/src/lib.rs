@@ -9,8 +9,9 @@ use tokio::sync::watch;
 use tokio::time::sleep;
 use tracing::warn;
 use turin_channel_core::{
-    ChannelAttachment, ChannelCapabilities, ChannelConversationKey, ChannelKind, ChannelMessageRef,
-    ChannelSessionScope, ChannelUser, InboundEvent, MessageBlock, OutboundMessage,
+    ChannelAdapterManifest, ChannelAttachment, ChannelCapabilities, ChannelConversationKey,
+    ChannelEnumSetting, ChannelKind, ChannelMessageRef, ChannelSessionScope, ChannelUser,
+    InboundEvent, MessageBlock, OutboundMessage,
 };
 use turin_channel_runner::{ChannelDriver, ChannelProgressUpdate, ChannelStreamMode};
 
@@ -43,6 +44,27 @@ pub fn validate_settings(
     allow_unconfigured_chats: bool,
 ) -> Result<()> {
     parse_settings(settings, allow_unconfigured_chats).map(|_| ())
+}
+
+pub fn adapter_manifest() -> ChannelAdapterManifest {
+    ChannelAdapterManifest {
+        kind: "telegram".to_string(),
+        enum_settings: vec![
+            ChannelEnumSetting {
+                key: "respond_mode".to_string(),
+                options: vec![
+                    "all".to_string(),
+                    "mentions".to_string(),
+                    "replies".to_string(),
+                    "mentions_or_replies".to_string(),
+                ],
+            },
+            ChannelEnumSetting {
+                key: "session_scope".to_string(),
+                options: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
+            },
+        ],
+    }
 }
 
 impl TelegramChannelDriverConfig {
@@ -1094,6 +1116,24 @@ impl ChannelDriver for TelegramChannelDriver {
         message: OutboundMessage,
     ) -> Result<()> {
         self.send_final_message(conversation, &message).await
+    }
+
+    fn enrich_outbound_for_event(
+        &self,
+        event: &InboundEvent,
+        mut outbound: OutboundMessage,
+    ) -> OutboundMessage {
+        if !outbound
+            .metadata
+            .contains_key("telegram_reply_to_message_id")
+            && let Some(message_id) = event.metadata.get("telegram_message_id")
+        {
+            outbound.metadata.insert(
+                "telegram_reply_to_message_id".to_string(),
+                message_id.clone(),
+            );
+        }
+        outbound
     }
 
     fn stream_mode(&self) -> ChannelStreamMode {
@@ -2456,6 +2496,37 @@ mod tests {
         TelegramChannelDriver::from_config("telegram-runtime", config(), rx).unwrap()
     }
 
+    fn sample_event_with_message_id(message_id: i64) -> InboundEvent {
+        let key = ChannelConversationKey {
+            channel: ChannelKind::Telegram,
+            workspace_id: "telegram".into(),
+            room_id: Some("-10012345".into()),
+            thread_id: "-10012345".into(),
+            user_id: Some("user-1".into()),
+        };
+        let mut metadata = serde_json::Map::new();
+        metadata.insert(
+            "telegram_message_id".to_string(),
+            serde_json::json!(message_id),
+        );
+        InboundEvent {
+            conversation: key.clone(),
+            message: ChannelMessageRef {
+                conversation: key,
+                message_id: format!("m-{message_id}"),
+            },
+            user: ChannelUser {
+                id: "user-1".into(),
+                display_name: Some("User One".into()),
+                username: Some("user1".into()),
+            },
+            session_scope: ChannelSessionScope::User,
+            text: "hello".into(),
+            attachments: vec![],
+            metadata,
+        }
+    }
+
     #[test]
     fn normalize_uses_chat_id_as_default_thread() {
         let driver = driver();
@@ -2881,6 +2952,63 @@ mod tests {
         };
 
         assert!(driver.normalize_update(update).is_some());
+    }
+
+    #[test]
+    fn adapter_manifest_exposes_telegram_enum_settings() {
+        let manifest = adapter_manifest();
+        assert_eq!(manifest.kind, "telegram");
+        assert_eq!(
+            manifest
+                .enum_setting("session_scope")
+                .expect("session scope setting")
+                .options,
+            vec!["user", "thread", "room"]
+        );
+        assert_eq!(
+            manifest
+                .enum_setting("respond_mode")
+                .expect("respond mode setting")
+                .options,
+            vec!["all", "mentions", "replies", "mentions_or_replies"]
+        );
+    }
+
+    #[test]
+    fn enrich_outbound_defaults_to_replying_to_source_message() {
+        let driver = driver();
+        let event = sample_event_with_message_id(42);
+        let enriched = driver.enrich_outbound_for_event(&event, OutboundMessage::text("reply"));
+        assert_eq!(enriched.metadata["telegram_reply_to_message_id"], 42);
+    }
+
+    #[test]
+    fn enrich_outbound_keeps_explicit_reply_override() {
+        let driver = driver();
+        let event = sample_event_with_message_id(42);
+        let mut outbound = OutboundMessage::text("reply");
+        outbound.metadata.insert(
+            "telegram_reply_to_message_id".to_string(),
+            serde_json::json!(7),
+        );
+        let enriched = driver.enrich_outbound_for_event(&event, outbound);
+        assert_eq!(enriched.metadata["telegram_reply_to_message_id"], 7);
+    }
+
+    #[test]
+    fn enrich_outbound_allows_clearing_default_reply_target() {
+        let driver = driver();
+        let event = sample_event_with_message_id(42);
+        let mut outbound = OutboundMessage::text("reply");
+        outbound.metadata.insert(
+            "telegram_reply_to_message_id".to_string(),
+            serde_json::Value::Null,
+        );
+        let enriched = driver.enrich_outbound_for_event(&event, outbound);
+        assert_eq!(
+            enriched.metadata.get("telegram_reply_to_message_id"),
+            Some(&serde_json::Value::Null)
+        );
     }
 
     #[test]

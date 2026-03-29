@@ -149,6 +149,26 @@ pub struct ChannelCapabilities {
     pub ephemeral_messages: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ChannelAdapterManifest {
+    pub kind: String,
+    #[serde(default)]
+    pub enum_settings: Vec<ChannelEnumSetting>,
+}
+
+impl ChannelAdapterManifest {
+    pub fn enum_setting(&self, key: &str) -> Option<&ChannelEnumSetting> {
+        self.enum_settings.iter().find(|setting| setting.key == key)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelEnumSetting {
+    pub key: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConversationBinding {
     pub agent_id: String,

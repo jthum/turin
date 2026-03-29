@@ -22,6 +22,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use turin_channel_core::ChannelAdapterManifest;
 use turin_local_ipc::{connect as connect_local_ipc, split as split_local_ipc};
 
 use turin::daemon::protocol::{
@@ -131,6 +132,8 @@ struct ChannelDetailView {
     agent_id: String,
     idle_ttl_secs: Option<u64>,
     settings: Value,
+    #[serde(default)]
+    adapter: Option<ChannelAdapterManifest>,
 }
 
 #[derive(Debug, Deserialize)]

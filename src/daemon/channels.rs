@@ -168,7 +168,7 @@ impl ChannelRuntimeManager {
                     snapshot.directory = channel.directory.display().to_string();
                     snapshot.state = "unsupported".to_string();
                     snapshot.last_error = Some(format!(
-                        "No built-in or external runner is available for channel kind '{}' (supported: fs, discord, telegram)",
+                        "No built-in or external runner is available for channel kind '{}'",
                         channel.kind,
                     ));
                     snapshot.last_error_code = Some("channel_kind_unsupported".to_string());
@@ -501,10 +501,10 @@ impl ChannelRuntimeManager {
     }
 
     async fn start_channel(&self, workspace_root: PathBuf, channel: DesiredChannel) {
-        match channel.kind.as_str() {
-            "fs" => self.start_fs_channel(workspace_root, channel).await,
-            "discord" | "telegram" => self.start_external_channel(workspace_root, channel).await,
-            _ => {}
+        if channel.kind == "fs" {
+            self.start_fs_channel(workspace_root, channel).await;
+        } else {
+            self.start_external_channel(workspace_root, channel).await;
         }
     }
 
@@ -554,7 +554,8 @@ impl ChannelRuntimeManager {
 }
 
 fn is_supported_kind(kind: &str) -> bool {
-    kind == "fs" || channel_runners::uses_external_runner(kind)
+    channel_runners::builtin_channel_manifest(kind).is_some()
+        || channel_runners::describe_external_runner(kind).is_ok()
 }
 
 fn binding_state_path(workspace_root: &std::path::Path, channel_id: &str) -> PathBuf {
@@ -649,7 +650,7 @@ mod tests {
         let runner = temp.path().join("fake-telegram-runner.sh");
         fs::write(
             &runner,
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  sleep 30\n  exit 0\nfi\nexit 0\n",
+            "#!/bin/sh\nif [ \"$1\" = \"describe\" ]; then\n  printf '%s\\n' '{\"kind\":\"telegram\",\"enum_settings\":[]}'\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  sleep 30\n  exit 0\nfi\nif [ \"$1\" = \"validate-settings\" ]; then\n  exit 0\nfi\nexit 0\n",
         )
         .unwrap();
         let mut perms = fs::metadata(&runner).unwrap().permissions();

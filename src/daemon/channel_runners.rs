@@ -2,14 +2,13 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use anyhow::{Context, Result, anyhow};
+use turin_channel_core::ChannelAdapterManifest;
 
-const TELEGRAM_RUNNER_BIN: &str = "turin-channel-telegram";
-const DISCORD_RUNNER_BIN: &str = "turin-channel-discord";
-const TELEGRAM_RUNNER_ENV: &str = "TURIN_CHANNEL_TELEGRAM_BIN";
-const DISCORD_RUNNER_ENV: &str = "TURIN_CHANNEL_DISCORD_BIN";
-
-pub(crate) fn uses_external_runner(kind: &str) -> bool {
-    matches!(kind, "discord" | "telegram")
+pub(crate) fn builtin_channel_manifest(kind: &str) -> Option<ChannelAdapterManifest> {
+    match kind {
+        "fs" => Some(turin_channel_fs::adapter_manifest()),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -19,21 +18,19 @@ pub(crate) struct ExternalRunnerCommand {
     pub display: String,
 }
 
-pub(crate) fn external_runner_binary_name(kind: &str) -> Option<&'static str> {
-    match kind {
-        "discord" => Some(DISCORD_RUNNER_BIN),
-        "telegram" => Some(TELEGRAM_RUNNER_BIN),
-        _ => None,
-    }
+pub(crate) fn external_runner_binary_name(kind: &str) -> String {
+    format!("turin-channel-{}", normalize_binary_component(kind))
+}
+
+pub(crate) fn external_runner_env_var(kind: &str) -> String {
+    format!("TURIN_CHANNEL_{}_BIN", normalize_env_component(kind))
 }
 
 pub(crate) fn resolve_external_runner_command(kind: &str) -> Result<ExternalRunnerCommand> {
-    let binary_name = external_runner_binary_name(kind)
-        .ok_or_else(|| anyhow!("No external runner is defined for channel kind '{kind}'"))?;
+    let binary_name = external_runner_binary_name(kind);
+    let env_var = external_runner_env_var(kind);
 
-    if let Some(path) = std::env::var_os(external_runner_env_var(kind).unwrap_or_default())
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(path) = std::env::var_os(&env_var).filter(|value| !value.is_empty()) {
         let path = PathBuf::from(path);
         return Ok(ExternalRunnerCommand {
             display: path.display().to_string(),
@@ -45,7 +42,7 @@ pub(crate) fn resolve_external_runner_command(kind: &str) -> Result<ExternalRunn
     let sibling_name = if cfg!(windows) {
         format!("{binary_name}.exe")
     } else {
-        binary_name.to_string()
+        binary_name.clone()
     };
 
     if let Ok(current_exe) = std::env::current_exe() {
@@ -71,7 +68,7 @@ pub(crate) fn resolve_external_runner_command(kind: &str) -> Result<ExternalRunn
     }
 
     if let Some(cargo) = std::env::var_os("CARGO").filter(|value| !value.is_empty()) {
-        let package = binary_name.to_string();
+        let package = binary_name.clone();
         return Ok(ExternalRunnerCommand {
             program: PathBuf::from(cargo),
             args_prefix: vec![
@@ -93,10 +90,40 @@ pub(crate) fn resolve_external_runner_command(kind: &str) -> Result<ExternalRunn
     })
 }
 
+pub(crate) fn describe_external_runner(kind: &str) -> Result<ChannelAdapterManifest> {
+    let runner = resolve_external_runner_command(kind)?;
+    let mut command = Command::new(&runner.program);
+    for arg in &runner.args_prefix {
+        command.arg(arg);
+    }
+    command.arg("describe");
+
+    let output = command
+        .output()
+        .with_context(|| format!("Failed to launch '{}'", runner.display))?;
+
+    if !output.status.success() {
+        return Err(anyhow!(runner_output_detail(&output).unwrap_or_else(
+            || { format!("runner exited with status {}", output.status) }
+        )));
+    }
+
+    let manifest: ChannelAdapterManifest = serde_json::from_slice(&output.stdout)
+        .context("Failed to decode channel runner manifest")?;
+    if manifest.kind != kind {
+        anyhow::bail!(
+            "Channel runner '{}' reported kind '{}' but '{}' was requested",
+            runner.display,
+            manifest.kind,
+            kind
+        );
+    }
+    Ok(manifest)
+}
+
 pub(crate) fn validate_external_channel_settings(
     kind: &str,
     settings: &serde_json::Value,
-    allow_unconfigured_chats: bool,
 ) -> Result<()> {
     let runner = resolve_external_runner_command(kind)?;
     let settings_json =
@@ -110,9 +137,6 @@ pub(crate) fn validate_external_channel_settings(
         .arg("validate-settings")
         .arg("--settings-json")
         .arg(&settings_json);
-    if kind == "telegram" && allow_unconfigured_chats {
-        command.arg("--allow-unconfigured-chats");
-    }
 
     let output = command
         .output()
@@ -122,25 +146,45 @@ pub(crate) fn validate_external_channel_settings(
         return Ok(());
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let detail = if !stderr.is_empty() {
-        stderr
-    } else if !stdout.is_empty() {
-        stdout
-    } else {
-        format!("runner exited with status {}", output.status)
-    };
-
-    Err(anyhow!(detail))
+    Err(anyhow!(runner_output_detail(&output).unwrap_or_else(
+        || format!("runner exited with status {}", output.status)
+    )))
 }
 
-fn external_runner_env_var(kind: &str) -> Option<&'static str> {
-    match kind {
-        "discord" => Some(DISCORD_RUNNER_ENV),
-        "telegram" => Some(TELEGRAM_RUNNER_ENV),
-        _ => None,
+fn runner_output_detail(output: &std::process::Output) -> Option<String> {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return Some(stderr);
     }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return Some(stdout);
+    }
+    None
+}
+
+fn normalize_binary_component(kind: &str) -> String {
+    kind.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn normalize_env_component(kind: &str) -> String {
+    kind.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -148,22 +192,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolves_external_runner_names() {
+    fn derives_external_runner_names_from_kind() {
         assert_eq!(
             external_runner_binary_name("telegram"),
-            Some("turin-channel-telegram")
+            "turin-channel-telegram"
         );
         assert_eq!(
-            external_runner_binary_name("discord"),
-            Some("turin-channel-discord")
+            external_runner_binary_name("rocketchat"),
+            "turin-channel-rocketchat"
         );
-        assert_eq!(external_runner_binary_name("fs"), None);
+        assert_eq!(
+            external_runner_binary_name("email.smtp"),
+            "turin-channel-email-smtp"
+        );
     }
 
     #[test]
-    fn reports_external_runner_usage_by_kind() {
-        assert!(uses_external_runner("telegram"));
-        assert!(uses_external_runner("discord"));
-        assert!(!uses_external_runner("fs"));
+    fn derives_external_runner_env_overrides_from_kind() {
+        assert_eq!(
+            external_runner_env_var("telegram"),
+            "TURIN_CHANNEL_TELEGRAM_BIN"
+        );
+        assert_eq!(
+            external_runner_env_var("rocketchat"),
+            "TURIN_CHANNEL_ROCKETCHAT_BIN"
+        );
+        assert_eq!(
+            external_runner_env_var("email.smtp"),
+            "TURIN_CHANNEL_EMAIL_SMTP_BIN"
+        );
     }
 }

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use turin_channel_core::ChannelAdapterManifest;
 use turin_daemon_client::DaemonClient;
 use turin_daemon_protocol::{
     ChannelAccessParams, ChannelAccessRoomParams, DaemonHandshake, DaemonRequest, EntityIdParams,
@@ -186,6 +187,8 @@ pub struct ChannelDetail {
     pub agent_id: String,
     pub idle_ttl_secs: Option<u64>,
     pub settings: Value,
+    #[serde(default)]
+    pub adapter: Option<ChannelAdapterManifest>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

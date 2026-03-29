@@ -20,6 +20,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Run(RunArgs),
+    Describe,
     ValidateSettings(ValidateSettingsArgs),
 }
 
@@ -53,6 +54,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Run(args) => run(args).await,
+        Command::Describe => describe(),
         Command::ValidateSettings(args) => validate_settings(args),
     }
 }
@@ -99,6 +101,14 @@ async fn run(args: RunArgs) -> Result<()> {
 fn validate_settings(args: ValidateSettingsArgs) -> Result<()> {
     let settings = parse_settings_json(&args.settings_json)?;
     turin_channel_discord::validate_settings(&settings)
+}
+
+fn describe() -> Result<()> {
+    println!(
+        "{}",
+        serde_json::to_string(&turin_channel_discord::adapter_manifest())?
+    );
+    Ok(())
 }
 
 fn parse_settings_json(raw: &str) -> Result<Value> {

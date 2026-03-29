@@ -5,18 +5,13 @@ pub(super) fn validate_channel_settings(
     kind: &str,
     channel_dir: &Path,
     settings: &serde_json::Value,
-    access_policy: &turin_channel_runner::ChannelAccessPolicy,
+    _access_policy: &turin_channel_runner::ChannelAccessPolicy,
 ) -> Result<()> {
     match kind {
         "fs" => turin_channel_fs::validate_settings(channel_dir, settings),
-        "discord" => crate::daemon::channel_runners::validate_external_channel_settings(
-            kind, settings, false,
-        ),
-        "telegram" => crate::daemon::channel_runners::validate_external_channel_settings(
-            kind,
-            settings,
-            access_policy.requires_unconfigured_inbound(),
-        ),
+        kind if crate::daemon::channel_runners::describe_external_runner(kind).is_ok() => {
+            crate::daemon::channel_runners::validate_external_channel_settings(kind, settings)
+        }
         _ => {
             if settings.is_object() {
                 Ok(())

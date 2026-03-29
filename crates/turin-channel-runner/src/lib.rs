@@ -401,6 +401,14 @@ pub trait ChannelDriver {
         message: OutboundMessage,
     ) -> Result<()>;
 
+    fn enrich_outbound_for_event(
+        &self,
+        _event: &InboundEvent,
+        outbound: OutboundMessage,
+    ) -> OutboundMessage {
+        outbound
+    }
+
     fn stream_mode(&self) -> ChannelStreamMode {
         ChannelStreamMode::Off
     }
@@ -624,7 +632,7 @@ impl ChannelRunner {
         let task = self
             .submit_and_wait(agent_id, event, reset_requested, timeout_ms)
             .await?;
-        Ok(enrich_outbound_for_event(task_to_outbound(&task), event))
+        Ok(task_to_outbound(&task))
     }
 
     async fn authorize_event<D: ChannelDriver + Send>(
@@ -896,6 +904,7 @@ impl ChannelRunner {
                 event,
                 outbound,
             } => {
+                let outbound = driver.enrich_outbound_for_event(&event, outbound);
                 driver.send(&event.conversation, outbound).await?;
                 dispatch_state.active_conversations.remove(&conversation_id);
                 if let Some(queue) = dispatch_state.queued_events.get_mut(&conversation_id) {
@@ -986,10 +995,7 @@ impl ChannelRunner {
             .wait_for_task_with_progress(&task_ctx, session_events, timeout_ms, &stream, action_tx)
             .await?;
         let outbound = task_to_outbound(&task);
-        Ok(enrich_outbound_for_event(
-            attach_final_thinking(outbound, final_thinking),
-            event,
-        ))
+        Ok(attach_final_thinking(outbound, final_thinking))
     }
 
     async fn wait_for_task_with_progress(
@@ -1391,24 +1397,6 @@ fn preview_thinking(include_thinking: bool, thinking_preview: &str) -> Option<St
         return None;
     }
     Some(thinking_preview.to_string())
-}
-
-fn enrich_outbound_for_event(
-    mut outbound: OutboundMessage,
-    event: &InboundEvent,
-) -> OutboundMessage {
-    if event.conversation.channel == ChannelKind::Telegram
-        && !outbound
-            .metadata
-            .contains_key("telegram_reply_to_message_id")
-        && let Some(message_id) = event.metadata.get("telegram_message_id")
-    {
-        outbound.metadata.insert(
-            "telegram_reply_to_message_id".to_string(),
-            message_id.clone(),
-        );
-    }
-    outbound
 }
 
 fn attach_final_thinking(
@@ -2044,114 +2032,5 @@ mod tests {
         assert_eq!(outbound.embeds.len(), 1);
         assert_eq!(outbound.components.len(), 1);
         assert_eq!(outbound.metadata["priority"], "high");
-    }
-
-    #[test]
-    fn telegram_outbound_defaults_to_replying_to_source_message() {
-        let key = ChannelConversationKey {
-            channel: ChannelKind::Telegram,
-            workspace_id: "telegram".into(),
-            room_id: Some("-1001".into()),
-            thread_id: "-1001".into(),
-            user_id: Some("user-1".into()),
-        };
-        let mut metadata = Map::new();
-        metadata.insert("telegram_message_id".to_string(), Value::from(42));
-        let event = InboundEvent {
-            conversation: key.clone(),
-            message: ChannelMessageRef {
-                conversation: key,
-                message_id: "m-42".into(),
-            },
-            user: ChannelUser {
-                id: "user-1".into(),
-                display_name: Some("User One".into()),
-                username: Some("user1".into()),
-            },
-            session_scope: ChannelSessionScope::User,
-            text: "hello".into(),
-            attachments: vec![],
-            metadata,
-        };
-
-        let enriched = enrich_outbound_for_event(OutboundMessage::text("reply"), &event);
-        assert_eq!(enriched.metadata["telegram_reply_to_message_id"], 42);
-    }
-
-    #[test]
-    fn telegram_outbound_keeps_explicit_reply_override() {
-        let key = ChannelConversationKey {
-            channel: ChannelKind::Telegram,
-            workspace_id: "telegram".into(),
-            room_id: Some("-1001".into()),
-            thread_id: "-1001".into(),
-            user_id: Some("user-1".into()),
-        };
-        let mut event_metadata = Map::new();
-        event_metadata.insert("telegram_message_id".to_string(), Value::from(42));
-        let event = InboundEvent {
-            conversation: key.clone(),
-            message: ChannelMessageRef {
-                conversation: key,
-                message_id: "m-42".into(),
-            },
-            user: ChannelUser {
-                id: "user-1".into(),
-                display_name: Some("User One".into()),
-                username: Some("user1".into()),
-            },
-            session_scope: ChannelSessionScope::User,
-            text: "hello".into(),
-            attachments: vec![],
-            metadata: event_metadata,
-        };
-
-        let mut outbound = OutboundMessage::text("reply");
-        outbound
-            .metadata
-            .insert("telegram_reply_to_message_id".to_string(), Value::from(7));
-
-        let enriched = enrich_outbound_for_event(outbound, &event);
-        assert_eq!(enriched.metadata["telegram_reply_to_message_id"], 7);
-    }
-
-    #[test]
-    fn telegram_outbound_allows_clearing_default_reply_target() {
-        let key = ChannelConversationKey {
-            channel: ChannelKind::Telegram,
-            workspace_id: "telegram".into(),
-            room_id: Some("-1001".into()),
-            thread_id: "-1001".into(),
-            user_id: Some("user-1".into()),
-        };
-        let mut event_metadata = Map::new();
-        event_metadata.insert("telegram_message_id".to_string(), Value::from(42));
-        let event = InboundEvent {
-            conversation: key.clone(),
-            message: ChannelMessageRef {
-                conversation: key,
-                message_id: "m-42".into(),
-            },
-            user: ChannelUser {
-                id: "user-1".into(),
-                display_name: Some("User One".into()),
-                username: Some("user1".into()),
-            },
-            session_scope: ChannelSessionScope::User,
-            text: "hello".into(),
-            attachments: vec![],
-            metadata: event_metadata,
-        };
-
-        let mut outbound = OutboundMessage::text("reply");
-        outbound
-            .metadata
-            .insert("telegram_reply_to_message_id".to_string(), Value::Null);
-
-        let enriched = enrich_outbound_for_event(outbound, &event);
-        assert_eq!(
-            enriched.metadata.get("telegram_reply_to_message_id"),
-            Some(&Value::Null)
-        );
     }
 }

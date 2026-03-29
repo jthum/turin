@@ -336,6 +336,22 @@ pub(super) fn print_channel_detail(channel: ChannelDetailView) {
     if let Some(idle_ttl_secs) = channel.idle_ttl_secs {
         println!("  idle_ttl_secs: {}", idle_ttl_secs);
     }
+    if let Some(adapter) = &channel.adapter
+        && !adapter.enum_settings.is_empty()
+    {
+        println!("  adapter:");
+        for setting in &adapter.enum_settings {
+            println!(
+                "    {}: {}",
+                setting.key,
+                if setting.options.is_empty() {
+                    "<none>".to_string()
+                } else {
+                    setting.options.join(", ")
+                }
+            );
+        }
+    }
     if channel.settings.is_object()
         && !channel
             .settings

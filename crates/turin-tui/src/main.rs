@@ -2441,6 +2441,10 @@ impl TuiApp {
         self.selected_channel_detail()?.settings.as_object()
     }
 
+    fn selected_channel_adapter(&self) -> Option<&turin_channel_core::ChannelAdapterManifest> {
+        self.selected_channel_detail()?.adapter.as_ref()
+    }
+
     fn selected_channel_string_list(&self, key: &str) -> Vec<String> {
         channel_setting_string_list(self.selected_channel_settings(), key)
     }
@@ -2457,13 +2461,10 @@ impl TuiApp {
             .unwrap_or_else(|| "off".to_string())
     }
 
-    fn selected_channel_respond_mode(&self) -> Option<String> {
-        self.selected_channel_string_setting("respond_mode")
-    }
-
-    fn selected_channel_session_scope(&self) -> String {
-        self.selected_channel_string_setting("session_scope")
-            .unwrap_or_else(|| "user".to_string())
+    fn selected_channel_enum_setting_options(&self, key: &str) -> Option<Vec<String>> {
+        self.selected_channel_adapter()?
+            .enum_setting(key)
+            .map(|setting| setting.options.clone())
     }
 
     fn channel_access_entries(&self) -> Vec<ChannelAccessEntryRef> {
@@ -2645,34 +2646,7 @@ impl TuiApp {
         &mut self,
         command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
     ) -> Result<()> {
-        let Some(channel) = self.selected_channel() else {
-            self.dashboard
-                .record_error("No channel is currently selected");
-            return Ok(());
-        };
-        if self.selected_channel_detail().is_none() {
-            self.dashboard
-                .record_error("Channel detail is still loading; try again in a moment");
-            return Ok(());
-        }
-        if channel.kind != "telegram" {
-            self.dashboard
-                .record_error("Respond mode is currently only exposed for Telegram channels");
-            return Ok(());
-        }
-        let next = match self.selected_channel_respond_mode().as_deref() {
-            Some("mentions") => "replies",
-            Some("replies") => "mentions_or_replies",
-            Some("mentions_or_replies") => "all",
-            _ => "mentions",
-        };
-        send_command(
-            command_tx,
-            OperatorCommand::UpdateChannelSettings {
-                channel_id: channel.id,
-                settings: serde_json::json!({ "respond_mode": next }),
-            },
-        )
+        self.cycle_selected_channel_enum_setting(command_tx, "respond_mode")
     }
 
     fn cycle_selected_channel_session_scope(
@@ -2689,30 +2663,53 @@ impl TuiApp {
                 .record_error("Channel detail is still loading; try again in a moment");
             return Ok(());
         }
+        let _ = channel;
+        self.cycle_selected_channel_enum_setting(command_tx, "session_scope")
+    }
 
-        let next = match channel.kind.as_str() {
-            "telegram" => match self.selected_channel_session_scope().as_str() {
-                "user" => "thread",
-                "thread" => "room",
-                _ => "user",
-            },
-            "discord" => match self.selected_channel_session_scope().as_str() {
-                "thread" => "user",
-                _ => "thread",
-            },
-            _ => {
-                self.dashboard.record_error(
-                    "Session scope cycling is currently exposed for Telegram and Discord channels",
-                );
-                return Ok(());
-            }
+    fn cycle_selected_channel_enum_setting(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+        key: &str,
+    ) -> Result<()> {
+        let Some(channel) = self.selected_channel() else {
+            self.dashboard
+                .record_error("No channel is currently selected");
+            return Ok(());
         };
-
+        if self.selected_channel_detail().is_none() {
+            self.dashboard
+                .record_error("Channel detail is still loading; try again in a moment");
+            return Ok(());
+        }
+        let Some(options) = self.selected_channel_enum_setting_options(key) else {
+            self.dashboard.record_error(format!(
+                "Setting '{}' is not exposed by this channel adapter",
+                key
+            ));
+            return Ok(());
+        };
+        if options.is_empty() {
+            self.dashboard
+                .record_error(format!("Setting '{}' has no available options", key));
+            return Ok(());
+        }
+        let current = self.selected_channel_string_setting(key);
+        let current_index = current
+            .as_deref()
+            .and_then(|value| options.iter().position(|option| option == value))
+            .unwrap_or(usize::MAX);
+        let next_index = if current_index == usize::MAX {
+            0
+        } else {
+            (current_index + 1) % options.len()
+        };
+        let next = options[next_index].clone();
         send_command(
             command_tx,
             OperatorCommand::UpdateChannelSettings {
                 channel_id: channel.id,
-                settings: serde_json::json!({ "session_scope": next }),
+                settings: serde_json::json!({ key: next }),
             },
         )
     }
@@ -5488,6 +5485,26 @@ impl TuiApp {
             .and_then(|detail| detail.settings.get("session_scope"))
             .and_then(|value| value.as_str())
             .unwrap_or("user");
+        let session_scope_supported = detail
+            .and_then(|detail| detail.adapter.as_ref())
+            .and_then(|adapter| adapter.enum_setting("session_scope"))
+            .is_some();
+        let respond_mode_supported = detail
+            .and_then(|detail| detail.adapter.as_ref())
+            .and_then(|adapter| adapter.enum_setting("respond_mode"))
+            .is_some();
+        let mut actions = vec![
+            "m pairing mode".to_string(),
+            "p pairing users".to_string(),
+            "u allowed users".to_string(),
+            "b banned users".to_string(),
+        ];
+        if session_scope_supported {
+            actions.push("s session scope".to_string());
+        }
+        if respond_mode_supported {
+            actions.push("o respond mode".to_string());
+        }
 
         let selected_room = match self.selected_channel_access_entry() {
             Some(entry) => match entry.kind {
@@ -5525,7 +5542,9 @@ impl TuiApp {
             format!("Enabled: {}", channel.enabled),
             format!(
                 "Runtime: {}",
-                runtime.map(|runtime| runtime.state.as_str()).unwrap_or("unknown")
+                runtime
+                    .map(|runtime| runtime.state.as_str())
+                    .unwrap_or("unknown")
             ),
             String::new(),
             format!("Pairing mode: {}", pairing_mode),
@@ -5566,7 +5585,7 @@ impl TuiApp {
             ),
             selected_room.unwrap_or_else(|| "Selected room: none".to_string()),
             String::new(),
-            "Actions: m pairing mode  s session scope  p pairing users  u allowed users  b banned users  o respond mode".to_string(),
+            format!("Actions: {}", actions.join("  ")),
             "Room actions: [ / ] select room  a approve  x reject  v revoke".to_string(),
         ]
         .join("\n")
@@ -5589,7 +5608,7 @@ impl TuiApp {
             TabKind::Sessions => "e or Enter resumes the selected stored session",
             TabKind::Tasks => "/ edit filter | F clear filter | c cancels the selected task",
             TabKind::Channels => {
-                "/ edit filter | F clear filter | [ / ] select access room | m cycle pairing | p/u/b edit pairing/allowed/banned users | o cycle respond mode | a approve pending | x reject pending | v revoke approved"
+                "/ edit filter | F clear filter | [ / ] select access room | m cycle pairing | s/o cycle supported enum settings | p/u/b edit pairing/allowed/banned users | a approve pending | x reject pending | v revoke approved"
             }
             TabKind::Events => {
                 "/ edit filter | F clear filter | z pause | f follow latest | G latest"

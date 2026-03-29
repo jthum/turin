@@ -1,4 +1,5 @@
 use serde::Serialize;
+use turin_channel_core::ChannelAdapterManifest;
 use turin_daemon_protocol::SessionSearchHitKind;
 
 #[derive(Debug, Clone, Serialize)]
@@ -33,6 +34,7 @@ pub struct ChannelDetail {
     pub agent_id: String,
     pub idle_ttl_secs: Option<u64>,
     pub settings: serde_json::Value,
+    pub adapter: Option<ChannelAdapterManifest>,
 }
 
 #[derive(Debug, Clone, Serialize)]

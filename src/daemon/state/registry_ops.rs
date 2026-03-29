@@ -333,6 +333,10 @@ impl DaemonState {
                 agent_id: channel.agent_id.clone(),
                 idle_ttl_secs: channel.idle_ttl_secs,
                 settings: serde_json::to_value(&channel.extra).unwrap_or_default(),
+                adapter: crate::daemon::channel_runners::builtin_channel_manifest(&channel.kind)
+                    .or_else(|| {
+                        crate::daemon::channel_runners::describe_external_runner(&channel.kind).ok()
+                    }),
             })
     }
 
