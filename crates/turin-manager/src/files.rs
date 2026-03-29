@@ -206,9 +206,9 @@ pub(crate) fn render_channel_file(
     settings: &BTreeMap<String, serde_json::Value>,
 ) -> Result<String> {
     let mut doc = if let Some(existing) = existing {
-        existing.parse::<DocumentMut>().with_context(|| {
-            "Failed to parse existing channel.toml while staging updated channel settings"
-        })?
+        existing.parse::<DocumentMut>().with_context(
+            || "Failed to parse existing channel.toml while staging updated channel settings",
+        )?
     } else {
         DocumentMut::new()
     };
@@ -259,7 +259,9 @@ fn json_to_toml_item(value: &serde_json::Value) -> Result<Item> {
 fn json_to_toml_value(value: &serde_json::Value) -> Result<Value> {
     match json_to_toml_item(value)? {
         Item::Value(value) => Ok(value),
-        _ => Err(anyhow!("Only scalar or array values can be nested in TOML arrays")),
+        _ => Err(anyhow!(
+            "Only scalar or array values can be nested in TOML arrays"
+        )),
     }
 }
 

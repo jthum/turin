@@ -336,8 +336,7 @@ pub(super) fn print_channel_detail(channel: ChannelDetailView) {
     if let Some(idle_ttl_secs) = channel.idle_ttl_secs {
         println!("  idle_ttl_secs: {}", idle_ttl_secs);
     }
-    if let Some(adapter) = &channel.adapter
-    {
+    if let Some(adapter) = &channel.adapter {
         println!("  adapter:");
         println!("    kind: {}", adapter.kind);
         println!("    display_name: {}", adapter.display_name_or_kind());

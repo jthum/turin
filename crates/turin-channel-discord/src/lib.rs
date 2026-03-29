@@ -13,9 +13,9 @@ use turin_channel_core::{
     ChannelAdapterManifest, ChannelAttachment, ChannelCapabilities, ChannelConfigField,
     ChannelConfigFieldOption, ChannelConfigTarget, ChannelConfigTargetKind, ChannelConversationKey,
     ChannelEnumSetting, ChannelIdentitySelectors, ChannelInstallManifest, ChannelKind,
-    ChannelMessageRef, ChannelRuntimeCapabilities, ChannelRuntimeManifest, ChannelSessionScope,
-    ChannelSecretRequirement, ChannelSetupManifest, ChannelUser, InboundEvent, MessageBlock,
-    OutboundMessage,
+    ChannelMessageRef, ChannelRuntimeCapabilities, ChannelRuntimeManifest,
+    ChannelSecretRequirement, ChannelSessionScope, ChannelSetupManifest, ChannelUser, InboundEvent,
+    MessageBlock, OutboundMessage,
 };
 use turin_channel_runner::ChannelDriver;
 

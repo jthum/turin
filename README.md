@@ -95,6 +95,9 @@ See `docs/guides/harness-library.md` for the current catalog and validation appr
 ```bash
 cargo build --release
 
+# Optional: build the setup/installation helper
+cargo build --release -p turin-manager
+
 # Optional: build the code-indexing companion if you want runtime code search setup
 cargo build --release -p turin-map
 
@@ -137,6 +140,15 @@ target/release/turin harness test --response "HARNESS_TEST_OK"
 ```
 
 `turin init` is interactive when run in a terminal without `--yes`.
+
+If you want the newer manager-driven setup path instead:
+
+```bash
+target/release/turin-manager init
+target/release/turin-manager setup telegram
+```
+
+`turin-manager` stages diffs before writing and stores optional secrets in a `.env` file next to `turin.toml`. Turin auto-loads that adjacent `.env` file at startup.
 
 Tool delegation notes:
 

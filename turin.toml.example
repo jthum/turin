@@ -1,5 +1,6 @@
 # Turin Example Configuration
 # Copy this file to turin.toml and customize for your runtime.
+# If a `.env` file sits next to `turin.toml`, Turin will load it automatically.
 
 # Optional global native tool ceiling for every agent and channel.
 # Defaults to Turin's standard built-in surface.

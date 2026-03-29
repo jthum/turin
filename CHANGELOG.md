@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Self-Describing Channel Metadata**
+  - Expanded sidecar `describe` manifests to carry versioned runtime, setup, and install metadata instead of only enum settings.
+  - Added richer adapter metadata for Telegram, Discord, and FS, including setup fields, secret hints, identity-selector hints, and install binary names.
+- **Turin Manager**
+  - Added a separate `turin-manager` binary for setup-oriented workflows without bloating the long-running daemon.
+  - Added `turin-manager init` for first-run `turin.toml` scaffolding plus starter harness creation.
+  - Added `turin-manager setup telegram` for manifest-driven Telegram channel setup with staged file writes and inline token validation.
+- **Adjacent `.env` Loading**
+  - Turin now loads a `.env` file adjacent to the chosen `turin.toml` before config validation, so manager-written provider and channel secrets work without extra shell export steps.
 - **External Channel Runners**
   - Added dedicated `turin-channel-telegram` and `turin-channel-discord` sidecar binaries.
   - The daemon now auto-discovers and auto-starts those sidecars for enabled Telegram and Discord channels instead of linking their runtime adapters directly into the core `turin` binary.

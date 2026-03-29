@@ -188,9 +188,7 @@ pub(crate) async fn run_setup_telegram(args: TelegramSetupArgs) -> Result<()> {
     let manifest = describe_external_runner("telegram")
         .context("Failed to inspect the Telegram sidecar manifest")?;
     let setup = manifest.setup.clone().ok_or_else(|| {
-        anyhow!(
-            "Telegram sidecar did not expose setup metadata; cannot continue with setup flow"
-        )
+        anyhow!("Telegram sidecar did not expose setup metadata; cannot continue with setup flow")
     })?;
 
     print_setup_intro(&manifest);
@@ -272,7 +270,7 @@ pub(crate) async fn run_setup_telegram(args: TelegramSetupArgs) -> Result<()> {
 
     println!("\nConfigured Telegram channel '{}'.", channel_id);
     if !secrets_written {
-        for (key, _) in &env_updates {
+        for key in env_updates.keys() {
             println!("Remember to export {} before starting Turin.", key);
         }
     }
@@ -334,10 +332,7 @@ async fn validate_secret(
     match validation.kind.as_str() {
         "http_get" => {
             let template = validation.url_template.as_ref().ok_or_else(|| {
-                anyhow!(
-                    "Validation for '{}' is missing 'url_template'",
-                    secret.name
-                )
+                anyhow!("Validation for '{}' is missing 'url_template'", secret.name)
             })?;
             let url = template.replace(&format!("{{{}}}", secret.name), value);
             let response = reqwest::Client::new()
@@ -528,7 +523,12 @@ fn prompt_field(field: &ChannelConfigField) -> Result<Value> {
                 .collect();
             let default_value = field.default.as_ref().and_then(Value::as_str);
             let default_index = default_value
-                .and_then(|wanted| field.options.iter().position(|option| option.value == wanted))
+                .and_then(|wanted| {
+                    field
+                        .options
+                        .iter()
+                        .position(|option| option.value == wanted)
+                })
                 .unwrap_or(0);
             let index = Select::new()
                 .with_prompt(prompt)
@@ -544,11 +544,13 @@ fn prompt_field(field: &ChannelConfigField) -> Result<Value> {
             )
         }
         "string_list" => {
-            let default = field.default.as_ref().and_then(value_as_string_list).map(|items| {
-                items.join(", ")
-            });
-            let mut input = Input::<String>::new()
-                .with_prompt(format!("{prompt} (comma-separated)"));
+            let default = field
+                .default
+                .as_ref()
+                .and_then(value_as_string_list)
+                .map(|items| items.join(", "));
+            let mut input =
+                Input::<String>::new().with_prompt(format!("{prompt} (comma-separated)"));
             if let Some(default) = default {
                 input = input.default(default);
             }
@@ -630,7 +632,10 @@ mod tests {
     #[test]
     fn visible_if_matches_existing_value() {
         let mut values = BTreeMap::new();
-        values.insert("pairing_mode".to_string(), Value::String("auto".to_string()));
+        values.insert(
+            "pairing_mode".to_string(),
+            Value::String("auto".to_string()),
+        );
         let rule = ChannelFieldVisibilityRule {
             key: "pairing_mode".to_string(),
             equals: Value::String("auto".to_string()),

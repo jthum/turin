@@ -46,6 +46,15 @@ export TELEGRAM_BOT_TOKEN="123456789:replace-me"
 
 Turin reads the token from `token_env`, so you can use a different env var name if you prefer.
 
+If you want the setup wizard path instead of hand-editing files:
+
+```bash
+turin-manager init
+turin-manager setup telegram
+```
+
+`turin-manager setup telegram` validates the token, stages the resulting `channel.toml` diff, and can write the token into a `.env` file next to `turin.toml`. Turin loads that adjacent `.env` automatically on startup.
+
 ## 2. Decide Which Telegram Surfaces You Want
 
 Turin’s `chat_id` is a numeric Telegram chat identifier. A Telegram channel can watch:
