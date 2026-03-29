@@ -1,9 +1,12 @@
 use std::path::PathBuf;
 
+use anyhow::anyhow;
+
 use crate::daemon::registry::{RegistryIssue, RegistrySnapshot};
 use crate::daemon::state::{DaemonStatus, DaemonWatchPaths};
 
 use super::dispatch::classify_registry_issue;
+use super::is_expected_client_disconnect;
 use super::watch::should_rescan_daemon;
 
 #[test]
@@ -100,4 +103,22 @@ fn classify_registry_issue_recognizes_agent_and_harness_paths() {
         classify_registry_issue(&status, &channel_issue).expect("channel issue classified");
     assert_eq!(channel_event, "channel.load_failed");
     assert_eq!(channel_data["channel_id"], "discord");
+}
+
+#[test]
+fn expected_client_disconnect_recognizes_broken_pipe_and_reset() {
+    let broken_pipe = anyhow!(std::io::Error::new(
+        std::io::ErrorKind::BrokenPipe,
+        "broken pipe"
+    ));
+    assert!(is_expected_client_disconnect(&broken_pipe));
+
+    let connection_reset = anyhow!(std::io::Error::new(
+        std::io::ErrorKind::ConnectionReset,
+        "connection reset"
+    ));
+    assert!(is_expected_client_disconnect(&connection_reset));
+
+    let other = anyhow!(std::io::Error::other("other"));
+    assert!(!is_expected_client_disconnect(&other));
 }

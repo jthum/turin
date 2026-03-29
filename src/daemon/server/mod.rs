@@ -10,7 +10,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{RwLock, broadcast, watch as watch_channel};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use turin_local_ipc::{
     BoxedLocalIpcStream, LocalIpcListener, cleanup_stale_endpoint, remove_endpoint,
     split as split_local_ipc,
@@ -105,7 +105,11 @@ pub async fn serve(config_path: &Path) -> Result<()> {
                         let client_ctx = client_ctx.clone();
                         tokio::spawn(async move {
                             if let Err(err) = handle_client(stream, client_ctx).await {
-                                error!(error = %err, "Daemon client handler failed");
+                                if is_expected_client_disconnect(&err) {
+                                    debug!(error = %err, "Daemon client disconnected");
+                                } else {
+                                    error!(error = %err, "Daemon client handler failed");
+                                }
                             }
                         });
                     }
@@ -184,4 +188,18 @@ async fn handle_client(stream: BoxedLocalIpcStream, ctx: ClientContext) -> Resul
     }
 
     Ok(())
+}
+
+fn is_expected_client_disconnect(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
+            matches!(
+                io.kind(),
+                std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::UnexpectedEof
+            )
+        })
+    })
 }
