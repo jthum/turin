@@ -21,7 +21,7 @@ use crate::files::{
 };
 use crate::runner::{
     describe_external_runner, discover_external_runner_kinds, poll_external_auth_flow,
-    start_external_auth_flow,
+    start_external_auth_flow, validate_external_runner_settings,
 };
 
 #[derive(Debug, Clone)]
@@ -474,6 +474,17 @@ pub(crate) async fn run_configure_channel(args: ConfigureChannelArgs) -> Result<
         )
         .await?;
     }
+
+    let settings_value = serde_json::to_value(&channel_settings)
+        .context("Failed to encode configured channel settings for validation")?;
+    validate_external_runner_settings(kind.as_str(), &settings_value, &env_updates).with_context(
+        || {
+            format!(
+                "Final {} settings validation failed",
+                manifest.display_name_or_kind()
+            )
+        },
+    )?;
 
     let channel_path = resolve_channels_dir(&config_path)?
         .join(&channel_id)

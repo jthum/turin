@@ -107,6 +107,38 @@ pub(crate) fn describe_external_runner(kind: &str) -> Result<ChannelAdapterManif
     Ok(manifest)
 }
 
+pub(crate) fn validate_external_runner_settings(
+    kind: &str,
+    settings: &Value,
+    env_overrides: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
+    let runner = resolve_external_runner_command(kind)?;
+    let settings_json =
+        serde_json::to_string(settings).context("Failed to encode channel settings JSON")?;
+
+    let mut command = Command::new(&runner.program);
+    for arg in &runner.args_prefix {
+        command.arg(arg);
+    }
+    command
+        .arg("validate-settings")
+        .arg("--settings-json")
+        .arg(&settings_json)
+        .envs(env_overrides);
+
+    let output = command
+        .output()
+        .with_context(|| format!("Failed to launch '{}'", runner.display))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    Err(anyhow!(runner_output_detail(&output).unwrap_or_else(
+        || format!("runner exited with status {}", output.status)
+    )))
+}
+
 pub(crate) fn start_external_auth_flow(
     kind: &str,
     request: &ChannelAuthFlowStartRequest,
