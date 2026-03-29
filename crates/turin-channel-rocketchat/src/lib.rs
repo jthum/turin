@@ -2,9 +2,11 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 use tokio::sync::watch;
 use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
@@ -1769,6 +1771,83 @@ fn login_result_error(frame: &RocketChatDdpFrame) -> Option<serde_json::Value> {
     frame.error.clone()
 }
 
+fn deserialize_rocketchat_timestamp<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    normalize_rocketchat_timestamp_value(value).map_err(serde::de::Error::custom)
+}
+
+fn deserialize_optional_rocketchat_timestamp<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    value
+        .map(normalize_rocketchat_timestamp_value)
+        .transpose()
+        .map_err(serde::de::Error::custom)
+}
+
+fn normalize_rocketchat_timestamp_value(value: serde_json::Value) -> Result<String> {
+    match value {
+        serde_json::Value::String(raw) => normalize_rocketchat_timestamp_string(&raw),
+        serde_json::Value::Object(map) => {
+            if let Some(inner) = map.get("$date") {
+                return normalize_rocketchat_timestamp_value(inner.clone());
+            }
+            anyhow::bail!(
+                "[rocketchat_timestamp_invalid] Rocket.Chat timestamp object must contain '$date'"
+            );
+        }
+        serde_json::Value::Number(number) => normalize_rocketchat_timestamp_number(&number),
+        other => anyhow::bail!(
+            "[rocketchat_timestamp_invalid] Rocket.Chat timestamp must be a string, number, or {{$date: ...}}, got {}",
+            other
+        ),
+    }
+}
+
+fn normalize_rocketchat_timestamp_string(raw: &str) -> Result<String> {
+    match OffsetDateTime::parse(raw, &Rfc3339) {
+        Ok(parsed) => parsed
+            .format(&Rfc3339)
+            .map_err(anyhow::Error::from)
+            .context("[rocketchat_timestamp_format_failed] Failed to format Rocket.Chat timestamp"),
+        Err(_) => Ok(raw.to_string()),
+    }
+}
+
+fn normalize_rocketchat_timestamp_number(number: &serde_json::Number) -> Result<String> {
+    let timestamp = if let Some(value) = number.as_i64() {
+        value
+    } else if let Some(value) = number.as_u64() {
+        i64::try_from(value).context(
+            "[rocketchat_timestamp_out_of_range] Rocket.Chat timestamp number does not fit in i64",
+        )?
+    } else {
+        anyhow::bail!(
+            "[rocketchat_timestamp_invalid] Rocket.Chat floating-point timestamps are not supported"
+        );
+    };
+
+    let nanos = if timestamp.abs() >= 10_000_000_000 {
+        i128::from(timestamp) * 1_000_000
+    } else {
+        i128::from(timestamp) * 1_000_000_000
+    };
+    let parsed = OffsetDateTime::from_unix_timestamp_nanos(nanos).context(
+        "[rocketchat_timestamp_out_of_range] Rocket.Chat numeric timestamp is out of range",
+    )?;
+    parsed
+        .format(&Rfc3339)
+        .map_err(anyhow::Error::from)
+        .context("[rocketchat_timestamp_format_failed] Failed to format Rocket.Chat timestamp")
+}
+
 impl RocketChatRoomType {
     fn parse(raw: &str) -> Result<Self> {
         match raw {
@@ -1832,9 +1911,17 @@ struct RocketChatRoomInfo {
     name: Option<String>,
     #[serde(rename = "fname")]
     friendly_name: Option<String>,
-    #[serde(rename = "_updatedAt")]
+    #[serde(
+        rename = "_updatedAt",
+        default,
+        deserialize_with = "deserialize_optional_rocketchat_timestamp"
+    )]
     updated_at: Option<String>,
-    #[serde(rename = "lm")]
+    #[serde(
+        rename = "lm",
+        default,
+        deserialize_with = "deserialize_optional_rocketchat_timestamp"
+    )]
     last_message_at: Option<String>,
     #[serde(rename = "lastMessage")]
     last_message: Option<RocketChatMessage>,
@@ -1874,6 +1961,7 @@ struct RocketChatMessage {
     id: String,
     #[serde(rename = "msg")]
     text: Option<String>,
+    #[serde(deserialize_with = "deserialize_rocketchat_timestamp")]
     ts: String,
     #[serde(rename = "u")]
     user: Option<RocketChatMessageUser>,
@@ -2087,5 +2175,41 @@ mod tests {
         assert_eq!(frame.msg.as_deref(), Some("result"));
         assert_eq!(frame.id.as_deref(), Some("turin-1"));
         assert!(login_result_error(&frame).is_none());
+    }
+
+    #[test]
+    fn rocketchat_message_accepts_ejson_timestamp() {
+        let message: RocketChatMessage = serde_json::from_value(serde_json::json!({
+            "_id": "message-id",
+            "msg": "hello",
+            "ts": { "$date": "2026-03-29T17:12:01.123Z" },
+            "u": {
+                "_id": "user-id",
+                "username": "alice",
+                "name": "Alice"
+            },
+            "mentions": [],
+            "attachments": []
+        }))
+        .expect("message");
+
+        assert_eq!(message.ts, "2026-03-29T17:12:01.123Z");
+    }
+
+    #[test]
+    fn rocketchat_room_info_accepts_ejson_timestamps() {
+        let room: RocketChatRoomInfo = serde_json::from_value(serde_json::json!({
+            "_id": "room-id",
+            "t": "c",
+            "_updatedAt": { "$date": "2026-03-29T17:12:01.123Z" },
+            "lm": { "$date": "2026-03-29T17:10:00.000Z" }
+        }))
+        .expect("room");
+
+        assert_eq!(room.updated_at.as_deref(), Some("2026-03-29T17:12:01.123Z"));
+        assert_eq!(
+            room.last_message_at.as_deref(),
+            Some("2026-03-29T17:10:00Z")
+        );
     }
 }
