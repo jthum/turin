@@ -1,11 +1,14 @@
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
+use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde::Deserialize;
 use std::collections::{HashSet, VecDeque};
 use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::sleep;
+use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use tracing::warn;
 use turin_channel_core::{
     ChannelAdapterManifest, ChannelAttachment, ChannelAuthFlowPollRequest,
@@ -19,16 +22,24 @@ use turin_channel_core::{
 use turin_channel_runner::ChannelDriver;
 
 const DEFAULT_BASE_URL: &str = "http://localhost:3000";
+const DEFAULT_TRANSPORT_MODE: &str = "realtime";
 const DEFAULT_POLL_INTERVAL_MS: u64 = 1_000;
 const DEFAULT_MAX_MESSAGES_PER_POLL: u16 = 50;
 const MAX_MESSAGES_PER_POLL: u16 = 100;
 const ROCKETCHAT_MESSAGE_MAX_LEN: usize = 4_000;
 const SEEN_MESSAGE_IDS_LIMIT: usize = 1_024;
+const DEFAULT_REALTIME_RECONNECT_DELAY_MS: u64 = 2_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RocketChatRespondMode {
     All,
     Mentions,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RocketChatTransportMode {
+    Realtime,
+    Polling,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,9 +49,13 @@ enum RocketChatRoomType {
     DirectMessage,
 }
 
+type RocketChatWsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
 #[derive(Debug, Clone)]
 pub struct RocketChatChannelDriverConfig {
     pub base_url: String,
+    pub websocket_url: String,
+    pub transport_mode: RocketChatTransportMode,
     pub workspace_id: String,
     pub room_id: Option<String>,
     pub room_name: Option<String>,
@@ -58,6 +73,8 @@ pub struct RocketChatChannelDriverConfig {
 struct RocketChatChannelSettings {
     token_env: String,
     base_url: String,
+    websocket_url: String,
+    transport_mode: RocketChatTransportMode,
     workspace_id: String,
     room_id: Option<String>,
     room_name: Option<String>,
@@ -102,6 +119,10 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
         runtime: ChannelRuntimeManifest {
             session_scopes: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
             enum_settings: vec![
+                ChannelEnumSetting {
+                    key: "transport_mode".to_string(),
+                    options: vec!["realtime".to_string(), "polling".to_string()],
+                },
                 ChannelEnumSetting {
                     key: "respond_mode".to_string(),
                     options: vec!["all".to_string(), "mentions".to_string()],
@@ -204,6 +225,43 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     target: Some(ChannelConfigTarget {
                         kind: ChannelConfigTargetKind::ChannelSetting,
                         name: "workspace_id".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+                ChannelConfigField {
+                    key: "transport_mode".to_string(),
+                    label: Some("Transport Mode".to_string()),
+                    field_type: "select".to_string(),
+                    prompt: Some("How should Turin receive Rocket.Chat messages?".to_string()),
+                    help: Some("Realtime uses Rocket.Chat's websocket/DDP path; polling remains available as a fallback.".to_string()),
+                    default: Some(serde_json::json!(DEFAULT_TRANSPORT_MODE)),
+                    advanced: true,
+                    options: vec![
+                        ChannelConfigFieldOption {
+                            value: "realtime".to_string(),
+                            label: Some("Realtime websocket".to_string()),
+                        },
+                        ChannelConfigFieldOption {
+                            value: "polling".to_string(),
+                            label: Some("REST polling".to_string()),
+                        },
+                    ],
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "transport_mode".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+                ChannelConfigField {
+                    key: "websocket_url".to_string(),
+                    label: Some("WebSocket URL".to_string()),
+                    field_type: "text".to_string(),
+                    prompt: Some("Optional Rocket.Chat websocket URL override".to_string()),
+                    help: Some("Leave empty to derive it automatically from the server URL as ws(s)://.../websocket.".to_string()),
+                    advanced: true,
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "websocket_url".to_string(),
                     }),
                     ..ChannelConfigField::default()
                 },
@@ -340,6 +398,8 @@ impl RocketChatChannelDriverConfig {
 
         Ok(Self {
             base_url: settings.base_url,
+            websocket_url: settings.websocket_url,
+            transport_mode: settings.transport_mode,
             workspace_id: settings.workspace_id,
             room_id: settings.room_id,
             room_name: settings.room_name,
@@ -361,10 +421,12 @@ pub struct RocketChatChannelDriver {
     config: RocketChatChannelDriverConfig,
     shutdown_rx: watch::Receiver<bool>,
     room: RocketChatResolvedRoom,
+    ws_stream: Option<RocketChatWsStream>,
     backlog: VecDeque<InboundEvent>,
     seen_message_ids: HashSet<String>,
     seen_message_order: VecDeque<String>,
     cursor_ts: Option<String>,
+    next_realtime_request_id: u64,
 }
 
 impl RocketChatChannelDriver {
@@ -383,10 +445,12 @@ impl RocketChatChannelDriver {
             config,
             shutdown_rx,
             room,
+            ws_stream: None,
             backlog: VecDeque::new(),
             seen_message_ids: HashSet::new(),
             seen_message_order: VecDeque::new(),
             cursor_ts: None,
+            next_realtime_request_id: 1,
         };
 
         if driver.config.start_from_latest {
@@ -394,6 +458,11 @@ impl RocketChatChannelDriver {
                 driver.remember_message_id(message_id);
             }
             driver.cursor_ts = driver.room.latest_message_ts.clone();
+        } else if matches!(
+            driver.config.transport_mode,
+            RocketChatTransportMode::Realtime
+        ) {
+            driver.poll_messages().await?;
         }
 
         Ok(driver)
@@ -542,6 +611,241 @@ impl RocketChatChannelDriver {
             }
         }
     }
+
+    fn next_request_id(&mut self) -> String {
+        let id = format!("turin-{}", self.next_realtime_request_id);
+        self.next_realtime_request_id += 1;
+        id
+    }
+
+    async fn ensure_realtime_connected(&mut self) -> Result<()> {
+        if self.ws_stream.is_some() {
+            return Ok(());
+        }
+
+        let websocket_url = self.config.websocket_url.clone();
+        let (mut stream, _) = connect_async(&websocket_url)
+            .await
+            .with_context(|| {
+                format!(
+                    "[rocketchat_realtime_connect_failed] Failed to connect to Rocket.Chat websocket '{}'",
+                    websocket_url
+                )
+            })?;
+
+        send_ws_json(
+            &mut stream,
+            serde_json::json!({
+                "msg": "connect",
+                "version": "1",
+                "support": ["1"]
+            }),
+        )
+        .await
+        .context("[rocketchat_realtime_connect_send_failed] Failed to send DDP connect message")?;
+
+        self.await_connected(&mut stream).await?;
+        self.login_realtime(&mut stream).await?;
+        self.subscribe_room_messages(&mut stream).await?;
+
+        self.ws_stream = Some(stream);
+
+        if self.cursor_ts.is_some() {
+            self.poll_messages().await?;
+        }
+
+        Ok(())
+    }
+
+    async fn await_connected(&mut self, stream: &mut RocketChatWsStream) -> Result<()> {
+        loop {
+            let frame = read_ddp_frame(stream).await?;
+            match frame.msg.as_deref() {
+                Some("connected") => return Ok(()),
+                Some("failed") => {
+                    anyhow::bail!(
+                        "[rocketchat_realtime_connect_rejected] Rocket.Chat rejected the DDP connect negotiation"
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    async fn login_realtime(&mut self, stream: &mut RocketChatWsStream) -> Result<()> {
+        let request_id = self.next_request_id();
+        send_ws_json(
+            stream,
+            serde_json::json!({
+                "msg": "method",
+                "method": "login",
+                "id": request_id,
+                "params": [{
+                    "resume": self.config.token
+                }]
+            }),
+        )
+        .await
+        .context(
+            "[rocketchat_realtime_login_send_failed] Failed to send Rocket.Chat DDP login request",
+        )?;
+
+        loop {
+            let frame = read_ddp_frame(stream).await?;
+            if frame.id.as_deref() != Some(request_id.as_str()) {
+                continue;
+            }
+
+            if frame.msg.as_deref() == Some("result") {
+                if let Some(error) = frame.error.or_else(|| frame.result.clone()) {
+                    let maybe_error = error
+                        .get("error")
+                        .or_else(|| error.get("reason"))
+                        .cloned()
+                        .unwrap_or(error);
+                    anyhow::bail!(
+                        "[rocketchat_realtime_login_failed] Rocket.Chat DDP login failed: {}",
+                        maybe_error
+                    );
+                }
+                return Ok(());
+            }
+
+            if frame.msg.as_deref() == Some("error") {
+                anyhow::bail!(
+                    "[rocketchat_realtime_login_failed] Rocket.Chat DDP login returned an error"
+                );
+            }
+        }
+    }
+
+    async fn subscribe_room_messages(&mut self, stream: &mut RocketChatWsStream) -> Result<()> {
+        let request_id = self.next_request_id();
+        send_ws_json(
+            stream,
+            serde_json::json!({
+                "msg": "sub",
+                "id": request_id,
+                "name": "stream-room-messages",
+                "params": [self.room.id.clone(), false]
+            }),
+        )
+        .await
+        .context("[rocketchat_realtime_subscribe_send_failed] Failed to subscribe to Rocket.Chat room messages")?;
+
+        loop {
+            let frame = read_ddp_frame(stream).await?;
+            match frame.msg.as_deref() {
+                Some("ready")
+                    if frame
+                        .subs
+                        .as_ref()
+                        .is_some_and(|subs| subs.iter().any(|sub| sub == &request_id)) =>
+                {
+                    return Ok(());
+                }
+                Some("nosub") if frame.id.as_deref() == Some(request_id.as_str()) => {
+                    anyhow::bail!(
+                        "[rocketchat_realtime_subscribe_failed] Rocket.Chat refused the room message subscription"
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    async fn next_realtime_event(&mut self) -> Result<Option<InboundEvent>> {
+        loop {
+            if let Err(err) = self.ensure_realtime_connected().await {
+                warn!(
+                    channel_id = %self.channel_id,
+                    room_id = %self.room.id,
+                    error = %err,
+                    "Rocket.Chat realtime connection failed"
+                );
+                self.ws_stream = None;
+                tokio::select! {
+                    changed = self.shutdown_rx.changed() => {
+                        if changed.is_ok() && *self.shutdown_rx.borrow() {
+                            return Ok(None);
+                        }
+                    }
+                    _ = sleep(Duration::from_millis(DEFAULT_REALTIME_RECONNECT_DELAY_MS)) => {}
+                }
+                continue;
+            }
+
+            if let Some(event) = self.backlog.pop_front() {
+                return Ok(Some(event));
+            }
+
+            let result = {
+                let stream = self
+                    .ws_stream
+                    .as_mut()
+                    .expect("realtime stream established before reading events");
+                tokio::select! {
+                    changed = self.shutdown_rx.changed() => {
+                        if changed.is_ok() && *self.shutdown_rx.borrow() {
+                            return Ok(None);
+                        }
+                        Ok(None)
+                    }
+                    frame = read_ddp_frame(stream) => frame.map(Some),
+                }
+            };
+
+            match result {
+                Ok(None) => continue,
+                Ok(Some(frame)) => {
+                    if let Some(event) = self.process_realtime_frame(frame)? {
+                        return Ok(Some(event));
+                    }
+                }
+                Err(err) => {
+                    warn!(
+                        channel_id = %self.channel_id,
+                        room_id = %self.room.id,
+                        error = %err,
+                        "Rocket.Chat realtime stream failed; reconnecting"
+                    );
+                    self.ws_stream = None;
+                }
+            }
+        }
+    }
+
+    fn process_realtime_frame(
+        &mut self,
+        frame: RocketChatDdpFrame,
+    ) -> Result<Option<InboundEvent>> {
+        if frame.msg.as_deref() != Some("changed")
+            || frame.collection.as_deref() != Some("stream-room-messages")
+        {
+            return Ok(None);
+        }
+
+        let fields = match frame.fields {
+            Some(fields) => fields,
+            None => return Ok(None),
+        };
+        if fields.event_name.as_deref() != Some(self.room.id.as_str()) {
+            return Ok(None);
+        }
+
+        let Some(raw_message) = fields.args.into_iter().next() else {
+            return Ok(None);
+        };
+        let message: RocketChatMessage = serde_json::from_value(raw_message).context(
+            "[rocketchat_realtime_decode_message_failed] Failed to decode Rocket.Chat room message from realtime event",
+        )?;
+        self.cursor_ts = Some(message.ts.clone());
+        if self.seen_message_ids.contains(&message.id) {
+            return Ok(None);
+        }
+        self.remember_message_id(message.id.clone());
+        self.message_to_event(message)
+    }
 }
 
 #[async_trait]
@@ -579,6 +883,13 @@ impl ChannelDriver for RocketChatChannelDriver {
 
             if let Some(event) = self.backlog.pop_front() {
                 return Ok(Some(event));
+            }
+
+            if matches!(
+                self.config.transport_mode,
+                RocketChatTransportMode::Realtime
+            ) {
+                return self.next_realtime_event().await;
             }
 
             if let Err(err) = self.poll_messages().await {
@@ -655,6 +966,7 @@ impl ChannelDriver for RocketChatChannelDriver {
     }
 
     async fn shutdown(&mut self) -> Result<()> {
+        self.ws_stream = None;
         Ok(())
     }
 }
@@ -774,6 +1086,62 @@ fn absolute_url(base_url: &str, raw: &str) -> String {
 
 fn api_url(base_url: &str, path: &str) -> String {
     format!("{}/api/v1/{}", base_url.trim_end_matches('/'), path)
+}
+
+async fn send_ws_json(stream: &mut RocketChatWsStream, payload: serde_json::Value) -> Result<()> {
+    stream
+        .send(WsMessage::Text(payload.to_string()))
+        .await
+        .context("Failed to send Rocket.Chat websocket frame")
+}
+
+async fn read_ddp_frame(stream: &mut RocketChatWsStream) -> Result<RocketChatDdpFrame> {
+    loop {
+        let message = stream
+            .next()
+            .await
+            .ok_or_else(|| anyhow!("[rocketchat_realtime_closed] Rocket.Chat websocket closed"))?
+            .context(
+                "[rocketchat_realtime_receive_failed] Failed to read Rocket.Chat websocket frame",
+            )?;
+
+        match message {
+            WsMessage::Text(text) => {
+                let frame: RocketChatDdpFrame = serde_json::from_str(&text).context(
+                    "[rocketchat_realtime_decode_failed] Failed to decode Rocket.Chat DDP frame",
+                )?;
+                if frame.msg.as_deref() == Some("ping") {
+                    send_ws_json(stream, serde_json::json!({ "msg": "pong" }))
+                        .await
+                        .context("[rocketchat_realtime_pong_failed] Failed to respond to Rocket.Chat DDP ping")?;
+                    continue;
+                }
+                return Ok(frame);
+            }
+            WsMessage::Binary(bytes) => {
+                let frame: RocketChatDdpFrame = serde_json::from_slice(&bytes)
+                    .context("[rocketchat_realtime_decode_failed] Failed to decode Rocket.Chat binary DDP frame")?;
+                if frame.msg.as_deref() == Some("ping") {
+                    send_ws_json(stream, serde_json::json!({ "msg": "pong" }))
+                        .await
+                        .context("[rocketchat_realtime_pong_failed] Failed to respond to Rocket.Chat DDP ping")?;
+                    continue;
+                }
+                return Ok(frame);
+            }
+            WsMessage::Ping(payload) => {
+                stream
+                    .send(WsMessage::Pong(payload))
+                    .await
+                    .context("[rocketchat_realtime_pong_failed] Failed to respond to Rocket.Chat websocket ping")?;
+            }
+            WsMessage::Pong(_) => {}
+            WsMessage::Close(_) => {
+                anyhow::bail!("[rocketchat_realtime_closed] Rocket.Chat websocket closed");
+            }
+            WsMessage::Frame(_) => {}
+        }
+    }
 }
 
 async fn fetch_room_info(
@@ -926,6 +1294,13 @@ fn parse_settings(settings: &serde_json::Value) -> Result<RocketChatChannelSetti
     .unwrap_or(DEFAULT_BASE_URL)
     .trim_end_matches('/')
     .to_string();
+    let websocket_url = read_optional_non_empty_string(
+        settings,
+        "websocket_url",
+        "[rocketchat_config_invalid_websocket_url] Rocket.Chat channel setting 'websocket_url' must not be empty",
+    )?
+    .map(ToString::to_string)
+    .unwrap_or_else(|| default_websocket_url(&base_url));
 
     let poll_interval_ms = read_u64_with_min(
         settings.get("poll_interval_ms"),
@@ -949,6 +1324,8 @@ fn parse_settings(settings: &serde_json::Value) -> Result<RocketChatChannelSetti
     Ok(RocketChatChannelSettings {
         token_env,
         base_url,
+        websocket_url,
+        transport_mode: read_transport_mode(settings.get("transport_mode"))?,
         workspace_id: read_optional_non_empty_string(
             settings,
             "workspace_id",
@@ -1054,6 +1431,24 @@ fn read_respond_mode(value: Option<&serde_json::Value>) -> Result<RocketChatResp
     }
 }
 
+fn read_transport_mode(value: Option<&serde_json::Value>) -> Result<RocketChatTransportMode> {
+    let raw = match value {
+        None => return Ok(RocketChatTransportMode::Realtime),
+        Some(value) => value.as_str().ok_or_else(|| {
+            anyhow!(
+                "[rocketchat_config_invalid_transport_mode] Rocket.Chat channel setting 'transport_mode' must be a string"
+            )
+        })?,
+    };
+    match raw {
+        "realtime" => Ok(RocketChatTransportMode::Realtime),
+        "polling" => Ok(RocketChatTransportMode::Polling),
+        _ => anyhow::bail!(
+            "[rocketchat_config_invalid_transport_mode] Rocket.Chat channel setting 'transport_mode' must be one of: realtime, polling"
+        ),
+    }
+}
+
 fn read_session_scope(value: Option<&serde_json::Value>) -> Result<ChannelSessionScope> {
     let raw = match value {
         None => return Ok(ChannelSessionScope::Thread),
@@ -1071,6 +1466,19 @@ fn read_session_scope(value: Option<&serde_json::Value>) -> Result<ChannelSessio
             "[rocketchat_config_invalid_session_scope] Rocket.Chat channel setting 'session_scope' must be one of: user, thread, room"
         ),
     }
+}
+
+fn default_websocket_url(base_url: &str) -> String {
+    if let Some(rest) = base_url.strip_prefix("https://") {
+        return format!("wss://{}/websocket", rest.trim_end_matches('/'));
+    }
+    if let Some(rest) = base_url.strip_prefix("http://") {
+        return format!("ws://{}/websocket", rest.trim_end_matches('/'));
+    }
+    if base_url.starts_with("wss://") || base_url.starts_with("ws://") {
+        return format!("{}/websocket", base_url.trim_end_matches('/'));
+    }
+    format!("ws://{}/websocket", base_url.trim_end_matches('/'))
 }
 
 impl RocketChatRoomType {
@@ -1112,6 +1520,32 @@ struct RocketChatRoomInfo {
 struct RocketChatHistoryResponse {
     #[serde(default)]
     messages: Vec<RocketChatMessage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RocketChatDdpFrame {
+    #[serde(default)]
+    msg: Option<String>,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    collection: Option<String>,
+    #[serde(default)]
+    fields: Option<RocketChatDdpChangedFields>,
+    #[serde(default)]
+    subs: Option<Vec<String>>,
+    #[serde(default)]
+    error: Option<serde_json::Value>,
+    #[serde(default)]
+    result: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RocketChatDdpChangedFields {
+    #[serde(rename = "eventName", default)]
+    event_name: Option<String>,
+    #[serde(default)]
+    args: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1191,6 +1625,8 @@ mod tests {
         });
         let parsed = parse_settings(&settings).expect("settings parse");
         assert_eq!(parsed.base_url, DEFAULT_BASE_URL);
+        assert_eq!(parsed.websocket_url, "ws://localhost:3000/websocket");
+        assert_eq!(parsed.transport_mode, RocketChatTransportMode::Realtime);
         assert_eq!(parsed.workspace_id, "rocketchat");
         assert_eq!(parsed.max_messages_per_poll, DEFAULT_MAX_MESSAGES_PER_POLL);
         assert_eq!(parsed.respond_mode, RocketChatRespondMode::Mentions);
@@ -1226,6 +1662,8 @@ mod tests {
     fn user_scope_uses_room_id_for_top_level_messages() {
         let config = RocketChatChannelDriverConfig {
             base_url: DEFAULT_BASE_URL.to_string(),
+            websocket_url: default_websocket_url(DEFAULT_BASE_URL),
+            transport_mode: RocketChatTransportMode::Realtime,
             workspace_id: "rocketchat".to_string(),
             room_id: Some("room1".to_string()),
             room_name: None,
@@ -1249,10 +1687,12 @@ mod tests {
                 latest_message_id: None,
                 latest_message_ts: None,
             },
+            ws_stream: None,
             backlog: VecDeque::new(),
             seen_message_ids: HashSet::new(),
             seen_message_order: VecDeque::new(),
             cursor_ts: None,
+            next_realtime_request_id: 1,
         };
         let message = RocketChatMessage {
             id: "m1".to_string(),
@@ -1270,5 +1710,17 @@ mod tests {
             file: None,
         };
         assert_eq!(driver.thread_id_for_message(&message), "room1");
+    }
+
+    #[test]
+    fn default_websocket_url_tracks_base_url_scheme() {
+        assert_eq!(
+            default_websocket_url("https://chat.example.com"),
+            "wss://chat.example.com/websocket"
+        );
+        assert_eq!(
+            default_websocket_url("http://chat.example.com"),
+            "ws://chat.example.com/websocket"
+        );
     }
 }
