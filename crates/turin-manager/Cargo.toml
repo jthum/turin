@@ -20,6 +20,7 @@ tokio = { version = "1.0", default-features = false, features = ["macros", "rt-m
 toml = "0.8"
 toml_edit = "0.22"
 turin-channel-core = { path = "../turin-channel-core" }
+turin-control-client = { path = "../turin-control-client" }
 
 [dev-dependencies]
 tempfile = "3.10"

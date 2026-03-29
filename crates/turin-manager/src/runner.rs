@@ -1,8 +1,10 @@
-use std::path::PathBuf;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, anyhow};
-use turin_channel_core::ChannelAdapterManifest;
+use serde_json::Value;
+use turin_channel_core::{ChannelAdapterManifest, ChannelKind};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ExternalRunnerCommand {
@@ -32,12 +34,7 @@ pub(crate) fn resolve_external_runner_command(kind: &str) -> Result<ExternalRunn
         });
     }
 
-    let sibling_name = if cfg!(windows) {
-        format!("{binary_name}.exe")
-    } else {
-        binary_name.clone()
-    };
-
+    let sibling_name = platform_binary_name(&binary_name);
     if let Ok(current_exe) = std::env::current_exe() {
         let mut candidates = Vec::new();
         if let Some(parent) = current_exe.parent() {
@@ -114,6 +111,16 @@ pub(crate) fn describe_external_runner(kind: &str) -> Result<ChannelAdapterManif
     Ok(manifest)
 }
 
+pub(crate) fn discover_external_runner_kinds() -> Vec<String> {
+    let mut kinds = BTreeSet::new();
+
+    discover_runner_kinds_from_current_exe(&mut kinds);
+    discover_runner_kinds_from_path(&mut kinds);
+    discover_runner_kinds_from_workspace(&mut kinds);
+
+    kinds.into_iter().collect()
+}
+
 fn runner_output_detail(output: &std::process::Output) -> Option<String> {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if !stderr.is_empty() {
@@ -124,6 +131,125 @@ fn runner_output_detail(output: &std::process::Output) -> Option<String> {
         return Some(stdout);
     }
     None
+}
+
+fn discover_runner_kinds_from_current_exe(kinds: &mut BTreeSet<String>) {
+    let Ok(current_exe) = std::env::current_exe() else {
+        return;
+    };
+    let Some(parent) = current_exe.parent() else {
+        return;
+    };
+
+    discover_runner_kinds_in_dir(parent, kinds);
+    if parent.file_name().is_some_and(|name| name == "deps")
+        && let Some(grandparent) = parent.parent()
+    {
+        discover_runner_kinds_in_dir(grandparent, kinds);
+    }
+}
+
+fn discover_runner_kinds_from_path(kinds: &mut BTreeSet<String>) {
+    let Some(path) = std::env::var_os("PATH") else {
+        return;
+    };
+    for dir in std::env::split_paths(&path) {
+        discover_runner_kinds_in_dir(&dir, kinds);
+    }
+}
+
+fn discover_runner_kinds_from_workspace(kinds: &mut BTreeSet<String>) {
+    let Some(cargo) = std::env::var_os("CARGO").filter(|value| !value.is_empty()) else {
+        return;
+    };
+    let Some(manifest_path) = find_workspace_manifest_path() else {
+        return;
+    };
+
+    let output = match Command::new(cargo)
+        .arg("metadata")
+        .arg("--no-deps")
+        .arg("--format-version")
+        .arg("1")
+        .arg("--manifest-path")
+        .arg(&manifest_path)
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return,
+    };
+
+    let Ok(metadata) = serde_json::from_slice::<Value>(&output.stdout) else {
+        return;
+    };
+    let Some(packages) = metadata.get("packages").and_then(Value::as_array) else {
+        return;
+    };
+
+    for package in packages {
+        let Some(targets) = package.get("targets").and_then(Value::as_array) else {
+            continue;
+        };
+        for target in targets {
+            let Some(kinds_array) = target.get("kind").and_then(Value::as_array) else {
+                continue;
+            };
+            let is_bin = kinds_array
+                .iter()
+                .any(|entry| entry.as_str().is_some_and(|kind| kind == "bin"));
+            if !is_bin {
+                continue;
+            }
+            let Some(name) = target.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            if let Some(kind) = kind_from_binary_name(name) {
+                kinds.insert(kind);
+            }
+        }
+    }
+}
+
+fn discover_runner_kinds_in_dir(dir: &Path, kinds: &mut BTreeSet<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        if let Some(kind) = kind_from_binary_name(&file_name) {
+            kinds.insert(kind);
+        }
+    }
+}
+
+fn kind_from_binary_name(binary_name: &str) -> Option<String> {
+    let name = binary_name.strip_suffix(".exe").unwrap_or(binary_name);
+    let raw_kind = name.strip_prefix("turin-channel-")?;
+    let kind = ChannelKind::parse(raw_kind).ok()?;
+    Some(kind.to_string())
+}
+
+fn find_workspace_manifest_path() -> Option<PathBuf> {
+    let mut cursor = std::env::current_dir().ok()?;
+    loop {
+        let manifest = cursor.join("Cargo.toml");
+        if manifest.is_file() {
+            return Some(manifest);
+        }
+        if !cursor.pop() {
+            return None;
+        }
+    }
+}
+
+fn platform_binary_name(binary_name: &str) -> String {
+    if cfg!(windows) {
+        format!("{binary_name}.exe")
+    } else {
+        binary_name.to_string()
+    }
 }
 
 fn normalize_binary_component(kind: &str) -> String {
@@ -164,5 +290,18 @@ mod tests {
             external_runner_binary_name("email.smtp"),
             "turin-channel-email-smtp"
         );
+    }
+
+    #[test]
+    fn extracts_channel_kind_from_binary_name() {
+        assert_eq!(
+            kind_from_binary_name("turin-channel-rocketchat"),
+            Some("rocketchat".to_string())
+        );
+        assert_eq!(
+            kind_from_binary_name("turin-channel-whatsapp.exe"),
+            Some("whatsapp".to_string())
+        );
+        assert_eq!(kind_from_binary_name("turin"), None);
     }
 }

@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Turin Manager**
   - Added a separate `turin-manager` binary for setup-oriented workflows without bloating the long-running daemon.
   - Added `turin-manager init` for first-run `turin.toml` scaffolding plus starter harness creation.
-  - Added `turin-manager setup telegram` for manifest-driven Telegram channel setup with staged file writes and inline token validation.
+  - Added `turin-manager channels list` to show discoverable channel sidecars and whether they are already configured.
+  - Added `turin-manager channels configure <kind>` for manifest-driven channel setup with staged file writes and inline validation.
+  - Added `turin-manager channels status` to show configured channel runtime state when the daemon is reachable.
 - **Adjacent `.env` Loading**
   - Turin now loads a `.env` file adjacent to the chosen `turin.toml` before config validation, so manager-written provider and channel secrets work without extra shell export steps.
 - **External Channel Runners**

@@ -1,20 +1,21 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
-use dialoguer::{Confirm, Input, Password, Select};
+use dialoguer::{Confirm, Input, MultiSelect, Password, Select};
 use serde::Serialize;
 use serde_json::Value;
 use turin_channel_core::{
     ChannelAdapterManifest, ChannelConfigField, ChannelConfigTarget, ChannelConfigTargetKind,
-    ChannelFieldVisibilityRule, ChannelSecretRequirement, ChannelValidationCheck,
+    ChannelFieldVisibilityRule, ChannelKind, ChannelSecretRequirement, ChannelValidationCheck,
 };
+use turin_control_client::{ConnectionSpec, ControlClient};
 
 use crate::files::{
-    PlannedWrite, config_dir, confirm_and_write, load_existing, merge_env_file,
-    render_channel_file, resolve_channels_dir,
+    ConfiguredChannel, PlannedWrite, config_dir, confirm_and_write, load_configured_channels,
+    load_existing, merge_env_file, render_channel_file, resolve_channels_dir,
 };
-use crate::runner::describe_external_runner;
+use crate::runner::{describe_external_runner, discover_external_runner_kinds};
 
 #[derive(Debug, Clone)]
 pub(crate) struct InitArgs {
@@ -23,10 +24,21 @@ pub(crate) struct InitArgs {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct TelegramSetupArgs {
+pub(crate) struct ChannelsListArgs {
     pub(crate) config: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ConfigureChannelArgs {
+    pub(crate) config: PathBuf,
+    pub(crate) kind: String,
     pub(crate) channel_id: Option<String>,
     pub(crate) agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ChannelsStatusArgs {
+    pub(crate) config: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -176,7 +188,65 @@ pub(crate) async fn run_init(args: InitArgs) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn run_setup_telegram(args: TelegramSetupArgs) -> Result<()> {
+pub(crate) async fn run_channels_list(args: ChannelsListArgs) -> Result<()> {
+    let configured_channels = load_configured_channels(&args.config)?;
+    let configured_by_kind = configured_channels_by_kind(&configured_channels);
+
+    let mut discovered_manifests = BTreeMap::new();
+    for kind in discover_external_runner_kinds() {
+        if let Ok(manifest) = describe_external_runner(&kind) {
+            discovered_manifests.insert(kind, manifest);
+        }
+    }
+
+    let mut all_kinds: BTreeSet<String> = discovered_manifests.keys().cloned().collect();
+    all_kinds.extend(configured_by_kind.keys().cloned());
+
+    if all_kinds.is_empty() {
+        println!("No channels discovered.");
+        println!(
+            "Install or place a `turin-channel-<kind>` sidecar where Turin can resolve it, then run `turin-manager channels configure <kind>`."
+        );
+        return Ok(());
+    }
+
+    let mut rows = Vec::new();
+    rows.push(vec![
+        "KIND".to_string(),
+        "NAME".to_string(),
+        "INSTALLED".to_string(),
+        "CONFIGURED".to_string(),
+        "CHANNEL IDS".to_string(),
+    ]);
+
+    for kind in all_kinds {
+        let configured_ids = configured_by_kind.get(&kind).cloned().unwrap_or_default();
+        let manifest = discovered_manifests
+            .get(&kind)
+            .cloned()
+            .or_else(|| describe_external_runner(&kind).ok());
+        let display_name = manifest
+            .as_ref()
+            .map(|manifest| manifest.display_name_or_kind().to_string())
+            .unwrap_or_else(|| kind.clone());
+        rows.push(vec![
+            kind,
+            display_name,
+            yes_no(manifest.is_some()),
+            yes_no(!configured_ids.is_empty()),
+            if configured_ids.is_empty() {
+                "-".to_string()
+            } else {
+                configured_ids.join(", ")
+            },
+        ]);
+    }
+
+    print_table(&rows);
+    Ok(())
+}
+
+pub(crate) async fn run_configure_channel(args: ConfigureChannelArgs) -> Result<()> {
     let config_path = args.config;
     if !config_path.is_file() {
         anyhow::bail!(
@@ -185,10 +255,14 @@ pub(crate) async fn run_setup_telegram(args: TelegramSetupArgs) -> Result<()> {
         );
     }
 
-    let manifest = describe_external_runner("telegram")
-        .context("Failed to inspect the Telegram sidecar manifest")?;
+    let kind = ChannelKind::parse(&args.kind).map_err(anyhow::Error::msg)?;
+    let manifest = describe_external_runner(kind.as_str())
+        .with_context(|| format!("Failed to inspect the '{}' sidecar manifest", kind.as_str()))?;
     let setup = manifest.setup.clone().ok_or_else(|| {
-        anyhow!("Telegram sidecar did not expose setup metadata; cannot continue with setup flow")
+        anyhow!(
+            "{} does not expose setup metadata; cannot build a generic configuration flow",
+            manifest.display_name_or_kind()
+        )
     })?;
 
     print_setup_intro(&manifest);
@@ -197,7 +271,7 @@ pub(crate) async fn run_setup_telegram(args: TelegramSetupArgs) -> Result<()> {
         Some(channel_id) => channel_id,
         None => Input::new()
             .with_prompt("Channel ID")
-            .default("telegram".to_string())
+            .default(kind.as_str().to_string())
             .interact_text()?,
     };
     let agent_id = match args.agent_id {
@@ -210,7 +284,10 @@ pub(crate) async fn run_setup_telegram(args: TelegramSetupArgs) -> Result<()> {
 
     let advanced_enabled = setup.config_fields.iter().any(|field| field.advanced)
         && Confirm::new()
-            .with_prompt("Configure advanced Telegram options?")
+            .with_prompt(format!(
+                "Configure advanced {} options?",
+                manifest.display_name_or_kind()
+            ))
             .default(false)
             .interact()?;
 
@@ -236,6 +313,9 @@ pub(crate) async fn run_setup_telegram(args: TelegramSetupArgs) -> Result<()> {
             )
         })?;
         let value = prompt_field(field)?;
+        if let Some(validation) = &field.validate {
+            validate_field(field, &value, validation).await?;
+        }
         apply_target_value(target, value, &mut channel_settings, &mut env_updates)?;
     }
 
@@ -246,7 +326,7 @@ pub(crate) async fn run_setup_telegram(args: TelegramSetupArgs) -> Result<()> {
     let channel_body = render_channel_file(
         existing_channel.as_deref(),
         true,
-        "telegram",
+        kind.as_str(),
         &agent_id,
         &channel_settings,
     )?;
@@ -255,7 +335,7 @@ pub(crate) async fn run_setup_telegram(args: TelegramSetupArgs) -> Result<()> {
     let mut secrets_written = false;
     if !env_updates.is_empty()
         && Confirm::new()
-            .with_prompt("Write validated secrets to .env next to turin.toml?")
+            .with_prompt("Write generated secrets and env vars to .env next to turin.toml?")
             .default(true)
             .interact()?
     {
@@ -268,7 +348,11 @@ pub(crate) async fn run_setup_telegram(args: TelegramSetupArgs) -> Result<()> {
 
     confirm_and_write(&plans)?;
 
-    println!("\nConfigured Telegram channel '{}'.", channel_id);
+    println!(
+        "\nConfigured {} channel '{}'.",
+        manifest.display_name_or_kind(),
+        channel_id
+    );
     if !secrets_written {
         for key in env_updates.keys() {
             println!("Remember to export {} before starting Turin.", key);
@@ -279,6 +363,76 @@ pub(crate) async fn run_setup_telegram(args: TelegramSetupArgs) -> Result<()> {
         config_path.display()
     );
 
+    Ok(())
+}
+
+pub(crate) async fn run_channels_status(args: ChannelsStatusArgs) -> Result<()> {
+    let configured_channels = load_configured_channels(&args.config)?;
+    if configured_channels.is_empty() {
+        println!("No configured channels found.");
+        println!("Use `turin-manager channels configure <kind>` to add one.");
+        return Ok(());
+    }
+
+    let mut runtimes_by_id = BTreeMap::new();
+    let daemon_note = match ControlClient::connect(&ConnectionSpec::LocalConfig {
+        config_path: args.config.clone(),
+    })
+    .await
+    {
+        Ok(client) => match client.status().await {
+            Ok(status) => {
+                for runtime in status.channel_runtimes {
+                    runtimes_by_id.insert(runtime.id.clone(), runtime);
+                }
+                None
+            }
+            Err(err) => Some(format!("Daemon status unavailable: {err}")),
+        },
+        Err(err) => Some(format!("Daemon not reachable: {err}")),
+    };
+
+    if let Some(note) = &daemon_note {
+        println!("{note}");
+        println!(
+            "Showing configured channels only. Start Turin with `turin daemon start --config {}` for runtime state.",
+            args.config.display()
+        );
+        println!();
+    }
+
+    let mut rows = Vec::new();
+    rows.push(vec![
+        "CHANNEL".to_string(),
+        "KIND".to_string(),
+        "ENABLED".to_string(),
+        "AGENT".to_string(),
+        "STATE".to_string(),
+        "ERROR".to_string(),
+    ]);
+
+    for channel in configured_channels {
+        let runtime = runtimes_by_id.get(&channel.id);
+        rows.push(vec![
+            channel.id,
+            channel.kind,
+            yes_no(channel.enabled),
+            channel.agent_id.unwrap_or_else(|| "-".to_string()),
+            runtime
+                .map(|runtime| runtime.state.clone())
+                .unwrap_or_else(|| "unknown".to_string()),
+            runtime
+                .and_then(|runtime| {
+                    runtime
+                        .last_error_code
+                        .clone()
+                        .or_else(|| runtime.last_error.clone())
+                })
+                .unwrap_or_else(|| "-".to_string()),
+        ]);
+    }
+
+    print_table(&rows);
     Ok(())
 }
 
@@ -308,7 +462,7 @@ async fn capture_secret(
     }
 
     if let Some(validation) = &secret.validate {
-        validate_secret(secret, &secret_value, validation).await?;
+        validate_named_value(&secret.name, &secret_value, validation).await?;
     }
 
     env_updates.insert(secret.env_var.clone(), secret_value);
@@ -324,29 +478,40 @@ async fn capture_secret(
     Ok(())
 }
 
-async fn validate_secret(
-    secret: &ChannelSecretRequirement,
+async fn validate_field(
+    field: &ChannelConfigField,
+    value: &Value,
+    validation: &ChannelValidationCheck,
+) -> Result<()> {
+    let raw = value_as_validation_string(value)
+        .ok_or_else(|| anyhow!("Field '{}' cannot be validated as text", field.key))?;
+    validate_named_value(&field.key, &raw, validation).await
+}
+
+async fn validate_named_value(
+    key: &str,
     value: &str,
     validation: &ChannelValidationCheck,
 ) -> Result<()> {
     match validation.kind.as_str() {
         "http_get" => {
-            let template = validation.url_template.as_ref().ok_or_else(|| {
-                anyhow!("Validation for '{}' is missing 'url_template'", secret.name)
-            })?;
-            let url = template.replace(&format!("{{{}}}", secret.name), value);
+            let template = validation
+                .url_template
+                .as_ref()
+                .ok_or_else(|| anyhow!("Validation for '{}' is missing 'url_template'", key))?;
+            let url = template.replace(&format!("{{{}}}", key), value);
             let response = reqwest::Client::new()
                 .get(&url)
                 .send()
                 .await
-                .with_context(|| format!("Validation request for '{}' failed", secret.name))?;
+                .with_context(|| format!("Validation request for '{}' failed", key))?;
             if !response.status().is_success() {
                 anyhow::bail!(
                     "{}",
                     validation.message.clone().unwrap_or_else(|| {
                         format!(
                             "Validation for '{}' failed with status {}",
-                            secret.name,
+                            key,
                             response.status()
                         )
                     })
@@ -424,7 +589,7 @@ end
 }
 
 fn print_setup_intro(manifest: &ChannelAdapterManifest) {
-    println!("Setting up {}.", manifest.display_name_or_kind());
+    println!("Configuring {}.", manifest.display_name_or_kind());
     if let Some(setup) = &manifest.setup {
         if let Some(instructions) = &setup.instructions {
             println!("{instructions}");
@@ -433,6 +598,17 @@ fn print_setup_intro(manifest: &ChannelAdapterManifest) {
             println!("Setup URL: {url}");
         }
     }
+}
+
+fn configured_channels_by_kind(channels: &[ConfiguredChannel]) -> BTreeMap<String, Vec<String>> {
+    let mut by_kind = BTreeMap::new();
+    for channel in channels {
+        by_kind
+            .entry(channel.kind.clone())
+            .or_insert_with(Vec::new)
+            .push(channel.id.clone());
+    }
+    by_kind
 }
 
 fn field_is_visible(
@@ -451,6 +627,9 @@ fn prompt_field(field: &ChannelConfigField) -> Result<Value> {
     }
     if let Some(hint) = &field.hint {
         println!("Hint: {hint}");
+    }
+    if let Some(example) = &field.example {
+        println!("Example: {example}");
     }
     let prompt = field
         .prompt
@@ -538,10 +717,34 @@ fn prompt_field(field: &ChannelConfigField) -> Result<Value> {
             Ok(Value::String(field.options[index].value.clone()))
         }
         "multi_select" => {
-            anyhow::bail!(
-                "Field '{}' uses 'multi_select', which is not implemented yet in turin-manager",
-                field.key
-            )
+            if field.options.is_empty() {
+                anyhow::bail!("Field '{}' has no multi-select options", field.key);
+            }
+            let labels: Vec<String> = field
+                .options
+                .iter()
+                .map(|option| option.label.clone().unwrap_or_else(|| option.value.clone()))
+                .collect();
+            let default_values = field
+                .default
+                .as_ref()
+                .and_then(value_as_string_list)
+                .unwrap_or_default();
+            let defaults: Vec<bool> = field
+                .options
+                .iter()
+                .map(|option| default_values.iter().any(|value| value == &option.value))
+                .collect();
+            let indices = MultiSelect::new()
+                .with_prompt(prompt)
+                .items(&labels)
+                .defaults(&defaults)
+                .interact()?;
+            let values: Vec<String> = indices
+                .into_iter()
+                .map(|index| field.options[index].value.clone())
+                .collect();
+            Ok(serde_json::json!(values))
         }
         "string_list" => {
             let default = field
@@ -613,6 +816,62 @@ fn value_as_string_list(value: &Value) -> Option<Vec<String>> {
     Some(items)
 }
 
+fn value_as_validation_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Bool(value) => Some(value.to_string()),
+        Value::Array(values) => {
+            let mut rendered = Vec::with_capacity(values.len());
+            for value in values {
+                rendered.push(value.as_str()?.to_string());
+            }
+            Some(rendered.join(","))
+        }
+        _ => None,
+    }
+}
+
+fn yes_no(value: bool) -> String {
+    if value {
+        "yes".to_string()
+    } else {
+        "no".to_string()
+    }
+}
+
+fn print_table(rows: &[Vec<String>]) {
+    if rows.is_empty() {
+        return;
+    }
+
+    let cols = rows[0].len();
+    let mut widths = vec![0usize; cols];
+    for row in rows {
+        for (idx, cell) in row.iter().enumerate() {
+            widths[idx] = widths[idx].max(cell.len());
+        }
+    }
+
+    for (row_idx, row) in rows.iter().enumerate() {
+        let line = row
+            .iter()
+            .enumerate()
+            .map(|(idx, cell)| format!("{:width$}", cell, width = widths[idx]))
+            .collect::<Vec<_>>()
+            .join("  ");
+        println!("{line}");
+        if row_idx == 0 {
+            let sep = widths
+                .iter()
+                .map(|width| "-".repeat(*width))
+                .collect::<Vec<_>>()
+                .join("  ");
+            println!("{sep}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -641,5 +900,39 @@ mod tests {
             equals: Value::String("auto".to_string()),
         };
         assert!(field_is_visible(Some(&rule), &values));
+    }
+
+    #[test]
+    fn groups_configured_channels_by_kind() {
+        let channels = vec![
+            ConfiguredChannel {
+                id: "telegram-main".to_string(),
+                kind: "telegram".to_string(),
+                enabled: true,
+                agent_id: Some("default".to_string()),
+            },
+            ConfiguredChannel {
+                id: "telegram-ops".to_string(),
+                kind: "telegram".to_string(),
+                enabled: true,
+                agent_id: Some("default".to_string()),
+            },
+            ConfiguredChannel {
+                id: "discord".to_string(),
+                kind: "discord".to_string(),
+                enabled: true,
+                agent_id: Some("default".to_string()),
+            },
+        ];
+
+        let grouped = configured_channels_by_kind(&channels);
+        assert_eq!(
+            grouped.get("telegram"),
+            Some(&vec![
+                "telegram-main".to_string(),
+                "telegram-ops".to_string()
+            ])
+        );
+        assert_eq!(grouped.get("discord"), Some(&vec!["discord".to_string()]));
     }
 }

@@ -50,10 +50,12 @@ If you want the setup wizard path instead of hand-editing files:
 
 ```bash
 turin-manager init
-turin-manager setup telegram
+turin-manager channels list
+turin-manager channels configure telegram
+turin-manager channels status
 ```
 
-`turin-manager setup telegram` validates the token, stages the resulting `channel.toml` diff, and can write the token into a `.env` file next to `turin.toml`. Turin loads that adjacent `.env` automatically on startup.
+`turin-manager channels configure telegram` validates the token, stages the resulting `channel.toml` diff, and can write the token into a `.env` file next to `turin.toml`. Turin loads that adjacent `.env` automatically on startup.
 
 ## 2. Decide Which Telegram Surfaces You Want
 

@@ -145,7 +145,9 @@ If you want the newer manager-driven setup path instead:
 
 ```bash
 target/release/turin-manager init
-target/release/turin-manager setup telegram
+target/release/turin-manager channels list
+target/release/turin-manager channels configure telegram
+target/release/turin-manager channels status
 ```
 
 `turin-manager` stages diffs before writing and stores optional secrets in a `.env` file next to `turin.toml`. Turin auto-loads that adjacent `.env` file at startup.

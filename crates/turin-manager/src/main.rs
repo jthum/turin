@@ -18,7 +18,7 @@ struct Cli {
 enum Command {
     Init(InitArgs),
     #[command(subcommand)]
-    Setup(SetupCommand),
+    Channels(ChannelsCommand),
 }
 
 #[derive(Args, Debug, Clone)]
@@ -30,18 +30,33 @@ struct InitArgs {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum SetupCommand {
-    Telegram(TelegramSetupArgs),
+enum ChannelsCommand {
+    List(ChannelsListArgs),
+    Configure(ConfigureChannelArgs),
+    Status(ChannelsStatusArgs),
 }
 
 #[derive(Args, Debug, Clone)]
-struct TelegramSetupArgs {
+struct ChannelsListArgs {
     #[arg(long, default_value = "turin.toml")]
     config: PathBuf,
+}
+
+#[derive(Args, Debug, Clone)]
+struct ConfigureChannelArgs {
+    #[arg(long, default_value = "turin.toml")]
+    config: PathBuf,
+    kind: String,
     #[arg(long)]
     channel_id: Option<String>,
     #[arg(long)]
     agent_id: Option<String>,
+}
+
+#[derive(Args, Debug, Clone)]
+struct ChannelsStatusArgs {
+    #[arg(long, default_value = "turin.toml")]
+    config: PathBuf,
 }
 
 #[tokio::main]
@@ -55,11 +70,24 @@ async fn main() -> Result<()> {
             })
             .await
         }
-        Command::Setup(SetupCommand::Telegram(args)) => {
-            setup::run_setup_telegram(setup::TelegramSetupArgs {
+        Command::Channels(ChannelsCommand::List(args)) => {
+            setup::run_channels_list(setup::ChannelsListArgs {
                 config: args.config,
+            })
+            .await
+        }
+        Command::Channels(ChannelsCommand::Configure(args)) => {
+            setup::run_configure_channel(setup::ConfigureChannelArgs {
+                config: args.config,
+                kind: args.kind,
                 channel_id: args.channel_id,
                 agent_id: args.agent_id,
+            })
+            .await
+        }
+        Command::Channels(ChannelsCommand::Status(args)) => {
+            setup::run_channels_status(setup::ChannelsStatusArgs {
+                config: args.config,
             })
             .await
         }

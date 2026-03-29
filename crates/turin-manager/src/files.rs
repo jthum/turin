@@ -28,6 +28,14 @@ impl PlannedWrite {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConfiguredChannel {
+    pub(crate) id: String,
+    pub(crate) kind: String,
+    pub(crate) enabled: bool,
+    pub(crate) agent_id: Option<String>,
+}
+
 pub(crate) fn config_dir(config_path: &Path) -> PathBuf {
     config_path
         .parent()
@@ -60,6 +68,54 @@ pub(crate) fn load_existing(path: &Path) -> Result<Option<String>> {
     let body = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read '{}'", path.display()))?;
     Ok(Some(body))
+}
+
+pub(crate) fn load_configured_channels(config_path: &Path) -> Result<Vec<ConfiguredChannel>> {
+    let channels_dir = resolve_channels_dir(config_path)?;
+    if !channels_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut channels = Vec::new();
+    for entry in std::fs::read_dir(&channels_dir)
+        .with_context(|| format!("Failed to read '{}'", channels_dir.display()))?
+    {
+        let entry = entry?;
+        let entry_path = entry.path();
+        if !entry_path.is_dir() {
+            continue;
+        }
+
+        let channel_id = entry.file_name().to_string_lossy().to_string();
+        let channel_path = entry_path.join("channel.toml");
+        if !channel_path.is_file() {
+            continue;
+        }
+
+        let raw = std::fs::read_to_string(&channel_path)
+            .with_context(|| format!("Failed to read '{}'", channel_path.display()))?;
+        let parsed: toml::Value = toml::from_str(&raw)
+            .with_context(|| format!("Failed to parse '{}'", channel_path.display()))?;
+        let Some(kind) = parsed.get("kind").and_then(toml::Value::as_str) else {
+            continue;
+        };
+
+        channels.push(ConfiguredChannel {
+            id: channel_id,
+            kind: kind.to_string(),
+            enabled: parsed
+                .get("enabled")
+                .and_then(toml::Value::as_bool)
+                .unwrap_or(true),
+            agent_id: parsed
+                .get("agent_id")
+                .and_then(toml::Value::as_str)
+                .map(ToString::to_string),
+        });
+    }
+
+    channels.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(channels)
 }
 
 pub(crate) fn confirm_and_write(plans: &[PlannedWrite]) -> Result<()> {
@@ -277,5 +333,31 @@ mod tests {
         assert!(body.contains("TOKEN=secret"));
         assert!(display.contains("TOKEN=***REDACTED***"));
         assert!(!display.contains("secret"));
+    }
+
+    #[test]
+    fn load_configured_channels_reads_channel_directories() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("turin.toml");
+        std::fs::write(&config_path, "[daemon]\nchannels_dir = \"channels\"\n")
+            .expect("config written");
+        let channel_dir = temp.path().join("channels/telegram");
+        std::fs::create_dir_all(&channel_dir).expect("channel dir");
+        std::fs::write(
+            channel_dir.join("channel.toml"),
+            "enabled = true\nkind = \"telegram\"\nagent_id = \"default\"\n",
+        )
+        .expect("channel file");
+
+        let channels = load_configured_channels(&config_path).expect("channels loaded");
+        assert_eq!(
+            channels,
+            vec![ConfiguredChannel {
+                id: "telegram".to_string(),
+                kind: "telegram".to_string(),
+                enabled: true,
+                agent_id: Some("default".to_string()),
+            }]
+        );
     }
 }
