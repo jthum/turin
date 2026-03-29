@@ -113,6 +113,9 @@ pub(super) async fn dispatch(
         DaemonRequest::ChannelAccessRevoke(params) => {
             channel::access_revoke(id, params, &context).await
         }
+        DaemonRequest::ChannelRunnerHello(params) => {
+            channel::runner_hello(id, params, &context).await
+        }
         DaemonRequest::ChannelDelete(params) => channel::delete(id, params, &context).await,
     }
 }

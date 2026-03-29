@@ -2,8 +2,8 @@ use serde_json::json;
 
 use crate::daemon::protocol::ErrorCode;
 use crate::daemon::protocol::{
-    ChannelAccessParams, ChannelAccessRoomParams, CreateChannelParams, EntityIdParams, NoParams,
-    ResponseEnvelope, UpdateChannelParams,
+    ChannelAccessParams, ChannelAccessRoomParams, ChannelRunnerHelloParams, CreateChannelParams,
+    EntityIdParams, NoParams, ResponseEnvelope, UpdateChannelParams,
 };
 use crate::daemon::state::{CreateChannelInput, UpdateChannelInput};
 
@@ -53,6 +53,17 @@ pub(super) async fn status(
             ErrorCode::ChannelNotFound,
             format!("Channel '{}' not found", params.id),
         ),
+    }
+}
+
+pub(super) async fn runner_hello(
+    id: Option<String>,
+    params: ChannelRunnerHelloParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    match ctx.channel_runtimes.record_external_hello(params).await {
+        Ok(snapshot) => serialize_response(id, snapshot, "channel runner hello"),
+        Err(err) => validation_error(id, err),
     }
 }
 

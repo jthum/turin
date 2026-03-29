@@ -192,6 +192,16 @@ pub struct ChannelDetail {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelRunnerHandshake {
+    pub display_name: String,
+    pub protocol_version: u32,
+    pub runner_binary: Option<String>,
+    pub runner_version: Option<String>,
+    pub pid: Option<u32>,
+    pub last_handshake_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelRuntime {
     pub id: String,
     pub kind: String,
@@ -206,6 +216,8 @@ pub struct ChannelRuntime {
     pub last_transition_unix_ms: u64,
     pub last_started_unix_ms: Option<u64>,
     pub last_stopped_unix_ms: Option<u64>,
+    #[serde(default)]
+    pub handshake: Option<ChannelRunnerHandshake>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

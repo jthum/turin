@@ -6,9 +6,11 @@ use clap::{Parser, Subcommand};
 use serde_json::Value;
 use tokio::sync::watch;
 use tracing_subscriber::EnvFilter;
+use turin_channel_core::{ChannelAuthFlowPollRequest, ChannelAuthFlowStartRequest};
 use turin_channel_runner::{ChannelAccessPolicy, ChannelRunner, RunnerConfig};
 use turin_channel_telegram::TelegramChannelDriver;
 use turin_daemon_client::DaemonClient;
+use turin_daemon_protocol::ChannelRunnerHelloParams;
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -22,6 +24,8 @@ enum Command {
     Run(RunArgs),
     Describe,
     ValidateSettings(ValidateSettingsArgs),
+    SetupAuthFlowStart(AuthFlowRequestArgs),
+    SetupAuthFlowPoll(AuthFlowRequestArgs),
 }
 
 #[derive(Parser)]
@@ -48,6 +52,12 @@ struct ValidateSettingsArgs {
     settings_json: String,
 }
 
+#[derive(Parser)]
+struct AuthFlowRequestArgs {
+    #[arg(long)]
+    request_json: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
@@ -56,6 +66,8 @@ async fn main() -> Result<()> {
         Command::Run(args) => run(args).await,
         Command::Describe => describe(),
         Command::ValidateSettings(args) => validate_settings(args),
+        Command::SetupAuthFlowStart(args) => setup_auth_flow_start(args),
+        Command::SetupAuthFlowPoll(args) => setup_auth_flow_poll(args),
     }
 }
 
@@ -74,7 +86,7 @@ async fn run(args: RunArgs) -> Result<()> {
 
     let daemon = DaemonClient::new(args.daemon_endpoint);
     let runner = ChannelRunner::new(
-        daemon,
+        daemon.clone(),
         RunnerConfig {
             state_path: args.bindings_path,
             access_state_path: args.access_state_path,
@@ -98,6 +110,22 @@ async fn run(args: RunArgs) -> Result<()> {
         )
     })?;
 
+    daemon
+        .channel_runner_hello(ChannelRunnerHelloParams {
+            channel_id: args.channel_id.clone(),
+            manifest: turin_channel_telegram::adapter_manifest(),
+            runner_binary: Some(env!("CARGO_BIN_NAME").to_string()),
+            runner_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            pid: Some(std::process::id()),
+        })
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to send runner hello for channel '{}'",
+                args.channel_id
+            )
+        })?;
+
     runner
         .run_driver(&args.agent_id, &mut driver, task_timeout_ms)
         .await
@@ -117,6 +145,26 @@ fn describe() -> Result<()> {
     println!(
         "{}",
         serde_json::to_string(&turin_channel_telegram::adapter_manifest())?
+    );
+    Ok(())
+}
+
+fn setup_auth_flow_start(args: AuthFlowRequestArgs) -> Result<()> {
+    let request: ChannelAuthFlowStartRequest =
+        serde_json::from_str(&args.request_json).context("Failed to parse auth flow start JSON")?;
+    println!(
+        "{}",
+        serde_json::to_string(&turin_channel_telegram::start_auth_flow(&request)?)?
+    );
+    Ok(())
+}
+
+fn setup_auth_flow_poll(args: AuthFlowRequestArgs) -> Result<()> {
+    let request: ChannelAuthFlowPollRequest =
+        serde_json::from_str(&args.request_json).context("Failed to parse auth flow poll JSON")?;
+    println!(
+        "{}",
+        serde_json::to_string(&turin_channel_telegram::poll_auth_flow(&request)?)?
     );
     Ok(())
 }

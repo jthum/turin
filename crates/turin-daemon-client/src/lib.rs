@@ -7,8 +7,8 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::time::sleep;
 use turin_daemon_protocol::{
-    DAEMON_PROTOCOL_VERSION, DaemonHandshake, DaemonRequest, EventEnvelope, NoParams,
-    RequestEnvelope, ResponseEnvelope, RuntimeEventsSubscribeParams,
+    ChannelRunnerHelloParams, DAEMON_PROTOCOL_VERSION, DaemonHandshake, DaemonRequest,
+    EventEnvelope, NoParams, RequestEnvelope, ResponseEnvelope, RuntimeEventsSubscribeParams,
 };
 use turin_local_ipc::{
     LocalIpcReadHalf, connect as connect_local_ipc, current_transport_name,
@@ -171,6 +171,13 @@ impl DaemonClient {
             .await?;
         ensure_compatible_handshake(&handshake)?;
         Ok(handshake)
+    }
+
+    pub async fn channel_runner_hello(&self, params: ChannelRunnerHelloParams) -> Result<()> {
+        let _: Value = self
+            .request_ok(None, DaemonRequest::ChannelRunnerHello(params))
+            .await?;
+        Ok(())
     }
 
     pub async fn health(&self) -> Result<DaemonHealth> {

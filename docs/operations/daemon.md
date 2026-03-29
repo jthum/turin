@@ -147,6 +147,8 @@ Current handshake values:
 - `wire_format = "ndjson"`
 - `protocol_version = 1`
 
+External channel sidecars also expose a separate manifest protocol through `describe`; see [channel-sidecars.md](../reference/channel-sidecars.md).
+
 Event stream example:
 
 ```json
@@ -160,6 +162,12 @@ Subscription semantics:
 - when `agent_id` and/or `session_id` filters are supplied, the snapshot is scoped to that view instead of leaking unrelated runtime state
 - if the event stream lags, the daemon emits `runtime.events_lagged` and then immediately sends a fresh `runtime.snapshot`
 - if a watcher-triggered registry rescan fails, the daemon emits `runtime.rescan_failed` with the error message and changed paths
+
+External channel runtime semantics:
+
+- sidecar-backed channels start in `starting`
+- the daemon marks them `running` after the sidecar sends `channel.runner.hello`
+- `channel.status` now includes runner handshake metadata such as sidecar binary name, version, pid, and manifest protocol version when available
 
 For local GUI wrappers, prefer the managed client subscription in `turin-daemon-client`:
 

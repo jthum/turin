@@ -2,7 +2,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use anyhow::{Context, Result, anyhow};
-use turin_channel_core::ChannelAdapterManifest;
+use serde_json::Value;
+use turin_channel_core::{ChannelAdapterManifest, validate_adapter_manifest};
 
 pub(crate) fn builtin_channel_manifest(kind: &str) -> Option<ChannelAdapterManifest> {
     match kind {
@@ -39,6 +40,10 @@ pub(crate) fn resolve_external_runner_command(kind: &str) -> Result<ExternalRunn
         });
     }
 
+    if let Some(command) = resolve_workspace_runner_command(&binary_name) {
+        return Ok(command);
+    }
+
     let sibling_name = if cfg!(windows) {
         format!("{binary_name}.exe")
     } else {
@@ -65,21 +70,6 @@ pub(crate) fn resolve_external_runner_command(kind: &str) -> Result<ExternalRunn
                 });
             }
         }
-    }
-
-    if let Some(cargo) = std::env::var_os("CARGO").filter(|value| !value.is_empty()) {
-        let package = binary_name.clone();
-        return Ok(ExternalRunnerCommand {
-            program: PathBuf::from(cargo),
-            args_prefix: vec![
-                "run".to_string(),
-                "-q".to_string(),
-                "-p".to_string(),
-                package.clone(),
-                "--".to_string(),
-            ],
-            display: format!("cargo run -q -p {package} --"),
-        });
     }
 
     let path = PathBuf::from(binary_name);
@@ -118,6 +108,9 @@ pub(crate) fn describe_external_runner(kind: &str) -> Result<ChannelAdapterManif
             kind
         );
     }
+    validate_adapter_manifest(&manifest)
+        .map_err(anyhow::Error::msg)
+        .context("Channel runner returned an invalid adapter manifest")?;
     Ok(manifest)
 }
 
@@ -161,6 +154,88 @@ fn runner_output_detail(output: &std::process::Output) -> Option<String> {
         return Some(stdout);
     }
     None
+}
+
+fn resolve_workspace_runner_command(binary_name: &str) -> Option<ExternalRunnerCommand> {
+    if !workspace_has_runner(binary_name) {
+        return None;
+    }
+
+    let cargo = std::env::var_os("CARGO").filter(|value| !value.is_empty())?;
+    Some(ExternalRunnerCommand {
+        program: PathBuf::from(cargo),
+        args_prefix: vec![
+            "run".to_string(),
+            "-q".to_string(),
+            "-p".to_string(),
+            binary_name.to_string(),
+            "--".to_string(),
+        ],
+        display: format!("cargo run -q -p {binary_name} --"),
+    })
+}
+
+fn workspace_has_runner(binary_name: &str) -> bool {
+    let Some(metadata) = workspace_metadata() else {
+        return false;
+    };
+    let Some(packages) = metadata.get("packages").and_then(Value::as_array) else {
+        return false;
+    };
+    for package in packages {
+        let Some(targets) = package.get("targets").and_then(Value::as_array) else {
+            continue;
+        };
+        for target in targets {
+            let Some(name) = target.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            if name != binary_name {
+                continue;
+            }
+            let Some(kinds_array) = target.get("kind").and_then(Value::as_array) else {
+                continue;
+            };
+            if kinds_array
+                .iter()
+                .any(|entry| entry.as_str().is_some_and(|kind| kind == "bin"))
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn workspace_metadata() -> Option<Value> {
+    let cargo = std::env::var_os("CARGO").filter(|value| !value.is_empty())?;
+    let manifest_path = find_workspace_manifest_path()?;
+    let output = Command::new(cargo)
+        .arg("metadata")
+        .arg("--no-deps")
+        .arg("--format-version")
+        .arg("1")
+        .arg("--manifest-path")
+        .arg(&manifest_path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    serde_json::from_slice::<Value>(&output.stdout).ok()
+}
+
+fn find_workspace_manifest_path() -> Option<PathBuf> {
+    let mut cursor = std::env::current_dir().ok()?;
+    loop {
+        let manifest = cursor.join("Cargo.toml");
+        if manifest.is_file() {
+            return Some(manifest);
+        }
+        if !cursor.pop() {
+            return None;
+        }
+    }
 }
 
 fn normalize_binary_component(kind: &str) -> String {

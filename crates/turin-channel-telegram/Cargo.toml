@@ -21,6 +21,7 @@ tracing-subscriber = { version = "0.3.22", features = ["fmt", "env-filter"] }
 turin-channel-core = { path = "../turin-channel-core" }
 turin-channel-runner = { path = "../turin-channel-runner" }
 turin-daemon-client = { path = "../turin-daemon-client" }
+turin-daemon-protocol = { path = "../turin-daemon-protocol" }
 
 [dev-dependencies]
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread"] }

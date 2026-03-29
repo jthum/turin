@@ -10,19 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Self-Describing Channel Metadata**
   - Expanded sidecar `describe` manifests to carry versioned runtime, setup, and install metadata instead of only enum settings.
+  - Formalized the sidecar manifest protocol as version `2` and added manifest validation at the daemon and manager boundaries.
   - Added richer adapter metadata for Telegram, Discord, and FS, including setup fields, secret hints, identity-selector hints, and install binary names.
+  - Added generic manifest-declared auth flow types for `oauth_device_code` and `qr_pairing`, plus sidecar commands for start/poll auth flow orchestration.
 - **Turin Manager**
   - Added a separate `turin-manager` binary for setup-oriented workflows without bloating the long-running daemon.
   - Added `turin-manager init` for first-run `turin.toml` scaffolding plus starter harness creation.
   - Added `turin-manager channels list` to show discoverable channel sidecars and whether they are already configured.
   - Added `turin-manager channels configure <kind>` for manifest-driven channel setup with staged file writes and inline validation.
   - Added `turin-manager channels status` to show configured channel runtime state when the daemon is reachable.
+  - Added `turin-manager doctor` for config, secret, sidecar, daemon, and channel runtime diagnostics.
 - **Adjacent `.env` Loading**
   - Turin now loads a `.env` file adjacent to the chosen `turin.toml` before config validation, so manager-written provider and channel secrets work without extra shell export steps.
 - **External Channel Runners**
   - Added dedicated `turin-channel-telegram` and `turin-channel-discord` sidecar binaries.
   - The daemon now auto-discovers and auto-starts those sidecars for enabled Telegram and Discord channels instead of linking their runtime adapters directly into the core `turin` binary.
   - Added external-runner supervision in the daemon, including runtime state tracking and external settings validation for sidecar-backed channels.
+  - Added a live `channel.runner.hello` startup handshake so external channels stay in `starting` until the sidecar announces itself to the daemon.
 - **Harness-Declared Virtual Tools**
   - Added `tool.declare(...)` so harness scripts can publish domain-specific tools to the model without expanding the native Rust tool surface.
   - Added `tool.call(...)`, `tool.sequence(...)`, and `shell.quote(...)` helpers for harness-defined tool handlers.

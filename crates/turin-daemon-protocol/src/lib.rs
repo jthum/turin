@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
+use turin_channel_core::ChannelAdapterManifest;
 use turin_types::{AgentMode, ThinkingConfig, ToolsConfig};
 
 pub const DAEMON_PROTOCOL_VERSION: u32 = 1;
@@ -121,6 +122,18 @@ pub struct ChannelAccessRoomParams {
     #[serde(default)]
     pub room_id: Option<String>,
     pub thread_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ChannelRunnerHelloParams {
+    pub channel_id: String,
+    pub manifest: ChannelAdapterManifest,
+    #[serde(default)]
+    pub runner_binary: Option<String>,
+    #[serde(default)]
+    pub runner_version: Option<String>,
+    #[serde(default)]
+    pub pid: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -323,6 +336,8 @@ pub enum DaemonRequest {
     ChannelAccessReject(ChannelAccessRoomParams),
     #[serde(rename = "channel.access.revoke")]
     ChannelAccessRevoke(ChannelAccessRoomParams),
+    #[serde(rename = "channel.runner.hello")]
+    ChannelRunnerHello(ChannelRunnerHelloParams),
     #[serde(rename = "channel.delete")]
     ChannelDelete(EntityIdParams),
 }

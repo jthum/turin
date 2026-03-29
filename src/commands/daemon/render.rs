@@ -419,6 +419,21 @@ pub(super) fn print_channel_runtime(channel: ChannelRuntimeView) {
     if let Some(last_stopped) = channel.last_stopped_unix_ms {
         println!("  last_stopped:  {}", last_stopped);
     }
+    if let Some(handshake) = channel.handshake {
+        println!("  runner:");
+        println!("    display_name: {}", handshake.display_name);
+        println!("    protocol_version: {}", handshake.protocol_version);
+        if let Some(binary) = handshake.runner_binary {
+            println!("    binary: {}", binary);
+        }
+        if let Some(version) = handshake.runner_version {
+            println!("    version: {}", version);
+        }
+        if let Some(pid) = handshake.pid {
+            println!("    pid: {}", pid);
+        }
+        println!("    last_hello: {}", handshake.last_handshake_unix_ms);
+    }
     if let Some(code) = channel.last_error_code {
         println!("  error_code:    {}", code);
     }

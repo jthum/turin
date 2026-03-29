@@ -8,10 +8,22 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use tokio::process::Command;
 use tokio::sync::{Mutex, broadcast};
+use turin_channel_core::ChannelAdapterManifest;
+use turin_daemon_protocol::ChannelRunnerHelloParams;
 
 use crate::daemon::channel_runners;
 use crate::daemon::protocol::EventEnvelope;
 use crate::daemon::registry::DiscoveredChannel;
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ChannelRunnerHandshakeSnapshot {
+    pub display_name: String,
+    pub protocol_version: u32,
+    pub runner_binary: Option<String>,
+    pub runner_version: Option<String>,
+    pub pid: Option<u32>,
+    pub last_handshake_unix_ms: u64,
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ChannelRuntimeSnapshot {
@@ -28,6 +40,7 @@ pub struct ChannelRuntimeSnapshot {
     pub last_transition_unix_ms: u64,
     pub last_started_unix_ms: Option<u64>,
     pub last_stopped_unix_ms: Option<u64>,
+    pub handshake: Option<ChannelRunnerHandshakeSnapshot>,
 }
 
 struct RuntimeHandle {
@@ -162,6 +175,7 @@ impl ChannelRuntimeManager {
                                 last_transition_unix_ms: now,
                                 last_started_unix_ms: None,
                                 last_stopped_unix_ms: Some(now),
+                                handshake: None,
                             });
                     snapshot.kind = channel.kind.clone();
                     snapshot.agent_id = channel.agent_id.clone();
@@ -199,6 +213,7 @@ impl ChannelRuntimeManager {
                                 last_transition_unix_ms: now,
                                 last_started_unix_ms: None,
                                 last_stopped_unix_ms: Some(now),
+                                handshake: None,
                             });
                     snapshot.kind = channel.kind.clone();
                     snapshot.agent_id = channel.agent_id.clone();
@@ -242,6 +257,39 @@ impl ChannelRuntimeManager {
     pub async fn get(&self, channel_id: &str) -> Option<ChannelRuntimeSnapshot> {
         self.prune_finished().await;
         self.inner.lock().await.by_id.get(channel_id).cloned()
+    }
+
+    pub async fn record_external_hello(
+        &self,
+        params: ChannelRunnerHelloParams,
+    ) -> Result<ChannelRuntimeSnapshot> {
+        let mut inner = self.inner.lock().await;
+        let status = inner.by_id.get_mut(&params.channel_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Channel runtime '{}' was not found for runner hello",
+                params.channel_id
+            )
+        })?;
+
+        validate_runner_hello(&status.kind, &params.manifest)?;
+
+        status.state = "running".to_string();
+        status.last_error = None;
+        status.last_error_code = None;
+        status.last_transition_unix_ms = now_unix_ms();
+        status.last_started_unix_ms = Some(status.last_transition_unix_ms);
+        status.handshake = Some(ChannelRunnerHandshakeSnapshot {
+            display_name: params.manifest.display_name_or_kind().to_string(),
+            protocol_version: params.manifest.protocol_version,
+            runner_binary: params.runner_binary,
+            runner_version: params.runner_version,
+            pid: params.pid,
+            last_handshake_unix_ms: now_unix_ms(),
+        });
+
+        let snapshot = status.clone();
+        emit_runtime_update(&self.event_tx, &snapshot);
+        Ok(snapshot)
     }
 
     pub async fn shutdown(&self) {
@@ -419,18 +467,6 @@ impl ChannelRuntimeManager {
                         runner_command.display
                     )
                 })?;
-
-                {
-                    let mut guard = inner.lock().await;
-                    if let Some(status) = guard.by_id.get_mut(&channel.id) {
-                        status.state = "running".to_string();
-                        status.last_error = None;
-                        status.last_error_code = None;
-                        status.last_transition_unix_ms = now_unix_ms();
-                        status.last_started_unix_ms = Some(status.last_transition_unix_ms);
-                        emit_runtime_update(&event_tx, status);
-                    }
-                }
 
                 tokio::select! {
                     status = child.wait() => {
@@ -621,6 +657,21 @@ fn classify_runtime_error_code(kind: &str, error: &str) -> String {
     format!("{kind}_runtime_error")
 }
 
+fn validate_runner_hello(expected_kind: &str, manifest: &ChannelAdapterManifest) -> Result<()> {
+    manifest
+        .validate()
+        .map_err(anyhow::Error::msg)
+        .context("runner hello contained an invalid adapter manifest")?;
+    if manifest.kind != expected_kind {
+        anyhow::bail!(
+            "runner hello reported kind '{}' but runtime expects '{}'",
+            manifest.kind,
+            expected_kind
+        );
+    }
+    Ok(())
+}
+
 fn extract_bracketed_error_code(error: &str) -> Option<String> {
     let start = error.find('[')?;
     let end = error[start + 1..].find(']')?;
@@ -650,7 +701,7 @@ mod tests {
         let runner = temp.path().join("fake-telegram-runner.sh");
         fs::write(
             &runner,
-            "#!/bin/sh\nif [ \"$1\" = \"describe\" ]; then\n  printf '%s\\n' '{\"kind\":\"telegram\",\"enum_settings\":[]}'\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  sleep 30\n  exit 0\nfi\nif [ \"$1\" = \"validate-settings\" ]; then\n  exit 0\nfi\nexit 0\n",
+            "#!/bin/sh\nif [ \"$1\" = \"describe\" ]; then\n  printf '%s\\n' '{\"protocol_version\":2,\"kind\":\"telegram\"}'\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  sleep 30\n  exit 0\nfi\nif [ \"$1\" = \"validate-settings\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"setup-auth-flow-start\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"setup-auth-flow-poll\" ]; then\n  exit 1\nfi\nexit 0\n",
         )
         .unwrap();
         let mut perms = fs::metadata(&runner).unwrap().permissions();
@@ -682,7 +733,7 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(200)).await;
         let runtime = manager.get("telegram-ops").await.expect("runtime exists");
-        assert_eq!(runtime.state, "running");
+        assert_eq!(runtime.state, "starting");
 
         manager.shutdown().await;
         if let Some(value) = previous {
@@ -694,5 +745,56 @@ mod tests {
                 std::env::remove_var("TURIN_CHANNEL_TELEGRAM_BIN");
             }
         }
+    }
+
+    #[tokio::test]
+    async fn external_runner_hello_marks_channel_running() {
+        let event_tx = broadcast::channel(8).0;
+        let manager = ChannelRuntimeManager::new(PathBuf::from("daemon.sock"), event_tx);
+
+        {
+            let mut inner = manager.inner.lock().await;
+            inner.by_id.insert(
+                "telegram-ops".to_string(),
+                ChannelRuntimeSnapshot {
+                    id: "telegram-ops".to_string(),
+                    kind: "telegram".to_string(),
+                    agent_id: "default".to_string(),
+                    directory: "/tmp/workspace/channels/telegram-ops".to_string(),
+                    state: "starting".to_string(),
+                    last_error: None,
+                    last_error_code: None,
+                    start_count: 1,
+                    restart_count: 0,
+                    failure_count: 0,
+                    last_transition_unix_ms: 1,
+                    last_started_unix_ms: None,
+                    last_stopped_unix_ms: None,
+                    handshake: None,
+                },
+            );
+        }
+
+        let snapshot = manager
+            .record_external_hello(ChannelRunnerHelloParams {
+                channel_id: "telegram-ops".to_string(),
+                manifest: ChannelAdapterManifest {
+                    protocol_version: turin_channel_core::CHANNEL_ADAPTER_PROTOCOL_VERSION,
+                    kind: "telegram".to_string(),
+                    display_name: "Telegram".to_string(),
+                    ..ChannelAdapterManifest::default()
+                },
+                runner_binary: Some("turin-channel-telegram".to_string()),
+                runner_version: Some("0.26.0".to_string()),
+                pid: Some(1234),
+            })
+            .await
+            .expect("hello recorded");
+
+        assert_eq!(snapshot.state, "running");
+        assert_eq!(
+            snapshot.handshake.as_ref().expect("handshake").display_name,
+            "Telegram"
+        );
     }
 }

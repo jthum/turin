@@ -523,6 +523,7 @@ mod tests {
                     last_transition_unix_ms: 1,
                     last_started_unix_ms: Some(1),
                     last_stopped_unix_ms: None,
+                    handshake: None,
                 },
                 ChannelRuntimeSnapshot {
                     id: "writer-fs".into(),
@@ -538,6 +539,7 @@ mod tests {
                     last_transition_unix_ms: 1,
                     last_started_unix_ms: Some(1),
                     last_stopped_unix_ms: None,
+                    handshake: None,
                 },
             ],
         };

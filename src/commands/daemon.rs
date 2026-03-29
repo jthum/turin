@@ -137,6 +137,16 @@ struct ChannelDetailView {
 }
 
 #[derive(Debug, Deserialize)]
+struct ChannelRunnerHandshakeView {
+    display_name: String,
+    protocol_version: u32,
+    runner_binary: Option<String>,
+    runner_version: Option<String>,
+    pid: Option<u32>,
+    last_handshake_unix_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
 struct ChannelRuntimeView {
     id: String,
     kind: String,
@@ -151,6 +161,7 @@ struct ChannelRuntimeView {
     last_transition_unix_ms: u64,
     last_started_unix_ms: Option<u64>,
     last_stopped_unix_ms: Option<u64>,
+    handshake: Option<ChannelRunnerHandshakeView>,
 }
 
 #[derive(Debug, Deserialize)]
