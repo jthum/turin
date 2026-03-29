@@ -491,6 +491,61 @@ async fn channel_create_accepts_multi_chat_telegram_settings() -> Result<()> {
 }
 
 #[tokio::test]
+async fn channel_create_accepts_valid_rocketchat_settings() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let mut state = DaemonState::load(&config_path).await?;
+
+    let created = state
+        .create_channel(CreateChannelInput {
+            id: "rocketchat".to_string(),
+            kind: "rocketchat".to_string(),
+            agent_id: "default".to_string(),
+            idle_ttl_secs: Some(600),
+            enabled: false,
+            settings: json!({
+                "token_env": "ROCKETCHAT_AUTH_TOKEN",
+                "user_id": "rbAXPnMktTFbNpwtJ",
+                "room_id": "GENERAL123",
+                "respond_mode": "mentions",
+            }),
+        })
+        .await?;
+
+    assert_eq!(created.id, "rocketchat");
+    assert_eq!(created.kind, "rocketchat");
+    assert_eq!(created.settings["room_id"], "GENERAL123");
+    assert_eq!(created.settings["respond_mode"], "mentions");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn channel_create_rejects_invalid_rocketchat_settings() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let mut state = DaemonState::load(&config_path).await?;
+
+    let error = state
+        .create_channel(CreateChannelInput {
+            id: "rocketchat".to_string(),
+            kind: "rocketchat".to_string(),
+            agent_id: "default".to_string(),
+            idle_ttl_secs: Some(600),
+            enabled: false,
+            settings: json!({
+                "token_env": "ROCKETCHAT_AUTH_TOKEN",
+                "room_id": "GENERAL123"
+            }),
+        })
+        .await
+        .expect_err("rocketchat settings without user_id should fail");
+    assert!(error.to_string().contains("user_id"));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn channel_access_snapshot_and_approval_are_filesystem_backed() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;

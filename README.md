@@ -151,7 +151,7 @@ target/release/turin-manager channels status
 target/release/turin-manager doctor
 ```
 
-`turin-manager` stages diffs before writing and stores optional secrets in a `.env` file next to `turin.toml`. Turin auto-loads that adjacent `.env` file at startup.
+`turin-manager` stages diffs before writing, validates assembled channel settings through the sidecar before it writes files, and stores optional secrets in a `.env` file next to `turin.toml`. Turin auto-loads that adjacent `.env` file at startup.
 
 External channel sidecars are described in [docs/reference/channel-sidecars.md](docs/reference/channel-sidecars.md).
 

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Rocket.Chat Channel**
+  - Added a new external `turin-channel-rocketchat` sidecar with manifest-driven setup, REST polling, room-aware routing, and Rocket.Chat message sending.
+  - Added `rocketchat` channel validation coverage in daemon state tests.
 - **Self-Describing Channel Metadata**
   - Expanded sidecar `describe` manifests to carry versioned runtime, setup, and install metadata instead of only enum settings.
   - Formalized the sidecar manifest protocol as version `2` and added manifest validation at the daemon and manager boundaries.
@@ -20,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `turin-manager channels configure <kind>` for manifest-driven channel setup with staged file writes and inline validation.
   - Added `turin-manager channels status` to show configured channel runtime state when the daemon is reachable.
   - Added `turin-manager doctor` for config, secret, sidecar, daemon, and channel runtime diagnostics.
+  - `turin-manager channels configure <kind>` now validates the assembled channel settings through the sidecar before writing files.
 - **Adjacent `.env` Loading**
   - Turin now loads a `.env` file adjacent to the chosen `turin.toml` before config validation, so manager-written provider and channel secrets work without extra shell export steps.
 - **External Channel Runners**

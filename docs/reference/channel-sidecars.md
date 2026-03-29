@@ -160,4 +160,6 @@ The daemon keeps an external channel in `starting` until the sidecar sends this 
 - `turin-manager channels status`
 - `turin-manager doctor`
 
+`turin-manager channels configure <kind>` renders setup fields from the manifest, then calls the sidecar's `validate-settings` command on the assembled settings before it writes config files.
+
 That means a new official or community sidecar can integrate with the manager without channel-specific code in the manager, as long as it stays within the shared manifest and auth-flow protocol.
