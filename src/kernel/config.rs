@@ -396,6 +396,9 @@ fn default_remote_event_keepalive_secs() -> u64 {
 impl TurinConfig {
     /// Load configuration from a TOML file.
     pub fn from_file(path: &Path) -> Result<Self> {
+        if let Some(config_dir) = path.parent() {
+            load_adjacent_env_file(config_dir)?;
+        }
         let contents = std::fs::read_to_string(path)
             .with_context(|| format!("Could not read config file: {}", path.display()))?;
         Self::from_str(&contents)
@@ -632,6 +635,27 @@ impl TurinConfig {
     pub fn resolve_daemon_endpoint(&self, base: &Path) -> PathBuf {
         resolve_local_ipc_endpoint(base, &self.kernel.workspace_root, &self.daemon.endpoint)
     }
+}
+
+fn load_adjacent_env_file(config_dir: &Path) -> Result<()> {
+    let env_path = config_dir.join(".env");
+    if !env_path.is_file() {
+        return Ok(());
+    }
+
+    for item in dotenvy::from_path_iter(&env_path)
+        .with_context(|| format!("Failed to parse '{}'", env_path.display()))?
+    {
+        let (key, value) =
+            item.with_context(|| format!("Failed to parse '{}'", env_path.display()))?;
+        if std::env::var_os(&key).is_none() {
+            unsafe {
+                std::env::set_var(&key, value);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn resolve_under_workspace(base: &Path, workspace_root: &str, value: &str) -> PathBuf {
@@ -1001,5 +1025,46 @@ require_audit_reason = true
             Some("worker")
         );
         assert!(config.governance.grants.enabled);
+    }
+
+    #[test]
+    fn from_file_loads_adjacent_dotenv_without_overriding_existing_env() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("turin.toml");
+        let env_path = temp.path().join(".env");
+        let key = "TURIN_TEST_CONFIG_DOTENV_KEY";
+
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+api_key_env = "{key}"
+"#
+            ),
+        )
+        .expect("write config");
+        std::fs::write(&env_path, format!("{key}=from-dotenv\n")).expect("write env");
+
+        unsafe {
+            std::env::remove_var(key);
+        }
+        let _ = TurinConfig::from_file(&config_path).expect("config loads");
+        assert_eq!(std::env::var(key).as_deref(), Ok("from-dotenv"));
+
+        unsafe {
+            std::env::set_var(key, "from-env");
+        }
+        let _ = TurinConfig::from_file(&config_path).expect("config loads twice");
+        assert_eq!(std::env::var(key).as_deref(), Ok("from-env"));
+
+        unsafe {
+            std::env::remove_var(key);
+        }
     }
 }

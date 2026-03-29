@@ -12,6 +12,7 @@ members = [
     "crates/turin-channel-fs",
     "crates/turin-channel-discord",
     "crates/turin-channel-telegram",
+    "crates/turin-manager",
     "crates/turin-code-index",
     "crates/turin-map",
     "crates/turin-tui",
@@ -81,6 +82,7 @@ async-trait = "0.1"
 # Unique IDs
 uuid = { version = "1.0", features = ["v4", "v7"] }
 notify = "6.1"
+dotenvy = "0.15"
 
 # REPL
 rustyline = "14.0"

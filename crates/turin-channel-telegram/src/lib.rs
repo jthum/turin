@@ -91,16 +91,21 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                 help: Some("Get this from @BotFather on Telegram.".to_string()),
                 optional: false,
                 hints: vec!["Looks like 123456789:AABBccDDeeFFgg...".to_string()],
+                target: Some(ChannelConfigTarget {
+                    kind: ChannelConfigTargetKind::ChannelSetting,
+                    name: "token_env".to_string(),
+                }),
+                validate: Some(ChannelValidationCheck {
+                    kind: "http_get".to_string(),
+                    url_template: Some(
+                        "https://api.telegram.org/bot{telegram_bot_token}/getMe".to_string(),
+                    ),
+                    message: Some("Verify that the supplied Telegram bot token is valid.".to_string()),
+                }),
             }],
             instructions: Some("Create a bot with BotFather, copy the token, and choose the channel settings you want Turin to apply.".to_string()),
             setup_url: Some("https://t.me/BotFather".to_string()),
-            validation_checks: vec![ChannelValidationCheck {
-                kind: "http_get".to_string(),
-                url_template: Some(
-                    "https://api.telegram.org/bot{telegram_bot_token}/getMe".to_string(),
-                ),
-                message: Some("Verify that the supplied Telegram bot token is valid.".to_string()),
-            }],
+            validation_checks: vec![],
             config_fields: vec![
                 ChannelConfigField {
                     key: "workspace_id".to_string(),

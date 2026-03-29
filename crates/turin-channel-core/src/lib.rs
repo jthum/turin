@@ -298,6 +298,10 @@ pub struct ChannelSecretRequirement {
     pub optional: bool,
     #[serde(default)]
     pub hints: Vec<String>,
+    #[serde(default)]
+    pub target: Option<ChannelConfigTarget>,
+    #[serde(default)]
+    pub validate: Option<ChannelValidationCheck>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

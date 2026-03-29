@@ -14,8 +14,8 @@ use turin_channel_core::{
     ChannelConfigFieldOption, ChannelConfigTarget, ChannelConfigTargetKind, ChannelConversationKey,
     ChannelEnumSetting, ChannelIdentitySelectors, ChannelInstallManifest, ChannelKind,
     ChannelMessageRef, ChannelRuntimeCapabilities, ChannelRuntimeManifest, ChannelSessionScope,
-    ChannelSecretRequirement, ChannelSetupManifest, ChannelUser, ChannelValidationCheck,
-    InboundEvent, MessageBlock, OutboundMessage,
+    ChannelSecretRequirement, ChannelSetupManifest, ChannelUser, InboundEvent, MessageBlock,
+    OutboundMessage,
 };
 use turin_channel_runner::ChannelDriver;
 
@@ -85,14 +85,15 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                 help: Some("Get this from the Discord developer portal for your application.".to_string()),
                 optional: false,
                 hints: vec!["Usually a long bot token string issued by Discord.".to_string()],
+                target: Some(ChannelConfigTarget {
+                    kind: ChannelConfigTargetKind::ChannelSetting,
+                    name: "token_env".to_string(),
+                }),
+                validate: None,
             }],
             instructions: Some("Create a Discord application, add a bot, enable the intents you need, and invite it to the target server.".to_string()),
             setup_url: Some("https://discord.com/developers/applications".to_string()),
-            validation_checks: vec![ChannelValidationCheck {
-                kind: "http_get".to_string(),
-                url_template: Some("https://discord.com/api/v10/users/@me".to_string()),
-                message: Some("Verify that the supplied Discord bot token can authenticate.".to_string()),
-            }],
+            validation_checks: vec![],
             config_fields: vec![
                 ChannelConfigField {
                     key: "channel_id".to_string(),
