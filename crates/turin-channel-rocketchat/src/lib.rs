@@ -923,7 +923,7 @@ impl RocketChatChannelDriver {
             }
 
             if frame.msg.as_deref() == Some("result") {
-                if let Some(error) = frame.error.or_else(|| frame.result.clone()) {
+                if let Some(error) = login_result_error(&frame) {
                     let maybe_error = error
                         .get("error")
                         .or_else(|| error.get("reason"))
@@ -1762,6 +1762,13 @@ fn subscription_room_id(request_id: &str) -> Option<&str> {
     request_id.strip_prefix("room:")
 }
 
+fn login_result_error(frame: &RocketChatDdpFrame) -> Option<serde_json::Value> {
+    if frame.msg.as_deref() != Some("result") {
+        return None;
+    }
+    frame.error.clone()
+}
+
 impl RocketChatRoomType {
     fn parse(raw: &str) -> Result<Self> {
         match raw {
@@ -1851,8 +1858,6 @@ struct RocketChatDdpFrame {
     fields: Option<RocketChatDdpChangedFields>,
     #[serde(default)]
     error: Option<serde_json::Value>,
-    #[serde(default)]
-    result: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2063,5 +2068,24 @@ mod tests {
             default_websocket_url("http://chat.example.com"),
             "ws://chat.example.com/websocket"
         );
+    }
+
+    #[test]
+    fn ddp_frame_deserializes_success_result_payloads() {
+        let frame: RocketChatDdpFrame = serde_json::from_value(serde_json::json!({
+            "msg": "result",
+            "id": "turin-1",
+            "result": {
+                "id": "user-id",
+                "token": "resume-token",
+                "tokenExpires": { "$date": null },
+                "type": "resume"
+            }
+        }))
+        .expect("frame");
+
+        assert_eq!(frame.msg.as_deref(), Some("result"));
+        assert_eq!(frame.id.as_deref(), Some("turin-1"));
+        assert!(login_result_error(&frame).is_none());
     }
 }
