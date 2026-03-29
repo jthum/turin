@@ -379,7 +379,7 @@ impl DaemonState {
         let snapshot = store
             .approve(
                 &ChannelRoomRef {
-                    channel: parse_channel_kind(&channel.kind),
+                    channel: parse_channel_kind(&channel.kind)?,
                     workspace_id,
                     room_id,
                     thread_id,
@@ -404,7 +404,7 @@ impl DaemonState {
         let store = FileAccessStateStore::new(self.channel_access_state_path(channel_id));
         let snapshot = store
             .reject_pending(&ChannelRoomRef {
-                channel: parse_channel_kind(&channel.kind),
+                channel: parse_channel_kind(&channel.kind)?,
                 workspace_id,
                 room_id,
                 thread_id,
@@ -426,7 +426,7 @@ impl DaemonState {
         let store = FileAccessStateStore::new(self.channel_access_state_path(channel_id));
         let snapshot = store
             .revoke(&ChannelRoomRef {
-                channel: parse_channel_kind(&channel.kind),
+                channel: parse_channel_kind(&channel.kind)?,
                 workspace_id,
                 room_id,
                 thread_id,
@@ -595,12 +595,6 @@ impl DaemonState {
     }
 }
 
-fn parse_channel_kind(kind: &str) -> ChannelKind {
-    match kind.trim().to_ascii_lowercase().as_str() {
-        "discord" => ChannelKind::Discord,
-        "telegram" => ChannelKind::Telegram,
-        "slack" => ChannelKind::Slack,
-        "matrix" => ChannelKind::Matrix,
-        other => ChannelKind::Other(other.to_string()),
-    }
+fn parse_channel_kind(kind: &str) -> Result<ChannelKind> {
+    ChannelKind::parse(kind).map_err(anyhow::Error::msg)
 }

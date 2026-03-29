@@ -199,7 +199,7 @@ async fn fs_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
 fn outbound_message_type_is_reachable_for_fs_adapter() {
     let _ = OutboundMessage::text("hello");
     let _ = ChannelConversationKey {
-        channel: ChannelKind::Other("fs".to_string()),
+        channel: ChannelKind::new("fs"),
         workspace_id: "workspace".into(),
         room_id: Some("room".into()),
         thread_id: "thread".into(),

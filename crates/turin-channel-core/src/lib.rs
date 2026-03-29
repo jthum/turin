@@ -1,14 +1,64 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::time::{Duration, SystemTime};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChannelKind {
-    Discord,
-    Slack,
-    Telegram,
-    Matrix,
-    Other(String),
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct ChannelKind(String);
+
+impl ChannelKind {
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        let normalized = raw.trim().to_ascii_lowercase();
+        if normalized.is_empty() {
+            return Err("channel kind cannot be empty".to_string());
+        }
+        if !normalized.chars().all(|ch| {
+            ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '-' | '_' | '.')
+        }) {
+            return Err(format!(
+                "channel kind '{}' must contain only lowercase letters, digits, '.', '-', or '_'",
+                raw
+            ));
+        }
+        Ok(Self(normalized))
+    }
+
+    pub fn new(raw: impl AsRef<str>) -> Self {
+        Self::parse(raw.as_ref()).expect("invalid channel kind")
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for ChannelKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl TryFrom<String> for ChannelKind {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::parse(&value)
+    }
+}
+
+impl From<ChannelKind> for String {
+    fn from(value: ChannelKind) -> Self {
+        value.0
+    }
+}
+
+impl<'de> Deserialize<'de> for ChannelKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Self::parse(&raw).map_err(serde::de::Error::custom)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -151,15 +201,46 @@ pub struct ChannelCapabilities {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ChannelAdapterManifest {
+    #[serde(default = "default_channel_protocol_version")]
+    pub protocol_version: u32,
     pub kind: String,
     #[serde(default)]
-    pub enum_settings: Vec<ChannelEnumSetting>,
+    pub display_name: String,
+    #[serde(default)]
+    pub runtime: ChannelRuntimeManifest,
+    #[serde(default)]
+    pub setup: Option<ChannelSetupManifest>,
+    #[serde(default)]
+    pub install: Option<ChannelInstallManifest>,
 }
 
 impl ChannelAdapterManifest {
     pub fn enum_setting(&self, key: &str) -> Option<&ChannelEnumSetting> {
-        self.enum_settings.iter().find(|setting| setting.key == key)
+        self.runtime
+            .enum_settings
+            .iter()
+            .find(|setting| setting.key == key)
     }
+
+    pub fn display_name_or_kind(&self) -> &str {
+        if self.display_name.trim().is_empty() {
+            &self.kind
+        } else {
+            &self.display_name
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ChannelRuntimeManifest {
+    #[serde(default)]
+    pub session_scopes: Vec<String>,
+    #[serde(default)]
+    pub enum_settings: Vec<ChannelEnumSetting>,
+    #[serde(default)]
+    pub capabilities: ChannelRuntimeCapabilities,
+    #[serde(default)]
+    pub identity_selectors: ChannelIdentitySelectors,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,6 +248,135 @@ pub struct ChannelEnumSetting {
     pub key: String,
     #[serde(default)]
     pub options: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ChannelRuntimeCapabilities {
+    #[serde(default)]
+    pub dm: bool,
+    #[serde(default)]
+    pub groups: bool,
+    #[serde(default)]
+    pub threads: bool,
+    #[serde(default)]
+    pub attachments: bool,
+    #[serde(default)]
+    pub streaming: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ChannelIdentitySelectors {
+    #[serde(default)]
+    pub matching_rules: Vec<String>,
+    #[serde(default)]
+    pub examples: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ChannelSetupManifest {
+    #[serde(default)]
+    pub required_secrets: Vec<ChannelSecretRequirement>,
+    #[serde(default)]
+    pub instructions: Option<String>,
+    #[serde(default)]
+    pub setup_url: Option<String>,
+    #[serde(default)]
+    pub validation_checks: Vec<ChannelValidationCheck>,
+    #[serde(default)]
+    pub config_fields: Vec<ChannelConfigField>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ChannelSecretRequirement {
+    pub name: String,
+    pub env_var: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub help: Option<String>,
+    #[serde(default)]
+    pub optional: bool,
+    #[serde(default)]
+    pub hints: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ChannelValidationCheck {
+    pub kind: String,
+    #[serde(default)]
+    pub url_template: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ChannelConfigField {
+    pub key: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(rename = "type")]
+    pub field_type: String,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub help: Option<String>,
+    #[serde(default)]
+    pub hint: Option<String>,
+    #[serde(default)]
+    pub example: Option<String>,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub advanced: bool,
+    #[serde(default)]
+    pub default: Option<serde_json::Value>,
+    #[serde(default)]
+    pub options: Vec<ChannelConfigFieldOption>,
+    #[serde(default)]
+    pub visible_if: Option<ChannelFieldVisibilityRule>,
+    #[serde(default)]
+    pub target: Option<ChannelConfigTarget>,
+    #[serde(default)]
+    pub validate: Option<ChannelValidationCheck>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ChannelConfigFieldOption {
+    pub value: String,
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelConfigTargetKind {
+    ChannelSetting,
+    RootConfig,
+    AgentConfig,
+    EnvVar,
+    LocalSecretStore,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelConfigTarget {
+    pub kind: ChannelConfigTargetKind,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelFieldVisibilityRule {
+    pub key: String,
+    pub equals: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ChannelInstallManifest {
+    #[serde(default)]
+    pub binary_name: Option<String>,
+}
+
+fn default_channel_protocol_version() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,7 +456,7 @@ mod tests {
 
     fn key() -> ChannelConversationKey {
         ChannelConversationKey {
-            channel: ChannelKind::Discord,
+            channel: ChannelKind::new("discord"),
             workspace_id: "guild-1".into(),
             room_id: Some("room-2".into()),
             thread_id: "thread-3".into(),
@@ -321,5 +531,17 @@ mod tests {
         };
 
         assert_eq!(event.prompt_text(), "[Message from Jay (@jthum)]\nhello");
+    }
+
+    #[test]
+    fn channel_kind_normalizes_to_lowercase() {
+        let kind = ChannelKind::parse("TeLeGrAm").expect("normalized");
+        assert_eq!(kind.as_str(), "telegram");
+    }
+
+    #[test]
+    fn channel_kind_rejects_invalid_characters() {
+        let err = ChannelKind::parse("telegram!").expect_err("invalid");
+        assert!(err.contains("channel kind"));
     }
 }

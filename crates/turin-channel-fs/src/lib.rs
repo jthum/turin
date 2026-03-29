@@ -7,8 +7,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::watch;
 use tokio::time::sleep;
 use turin_channel_core::{
-    ChannelAdapterManifest, ChannelAttachment, ChannelConversationKey, ChannelKind,
-    ChannelMessageRef, ChannelSessionScope, ChannelUser, InboundEvent, OutboundMessage,
+    ChannelAdapterManifest, ChannelAttachment, ChannelConfigField, ChannelConfigTarget,
+    ChannelConfigTargetKind, ChannelConversationKey, ChannelInstallManifest, ChannelKind,
+    ChannelMessageRef, ChannelRuntimeCapabilities, ChannelRuntimeManifest, ChannelSessionScope,
+    ChannelSetupManifest, ChannelUser, InboundEvent, OutboundMessage,
 };
 use turin_channel_runner::ChannelDriver;
 
@@ -27,8 +29,52 @@ pub fn validate_settings(channel_dir: &Path, settings: &serde_json::Value) -> Re
 
 pub fn adapter_manifest() -> ChannelAdapterManifest {
     ChannelAdapterManifest {
+        protocol_version: 1,
         kind: "fs".to_string(),
-        ..ChannelAdapterManifest::default()
+        display_name: "Filesystem".to_string(),
+        runtime: ChannelRuntimeManifest {
+            capabilities: ChannelRuntimeCapabilities {
+                dm: false,
+                groups: false,
+                threads: false,
+                attachments: true,
+                streaming: false,
+            },
+            ..ChannelRuntimeManifest::default()
+        },
+        setup: Some(ChannelSetupManifest {
+            instructions: Some("Point Turin at inbox/outbox directories that another process can drop JSON messages into and read replies from.".to_string()),
+            config_fields: vec![
+                ChannelConfigField {
+                    key: "inbox_dir".to_string(),
+                    label: Some("Inbox Directory".to_string()),
+                    field_type: "text".to_string(),
+                    help: Some("Directory where incoming channel JSON messages will be read from.".to_string()),
+                    default: Some(serde_json::json!("inbox")),
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "inbox_dir".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+                ChannelConfigField {
+                    key: "outbox_dir".to_string(),
+                    label: Some("Outbox Directory".to_string()),
+                    field_type: "text".to_string(),
+                    help: Some("Directory where Turin writes outbound JSON responses.".to_string()),
+                    default: Some(serde_json::json!("outbox")),
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "outbox_dir".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+            ],
+            ..ChannelSetupManifest::default()
+        }),
+        install: Some(ChannelInstallManifest {
+            binary_name: None,
+        }),
     }
 }
 
@@ -151,7 +197,7 @@ impl FsChannelDriver {
 #[async_trait]
 impl ChannelDriver for FsChannelDriver {
     fn kind(&self) -> ChannelKind {
-        ChannelKind::Other("fs".to_string())
+        ChannelKind::new("fs")
     }
 
     fn user_matches_selector(&self, selector: &str, user: &ChannelUser) -> bool {
@@ -381,7 +427,7 @@ mod tests {
             .unwrap();
 
         let conversation = ChannelConversationKey {
-            channel: ChannelKind::Other("fs".to_string()),
+            channel: ChannelKind::new("fs"),
             workspace_id: "workspace".into(),
             room_id: Some("room".into()),
             thread_id: "thread".into(),

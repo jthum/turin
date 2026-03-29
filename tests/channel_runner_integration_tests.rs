@@ -182,7 +182,7 @@ impl RecordingDriver {
 #[async_trait]
 impl ChannelDriver for MockDriver {
     fn kind(&self) -> ChannelKind {
-        ChannelKind::Other("mock".into())
+        ChannelKind::new("mock")
     }
 
     fn user_matches_selector(&self, selector: &str, user: &ChannelUser) -> bool {
@@ -242,7 +242,7 @@ impl ChannelDriver for MockDriver {
 #[async_trait]
 impl ChannelDriver for RecordingDriver {
     fn kind(&self) -> ChannelKind {
-        ChannelKind::Telegram
+        ChannelKind::new("telegram")
     }
 
     fn user_matches_selector(&self, selector: &str, user: &ChannelUser) -> bool {
@@ -287,7 +287,7 @@ impl ChannelDriver for RecordingDriver {
 
 fn sample_event() -> InboundEvent {
     let conversation = ChannelConversationKey {
-        channel: ChannelKind::Discord,
+        channel: ChannelKind::new("discord"),
         workspace_id: "guild".into(),
         room_id: Some("room".into()),
         thread_id: "thread-1".into(),
@@ -313,7 +313,7 @@ fn sample_event() -> InboundEvent {
 
 fn sample_telegram_event(thread_id: &str, user_id: &str, message_id: &str) -> InboundEvent {
     let conversation = ChannelConversationKey {
-        channel: ChannelKind::Telegram,
+        channel: ChannelKind::new("telegram"),
         workspace_id: "telegram".into(),
         room_id: Some("group-1".into()),
         thread_id: thread_id.into(),

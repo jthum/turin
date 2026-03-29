@@ -10,8 +10,11 @@ use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use turin_channel_core::{
-    ChannelAdapterManifest, ChannelAttachment, ChannelCapabilities, ChannelConversationKey,
-    ChannelEnumSetting, ChannelKind, ChannelMessageRef, ChannelSessionScope, ChannelUser,
+    ChannelAdapterManifest, ChannelAttachment, ChannelCapabilities, ChannelConfigField,
+    ChannelConfigFieldOption, ChannelConfigTarget, ChannelConfigTargetKind, ChannelConversationKey,
+    ChannelEnumSetting, ChannelIdentitySelectors, ChannelInstallManifest, ChannelKind,
+    ChannelMessageRef, ChannelRuntimeCapabilities, ChannelRuntimeManifest, ChannelSessionScope,
+    ChannelSecretRequirement, ChannelSetupManifest, ChannelUser, ChannelValidationCheck,
     InboundEvent, MessageBlock, OutboundMessage,
 };
 use turin_channel_runner::ChannelDriver;
@@ -53,11 +56,94 @@ pub fn validate_settings(settings: &serde_json::Value) -> Result<()> {
 
 pub fn adapter_manifest() -> ChannelAdapterManifest {
     ChannelAdapterManifest {
+        protocol_version: 1,
         kind: "discord".to_string(),
-        enum_settings: vec![ChannelEnumSetting {
-            key: "session_scope".to_string(),
-            options: vec!["user".to_string(), "thread".to_string()],
-        }],
+        display_name: "Discord".to_string(),
+        runtime: ChannelRuntimeManifest {
+            session_scopes: vec!["user".to_string(), "thread".to_string()],
+            enum_settings: vec![ChannelEnumSetting {
+                key: "session_scope".to_string(),
+                options: vec!["user".to_string(), "thread".to_string()],
+            }],
+            capabilities: ChannelRuntimeCapabilities {
+                dm: true,
+                groups: true,
+                threads: true,
+                attachments: true,
+                streaming: false,
+            },
+            identity_selectors: ChannelIdentitySelectors {
+                matching_rules: vec!["id".to_string(), "username".to_string()],
+                examples: vec!["123456789012345678".to_string(), "jthum".to_string()],
+            },
+        },
+        setup: Some(ChannelSetupManifest {
+            required_secrets: vec![ChannelSecretRequirement {
+                name: "discord_bot_token".to_string(),
+                env_var: "DISCORD_BOT_TOKEN".to_string(),
+                display_name: Some("Discord bot token".to_string()),
+                help: Some("Get this from the Discord developer portal for your application.".to_string()),
+                optional: false,
+                hints: vec!["Usually a long bot token string issued by Discord.".to_string()],
+            }],
+            instructions: Some("Create a Discord application, add a bot, enable the intents you need, and invite it to the target server.".to_string()),
+            setup_url: Some("https://discord.com/developers/applications".to_string()),
+            validation_checks: vec![ChannelValidationCheck {
+                kind: "http_get".to_string(),
+                url_template: Some("https://discord.com/api/v10/users/@me".to_string()),
+                message: Some("Verify that the supplied Discord bot token can authenticate.".to_string()),
+            }],
+            config_fields: vec![
+                ChannelConfigField {
+                    key: "channel_id".to_string(),
+                    label: Some("Channel ID".to_string()),
+                    field_type: "text".to_string(),
+                    prompt: Some("Discord channel ID to connect Turin to".to_string()),
+                    help: Some("Enable developer mode in Discord to copy the channel ID.".to_string()),
+                    required: true,
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "channel_id".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+                ChannelConfigField {
+                    key: "workspace_id".to_string(),
+                    label: Some("Workspace ID".to_string()),
+                    field_type: "text".to_string(),
+                    default: Some(serde_json::json!("discord")),
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "workspace_id".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+                ChannelConfigField {
+                    key: "session_scope".to_string(),
+                    label: Some("Session Scope".to_string()),
+                    field_type: "select".to_string(),
+                    default: Some(serde_json::json!("thread")),
+                    options: vec![
+                        ChannelConfigFieldOption {
+                            value: "user".to_string(),
+                            label: Some("Per user".to_string()),
+                        },
+                        ChannelConfigFieldOption {
+                            value: "thread".to_string(),
+                            label: Some("Per thread".to_string()),
+                        },
+                    ],
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "session_scope".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+            ],
+        }),
+        install: Some(ChannelInstallManifest {
+            binary_name: Some("turin-channel-discord".to_string()),
+        }),
     }
 }
 
@@ -696,7 +782,7 @@ impl DiscordChannelDriver {
             .collect();
 
         let conversation = ChannelConversationKey {
-            channel: ChannelKind::Discord,
+            channel: ChannelKind::new("discord"),
             workspace_id: self.config.workspace_id.clone(),
             room_id,
             thread_id: message.channel_id.clone(),
@@ -938,7 +1024,7 @@ impl DiscordChannelDriver {
 #[async_trait]
 impl ChannelDriver for DiscordChannelDriver {
     fn kind(&self) -> ChannelKind {
-        ChannelKind::Discord
+        ChannelKind::new("discord")
     }
 
     fn user_matches_selector(&self, selector: &str, user: &ChannelUser) -> bool {

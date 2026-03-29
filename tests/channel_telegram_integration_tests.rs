@@ -396,7 +396,7 @@ fn sample_update(chat_id: i64, message_thread_id: Option<i64>, text: &str) -> se
 
 fn sample_inbound_event(chat_id: i64, text: &str) -> InboundEvent {
     let conversation = ChannelConversationKey {
-        channel: ChannelKind::Telegram,
+        channel: ChannelKind::new("telegram"),
         workspace_id: "telegram".to_string(),
         room_id: Some(chat_id.to_string()),
         thread_id: chat_id.to_string(),

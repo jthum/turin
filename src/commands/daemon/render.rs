@@ -337,19 +337,59 @@ pub(super) fn print_channel_detail(channel: ChannelDetailView) {
         println!("  idle_ttl_secs: {}", idle_ttl_secs);
     }
     if let Some(adapter) = &channel.adapter
-        && !adapter.enum_settings.is_empty()
     {
         println!("  adapter:");
-        for setting in &adapter.enum_settings {
+        println!("    kind: {}", adapter.kind);
+        println!("    display_name: {}", adapter.display_name_or_kind());
+        println!("    protocol_version: {}", adapter.protocol_version);
+        if !adapter.runtime.session_scopes.is_empty() {
             println!(
-                "    {}: {}",
-                setting.key,
-                if setting.options.is_empty() {
-                    "<none>".to_string()
-                } else {
-                    setting.options.join(", ")
-                }
+                "    session_scopes: {}",
+                adapter.runtime.session_scopes.join(", ")
             );
+        }
+        if !adapter.runtime.enum_settings.is_empty() {
+            println!("    enum_settings:");
+            for setting in &adapter.runtime.enum_settings {
+                println!(
+                    "      {}: {}",
+                    setting.key,
+                    if setting.options.is_empty() {
+                        "<none>".to_string()
+                    } else {
+                        setting.options.join(", ")
+                    }
+                );
+            }
+        }
+        let capabilities = &adapter.runtime.capabilities;
+        if capabilities.dm
+            || capabilities.groups
+            || capabilities.threads
+            || capabilities.attachments
+            || capabilities.streaming
+        {
+            println!(
+                "    capabilities: dm={}, groups={}, threads={}, attachments={}, streaming={}",
+                yes_no(capabilities.dm),
+                yes_no(capabilities.groups),
+                yes_no(capabilities.threads),
+                yes_no(capabilities.attachments),
+                yes_no(capabilities.streaming),
+            );
+        }
+        if let Some(setup) = &adapter.setup {
+            println!(
+                "    setup: secrets={}, fields={}, validations={}",
+                setup.required_secrets.len(),
+                setup.config_fields.len(),
+                setup.validation_checks.len()
+            );
+        }
+        if let Some(install) = &adapter.install
+            && let Some(binary_name) = &install.binary_name
+        {
+            println!("    binary: {}", binary_name);
         }
     }
     if channel.settings.is_object()

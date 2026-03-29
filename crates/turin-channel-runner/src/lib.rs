@@ -1475,7 +1475,7 @@ mod tests {
     #[async_trait::async_trait]
     impl ChannelDriver for TestDriver {
         fn kind(&self) -> ChannelKind {
-            ChannelKind::Other("test".into())
+            ChannelKind::new("test")
         }
 
         fn user_matches_selector(&self, selector: &str, user: &ChannelUser) -> bool {
@@ -1510,7 +1510,7 @@ mod tests {
 
     fn sample_key() -> ChannelConversationKey {
         ChannelConversationKey {
-            channel: ChannelKind::Discord,
+            channel: ChannelKind::new("discord"),
             workspace_id: "guild".into(),
             room_id: Some("room".into()),
             thread_id: "thread".into(),
@@ -1559,7 +1559,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = FileAccessStateStore::new(dir.path().join("access.json"));
         let room = ChannelRoomRef {
-            channel: ChannelKind::Telegram,
+            channel: ChannelKind::new("telegram"),
             workspace_id: "telegram".into(),
             room_id: Some("-100123".into()),
             thread_id: "-100123".into(),
