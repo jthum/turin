@@ -119,6 +119,7 @@ struct RocketChatResolvedRoom {
     room_type: RocketChatRoomType,
     name: Option<String>,
     friendly_name: Option<String>,
+    usernames: Vec<String>,
     latest_message: Option<RocketChatMessage>,
     latest_message_id: Option<String>,
     latest_message_ts: Option<String>,
@@ -990,6 +991,23 @@ impl RocketChatChannelDriver {
             serde_json::json!(message.ts),
         );
         metadata.insert("rocketchat_room_id".to_string(), serde_json::json!(room.id));
+        if let Some(message_link) = build_rocketchat_message_link(
+            &self.config.base_url,
+            room,
+            self.bot_username.as_deref(),
+            &message.id,
+        ) {
+            metadata.insert(
+                "rocketchat_message_link".to_string(),
+                serde_json::json!(message_link),
+            );
+        }
+        if let Some(username) = user.username.as_deref() {
+            metadata.insert(
+                "rocketchat_message_username".to_string(),
+                serde_json::json!(username),
+            );
+        }
         if let Some(tmid) = message.thread_root_id {
             metadata.insert("rocketchat_thread_id".to_string(), serde_json::json!(tmid));
         }
@@ -1705,6 +1723,16 @@ impl ChannelDriver for RocketChatChannelDriver {
         }
         if !outbound
             .metadata
+            .contains_key("rocketchat_reply_to_username")
+            && let Some(username) = event.user.username.as_deref()
+        {
+            outbound.metadata.insert(
+                "rocketchat_reply_to_username".to_string(),
+                serde_json::json!(username),
+            );
+        }
+        if !outbound
+            .metadata
             .contains_key("rocketchat_reply_to_excerpt")
             && !event.text.trim().is_empty()
         {
@@ -1721,6 +1749,16 @@ impl ChannelDriver for RocketChatChannelDriver {
             outbound.metadata.insert(
                 "rocketchat_reply_to_message_ts".to_string(),
                 message_ts.clone(),
+            );
+        }
+        if !outbound
+            .metadata
+            .contains_key("rocketchat_reply_to_message_link")
+            && let Some(message_link) = event.metadata.get("rocketchat_message_link")
+        {
+            outbound.metadata.insert(
+                "rocketchat_reply_to_message_link".to_string(),
+                message_link.clone(),
             );
         }
         outbound
@@ -1783,9 +1821,10 @@ fn build_rocketchat_send_payload(
     reply_target: RocketChatReplyTarget<'_>,
     attachments: &[serde_json::Value],
 ) -> serde_json::Value {
+    let rendered_text = prepend_quoted_message_anchor(text, attachments);
     let mut message = serde_json::Map::new();
     message.insert("rid".to_string(), serde_json::json!(room_id));
-    message.insert("msg".to_string(), serde_json::json!(text));
+    message.insert("msg".to_string(), serde_json::json!(rendered_text));
     message.insert("parseUrls".to_string(), serde_json::json!(false));
     if !attachments.is_empty() {
         message.insert(
@@ -1820,6 +1859,12 @@ fn render_rocketchat_message(message: &OutboundMessage, persist_thinking: bool) 
 }
 
 fn build_channel_reply_attachments(message: &OutboundMessage) -> Vec<serde_json::Value> {
+    let reply_username = message
+        .metadata
+        .get("rocketchat_reply_to_username")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let reply_label = message
         .metadata
         .get("rocketchat_reply_to_label")
@@ -1845,12 +1890,18 @@ fn build_channel_reply_attachments(message: &OutboundMessage) -> Vec<serde_json:
         .map(str::trim)
         .filter(|value| !value.is_empty());
 
-    if reply_label.is_none() && reply_excerpt.is_none() {
+    if reply_label.is_none() && reply_username.is_none() && reply_excerpt.is_none() {
         return Vec::new();
     }
 
     let mut attachment = serde_json::Map::new();
-    if let Some(reply_label) = reply_label {
+    if let Some(reply_username) = reply_username {
+        attachment.insert("author_name".to_string(), serde_json::json!(reply_username));
+        attachment.insert(
+            "author_icon".to_string(),
+            serde_json::json!(format!("/avatar/{}", reply_username)),
+        );
+    } else if let Some(reply_label) = reply_label {
         attachment.insert("author_name".to_string(), serde_json::json!(reply_label));
     }
     if let Some(reply_excerpt) = reply_excerpt {
@@ -1862,7 +1913,29 @@ fn build_channel_reply_attachments(message: &OutboundMessage) -> Vec<serde_json:
     if let Some(reply_link) = reply_link {
         attachment.insert("message_link".to_string(), serde_json::json!(reply_link));
     }
+    attachment.insert("attachments".to_string(), serde_json::json!([]));
     vec![serde_json::Value::Object(attachment)]
+}
+
+fn prepend_quoted_message_anchor(text: &str, attachments: &[serde_json::Value]) -> String {
+    let Some(message_link) = attachments
+        .iter()
+        .find_map(|attachment| {
+            attachment
+                .get("message_link")
+                .and_then(|value| value.as_str())
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return text.to_string();
+    };
+
+    if text.is_empty() {
+        format!("[ ]({})", message_link)
+    } else {
+        format!("[ ]({})\n{}", message_link, text)
+    }
 }
 
 fn resolve_reply_target<'a>(
@@ -2065,6 +2138,32 @@ fn collect_attachments(base_url: &str, message: &RocketChatMessage) -> Vec<Chann
         }
     }
     attachments
+}
+
+fn build_rocketchat_message_link(
+    base_url: &str,
+    room: &RocketChatResolvedRoom,
+    bot_username: Option<&str>,
+    message_id: &str,
+) -> Option<String> {
+    let path = match room.room_type {
+        RocketChatRoomType::Channel => room.name.as_deref().map(|name| format!("channel/{}", name)),
+        RocketChatRoomType::PrivateGroup => {
+            room.name.as_deref().map(|name| format!("group/{}", name))
+        }
+        RocketChatRoomType::DirectMessage => room
+            .usernames
+            .iter()
+            .find(|username| Some(username.as_str()) != bot_username && !username.trim().is_empty())
+            .map(|username| format!("direct/{}", username)),
+    }?;
+
+    Some(format!(
+        "{}/{}?msg={}",
+        base_url.trim_end_matches('/'),
+        path,
+        message_id
+    ))
 }
 
 fn absolute_url(base_url: &str, raw: &str) -> String {
@@ -2738,6 +2837,7 @@ impl TryFrom<RocketChatRoomInfo> for RocketChatResolvedRoom {
             room_type: RocketChatRoomType::parse(&value.kind)?,
             name: value.name,
             friendly_name: value.friendly_name,
+            usernames: value.usernames,
             latest_message_id: value
                 .last_message
                 .as_ref()
@@ -2778,6 +2878,8 @@ struct RocketChatRoomInfo {
     name: Option<String>,
     #[serde(rename = "fname")]
     friendly_name: Option<String>,
+    #[serde(default)]
+    usernames: Vec<String>,
     #[serde(
         rename = "_updatedAt",
         default,
@@ -3028,6 +3130,7 @@ mod tests {
                         room_type: RocketChatRoomType::Channel,
                         name: Some("general".to_string()),
                         friendly_name: Some("General".to_string()),
+                        usernames: vec![],
                         latest_message: None,
                         latest_message_id: None,
                         latest_message_ts: None,
@@ -3174,6 +3277,7 @@ mod tests {
             room_type: RocketChatRoomType::Channel,
             name: Some("general".to_string()),
             friendly_name: Some("General".to_string()),
+            usernames: vec![],
             latest_message: None,
             latest_message_id: None,
             latest_message_ts: None,
@@ -3252,6 +3356,7 @@ mod tests {
             room_type: RocketChatRoomType::DirectMessage,
             name: None,
             friendly_name: None,
+            usernames: vec!["bot".to_string(), "alice".to_string()],
             latest_message: None,
             latest_message_id: None,
             latest_message_ts: None,
@@ -3334,12 +3439,16 @@ mod tests {
             },
             &[serde_json::json!({
                 "author_name": "Alice",
-                "text": "Can you summarize the scores?"
+                "text": "Can you summarize the scores?",
+                "message_link": "https://chat.example.com/group/general?msg=orig-1"
             })],
         );
 
         assert_eq!(payload["message"]["rid"], "room1");
-        assert_eq!(payload["message"]["msg"], "hello");
+        assert_eq!(
+            payload["message"]["msg"],
+            "[ ](https://chat.example.com/group/general?msg=orig-1)\nhello"
+        );
         assert_eq!(payload["message"]["parseUrls"], false);
         assert_eq!(payload["message"]["tmid"], "message-42");
         assert_eq!(payload["message"]["tshow"], true);
@@ -3367,8 +3476,8 @@ mod tests {
     fn channel_reply_attachments_render_reply_context() {
         let mut outbound = OutboundMessage::text("reply");
         outbound.metadata.insert(
-            "rocketchat_reply_to_label".to_string(),
-            serde_json::json!("Alice"),
+            "rocketchat_reply_to_username".to_string(),
+            serde_json::json!("alice"),
         );
         outbound.metadata.insert(
             "rocketchat_reply_to_excerpt".to_string(),
@@ -3378,12 +3487,22 @@ mod tests {
             "rocketchat_reply_to_message_ts".to_string(),
             serde_json::json!("2026-03-30T10:00:00Z"),
         );
+        outbound.metadata.insert(
+            "rocketchat_reply_to_message_link".to_string(),
+            serde_json::json!("https://chat.example.com/group/general?msg=m1"),
+        );
 
         let attachments = build_channel_reply_attachments(&outbound);
         assert_eq!(attachments.len(), 1);
-        assert_eq!(attachments[0]["author_name"], "Alice");
+        assert_eq!(attachments[0]["author_name"], "alice");
+        assert_eq!(attachments[0]["author_icon"], "/avatar/alice");
         assert_eq!(attachments[0]["text"], "Can you summarize the scores?");
         assert_eq!(attachments[0]["ts"], "2026-03-30T10:00:00Z");
+        assert_eq!(
+            attachments[0]["message_link"],
+            "https://chat.example.com/group/general?msg=m1"
+        );
+        assert_eq!(attachments[0]["attachments"], serde_json::json!([]));
     }
 
     #[test]
@@ -3437,6 +3556,7 @@ mod tests {
             room_type: RocketChatRoomType::Channel,
             name: Some("general".to_string()),
             friendly_name: Some("General".to_string()),
+            usernames: vec![],
             latest_message: None,
             latest_message_id: None,
             latest_message_ts: None,
@@ -3473,6 +3593,51 @@ mod tests {
             &message,
             message.user.as_ref().expect("user"),
         ));
+    }
+
+    #[test]
+    fn build_rocketchat_message_link_matches_native_room_paths() {
+        let group_room = RocketChatResolvedRoom {
+            id: "room1".to_string(),
+            room_type: RocketChatRoomType::PrivateGroup,
+            name: Some("turin".to_string()),
+            friendly_name: Some("Turin".to_string()),
+            usernames: vec![],
+            latest_message: None,
+            latest_message_id: None,
+            latest_message_ts: None,
+        };
+        assert_eq!(
+            build_rocketchat_message_link(
+                "https://chat.example.com",
+                &group_room,
+                Some("nux"),
+                "abc123"
+            )
+            .as_deref(),
+            Some("https://chat.example.com/group/turin?msg=abc123")
+        );
+
+        let dm_room = RocketChatResolvedRoom {
+            id: "room2".to_string(),
+            room_type: RocketChatRoomType::DirectMessage,
+            name: None,
+            friendly_name: None,
+            usernames: vec!["nux".to_string(), "jayadeep".to_string()],
+            latest_message: None,
+            latest_message_id: None,
+            latest_message_ts: None,
+        };
+        assert_eq!(
+            build_rocketchat_message_link(
+                "https://chat.example.com",
+                &dm_room,
+                Some("nux"),
+                "def456"
+            )
+            .as_deref(),
+            Some("https://chat.example.com/direct/jayadeep?msg=def456")
+        );
     }
 
     #[test]
