@@ -1423,7 +1423,7 @@ impl ChannelDriver for RocketChatChannelDriver {
 
         for (index, chunk) in chunks.into_iter().enumerate() {
             let mut payload = serde_json::Map::new();
-            payload.insert("roomId".to_string(), serde_json::json!(room_id));
+            payload.insert("channel".to_string(), serde_json::json!(room_id));
             payload.insert("text".to_string(), serde_json::json!(chunk));
             payload.insert("parseUrls".to_string(), serde_json::json!(false));
             if let Some(thread_id) = reply_target.thread_id {
