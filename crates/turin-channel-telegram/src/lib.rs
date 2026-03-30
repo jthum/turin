@@ -438,6 +438,7 @@ fn parse_settings(
     let settings = settings
         .as_object()
         .ok_or_else(|| anyhow!("Telegram channel settings must be a JSON object"))?;
+    reject_deprecated_session_scope_keys(settings)?;
 
     let token_env = read_required_string(
         settings,
@@ -569,20 +570,17 @@ fn parse_settings(
             .unwrap_or(true),
         respond_mode: read_respond_mode(settings.get("respond_mode"))?,
         session_scope: read_telegram_session_scope(settings.get("session_scope"))?,
-        session_scope_dm: read_optional_session_scope_alias(
-            settings,
+        session_scope_dm: read_optional_telegram_session_scope(
+            settings.get("session_scope_dm"),
             "session_scope_dm",
-            "dm_session_scope",
         )?,
-        session_scope_group: read_optional_session_scope_alias(
-            settings,
+        session_scope_group: read_optional_telegram_session_scope(
+            settings.get("session_scope_group"),
             "session_scope_group",
-            "group_session_scope",
         )?,
-        session_scope_channel: read_optional_session_scope_alias(
-            settings,
+        session_scope_channel: read_optional_telegram_session_scope(
+            settings.get("session_scope_channel"),
             "session_scope_channel",
-            "channel_session_scope",
         )?,
         stream_mode: read_stream_mode(settings.get("stream_mode"))?,
         stream_thinking: settings
@@ -1819,15 +1817,23 @@ fn read_optional_telegram_session_scope(
     }
 }
 
-fn read_optional_session_scope_alias(
+fn reject_deprecated_session_scope_keys(
     settings: &serde_json::Map<String, serde_json::Value>,
-    primary_key: &str,
-    legacy_key: &str,
-) -> Result<Option<ChannelSessionScope>> {
-    if let Some(value) = settings.get(primary_key) {
-        return read_optional_telegram_session_scope(Some(value), primary_key);
+) -> Result<()> {
+    for (legacy, replacement) in [
+        ("dm_session_scope", "session_scope_dm"),
+        ("group_session_scope", "session_scope_group"),
+        ("channel_session_scope", "session_scope_channel"),
+    ] {
+        if settings.contains_key(legacy) {
+            anyhow::bail!(
+                "[telegram_config_deprecated_session_scope_key] Telegram channel setting '{}' is no longer supported; use '{}' instead",
+                legacy,
+                replacement
+            );
+        }
     }
-    read_optional_telegram_session_scope(settings.get(legacy_key), legacy_key)
+    Ok(())
 }
 
 fn effective_telegram_session_scope(
@@ -3582,6 +3588,21 @@ mod tests {
             effective_telegram_session_scope(&config, &chat),
             ChannelSessionScope::Room
         );
+    }
+
+    #[test]
+    fn validate_settings_rejects_deprecated_session_scope_aliases() {
+        let error = validate_settings(
+            &serde_json::json!({
+                "token_env": "TELEGRAM_BOT_TOKEN",
+                "chat_id": "498502840",
+                "dm_session_scope": "room"
+            }),
+            false,
+        )
+        .expect_err("deprecated alias should fail");
+
+        assert!(error.to_string().contains("session_scope_dm"));
     }
 
     #[test]
