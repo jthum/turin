@@ -43,6 +43,8 @@ Common settings:
 - `transport_mode = "realtime" | "polling"`
 - `respond_mode = "all" | "mentions"`
 - `session_scope = "user" | "thread" | "room"`
+- `reply_mode = "thread" | "channel" | "thread_and_channel"`
+- `stream_mode = "off" | "typing"`
 
 Advanced settings:
 
@@ -56,12 +58,19 @@ Advanced settings:
 - `poll_interval_ms`
 - `start_from_latest`
 - `ignore_bot_messages`
+- `persist_thinking`
 
 ## Runtime Notes
 
 - direct messages bypass mention checks, but still respect room approval and user allow/ban rules
 - shared rooms can be limited to mentions-only mode
-- `session_scope = "thread"` replies in Rocket.Chat threads by setting `tmid`
+- `reply_mode = "thread"` replies in Rocket.Chat threads by setting `tmid`
+- `reply_mode = "thread_and_channel"` posts into the thread and also shows the reply in the room with Rocket.Chat's `tshow`
+- `reply_mode = "channel"` posts directly in the room and prepends a short quote of the triggering message instead of starting a thread
+- once Turin has replied in a thread, subsequent messages in that same thread are accepted without mentioning the bot again
+- `stream_mode = "typing"` sends Rocket.Chat typing notifications while a turn is running
+- `persist_thinking = true` prepends final model thinking to the posted reply
+- markdown pipe tables are wrapped in fenced code blocks automatically so they stay readable in Rocket.Chat
 - pairing and room approval use the same generic Turin access-state model as Telegram
 - realtime websocket/DDP inbound delivery is the default
 - `transport_mode = "polling"` remains available as a fallback if the server's realtime path is unavailable
