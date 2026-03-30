@@ -79,6 +79,7 @@ pub struct RocketChatChannelDriverConfig {
     pub ignore_bot_messages: bool,
     pub respond_mode: RocketChatRespondMode,
     pub session_scope: ChannelSessionScope,
+    pub dm_session_scope: Option<ChannelSessionScope>,
     pub reply_mode: RocketChatReplyMode,
     pub stream_mode: ChannelStreamMode,
     pub persist_thinking: bool,
@@ -101,6 +102,7 @@ struct RocketChatChannelSettings {
     ignore_bot_messages: bool,
     respond_mode: RocketChatRespondMode,
     session_scope: ChannelSessionScope,
+    dm_session_scope: Option<ChannelSessionScope>,
     reply_mode: RocketChatReplyMode,
     stream_mode: ChannelStreamMode,
     persist_thinking: bool,
@@ -160,6 +162,10 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                 },
                 ChannelEnumSetting {
                     key: "session_scope".to_string(),
+                    options: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
+                },
+                ChannelEnumSetting {
+                    key: "dm_session_scope".to_string(),
                     options: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
                 },
                 ChannelEnumSetting {
@@ -444,6 +450,33 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
+                    key: "dm_session_scope".to_string(),
+                    label: Some("DM Session Scope".to_string()),
+                    field_type: "select".to_string(),
+                    prompt: Some("Optional session scope override for direct messages".to_string()),
+                    help: Some("Leave empty to reuse the main session scope. Set this to 'room' if you want direct messages to continue in one session while shared rooms stay per thread.".to_string()),
+                    advanced: true,
+                    options: vec![
+                        ChannelConfigFieldOption {
+                            value: "user".to_string(),
+                            label: Some("Per user".to_string()),
+                        },
+                        ChannelConfigFieldOption {
+                            value: "thread".to_string(),
+                            label: Some("Per thread".to_string()),
+                        },
+                        ChannelConfigFieldOption {
+                            value: "room".to_string(),
+                            label: Some("Per room".to_string()),
+                        },
+                    ],
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "dm_session_scope".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+                ChannelConfigField {
                     key: "stream_mode".to_string(),
                     label: Some("Progress Mode".to_string()),
                     field_type: "select".to_string(),
@@ -579,6 +612,7 @@ impl RocketChatChannelDriverConfig {
             ignore_bot_messages: settings.ignore_bot_messages,
             respond_mode: settings.respond_mode,
             session_scope: settings.session_scope,
+            dm_session_scope: settings.dm_session_scope,
             reply_mode: settings.reply_mode,
             stream_mode: settings.stream_mode,
             persist_thinking: settings.persist_thinking,
@@ -858,12 +892,13 @@ impl RocketChatChannelDriver {
             display_name: user.name.clone(),
             username: user.username.clone(),
         };
+        let session_scope = self.effective_session_scope(room);
         let conversation = ChannelConversationKey {
             channel: ChannelKind::new("rocketchat"),
             workspace_id: self.config.workspace_id.clone(),
             room_id: Some(room.id.clone()),
-            thread_id: self.thread_id_for_message(room, &message),
-            user_id: if matches!(self.config.session_scope, ChannelSessionScope::User) {
+            thread_id: self.thread_id_for_message(room, &message, session_scope),
+            user_id: if matches!(session_scope, ChannelSessionScope::User) {
                 Some(user.id.clone())
             } else {
                 None
@@ -890,11 +925,22 @@ impl RocketChatChannelDriver {
             },
             conversation,
             user,
-            session_scope: self.config.session_scope,
+            session_scope,
             text,
             attachments,
             metadata,
         }))
+    }
+
+    fn effective_session_scope(&self, room: &RocketChatResolvedRoom) -> ChannelSessionScope {
+        match room.room_type {
+            RocketChatRoomType::DirectMessage => {
+                self.config.dm_session_scope.unwrap_or(self.config.session_scope)
+            }
+            RocketChatRoomType::Channel | RocketChatRoomType::PrivateGroup => {
+                self.config.session_scope
+            }
+        }
     }
 
     fn should_accept_message(
@@ -926,8 +972,9 @@ impl RocketChatChannelDriver {
         &self,
         room: &RocketChatResolvedRoom,
         message: &RocketChatMessage,
+        session_scope: ChannelSessionScope,
     ) -> String {
-        match self.config.session_scope {
+        match session_scope {
             ChannelSessionScope::Room => room.id.clone(),
             ChannelSessionScope::Thread => message
                 .thread_root_id
@@ -2135,6 +2182,7 @@ fn parse_settings(
         )?,
         respond_mode: read_respond_mode(settings.get("respond_mode"))?,
         session_scope: read_session_scope(settings.get("session_scope"))?,
+        dm_session_scope: read_optional_session_scope(settings.get("dm_session_scope"), "dm_session_scope")?,
         reply_mode: read_reply_mode(settings.get("reply_mode"))?,
         stream_mode: read_stream_mode(settings.get("stream_mode"))?,
         persist_thinking: read_bool(
@@ -2297,6 +2345,30 @@ fn read_session_scope(value: Option<&serde_json::Value>) -> Result<ChannelSessio
         "room" => Ok(ChannelSessionScope::Room),
         _ => anyhow::bail!(
             "[rocketchat_config_invalid_session_scope] Rocket.Chat channel setting 'session_scope' must be one of: user, thread, room"
+        ),
+    }
+}
+
+fn read_optional_session_scope(
+    value: Option<&serde_json::Value>,
+    key: &str,
+) -> Result<Option<ChannelSessionScope>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let scope = value.as_str().ok_or_else(|| {
+        anyhow!(
+            "[rocketchat_config_invalid_session_scope] Rocket.Chat channel setting '{}' must be a string",
+            key
+        )
+    })?;
+    match scope {
+        "user" => Ok(Some(ChannelSessionScope::User)),
+        "thread" => Ok(Some(ChannelSessionScope::Thread)),
+        "room" => Ok(Some(ChannelSessionScope::Room)),
+        _ => anyhow::bail!(
+            "[rocketchat_config_invalid_session_scope] Rocket.Chat channel setting '{}' must be one of: user, thread, room",
+            key
         ),
     }
 }
@@ -2608,6 +2680,7 @@ mod tests {
         assert_eq!(parsed.max_messages_per_poll, DEFAULT_MAX_MESSAGES_PER_POLL);
         assert_eq!(parsed.respond_mode, RocketChatRespondMode::Mentions);
         assert_eq!(parsed.session_scope, ChannelSessionScope::Thread);
+        assert_eq!(parsed.dm_session_scope, None);
         assert_eq!(parsed.reply_mode, RocketChatReplyMode::Thread);
         assert_eq!(parsed.stream_mode, ChannelStreamMode::Typing);
         assert!(!parsed.persist_thinking);
@@ -2668,6 +2741,7 @@ mod tests {
             ignore_bot_messages: true,
             respond_mode: RocketChatRespondMode::Mentions,
             session_scope: ChannelSessionScope::User,
+            dm_session_scope: None,
             reply_mode: RocketChatReplyMode::Thread,
             stream_mode: ChannelStreamMode::Typing,
             persist_thinking: false,
@@ -2720,7 +2794,10 @@ mod tests {
             attachments: vec![],
             file: None,
         };
-        assert_eq!(driver.thread_id_for_message(&room, &message), "room1");
+        assert_eq!(
+            driver.thread_id_for_message(&room, &message, ChannelSessionScope::User),
+            "room1"
+        );
     }
 
     #[test]
@@ -2741,6 +2818,7 @@ mod tests {
             ignore_bot_messages: true,
             respond_mode: RocketChatRespondMode::Mentions,
             session_scope: ChannelSessionScope::User,
+            dm_session_scope: None,
             reply_mode: RocketChatReplyMode::Thread,
             stream_mode: ChannelStreamMode::Typing,
             persist_thinking: false,
@@ -2788,6 +2866,7 @@ mod tests {
             ignore_bot_messages: true,
             respond_mode: RocketChatRespondMode::Mentions,
             session_scope: ChannelSessionScope::Thread,
+            dm_session_scope: None,
             reply_mode: RocketChatReplyMode::Thread,
             stream_mode: ChannelStreamMode::Typing,
             persist_thinking: false,
@@ -2840,6 +2919,79 @@ mod tests {
             &message,
             message.user.as_ref().expect("user"),
         ));
+    }
+
+    #[test]
+    fn direct_messages_can_override_session_scope() {
+        let config = RocketChatChannelDriverConfig {
+            base_url: DEFAULT_BASE_URL.to_string(),
+            websocket_url: default_websocket_url(DEFAULT_BASE_URL),
+            transport_mode: RocketChatTransportMode::Realtime,
+            workspace_id: "rocketchat".to_string(),
+            accept_all_rooms: false,
+            room_id: Some("dm-room".to_string()),
+            room_name: None,
+            user_id: "bot".to_string(),
+            token: "token".to_string(),
+            poll_interval: Duration::from_millis(DEFAULT_POLL_INTERVAL_MS),
+            max_messages_per_poll: DEFAULT_MAX_MESSAGES_PER_POLL,
+            start_from_latest: true,
+            ignore_bot_messages: true,
+            respond_mode: RocketChatRespondMode::Mentions,
+            session_scope: ChannelSessionScope::Thread,
+            dm_session_scope: Some(ChannelSessionScope::Room),
+            reply_mode: RocketChatReplyMode::Thread,
+            stream_mode: ChannelStreamMode::Typing,
+            persist_thinking: false,
+        };
+        let driver = RocketChatChannelDriver {
+            channel_id: "rocketchat".to_string(),
+            client: Client::new(),
+            config,
+            shutdown_rx: watch::channel(false).1,
+            bot_username: None,
+            rooms: HashMap::new(),
+            ws_stream: None,
+            realtime_subscribed_room_ids: HashSet::new(),
+            active_thread_keys: HashSet::new(),
+            backlog: VecDeque::new(),
+            seen_message_ids: HashSet::new(),
+            seen_message_order: VecDeque::new(),
+            rooms_updated_since: None,
+            last_room_refresh: None,
+            last_typing_at: HashMap::new(),
+            next_realtime_request_id: 1,
+        };
+        let room = RocketChatResolvedRoom {
+            id: "dm-room".to_string(),
+            room_type: RocketChatRoomType::DirectMessage,
+            name: None,
+            friendly_name: None,
+            latest_message: None,
+            latest_message_id: None,
+            latest_message_ts: None,
+        };
+        let message = RocketChatMessage {
+            id: "m1".to_string(),
+            text: Some("hi".to_string()),
+            ts: "2026-03-29T00:00:00.000Z".to_string(),
+            user: Some(RocketChatMessageUser {
+                id: "user1".to_string(),
+                username: Some("alice".to_string()),
+                name: Some("Alice".to_string()),
+            }),
+            kind: None,
+            thread_root_id: None,
+            mentions: vec![],
+            attachments: vec![],
+            file: None,
+        };
+
+        assert_eq!(driver.effective_session_scope(&room), ChannelSessionScope::Room);
+        assert_eq!(
+            driver.thread_id_for_message(&room, &message, driver.effective_session_scope(&room)),
+            "dm-room"
+        );
     }
 
     #[test]

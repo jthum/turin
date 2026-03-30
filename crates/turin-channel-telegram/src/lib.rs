@@ -38,6 +38,7 @@ pub struct TelegramChannelDriverConfig {
     pub ignore_bot_messages: bool,
     pub respond_mode: TelegramRespondMode,
     pub session_scope: ChannelSessionScope,
+    pub dm_session_scope: Option<ChannelSessionScope>,
     pub stream_mode: ChannelStreamMode,
     pub stream_thinking: bool,
     pub persist_thinking: bool,
@@ -81,6 +82,10 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                 },
                 ChannelEnumSetting {
                     key: "session_scope".to_string(),
+                    options: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
+                },
+                ChannelEnumSetting {
+                    key: "dm_session_scope".to_string(),
                     options: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
                 },
             ],
@@ -219,6 +224,33 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
+                    key: "dm_session_scope".to_string(),
+                    label: Some("DM Session Scope".to_string()),
+                    field_type: "select".to_string(),
+                    prompt: Some("Optional session scope override for private Telegram chats".to_string()),
+                    help: Some("Leave empty to reuse the main session scope. Set this to 'room' to keep direct chats continuous while groups stay per user or per thread.".to_string()),
+                    advanced: true,
+                    options: vec![
+                        ChannelConfigFieldOption {
+                            value: "user".to_string(),
+                            label: Some("Per user".to_string()),
+                        },
+                        ChannelConfigFieldOption {
+                            value: "thread".to_string(),
+                            label: Some("Per thread".to_string()),
+                        },
+                        ChannelConfigFieldOption {
+                            value: "room".to_string(),
+                            label: Some("Per room".to_string()),
+                        },
+                    ],
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "dm_session_scope".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+                ChannelConfigField {
                     key: "pairing_users".to_string(),
                     label: Some("Pairing Users".to_string()),
                     field_type: "string_list".to_string(),
@@ -292,6 +324,7 @@ impl TelegramChannelDriverConfig {
             ignore_bot_messages: settings.ignore_bot_messages,
             respond_mode: settings.respond_mode,
             session_scope: settings.session_scope,
+            dm_session_scope: settings.dm_session_scope,
             stream_mode: settings.stream_mode,
             stream_thinking: settings.stream_thinking,
             persist_thinking: settings.persist_thinking,
@@ -323,6 +356,7 @@ struct TelegramChannelSettings {
     ignore_bot_messages: bool,
     respond_mode: TelegramRespondMode,
     session_scope: ChannelSessionScope,
+    dm_session_scope: Option<ChannelSessionScope>,
     stream_mode: ChannelStreamMode,
     stream_thinking: bool,
     persist_thinking: bool,
@@ -467,6 +501,7 @@ fn parse_settings(
             .unwrap_or(true),
         respond_mode: read_respond_mode(settings.get("respond_mode"))?,
         session_scope: read_telegram_session_scope(settings.get("session_scope"))?,
+        dm_session_scope: read_optional_telegram_session_scope(settings.get("dm_session_scope"), "dm_session_scope")?,
         stream_mode: read_stream_mode(settings.get("stream_mode"))?,
         stream_thinking: settings
             .get("stream_thinking")
@@ -914,15 +949,16 @@ impl TelegramChannelDriver {
             serde_json::json!(message.chat.chat_type),
         );
 
+        let session_scope = effective_telegram_session_scope(&self.config, &message.chat);
         let conversation = ChannelConversationKey {
             channel: ChannelKind::new("telegram"),
             workspace_id: self.config.workspace_id.clone(),
             room_id: Some(chat_id.clone()),
-            thread_id: match self.config.session_scope {
+            thread_id: match session_scope {
                 ChannelSessionScope::User | ChannelSessionScope::Thread => scoped_thread_id,
                 ChannelSessionScope::Room => chat_id,
             },
-            user_id: match self.config.session_scope {
+            user_id: match session_scope {
                 ChannelSessionScope::User => Some(user.id.clone()),
                 ChannelSessionScope::Thread | ChannelSessionScope::Room => None,
             },
@@ -935,7 +971,7 @@ impl TelegramChannelDriver {
             },
             conversation,
             user,
-            session_scope: self.config.session_scope,
+            session_scope,
             text,
             attachments: Vec::new(),
             metadata,
@@ -1674,6 +1710,41 @@ fn read_telegram_session_scope(value: Option<&serde_json::Value>) -> Result<Chan
         _ => anyhow::bail!(
             "[telegram_config_invalid_session_scope] Telegram channel setting 'session_scope' must be one of: user, thread, room"
         ),
+    }
+}
+
+fn read_optional_telegram_session_scope(
+    value: Option<&serde_json::Value>,
+    key: &str,
+) -> Result<Option<ChannelSessionScope>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let scope = value.as_str().ok_or_else(|| {
+        anyhow!(
+            "[telegram_config_invalid_session_scope] Telegram channel setting '{}' must be a string",
+            key
+        )
+    })?;
+    match scope.trim().to_ascii_lowercase().as_str() {
+        "user" => Ok(Some(ChannelSessionScope::User)),
+        "thread" => Ok(Some(ChannelSessionScope::Thread)),
+        "room" => Ok(Some(ChannelSessionScope::Room)),
+        _ => anyhow::bail!(
+            "[telegram_config_invalid_session_scope] Telegram channel setting '{}' must be one of: user, thread, room",
+            key
+        ),
+    }
+}
+
+fn effective_telegram_session_scope(
+    config: &TelegramChannelDriverConfig,
+    chat: &TelegramChat,
+) -> ChannelSessionScope {
+    if chat.is_private() {
+        config.dm_session_scope.unwrap_or(config.session_scope)
+    } else {
+        config.session_scope
     }
 }
 
@@ -2683,6 +2754,7 @@ mod tests {
             ignore_bot_messages: true,
             respond_mode: TelegramRespondMode::All,
             session_scope: ChannelSessionScope::User,
+            dm_session_scope: None,
             stream_mode: ChannelStreamMode::Off,
             stream_thinking: false,
             persist_thinking: false,
@@ -3373,8 +3445,43 @@ mod tests {
 
         assert_eq!(config.chat_ids, vec!["498502840", "-10012345"]);
         assert_eq!(config.respond_mode, TelegramRespondMode::MentionsOrReplies);
+        assert_eq!(config.dm_session_scope, None);
         assert!(config.stream_thinking);
         assert!(config.persist_thinking);
+    }
+
+    #[test]
+    fn private_chats_can_override_session_scope() {
+        let config = TelegramChannelDriverConfig {
+            base_url: DEFAULT_BASE_URL.to_string(),
+            workspace_id: "telegram".to_string(),
+            chat_ids: vec!["498502840".to_string()],
+            accept_all_chats: false,
+            token: "token".to_string(),
+            poll_timeout_secs: 30,
+            poll_interval: Duration::from_millis(250),
+            max_updates_per_poll: 25,
+            start_from_latest: true,
+            ignore_bot_messages: true,
+            respond_mode: TelegramRespondMode::MentionsOrReplies,
+            session_scope: ChannelSessionScope::User,
+            dm_session_scope: Some(ChannelSessionScope::Room),
+            stream_mode: ChannelStreamMode::Off,
+            stream_thinking: false,
+            persist_thinking: false,
+        };
+        let chat = TelegramChat {
+            id: 498502840,
+            title: None,
+            username: Some("jthum".to_string()),
+            first_name: Some("Jay".to_string()),
+            chat_type: "private".to_string(),
+        };
+
+        assert_eq!(
+            effective_telegram_session_scope(&config, &chat),
+            ChannelSessionScope::Room
+        );
     }
 
     #[test]
