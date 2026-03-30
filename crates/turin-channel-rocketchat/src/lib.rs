@@ -31,6 +31,7 @@ const DEFAULT_MAX_MESSAGES_PER_POLL: u16 = 50;
 const MAX_MESSAGES_PER_POLL: u16 = 100;
 const ROCKETCHAT_MESSAGE_MAX_LEN: usize = 4_000;
 const SEEN_MESSAGE_IDS_LIMIT: usize = 1_024;
+const RECENT_SENT_MESSAGE_IDS_LIMIT: usize = 256;
 const DEFAULT_REALTIME_RECONNECT_DELAY_MS: u64 = 2_000;
 const ROCKETCHAT_TYPING_STATUS_INTERVAL_SECS: u64 = 4;
 
@@ -400,7 +401,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     label: Some("Reply Mode".to_string()),
                     field_type: "select".to_string(),
                     prompt: Some("How should Turin post replies back into Rocket.Chat?".to_string()),
-                    help: Some("Thread keeps replies nested, thread and channel also shows them in the room, channel replies inline and quotes the triggering message.".to_string()),
+                    help: Some("Thread keeps replies nested, thread and channel also shows them in the room, channel replies inline with an attachment-style quote of the triggering message.".to_string()),
                     default: Some(serde_json::json!("thread")),
                     options: vec![
                         ChannelConfigFieldOption {
@@ -481,7 +482,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     label: Some("Progress Mode".to_string()),
                     field_type: "select".to_string(),
                     prompt: Some("How should Turin signal that it is working on a reply?".to_string()),
-                    help: Some("Typing sends Rocket.Chat typing notifications while the turn is active.".to_string()),
+                    help: Some("Typing sends Rocket.Chat room activity notifications while the turn is active.".to_string()),
                     default: Some(serde_json::json!(DEFAULT_STREAM_MODE)),
                     options: vec![
                         ChannelConfigFieldOption {
@@ -626,6 +627,7 @@ pub struct RocketChatChannelDriver {
     config: RocketChatChannelDriverConfig,
     shutdown_rx: watch::Receiver<bool>,
     bot_username: Option<String>,
+    bot_display_name: Option<String>,
     rooms: HashMap<String, RocketChatRoomState>,
     ws_stream: Option<RocketChatWsStream>,
     realtime_subscribed_room_ids: HashSet<String>,
@@ -633,6 +635,8 @@ pub struct RocketChatChannelDriver {
     backlog: VecDeque<InboundEvent>,
     seen_message_ids: HashSet<String>,
     seen_message_order: VecDeque<String>,
+    recent_sent_message_ids: HashSet<String>,
+    recent_sent_message_order: VecDeque<String>,
     rooms_updated_since: Option<String>,
     last_room_refresh: Option<Instant>,
     last_typing_at: HashMap<String, Instant>,
@@ -656,6 +660,7 @@ impl RocketChatChannelDriver {
             config,
             shutdown_rx,
             bot_username: None,
+            bot_display_name: None,
             rooms: HashMap::new(),
             ws_stream: None,
             realtime_subscribed_room_ids: HashSet::new(),
@@ -663,13 +668,15 @@ impl RocketChatChannelDriver {
             backlog: VecDeque::new(),
             seen_message_ids: HashSet::new(),
             seen_message_order: VecDeque::new(),
+            recent_sent_message_ids: HashSet::new(),
+            recent_sent_message_order: VecDeque::new(),
             rooms_updated_since: None,
             last_room_refresh: None,
             last_typing_at: HashMap::new(),
             next_realtime_request_id: 1,
         };
 
-        if let Err(err) = driver.load_bot_username().await {
+        if let Err(err) = driver.load_bot_identity().await {
             warn!(
                 channel_id = %driver.channel_id,
                 error = ?err,
@@ -910,6 +917,10 @@ impl RocketChatChannelDriver {
             "rocketchat_message_id".to_string(),
             serde_json::json!(message.id),
         );
+        metadata.insert(
+            "rocketchat_message_ts".to_string(),
+            serde_json::json!(message.ts),
+        );
         metadata.insert("rocketchat_room_id".to_string(), serde_json::json!(room.id));
         if let Some(tmid) = message.thread_root_id {
             metadata.insert("rocketchat_thread_id".to_string(), serde_json::json!(tmid));
@@ -934,9 +945,10 @@ impl RocketChatChannelDriver {
 
     fn effective_session_scope(&self, room: &RocketChatResolvedRoom) -> ChannelSessionScope {
         match room.room_type {
-            RocketChatRoomType::DirectMessage => {
-                self.config.dm_session_scope.unwrap_or(self.config.session_scope)
-            }
+            RocketChatRoomType::DirectMessage => self
+                .config
+                .dm_session_scope
+                .unwrap_or(self.config.session_scope),
             RocketChatRoomType::Channel | RocketChatRoomType::PrivateGroup => {
                 self.config.session_scope
             }
@@ -960,12 +972,26 @@ impl RocketChatChannelDriver {
                     .mentions
                     .iter()
                     .any(|mention| mention.id.as_deref() == Some(self.config.user_id.as_str()))
+                    || self.message_quotes_bot_reply(message)
                     || message.thread_root_id.as_deref().is_some_and(|thread_id| {
                         self.active_thread_keys
                             .contains(&active_thread_key(&room.id, thread_id))
                     })
             }
         }
+    }
+
+    fn message_quotes_bot_reply(&self, message: &RocketChatMessage) -> bool {
+        message.attachments.iter().any(|attachment| {
+            attachment.message_link.as_deref().is_some_and(|link| {
+                self.recent_sent_message_ids
+                    .iter()
+                    .any(|message_id| link.contains(message_id))
+            }) || attachment
+                .author_name
+                .as_deref()
+                .is_some_and(|author_name| self.is_bot_identity_label(author_name))
+        })
     }
 
     fn thread_id_for_message(
@@ -1004,8 +1030,24 @@ impl RocketChatChannelDriver {
         id
     }
 
-    async fn load_bot_username(&mut self) -> Result<()> {
-        self.bot_username = Some(fetch_bot_username(&self.client, &self.config).await?);
+    fn is_bot_identity_label(&self, raw: &str) -> bool {
+        let normalized = normalize_identity_label(raw);
+        if normalized.is_empty() {
+            return false;
+        }
+        self.bot_username
+            .as_deref()
+            .is_some_and(|value| normalize_identity_label(value) == normalized)
+            || self
+                .bot_display_name
+                .as_deref()
+                .is_some_and(|value| normalize_identity_label(value) == normalized)
+    }
+
+    async fn load_bot_identity(&mut self) -> Result<()> {
+        let identity = fetch_bot_identity(&self.client, &self.config).await?;
+        self.bot_username = Some(identity.username);
+        self.bot_display_name = identity.display_name;
         Ok(())
     }
 
@@ -1017,6 +1059,17 @@ impl RocketChatChannelDriver {
             "[rocketchat_http_client_rebuild_failed] Failed to rebuild Rocket.Chat HTTP client",
         )?;
         Ok(())
+    }
+
+    fn remember_sent_message_id(&mut self, message_id: String) {
+        if self.recent_sent_message_ids.insert(message_id.clone()) {
+            self.recent_sent_message_order.push_back(message_id);
+            while self.recent_sent_message_order.len() > RECENT_SENT_MESSAGE_IDS_LIMIT {
+                if let Some(oldest) = self.recent_sent_message_order.pop_front() {
+                    self.recent_sent_message_ids.remove(&oldest);
+                }
+            }
+        }
     }
 
     async fn send_typing_status(&mut self, event: &InboundEvent) -> Result<()> {
@@ -1040,7 +1093,7 @@ impl RocketChatChannelDriver {
         }
 
         if self.bot_username.is_none()
-            && let Err(err) = self.load_bot_username().await
+            && let Err(err) = self.load_bot_identity().await
         {
             warn!(
                 channel_id = %self.channel_id,
@@ -1054,6 +1107,43 @@ impl RocketChatChannelDriver {
         };
 
         self.ensure_realtime_connected().await?;
+        self.send_room_notification(
+            vec![
+                serde_json::json!(format!("{room_id}/typing")),
+                serde_json::json!(username.clone()),
+                serde_json::json!(true),
+            ],
+            "[rocketchat_typing_failed] Failed to send Rocket.Chat typing notification",
+        )
+        .await?;
+        if let Err(err) = self
+            .send_room_notification(
+                vec![
+                    serde_json::json!(format!("{room_id}/user-activity")),
+                    serde_json::json!(username.clone()),
+                    serde_json::json!(["user-typing"]),
+                    serde_json::json!({}),
+                ],
+                "[rocketchat_user_activity_failed] Failed to send Rocket.Chat user activity notification",
+            )
+            .await
+        {
+            warn!(
+                channel_id = %self.channel_id,
+                room_id = room_id,
+                error = ?err,
+                "Rocket.Chat user activity notification failed"
+            );
+        }
+        self.last_typing_at.insert(key, now);
+        Ok(())
+    }
+
+    async fn send_room_notification(
+        &mut self,
+        params: Vec<serde_json::Value>,
+        error_context: &str,
+    ) -> Result<()> {
         let request_id = self.next_request_id();
         let stream = self.ws_stream.as_mut().ok_or_else(|| {
             anyhow!("[rocketchat_realtime_missing_stream] Rocket.Chat websocket is not connected")
@@ -1064,12 +1154,11 @@ impl RocketChatChannelDriver {
                 "msg": "method",
                 "method": "stream-notify-room",
                 "id": request_id,
-                "params": [format!("{room_id}/typing"), username, true]
+                "params": params
             }),
         )
         .await
-        .context("[rocketchat_typing_failed] Failed to send Rocket.Chat typing notification")?;
-        self.last_typing_at.insert(key, now);
+        .with_context(|| error_context.to_string())?;
         Ok(())
     }
 
@@ -1462,15 +1551,26 @@ impl ChannelDriver for RocketChatChannelDriver {
 
         let reply_target =
             resolve_reply_target(room_id, conversation, &message, self.config.reply_mode);
+        let reply_attachments = if matches!(self.config.reply_mode, RocketChatReplyMode::Channel) {
+            build_channel_reply_attachments(&message)
+        } else {
+            Vec::new()
+        };
         let chunks = split_for_rocketchat_content(render_rocketchat_message(
             &message,
             self.config.persist_thinking,
-            matches!(self.config.reply_mode, RocketChatReplyMode::Channel),
         ));
 
         for (index, chunk) in chunks.into_iter().enumerate() {
-            let payload = build_rocketchat_send_payload(room_id, &chunk, reply_target);
-            if let Some(thread_id) = reply_target.thread_id && index == 0 {
+            let payload = build_rocketchat_send_payload(
+                room_id,
+                &chunk,
+                reply_target,
+                if index == 0 { &reply_attachments } else { &[] },
+            );
+            if let Some(thread_id) = reply_target.thread_id
+                && index == 0
+            {
                 self.active_thread_keys
                     .insert(active_thread_key(room_id, thread_id));
             }
@@ -1483,14 +1583,19 @@ impl ChannelDriver for RocketChatChannelDriver {
                 .send()
                 .await
                 .context("Failed to send Rocket.Chat message")?;
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            if !status.is_success() {
                 anyhow::bail!(
                     "[rocketchat_send_failed] Rocket.Chat chat.sendMessage failed with status {}: {}",
                     status,
                     body
                 );
+            }
+            if let Ok(parsed) = serde_json::from_str::<RocketChatSendMessageResponse>(&body)
+                && let Some(sent_message) = parsed.message
+            {
+                self.remember_sent_message_id(sent_message.id);
             }
         }
 
@@ -1533,6 +1638,16 @@ impl ChannelDriver for RocketChatChannelDriver {
             outbound.metadata.insert(
                 "rocketchat_reply_to_excerpt".to_string(),
                 serde_json::json!(reply_excerpt(&event.text)),
+            );
+        }
+        if !outbound
+            .metadata
+            .contains_key("rocketchat_reply_to_message_ts")
+            && let Some(message_ts) = event.metadata.get("rocketchat_message_ts")
+        {
+            outbound.metadata.insert(
+                "rocketchat_reply_to_message_ts".to_string(),
+                message_ts.clone(),
             );
         }
         outbound
@@ -1593,11 +1708,18 @@ fn build_rocketchat_send_payload(
     room_id: &str,
     text: &str,
     reply_target: RocketChatReplyTarget<'_>,
+    attachments: &[serde_json::Value],
 ) -> serde_json::Value {
     let mut message = serde_json::Map::new();
     message.insert("rid".to_string(), serde_json::json!(room_id));
     message.insert("msg".to_string(), serde_json::json!(text));
     message.insert("parseUrls".to_string(), serde_json::json!(false));
+    if !attachments.is_empty() {
+        message.insert(
+            "attachments".to_string(),
+            serde_json::Value::Array(attachments.to_vec()),
+        );
+    }
     if let Some(thread_id) = reply_target.thread_id {
         message.insert("tmid".to_string(), serde_json::json!(thread_id));
         if reply_target.show_in_channel {
@@ -1608,11 +1730,7 @@ fn build_rocketchat_send_payload(
     serde_json::json!({ "message": message })
 }
 
-fn render_rocketchat_message(
-    message: &OutboundMessage,
-    persist_thinking: bool,
-    quote_reply_context: bool,
-) -> String {
+fn render_rocketchat_message(message: &OutboundMessage, persist_thinking: bool) -> String {
     let mut rendered = render_text_blocks(&message.blocks);
     if persist_thinking
         && let Some(thinking) = message
@@ -1625,23 +1743,53 @@ fn render_rocketchat_message(
         rendered = prepend_final_thinking_text(&rendered, thinking);
     }
 
-    if quote_reply_context {
-        let reply_label = message
-            .metadata
-            .get("rocketchat_reply_to_label")
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty());
-        let reply_excerpt = message
-            .metadata
-            .get("rocketchat_reply_to_excerpt")
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty());
-        rendered = prepend_reply_context(&rendered, reply_label, reply_excerpt);
+    rendered
+}
+
+fn build_channel_reply_attachments(message: &OutboundMessage) -> Vec<serde_json::Value> {
+    let reply_label = message
+        .metadata
+        .get("rocketchat_reply_to_label")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let reply_excerpt = message
+        .metadata
+        .get("rocketchat_reply_to_excerpt")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let reply_ts = message
+        .metadata
+        .get("rocketchat_reply_to_message_ts")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let reply_link = message
+        .metadata
+        .get("rocketchat_reply_to_message_link")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if reply_label.is_none() && reply_excerpt.is_none() {
+        return Vec::new();
     }
 
-    rendered
+    let mut attachment = serde_json::Map::new();
+    if let Some(reply_label) = reply_label {
+        attachment.insert("author_name".to_string(), serde_json::json!(reply_label));
+    }
+    if let Some(reply_excerpt) = reply_excerpt {
+        attachment.insert("text".to_string(), serde_json::json!(reply_excerpt));
+    }
+    if let Some(reply_ts) = reply_ts {
+        attachment.insert("ts".to_string(), serde_json::json!(reply_ts));
+    }
+    if let Some(reply_link) = reply_link {
+        attachment.insert("message_link".to_string(), serde_json::json!(reply_link));
+    }
+    vec![serde_json::Value::Object(attachment)]
 }
 
 fn resolve_reply_target<'a>(
@@ -1680,30 +1828,6 @@ fn prepend_final_thinking_text(rendered: &str, thinking: &str) -> String {
         format!("Thinking:\n{}", thinking)
     } else {
         format!("Thinking:\n{}\n\nReply:\n{}", thinking, trimmed)
-    }
-}
-
-fn prepend_reply_context(
-    rendered: &str,
-    reply_label: Option<&str>,
-    reply_excerpt: Option<&str>,
-) -> String {
-    let Some(reply_label) = reply_label else {
-        return rendered.to_string();
-    };
-
-    let mut prefix = format!("Replying to {}:", reply_label);
-    if let Some(reply_excerpt) = reply_excerpt {
-        prefix.push('\n');
-        prefix.push_str("> ");
-        prefix.push_str(reply_excerpt);
-    }
-
-    let trimmed = rendered.trim();
-    if trimmed.is_empty() {
-        prefix
-    } else {
-        format!("{}\n\n{}", prefix, trimmed)
     }
 }
 
@@ -1942,10 +2066,10 @@ async fn read_ddp_frame(stream: &mut RocketChatWsStream) -> Result<RocketChatDdp
     }
 }
 
-async fn fetch_bot_username(
+async fn fetch_bot_identity(
     client: &Client,
     config: &RocketChatChannelDriverConfig,
-) -> Result<String> {
+) -> Result<RocketChatBotIdentity> {
     let response = client
         .get(api_url(&config.base_url, "users.info"))
         .header("X-Auth-Token", &config.token)
@@ -1966,7 +2090,7 @@ async fn fetch_bot_username(
 
     let parsed: RocketChatUserInfoResponse =
         serde_json::from_str(&body).context("Failed to decode Rocket.Chat users.info response")?;
-    parsed
+    let username = parsed
         .user
         .username
         .map(|value| value.trim().to_string())
@@ -1976,7 +2100,16 @@ async fn fetch_bot_username(
                 "[rocketchat_user_info_missing_username] Rocket.Chat users.info did not return a username for '{}'",
                 config.user_id
             )
-        })
+        })?;
+    let display_name = parsed
+        .user
+        .name
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    Ok(RocketChatBotIdentity {
+        username,
+        display_name,
+    })
 }
 
 async fn fetch_rooms(
@@ -2571,6 +2704,24 @@ struct RocketChatUserInfoResponse {
 #[derive(Debug, Deserialize)]
 struct RocketChatApiUser {
     username: Option<String>,
+    name: Option<String>,
+}
+
+#[derive(Debug)]
+struct RocketChatBotIdentity {
+    username: String,
+    display_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RocketChatSendMessageResponse {
+    message: Option<RocketChatSentMessage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RocketChatSentMessage {
+    #[serde(rename = "_id")]
+    id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2637,6 +2788,10 @@ struct RocketChatApiAttachment {
     title: Option<String>,
     #[serde(rename = "title_link")]
     title_link: Option<String>,
+    #[serde(rename = "message_link")]
+    message_link: Option<String>,
+    #[serde(rename = "author_name")]
+    author_name: Option<String>,
     #[serde(rename = "image_url")]
     image_url: Option<String>,
     #[serde(rename = "audio_url")]
@@ -2651,6 +2806,10 @@ struct RocketChatFileInfo {
     #[serde(rename = "type")]
     content_type: Option<String>,
     url: Option<String>,
+}
+
+fn normalize_identity_label(raw: &str) -> String {
+    raw.trim().trim_start_matches('@').to_ascii_lowercase()
 }
 
 #[cfg(test)]
@@ -2752,6 +2911,7 @@ mod tests {
             config,
             shutdown_rx: watch::channel(false).1,
             bot_username: None,
+            bot_display_name: None,
             rooms: HashMap::from([(
                 "room1".to_string(),
                 RocketChatRoomState {
@@ -2773,6 +2933,8 @@ mod tests {
             backlog: VecDeque::new(),
             seen_message_ids: HashSet::new(),
             seen_message_order: VecDeque::new(),
+            recent_sent_message_ids: HashSet::new(),
+            recent_sent_message_order: VecDeque::new(),
             rooms_updated_since: None,
             last_room_refresh: None,
             last_typing_at: HashMap::new(),
@@ -2829,6 +2991,7 @@ mod tests {
             config,
             shutdown_rx: watch::channel(false).1,
             bot_username: None,
+            bot_display_name: None,
             rooms: HashMap::new(),
             ws_stream: None,
             realtime_subscribed_room_ids: HashSet::from(["room1".to_string()]),
@@ -2836,6 +2999,8 @@ mod tests {
             backlog: VecDeque::new(),
             seen_message_ids: HashSet::new(),
             seen_message_order: VecDeque::new(),
+            recent_sent_message_ids: HashSet::new(),
+            recent_sent_message_order: VecDeque::new(),
             rooms_updated_since: Some("2026-03-29T17:12:01Z".to_string()),
             last_room_refresh: None,
             last_typing_at: HashMap::new(),
@@ -2877,6 +3042,7 @@ mod tests {
             config,
             shutdown_rx: watch::channel(false).1,
             bot_username: None,
+            bot_display_name: None,
             rooms: HashMap::new(),
             ws_stream: None,
             realtime_subscribed_room_ids: HashSet::new(),
@@ -2884,6 +3050,8 @@ mod tests {
             backlog: VecDeque::new(),
             seen_message_ids: HashSet::new(),
             seen_message_order: VecDeque::new(),
+            recent_sent_message_ids: HashSet::new(),
+            recent_sent_message_order: VecDeque::new(),
             rooms_updated_since: None,
             last_room_refresh: None,
             last_typing_at: HashMap::new(),
@@ -2950,6 +3118,7 @@ mod tests {
             config,
             shutdown_rx: watch::channel(false).1,
             bot_username: None,
+            bot_display_name: None,
             rooms: HashMap::new(),
             ws_stream: None,
             realtime_subscribed_room_ids: HashSet::new(),
@@ -2957,6 +3126,8 @@ mod tests {
             backlog: VecDeque::new(),
             seen_message_ids: HashSet::new(),
             seen_message_order: VecDeque::new(),
+            recent_sent_message_ids: HashSet::new(),
+            recent_sent_message_order: VecDeque::new(),
             rooms_updated_since: None,
             last_room_refresh: None,
             last_typing_at: HashMap::new(),
@@ -2987,7 +3158,10 @@ mod tests {
             file: None,
         };
 
-        assert_eq!(driver.effective_session_scope(&room), ChannelSessionScope::Room);
+        assert_eq!(
+            driver.effective_session_scope(&room),
+            ChannelSessionScope::Room
+        );
         assert_eq!(
             driver.thread_id_for_message(&room, &message, driver.effective_session_scope(&room)),
             "dm-room"
@@ -3028,6 +3202,10 @@ mod tests {
                 thread_id: Some("message-42"),
                 show_in_channel: true,
             },
+            &[serde_json::json!({
+                "author_name": "Alice",
+                "text": "Can you summarize the scores?"
+            })],
         );
 
         assert_eq!(payload["message"]["rid"], "room1");
@@ -3035,14 +3213,29 @@ mod tests {
         assert_eq!(payload["message"]["parseUrls"], false);
         assert_eq!(payload["message"]["tmid"], "message-42");
         assert_eq!(payload["message"]["tshow"], true);
+        assert_eq!(payload["message"]["attachments"][0]["author_name"], "Alice");
         assert!(payload.get("roomId").is_none());
         assert!(payload.get("channel").is_none());
     }
 
     #[test]
-    fn render_rocketchat_message_wraps_markdown_tables_and_reply_context() {
+    fn render_rocketchat_message_wraps_markdown_tables_and_thinking() {
         let mut outbound =
             OutboundMessage::text("| Name | Score |\n| --- | --- |\n| Alice | 10 |\n| Bob | 9 |");
+        outbound.metadata.insert(
+            "channel_final_thinking".to_string(),
+            serde_json::json!("brief reasoning"),
+        );
+
+        let rendered = render_rocketchat_message(&outbound, true);
+        assert!(rendered.contains("Thinking:"));
+        assert!(rendered.contains("```"));
+        assert!(rendered.contains("| Alice | 10 |"));
+    }
+
+    #[test]
+    fn channel_reply_attachments_render_reply_context() {
+        let mut outbound = OutboundMessage::text("reply");
         outbound.metadata.insert(
             "rocketchat_reply_to_label".to_string(),
             serde_json::json!("Alice"),
@@ -3052,15 +3245,102 @@ mod tests {
             serde_json::json!("Can you summarize the scores?"),
         );
         outbound.metadata.insert(
-            "channel_final_thinking".to_string(),
-            serde_json::json!("brief reasoning"),
+            "rocketchat_reply_to_message_ts".to_string(),
+            serde_json::json!("2026-03-30T10:00:00Z"),
         );
 
-        let rendered = render_rocketchat_message(&outbound, true, true);
-        assert!(rendered.contains("Replying to Alice:"));
-        assert!(rendered.contains("Thinking:"));
-        assert!(rendered.contains("```"));
-        assert!(rendered.contains("| Alice | 10 |"));
+        let attachments = build_channel_reply_attachments(&outbound);
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0]["author_name"], "Alice");
+        assert_eq!(attachments[0]["text"], "Can you summarize the scores?");
+        assert_eq!(attachments[0]["ts"], "2026-03-30T10:00:00Z");
+    }
+
+    #[test]
+    fn mentions_mode_accepts_quoted_messages_from_recent_bot_replies() {
+        let config = RocketChatChannelDriverConfig {
+            base_url: DEFAULT_BASE_URL.to_string(),
+            websocket_url: default_websocket_url(DEFAULT_BASE_URL),
+            transport_mode: RocketChatTransportMode::Realtime,
+            workspace_id: "rocketchat".to_string(),
+            accept_all_rooms: false,
+            room_id: Some("room1".to_string()),
+            room_name: None,
+            user_id: "bot".to_string(),
+            token: "token".to_string(),
+            poll_interval: Duration::from_millis(DEFAULT_POLL_INTERVAL_MS),
+            max_messages_per_poll: DEFAULT_MAX_MESSAGES_PER_POLL,
+            start_from_latest: true,
+            ignore_bot_messages: true,
+            respond_mode: RocketChatRespondMode::Mentions,
+            session_scope: ChannelSessionScope::Thread,
+            dm_session_scope: None,
+            reply_mode: RocketChatReplyMode::Channel,
+            stream_mode: ChannelStreamMode::Typing,
+            persist_thinking: false,
+        };
+        let driver = RocketChatChannelDriver {
+            channel_id: "rocketchat".to_string(),
+            client: Client::new(),
+            config,
+            shutdown_rx: watch::channel(false).1,
+            bot_username: Some("turinbot".to_string()),
+            bot_display_name: Some("Turin".to_string()),
+            rooms: HashMap::new(),
+            ws_stream: None,
+            realtime_subscribed_room_ids: HashSet::new(),
+            active_thread_keys: HashSet::new(),
+            backlog: VecDeque::new(),
+            seen_message_ids: HashSet::new(),
+            seen_message_order: VecDeque::new(),
+            recent_sent_message_ids: HashSet::from(["bot-message-1".to_string()]),
+            recent_sent_message_order: VecDeque::from(["bot-message-1".to_string()]),
+            rooms_updated_since: None,
+            last_room_refresh: None,
+            last_typing_at: HashMap::new(),
+            next_realtime_request_id: 1,
+        };
+        let room = RocketChatResolvedRoom {
+            id: "room1".to_string(),
+            room_type: RocketChatRoomType::Channel,
+            name: Some("general".to_string()),
+            friendly_name: Some("General".to_string()),
+            latest_message: None,
+            latest_message_id: None,
+            latest_message_ts: None,
+        };
+        let message = RocketChatMessage {
+            id: "m2".to_string(),
+            text: Some("follow up".to_string()),
+            ts: "2026-03-30T00:00:00.000Z".to_string(),
+            user: Some(RocketChatMessageUser {
+                id: "user1".to_string(),
+                username: Some("alice".to_string()),
+                name: Some("Alice".to_string()),
+            }),
+            kind: None,
+            thread_root_id: None,
+            mentions: vec![],
+            attachments: vec![RocketChatApiAttachment {
+                text: Some("Earlier reply".to_string()),
+                title: None,
+                title_link: None,
+                message_link: Some(
+                    "https://chat.example.com/channel/general?msg=bot-message-1".to_string(),
+                ),
+                author_name: Some("Turin".to_string()),
+                image_url: None,
+                audio_url: None,
+                video_url: None,
+            }],
+            file: None,
+        };
+
+        assert!(driver.should_accept_message(
+            &room,
+            &message,
+            message.user.as_ref().expect("user"),
+        ));
     }
 
     #[test]

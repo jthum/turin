@@ -67,10 +67,11 @@ Advanced settings:
 - shared rooms can be limited to mentions-only mode
 - `reply_mode = "thread"` replies in Rocket.Chat threads by setting `tmid`
 - `reply_mode = "thread_and_channel"` posts into the thread and also shows the reply in the room with Rocket.Chat's `tshow`
-- `reply_mode = "channel"` posts directly in the room and prepends a short quote of the triggering message instead of starting a thread
+- `reply_mode = "channel"` posts directly in the room and includes the triggering message as a Rocket.Chat attachment-style quote instead of starting a thread
 - `dm_session_scope = "room"` is the practical choice if you want direct messages to continue in one session while shared rooms stay per thread
 - once Turin has replied in a thread, subsequent messages in that same thread are accepted without mentioning the bot again
-- `stream_mode = "typing"` sends Rocket.Chat typing notifications while a turn is running
+- quoting a recent Turin message in the room is also accepted as a follow-up trigger, even without another mention
+- `stream_mode = "typing"` sends Rocket.Chat room activity notifications while a turn is running
 - `persist_thinking = true` prepends final model thinking to the posted reply
 - markdown pipe tables are wrapped in fenced code blocks automatically so they stay readable in Rocket.Chat
 - pairing and room approval use the same generic Turin access-state model as Telegram

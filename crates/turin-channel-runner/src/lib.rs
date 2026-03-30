@@ -974,7 +974,7 @@ impl ChannelRunner {
         let binding = self
             .ensure_session(agent_id, &event.conversation, reset_requested)
             .await?;
-        let session_events = if stream.mode.streams_text() || stream.stream_thinking {
+        let session_events = if should_subscribe_to_session_events(&stream) {
             self.daemon
                 .subscribe_managed(RuntimeEventsSubscribeParams {
                     agent_id: None,
@@ -1399,6 +1399,10 @@ fn preview_thinking(include_thinking: bool, thinking_preview: &str) -> Option<St
     Some(thinking_preview.to_string())
 }
 
+fn should_subscribe_to_session_events(stream: &WorkerStreamConfig) -> bool {
+    stream.mode.streams_text() || stream.stream_thinking || stream.persist_thinking
+}
+
 fn attach_final_thinking(
     mut outbound: OutboundMessage,
     thinking: Option<String>,
@@ -1628,6 +1632,16 @@ mod tests {
             Some(vec!["group:web".to_string(), "read_file".to_string()])
         );
         assert_eq!(tools.selection.exclude, vec!["web_search".to_string()]);
+    }
+
+    #[test]
+    fn persist_thinking_subscribes_to_session_events_even_without_streamed_text() {
+        let stream = WorkerStreamConfig {
+            mode: ChannelStreamMode::Typing,
+            stream_thinking: false,
+            persist_thinking: true,
+        };
+        assert!(should_subscribe_to_session_events(&stream));
     }
 
     fn test_runner(dir: &tempfile::TempDir, policy: ChannelAccessPolicy) -> ChannelRunner {
