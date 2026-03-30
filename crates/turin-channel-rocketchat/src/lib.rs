@@ -845,6 +845,15 @@ impl RocketChatChannelDriver {
         id
     }
 
+    fn reset_transport_state(&mut self) -> Result<()> {
+        self.ws_stream = None;
+        self.realtime_subscribed_room_ids.clear();
+        self.client = Client::builder().build().context(
+            "[rocketchat_http_client_rebuild_failed] Failed to rebuild Rocket.Chat HTTP client",
+        )?;
+        Ok(())
+    }
+
     async fn ensure_realtime_connected(&mut self) -> Result<()> {
         if self.ws_stream.is_some() {
             return Ok(());
@@ -986,11 +995,16 @@ impl RocketChatChannelDriver {
                 warn!(
                     channel_id = %self.channel_id,
                     room_count = self.rooms.len(),
-                    error = %err,
+                    error = ?err,
                     "Rocket.Chat realtime connection failed"
                 );
-                self.ws_stream = None;
-                self.realtime_subscribed_room_ids.clear();
+                if let Err(reset_err) = self.reset_transport_state() {
+                    warn!(
+                        channel_id = %self.channel_id,
+                        error = ?reset_err,
+                        "Rocket.Chat transport reset failed"
+                    );
+                }
                 tokio::select! {
                     changed = self.shutdown_rx.changed() => {
                         if changed.is_ok() && *self.shutdown_rx.borrow() {
@@ -1013,17 +1027,30 @@ impl RocketChatChannelDriver {
                 if let Err(err) = self.refresh_rooms(false).await {
                     warn!(
                         channel_id = %self.channel_id,
-                        error = %err,
+                        error = ?err,
                         "Rocket.Chat room refresh failed"
                     );
+                    if let Err(reset_err) = self.reset_transport_state() {
+                        warn!(
+                            channel_id = %self.channel_id,
+                            error = ?reset_err,
+                            "Rocket.Chat transport reset failed"
+                        );
+                    }
+                    continue;
                 } else if let Err(err) = self.sync_realtime_subscriptions().await {
                     warn!(
                         channel_id = %self.channel_id,
-                        error = %err,
+                        error = ?err,
                         "Rocket.Chat subscription sync failed"
                     );
-                    self.ws_stream = None;
-                    self.realtime_subscribed_room_ids.clear();
+                    if let Err(reset_err) = self.reset_transport_state() {
+                        warn!(
+                            channel_id = %self.channel_id,
+                            error = ?reset_err,
+                            "Rocket.Chat transport reset failed"
+                        );
+                    }
                     continue;
                 }
                 if let Some(event) = self.backlog.pop_front() {
@@ -1063,11 +1090,16 @@ impl RocketChatChannelDriver {
                 Err(err) => {
                     warn!(
                         channel_id = %self.channel_id,
-                        error = %err,
+                        error = ?err,
                         "Rocket.Chat realtime stream failed; reconnecting"
                     );
-                    self.ws_stream = None;
-                    self.realtime_subscribed_room_ids.clear();
+                    if let Err(reset_err) = self.reset_transport_state() {
+                        warn!(
+                            channel_id = %self.channel_id,
+                            error = ?reset_err,
+                            "Rocket.Chat transport reset failed"
+                        );
+                    }
                 }
             }
         }
@@ -1169,9 +1201,16 @@ impl ChannelDriver for RocketChatChannelDriver {
                 warn!(
                     channel_id = %self.channel_id,
                     room_count = self.rooms.len(),
-                    error = %err,
+                    error = ?err,
                     "Rocket.Chat polling failed"
                 );
+                if let Err(reset_err) = self.reset_transport_state() {
+                    warn!(
+                        channel_id = %self.channel_id,
+                        error = ?reset_err,
+                        "Rocket.Chat transport reset failed"
+                    );
+                }
             }
 
             if let Some(event) = self.backlog.pop_front() {
@@ -2144,6 +2183,47 @@ mod tests {
             file: None,
         };
         assert_eq!(driver.thread_id_for_message(&room, &message), "room1");
+    }
+
+    #[test]
+    fn reset_transport_state_clears_realtime_subscriptions() {
+        let config = RocketChatChannelDriverConfig {
+            base_url: DEFAULT_BASE_URL.to_string(),
+            websocket_url: default_websocket_url(DEFAULT_BASE_URL),
+            transport_mode: RocketChatTransportMode::Realtime,
+            workspace_id: "rocketchat".to_string(),
+            accept_all_rooms: false,
+            room_id: Some("room1".to_string()),
+            room_name: None,
+            user_id: "bot".to_string(),
+            token: "token".to_string(),
+            poll_interval: Duration::from_millis(DEFAULT_POLL_INTERVAL_MS),
+            max_messages_per_poll: DEFAULT_MAX_MESSAGES_PER_POLL,
+            start_from_latest: true,
+            ignore_bot_messages: true,
+            respond_mode: RocketChatRespondMode::Mentions,
+            session_scope: ChannelSessionScope::User,
+        };
+        let mut driver = RocketChatChannelDriver {
+            channel_id: "rocketchat".to_string(),
+            client: Client::new(),
+            config,
+            shutdown_rx: watch::channel(false).1,
+            rooms: HashMap::new(),
+            ws_stream: None,
+            realtime_subscribed_room_ids: HashSet::from(["room1".to_string()]),
+            backlog: VecDeque::new(),
+            seen_message_ids: HashSet::new(),
+            seen_message_order: VecDeque::new(),
+            rooms_updated_since: Some("2026-03-29T17:12:01Z".to_string()),
+            last_room_refresh: None,
+            next_realtime_request_id: 1,
+        };
+
+        driver.reset_transport_state().expect("transport reset");
+
+        assert!(driver.ws_stream.is_none());
+        assert!(driver.realtime_subscribed_room_ids.is_empty());
     }
 
     #[test]
