@@ -1422,23 +1422,14 @@ impl ChannelDriver for RocketChatChannelDriver {
         ));
 
         for (index, chunk) in chunks.into_iter().enumerate() {
-            let mut payload = serde_json::Map::new();
-            payload.insert("channel".to_string(), serde_json::json!(room_id));
-            payload.insert("text".to_string(), serde_json::json!(chunk));
-            payload.insert("parseUrls".to_string(), serde_json::json!(false));
-            if let Some(thread_id) = reply_target.thread_id {
-                payload.insert("tmid".to_string(), serde_json::json!(thread_id));
-                if reply_target.show_in_channel {
-                    payload.insert("tshow".to_string(), serde_json::json!(true));
-                }
-                if index == 0 {
-                    self.active_thread_keys
-                        .insert(active_thread_key(room_id, thread_id));
-                }
+            let payload = build_rocketchat_send_payload(room_id, &chunk, reply_target);
+            if let Some(thread_id) = reply_target.thread_id && index == 0 {
+                self.active_thread_keys
+                    .insert(active_thread_key(room_id, thread_id));
             }
             let response = self
                 .client
-                .post(api_url(&self.config.base_url, "chat.postMessage"))
+                .post(api_url(&self.config.base_url, "chat.sendMessage"))
                 .header("X-Auth-Token", &self.config.token)
                 .header("X-User-Id", &self.config.user_id)
                 .json(&payload)
@@ -1449,7 +1440,7 @@ impl ChannelDriver for RocketChatChannelDriver {
                 let status = response.status();
                 let body = response.text().await.unwrap_or_default();
                 anyhow::bail!(
-                    "[rocketchat_send_failed] Rocket.Chat chat.postMessage failed with status {}: {}",
+                    "[rocketchat_send_failed] Rocket.Chat chat.sendMessage failed with status {}: {}",
                     status,
                     body
                 );
@@ -1549,6 +1540,25 @@ fn render_text_blocks(blocks: &[MessageBlock]) -> String {
 struct RocketChatReplyTarget<'a> {
     thread_id: Option<&'a str>,
     show_in_channel: bool,
+}
+
+fn build_rocketchat_send_payload(
+    room_id: &str,
+    text: &str,
+    reply_target: RocketChatReplyTarget<'_>,
+) -> serde_json::Value {
+    let mut message = serde_json::Map::new();
+    message.insert("rid".to_string(), serde_json::json!(room_id));
+    message.insert("msg".to_string(), serde_json::json!(text));
+    message.insert("parseUrls".to_string(), serde_json::json!(false));
+    if let Some(thread_id) = reply_target.thread_id {
+        message.insert("tmid".to_string(), serde_json::json!(thread_id));
+        if reply_target.show_in_channel {
+            message.insert("tshow".to_string(), serde_json::json!(true));
+        }
+    }
+
+    serde_json::json!({ "message": message })
 }
 
 fn render_rocketchat_message(
@@ -2855,6 +2865,26 @@ mod tests {
         );
         assert_eq!(reply_target.thread_id, Some("message-42"));
         assert!(!reply_target.show_in_channel);
+    }
+
+    #[test]
+    fn build_rocketchat_send_payload_uses_send_message_shape() {
+        let payload = build_rocketchat_send_payload(
+            "room1",
+            "hello",
+            RocketChatReplyTarget {
+                thread_id: Some("message-42"),
+                show_in_channel: true,
+            },
+        );
+
+        assert_eq!(payload["message"]["rid"], "room1");
+        assert_eq!(payload["message"]["msg"], "hello");
+        assert_eq!(payload["message"]["parseUrls"], false);
+        assert_eq!(payload["message"]["tmid"], "message-42");
+        assert_eq!(payload["message"]["tshow"], true);
+        assert!(payload.get("roomId").is_none());
+        assert!(payload.get("channel").is_none());
     }
 
     #[test]
