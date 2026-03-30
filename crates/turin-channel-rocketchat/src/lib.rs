@@ -80,7 +80,9 @@ pub struct RocketChatChannelDriverConfig {
     pub ignore_bot_messages: bool,
     pub respond_mode: RocketChatRespondMode,
     pub session_scope: ChannelSessionScope,
-    pub dm_session_scope: Option<ChannelSessionScope>,
+    pub session_scope_dm: Option<ChannelSessionScope>,
+    pub session_scope_group: Option<ChannelSessionScope>,
+    pub session_scope_channel: Option<ChannelSessionScope>,
     pub reply_mode: RocketChatReplyMode,
     pub stream_mode: ChannelStreamMode,
     pub persist_thinking: bool,
@@ -103,7 +105,9 @@ struct RocketChatChannelSettings {
     ignore_bot_messages: bool,
     respond_mode: RocketChatRespondMode,
     session_scope: ChannelSessionScope,
-    dm_session_scope: Option<ChannelSessionScope>,
+    session_scope_dm: Option<ChannelSessionScope>,
+    session_scope_group: Option<ChannelSessionScope>,
+    session_scope_channel: Option<ChannelSessionScope>,
     reply_mode: RocketChatReplyMode,
     stream_mode: ChannelStreamMode,
     persist_thinking: bool,
@@ -166,7 +170,15 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     options: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
                 },
                 ChannelEnumSetting {
-                    key: "dm_session_scope".to_string(),
+                    key: "session_scope_dm".to_string(),
+                    options: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
+                },
+                ChannelEnumSetting {
+                    key: "session_scope_group".to_string(),
+                    options: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
+                },
+                ChannelEnumSetting {
+                    key: "session_scope_channel".to_string(),
                     options: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
                 },
                 ChannelEnumSetting {
@@ -451,11 +463,11 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
-                    key: "dm_session_scope".to_string(),
+                    key: "session_scope_dm".to_string(),
                     label: Some("DM Session Scope".to_string()),
                     field_type: "select".to_string(),
                     prompt: Some("Optional session scope override for direct messages".to_string()),
-                    help: Some("Leave empty to reuse the main session scope. Set this to 'room' if you want direct messages to continue in one session while shared rooms stay per thread.".to_string()),
+                    help: Some("Leave empty to reuse the main session scope.".to_string()),
                     advanced: true,
                     options: vec![
                         ChannelConfigFieldOption {
@@ -473,7 +485,61 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     ],
                     target: Some(ChannelConfigTarget {
                         kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "dm_session_scope".to_string(),
+                        name: "session_scope_dm".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+                ChannelConfigField {
+                    key: "session_scope_group".to_string(),
+                    label: Some("Group Session Scope".to_string()),
+                    field_type: "select".to_string(),
+                    prompt: Some("Optional session scope override for private groups".to_string()),
+                    help: Some("Leave empty to reuse the main session scope.".to_string()),
+                    advanced: true,
+                    options: vec![
+                        ChannelConfigFieldOption {
+                            value: "user".to_string(),
+                            label: Some("Per user".to_string()),
+                        },
+                        ChannelConfigFieldOption {
+                            value: "thread".to_string(),
+                            label: Some("Per thread".to_string()),
+                        },
+                        ChannelConfigFieldOption {
+                            value: "room".to_string(),
+                            label: Some("Per room".to_string()),
+                        },
+                    ],
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "session_scope_group".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+                ChannelConfigField {
+                    key: "session_scope_channel".to_string(),
+                    label: Some("Channel Session Scope".to_string()),
+                    field_type: "select".to_string(),
+                    prompt: Some("Optional session scope override for public channels".to_string()),
+                    help: Some("Leave empty to reuse the main session scope.".to_string()),
+                    advanced: true,
+                    options: vec![
+                        ChannelConfigFieldOption {
+                            value: "user".to_string(),
+                            label: Some("Per user".to_string()),
+                        },
+                        ChannelConfigFieldOption {
+                            value: "thread".to_string(),
+                            label: Some("Per thread".to_string()),
+                        },
+                        ChannelConfigFieldOption {
+                            value: "room".to_string(),
+                            label: Some("Per room".to_string()),
+                        },
+                    ],
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "session_scope_channel".to_string(),
                     }),
                     ..ChannelConfigField::default()
                 },
@@ -613,7 +679,9 @@ impl RocketChatChannelDriverConfig {
             ignore_bot_messages: settings.ignore_bot_messages,
             respond_mode: settings.respond_mode,
             session_scope: settings.session_scope,
-            dm_session_scope: settings.dm_session_scope,
+            session_scope_dm: settings.session_scope_dm,
+            session_scope_group: settings.session_scope_group,
+            session_scope_channel: settings.session_scope_channel,
             reply_mode: settings.reply_mode,
             stream_mode: settings.stream_mode,
             persist_thinking: settings.persist_thinking,
@@ -947,11 +1015,16 @@ impl RocketChatChannelDriver {
         match room.room_type {
             RocketChatRoomType::DirectMessage => self
                 .config
-                .dm_session_scope
+                .session_scope_dm
                 .unwrap_or(self.config.session_scope),
-            RocketChatRoomType::Channel | RocketChatRoomType::PrivateGroup => {
-                self.config.session_scope
-            }
+            RocketChatRoomType::Channel => self
+                .config
+                .session_scope_channel
+                .unwrap_or(self.config.session_scope),
+            RocketChatRoomType::PrivateGroup => self
+                .config
+                .session_scope_group
+                .unwrap_or(self.config.session_scope),
         }
     }
 
@@ -2315,7 +2388,21 @@ fn parse_settings(
         )?,
         respond_mode: read_respond_mode(settings.get("respond_mode"))?,
         session_scope: read_session_scope(settings.get("session_scope"))?,
-        dm_session_scope: read_optional_session_scope(settings.get("dm_session_scope"), "dm_session_scope")?,
+        session_scope_dm: read_optional_session_scope_alias(
+            settings,
+            "session_scope_dm",
+            "dm_session_scope",
+        )?,
+        session_scope_group: read_optional_session_scope_alias(
+            settings,
+            "session_scope_group",
+            "group_session_scope",
+        )?,
+        session_scope_channel: read_optional_session_scope_alias(
+            settings,
+            "session_scope_channel",
+            "channel_session_scope",
+        )?,
         reply_mode: read_reply_mode(settings.get("reply_mode"))?,
         stream_mode: read_stream_mode(settings.get("stream_mode"))?,
         persist_thinking: read_bool(
@@ -2504,6 +2591,17 @@ fn read_optional_session_scope(
             key
         ),
     }
+}
+
+fn read_optional_session_scope_alias(
+    settings: &serde_json::Map<String, serde_json::Value>,
+    primary_key: &str,
+    legacy_key: &str,
+) -> Result<Option<ChannelSessionScope>> {
+    if let Some(value) = settings.get(primary_key) {
+        return read_optional_session_scope(Some(value), primary_key);
+    }
+    read_optional_session_scope(settings.get(legacy_key), legacy_key)
 }
 
 fn default_websocket_url(base_url: &str) -> String {
@@ -2839,7 +2937,9 @@ mod tests {
         assert_eq!(parsed.max_messages_per_poll, DEFAULT_MAX_MESSAGES_PER_POLL);
         assert_eq!(parsed.respond_mode, RocketChatRespondMode::Mentions);
         assert_eq!(parsed.session_scope, ChannelSessionScope::Thread);
-        assert_eq!(parsed.dm_session_scope, None);
+        assert_eq!(parsed.session_scope_dm, None);
+        assert_eq!(parsed.session_scope_group, None);
+        assert_eq!(parsed.session_scope_channel, None);
         assert_eq!(parsed.reply_mode, RocketChatReplyMode::Thread);
         assert_eq!(parsed.stream_mode, ChannelStreamMode::Typing);
         assert!(!parsed.persist_thinking);
@@ -2900,7 +3000,9 @@ mod tests {
             ignore_bot_messages: true,
             respond_mode: RocketChatRespondMode::Mentions,
             session_scope: ChannelSessionScope::User,
-            dm_session_scope: None,
+            session_scope_dm: None,
+            session_scope_group: None,
+            session_scope_channel: None,
             reply_mode: RocketChatReplyMode::Thread,
             stream_mode: ChannelStreamMode::Typing,
             persist_thinking: false,
@@ -2980,7 +3082,9 @@ mod tests {
             ignore_bot_messages: true,
             respond_mode: RocketChatRespondMode::Mentions,
             session_scope: ChannelSessionScope::User,
-            dm_session_scope: None,
+            session_scope_dm: None,
+            session_scope_group: None,
+            session_scope_channel: None,
             reply_mode: RocketChatReplyMode::Thread,
             stream_mode: ChannelStreamMode::Typing,
             persist_thinking: false,
@@ -3031,7 +3135,9 @@ mod tests {
             ignore_bot_messages: true,
             respond_mode: RocketChatRespondMode::Mentions,
             session_scope: ChannelSessionScope::Thread,
-            dm_session_scope: None,
+            session_scope_dm: None,
+            session_scope_group: None,
+            session_scope_channel: None,
             reply_mode: RocketChatReplyMode::Thread,
             stream_mode: ChannelStreamMode::Typing,
             persist_thinking: false,
@@ -3107,7 +3213,9 @@ mod tests {
             ignore_bot_messages: true,
             respond_mode: RocketChatRespondMode::Mentions,
             session_scope: ChannelSessionScope::Thread,
-            dm_session_scope: Some(ChannelSessionScope::Room),
+            session_scope_dm: Some(ChannelSessionScope::Room),
+            session_scope_group: None,
+            session_scope_channel: None,
             reply_mode: RocketChatReplyMode::Thread,
             stream_mode: ChannelStreamMode::Typing,
             persist_thinking: false,
@@ -3274,7 +3382,9 @@ mod tests {
             ignore_bot_messages: true,
             respond_mode: RocketChatRespondMode::Mentions,
             session_scope: ChannelSessionScope::Thread,
-            dm_session_scope: None,
+            session_scope_dm: None,
+            session_scope_group: None,
+            session_scope_channel: None,
             reply_mode: RocketChatReplyMode::Channel,
             stream_mode: ChannelStreamMode::Typing,
             persist_thinking: false,

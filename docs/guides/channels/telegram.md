@@ -21,7 +21,7 @@ Current Phase 8 scope:
 - generic pairing modes for chat discovery (`off`, `pending`, `auto`)
 - generic sender access policies (`pairing_users`, `allowed_users`, `banned_users`)
 - configurable group trigger policy (`all`, `mentions`, `replies`, `mentions_or_replies`)
-- optional DM-specific session-scope override via `dm_session_scope`
+- optional per-chat-type session-scope overrides via `session_scope_dm`, `session_scope_group`, and `session_scope_channel`
 - daemon-managed lifecycle (`create`, `enable`, `disable`, `update`, `status`)
 
 Current non-goals:
@@ -96,7 +96,7 @@ Turin can also enforce its own group trigger policy with `respond_mode`:
 
 For shared groups, `mentions_or_replies` is usually the right setting.
 
-If you want direct messages to keep a continuous session while shared groups stay on a different memory model, set `dm_session_scope` separately from `session_scope`.
+If you want direct messages to keep a continuous session while shared groups stay on a different memory model, set `session_scope_dm` separately from `session_scope`. You can also override groups and channels independently with `session_scope_group` and `session_scope_channel`.
 
 ### Channel
 

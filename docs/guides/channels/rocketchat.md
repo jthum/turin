@@ -43,7 +43,9 @@ Common settings:
 - `transport_mode = "realtime" | "polling"`
 - `respond_mode = "all" | "mentions"`
 - `session_scope = "user" | "thread" | "room"`
-- `dm_session_scope = "user" | "thread" | "room"` (optional override)
+- `session_scope_dm = "user" | "thread" | "room"` (optional override)
+- `session_scope_group = "user" | "thread" | "room"` (optional override)
+- `session_scope_channel = "user" | "thread" | "room"` (optional override)
 - `reply_mode = "thread" | "channel" | "thread_and_channel"`
 - `stream_mode = "off" | "typing"`
 
@@ -68,7 +70,7 @@ Advanced settings:
 - `reply_mode = "thread"` replies in Rocket.Chat threads by setting `tmid`
 - `reply_mode = "thread_and_channel"` posts into the thread and also shows the reply in the room with Rocket.Chat's `tshow`
 - `reply_mode = "channel"` posts directly in the room and includes the triggering message as a Rocket.Chat attachment-style quote instead of starting a thread
-- `dm_session_scope = "room"` is the practical choice if you want direct messages to continue in one session while shared rooms stay per thread
+- `session_scope_dm = "room"` is the practical choice if you want direct messages to continue in one session while shared rooms stay per thread
 - once Turin has replied in a thread, subsequent messages in that same thread are accepted without mentioning the bot again
 - quoting a recent Turin message in the room is also accepted as a follow-up trigger, even without another mention
 - `stream_mode = "typing"` sends Rocket.Chat room activity notifications while a turn is running
