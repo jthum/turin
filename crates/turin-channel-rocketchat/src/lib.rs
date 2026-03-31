@@ -1024,7 +1024,7 @@ impl RocketChatChannelDriver {
     }
 
     fn effective_session_scope(&self, room: &RocketChatResolvedRoom) -> ChannelSessionScope {
-        match room.room_type {
+        let configured_scope = match room.room_type {
             RocketChatRoomType::DirectMessage => self
                 .config
                 .session_scope_dm
@@ -1037,6 +1037,14 @@ impl RocketChatChannelDriver {
                 .config
                 .session_scope_group
                 .unwrap_or(self.config.session_scope),
+        };
+
+        if matches!(self.config.reply_mode, RocketChatReplyMode::Channel)
+            && matches!(configured_scope, ChannelSessionScope::Thread)
+        {
+            ChannelSessionScope::Room
+        } else {
+            configured_scope
         }
     }
 
@@ -3355,6 +3363,88 @@ mod tests {
         assert_eq!(
             driver.thread_id_for_message(&room, &message, driver.effective_session_scope(&room)),
             "dm-room"
+        );
+    }
+
+    #[test]
+    fn channel_reply_mode_downgrades_thread_scope_to_room_scope() {
+        let config = RocketChatChannelDriverConfig {
+            base_url: DEFAULT_BASE_URL.to_string(),
+            websocket_url: default_websocket_url(DEFAULT_BASE_URL),
+            transport_mode: RocketChatTransportMode::Realtime,
+            workspace_id: "rocketchat".to_string(),
+            accept_all_rooms: false,
+            room_id: Some("room1".to_string()),
+            room_name: None,
+            user_id: "bot".to_string(),
+            token: "token".to_string(),
+            poll_interval: Duration::from_millis(DEFAULT_POLL_INTERVAL_MS),
+            max_messages_per_poll: DEFAULT_MAX_MESSAGES_PER_POLL,
+            start_from_latest: true,
+            ignore_bot_messages: true,
+            respond_mode: RocketChatRespondMode::Mentions,
+            session_scope: ChannelSessionScope::Thread,
+            session_scope_dm: None,
+            session_scope_group: None,
+            session_scope_channel: None,
+            reply_mode: RocketChatReplyMode::Channel,
+            stream_mode: ChannelStreamMode::Typing,
+            persist_thinking: false,
+        };
+        let driver = RocketChatChannelDriver {
+            channel_id: "rocketchat".to_string(),
+            client: Client::new(),
+            config,
+            shutdown_rx: watch::channel(false).1,
+            bot_username: None,
+            bot_display_name: None,
+            rooms: HashMap::new(),
+            ws_stream: None,
+            realtime_subscribed_room_ids: HashSet::new(),
+            active_thread_keys: HashSet::new(),
+            backlog: VecDeque::new(),
+            seen_message_ids: HashSet::new(),
+            seen_message_order: VecDeque::new(),
+            recent_sent_message_ids: HashSet::new(),
+            recent_sent_message_order: VecDeque::new(),
+            rooms_updated_since: None,
+            last_room_refresh: None,
+            last_typing_at: HashMap::new(),
+            next_realtime_request_id: 1,
+        };
+        let room = RocketChatResolvedRoom {
+            id: "room1".to_string(),
+            room_type: RocketChatRoomType::PrivateGroup,
+            name: Some("turin".to_string()),
+            friendly_name: Some("Turin".to_string()),
+            usernames: vec![],
+            latest_message: None,
+            latest_message_id: None,
+            latest_message_ts: None,
+        };
+        let message = RocketChatMessage {
+            id: "m1".to_string(),
+            text: Some("@nux hello".to_string()),
+            ts: "2026-03-31T00:00:00.000Z".to_string(),
+            user: Some(RocketChatMessageUser {
+                id: "user1".to_string(),
+                username: Some("alice".to_string()),
+                name: Some("Alice".to_string()),
+            }),
+            kind: None,
+            thread_root_id: None,
+            mentions: vec![],
+            attachments: vec![],
+            file: None,
+        };
+
+        assert_eq!(
+            driver.effective_session_scope(&room),
+            ChannelSessionScope::Room
+        );
+        assert_eq!(
+            driver.thread_id_for_message(&room, &message, driver.effective_session_scope(&room)),
+            "room1"
         );
     }
 

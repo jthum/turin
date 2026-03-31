@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Rocket.Chat Channel**
   - Added a new external `turin-channel-rocketchat` sidecar with manifest-driven setup, realtime Rocket.Chat inbound delivery by default, polling fallback support, dynamic multi-room discovery, generic pairing and room approval, and Rocket.Chat message sending.
   - Added `rocketchat` channel validation coverage in daemon state tests.
-  - Added Rocket.Chat reply mode controls (`thread`, `channel`, `thread_and_channel`), top-of-message quoted channel replies, typing progress notifications, optional persisted final thinking, Turin-thread and quoted-message follow-up handling without repeated mentions, and automatic fenced rendering for markdown pipe tables.
+  - Added Rocket.Chat reply mode controls (`thread`, `channel`, `thread_and_channel`), top-of-message quoted channel replies with linked sender headings, room-scoped session normalization when `reply_mode = "channel"`, typing progress notifications, optional persisted final thinking, Turin-thread and quoted-message follow-up handling without repeated mentions, and automatic fenced rendering for markdown pipe tables.
   - Added per-surface session-scope overrides for Rocket.Chat and Telegram via `session_scope_dm`, `session_scope_group`, and `session_scope_channel`, so direct messages, groups, and channels can each use a different memory model when needed.
 - **Self-Describing Channel Metadata**
   - Expanded sidecar `describe` manifests to carry versioned runtime, setup, and install metadata instead of only enum settings.
