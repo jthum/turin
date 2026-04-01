@@ -1,6 +1,7 @@
 use crate::daemon::protocol::{
-    NoParams, OpenSessionParams, ResponseEnvelope, ResumeSessionParams, SessionIdParams,
-    SessionListParams, SessionSearchParams, SessionTitleParams,
+    NoParams, OpenSessionParams, ResponseEnvelope, ResumeSessionParams,
+    SessionBranchCheckoutParams, SessionBranchCreateParams, SessionIdParams, SessionListParams,
+    SessionSearchParams, SessionTitleParams,
 };
 
 use super::{
@@ -139,6 +140,83 @@ pub(super) async fn set_title(
             id,
             ErrorCode::SessionNotFound,
             format!("Session '{}' not found", params.session_id),
+        ),
+        Err(err) => validation_error(id, err),
+    }
+}
+
+pub(super) async fn branch_list(
+    id: Option<String>,
+    params: SessionIdParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard.list_session_branches(&params.session_id).await {
+        Ok(Some(branches)) => ResponseEnvelope::ok(id, serde_json::json!({ "branches": branches })),
+        Ok(None) => not_found_error(
+            id,
+            ErrorCode::SessionNotFound,
+            format!("Session '{}' not found", params.session_id),
+        ),
+        Err(err) => validation_error(id, err),
+    }
+}
+
+pub(super) async fn branch_create(
+    id: Option<String>,
+    params: SessionBranchCreateParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard
+        .create_session_branch(
+            &params.session_id,
+            &params.name,
+            params.from_turn_index,
+            params.activate,
+        )
+        .await
+    {
+        Ok(Some(branch)) => serialize_response_with_event(
+            id,
+            branch,
+            "created session branch",
+            &ctx.event_tx,
+            "session.branch_created",
+        ),
+        Ok(None) => not_found_error(
+            id,
+            ErrorCode::SessionNotFound,
+            format!("Session '{}' not found", params.session_id),
+        ),
+        Err(err) => validation_error(id, err),
+    }
+}
+
+pub(super) async fn branch_checkout(
+    id: Option<String>,
+    params: SessionBranchCheckoutParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard
+        .checkout_session_branch(&params.session_id, &params.branch)
+        .await
+    {
+        Ok(Some(branch)) => serialize_response_with_event(
+            id,
+            branch,
+            "checked out session branch",
+            &ctx.event_tx,
+            "session.branch_checked_out",
+        ),
+        Ok(None) => not_found_error(
+            id,
+            ErrorCode::SessionNotFound,
+            format!(
+                "Session '{}' or branch '{}' not found",
+                params.session_id, params.branch
+            ),
         ),
         Err(err) => validation_error(id, err),
     }

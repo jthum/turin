@@ -232,6 +232,22 @@ pub struct SessionTitleParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SessionBranchCreateParams {
+    pub session_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub from_turn_index: Option<u32>,
+    #[serde(default)]
+    pub activate: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SessionBranchCheckoutParams {
+    pub session_id: String,
+    pub branch: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "op", content = "params")]
 pub enum DaemonRequest {
     #[serde(rename = "daemon.ping")]
@@ -296,6 +312,12 @@ pub enum DaemonRequest {
     SessionGet(SessionIdParams),
     #[serde(rename = "session.set_title")]
     SessionSetTitle(SessionTitleParams),
+    #[serde(rename = "session.branch_list")]
+    SessionBranchList(SessionIdParams),
+    #[serde(rename = "session.branch_create")]
+    SessionBranchCreate(SessionBranchCreateParams),
+    #[serde(rename = "session.branch_checkout")]
+    SessionBranchCheckout(SessionBranchCheckoutParams),
     #[serde(rename = "session.cancel")]
     SessionCancel(SessionIdParams),
     #[serde(rename = "session.kill")]

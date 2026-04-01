@@ -87,6 +87,15 @@ pub struct SessionDetail {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct SessionBranchDetail {
+    pub branch_id: String,
+    pub name: String,
+    pub head_turn_index: Option<u32>,
+    pub active: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SessionSearchHit {
     pub kind: SessionSearchHitKind,
     pub score: i64,

@@ -86,6 +86,15 @@ pub(super) async fn dispatch(
         DaemonRequest::SessionResume(params) => session::resume(id, params, &context).await,
         DaemonRequest::SessionGet(params) => session::get(id, params, &context).await,
         DaemonRequest::SessionSetTitle(params) => session::set_title(id, params, &context).await,
+        DaemonRequest::SessionBranchList(params) => {
+            session::branch_list(id, params, &context).await
+        }
+        DaemonRequest::SessionBranchCreate(params) => {
+            session::branch_create(id, params, &context).await
+        }
+        DaemonRequest::SessionBranchCheckout(params) => {
+            session::branch_checkout(id, params, &context).await
+        }
         DaemonRequest::SessionCancel(params) => session::cancel(id, params, &context).await,
         DaemonRequest::SessionKill(params) => session::kill(id, params, &context).await,
         DaemonRequest::HarnessList(params) => harness::list(id, params, &context).await,

@@ -6,15 +6,15 @@ use turin_daemon_protocol::SessionSearchScope;
 use uuid::Uuid;
 
 use super::{
-    DaemonState, SessionDetail, SessionEventDetail, SessionMessageDetail, SessionSearchHit,
-    SessionSummary, SessionToolExecutionDetail,
+    DaemonState, SessionBranchDetail, SessionDetail, SessionEventDetail, SessionMessageDetail,
+    SessionSearchHit, SessionSummary, SessionToolExecutionDetail,
 };
 use crate::kernel::agent_manager::{AgentStatusSnapshot, TaskStatusSnapshot};
 use crate::kernel::event::KernelEvent;
 use crate::kernel::session::QueuedTask;
 use crate::kernel::session_refs::{format_session_reference, parse_session_reference};
 use crate::persistence::manager::StoreSelector;
-use crate::persistence::schema::SessionRow;
+use crate::persistence::schema::{BranchHeadRow, SessionRow};
 use turin_types::ToolsConfig;
 
 impl DaemonState {
@@ -279,6 +279,65 @@ impl DaemonState {
             .map(|row| session_summary_from_row_and_selector(row, &store_selector)))
     }
 
+    pub async fn list_session_branches(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<Vec<SessionBranchDetail>>> {
+        let Some((store_selector, row)) = self.resolve_persisted_session(session_id).await? else {
+            return Ok(None);
+        };
+        let store = self.kernel.store_manager().open(&store_selector).await?;
+        let branches = store
+            .list_branch_heads(row.id)
+            .await?
+            .into_iter()
+            .map(branch_detail_from_row)
+            .collect();
+        Ok(Some(branches))
+    }
+
+    pub async fn create_session_branch(
+        &self,
+        session_id: &str,
+        name: &str,
+        from_turn_index: Option<u32>,
+        activate: bool,
+    ) -> Result<Option<SessionBranchDetail>> {
+        let Some((store_selector, row)) = self.resolve_persisted_session(session_id).await? else {
+            return Ok(None);
+        };
+        let store = self.kernel.store_manager().open(&store_selector).await?;
+        let branch = store
+            .create_branch_head_from_turn_index(row.id, name, from_turn_index, activate)
+            .await?;
+        Ok(Some(branch_detail_from_row(branch)))
+    }
+
+    pub async fn checkout_session_branch(
+        &self,
+        session_id: &str,
+        branch: &str,
+    ) -> Result<Option<SessionBranchDetail>> {
+        let Some((store_selector, row)) = self.resolve_persisted_session(session_id).await? else {
+            return Ok(None);
+        };
+        if self.session_is_live(&row.public_id).await {
+            anyhow::bail!(
+                "Cannot check out branch for live session '{}'; stop or resume it later",
+                session_id
+            );
+        }
+        let store = self.kernel.store_manager().open(&store_selector).await?;
+        let branch = if let Ok(branch_id) = Uuid::parse_str(branch) {
+            store
+                .checkout_branch_head_by_public_id(row.id, branch_id)
+                .await?
+        } else {
+            store.checkout_branch_head_by_name(row.id, branch).await?
+        };
+        Ok(branch.map(branch_detail_from_row))
+    }
+
     pub async fn cancel_session(&self, session_id: &str) -> Result<serde_json::Value> {
         let (agent_id, session_id) = self
             .kernel
@@ -418,6 +477,20 @@ impl DaemonState {
         let row = store.get_session_row_by_public_id(public_id).await?;
         Ok(row.map(|row| (store_selector, row)))
     }
+
+    async fn session_is_live(&self, public_id: &[u8]) -> bool {
+        let wanted = super::helpers::format_uuid_bytes_simple(public_id);
+        self.kernel
+            .agent_manager()
+            .list_live_sessions(None)
+            .await
+            .into_iter()
+            .any(|snapshot| {
+                parse_session_reference(&snapshot.session_id)
+                    .map(|session_ref| session_ref.public_id == wanted)
+                    .unwrap_or_else(|_| snapshot.session_id == wanted)
+            })
+    }
 }
 
 fn session_summary_from_row_and_selector(
@@ -427,6 +500,16 @@ fn session_summary_from_row_and_selector(
     let mut summary = super::helpers::session_summary_from_row(row);
     summary.session_id = format_session_reference(&summary.session_id, selector);
     summary
+}
+
+fn branch_detail_from_row(row: BranchHeadRow) -> SessionBranchDetail {
+    SessionBranchDetail {
+        branch_id: super::helpers::format_uuid_bytes_simple(&row.public_id),
+        name: row.name,
+        head_turn_index: row.head_turn_depth,
+        active: row.is_active,
+        created_at: row.created_at,
+    }
 }
 
 fn summarize_search_hit(text: &str, query: &str) -> String {

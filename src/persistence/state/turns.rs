@@ -97,7 +97,9 @@ impl StateStore {
     ) -> Result<BranchHeadRow> {
         let conn = self.connect().await?;
         let public_id = uuid::Uuid::now_v7().into_bytes().to_vec();
-        let source_turn_id = self.resolve_branch_source_turn(session_id, from_turn_index).await?;
+        let source_turn_id = self
+            .resolve_branch_source_turn(session_id, from_turn_index)
+            .await?;
 
         conn.execute(
             r#"
@@ -125,7 +127,8 @@ impl StateStore {
         }
 
         let heads = self.list_branch_heads(session_id).await?;
-        heads.into_iter()
+        heads
+            .into_iter()
             .find(|head| head.id == branch_id)
             .ok_or_else(|| anyhow!("Created branch head '{}' was not readable", name))
     }
@@ -380,14 +383,12 @@ impl StateStore {
                     .transpose()?
                     .flatten())
             }
-            Some(branch_depth) => {
-                Ok(self
-                    .active_branch_path_turns(session_id)
-                    .await?
-                    .into_iter()
-                    .find(|turn| turn.branch_depth == branch_depth)
-                    .map(|turn| turn.id))
-            }
+            Some(branch_depth) => Ok(self
+                .active_branch_path_turns(session_id)
+                .await?
+                .into_iter()
+                .find(|turn| turn.branch_depth == branch_depth)
+                .map(|turn| turn.id)),
         }
     }
 }

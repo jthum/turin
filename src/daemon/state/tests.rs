@@ -211,6 +211,94 @@ async fn session_list_and_get_expose_persisted_session_details() -> Result<()> {
 }
 
 #[tokio::test]
+async fn session_branches_can_be_created_listed_and_checked_out() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+
+    let task = state
+        .submit_task(
+            Some("default"),
+            None,
+            "Hello branches".to_string(),
+            Default::default(),
+        )
+        .await?;
+    let completed = state.wait_for_task(&task.request_id, Some(2_000)).await?;
+    assert_eq!(completed.state, "completed");
+
+    let sessions = state.list_sessions(10, 0).await?;
+    let session_id = sessions
+        .first()
+        .expect("persisted session available")
+        .session_id
+        .clone();
+
+    let initial = state
+        .list_session_branches(&session_id)
+        .await?
+        .expect("session exists");
+    assert_eq!(initial.len(), 1);
+    assert_eq!(initial[0].name, "main");
+    assert!(initial[0].active);
+
+    let created = state
+        .create_session_branch(&session_id, "alt", Some(0), false)
+        .await?
+        .expect("branch created");
+    assert_eq!(created.name, "alt");
+    assert!(!created.active);
+
+    let listed = state
+        .list_session_branches(&session_id)
+        .await?
+        .expect("session exists");
+    assert_eq!(listed.len(), 2);
+    assert!(listed.iter().any(|branch| branch.name == "main"));
+    assert!(listed.iter().any(|branch| branch.name == "alt"));
+
+    let _ = state.kill_session(&session_id).await?;
+    let mut stopped = false;
+    for _ in 0..50 {
+        if state
+            .list_live_sessions()
+            .await
+            .into_iter()
+            .all(|session| session.session_id != session_id)
+        {
+            stopped = true;
+            break;
+        }
+        sleep(Duration::from_millis(20)).await;
+    }
+    assert!(stopped, "live session did not stop in time");
+
+    let checked_out = state
+        .checkout_session_branch(&session_id, "alt")
+        .await?
+        .expect("branch checkout succeeds");
+    assert_eq!(checked_out.name, "alt");
+    assert!(checked_out.active);
+
+    let listed = state
+        .list_session_branches(&session_id)
+        .await?
+        .expect("session exists");
+    assert!(
+        listed
+            .iter()
+            .any(|branch| branch.name == "alt" && branch.active)
+    );
+    assert!(
+        listed
+            .iter()
+            .any(|branch| branch.name == "main" && !branch.active)
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn harness_reload_and_validate_are_targeted() -> Result<()> {
     let temp = tempdir()?;
     let shared_harness = temp.path().join("harnesses").join("shared");

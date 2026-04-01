@@ -22,8 +22,8 @@ mod messages;
 mod sessions;
 #[cfg(test)]
 mod tests;
-mod turns;
 mod tools;
+mod turns;
 
 /// The state store manages all Turin persistence.
 ///

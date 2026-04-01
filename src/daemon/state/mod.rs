@@ -20,8 +20,9 @@ use crate::kernel::Kernel;
 use crate::kernel::config::{AgentMode, ThinkingConfig, TurinConfig};
 
 pub use types::{
-    AgentDetail, ChannelDetail, HarnessDetail, SessionDetail, SessionEventDetail,
-    SessionMessageDetail, SessionSearchHit, SessionSummary, SessionToolExecutionDetail,
+    AgentDetail, ChannelDetail, HarnessDetail, SessionBranchDetail, SessionDetail,
+    SessionEventDetail, SessionMessageDetail, SessionSearchHit, SessionSummary,
+    SessionToolExecutionDetail,
 };
 
 #[derive(Debug, Clone)]
