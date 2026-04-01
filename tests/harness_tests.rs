@@ -13,9 +13,7 @@ use turin::kernel::config::{
     AgentConfig, AgentMode, EmbeddingConfig, GovernanceConfig, GovernanceGrantsConfig,
     GovernanceProfile, HarnessConfig, KernelConfig, PersistenceConfig, ProviderConfig, TurinConfig,
 };
-use turin::kernel::identity::ContextSelector;
 use turin::kernel::policy::PolicyScope;
-use turin::persistence::manager::StoreSelector;
 
 struct ToolMockProvider {
     tool_name: String,
@@ -2133,38 +2131,28 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
         .await?;
     kernel.end_session(&mut session).await?;
 
-    let project_selector = ContextSelector {
-        tags: vec!["project:alpha".to_string()],
-        namespace: "notes".to_string(),
-        visibility: "private".to_string(),
-    };
-    let project_store = kernel
-        .store_manager()
-        .open(&turin::persistence::manager::StoreSelector::Alias(
-            project_selector.to_alias(),
-        ))
-        .await?;
+    let project_scope_key = serde_json::json!({
+        "namespace": "notes",
+        "key": "alpha",
+    })
+    .to_string();
+    let project_store = kernel.store_manager().get_default().await?;
     assert_eq!(
-        project_store.kv_get("raw_key").await?,
+        project_store
+            .kv_get("project", &project_scope_key, "raw_key")
+            .await?,
         Some("raw_val".to_string())
     );
     assert_eq!(
-        project_store.kv_get("scoped_key").await?,
+        project_store
+            .kv_get("project", &project_scope_key, "scoped_key")
+            .await?,
         Some("scoped_val".to_string())
     );
-
-    let ctx_session_uuid: uuid::Uuid = project_store
-        .kv_get("__turin_context_session_public_id")
-        .await?
-        .expect("context session uuid kv missing")
-        .parse()?;
-    let ctx_internal_id = project_store
-        .get_session_by_public_id(ctx_session_uuid)
-        .await?
-        .expect("context session row missing");
     let hits = project_store
         .search_memories(
-            ctx_internal_id,
+            "project",
+            &project_scope_key,
             None,
             None,
             None,
@@ -5384,16 +5372,14 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
         .await?;
     assert_eq!(policy_value, Some(serde_json::json!(77)));
 
-    let session_selector = ContextSelector {
-        tags: vec![format!("session:{}", session.identity.session_id())],
-        namespace: "default".to_string(),
-        visibility: "private".to_string(),
-    };
-    let session_store = kernel
-        .store_manager()
-        .open(&StoreSelector::Alias(session_selector.to_alias()))
+    let session_store = kernel.store_manager().get_default().await?;
+    let marker = session_store
+        .kv_get(
+            "session",
+            session.identity.session_id(),
+            "peer_complete_marker",
+        )
         .await?;
-    let marker = session_store.kv_get("peer_complete_marker").await?;
     assert_eq!(marker.as_deref(), Some("done"));
 
     Ok(())

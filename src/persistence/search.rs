@@ -14,9 +14,11 @@ impl StateStore {
     // ─── Memories (Vector + Native FTS Hybrid Store) ──────────────
 
     /// Insert a memory, optionally with an embedding vector.
+    #[allow(clippy::too_many_arguments)]
     pub async fn insert_memory(
         &self,
-        session_id: i64,
+        scope_kind: &str,
+        scope_key: &str,
         content: &str,
         vector: Option<&[f32]>,
         embedding_key: Option<&str>,
@@ -45,10 +47,11 @@ impl StateStore {
                 }
 
                 conn.execute(
-                    "INSERT INTO memories (public_id, session_id, content, embedding, embedding_key, embedding_dimensions, metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    "INSERT INTO memories (public_id, scope_kind, scope_key, content, embedding, embedding_key, embedding_dimensions, metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     turso::params![
                         public_id_bytes.clone(),
-                        session_id,
+                        scope_kind,
+                        scope_key,
                         content,
                         vector_bytes,
                         embedding_key.to_string(),
@@ -57,15 +60,31 @@ impl StateStore {
                     ],
                 )
                 .await
-                .with_context(|| format!("Failed to insert memory for session: {}", session_id))?;
+                .with_context(|| {
+                    format!(
+                        "Failed to insert memory for scope {}:{}",
+                        scope_kind, scope_key
+                    )
+                })?;
             }
             None => {
                 conn.execute(
-                    "INSERT INTO memories (public_id, session_id, content, metadata) VALUES (?1, ?2, ?3, ?4)",
-                    turso::params![public_id_bytes.clone(), session_id, content, metadata_str],
+                    "INSERT INTO memories (public_id, scope_kind, scope_key, content, metadata) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    turso::params![
+                        public_id_bytes.clone(),
+                        scope_kind,
+                        scope_key,
+                        content,
+                        metadata_str
+                    ],
                 )
                 .await
-                .with_context(|| format!("Failed to insert memory for session: {}", session_id))?;
+                .with_context(|| {
+                    format!(
+                        "Failed to insert memory for scope {}:{}",
+                        scope_kind, scope_key
+                    )
+                })?;
             }
         }
 
@@ -99,7 +118,8 @@ impl StateStore {
     #[allow(clippy::too_many_arguments)]
     pub async fn search_memories(
         &self,
-        session_id: i64,
+        scope_kind: &str,
+        scope_key: &str,
         vector: Option<&[f32]>,
         query_embedding_key: Option<&str>,
         query_embedding_dimensions: Option<usize>,
@@ -131,16 +151,17 @@ impl StateStore {
 
             let (sql, params) = if include_superseded {
                 (
-                    "SELECT id, public_id, session_id, content, metadata, created_at, weight, retrieval_count, last_retrieved_at, superseded_at,
+                    "SELECT id, public_id, scope_kind, scope_key, content, metadata, created_at, weight, retrieval_count, last_retrieved_at, superseded_at,
                             CAST((julianday('now') - julianday(created_at)) * 86400.0 AS REAL) AS age_seconds,
                             vector_distance_cos(embedding, ?1) AS distance
                      FROM memories
-                     WHERE session_id = ?2 AND embedding IS NOT NULL AND embedding_key = ?3 AND embedding_dimensions = ?4
+                     WHERE scope_kind = ?2 AND scope_key = ?3 AND embedding IS NOT NULL AND embedding_key = ?4 AND embedding_dimensions = ?5
                      ORDER BY distance ASC
-                     LIMIT ?5",
+                     LIMIT ?6",
                     turso::params![
                         vector_bytes,
-                        session_id,
+                        scope_kind,
+                        scope_key,
                         query_embedding_key.to_string(),
                         query_embedding_dimensions as i64,
                         limit as i64
@@ -148,16 +169,17 @@ impl StateStore {
                 )
             } else {
                 (
-                    "SELECT id, public_id, session_id, content, metadata, created_at, weight, retrieval_count, last_retrieved_at, superseded_at,
+                    "SELECT id, public_id, scope_kind, scope_key, content, metadata, created_at, weight, retrieval_count, last_retrieved_at, superseded_at,
                             CAST((julianday('now') - julianday(created_at)) * 86400.0 AS REAL) AS age_seconds,
                             vector_distance_cos(embedding, ?1) AS distance
                      FROM memories
-                     WHERE session_id = ?2 AND embedding IS NOT NULL AND embedding_key = ?3 AND embedding_dimensions = ?4 AND superseded_at IS NULL
+                     WHERE scope_kind = ?2 AND scope_key = ?3 AND embedding IS NOT NULL AND embedding_key = ?4 AND embedding_dimensions = ?5 AND superseded_at IS NULL
                      ORDER BY distance ASC
-                     LIMIT ?5",
+                     LIMIT ?6",
                     turso::params![
                         vector_bytes,
-                        session_id,
+                        scope_kind,
+                        scope_key,
                         query_embedding_key.to_string(),
                         query_embedding_dimensions as i64,
                         limit as i64
@@ -172,28 +194,29 @@ impl StateStore {
             let mut rank = 1;
             while let Some(row) = rows.next().await? {
                 let id: i64 = row.get(0)?;
-                let distance: f64 = row.get(11)?;
-                let age_seconds: f64 = row.get::<Option<f64>>(10)?.unwrap_or(0.0);
+                let age_seconds: f64 = row.get::<Option<f64>>(11)?.unwrap_or(0.0);
+                let distance: f64 = row.get(12)?;
 
                 // Track row data if not seen
                 if let std::collections::hash_map::Entry::Vacant(e) = rows_data.entry(id) {
                     e.insert(MemoryRow {
                         id,
                         public_id: row.get(1)?,
-                        session_id: row.get(2)?,
-                        content: row.get(3)?,
+                        scope_kind: row.get(2)?,
+                        scope_key: row.get(3)?,
+                        content: row.get(4)?,
                         metadata: include_metadata
-                            .then(|| row.get::<Option<String>>(4))
+                            .then(|| row.get::<Option<String>>(5))
                             .transpose()?
                             .flatten(),
-                        created_at: row.get(5)?,
+                        created_at: row.get(6)?,
                         score: 0.0,
                         lexical_score: None,
                         semantic_score: Some(1.0 / (1.0 + distance.max(0.0))),
-                        weight: row.get(6)?,
-                        retrieval_count: row.get::<i64>(7)? as u64,
-                        last_retrieved_at: row.get(8)?,
-                        superseded_at: row.get(9)?,
+                        weight: row.get(7)?,
+                        retrieval_count: row.get::<i64>(8)? as u64,
+                        last_retrieved_at: row.get(9)?,
+                        superseded_at: row.get(10)?,
                     });
                     recency_boosts.insert(id, recency_boost(age_seconds));
                 } else if let Some(existing) = rows_data.get_mut(&id) {
@@ -214,28 +237,28 @@ impl StateStore {
             if !query.is_empty() {
                 let (sql, params) = if include_superseded {
                     (
-                        "SELECT id, public_id, session_id, content, metadata, created_at, weight, retrieval_count, last_retrieved_at, superseded_at,
+                        "SELECT id, public_id, scope_kind, scope_key, content, metadata, created_at, weight, retrieval_count, last_retrieved_at, superseded_at,
                                 CAST((julianday('now') - julianday(created_at)) * 86400.0 AS REAL) AS age_seconds,
                                 fts_score(content, ?1) AS lexical_score
                          FROM memories
-                         WHERE session_id = ?2
+                         WHERE scope_kind = ?2 AND scope_key = ?3
                          AND fts_match(content, ?1)
                          ORDER BY lexical_score DESC
-                         LIMIT ?3",
-                        turso::params![query, session_id, limit as i64],
+                         LIMIT ?4",
+                        turso::params![query, scope_kind, scope_key, limit as i64],
                     )
                 } else {
                     (
-                        "SELECT id, public_id, session_id, content, metadata, created_at, weight, retrieval_count, last_retrieved_at, superseded_at,
+                        "SELECT id, public_id, scope_kind, scope_key, content, metadata, created_at, weight, retrieval_count, last_retrieved_at, superseded_at,
                                 CAST((julianday('now') - julianday(created_at)) * 86400.0 AS REAL) AS age_seconds,
                                 fts_score(content, ?1) AS lexical_score
                          FROM memories
-                         WHERE session_id = ?2
+                         WHERE scope_kind = ?2 AND scope_key = ?3
                          AND superseded_at IS NULL
                          AND fts_match(content, ?1)
                          ORDER BY lexical_score DESC
-                         LIMIT ?3",
-                        turso::params![query, session_id, limit as i64],
+                         LIMIT ?4",
+                        turso::params![query, scope_kind, scope_key, limit as i64],
                     )
                 };
                 let mut rows = conn
@@ -246,27 +269,28 @@ impl StateStore {
                 let mut rank = 1;
                 while let Some(row) = rows.next().await? {
                     let id: i64 = row.get(0)?;
-                    let lexical_score: f64 = row.get(11)?;
-                    let age_seconds: f64 = row.get::<Option<f64>>(10)?.unwrap_or(0.0);
+                    let age_seconds: f64 = row.get::<Option<f64>>(11)?.unwrap_or(0.0);
+                    let lexical_score: f64 = row.get(12)?;
 
                     if let std::collections::hash_map::Entry::Vacant(e) = rows_data.entry(id) {
                         e.insert(MemoryRow {
                             id,
                             public_id: row.get(1)?,
-                            session_id: row.get(2)?,
-                            content: row.get(3)?,
+                            scope_kind: row.get(2)?,
+                            scope_key: row.get(3)?,
+                            content: row.get(4)?,
                             metadata: include_metadata
-                                .then(|| row.get::<Option<String>>(4))
+                                .then(|| row.get::<Option<String>>(5))
                                 .transpose()?
                                 .flatten(),
-                            created_at: row.get(5)?,
+                            created_at: row.get(6)?,
                             score: 0.0,
                             lexical_score: Some(lexical_score),
                             semantic_score: None,
-                            weight: row.get(6)?,
-                            retrieval_count: row.get::<i64>(7)? as u64,
-                            last_retrieved_at: row.get(8)?,
-                            superseded_at: row.get(9)?,
+                            weight: row.get(7)?,
+                            retrieval_count: row.get::<i64>(8)? as u64,
+                            last_retrieved_at: row.get(9)?,
+                            superseded_at: row.get(10)?,
                         });
                         recency_boosts.insert(id, recency_boost(age_seconds));
                     } else if let Some(existing) = rows_data.get_mut(&id) {
@@ -323,7 +347,8 @@ impl StateStore {
     #[allow(clippy::too_many_arguments)]
     pub async fn apply_memory_feedback(
         &self,
-        session_id: i64,
+        scope_kind: &str,
+        scope_key: &str,
         public_id: Uuid,
         delta: f64,
         clamp_min: f64,
@@ -338,7 +363,7 @@ impl StateStore {
         let conn = self.connect().await?;
         let public_id_bytes = public_id.into_bytes().to_vec();
         let (row_id, current_weight) =
-            resolve_memory_feedback_target(&conn, session_id, &public_id_bytes).await?;
+            resolve_memory_feedback_target(&conn, scope_kind, scope_key, &public_id_bytes).await?;
         let updated_weight = (current_weight + delta).clamp(clamp_min, clamp_max);
         let updated_at = current_utc_timestamp(&conn).await?;
 
@@ -365,7 +390,8 @@ impl StateStore {
     #[allow(clippy::too_many_arguments)]
     pub async fn correct_memory(
         &self,
-        session_id: i64,
+        scope_kind: &str,
+        scope_key: &str,
         public_id: Uuid,
         content: &str,
         vector: Option<&[f32]>,
@@ -376,14 +402,16 @@ impl StateStore {
         let conn = self.connect().await?;
         let public_id_bytes = public_id.into_bytes().to_vec();
         let (old_row_id, already_superseded) =
-            resolve_memory_correction_target(&conn, session_id, &public_id_bytes).await?;
+            resolve_memory_correction_target(&conn, scope_kind, scope_key, &public_id_bytes)
+                .await?;
         if already_superseded {
             anyhow::bail!("runtime.memory.correct: memory is already superseded");
         }
 
         let inserted = self
             .insert_memory(
-                session_id,
+                scope_kind,
+                scope_key,
                 content,
                 vector,
                 embedding_key,
@@ -414,7 +442,8 @@ impl StateStore {
     #[allow(clippy::too_many_arguments)]
     pub async fn purge_memories(
         &self,
-        session_id: i64,
+        scope_kind: &str,
+        scope_key: &str,
         older_than_days: Option<u64>,
         min_weight: Option<f64>,
         max_retrieval_count: Option<u64>,
@@ -431,8 +460,8 @@ impl StateStore {
                         retrieval_count,
                         superseded_at
                  FROM memories
-                 WHERE session_id = ?1",
-                turso::params![session_id],
+                 WHERE scope_kind = ?1 AND scope_key = ?2",
+                turso::params![scope_kind, scope_key],
             )
             .await
             .context("Failed to enumerate memories for purge")?;
@@ -529,13 +558,14 @@ async fn current_utc_timestamp(conn: &turso::Connection) -> Result<String> {
 
 async fn resolve_memory_feedback_target(
     conn: &turso::Connection,
-    session_id: i64,
+    scope_kind: &str,
+    scope_key: &str,
     public_id: &[u8],
 ) -> Result<(i64, f64)> {
     let mut rows = conn
         .query(
-            "SELECT id, weight FROM memories WHERE session_id = ?1 AND public_id = ?2",
-            turso::params![session_id, public_id.to_vec()],
+            "SELECT id, weight FROM memories WHERE scope_kind = ?1 AND scope_key = ?2 AND public_id = ?3",
+            turso::params![scope_kind, scope_key, public_id.to_vec()],
         )
         .await
         .context("Failed to look up memory for feedback")?;
@@ -548,13 +578,14 @@ async fn resolve_memory_feedback_target(
 
 async fn resolve_memory_correction_target(
     conn: &turso::Connection,
-    session_id: i64,
+    scope_kind: &str,
+    scope_key: &str,
     public_id: &[u8],
 ) -> Result<(i64, bool)> {
     let mut rows = conn
         .query(
-            "SELECT id, superseded_at FROM memories WHERE session_id = ?1 AND public_id = ?2",
-            turso::params![session_id, public_id.to_vec()],
+            "SELECT id, superseded_at FROM memories WHERE scope_kind = ?1 AND scope_key = ?2 AND public_id = ?3",
+            turso::params![scope_kind, scope_key, public_id.to_vec()],
         )
         .await
         .context("Failed to look up memory for correction")?;

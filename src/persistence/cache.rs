@@ -458,7 +458,8 @@ mod tests {
 
         let still_searches = store
             .insert_memory(
-                session_id,
+                "session",
+                &session_id.to_string(),
                 "cache reset should not affect memories",
                 None,
                 None,

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::kernel::identity::ContextSelector;
-use crate::persistence::manager::{StoreManager, StoreSelector};
+use crate::persistence::manager::StoreManager;
 use crate::persistence::schema::{
     MemoryCorrectionRow, MemoryFeedbackState, MemoryPurgeReport, MemoryRow, StoredMemoryRow,
 };
@@ -118,76 +118,55 @@ fn visibility_allowed(selector: &ContextSelector) -> anyhow::Result<()> {
     }
 }
 
-async fn open_selector_store(
-    manager: &StoreManager,
-    selector: &ContextSelector,
-) -> anyhow::Result<Arc<crate::persistence::state::StateStore>> {
+#[derive(Debug, Clone)]
+struct ScopedStateRef {
+    scope_kind: String,
+    scope_key: String,
+}
+
+fn encode_scope_key(raw_key: &str, namespace: &str) -> String {
+    if namespace == "default" {
+        raw_key.to_string()
+    } else {
+        serde_json::json!({
+            "namespace": namespace,
+            "key": raw_key,
+        })
+        .to_string()
+    }
+}
+
+fn selector_scope_ref(selector: &ContextSelector) -> anyhow::Result<ScopedStateRef> {
     visibility_allowed(selector)?;
+    if selector.tags.len() == 1
+        && let Some((kind, key)) = selector.tags[0].split_once(':')
+    {
+        return Ok(ScopedStateRef {
+            scope_kind: kind.to_string(),
+            scope_key: encode_scope_key(key, &selector.namespace),
+        });
+    }
+
+    let mut tags = selector.tags.clone();
+    tags.sort();
+    Ok(ScopedStateRef {
+        scope_kind: "selector".to_string(),
+        scope_key: serde_json::json!({
+            "tags": tags,
+            "namespace": selector.namespace,
+            "visibility": selector.visibility,
+        })
+        .to_string(),
+    })
+}
+
+async fn open_state_store(
+    manager: &StoreManager,
+) -> anyhow::Result<Arc<crate::persistence::state::StateStore>> {
     manager
-        .open(&StoreSelector::Alias(selector.to_alias()))
+        .get_default()
         .await
         .map_err(|e| anyhow::anyhow!(e.to_string()))
-}
-
-async fn resolve_context_memory_session(
-    store: &crate::persistence::state::StateStore,
-    selector: &ContextSelector,
-) -> anyhow::Result<Option<i64>> {
-    const KEY: &str = "__turin_context_session_public_id";
-
-    let public_id = if let Some(existing) = store.kv_get(KEY).await? {
-        Some(
-            uuid::Uuid::parse_str(&existing)
-                .map_err(|e| anyhow::anyhow!("Invalid stored context session UUID: {}", e))?,
-        )
-    } else {
-        None
-    };
-
-    let Some(public_id) = public_id else {
-        return Ok(None);
-    };
-
-    if let Some(id) = store.get_session_by_public_id(public_id).await? {
-        return Ok(Some(id));
-    }
-
-    let agent_id = selector
-        .tags
-        .iter()
-        .find_map(|t| t.strip_prefix("agent:").map(ToOwned::to_owned))
-        .unwrap_or_else(|| "context".to_string());
-    let metadata = serde_json::to_string(selector).ok();
-    store
-        .create_session(public_id, &agent_id, metadata.as_deref())
-        .await
-        .map(Some)
-}
-
-async fn ensure_context_memory_session(
-    store: &crate::persistence::state::StateStore,
-    selector: &ContextSelector,
-) -> anyhow::Result<i64> {
-    if let Some(id) = resolve_context_memory_session(store, selector).await? {
-        return Ok(id);
-    }
-
-    let new_id = uuid::Uuid::now_v7();
-    store
-        .kv_set(
-            "__turin_context_session_public_id",
-            &new_id.simple().to_string(),
-        )
-        .await?;
-    let agent_id = selector
-        .tags
-        .iter()
-        .find_map(|t| t.strip_prefix("agent:").map(ToOwned::to_owned))
-        .unwrap_or_else(|| "context".to_string());
-    let metadata = serde_json::to_string(selector).ok();
-    store
-        .create_session(new_id, &agent_id, metadata.as_deref())
-        .await
 }
 
 pub(crate) async fn kv_get_backend(
@@ -195,8 +174,9 @@ pub(crate) async fn kv_get_backend(
     selector: &ContextSelector,
     key: &str,
 ) -> anyhow::Result<Option<String>> {
-    let store = open_selector_store(manager, selector).await?;
-    store.kv_get(key).await
+    let store = open_state_store(manager).await?;
+    let scope = selector_scope_ref(selector)?;
+    store.kv_get(&scope.scope_kind, &scope.scope_key, key).await
 }
 
 pub(crate) async fn kv_set_backend(
@@ -205,8 +185,11 @@ pub(crate) async fn kv_set_backend(
     key: &str,
     value: &str,
 ) -> anyhow::Result<()> {
-    let store = open_selector_store(manager, selector).await?;
-    store.kv_set(key, value).await
+    let store = open_state_store(manager).await?;
+    let scope = selector_scope_ref(selector)?;
+    store
+        .kv_set(&scope.scope_kind, &scope.scope_key, key, value)
+        .await
 }
 
 pub(crate) async fn kv_delete_backend(
@@ -214,8 +197,11 @@ pub(crate) async fn kv_delete_backend(
     selector: &ContextSelector,
     key: &str,
 ) -> anyhow::Result<()> {
-    let store = open_selector_store(manager, selector).await?;
-    store.kv_delete(key).await
+    let store = open_state_store(manager).await?;
+    let scope = selector_scope_ref(selector)?;
+    store
+        .kv_delete(&scope.scope_kind, &scope.scope_key, key)
+        .await
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -246,8 +232,8 @@ pub(crate) async fn memory_store_backend_with_request(
     metadata: &serde_json::Value,
     request: &MemoryStoreRequest,
 ) -> anyhow::Result<StoredMemoryRow> {
-    let store = open_selector_store(manager, selector).await?;
-    let session_id = ensure_context_memory_session(&store, selector).await?;
+    let store = open_state_store(manager).await?;
+    let scope = selector_scope_ref(selector)?;
     let vector = match request.storage {
         MemoryStoreMode::Auto => {
             if let Some(provider) = embedding_provider {
@@ -275,7 +261,8 @@ pub(crate) async fn memory_store_backend_with_request(
     let metadata = augment_memory_metadata(metadata, request);
     store
         .insert_memory(
-            session_id,
+            &scope.scope_kind,
+            &scope.scope_key,
             content,
             vector.as_deref(),
             embedding_key.as_deref(),
@@ -307,8 +294,8 @@ pub(crate) async fn memory_search_backend_with_request(
     query: &str,
     request: &MemorySearchRequest,
 ) -> anyhow::Result<Vec<MemoryRow>> {
-    let store = open_selector_store(manager, selector).await?;
-    let session_id = ensure_context_memory_session(&store, selector).await?;
+    let store = open_state_store(manager).await?;
+    let scope = selector_scope_ref(selector)?;
     let query = query.trim();
     if query.is_empty() {
         return Ok(Vec::new());
@@ -371,7 +358,8 @@ pub(crate) async fn memory_search_backend_with_request(
 
     store
         .search_memories(
-            session_id,
+            &scope.scope_kind,
+            &scope.scope_key,
             vector.as_deref(),
             query_embedding_key.as_deref(),
             query_embedding_dimensions,
@@ -391,10 +379,8 @@ pub(crate) async fn memory_feedback_backend_with_request(
     signal: MemoryFeedbackSignal,
     request: &MemoryFeedbackRequest,
 ) -> anyhow::Result<MemoryFeedbackState> {
-    let store = open_selector_store(manager, selector).await?;
-    let session_id = resolve_context_memory_session(&store, selector)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("runtime.memory.feedback: no memory session exists"))?;
+    let store = open_state_store(manager).await?;
+    let scope = selector_scope_ref(selector)?;
     let public_id = uuid::Uuid::parse_str(memory_id)
         .map_err(|e| anyhow::anyhow!("runtime.memory.feedback: invalid memory id: {}", e))?;
     let delta = match signal {
@@ -404,7 +390,8 @@ pub(crate) async fn memory_feedback_backend_with_request(
     };
     store
         .apply_memory_feedback(
-            session_id,
+            &scope.scope_kind,
+            &scope.scope_key,
             public_id,
             delta,
             request.clamp_min,
@@ -424,10 +411,8 @@ pub(crate) async fn memory_correct_backend_with_request(
     metadata: &serde_json::Value,
     request: &MemoryStoreRequest,
 ) -> anyhow::Result<MemoryCorrectionRow> {
-    let store = open_selector_store(manager, selector).await?;
-    let session_id = resolve_context_memory_session(&store, selector)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("runtime.memory.correct: no memory session exists"))?;
+    let store = open_state_store(manager).await?;
+    let scope = selector_scope_ref(selector)?;
     let public_id = uuid::Uuid::parse_str(memory_id)
         .map_err(|e| anyhow::anyhow!("runtime.memory.correct: invalid memory id: {}", e))?;
     let vector = match request.storage {
@@ -457,7 +442,8 @@ pub(crate) async fn memory_correct_backend_with_request(
     let metadata = augment_memory_metadata(metadata, request);
     store
         .correct_memory(
-            session_id,
+            &scope.scope_kind,
+            &scope.scope_key,
             public_id,
             content,
             vector.as_deref(),
@@ -473,17 +459,12 @@ pub(crate) async fn memory_purge_backend_with_request(
     selector: &ContextSelector,
     request: &MemoryPurgeRequest,
 ) -> anyhow::Result<MemoryPurgeReport> {
-    let store = open_selector_store(manager, selector).await?;
-    let Some(session_id) = resolve_context_memory_session(&store, selector).await? else {
-        return Ok(MemoryPurgeReport {
-            matched: 0,
-            deleted: 0,
-            dry_run: request.dry_run,
-        });
-    };
+    let store = open_state_store(manager).await?;
+    let scope = selector_scope_ref(selector)?;
     store
         .purge_memories(
-            session_id,
+            &scope.scope_kind,
+            &scope.scope_key,
             request.older_than_days,
             request.min_weight,
             request.max_retrieval_count,

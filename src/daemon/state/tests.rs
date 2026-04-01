@@ -597,9 +597,25 @@ async fn channel_access_snapshot_and_approval_are_filesystem_backed() -> Result<
     Ok(())
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn channel_create_rejects_invalid_telegram_settings() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
     let temp = tempdir()?;
+    let runner = temp.path().join("fake-telegram-runner.sh");
+    std::fs::write(
+        &runner,
+        "#!/bin/sh\nif [ \"$1\" = \"describe\" ]; then\n  printf '%s\\n' '{\"protocol_version\":2,\"kind\":\"telegram\"}'\n  exit 0\nfi\nif [ \"$1\" = \"validate-settings\" ]; then\n  case \"$3\" in\n    *'\"chat_id\":\"@ops\"'*)\n      printf '%s\\n' 'chat_id must be numeric' >&2\n      exit 1\n      ;;\n  esac\n  exit 0\nfi\nexit 0\n",
+    )?;
+    let mut perms = std::fs::metadata(&runner)?.permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&runner, perms)?;
+    let previous = std::env::var_os("TURIN_CHANNEL_TELEGRAM_BIN");
+    unsafe {
+        std::env::set_var("TURIN_CHANNEL_TELEGRAM_BIN", &runner);
+    }
+
     let config_path = write_bootstrap(temp.path())?;
     let mut state = DaemonState::load(&config_path).await?;
 
@@ -618,6 +634,16 @@ async fn channel_create_rejects_invalid_telegram_settings() -> Result<()> {
         .await
         .expect_err("telegram settings with non-numeric chat_id should fail");
     assert!(error.to_string().contains("chat_id"));
+
+    if let Some(value) = previous {
+        unsafe {
+            std::env::set_var("TURIN_CHANNEL_TELEGRAM_BIN", value);
+        }
+    } else {
+        unsafe {
+            std::env::remove_var("TURIN_CHANNEL_TELEGRAM_BIN");
+        }
+    }
 
     Ok(())
 }

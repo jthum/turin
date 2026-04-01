@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 8;
+pub(crate) const SCHEMA_VERSION: u32 = 9;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -36,12 +36,15 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Harness key-value store
-CREATE TABLE IF NOT EXISTS harness_kv (
-    key         TEXT PRIMARY KEY,
-    value       TEXT NOT NULL,
-    expires_at  TEXT,
-    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+-- Scoped key-value store
+CREATE TABLE IF NOT EXISTS kv (
+    scope_kind TEXT NOT NULL,
+    scope_key  TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    expires_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (scope_kind, scope_key, key)
 );
 
 -- Tool execution log
@@ -69,27 +72,30 @@ CREATE TABLE IF NOT EXISTS schema_info (
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_executions_session ON tool_executions(session_id);
+CREATE INDEX IF NOT EXISTS idx_kv_scope ON kv(scope_kind, scope_key);
 
 -- Cognitive Memory
 CREATE TABLE IF NOT EXISTS memories (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    public_id   BLOB(16) UNIQUE NOT NULL,
-    session_id  INTEGER NOT NULL REFERENCES sessions(id),
-    content     TEXT NOT NULL,
-    embedding   BLOB,
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_id     BLOB(16) UNIQUE NOT NULL,
+    scope_kind    TEXT NOT NULL,
+    scope_key     TEXT NOT NULL,
+    content       TEXT NOT NULL,
+    embedding     BLOB,
     embedding_key TEXT,
     embedding_dimensions INTEGER,
-    metadata    TEXT,
-    weight      REAL NOT NULL DEFAULT 1.0,
+    metadata      TEXT,
+    weight        REAL NOT NULL DEFAULT 1.0,
     retrieval_count INTEGER NOT NULL DEFAULT 0,
     last_retrieved_at TEXT,
     superseded_at TEXT,
     superseded_by_memory_id INTEGER REFERENCES memories(id),
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    CHECK (metadata IS NULL OR json_valid(metadata))
 );
 
-CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
-CREATE INDEX IF NOT EXISTS idx_memories_embedding_profile ON memories(session_id, embedding_key, embedding_dimensions);
+CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope_kind, scope_key);
+CREATE INDEX IF NOT EXISTS idx_memories_embedding_profile ON memories(scope_kind, scope_key, embedding_key, embedding_dimensions);
 
 CREATE TABLE IF NOT EXISTS memory_feedback_events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -186,7 +192,8 @@ pub struct ToolExecutionRow {
 pub struct MemoryRow {
     pub id: i64,
     pub public_id: Vec<u8>,
-    pub session_id: i64,
+    pub scope_kind: String,
+    pub scope_key: String,
     pub content: String,
     pub metadata: Option<String>,
     pub created_at: String,

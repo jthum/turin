@@ -678,8 +678,14 @@ impl StateStore {
 
     // ─── Harness KV Store ────────────────────────────────────────
 
-    /// Set a key-value pair in the harness store.
-    pub async fn kv_set(&self, key: &str, value: &str) -> Result<()> {
+    /// Set a scoped key-value pair.
+    pub async fn kv_set(
+        &self,
+        scope_kind: &str,
+        scope_key: &str,
+        key: &str,
+        value: &str,
+    ) -> Result<()> {
         const MAX_KV_VALUE_SIZE: usize = 1_048_576; // 1MB
 
         if value.len() > MAX_KV_VALUE_SIZE {
@@ -693,21 +699,31 @@ impl StateStore {
         let conn = self.connect().await?;
         conn
             .execute(
-                "INSERT OR REPLACE INTO harness_kv (key, value, updated_at) VALUES (?1, ?2, datetime('now'))",
-                turso::params![key, value],
+                "INSERT OR REPLACE INTO kv (scope_kind, scope_key, key, value, updated_at) VALUES (?1, ?2, ?3, ?4, datetime('now'))",
+                turso::params![scope_kind, scope_key, key, value],
             )
             .await
-            .with_context(|| format!("Failed to set KV pair for key: {}", key))?;
+            .with_context(|| {
+                format!(
+                    "Failed to set KV pair for scope {}:{} key {}",
+                    scope_kind, scope_key, key
+                )
+            })?;
         Ok(())
     }
 
-    /// Get a value from the harness store.
-    pub async fn kv_get(&self, key: &str) -> Result<Option<String>> {
+    /// Get a scoped key-value pair.
+    pub async fn kv_get(
+        &self,
+        scope_kind: &str,
+        scope_key: &str,
+        key: &str,
+    ) -> Result<Option<String>> {
         let conn = self.connect().await?;
         let mut rows = conn
             .query(
-                "SELECT value FROM harness_kv WHERE key = ?1 AND (expires_at IS NULL OR expires_at > datetime('now'))",
-                [key],
+                "SELECT value FROM kv WHERE scope_kind = ?1 AND scope_key = ?2 AND key = ?3 AND (expires_at IS NULL OR expires_at > datetime('now'))",
+                turso::params![scope_kind, scope_key, key],
             )
             .await?;
 
@@ -718,11 +734,14 @@ impl StateStore {
         }
     }
 
-    /// Delete a key from the harness store.
-    pub async fn kv_delete(&self, key: &str) -> Result<()> {
+    /// Delete a scoped key from the KV store.
+    pub async fn kv_delete(&self, scope_kind: &str, scope_key: &str, key: &str) -> Result<()> {
         let conn = self.connect().await?;
-        conn.execute("DELETE FROM harness_kv WHERE key = ?1", [key])
-            .await?;
+        conn.execute(
+            "DELETE FROM kv WHERE scope_kind = ?1 AND scope_key = ?2 AND key = ?3",
+            turso::params![scope_kind, scope_key, key],
+        )
+        .await?;
         Ok(())
     }
 
@@ -1061,29 +1080,52 @@ mod tests {
     #[tokio::test]
     async fn test_kv_set_get_delete() {
         let store = StateStore::open_memory().await.unwrap();
+        let scope_kind = "session";
+        let scope_key = "test-session";
 
         // Set
-        store.kv_set("budget_remaining", "1000").await.unwrap();
+        store
+            .kv_set(scope_kind, scope_key, "budget_remaining", "1000")
+            .await
+            .unwrap();
 
         // Get
-        let val = store.kv_get("budget_remaining").await.unwrap();
+        let val = store
+            .kv_get(scope_kind, scope_key, "budget_remaining")
+            .await
+            .unwrap();
         assert_eq!(val, Some("1000".to_string()));
 
         // Update
-        store.kv_set("budget_remaining", "500").await.unwrap();
-        let val = store.kv_get("budget_remaining").await.unwrap();
+        store
+            .kv_set(scope_kind, scope_key, "budget_remaining", "500")
+            .await
+            .unwrap();
+        let val = store
+            .kv_get(scope_kind, scope_key, "budget_remaining")
+            .await
+            .unwrap();
         assert_eq!(val, Some("500".to_string()));
 
         // Delete
-        store.kv_delete("budget_remaining").await.unwrap();
-        let val = store.kv_get("budget_remaining").await.unwrap();
+        store
+            .kv_delete(scope_kind, scope_key, "budget_remaining")
+            .await
+            .unwrap();
+        let val = store
+            .kv_get(scope_kind, scope_key, "budget_remaining")
+            .await
+            .unwrap();
         assert_eq!(val, None);
     }
 
     #[tokio::test]
     async fn test_kv_get_nonexistent() {
         let store = StateStore::open_memory().await.unwrap();
-        let val = store.kv_get("nonexistent").await.unwrap();
+        let val = store
+            .kv_get("session", "test-session", "nonexistent")
+            .await
+            .unwrap();
         assert_eq!(val, None);
     }
 
@@ -1100,7 +1142,10 @@ mod tests {
                 .insert_event(1, "session_start", &json!({}))
                 .await
                 .unwrap();
-            store.kv_set("key1", "value1").await.unwrap();
+            store
+                .kv_set("session", "test-session", "key1", "value1")
+                .await
+                .unwrap();
         }
 
         // Reopen and verify persistence
@@ -1109,7 +1154,10 @@ mod tests {
             let events = store.get_events(1).await.unwrap();
             assert_eq!(events.len(), 1);
 
-            let val = store.kv_get("key1").await.unwrap();
+            let val = store
+                .kv_get("session", "test-session", "key1")
+                .await
+                .unwrap();
             assert_eq!(val, Some("value1".to_string()));
         }
     }
@@ -1120,12 +1168,14 @@ mod tests {
             .await
             .expect("Failed to open state store");
 
-        let session = 1;
+        let scope_kind = "session";
+        let scope_key = "test-session";
 
         // Insert memories
         store
             .insert_memory(
-                session,
+                scope_kind,
+                scope_key,
                 "The secret code is 12345",
                 Some(&[1.0, 0.0]),
                 Some("test:semantic:2"),
@@ -1137,7 +1187,8 @@ mod tests {
 
         store
             .insert_memory(
-                session,
+                scope_kind,
+                scope_key,
                 "Apples are red",
                 Some(&[0.0, 1.0]),
                 Some("test:semantic:2"),
@@ -1150,7 +1201,8 @@ mod tests {
         // Test 1: Vector Search
         let results = store
             .search_memories(
-                session,
+                scope_kind,
+                scope_key,
                 Some(&[1.0, 0.0]),
                 Some("test:semantic:2"),
                 Some(2),
@@ -1169,7 +1221,8 @@ mod tests {
         // Test 2: Lexical Search
         let results = store
             .search_memories(
-                session,
+                scope_kind,
+                scope_key,
                 None,
                 None,
                 None,
@@ -1188,7 +1241,8 @@ mod tests {
         // Test 3: Hybrid Search
         let results = store
             .search_memories(
-                session,
+                scope_kind,
+                scope_key,
                 Some(&[0.0, 1.0]),
                 Some("test:semantic:2"),
                 Some(2),
@@ -1212,11 +1266,13 @@ mod tests {
         let store = StateStore::open_memory()
             .await
             .expect("Failed to open state store");
-        let session = 1;
+        let scope_kind = "session";
+        let scope_key = "test-session";
 
         store
             .insert_memory(
-                session,
+                scope_kind,
+                scope_key,
                 "The secret code is 12345",
                 None,
                 None,
@@ -1228,7 +1284,8 @@ mod tests {
 
         let results = store
             .search_memories(
-                session,
+                scope_kind,
+                scope_key,
                 None,
                 None,
                 None,
@@ -1245,7 +1302,8 @@ mod tests {
 
         let hybrid_results = store
             .search_memories(
-                session,
+                scope_kind,
+                scope_key,
                 Some(&[1.0, 0.0]),
                 Some("test:semantic:2"),
                 Some(2),
@@ -1266,11 +1324,13 @@ mod tests {
         let store = StateStore::open_memory()
             .await
             .expect("Failed to open state store");
-        let session = 1;
+        let scope_kind = "session";
+        let scope_key = "test-session";
 
         let stored = store
             .insert_memory(
-                session,
+                scope_kind,
+                scope_key,
                 "alpha memory",
                 None,
                 None,
@@ -1286,7 +1346,8 @@ mod tests {
 
         let rows = store
             .search_memories(
-                session,
+                scope_kind,
+                scope_key,
                 None,
                 None,
                 None,
@@ -1316,11 +1377,13 @@ mod tests {
         let store = StateStore::open_memory()
             .await
             .expect("Failed to open state store");
-        let session = 1;
+        let scope_kind = "session";
+        let scope_key = "test-session";
 
         store
             .insert_memory(
-                session,
+                scope_kind,
+                scope_key,
                 "Compiler errors should stay concise and actionable",
                 None,
                 None,
@@ -1331,7 +1394,8 @@ mod tests {
             .unwrap();
         store
             .insert_memory(
-                session,
+                scope_kind,
+                scope_key,
                 "Cache invalidation should be explicit and session aware",
                 None,
                 None,
@@ -1343,7 +1407,8 @@ mod tests {
 
         let rows = store
             .search_memories(
-                session,
+                scope_kind,
+                scope_key,
                 Some(&[1.0, 0.0]),
                 Some("test:semantic:2"),
                 Some(2),

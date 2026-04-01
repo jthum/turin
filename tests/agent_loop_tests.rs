@@ -14,15 +14,6 @@ use turin::kernel::config::{
     AgentConfig, EmbeddingConfig, HarnessConfig, PersistenceConfig, ProviderConfig, TurinConfig,
 };
 use turin::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent, StreamEvent};
-use turin::kernel::identity::ContextSelector;
-
-fn project_state_selector() -> ContextSelector {
-    ContextSelector {
-        tags: vec!["project:state".to_string()],
-        namespace: "default".to_string(),
-        visibility: "private".to_string(),
-    }
-}
 
 /// A mock provider that returns a text response followed by a tool call in the next turn.
 struct SequenceMockProvider {
@@ -394,13 +385,8 @@ async fn test_harness_observation() -> Result<()> {
     kernel.run(&mut session, Some("Hi".to_string())).await?;
 
     // Check KV store if it was updated by the harness (project:state context)
-    let store = kernel
-        .store_manager()
-        .open(&turin::persistence::manager::StoreSelector::Alias(
-            project_state_selector().to_alias(),
-        ))
-        .await?;
-    let val: Option<String> = store.kv_get("observed_tokens").await?;
+    let store = kernel.store_manager().get_default().await?;
+    let val: Option<String> = store.kv_get("project", "state", "observed_tokens").await?;
     assert_eq!(val, Some("Hello World".to_string()));
 
     kernel.end_session(&mut session).await?;
@@ -528,13 +514,8 @@ async fn test_nested_agent_spawning() -> Result<()> {
         .await?;
 
     // Verify sub-agent work happened (observed via shared DB)
-    let store = kernel
-        .store_manager()
-        .open(&turin::persistence::manager::StoreSelector::Alias(
-            project_state_selector().to_alias(),
-        ))
-        .await?;
-    let val: Option<String> = store.kv_get("nested_executed").await?;
+    let store = kernel.store_manager().get_default().await?;
+    let val: Option<String> = store.kv_get("project", "state", "nested_executed").await?;
     assert_eq!(val, Some("true".to_string()));
 
     kernel.end_session(&mut session).await?;
