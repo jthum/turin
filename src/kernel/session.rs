@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 use crate::inference::provider::InferenceMessage;
 use crate::kernel::event::KernelEvent;
 use crate::kernel::identity::RuntimeIdentity;
+use crate::persistence::manager::StoreSelector;
 use turin_types::ToolsConfig;
 
 /// One queued unit of work to be executed by the kernel.
@@ -89,6 +90,7 @@ pub enum SessionStatus {
 pub struct SessionState {
     pub identity: RuntimeIdentity,
     pub internal_id: Option<i64>,
+    pub store_selector: StoreSelector,
     pub history: Vec<InferenceMessage>,
     pub queue: Arc<Mutex<VecDeque<QueuedTask>>>,
     pub plans: HashMap<String, PlanProgress>,
@@ -124,6 +126,7 @@ impl SessionState {
         Self {
             identity: RuntimeIdentity::new(session_id, "default"),
             internal_id: None,
+            store_selector: StoreSelector::Alias("state".to_string()),
             history: Vec::new(),
             queue: Arc::new(Mutex::new(VecDeque::new())),
             plans: HashMap::new(),

@@ -12,6 +12,7 @@ use crate::daemon::registry::{
     AgentFileConfig, ChannelFileConfig, RegistryIssue, read_agent_file, read_channel_file,
     write_agent_file, write_channel_file,
 };
+use crate::kernel::config::ContextPersistenceConfig;
 
 impl DaemonState {
     pub fn agent_issues(&self, agent_id: &str) -> Result<Option<Vec<RegistryIssue>>> {
@@ -59,6 +60,7 @@ impl DaemonState {
             harness: input.harness,
             idle_grace_secs: input.idle_grace_secs,
             tools: input.tools,
+            persistence: ContextPersistenceConfig::default(),
         };
         write_agent_file(&agent_dir, &file)?;
         self.rescan().await?;
@@ -467,6 +469,7 @@ impl DaemonState {
             kind: input.kind,
             agent_id: input.agent_id,
             idle_ttl_secs: input.idle_ttl_secs,
+            persistence: ContextPersistenceConfig::default(),
             extra: super::helpers::json_object_to_toml_table(input.settings)?,
         };
 

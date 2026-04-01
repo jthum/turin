@@ -83,6 +83,7 @@ async fn build_openclaw_fixture(
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("planner".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
     config.agents.insert(
@@ -97,6 +98,7 @@ async fn build_openclaw_fixture(
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("reviewer".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
 
@@ -160,6 +162,7 @@ async fn build_full_coding_harness_fixture(
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("planner".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
     config.agents.insert(
@@ -174,6 +177,7 @@ async fn build_full_coding_harness_fixture(
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("reviewer".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
 
@@ -237,6 +241,7 @@ async fn build_bug_triage_fixture(
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("triager".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
     config.agents.insert(
@@ -251,6 +256,7 @@ async fn build_bug_triage_fixture(
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("responder".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
 
@@ -317,6 +323,7 @@ async fn build_release_manager_fixture(
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("readiness_reviewer".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
     config.agents.insert(
@@ -331,6 +338,7 @@ async fn build_release_manager_fixture(
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("changelog_writer".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
 
@@ -394,6 +402,7 @@ async fn build_docs_team_fixture(
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("docs_reviewer".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
     config.agents.insert(
@@ -408,6 +417,7 @@ async fn build_docs_team_fixture(
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("draft_writer".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
 
@@ -771,6 +781,7 @@ async fn test_governed_peer_review_example() -> Result<()> {
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("reviewer".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
 
@@ -1270,6 +1281,7 @@ async fn test_delegated_peer_capabilities_example() -> Result<()> {
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("reviewer".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
 

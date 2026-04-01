@@ -21,8 +21,8 @@ provider = "mock"
 [kernel]
 workspace_root = "."
 
-[persistence]
-database_path = "state.db"
+[persistence.state]
+path = "state.db"
 
 [harness]
 directory = "default-harness"

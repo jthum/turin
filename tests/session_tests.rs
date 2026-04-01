@@ -9,7 +9,7 @@ use tempfile::tempdir;
 use turin::kernel::Kernel;
 use turin::kernel::config::{
     AgentConfig, EmbeddingConfig, HarnessConfig, KernelConfig, PersistenceConfig, ProviderConfig,
-    TurinConfig,
+    StoreTargetConfig, TurinConfig,
 };
 use turin::kernel::policy::PolicyScope;
 use turin::kernel::session::{QueuedTask, SessionStatus};
@@ -44,6 +44,7 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
             mode: turin::kernel::config::AgentMode::Auto,
             harness: None,
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
         agents: std::collections::HashMap::new(),
         kernel: KernelConfig {
@@ -52,10 +53,7 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
-        persistence: PersistenceConfig {
-            database_path: db_path.to_str().unwrap().to_string(),
-            ..PersistenceConfig::default()
-        },
+        persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
@@ -482,6 +480,7 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
             mode: turin::kernel::config::AgentMode::Stateless,
             harness: Some("reviewer".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
 
@@ -497,6 +496,7 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
             mode: turin::kernel::config::AgentMode::Stateless,
             harness: None,
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
         agents,
         kernel: KernelConfig {
@@ -505,10 +505,7 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
-        persistence: PersistenceConfig {
-            database_path: db_path.to_str().unwrap().to_string(),
-            ..PersistenceConfig::default()
-        },
+        persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: default_harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
@@ -635,6 +632,7 @@ async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("writer".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
 
@@ -650,6 +648,7 @@ async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
             mode: turin::kernel::config::AgentMode::Auto,
             harness: None,
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
         agents,
         kernel: KernelConfig {
@@ -658,10 +657,7 @@ async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
-        persistence: PersistenceConfig {
-            database_path: db_path.to_str().unwrap().to_string(),
-            ..PersistenceConfig::default()
-        },
+        persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: default_harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
@@ -780,6 +776,7 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("writer".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
 
@@ -795,6 +792,7 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
             mode: turin::kernel::config::AgentMode::Auto,
             harness: None,
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
         agents,
         kernel: KernelConfig {
@@ -803,10 +801,7 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
-        persistence: PersistenceConfig {
-            database_path: db_path.to_str().unwrap().to_string(),
-            ..PersistenceConfig::default()
-        },
+        persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: default_harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
@@ -1061,6 +1056,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
             mode: turin::kernel::config::AgentMode::Auto,
             harness: None,
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
         agents: std::collections::HashMap::new(),
         kernel: KernelConfig {
@@ -1070,7 +1066,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
             initial_spawn_depth: 0,
         },
         persistence: PersistenceConfig {
-            database_path: "".to_string(), // Empty — no persistence
+            state: StoreTargetConfig::from_path(""), // Empty — no persistence
             ..PersistenceConfig::default()
         },
         harness: HarnessConfig {

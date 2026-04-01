@@ -675,7 +675,7 @@ impl ExecutionHost {
                 }),
             );
 
-            if let Ok(store) = self.store_manager.get_default().await
+            if let Ok(store) = self.store_manager.open(&session.store_selector).await
                 && let Some(iid) = session.internal_id
             {
                 let _ = store
@@ -718,7 +718,7 @@ impl ExecutionHost {
                 tool_call_id: None,
             });
 
-            if let Ok(store) = self.store_manager.get_default().await {
+            if let Ok(store) = self.store_manager.open(&session.store_selector).await {
                 let result_content: Vec<serde_json::Value> = tool_results
                     .iter()
                     .map(|r| match r {

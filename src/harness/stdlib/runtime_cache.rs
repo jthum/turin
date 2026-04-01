@@ -11,7 +11,9 @@ use crate::harness::stdlib::binding_common::{
 };
 use crate::harness::stdlib::governance_support::require_capability as require_governance_capability;
 use crate::harness::stdlib::system_globals::{require_capability_for_lua, resolve_safe_path};
+use crate::kernel::session_refs::parse_session_reference;
 use crate::persistence::manager::StoreManager;
+use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{
     CacheReadResult, CacheResetReport, CacheSessionStats, CacheStatsReport,
 };
@@ -84,7 +86,7 @@ pub fn register_runtime_cache_namespace(
                 let execution_ctx = execution_ctx.clone();
                 let fs_root = fs_root.clone();
                 let result = bridge_async_result(async move {
-                    let (session_id, _) = resolve_cache_session(
+                    let (session_id, _, store_selector) = resolve_cache_session(
                         manager.clone(),
                         execution_ctx,
                         parsed.session_id.clone(),
@@ -93,7 +95,10 @@ pub fn register_runtime_cache_namespace(
                     let (cache_path, resolved) =
                         normalize_cache_path(&fs_root, &path).map_err(|e| e.to_string())?;
                     let content = std::fs::read_to_string(&resolved).map_err(|e| e.to_string())?;
-                    let store = manager.get_default().await.map_err(|e| e.to_string())?;
+                    let store = manager
+                        .open(&store_selector)
+                        .await
+                        .map_err(|e| e.to_string())?;
                     store
                         .cache_read_file(
                             session_id,
@@ -140,8 +145,8 @@ pub fn register_runtime_cache_namespace(
                         Some(
                             resolve_cache_session(
                                 manager.clone(),
-                                execution_ctx,
-                                parsed.session_id,
+                                execution_ctx.clone(),
+                                parsed.session_id.clone(),
                             )
                             .await?
                             .0,
@@ -149,9 +154,14 @@ pub fn register_runtime_cache_namespace(
                     } else {
                         None
                     };
+                    let store_selector =
+                        resolve_cache_store_selector(execution_ctx, parsed.session_id.as_deref())?;
                     let (cache_path, _) =
                         normalize_cache_path(&fs_root, &path).map_err(|e| e.to_string())?;
-                    let store = manager.get_default().await.map_err(|e| e.to_string())?;
+                    let store = manager
+                        .open(&store_selector)
+                        .await
+                        .map_err(|e| e.to_string())?;
                     store
                         .cache_invalidate_file(
                             &cache_path,
@@ -196,8 +206,8 @@ pub fn register_runtime_cache_namespace(
                         Some(
                             resolve_cache_session(
                                 manager.clone(),
-                                execution_ctx,
-                                parsed.session_id,
+                                execution_ctx.clone(),
+                                parsed.session_id.clone(),
                             )
                             .await?
                             .0,
@@ -205,7 +215,12 @@ pub fn register_runtime_cache_namespace(
                     } else {
                         None
                     };
-                    let store = manager.get_default().await.map_err(|e| e.to_string())?;
+                    let store_selector =
+                        resolve_cache_store_selector(execution_ctx, parsed.session_id.as_deref())?;
+                    let store = manager
+                        .open(&store_selector)
+                        .await
+                        .map_err(|e| e.to_string())?;
                     store
                         .cache_stats(session_id, include_global, include_session)
                         .await
@@ -243,8 +258,8 @@ pub fn register_runtime_cache_namespace(
                         Some(
                             resolve_cache_session(
                                 manager.clone(),
-                                execution_ctx,
-                                parsed.session_id,
+                                execution_ctx.clone(),
+                                parsed.session_id.clone(),
                             )
                             .await?
                             .0,
@@ -252,7 +267,12 @@ pub fn register_runtime_cache_namespace(
                     } else {
                         None
                     };
-                    let store = manager.get_default().await.map_err(|e| e.to_string())?;
+                    let store_selector =
+                        resolve_cache_store_selector(execution_ctx, parsed.session_id.as_deref())?;
+                    let store = manager
+                        .open(&store_selector)
+                        .await
+                        .map_err(|e| e.to_string())?;
                     store
                         .cache_reset(session_id, matches!(scope, CacheScope::Global), dry_run)
                         .await
@@ -314,26 +334,57 @@ async fn resolve_cache_session(
     manager: Arc<StoreManager>,
     execution_ctx: ActiveHarnessExecutionContext,
     requested_session_id: Option<String>,
-) -> Result<(i64, String), String> {
-    let public_id = if let Some(requested) = requested_session_id {
-        requested
+) -> Result<(i64, String, StoreSelector), String> {
+    let (public_id, selector) = if let Some(requested) = requested_session_id {
+        let session_ref = parse_session_reference(&requested).map_err(|e| e.to_string())?;
+        (
+            session_ref.public_id,
+            session_ref
+                .store_selector
+                .unwrap_or_else(|| StoreSelector::Alias("state".to_string())),
+        )
     } else {
-        execution_ctx
+        let lock = execution_ctx
             .lock()
-            .map_err(|_| "execution context mutex poisoned".to_string())?
-            .session_id
-            .clone()
-            .ok_or_else(|| "No active session context".to_string())?
+            .map_err(|_| "execution context mutex poisoned".to_string())?;
+        (
+            lock.session_id
+                .clone()
+                .ok_or_else(|| "No active session context".to_string())?,
+            lock.session_store_selector
+                .clone()
+                .unwrap_or_else(|| StoreSelector::Alias("state".to_string())),
+        )
     };
     let uuid = Uuid::parse_str(&public_id)
         .map_err(|e| format!("invalid session id '{}': {}", public_id, e))?;
-    let store = manager.get_default().await.map_err(|e| e.to_string())?;
+    let store = manager.open(&selector).await.map_err(|e| e.to_string())?;
     let session_id = store
         .get_session_by_public_id(uuid)
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("unknown session id '{}'", public_id))?;
-    Ok((session_id, uuid.simple().to_string()))
+    Ok((session_id, uuid.simple().to_string(), selector))
+}
+
+fn resolve_cache_store_selector(
+    execution_ctx: ActiveHarnessExecutionContext,
+    requested_session_id: Option<&str>,
+) -> Result<StoreSelector, String> {
+    if let Some(requested) = requested_session_id {
+        let session_ref = parse_session_reference(requested).map_err(|e| e.to_string())?;
+        return Ok(session_ref
+            .store_selector
+            .unwrap_or_else(|| StoreSelector::Alias("state".to_string())));
+    }
+
+    let lock = execution_ctx
+        .lock()
+        .map_err(|_| "execution context mutex poisoned".to_string())?;
+    Ok(lock
+        .session_store_selector
+        .clone()
+        .unwrap_or_else(|| StoreSelector::Alias("state".to_string())))
 }
 
 fn normalize_cache_path(

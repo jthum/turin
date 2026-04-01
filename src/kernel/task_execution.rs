@@ -83,7 +83,7 @@ impl ExecutionHost {
     }
 
     async fn persist_task_user_message(&self, session: &SessionState, prompt: &str) {
-        if let Ok(store) = self.store_manager.get_default().await {
+        if let Ok(store) = self.store_manager.open(&session.store_selector).await {
             if let Some(iid) = session.internal_id {
                 let _ = store
                     .insert_message(
@@ -106,6 +106,7 @@ impl ExecutionHost {
         if let Some(ref engine) = *harness {
             engine.set_active_session(
                 Some(session.identity.session_id()),
+                Some(session.store_selector.clone()),
                 Some(session.mode.clone()),
             );
             engine.set_active_trace_id(Some(&task.trace_id));
@@ -122,7 +123,7 @@ impl ExecutionHost {
         let runtime = self.runtime_for_session(session);
         let harness = runtime.lock_engine();
         if let Some(ref engine) = *harness {
-            engine.set_active_session(None, None);
+            engine.set_active_session(None, None, None);
             engine.set_active_trace_id(None);
             engine.set_active_event_context(None);
         }

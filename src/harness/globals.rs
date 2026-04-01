@@ -15,6 +15,7 @@ use crate::inference::provider::ProviderClient;
 use crate::kernel::event::KernelEvent;
 use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreManager;
+use crate::persistence::manager::StoreSelector;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
@@ -37,6 +38,7 @@ pub struct HarnessEventContext {
 #[derive(Clone, Default)]
 pub struct HarnessExecutionContext {
     pub session_id: Option<String>,
+    pub session_store_selector: Option<StoreSelector>,
     pub session_mode: Option<crate::kernel::config::AgentMode>,
     pub trace_id: Option<String>,
     pub queue: Option<SessionQueue>,

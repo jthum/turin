@@ -3,6 +3,7 @@ use std::path::Path;
 use turin::display;
 use turin::kernel::Kernel;
 use turin::kernel::config::TurinConfig;
+use turin::persistence::manager::StoreSelector;
 
 pub async fn run_check(config_path: &Path) -> Result<()> {
     let ansi = display::stdout_ansi();
@@ -135,7 +136,17 @@ pub async fn run_check(config_path: &Path) -> Result<()> {
     }
 
     // 4. Check DB
-    let db_path = Path::new(&config.persistence.database_path);
+    let state_path = match config.persistence.top_level_state_selector()? {
+        StoreSelector::Alias(alias) => config
+            .persistence
+            .states
+            .get(&alias)
+            .map(|target| target.path.clone())
+            .unwrap_or_else(|| ".turin/state.db".to_string()),
+        StoreSelector::Path(path) => path,
+        StoreSelector::Handle(_) => ".turin/state.db".to_string(),
+    };
+    let db_path = Path::new(&state_path);
     if db_path.exists() {
         println!(
             "{} State database found at '{}'.",

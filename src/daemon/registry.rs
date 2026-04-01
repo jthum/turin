@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use turin_types::ToolsConfig;
 
 use crate::kernel::agent_manager::AgentManager;
-use crate::kernel::config::{AgentConfig, AgentMode, HarnessConfig, ThinkingConfig, TurinConfig};
+use crate::kernel::config::{
+    AgentConfig, AgentMode, ContextPersistenceConfig, HarnessConfig, ThinkingConfig, TurinConfig,
+};
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_runtime::{HarnessRuntime, HarnessRuntimeInitContext};
 use crate::kernel::policy::RuntimePolicyManager;
@@ -124,6 +126,8 @@ pub(crate) struct AgentFileConfig {
     pub idle_grace_secs: Option<u64>,
     #[serde(default)]
     pub tools: ToolsConfig,
+    #[serde(default)]
+    pub persistence: ContextPersistenceConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -136,6 +140,8 @@ pub(crate) struct ChannelFileConfig {
     pub agent_id: String,
     #[serde(default)]
     pub idle_ttl_secs: Option<u64>,
+    #[serde(default)]
+    pub persistence: ContextPersistenceConfig,
     #[serde(flatten)]
     pub extra: toml::Table,
 }
@@ -438,6 +444,7 @@ fn scan_agent_dir(
         harness: Some(harness_id.clone()),
         idle_grace_secs: parsed.idle_grace_secs,
         tools: parsed.tools,
+        persistence: parsed.persistence,
     };
 
     Ok(Some(DiscoveredAgent {

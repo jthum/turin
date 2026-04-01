@@ -54,7 +54,7 @@ impl ExecutionHost {
             }
         }
 
-        if let Ok(store) = self.store_manager.get_default().await {
+        if let Ok(store) = self.store_manager.open(&session.store_selector).await {
             let content: Vec<serde_json::Value> = {
                 let mut parts = Vec::new();
                 if !response_text.is_empty() {

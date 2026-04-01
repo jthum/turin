@@ -140,6 +140,7 @@ impl ExecutionHost {
             if let Some(ref engine) = *harness {
                 engine.set_active_session(
                     Some(session.identity.session_id()),
+                    Some(session.store_selector.clone()),
                     Some(session.mode.clone()),
                 );
                 engine.set_active_trace_id(Some(&task.trace_id));
@@ -163,7 +164,7 @@ impl ExecutionHost {
                         "error": error,
                     }),
                 );
-                engine.set_active_session(None, None);
+                engine.set_active_session(None, None, None);
                 engine.set_active_trace_id(None);
                 engine.set_active_event_context(None);
                 Some(result)

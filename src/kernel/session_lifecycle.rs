@@ -7,6 +7,8 @@ use tracing::{info, warn};
 use crate::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::{SessionState, SessionStatus};
+use crate::kernel::session_refs::parse_session_reference;
+use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{EventRow, MessageRow};
 use crate::{
     inference::provider::{InferenceContent, InferenceMessage, InferenceRole},
@@ -23,6 +25,7 @@ impl ExecutionHost {
     pub async fn create_session_for_agent(&self, agent_id: &str) -> SessionState {
         let mut session = SessionState::new();
         session.identity.set_agent_id(agent_id.to_string());
+        session.store_selector = self.resolve_agent_state_selector(agent_id);
         self.attach_session_persistence(&mut session, true).await;
         session
     }
@@ -33,21 +36,25 @@ impl ExecutionHost {
         agent_id: &str,
         session_id: &str,
     ) -> Result<SessionState> {
-        let public_id = uuid::Uuid::parse_str(session_id)
-            .with_context(|| format!("Invalid session id '{}'", session_id))?;
+        let session_ref = parse_session_reference(session_id)?;
+        let public_id = uuid::Uuid::parse_str(&session_ref.public_id)
+            .with_context(|| format!("Invalid session id '{}'", session_ref.public_id))?;
+        let store_selector = session_ref
+            .store_selector
+            .unwrap_or_else(|| self.resolve_agent_state_selector(agent_id));
         let store = self
             .store_manager
-            .get_default()
+            .open(&store_selector)
             .await
             .context("Session resume requires a configured persistent state store")?;
         let row = store
             .get_session_row_by_public_id(public_id)
             .await?
-            .ok_or_else(|| anyhow!("Session '{}' not found", session_id))?;
+            .ok_or_else(|| anyhow!("Session '{}' not found", session_ref.public_id))?;
         if row.agent_id != agent_id {
             anyhow::bail!(
                 "Session '{}' belongs to agent '{}' not '{}'",
-                session_id,
+                session_ref.public_id,
                 row.agent_id,
                 agent_id
             );
@@ -60,8 +67,9 @@ impl ExecutionHost {
             rebuild_session_counters(&events);
 
         let mut session = SessionState::new();
-        session.identity = RuntimeIdentity::new(session_id.to_string(), agent_id);
+        session.identity = RuntimeIdentity::new(session_ref.public_id, agent_id);
         session.internal_id = Some(row.id);
+        session.store_selector = store_selector;
         session.history = history;
         session.turn_index = turn_index;
         session.total_input_tokens = total_input_tokens;
@@ -74,7 +82,7 @@ impl ExecutionHost {
     }
 
     async fn attach_session_persistence(&self, session: &mut SessionState, create_row: bool) {
-        if let Ok(store) = self.store_manager.get_default().await {
+        if let Ok(store) = self.store_manager.open(&session.store_selector).await {
             if create_row
                 && let Ok(public_id) = uuid::Uuid::parse_str(session.identity.session_id())
             {
@@ -106,6 +114,28 @@ impl ExecutionHost {
             });
             session.event_task = Some(Arc::new(AsyncMutex::new(Some(handle))));
         }
+    }
+
+    pub(crate) fn resolve_agent_state_selector(&self, agent_id: &str) -> StoreSelector {
+        let context = if agent_id == self.config.agent.id {
+            Some(&self.config.agent.persistence)
+        } else {
+            self.config
+                .agents
+                .get(agent_id)
+                .map(|agent| &agent.persistence)
+        };
+        self.config
+            .persistence
+            .resolve_context_state_selector(context)
+            .unwrap_or_else(|err| {
+                warn!(
+                    agent_id = %agent_id,
+                    error = %err,
+                    "Falling back to default state selector for agent"
+                );
+                StoreSelector::Alias("state".to_string())
+            })
     }
 
     /// Start a new session.

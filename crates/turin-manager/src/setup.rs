@@ -114,7 +114,12 @@ struct GeneratedKernelConfig {
 
 #[derive(Debug, Serialize)]
 struct GeneratedPersistenceConfig {
-    database_path: String,
+    state: GeneratedStoreTargetConfig,
+}
+
+#[derive(Debug, Serialize)]
+struct GeneratedStoreTargetConfig {
+    path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -852,7 +857,9 @@ fn generate_turin_config(
             initial_spawn_depth: 0,
         },
         persistence: GeneratedPersistenceConfig {
-            database_path: ".turin/state.db".to_string(),
+            state: GeneratedStoreTargetConfig {
+                path: ".turin/state.db".to_string(),
+            },
         },
         harness: GeneratedHarnessConfig {
             directory: ".turin/harnesses".to_string(),

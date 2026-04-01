@@ -401,6 +401,14 @@ pub(crate) fn resolve_scoped_store_selector(
         return Ok(explicit);
     }
     let scope = selector_scope_ref(selector).map_err(mlua::Error::runtime)?;
+    if scope.scope_kind == "session"
+        && let Some(raw_scope_key) = scope.raw_scope_key.as_deref()
+        && let Ok(lock) = app_data.execution_ctx.lock()
+        && lock.session_id.as_deref() == Some(raw_scope_key)
+        && let Some(selector) = lock.session_store_selector.clone()
+    {
+        return Ok(Some(selector));
+    }
     Ok(resolve_scope_store_selector(
         &app_data.config,
         &scope.scope_kind,
@@ -417,8 +425,7 @@ pub(crate) fn resolve_scope_store_selector(
 ) -> Option<StoreSelector> {
     config
         .persistence
-        .resolve_store_alias_for_scope(scope_kind, raw_scope_key, namespace)
-        .map(|alias| StoreSelector::Alias(alias.to_string()))
+        .resolve_store_selector_for_scope(scope_kind, raw_scope_key, namespace)
 }
 
 pub(crate) fn resolve_memory_search_request(

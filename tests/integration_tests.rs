@@ -36,6 +36,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
             mode: turin::kernel::config::AgentMode::Auto,
             harness: None,
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
         agents: std::collections::HashMap::new(),
         kernel: turin::kernel::config::KernelConfig {
@@ -44,10 +45,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
-        persistence: PersistenceConfig {
-            database_path: db_path.to_str().unwrap().to_string(),
-            ..PersistenceConfig::default()
-        },
+        persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),

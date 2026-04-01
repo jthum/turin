@@ -64,6 +64,7 @@ fn test_config(workspace_root: &std::path::Path, harness_dir: &std::path::Path) 
             mode: crate::kernel::config::AgentMode::Auto,
             harness: None,
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
         agents: HashMap::new(),
         kernel: KernelConfig {
@@ -72,10 +73,9 @@ fn test_config(workspace_root: &std::path::Path, harness_dir: &std::path::Path) 
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
-        persistence: PersistenceConfig {
-            database_path: workspace_root.join("test.db").to_string_lossy().to_string(),
-            ..PersistenceConfig::default()
-        },
+        persistence: PersistenceConfig::with_state_path(
+            workspace_root.join("test.db").to_string_lossy().to_string(),
+        ),
         harness: HarnessConfig {
             directory: harness_dir.to_string_lossy().to_string(),
             fs_root: ".".to_string(),

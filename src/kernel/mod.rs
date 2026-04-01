@@ -15,6 +15,7 @@ pub mod policy;
 mod run_loop;
 pub mod session;
 mod session_lifecycle;
+pub mod session_refs;
 mod task_execution;
 mod task_lifecycle;
 mod task_planning;

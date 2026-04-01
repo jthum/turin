@@ -73,8 +73,8 @@ max_turns = 4
 heartbeat_interval_secs = 30
 initial_spawn_depth = 0
 
-[persistence]
-database_path = "{database_path}"
+[persistence.state]
+path = "{database_path}"
 
 [harness]
 directory = "{harness_directory}"

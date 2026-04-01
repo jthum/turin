@@ -371,8 +371,8 @@ pub fn render_turin_toml(options: &InitOptions) -> String {
     toml.push_str("heartbeat_interval_secs = 30\n");
     toml.push_str("initial_spawn_depth = 0\n\n");
 
-    toml.push_str("[persistence]\n");
-    toml.push_str("database_path = \".turin/state.db\"\n\n");
+    toml.push_str("[persistence.state]\n");
+    toml.push_str("path = \".turin/state.db\"\n\n");
 
     toml.push_str("[harness]\n");
     toml.push_str("directory = \".turin/harnesses\"\n");

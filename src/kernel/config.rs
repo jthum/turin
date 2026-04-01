@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use turin_local_ipc::resolve_endpoint as resolve_local_ipc_endpoint;
 
+use crate::persistence::manager::StoreSelector;
 pub use turin_types::{AgentMode, ThinkingConfig, ToolSelectionConfig, ToolsConfig};
 
 /// Top-level Turin configuration, parsed from `turin.toml`.
@@ -79,6 +80,8 @@ pub struct AgentConfig {
     pub idle_grace_secs: Option<u64>,
     #[serde(default)]
     pub tools: ToolsConfig,
+    #[serde(default)]
+    pub persistence: ContextPersistenceConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -110,10 +113,16 @@ impl Default for KernelConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PersistenceConfig {
-    /// Path to the libSQL database file
-    #[serde(default = "default_database_path")]
-    pub database_path: String,
+    /// Primary owning state target for session/runtime data.
+    #[serde(default = "default_state_target")]
+    pub state: StoreTargetConfig,
+    /// Optional default auxiliary store for scoped non-session data.
+    #[serde(default)]
+    pub store: Option<StoreTargetConfig>,
     /// Optional named state stores that can be referenced by alias.
+    #[serde(default)]
+    pub states: std::collections::HashMap<String, NamedStoreConfig>,
+    /// Optional named auxiliary stores that can be referenced by alias.
     #[serde(default)]
     pub stores: std::collections::HashMap<String, NamedStoreConfig>,
     /// Optional Level 1 placement rules for scoped memory/KV when no store is provided.
@@ -124,11 +133,68 @@ pub struct PersistenceConfig {
 impl Default for PersistenceConfig {
     fn default() -> Self {
         Self {
-            database_path: default_database_path(),
+            state: default_state_target(),
+            store: None,
+            states: std::collections::HashMap::new(),
             stores: std::collections::HashMap::new(),
             placements: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize, Default, PartialEq, Eq)]
+pub struct StoreTargetConfig {
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub alias: Option<String>,
+}
+
+impl StoreTargetConfig {
+    pub fn from_path(path: impl Into<String>) -> Self {
+        Self {
+            path: Some(path.into()),
+            alias: None,
+        }
+    }
+
+    pub fn from_alias(alias: impl Into<String>) -> Self {
+        Self {
+            path: None,
+            alias: Some(alias.into()),
+        }
+    }
+
+    fn validate(&self, label: &str) -> Result<()> {
+        let has_path = self
+            .path
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty());
+        let has_alias = self
+            .alias
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty());
+
+        anyhow::ensure!(
+            has_path || has_alias,
+            "{} requires either 'path' or 'alias'",
+            label
+        );
+        anyhow::ensure!(
+            !(has_path && has_alias),
+            "{} cannot set both 'path' and 'alias'",
+            label
+        );
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize, Default, PartialEq, Eq)]
+pub struct ContextPersistenceConfig {
+    #[serde(default)]
+    pub state: Option<StoreTargetConfig>,
+    #[serde(default)]
+    pub store: Option<StoreTargetConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize, Default)]
@@ -147,6 +213,81 @@ pub struct ScopedStorePlacementConfig {
 }
 
 impl PersistenceConfig {
+    pub fn with_state_path(path: impl Into<String>) -> Self {
+        Self {
+            state: StoreTargetConfig::from_path(path),
+            ..Self::default()
+        }
+    }
+
+    pub fn top_level_state_selector(&self) -> Result<StoreSelector> {
+        self.resolve_state_target(&self.state)
+    }
+
+    pub fn top_level_store_selector(&self) -> Result<StoreSelector> {
+        match &self.store {
+            Some(target) => self.resolve_store_target(target),
+            None => self.top_level_state_selector(),
+        }
+    }
+
+    pub fn resolve_context_state_selector(
+        &self,
+        context: Option<&ContextPersistenceConfig>,
+    ) -> Result<StoreSelector> {
+        if let Some(target) = context.and_then(|context| context.state.as_ref()) {
+            return self.resolve_state_target(target);
+        }
+        self.top_level_state_selector()
+    }
+
+    pub fn resolve_context_store_selector(
+        &self,
+        context: Option<&ContextPersistenceConfig>,
+    ) -> Result<StoreSelector> {
+        if let Some(target) = context.and_then(|context| context.store.as_ref()) {
+            return self.resolve_store_target(target);
+        }
+        if let Some(target) = context.and_then(|context| context.state.as_ref()) {
+            return self.resolve_state_target(target);
+        }
+        self.top_level_store_selector()
+    }
+
+    pub fn resolve_state_target(&self, target: &StoreTargetConfig) -> Result<StoreSelector> {
+        target.validate("persistence.state")?;
+        if let Some(path) = &target.path {
+            return Ok(StoreSelector::Path(path.clone()));
+        }
+        let alias = target
+            .alias
+            .as_deref()
+            .expect("validated state target has alias");
+        anyhow::ensure!(
+            alias == "state" || self.states.contains_key(alias),
+            "persistence.state alias '{}' not found in persistence.states",
+            alias
+        );
+        Ok(StoreSelector::Alias(alias.to_string()))
+    }
+
+    pub fn resolve_store_target(&self, target: &StoreTargetConfig) -> Result<StoreSelector> {
+        target.validate("persistence.store")?;
+        if let Some(path) = &target.path {
+            return Ok(StoreSelector::Path(path.clone()));
+        }
+        let alias = target
+            .alias
+            .as_deref()
+            .expect("validated store target has alias");
+        anyhow::ensure!(
+            alias == "state" || self.states.contains_key(alias) || self.stores.contains_key(alias),
+            "persistence.store alias '{}' not found in persistence.states or persistence.stores",
+            alias
+        );
+        Ok(StoreSelector::Alias(alias.to_string()))
+    }
+
     pub fn resolve_store_alias_for_scope(
         &self,
         scope_kind: &str,
@@ -166,6 +307,20 @@ impl PersistenceConfig {
             .iter()
             .find(|placement| placement.scope_kind == scope_kind && placement.scope_key.is_none())
             .map(|placement| placement.store.as_str())
+    }
+
+    pub fn resolve_store_selector_for_scope(
+        &self,
+        scope_kind: &str,
+        raw_scope_key: Option<&str>,
+        namespace: &str,
+    ) -> Option<StoreSelector> {
+        if let Some(alias) =
+            self.resolve_store_alias_for_scope(scope_kind, raw_scope_key, namespace)
+        {
+            return Some(StoreSelector::Alias(alias.to_string()));
+        }
+        self.top_level_store_selector().ok()
     }
 }
 
@@ -437,6 +592,10 @@ fn default_remote_event_keepalive_secs() -> u64 {
     15
 }
 
+fn default_state_target() -> StoreTargetConfig {
+    StoreTargetConfig::from_path(default_database_path())
+}
+
 // ─── Loading ─────────────────────────────────────────────────────
 
 impl TurinConfig {
@@ -512,19 +671,48 @@ impl TurinConfig {
             self.remote.event_keepalive_secs > 0,
             "remote.event_keepalive_secs must be greater than 0"
         );
+        self.persistence.state.validate("persistence.state")?;
+        if let Some(store) = &self.persistence.store {
+            store.validate("persistence.store")?;
+        }
+        for (state_name, state) in &self.persistence.states {
+            anyhow::ensure!(
+                !state_name.trim().is_empty(),
+                "persistence.states contains an empty state name"
+            );
+            anyhow::ensure!(
+                state_name != "state" && state_name != "store",
+                "persistence.states.{} is reserved",
+                state_name
+            );
+            anyhow::ensure!(
+                !state.path.trim().is_empty(),
+                "persistence.states.{}.path must not be empty",
+                state_name
+            );
+        }
         for (store_name, store) in &self.persistence.stores {
             anyhow::ensure!(
                 !store_name.trim().is_empty(),
                 "persistence.stores contains an empty store name"
             );
             anyhow::ensure!(
-                store_name != "state",
-                "persistence.stores.state is reserved; use persistence.database_path for the primary state store"
+                store_name != "state" && store_name != "store",
+                "persistence.stores.{} is reserved",
+                store_name
             );
             anyhow::ensure!(
                 !store.path.trim().is_empty(),
                 "persistence.stores.{}.path must not be empty",
                 store_name
+            );
+        }
+        for state_name in self.persistence.states.keys() {
+            anyhow::ensure!(
+                !self.persistence.stores.contains_key(state_name),
+                "persistence.states.{} collides with persistence.stores.{}",
+                state_name,
+                state_name
             );
         }
         for (idx, placement) in self.persistence.placements.iter().enumerate() {
@@ -554,8 +742,9 @@ impl TurinConfig {
             );
             anyhow::ensure!(
                 placement.store == "state"
+                    || self.persistence.states.contains_key(&placement.store)
                     || self.persistence.stores.contains_key(&placement.store),
-                "persistence.placements[{}].store '{}' not found in persistence.stores",
+                "persistence.placements[{}].store '{}' not found in persistence.states or persistence.stores",
                 idx,
                 placement.store
             );
@@ -655,6 +844,22 @@ impl TurinConfig {
         for (agent_id, agent_cfg) in
             std::iter::once((&self.agent.id, &self.agent)).chain(self.agents.iter())
         {
+            if let Some(state) = &agent_cfg.persistence.state {
+                state.validate(&format!("agent '{}'.persistence.state", agent_id))?;
+                self.persistence
+                    .resolve_state_target(state)
+                    .with_context(|| {
+                        format!("agent '{}': invalid persistence.state target", agent_id)
+                    })?;
+            }
+            if let Some(store) = &agent_cfg.persistence.store {
+                store.validate(&format!("agent '{}'.persistence.store", agent_id))?;
+                self.persistence
+                    .resolve_store_target(store)
+                    .with_context(|| {
+                        format!("agent '{}': invalid persistence.store target", agent_id)
+                    })?;
+            }
             if let Some(harness_id) = &agent_cfg.harness {
                 anyhow::ensure!(
                     harness_id == "default" || self.harnesses.contains_key(harness_id),
@@ -780,6 +985,7 @@ impl Default for AgentConfig {
             harness: None,
             idle_grace_secs: None,
             tools: ToolsConfig::default(),
+            persistence: ContextPersistenceConfig::default(),
         }
     }
 }
@@ -806,8 +1012,8 @@ workspace_root = "."
 max_turns = 50
 heartbeat_interval_secs = 30
 
-[persistence]
-database_path = ".turin/state.db"
+[persistence.state]
+path = ".turin/state.db"
 
 [harness]
 directory = ".turin/harnesses"
@@ -825,7 +1031,10 @@ api_key_env = "OPENAI_API_KEY"
         assert_eq!(config.agent.model, "claude-sonnet-4-20250514");
         assert_eq!(config.agent.provider, "anthropic");
         assert_eq!(config.kernel.max_turns, 50);
-        assert_eq!(config.persistence.database_path, ".turin/state.db");
+        assert_eq!(
+            config.persistence.state,
+            StoreTargetConfig::from_path(".turin/state.db")
+        );
         assert_eq!(config.harness.directory, ".turin/harnesses");
         assert_eq!(
             config
@@ -856,7 +1065,10 @@ type = "openai"
         // Defaults should be applied
         assert_eq!(config.kernel.workspace_root, ".");
         assert_eq!(config.kernel.max_turns, 50);
-        assert_eq!(config.persistence.database_path, ".turin/state.db");
+        assert_eq!(
+            config.persistence.state,
+            StoreTargetConfig::from_path(".turin/state.db")
+        );
         assert_eq!(config.harness.directory, ".turin/harnesses");
         assert_eq!(config.remote.bind, "127.0.0.1:9324");
         assert_eq!(config.remote.auth_token_env, "TURIN_REMOTE_TOKEN");
@@ -894,8 +1106,8 @@ provider = "openai"
 [providers.openai]
 type = "openai"
 
-[persistence]
-database_path = ".turin/state.db"
+[persistence.state]
+path = ".turin/state.db"
 
 [persistence.stores.rust_kb]
 path = ".turin/kb/rust.db"

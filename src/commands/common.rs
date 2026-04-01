@@ -79,7 +79,7 @@ pub(crate) async fn run_prompt_once(
         workspace = %config.kernel.workspace_root,
         harness_id = %harness_id,
         harness_dir = %harness_cfg.directory,
-        db = %config.persistence.database_path,
+        db = ?config.persistence.top_level_state_selector().ok(),
         "Config loaded"
     );
 

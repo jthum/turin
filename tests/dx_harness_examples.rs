@@ -284,6 +284,7 @@ async fn test_dx_fixture_peer_review_orchestrator() -> Result<()> {
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("reviewer".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
 
@@ -395,6 +396,7 @@ async fn test_dx_fixture_import_scoped_complete_delegate() -> Result<()> {
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("reviewer".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
 
@@ -519,6 +521,7 @@ async fn test_dx_fixture_peer_agent_denial() -> Result<()> {
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("blocked".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
 
@@ -582,6 +585,7 @@ async fn test_dx_fixture_peer_complete_delegated_caps() -> Result<()> {
             mode: turin::kernel::config::AgentMode::Auto,
             harness: Some("reviewer".to_string()),
             idle_grace_secs: None,
+            persistence: Default::default(),
         },
     );
 

@@ -87,8 +87,25 @@ impl ExecutionHost {
 
     /// Initialize the default state store alias. Call before `run()`.
     pub async fn init_state(&mut self) -> Result<()> {
-        let db_path = &self.config.persistence.database_path;
-        self.store_manager.register_alias("state", db_path).await?;
+        let state_selector = self.config.persistence.top_level_state_selector()?;
+        let db_path = match &state_selector {
+            crate::persistence::manager::StoreSelector::Alias(alias) => self
+                .config
+                .persistence
+                .states
+                .get(alias)
+                .map(|target| target.path.as_str())
+                .unwrap_or(".turin/state.db")
+                .to_string(),
+            crate::persistence::manager::StoreSelector::Path(path) => path.clone(),
+            crate::persistence::manager::StoreSelector::Handle(_) => ".turin/state.db".to_string(),
+        };
+        self.store_manager.register_alias("state", &db_path).await?;
+        for (alias, store) in &self.config.persistence.states {
+            self.store_manager
+                .register_alias(alias, &store.path)
+                .await?;
+        }
         for (alias, store) in &self.config.persistence.stores {
             self.store_manager
                 .register_alias(alias, &store.path)

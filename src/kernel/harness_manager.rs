@@ -153,6 +153,7 @@ mod tests {
                 mode: AgentMode::Auto,
                 harness: None,
                 idle_grace_secs: None,
+                persistence: Default::default(),
             },
             agents: HashMap::from([
                 (
@@ -167,6 +168,7 @@ mod tests {
                         mode: AgentMode::Auto,
                         harness: Some("shared".to_string()),
                         idle_grace_secs: None,
+                        persistence: Default::default(),
                     },
                 ),
                 (
@@ -181,6 +183,7 @@ mod tests {
                         mode: AgentMode::Auto,
                         harness: Some("shared".to_string()),
                         idle_grace_secs: None,
+                        persistence: Default::default(),
                     },
                 ),
             ]),
@@ -190,10 +193,9 @@ mod tests {
                 heartbeat_interval_secs: 30,
                 initial_spawn_depth: 0,
             },
-            persistence: PersistenceConfig {
-                database_path: tmp.path().join("test.db").to_string_lossy().to_string(),
-                ..PersistenceConfig::default()
-            },
+            persistence: PersistenceConfig::with_state_path(
+                tmp.path().join("test.db").to_string_lossy().to_string(),
+            ),
             harness: HarnessConfig {
                 directory: default_harness.to_string_lossy().to_string(),
                 fs_root: ".".to_string(),
