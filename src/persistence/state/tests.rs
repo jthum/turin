@@ -59,7 +59,10 @@ async fn test_events_isolated_by_session() {
 #[tokio::test]
 async fn test_insert_and_get_messages() {
     let store = StateStore::open_memory().await.unwrap();
-    let session = 1;
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
 
     store
         .insert_message(
@@ -92,7 +95,10 @@ async fn test_insert_and_get_messages() {
 #[tokio::test]
 async fn test_insert_and_get_tool_executions() {
     let store = StateStore::open_memory().await.unwrap();
-    let session = 1;
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
 
     store
         .insert_tool_execution(
@@ -121,12 +127,15 @@ async fn test_insert_and_get_tool_executions() {
 #[tokio::test]
 async fn test_tool_execution_with_error() {
     let store = StateStore::open_memory().await.unwrap();
-    let session = 1;
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
 
     store
         .insert_tool_execution(
             session,
-            1,
+            0,
             "call_2",
             "shell_exec",
             &json!({"command": "rm -rf /"}),
@@ -202,7 +211,7 @@ async fn test_search_session_history_queries_messages_tools_events_and_titles() 
     store
         .insert_message(
             session_id,
-            3,
+            0,
             "user",
             &json!([{"type": "text", "text": "Investigate the compiler panic in src/main.rs"}]),
             None,
@@ -212,7 +221,7 @@ async fn test_search_session_history_queries_messages_tools_events_and_titles() 
     store
         .insert_tool_execution(
             session_id,
-            3,
+            0,
             "call_1",
             "read_file",
             &json!({"path": "src/main.rs"}),
@@ -337,8 +346,12 @@ async fn test_file_based_store() {
 
     {
         let store = StateStore::open(db_path_str).await.unwrap();
+        let session = store
+            .create_session(uuid::Uuid::now_v7(), "default", None)
+            .await
+            .unwrap();
         store
-            .insert_event(1, "session_start", &json!({}))
+            .insert_event(session, "session_start", &json!({}))
             .await
             .unwrap();
         store
@@ -349,7 +362,9 @@ async fn test_file_based_store() {
 
     {
         let store = StateStore::open(db_path_str).await.unwrap();
-        let events = store.get_events(1).await.unwrap();
+        let sessions = store.list_session_rows(4, 0).await.unwrap();
+        let session = sessions.first().expect("persisted session").id;
+        let events = store.get_events(session).await.unwrap();
         assert_eq!(events.len(), 1);
 
         let val = store
@@ -358,6 +373,100 @@ async fn test_file_based_store() {
             .unwrap();
         assert_eq!(val, Some("value1".to_string()));
     }
+}
+
+#[tokio::test]
+async fn test_create_session_initializes_main_branch() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    let head = store
+        .get_active_branch_head(session)
+        .await
+        .unwrap()
+        .expect("active branch head");
+    assert_eq!(head.name, "main");
+    assert!(head.is_active);
+    assert!(head.head_turn_id.is_none());
+}
+
+#[tokio::test]
+async fn test_get_messages_follows_active_branch_path() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    store
+        .insert_message(
+            session,
+            0,
+            "user",
+            &json!([{"type": "text", "text": "root"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .insert_message(
+            session,
+            1,
+            "assistant",
+            &json!([{"type": "text", "text": "main"}]),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let branch = store
+        .create_branch_head_from_turn_index(session, "alt", Some(0), true)
+        .await
+        .unwrap();
+    assert_eq!(branch.name, "alt");
+    assert!(branch.is_active);
+
+    store
+        .insert_message(
+            session,
+            1,
+            "assistant",
+            &json!([{"type": "text", "text": "alternate"}]),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let alt_messages = store.get_messages(session).await.unwrap();
+    let texts = alt_messages
+        .iter()
+        .map(|row| row.content.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(alt_messages.len(), 2);
+    assert!(texts.iter().any(|content| content.contains("root")));
+    assert!(texts.iter().any(|content| content.contains("alternate")));
+    assert!(!texts.iter().any(|content| content.contains("main")));
+
+    let main_head = store
+        .checkout_branch_head_by_name(session, "main")
+        .await
+        .unwrap()
+        .expect("main branch exists");
+    assert_eq!(main_head.name, "main");
+    assert!(main_head.is_active);
+
+    let main_messages = store.get_messages(session).await.unwrap();
+    let texts = main_messages
+        .iter()
+        .map(|row| row.content.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(main_messages.len(), 2);
+    assert!(texts.iter().any(|content| content.contains("root")));
+    assert!(texts.iter().any(|content| content.contains("main")));
+    assert!(!texts.iter().any(|content| content.contains("alternate")));
 }
 
 #[tokio::test]

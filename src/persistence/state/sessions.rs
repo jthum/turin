@@ -20,7 +20,9 @@ impl StateStore {
         .await
         .context("Failed to insert into sessions table")?;
 
-        Ok(conn.last_insert_rowid())
+        let session_id = conn.last_insert_rowid();
+        self.initialize_main_branch(session_id).await?;
+        Ok(session_id)
     }
 
     pub async fn get_session_by_public_id(&self, public_id: uuid::Uuid) -> Result<Option<i64>> {
@@ -45,7 +47,7 @@ impl StateStore {
         let conn = self.connect().await?;
         let mut rows = conn
             .query(
-                "SELECT id, public_id, agent_id, metadata, created_at FROM sessions WHERE id = ?1",
+                "SELECT id, public_id, agent_id, metadata, active_branch_head_id, created_at FROM sessions WHERE id = ?1",
                 [session_id],
             )
             .await?;
@@ -56,7 +58,8 @@ impl StateStore {
                 public_id: row.get::<Vec<u8>>(1)?,
                 agent_id: row.get::<String>(2)?,
                 metadata: row.get::<Option<String>>(3)?,
-                created_at: row.get::<String>(4)?,
+                active_branch_head_id: row.get::<Option<i64>>(4)?,
+                created_at: row.get::<String>(5)?,
             }))
         } else {
             Ok(None)
@@ -71,7 +74,7 @@ impl StateStore {
         let public_id_bytes = public_id.into_bytes().to_vec();
         let mut rows = conn
             .query(
-                "SELECT id, public_id, agent_id, metadata, created_at FROM sessions WHERE public_id = ?1",
+                "SELECT id, public_id, agent_id, metadata, active_branch_head_id, created_at FROM sessions WHERE public_id = ?1",
                 turso::params![public_id_bytes],
             )
             .await?;
@@ -82,7 +85,8 @@ impl StateStore {
                 public_id: row.get::<Vec<u8>>(1)?,
                 agent_id: row.get::<String>(2)?,
                 metadata: row.get::<Option<String>>(3)?,
-                created_at: row.get::<String>(4)?,
+                active_branch_head_id: row.get::<Option<i64>>(4)?,
+                created_at: row.get::<String>(5)?,
             }))
         } else {
             Ok(None)

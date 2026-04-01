@@ -8,7 +8,7 @@ impl StateStore {
         let mut rows = conn
             .query(
                 r#"
-                SELECT s.id, s.public_id, s.agent_id, s.metadata, s.created_at
+                SELECT s.id, s.public_id, s.agent_id, s.metadata, s.active_branch_head_id, s.created_at
                 FROM sessions s
                 LEFT JOIN events e ON e.session_id = s.id
                 GROUP BY s.id
@@ -26,7 +26,8 @@ impl StateStore {
                 public_id: row.get::<Vec<u8>>(1)?,
                 agent_id: row.get::<String>(2)?,
                 metadata: row.get::<Option<String>>(3)?,
-                created_at: row.get::<String>(4)?,
+                active_branch_head_id: row.get::<Option<i64>>(4)?,
+                created_at: row.get::<String>(5)?,
             });
         }
         Ok(sessions)
@@ -42,41 +43,59 @@ impl StateStore {
     ) -> Result<()> {
         let conn = self.connect().await?;
         let content_str = serde_json::to_string(content)?;
+        let turn = self
+            .ensure_turn_for_active_branch(session_id, turn_index)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!("No active branch head available for session {}", session_id)
+            })?;
         conn.execute(
             "INSERT INTO messages (session_id, turn_index, role, content, token_count) VALUES (?1, ?2, ?3, ?4, ?5)",
             turso::params![
                 session_id,
                 turn_index as i64,
                 role,
-                content_str,
+                content_str.clone(),
                 token_count.map(|t| t as i64),
             ],
         )
         .await
         .with_context(|| format!("Failed to insert message for session: {}", session_id))?;
+        conn.execute(
+            "INSERT INTO turn_messages (turn_id, role, content, token_count) VALUES (?1, ?2, ?3, ?4)",
+            turso::params![
+                turn.id,
+                role,
+                content_str,
+                token_count.map(|t| t as i64),
+            ],
+        )
+        .await
+        .with_context(|| format!("Failed to insert turn message for session: {}", session_id))?;
         Ok(())
     }
 
     pub async fn get_messages(&self, session_id: i64) -> Result<Vec<MessageRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                "SELECT id, session_id, turn_index, role, content, token_count, created_at FROM messages WHERE session_id = ?1 ORDER BY id",
-                [session_id],
-            )
-            .await?;
-
         let mut messages = Vec::new();
-        while let Some(row) = rows.next().await? {
-            messages.push(MessageRow {
-                id: row.get::<i64>(0)?,
-                session_id: row.get::<i64>(1)?,
-                turn_index: row.get::<i64>(2)? as u32,
-                role: row.get::<String>(3)?,
-                content: row.get::<String>(4)?,
-                token_count: row.get::<Option<i64>>(5)?.map(|t| t as u64),
-                created_at: row.get::<String>(6)?,
-            });
+        for turn in self.active_branch_path_turns(session_id).await? {
+            let mut rows = conn
+                .query(
+                    "SELECT id, role, content, token_count, created_at FROM turn_messages WHERE turn_id = ?1 ORDER BY id",
+                    [turn.id],
+                )
+                .await?;
+            while let Some(row) = rows.next().await? {
+                messages.push(MessageRow {
+                    id: row.get::<i64>(0)?,
+                    session_id,
+                    turn_index: turn.branch_depth,
+                    role: row.get::<String>(1)?,
+                    content: row.get::<String>(2)?,
+                    token_count: row.get::<Option<i64>>(3)?.map(|t| t as u64),
+                    created_at: row.get::<String>(4)?,
+                });
+            }
         }
         Ok(messages)
     }

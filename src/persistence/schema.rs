@@ -3,17 +3,18 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 9;
+pub(crate) const SCHEMA_VERSION: u32 = 10;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
 -- Core routing and identity envelope
 CREATE TABLE IF NOT EXISTS sessions (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    public_id  BLOB(16) UNIQUE NOT NULL,
-    agent_id   TEXT NOT NULL,
-    metadata   TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_id             BLOB(16) UNIQUE NOT NULL,
+    agent_id              TEXT NOT NULL,
+    metadata              TEXT,
+    active_branch_head_id INTEGER REFERENCES branch_heads(id),
+    created_at            TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Core event log (append-only)
@@ -34,6 +35,49 @@ CREATE TABLE IF NOT EXISTS messages (
     content     TEXT NOT NULL,
     token_count INTEGER,
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Branch-native turn graph
+CREATE TABLE IF NOT EXISTS turns (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_id     BLOB(16) UNIQUE NOT NULL,
+    session_id    INTEGER NOT NULL REFERENCES sessions(id),
+    parent_turn_id INTEGER REFERENCES turns(id),
+    branch_depth  INTEGER NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS branch_heads (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_id            BLOB(16) UNIQUE NOT NULL,
+    session_id           INTEGER NOT NULL REFERENCES sessions(id),
+    name                 TEXT NOT NULL,
+    head_turn_id         INTEGER REFERENCES turns(id),
+    created_from_turn_id INTEGER REFERENCES turns(id),
+    created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(session_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS turn_messages (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    turn_id      INTEGER NOT NULL REFERENCES turns(id),
+    role        TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    token_count INTEGER,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS turn_tool_executions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    turn_id      INTEGER NOT NULL REFERENCES turns(id),
+    tool_call_id TEXT NOT NULL,
+    tool_name    TEXT NOT NULL,
+    args         TEXT NOT NULL,
+    output       TEXT,
+    is_error     INTEGER NOT NULL DEFAULT 0,
+    duration_ms  INTEGER,
+    verdict      TEXT NOT NULL DEFAULT 'allow',
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Scoped key-value store
@@ -73,6 +117,12 @@ CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_executions_session ON tool_executions(session_id);
 CREATE INDEX IF NOT EXISTS idx_kv_scope ON kv(scope_kind, scope_key);
+CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id);
+CREATE INDEX IF NOT EXISTS idx_turns_parent ON turns(parent_turn_id);
+CREATE INDEX IF NOT EXISTS idx_turns_session_depth ON turns(session_id, branch_depth);
+CREATE INDEX IF NOT EXISTS idx_branch_heads_session ON branch_heads(session_id);
+CREATE INDEX IF NOT EXISTS idx_turn_messages_turn ON turn_messages(turn_id);
+CREATE INDEX IF NOT EXISTS idx_turn_tool_executions_turn ON turn_tool_executions(turn_id);
 
 -- Cognitive Memory
 CREATE TABLE IF NOT EXISTS memories (
@@ -146,6 +196,7 @@ pub struct SessionRow {
     pub public_id: Vec<u8>,
     pub agent_id: String,
     pub metadata: Option<String>,
+    pub active_branch_head_id: Option<i64>,
     pub created_at: String,
 }
 
@@ -169,6 +220,31 @@ pub struct MessageRow {
     pub content: String,
     pub token_count: Option<u64>,
     pub created_at: String,
+}
+
+/// A row from the `turns` table.
+#[derive(Debug, Clone)]
+pub struct TurnRow {
+    pub id: i64,
+    pub public_id: Vec<u8>,
+    pub session_id: i64,
+    pub parent_turn_id: Option<i64>,
+    pub branch_depth: u32,
+    pub created_at: String,
+}
+
+/// A row from the `branch_heads` table.
+#[derive(Debug, Clone)]
+pub struct BranchHeadRow {
+    pub id: i64,
+    pub public_id: Vec<u8>,
+    pub session_id: i64,
+    pub name: String,
+    pub head_turn_id: Option<i64>,
+    pub head_turn_depth: Option<u32>,
+    pub created_from_turn_id: Option<i64>,
+    pub created_at: String,
+    pub is_active: bool,
 }
 
 /// A row from the `tool_executions` table.
