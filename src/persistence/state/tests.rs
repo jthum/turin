@@ -292,6 +292,112 @@ async fn test_search_session_history_queries_messages_tools_events_and_titles() 
 }
 
 #[tokio::test]
+async fn test_search_session_history_follows_active_branch_path_for_messages_and_tools() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session_id = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    store
+        .insert_message(
+            session_id,
+            0,
+            "user",
+            &json!([{"type": "text", "text": "shared root"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .insert_message(
+            session_id,
+            1,
+            "assistant",
+            &json!([{"type": "text", "text": "main branch only message"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .insert_tool_execution(
+            session_id,
+            1,
+            "call_main",
+            "main_branch_tool",
+            &json!({"path": "main.rs"}),
+            Some("main branch output"),
+            false,
+            Some(8),
+            "allow",
+        )
+        .await
+        .unwrap();
+
+    store
+        .create_branch_head_from_turn_index(session_id, "alt", Some(0), true)
+        .await
+        .unwrap();
+    store
+        .insert_message(
+            session_id,
+            1,
+            "assistant",
+            &json!([{"type": "text", "text": "alt branch only message"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .insert_tool_execution(
+            session_id,
+            1,
+            "call_alt",
+            "alt_branch_tool",
+            &json!({"path": "alt.rs"}),
+            Some("alt branch output"),
+            false,
+            Some(9),
+            "allow",
+        )
+        .await
+        .unwrap();
+
+    let main_message_hits = store
+        .search_session_history("main branch only", SessionSearchScope::Messages, 16, 0)
+        .await
+        .unwrap();
+    assert!(main_message_hits.is_empty());
+
+    let alt_message_hits = store
+        .search_session_history("alt branch only", SessionSearchScope::Messages, 16, 0)
+        .await
+        .unwrap();
+    assert_eq!(alt_message_hits.len(), 1);
+    assert_eq!(alt_message_hits[0].kind, SessionSearchHitKind::Message);
+    assert_eq!(alt_message_hits[0].turn_index, Some(1));
+
+    let main_tool_hits = store
+        .search_session_history(
+            "main_branch_tool",
+            SessionSearchScope::ToolExecutions,
+            16,
+            0,
+        )
+        .await
+        .unwrap();
+    assert!(main_tool_hits.is_empty());
+
+    let alt_tool_hits = store
+        .search_session_history("alt_branch_tool", SessionSearchScope::ToolExecutions, 16, 0)
+        .await
+        .unwrap();
+    assert_eq!(alt_tool_hits.len(), 1);
+    assert_eq!(alt_tool_hits[0].kind, SessionSearchHitKind::ToolExecution);
+    assert_eq!(alt_tool_hits[0].turn_index, Some(1));
+}
+
+#[tokio::test]
 async fn test_kv_set_get_delete() {
     let store = StateStore::open_memory().await.unwrap();
     let scope_kind = "session";

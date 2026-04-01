@@ -1,7 +1,14 @@
 use anyhow::{Context, Result};
+use std::collections::{HashMap, HashSet};
 use turin_daemon_protocol::{SessionSearchHitKind, SessionSearchScope};
 
 use super::{SessionRow, SessionSearchRow, StateStore, update_session_title_metadata};
+
+#[derive(Debug)]
+struct RankedSessionSearchHit {
+    row: SessionSearchRow,
+    sort_id: i64,
+}
 
 impl StateStore {
     pub async fn create_session(
@@ -127,15 +134,62 @@ impl StateStore {
             return Ok(Vec::new());
         }
 
-        let mut clauses = Vec::new();
+        let mut hits = Vec::new();
         if matches!(
             scope,
             SessionSearchScope::All | SessionSearchScope::Sessions
         ) {
-            clauses.push(
+            hits.extend(self.search_session_title_hits(&normalized).await?);
+        }
+        if matches!(
+            scope,
+            SessionSearchScope::All | SessionSearchScope::Messages
+        ) {
+            hits.extend(self.search_active_branch_message_hits(&normalized).await?);
+        }
+        if matches!(
+            scope,
+            SessionSearchScope::All | SessionSearchScope::ToolExecutions
+        ) {
+            hits.extend(self.search_active_branch_tool_hits(&normalized).await?);
+        }
+        if matches!(scope, SessionSearchScope::All | SessionSearchScope::Events) {
+            hits.extend(self.search_event_hits(&normalized).await?);
+        }
+
+        if hits.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        hits.sort_by(|left, right| {
+            right
+                .row
+                .score
+                .cmp(&left.row.score)
+                .then_with(|| right.row.created_at.cmp(&left.row.created_at))
+                .then_with(|| right.sort_id.cmp(&left.sort_id))
+        });
+
+        Ok(hits
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|hit| hit.row)
+            .collect())
+    }
+}
+
+impl StateStore {
+    async fn search_session_title_hits(
+        &self,
+        normalized: &str,
+    ) -> Result<Vec<RankedSessionSearchHit>> {
+        let conn = self.connect().await?;
+        let needle = format!("%{normalized}%");
+        let mut rows = conn
+            .query(
                 r#"
-                SELECT 'session' AS kind,
-                       CASE
+                SELECT CASE
                            WHEN LOWER(s.agent_id) = ?2 THEN 1200
                            WHEN LOWER(COALESCE(s.metadata, '')) LIKE (?2 || '%') THEN 1120
                            WHEN LOWER(s.agent_id) LIKE (?2 || '%') THEN 1080
@@ -146,89 +200,196 @@ impl StateStore {
                        s.agent_id,
                        s.metadata,
                        s.created_at,
-                       NULL AS turn_index,
-                       NULL AS role,
-                       NULL AS tool_name,
-                       NULL AS event_type,
                        COALESCE(s.metadata, s.agent_id) AS match_text
                 FROM sessions s
                 WHERE LOWER(s.agent_id) LIKE ?1
                    OR LOWER(COALESCE(s.metadata, '')) LIKE ?1
                 "#,
-            );
+                turso::params![needle, normalized],
+            )
+            .await
+            .context("Failed to search persisted session titles")?;
+
+        let mut hits = Vec::new();
+        while let Some(row) = rows.next().await? {
+            hits.push(RankedSessionSearchHit {
+                sort_id: row.get::<i64>(1)?,
+                row: SessionSearchRow {
+                    kind: SessionSearchHitKind::Session,
+                    score: row.get::<i64>(0)?,
+                    public_id: row.get::<Vec<u8>>(2)?,
+                    agent_id: row.get::<String>(3)?,
+                    metadata: row.get::<Option<String>>(4)?,
+                    created_at: row.get::<String>(5)?,
+                    turn_index: None,
+                    role: None,
+                    tool_name: None,
+                    event_type: None,
+                    match_text: row.get::<String>(6)?,
+                },
+            });
         }
-        if matches!(
-            scope,
-            SessionSearchScope::All | SessionSearchScope::Messages
-        ) {
-            clauses.push(
+        Ok(hits)
+    }
+
+    async fn search_active_branch_message_hits(
+        &self,
+        normalized: &str,
+    ) -> Result<Vec<RankedSessionSearchHit>> {
+        let conn = self.connect().await?;
+        let needle = format!("%{normalized}%");
+        let mut rows = conn
+            .query(
                 r#"
-                SELECT 'message' AS kind,
-                       CASE
-                           WHEN LOWER(m.role) = ?2 THEN 860
-                           WHEN instr(LOWER(m.content), ?2) = 1 THEN 820
+                SELECT CASE
+                           WHEN LOWER(tm.role) = ?2 THEN 860
+                           WHEN instr(LOWER(tm.content), ?2) = 1 THEN 820
                            ELSE 740
                        END AS score,
-                       m.id AS sort_id,
+                       tm.id AS sort_id,
                        s.public_id,
                        s.agent_id,
                        s.metadata,
-                       m.created_at,
-                       m.turn_index,
-                       m.role,
-                       NULL AS tool_name,
-                       NULL AS event_type,
-                       m.content AS match_text
-                FROM messages m
-                JOIN sessions s ON s.id = m.session_id
-                WHERE LOWER(m.content) LIKE ?1
-                   OR LOWER(m.role) LIKE ?1
+                       tm.created_at,
+                       t.branch_depth,
+                       tm.role,
+                       tm.content,
+                       t.session_id,
+                       t.id
+                FROM turn_messages tm
+                JOIN turns t ON t.id = tm.turn_id
+                JOIN sessions s ON s.id = t.session_id
+                WHERE LOWER(tm.content) LIKE ?1
+                   OR LOWER(tm.role) LIKE ?1
                 "#,
-            );
+                turso::params![needle, normalized],
+            )
+            .await
+            .context("Failed to search active-branch messages")?;
+
+        let mut active_turn_ids_by_session = HashMap::<i64, HashSet<i64>>::new();
+        let mut hits = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let session_id = row.get::<i64>(9)?;
+            let turn_id = row.get::<i64>(10)?;
+            if !self
+                .active_branch_turn_ids_contains(
+                    session_id,
+                    turn_id,
+                    &mut active_turn_ids_by_session,
+                )
+                .await?
+            {
+                continue;
+            }
+            hits.push(RankedSessionSearchHit {
+                sort_id: row.get::<i64>(1)?,
+                row: SessionSearchRow {
+                    kind: SessionSearchHitKind::Message,
+                    score: row.get::<i64>(0)?,
+                    public_id: row.get::<Vec<u8>>(2)?,
+                    agent_id: row.get::<String>(3)?,
+                    metadata: row.get::<Option<String>>(4)?,
+                    created_at: row.get::<String>(5)?,
+                    turn_index: Some(row.get::<i64>(6)? as u32),
+                    role: Some(row.get::<String>(7)?),
+                    tool_name: None,
+                    event_type: None,
+                    match_text: row.get::<String>(8)?,
+                },
+            });
         }
-        if matches!(
-            scope,
-            SessionSearchScope::All | SessionSearchScope::ToolExecutions
-        ) {
-            clauses.push(
+
+        Ok(hits)
+    }
+
+    async fn search_active_branch_tool_hits(
+        &self,
+        normalized: &str,
+    ) -> Result<Vec<RankedSessionSearchHit>> {
+        let conn = self.connect().await?;
+        let needle = format!("%{normalized}%");
+        let mut rows = conn
+            .query(
                 r#"
-                SELECT 'tool_execution' AS kind,
-                       CASE
-                           WHEN LOWER(t.tool_name) = ?2 THEN 900
-                           WHEN LOWER(t.tool_name) LIKE (?2 || '%') THEN 860
-                           WHEN instr(LOWER(COALESCE(t.args, '')), ?2) = 1 THEN 760
-                           WHEN instr(LOWER(COALESCE(t.output, '')), ?2) = 1 THEN 740
+                SELECT CASE
+                           WHEN LOWER(tt.tool_name) = ?2 THEN 900
+                           WHEN LOWER(tt.tool_name) LIKE (?2 || '%') THEN 860
+                           WHEN instr(LOWER(COALESCE(tt.args, '')), ?2) = 1 THEN 760
+                           WHEN instr(LOWER(COALESCE(tt.output, '')), ?2) = 1 THEN 740
                            ELSE 700
                        END AS score,
-                       t.id AS sort_id,
+                       tt.id AS sort_id,
                        s.public_id,
                        s.agent_id,
                        s.metadata,
-                       t.created_at,
-                       t.turn_index,
-                       NULL AS role,
-                       t.tool_name,
-                       NULL AS event_type,
+                       tt.created_at,
+                       t.branch_depth,
+                       tt.tool_name,
                        TRIM(
-                           t.tool_name || ' ' ||
-                           COALESCE(t.args, '') || ' ' ||
-                           COALESCE(t.output, '') || ' ' ||
-                           COALESCE(t.verdict, '')
-                       ) AS match_text
-                FROM tool_executions t
+                           tt.tool_name || ' ' ||
+                           COALESCE(tt.args, '') || ' ' ||
+                           COALESCE(tt.output, '') || ' ' ||
+                           COALESCE(tt.verdict, '')
+                       ) AS match_text,
+                       t.session_id,
+                       t.id
+                FROM turn_tool_executions tt
+                JOIN turns t ON t.id = tt.turn_id
                 JOIN sessions s ON s.id = t.session_id
-                WHERE LOWER(t.tool_name) LIKE ?1
-                   OR LOWER(COALESCE(t.args, '')) LIKE ?1
-                   OR LOWER(COALESCE(t.output, '')) LIKE ?1
-                   OR LOWER(COALESCE(t.verdict, '')) LIKE ?1
+                WHERE LOWER(tt.tool_name) LIKE ?1
+                   OR LOWER(COALESCE(tt.args, '')) LIKE ?1
+                   OR LOWER(COALESCE(tt.output, '')) LIKE ?1
+                   OR LOWER(COALESCE(tt.verdict, '')) LIKE ?1
                 "#,
-            );
+                turso::params![needle, normalized],
+            )
+            .await
+            .context("Failed to search active-branch tool executions")?;
+
+        let mut active_turn_ids_by_session = HashMap::<i64, HashSet<i64>>::new();
+        let mut hits = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let session_id = row.get::<i64>(9)?;
+            let turn_id = row.get::<i64>(10)?;
+            if !self
+                .active_branch_turn_ids_contains(
+                    session_id,
+                    turn_id,
+                    &mut active_turn_ids_by_session,
+                )
+                .await?
+            {
+                continue;
+            }
+            hits.push(RankedSessionSearchHit {
+                sort_id: row.get::<i64>(1)?,
+                row: SessionSearchRow {
+                    kind: SessionSearchHitKind::ToolExecution,
+                    score: row.get::<i64>(0)?,
+                    public_id: row.get::<Vec<u8>>(2)?,
+                    agent_id: row.get::<String>(3)?,
+                    metadata: row.get::<Option<String>>(4)?,
+                    created_at: row.get::<String>(5)?,
+                    turn_index: Some(row.get::<i64>(6)? as u32),
+                    role: None,
+                    tool_name: Some(row.get::<String>(7)?),
+                    event_type: None,
+                    match_text: row.get::<String>(8)?,
+                },
+            });
         }
-        if matches!(scope, SessionSearchScope::All | SessionSearchScope::Events) {
-            clauses.push(
+
+        Ok(hits)
+    }
+
+    async fn search_event_hits(&self, normalized: &str) -> Result<Vec<RankedSessionSearchHit>> {
+        let conn = self.connect().await?;
+        let needle = format!("%{normalized}%");
+        let mut rows = conn
+            .query(
                 r#"
-                SELECT 'event' AS kind,
-                       CASE
+                SELECT CASE
                            WHEN LOWER(e.event_type) = ?2 THEN 820
                            WHEN LOWER(e.event_type) LIKE (?2 || '%') THEN 780
                            ELSE 680
@@ -238,69 +399,59 @@ impl StateStore {
                        s.agent_id,
                        s.metadata,
                        e.created_at,
-                       NULL AS turn_index,
-                       NULL AS role,
-                       NULL AS tool_name,
                        e.event_type,
-                       e.payload AS match_text
+                       e.payload
                 FROM events e
                 JOIN sessions s ON s.id = e.session_id
                 WHERE LOWER(e.event_type) LIKE ?1
                    OR LOWER(e.payload) LIKE ?1
                 "#,
-            );
-        }
-
-        if clauses.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let sql = format!(
-            r#"
-            SELECT *
-            FROM (
-                {}
-            ) search_hits
-            ORDER BY score DESC, created_at DESC, sort_id DESC
-            LIMIT ?3 OFFSET ?4
-            "#,
-            clauses.join("\nUNION ALL\n")
-        );
-
-        let conn = self.connect().await?;
-        let needle = format!("%{normalized}%");
-        let mut rows = conn
-            .query(
-                &sql,
-                turso::params![needle, normalized, limit as i64, offset as i64],
+                turso::params![needle, normalized],
             )
             .await
-            .context("Failed to search persisted session history")?;
+            .context("Failed to search persisted events")?;
 
         let mut hits = Vec::new();
         while let Some(row) = rows.next().await? {
-            let kind = match row.get::<String>(0)?.as_str() {
-                "session" => SessionSearchHitKind::Session,
-                "message" => SessionSearchHitKind::Message,
-                "tool_execution" => SessionSearchHitKind::ToolExecution,
-                "event" => SessionSearchHitKind::Event,
-                other => anyhow::bail!("Unexpected persisted search hit kind '{}'", other),
-            };
-            hits.push(SessionSearchRow {
-                kind,
-                score: row.get::<i64>(1)?,
-                public_id: row.get::<Vec<u8>>(3)?,
-                agent_id: row.get::<String>(4)?,
-                metadata: row.get::<Option<String>>(5)?,
-                created_at: row.get::<String>(6)?,
-                turn_index: row.get::<Option<i64>>(7)?.map(|value| value as u32),
-                role: row.get::<Option<String>>(8)?,
-                tool_name: row.get::<Option<String>>(9)?,
-                event_type: row.get::<Option<String>>(10)?,
-                match_text: row.get::<String>(11)?,
+            hits.push(RankedSessionSearchHit {
+                sort_id: row.get::<i64>(1)?,
+                row: SessionSearchRow {
+                    kind: SessionSearchHitKind::Event,
+                    score: row.get::<i64>(0)?,
+                    public_id: row.get::<Vec<u8>>(2)?,
+                    agent_id: row.get::<String>(3)?,
+                    metadata: row.get::<Option<String>>(4)?,
+                    created_at: row.get::<String>(5)?,
+                    turn_index: None,
+                    role: None,
+                    tool_name: None,
+                    event_type: Some(row.get::<String>(6)?),
+                    match_text: row.get::<String>(7)?,
+                },
             });
         }
 
         Ok(hits)
+    }
+
+    async fn active_branch_turn_ids_contains(
+        &self,
+        session_id: i64,
+        turn_id: i64,
+        active_turn_ids_by_session: &mut HashMap<i64, HashSet<i64>>,
+    ) -> Result<bool> {
+        if let Some(turn_ids) = active_turn_ids_by_session.get(&session_id) {
+            return Ok(turn_ids.contains(&turn_id));
+        }
+
+        let turn_ids = self
+            .active_branch_path_turns(session_id)
+            .await?
+            .into_iter()
+            .map(|turn| turn.id)
+            .collect::<HashSet<_>>();
+        let contains = turn_ids.contains(&turn_id);
+        active_turn_ids_by_session.insert(session_id, turn_ids);
+        Ok(contains)
     }
 }
