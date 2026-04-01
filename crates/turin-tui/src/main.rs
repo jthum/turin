@@ -186,6 +186,9 @@ enum InputMode {
     SubmitPrompt {
         session_id: String,
     },
+    CreateSessionBranch {
+        session_id: String,
+    },
     ConfirmDiscard {
         action: PendingDraftAction,
     },
@@ -716,6 +719,22 @@ fn handle_key(
         KeyCode::Char('F') if app.tab == TabKind::Search => app.clear_search_query(command_tx)?,
         KeyCode::Char('[') if app.tab == TabKind::Search => app.prev_search_page(command_tx)?,
         KeyCode::Char(']') if app.tab == TabKind::Search => app.next_search_page(command_tx)?,
+        KeyCode::Char('[')
+            if matches!(
+                app.tab,
+                TabKind::Chat | TabKind::LiveSessions | TabKind::Sessions
+            ) =>
+        {
+            app.checkout_adjacent_session_branch(command_tx, -1)?
+        }
+        KeyCode::Char(']')
+            if matches!(
+                app.tab,
+                TabKind::Chat | TabKind::LiveSessions | TabKind::Sessions
+            ) =>
+        {
+            app.checkout_adjacent_session_branch(command_tx, 1)?
+        }
         KeyCode::Char('v') if app.tab == TabKind::Connections => {
             app.load_current_connection_into_draft()
         }
@@ -731,6 +750,14 @@ fn handle_key(
             ) =>
         {
             app.start_edit_session_title()
+        }
+        KeyCode::Char('B')
+            if matches!(
+                app.tab,
+                TabKind::Chat | TabKind::LiveSessions | TabKind::Sessions
+            ) =>
+        {
+            app.start_create_session_branch()
         }
         KeyCode::Char('E') if app.tab == TabKind::Connections => {
             app.ensure_local_daemon_for_draft()
@@ -984,6 +1011,7 @@ fn handle_input_mode(
             {
                 let message = match app.input_mode.as_ref() {
                     Some(InputMode::SubmitPrompt { .. }) => "Prompt cannot be empty",
+                    Some(InputMode::CreateSessionBranch { .. }) => "Branch name cannot be empty",
                     Some(InputMode::SaveProfile { .. })
                     | Some(InputMode::DuplicateProfile { .. })
                     | Some(InputMode::RenameProfile { .. }) => "Profile name cannot be empty",
@@ -1026,6 +1054,17 @@ fn handle_input_mode(
                         OperatorCommand::SubmitPrompt {
                             session_id,
                             prompt: input,
+                        },
+                    )?;
+                }
+                Some(InputMode::CreateSessionBranch { session_id }) => {
+                    send_command(
+                        command_tx,
+                        OperatorCommand::CreateSessionBranch {
+                            session_id,
+                            name: input,
+                            from_turn_index: None,
+                            activate: true,
                         },
                     )?;
                 }
@@ -3277,6 +3316,7 @@ impl TuiApp {
     fn input_title(&self) -> &'static str {
         match self.input_mode.as_ref() {
             Some(InputMode::SubmitPrompt { .. }) => "Prompt",
+            Some(InputMode::CreateSessionBranch { .. }) => "Create Branch",
             Some(InputMode::ConfirmDiscard { .. }) => "Discard Changes",
             Some(InputMode::SaveProfile { .. }) => "Save Profile",
             Some(InputMode::DuplicateProfile { .. }) => "Duplicate Profile",
@@ -3302,6 +3342,9 @@ impl TuiApp {
         match self.input_mode.as_ref() {
             Some(InputMode::SubmitPrompt { .. }) => {
                 "Enter submits. Esc cancels. Left/Right/Home/End move the cursor. Paste is inserted as one block.".to_string()
+            }
+            Some(InputMode::CreateSessionBranch { .. }) => {
+                "Enter creates a new branch from the current active head and checks it out. Esc cancels.".to_string()
             }
             Some(InputMode::ConfirmDiscard { .. }) => {
                 "Press y or Enter to discard changes. Press n or Esc to cancel.".to_string()
@@ -3445,6 +3488,15 @@ impl TuiApp {
         }
     }
 
+    fn start_create_session_branch(&mut self) {
+        let Some(session_id) = self.current_detail_session_id() else {
+            self.dashboard
+                .record_error("No session is currently selected for branching");
+            return;
+        };
+        self.begin_input_mode(InputMode::CreateSessionBranch { session_id }, "");
+    }
+
     fn start_chat_prompt_input(&mut self) {
         match self.current_chat_sidebar_item() {
             Some(ChatSidebarItem::Agent { agent_id, label }) => {
@@ -3486,6 +3538,55 @@ impl TuiApp {
                 "The selected chat session is not live. Resume it first, or open a fresh live session.",
             );
         }
+    }
+
+    fn checkout_adjacent_session_branch(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+        step: isize,
+    ) -> Result<()> {
+        let Some(session_id) = self.current_detail_session_id() else {
+            self.dashboard
+                .record_error("No session is currently selected for branch checkout");
+            return Ok(());
+        };
+
+        let Some(detail) = self.dashboard.session_detail(&session_id) else {
+            self.requested_session_detail = None;
+            send_command(
+                command_tx,
+                OperatorCommand::LoadSessionDetail {
+                    session_id: session_id.clone(),
+                },
+            )?;
+            self.dashboard.record_info(format!(
+                "Loading branch detail for session {}",
+                tail(&session_id, 8)
+            ));
+            return Ok(());
+        };
+
+        if detail.branches.len() < 2 {
+            self.dashboard
+                .record_info("The selected session only has one branch");
+            return Ok(());
+        }
+
+        let active_index = detail
+            .branches
+            .iter()
+            .position(|branch| branch.active)
+            .unwrap_or(0);
+        let len = detail.branches.len() as isize;
+        let next_index = (active_index as isize + step).rem_euclid(len) as usize;
+        let branch = &detail.branches[next_index];
+        send_command(
+            command_tx,
+            OperatorCommand::CheckoutSessionBranch {
+                session_id,
+                branch: branch.branch_id.clone(),
+            },
+        )
     }
 
     fn start_save_profile_input(&mut self, make_default: bool) {
@@ -5595,7 +5696,7 @@ impl TuiApp {
         let shared = "0-9 switch views | Tab cycle | arrows/j/k move | r refresh | q quit";
         let scoped = match self.tab {
             TabKind::Chat => {
-                "Enter opens/resumes or prompts | p prompt | ,/. cycle panes | h thinking pane | t inline thinking | v preview | f follow-latest | PgUp/PgDn scroll | Home/End jump"
+                "Enter opens/resumes or prompts | p prompt | B create branch | [ / ] checkout prev/next branch | ,/. cycle panes | h thinking pane | t inline thinking | v preview | f follow-latest | PgUp/PgDn scroll | Home/End jump"
             }
             TabKind::Search => {
                 "/ edits query | m cycles scope | [ / ] page | F clears query | Enter opens selected hit"
@@ -5604,8 +5705,12 @@ impl TuiApp {
                 "Enter/s connect selected | C connect draft | T test draft | P test selected | E ensure draft local | S update selected | R load recent | [/ ] pick recent | v load current | b load selected | m/o cycle draft | t/g edit draft | a/A save as named | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
             }
             TabKind::Agents => "n or Enter opens a live session for the selected agent",
-            TabKind::LiveSessions => "p or Enter prompts | c cancel session | x kill session",
-            TabKind::Sessions => "e or Enter resumes the selected stored session",
+            TabKind::LiveSessions => {
+                "p or Enter prompts | B create branch | [ / ] checkout prev/next branch | c cancel session | x kill session"
+            }
+            TabKind::Sessions => {
+                "e or Enter resumes the selected stored session | B create branch | [ / ] checkout prev/next branch"
+            }
             TabKind::Tasks => "/ edit filter | F clear filter | c cancels the selected task",
             TabKind::Channels => {
                 "/ edit filter | F clear filter | [ / ] select access room | m cycle pairing | s/o cycle supported enum settings | p/u/b edit pairing/allowed/banned users | a approve pending | x reject pending | v revoke approved"
