@@ -79,6 +79,19 @@ async fn queue_push_many(
     Ok(())
 }
 
+fn current_session_store_selector(
+    execution_ctx: &ActiveHarnessExecutionContext,
+) -> Result<StoreSelector, String> {
+    execution_ctx
+        .lock()
+        .map_err(|_| "execution context mutex poisoned".to_string())
+        .map(|lock| {
+            lock.session_store_selector
+                .clone()
+                .unwrap_or_else(|| StoreSelector::Alias("state".to_string()))
+        })
+}
+
 pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
     let agent_table = lua.create_table()?;
     let session_ns = lua.create_table()?;
@@ -307,16 +320,17 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
     // agent.session.load(session_id)
     {
         let manager = app_data.store_manager.clone();
+        let execution_ctx = app_data.execution_ctx.clone();
         session_ns.set(
             "load",
             lua.create_function(move |lua, session_id: String| {
                 let manager = manager.clone();
+                let execution_ctx = execution_ctx.clone();
                 let result = bridge_async_result(async move {
                     let session_ref =
                         parse_session_reference(&session_id).map_err(|e| e.to_string())?;
-                    let selector = session_ref
-                        .store_selector
-                        .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+                    let implicit_selector = current_session_store_selector(&execution_ctx)?;
+                    let selector = session_ref.store_selector.unwrap_or(implicit_selector);
                     let store = manager.open(&selector).await.map_err(|e| e.to_string())?;
                     let uuid =
                         uuid::Uuid::parse_str(&session_ref.public_id).map_err(|e| e.to_string())?;
@@ -340,6 +354,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
     // agent.session.list(limit?, offset?)
     {
         let manager = app_data.store_manager.clone();
+        let execution_ctx = app_data.execution_ctx.clone();
         session_ns.set(
             "list",
             lua.create_function(
@@ -347,8 +362,10 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     let limit = limit.unwrap_or(20);
                     let offset = offset.unwrap_or(0);
                     let manager = manager.clone();
+                    let execution_ctx = execution_ctx.clone();
                     let result = bridge_async_result(async move {
-                        let store = manager.get_default().await.map_err(|e| e.to_string())?;
+                        let selector = current_session_store_selector(&execution_ctx)?;
+                        let store = manager.open(&selector).await.map_err(|e| e.to_string())?;
                         store
                             .list_session_rows(limit, offset)
                             .await

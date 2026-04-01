@@ -337,11 +337,15 @@ async fn resolve_cache_session(
 ) -> Result<(i64, String, StoreSelector), String> {
     let (public_id, selector) = if let Some(requested) = requested_session_id {
         let session_ref = parse_session_reference(&requested).map_err(|e| e.to_string())?;
+        let implicit_selector = execution_ctx
+            .lock()
+            .map_err(|_| "execution context mutex poisoned".to_string())?
+            .session_store_selector
+            .clone()
+            .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
         (
             session_ref.public_id,
-            session_ref
-                .store_selector
-                .unwrap_or_else(|| StoreSelector::Alias("state".to_string())),
+            session_ref.store_selector.unwrap_or(implicit_selector),
         )
     } else {
         let lock = execution_ctx
@@ -379,9 +383,13 @@ fn resolve_cache_store_selector(
 ) -> Result<StoreSelector, String> {
     if let Some(requested) = requested_session_id {
         let session_ref = parse_session_reference(requested).map_err(|e| e.to_string())?;
-        return Ok(session_ref
-            .store_selector
-            .unwrap_or_else(|| StoreSelector::Alias("state".to_string())));
+        let implicit_selector = execution_ctx
+            .lock()
+            .map_err(|_| "execution context mutex poisoned".to_string())?
+            .session_store_selector
+            .clone()
+            .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+        return Ok(session_ref.store_selector.unwrap_or(implicit_selector));
     }
 
     let lock = execution_ctx

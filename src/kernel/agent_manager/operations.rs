@@ -77,6 +77,7 @@ impl AgentManager {
         agent_id: &str,
         slot_id: Option<&str>,
         initial_state_selector: Option<StoreSelector>,
+        initial_default_store_selector: Option<StoreSelector>,
     ) -> Result<LiveSessionSnapshot> {
         let runtime_key = RuntimeSlotKey {
             agent_id: agent_id.to_string(),
@@ -85,7 +86,11 @@ impl AgentManager {
                 .unwrap_or_else(|| format!("sl_{}", uuid::Uuid::now_v7().simple())),
         };
         let handle = self
-            .ensure_runtime_slot_in_store(runtime_key.clone(), initial_state_selector)
+            .ensure_runtime_slot_in_store(
+                runtime_key.clone(),
+                initial_state_selector,
+                initial_default_store_selector,
+            )
             .await?;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
         let session_id = loop {

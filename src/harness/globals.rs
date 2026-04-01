@@ -39,6 +39,7 @@ pub struct HarnessEventContext {
 pub struct HarnessExecutionContext {
     pub session_id: Option<String>,
     pub session_store_selector: Option<StoreSelector>,
+    pub default_store_selector: Option<StoreSelector>,
     pub session_mode: Option<crate::kernel::config::AgentMode>,
     pub trace_id: Option<String>,
     pub queue: Option<SessionQueue>,

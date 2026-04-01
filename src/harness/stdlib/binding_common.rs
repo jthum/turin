@@ -398,12 +398,28 @@ pub(crate) fn resolve_scoped_store_selector(
     selector: &ContextSelector,
     explicit: Option<StoreSelector>,
 ) -> LuaResult<Option<StoreSelector>> {
+    let scope = selector_scope_ref(selector).map_err(mlua::Error::runtime)?;
+    resolve_contextual_store_selector(
+        app_data,
+        &scope.scope_kind,
+        scope.raw_scope_key.as_deref(),
+        &scope.namespace,
+        explicit,
+    )
+}
+
+pub(crate) fn resolve_contextual_store_selector(
+    app_data: &HarnessAppData,
+    scope_kind: &str,
+    raw_scope_key: Option<&str>,
+    namespace: &str,
+    explicit: Option<StoreSelector>,
+) -> LuaResult<Option<StoreSelector>> {
     if explicit.is_some() {
         return Ok(explicit);
     }
-    let scope = selector_scope_ref(selector).map_err(mlua::Error::runtime)?;
-    if scope.scope_kind == "session"
-        && let Some(raw_scope_key) = scope.raw_scope_key.as_deref()
+    if scope_kind == "session"
+        && let Some(raw_scope_key) = raw_scope_key
         && let Ok(lock) = app_data.execution_ctx.lock()
         && lock
             .session_id
@@ -414,11 +430,16 @@ pub(crate) fn resolve_scoped_store_selector(
     {
         return Ok(Some(selector));
     }
+    if let Ok(lock) = app_data.execution_ctx.lock()
+        && let Some(selector) = lock.default_store_selector.clone()
+    {
+        return Ok(Some(selector));
+    }
     Ok(resolve_scope_store_selector(
         &app_data.config,
-        &scope.scope_kind,
-        scope.raw_scope_key.as_deref(),
-        &scope.namespace,
+        scope_kind,
+        raw_scope_key,
+        namespace,
     ))
 }
 
@@ -447,12 +468,15 @@ pub(crate) fn resolve_memory_search_request(
         for source in &mut resolved.sources {
             if source.store_selector.is_none() {
                 source.store_selector = common_store_selector.clone().or_else(|| {
-                    resolve_scope_store_selector(
-                        &app_data.config,
+                    resolve_contextual_store_selector(
+                        app_data,
                         &source.scope_kind,
                         Some(source.raw_scope_key.as_str()),
                         &source.namespace,
+                        None,
                     )
+                    .ok()
+                    .flatten()
                 });
             }
         }

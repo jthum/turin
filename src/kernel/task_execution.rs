@@ -108,6 +108,7 @@ impl ExecutionHost {
             engine.set_active_session(
                 Some(&session_id),
                 Some(session.store_selector.clone()),
+                session.default_store_selector.clone(),
                 Some(session.mode.clone()),
             );
             engine.set_active_trace_id(Some(&task.trace_id));
@@ -124,7 +125,7 @@ impl ExecutionHost {
         let runtime = self.runtime_for_session(session);
         let harness = runtime.lock_engine();
         if let Some(ref engine) = *harness {
-            engine.set_active_session(None, None, None);
+            engine.set_active_session(None, None, None, None);
             engine.set_active_trace_id(None);
             engine.set_active_event_context(None);
         }

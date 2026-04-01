@@ -10,11 +10,12 @@ use turin::inference::provider::{
 };
 use turin::kernel::Kernel;
 use turin::kernel::config::{
-    AgentConfig, AgentMode, EmbeddingConfig, GovernanceConfig, GovernanceGrantsConfig,
-    GovernanceProfile, HarnessConfig, KernelConfig, NamedStoreConfig, PersistenceConfig,
-    ProviderConfig, ScopedStorePlacementConfig, StoreTargetConfig, TurinConfig,
+    AgentConfig, AgentMode, ContextPersistenceConfig, EmbeddingConfig, GovernanceConfig,
+    GovernanceGrantsConfig, GovernanceProfile, HarnessConfig, KernelConfig, NamedStoreConfig,
+    PersistenceConfig, ProviderConfig, ScopedStorePlacementConfig, StoreTargetConfig, TurinConfig,
 };
 use turin::kernel::policy::PolicyScope;
+use turin::persistence::manager::StoreSelector;
 
 struct ToolMockProvider {
     tool_name: String,
@@ -3104,6 +3105,184 @@ FROM code_chunks;
         )
         .await?;
     }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_agent_persistence_store_overrides_default_scoped_data_store() -> Result<()> {
+    let tmp = tempdir()?;
+    let top_state_db = tmp.path().join("top-state.db");
+    let agent_state_db = tmp.path().join("agent-state.db");
+    let agent_store_db = tmp.path().join("agent-store.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    let harness_code = r#"
+        function on_turn_prepare(ctx)
+            local ok, err = kv.set("agent_marker", "agent")
+            if not ok then error("kv.set failed: " .. tostring(err)) end
+            local agent_value, agent_err = kv.get("agent_marker")
+            if agent_err ~= nil then error("kv.get failed: " .. tostring(agent_err)) end
+            if agent_value ~= "agent" then
+                error("kv.get mismatch: " .. tostring(agent_value))
+            end
+
+            local sok, serr = session.set("session_marker", "session")
+            if not sok then error("session.set failed: " .. tostring(serr)) end
+            local session_value, session_err = session.get("session_marker")
+            if session_err ~= nil then error("session.get failed: " .. tostring(session_err)) end
+            if session_value ~= "session" then
+                error("session.get mismatch: " .. tostring(session_value))
+            end
+
+            local current_session_id = agent.session.identity().session_id
+            local loaded, load_err = agent.session.load(current_session_id)
+            if load_err ~= nil then error("agent.session.load failed: " .. tostring(load_err)) end
+            if loaded == nil or loaded.session_id ~= current_session_id then
+                error("agent.session.load mismatch")
+            end
+
+            local sessions, list_err = agent.session.list()
+            if list_err ~= nil then error("agent.session.list failed: " .. tostring(list_err)) end
+            local found = false
+            for _, row in ipairs(sessions) do
+                if row.session_id == current_session_id then
+                    found = true
+                    break
+                end
+            end
+            if not found then
+                error("agent.session.list missing current session")
+            end
+
+            return ALLOW
+        end
+    "#;
+    std::fs::write(harness_dir.join("main.lua"), harness_code)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let cfg = TurinConfig {
+        tools: Default::default(),
+        agent: AgentConfig {
+            tools: Default::default(),
+            id: "default".to_string(),
+            system_prompt: "agent store override".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+            persistence: ContextPersistenceConfig {
+                state: Some(StoreTargetConfig::from_path(
+                    agent_state_db.to_string_lossy().to_string(),
+                )),
+                store: Some(StoreTargetConfig::from_path(
+                    agent_store_db.to_string_lossy().to_string(),
+                )),
+            },
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_string_lossy().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig::with_state_path(top_state_db.to_string_lossy().to_string()),
+        harness: HarnessConfig {
+            directory: harness_dir.to_string_lossy().to_string(),
+            fs_root: ".".to_string(),
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: None,
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(cfg).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    let session_uuid = uuid::Uuid::parse_str(session.identity.session_id())?;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise agent store override".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    let top_store = kernel.store_manager().get_default().await?;
+    assert!(
+        top_store
+            .get_session_by_public_id(session_uuid)
+            .await?
+            .is_none(),
+        "top-level state DB should not own the session"
+    );
+
+    let agent_state_store = kernel
+        .store_manager()
+        .open(&StoreSelector::Path(
+            agent_state_db.to_string_lossy().to_string(),
+        ))
+        .await?;
+    assert!(
+        agent_state_store
+            .get_session_by_public_id(session_uuid)
+            .await?
+            .is_some(),
+        "agent state DB should own the session"
+    );
+    assert_eq!(
+        agent_state_store
+            .kv_get("session", session.identity.session_id(), "session_marker")
+            .await?
+            .as_deref(),
+        Some("session")
+    );
+    assert_eq!(
+        agent_state_store
+            .kv_get("agent", "default", "agent_marker")
+            .await?,
+        None
+    );
+
+    let agent_store = kernel
+        .store_manager()
+        .open(&StoreSelector::Path(
+            agent_store_db.to_string_lossy().to_string(),
+        ))
+        .await?;
+    assert_eq!(
+        agent_store
+            .kv_get("agent", "default", "agent_marker")
+            .await?
+            .as_deref(),
+        Some("agent")
+    );
+    assert_eq!(
+        agent_store
+            .kv_get("session", session.identity.session_id(), "session_marker")
+            .await?,
+        None
+    );
+
     Ok(())
 }
 

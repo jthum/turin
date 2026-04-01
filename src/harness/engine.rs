@@ -489,6 +489,7 @@ impl HarnessEngine {
         &self,
         session_id: Option<&str>,
         store_selector: Option<crate::persistence::manager::StoreSelector>,
+        default_store_selector: Option<crate::persistence::manager::StoreSelector>,
         mode: Option<crate::kernel::config::AgentMode>,
     ) {
         if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
@@ -496,6 +497,7 @@ impl HarnessEngine {
         {
             lock.session_id = session_id.map(|s| s.to_string());
             lock.session_store_selector = store_selector;
+            lock.default_store_selector = default_store_selector;
             lock.session_mode = mode;
         }
     }

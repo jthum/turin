@@ -4,6 +4,7 @@ use anyhow::{Context, Result, anyhow};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{info, warn};
 
+use crate::kernel::config::StoreTargetConfig;
 use crate::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::{SessionState, SessionStatus};
@@ -23,18 +24,22 @@ impl ExecutionHost {
 
     /// Create a new session bound to a specific configured agent profile.
     pub async fn create_session_for_agent(&self, agent_id: &str) -> SessionState {
-        self.create_session_for_agent_in_store(agent_id, None).await
+        self.create_session_for_agent_in_store(agent_id, None, None)
+            .await
     }
 
     pub async fn create_session_for_agent_in_store(
         &self,
         agent_id: &str,
-        store_selector: Option<StoreSelector>,
+        state_selector: Option<StoreSelector>,
+        default_store_selector: Option<StoreSelector>,
     ) -> SessionState {
         let mut session = SessionState::new();
         session.identity.set_agent_id(agent_id.to_string());
         session.store_selector =
-            store_selector.unwrap_or_else(|| self.resolve_agent_state_selector(agent_id));
+            state_selector.unwrap_or_else(|| self.resolve_agent_state_selector(agent_id));
+        session.default_store_selector =
+            default_store_selector.or_else(|| self.resolve_agent_default_store_selector(agent_id));
         self.attach_session_persistence(&mut session, true).await;
         session
     }
@@ -83,6 +88,8 @@ impl ExecutionHost {
         session.identity = RuntimeIdentity::new(session_ref.public_id, agent_id);
         session.internal_id = Some(row.id);
         session.store_selector = store_selector;
+        session.default_store_selector =
+            session_default_store_selector_from_metadata(row.metadata.as_deref());
         session.history = history;
         session.turn_index = turn_index;
         session.total_input_tokens = total_input_tokens;
@@ -99,8 +106,9 @@ impl ExecutionHost {
             if create_row
                 && let Ok(public_id) = uuid::Uuid::parse_str(session.identity.session_id())
             {
+                let metadata = session_create_metadata(session);
                 match store
-                    .create_session(public_id, session.identity.agent_id(), None)
+                    .create_session(public_id, session.identity.agent_id(), metadata.as_deref())
                     .await
                 {
                     Ok(id) => session.internal_id = Some(id),
@@ -148,6 +156,36 @@ impl ExecutionHost {
                     "Falling back to default state selector for agent"
                 );
                 StoreSelector::Alias("state".to_string())
+            })
+    }
+
+    pub(crate) fn resolve_agent_default_store_selector(
+        &self,
+        agent_id: &str,
+    ) -> Option<StoreSelector> {
+        let context = if agent_id == self.config.agent.id {
+            Some(&self.config.agent.persistence)
+        } else {
+            self.config
+                .agents
+                .get(agent_id)
+                .map(|agent| &agent.persistence)
+        };
+        let context = context?;
+        if context.store.is_none() && context.state.is_none() {
+            return None;
+        }
+        self.config
+            .persistence
+            .resolve_context_store_selector(Some(context))
+            .map(Some)
+            .unwrap_or_else(|err| {
+                warn!(
+                    agent_id = %agent_id,
+                    error = %err,
+                    "Falling back to default store selector for agent"
+                );
+                None
             })
     }
 
@@ -253,6 +291,44 @@ impl ExecutionHost {
 
         session.status = SessionStatus::Inactive;
         Ok(())
+    }
+}
+
+fn session_create_metadata(session: &SessionState) -> Option<String> {
+    let default_store = store_target_from_selector(session.default_store_selector.as_ref()?)?;
+    Some(
+        serde_json::json!({
+            "_turin": {
+                "default_store": default_store,
+            }
+        })
+        .to_string(),
+    )
+}
+
+fn session_default_store_selector_from_metadata(metadata: Option<&str>) -> Option<StoreSelector> {
+    let parsed = metadata
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .and_then(|value| value.get("_turin").cloned())
+        .and_then(|value| value.get("default_store").cloned())
+        .and_then(|value| serde_json::from_value::<StoreTargetConfig>(value).ok());
+
+    parsed.and_then(store_selector_from_target)
+}
+
+fn store_target_from_selector(selector: &StoreSelector) -> Option<StoreTargetConfig> {
+    match selector {
+        StoreSelector::Alias(alias) => Some(StoreTargetConfig::from_alias(alias.clone())),
+        StoreSelector::Path(path) => Some(StoreTargetConfig::from_path(path.clone())),
+        StoreSelector::Handle(_) => None,
+    }
+}
+
+fn store_selector_from_target(target: StoreTargetConfig) -> Option<StoreSelector> {
+    if let Some(path) = target.path {
+        Some(StoreSelector::Path(path))
+    } else {
+        target.alias.map(StoreSelector::Alias)
     }
 }
 

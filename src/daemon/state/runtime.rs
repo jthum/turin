@@ -176,9 +176,16 @@ impl DaemonState {
     ) -> Result<crate::kernel::agent_manager::LiveSessionSnapshot> {
         self.ensure_enabled_agent(agent_id)?;
         let initial_state_selector = self.resolve_channel_state_selector(channel_id)?;
+        let initial_default_store_selector =
+            self.resolve_channel_default_store_selector(channel_id)?;
         self.kernel
             .agent_manager()
-            .open_session(agent_id, slot_id, initial_state_selector)
+            .open_session(
+                agent_id,
+                slot_id,
+                initial_state_selector,
+                initial_default_store_selector,
+            )
             .await
     }
 
@@ -371,6 +378,30 @@ impl DaemonState {
                     .resolve_context_state_selector(Some(&channel.persistence))
             })
             .transpose()
+    }
+
+    fn resolve_channel_default_store_selector(
+        &self,
+        channel_id: Option<&str>,
+    ) -> Result<Option<StoreSelector>> {
+        let Some(channel_id) = channel_id else {
+            return Ok(None);
+        };
+        let Some(channel) = self
+            .registry_load
+            .channels
+            .iter()
+            .find(|channel| channel.id == channel_id)
+        else {
+            return Ok(None);
+        };
+        if channel.persistence.store.is_none() && channel.persistence.state.is_none() {
+            return Ok(None);
+        }
+        self.bootstrap_config
+            .persistence
+            .resolve_context_store_selector(Some(&channel.persistence))
+            .map(Some)
     }
 
     async fn resolve_persisted_session(

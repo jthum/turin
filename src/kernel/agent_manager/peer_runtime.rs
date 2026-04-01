@@ -39,6 +39,7 @@ impl PeerRuntime {
         control: Arc<RuntimeControl>,
         initial_session_id: Option<&str>,
         initial_state_selector: Option<StoreSelector>,
+        initial_default_store_selector: Option<StoreSelector>,
     ) -> Result<Self> {
         let mut host = fork_peer_kernel(&manager);
         if host.clients.is_empty() {
@@ -48,8 +49,12 @@ impl PeerRuntime {
         let mut session = if let Some(session_id) = initial_session_id {
             host.resume_session_for_agent(agent_id, session_id).await?
         } else {
-            host.create_session_for_agent_in_store(agent_id, initial_state_selector)
-                .await
+            host.create_session_for_agent_in_store(
+                agent_id,
+                initial_state_selector,
+                initial_default_store_selector,
+            )
+            .await
         };
         host.start_session(&mut session).await?;
         control.set_current_session(
