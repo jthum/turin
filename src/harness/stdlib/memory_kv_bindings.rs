@@ -7,7 +7,9 @@ use crate::harness::stdlib::binding_common::{
     memory_feedback_state_to_lua_value, memory_purge_report_to_lua_value,
     memory_purge_request_from_opts, memory_rows_to_lua_table, memory_search_request_from_opt,
     memory_store_request_from_opts, memory_store_row_to_lua_value, metadata_json_or_empty, nil_err,
-    nil_ok, ok_bool, ok_value, scoped_state_path_scope, store_selector_from_opts_table, string_ok,
+    nil_ok, ok_bool, ok_value, resolve_memory_search_request, resolve_scoped_store_selector,
+    scoped_state_path_scope, scoped_state_path_scope_for_selectors, store_selector_from_opts_table,
+    string_ok,
 };
 use crate::harness::stdlib::context_selectors::{normalize_selector, table_to_selector};
 use crate::harness::stdlib::scoped_data_backend::{
@@ -257,13 +259,24 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
         memory_table.set(
             "search",
             lua.create_function(move |lua, (query, opts): (String, Option<Value>)| {
-                let request = memory_search_request_from_opt(lua, opts)?;
                 let selector = default_agent_selector(&app_data_snapshot)?;
+                let request = resolve_memory_search_request(
+                    &app_data_snapshot,
+                    &selector,
+                    &memory_search_request_from_opt(lua, opts)?,
+                )?;
                 if !has_active_session(&execution_ctx) {
                     return nil_err(lua, "No active session context");
                 }
-                let path_scope =
-                    scoped_state_path_scope(&app_data_snapshot, request.store_selector.as_ref())?;
+                let path_scope = scoped_state_path_scope_for_selectors(
+                    &app_data_snapshot,
+                    request.store_selector.as_ref().into_iter().chain(
+                        request
+                            .sources
+                            .iter()
+                            .filter_map(|source| source.store_selector.as_ref()),
+                    ),
+                )?;
                 memory_search_result(
                     lua,
                     manager.clone(),
@@ -292,7 +305,12 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
                         return nil_err(lua, "No active session context");
                     }
                     let metadata_json = metadata_json_or_empty(lua, metadata)?;
-                    let request = memory_store_request_from_opts(lua, opts)?;
+                    let mut request = memory_store_request_from_opts(lua, opts)?;
+                    request.store_selector = resolve_scoped_store_selector(
+                        &app_data_snapshot,
+                        &selector,
+                        request.store_selector.clone(),
+                    )?;
                     let path_scope = scoped_state_path_scope(
                         &app_data_snapshot,
                         request.store_selector.as_ref(),
@@ -330,9 +348,19 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
                 proxy.set(
                     "search",
                     lua.create_function(move |lua, (query, opts): (String, Option<Value>)| {
-                        let request = memory_search_request_from_opt(lua, opts)?;
-                        let path_scope =
-                            scoped_state_path_scope(&app_data_search, request.store_selector.as_ref())?;
+                        let request = resolve_memory_search_request(
+                            &app_data_search,
+                            &sel_search,
+                            &memory_search_request_from_opt(lua, opts)?,
+                        )?;
+                        let path_scope = scoped_state_path_scope_for_selectors(
+                            &app_data_search,
+                            request
+                                .store_selector
+                                .as_ref()
+                                .into_iter()
+                                .chain(request.sources.iter().filter_map(|source| source.store_selector.as_ref())),
+                        )?;
                         memory_search_result(
                             lua,
                             m_search.clone(),
@@ -354,7 +382,12 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
                     lua.create_function(
                         move |lua, (content, metadata, opts): (String, Option<Table>, Option<Table>)| {
                             let metadata_json = metadata_json_or_empty(lua, metadata)?;
-                            let request = memory_store_request_from_opts(lua, opts)?;
+                            let mut request = memory_store_request_from_opts(lua, opts)?;
+                            request.store_selector = resolve_scoped_store_selector(
+                                &app_data_store,
+                                &sel_store,
+                                request.store_selector.clone(),
+                            )?;
                             let path_scope =
                                 scoped_state_path_scope(&app_data_store, request.store_selector.as_ref())?;
                             memory_store_result(
@@ -379,7 +412,12 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
                     lua.create_function(
                         move |lua, (memory_id, signal, opts): (String, Value, Option<Table>)| {
                             let signal = memory_feedback_signal_from_value(signal)?;
-                            let request = memory_feedback_request_from_opts(lua, opts)?;
+                            let mut request = memory_feedback_request_from_opts(lua, opts)?;
+                            request.store_selector = resolve_scoped_store_selector(
+                                &app_data_feedback,
+                                &sel_feedback,
+                                request.store_selector.clone(),
+                            )?;
                             let path_scope =
                                 scoped_state_path_scope(&app_data_feedback, request.store_selector.as_ref())?;
                             memory_feedback_result(
@@ -410,7 +448,12 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
                             Option<Table>,
                         )| {
                             let metadata_json = metadata_json_or_empty(lua, metadata)?;
-                            let request = memory_store_request_from_opts(lua, opts)?;
+                            let mut request = memory_store_request_from_opts(lua, opts)?;
+                            request.store_selector = resolve_scoped_store_selector(
+                                &app_data_correct,
+                                &sel_correct,
+                                request.store_selector.clone(),
+                            )?;
                             let path_scope =
                                 scoped_state_path_scope(&app_data_correct, request.store_selector.as_ref())?;
                             memory_correct_result(
@@ -434,7 +477,12 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
                 proxy.set(
                     "purge",
                     lua.create_function(move |lua, opts: Option<Table>| {
-                        let request = memory_purge_request_from_opts(lua, opts)?;
+                        let mut request = memory_purge_request_from_opts(lua, opts)?;
+                        request.store_selector = resolve_scoped_store_selector(
+                            &app_data_purge,
+                            &sel_purge,
+                            request.store_selector.clone(),
+                        )?;
                         let path_scope =
                             scoped_state_path_scope(&app_data_purge, request.store_selector.as_ref())?;
                         memory_purge_result(
@@ -466,7 +514,12 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
                         return nil_err(lua, "No active session context");
                     }
                     let signal = memory_feedback_signal_from_value(signal)?;
-                    let request = memory_feedback_request_from_opts(lua, opts)?;
+                    let mut request = memory_feedback_request_from_opts(lua, opts)?;
+                    request.store_selector = resolve_scoped_store_selector(
+                        &app_data_snapshot,
+                        &selector,
+                        request.store_selector.clone(),
+                    )?;
                     let path_scope = scoped_state_path_scope(
                         &app_data_snapshot,
                         request.store_selector.as_ref(),
@@ -506,7 +559,12 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
                         return nil_err(lua, "No active session context");
                     }
                     let metadata_json = metadata_json_or_empty(lua, metadata)?;
-                    let request = memory_store_request_from_opts(lua, opts)?;
+                    let mut request = memory_store_request_from_opts(lua, opts)?;
+                    request.store_selector = resolve_scoped_store_selector(
+                        &app_data_snapshot,
+                        &selector,
+                        request.store_selector.clone(),
+                    )?;
                     let path_scope = scoped_state_path_scope(
                         &app_data_snapshot,
                         request.store_selector.as_ref(),
@@ -539,7 +597,12 @@ pub fn register_memory_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult
                 if !has_active_session(&execution_ctx) {
                     return nil_err(lua, "No active session context");
                 }
-                let request = memory_purge_request_from_opts(lua, opts)?;
+                let mut request = memory_purge_request_from_opts(lua, opts)?;
+                request.store_selector = resolve_scoped_store_selector(
+                    &app_data_snapshot,
+                    &selector,
+                    request.store_selector.clone(),
+                )?;
                 let path_scope =
                     scoped_state_path_scope(&app_data_snapshot, request.store_selector.as_ref())?;
                 memory_purge_result(lua, manager.clone(), selector, request, path_scope)
@@ -566,7 +629,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
                     return nil_err(lua, "No active session context");
                 }
                 let selector = default_agent_selector(&app_data_snapshot)?;
-                let store_selector = store_selector_from_opts_table(opts)?;
+                let store_selector = resolve_scoped_store_selector(
+                    &app_data_snapshot,
+                    &selector,
+                    store_selector_from_opts_table(opts)?,
+                )?;
                 let path_scope =
                     scoped_state_path_scope(&app_data_snapshot, store_selector.as_ref())?;
                 kv_get_result(
@@ -594,7 +661,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
                         return bool_err(lua, "No active session context");
                     }
                     let selector = default_agent_selector(&app_data_snapshot)?;
-                    let store_selector = store_selector_from_opts_table(opts)?;
+                    let store_selector = resolve_scoped_store_selector(
+                        &app_data_snapshot,
+                        &selector,
+                        store_selector_from_opts_table(opts)?,
+                    )?;
                     let path_scope =
                         scoped_state_path_scope(&app_data_snapshot, store_selector.as_ref())?;
                     kv_set_result(
@@ -623,7 +694,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
                     return bool_err(lua, "No active session context");
                 }
                 let selector = default_agent_selector(&app_data_snapshot)?;
-                let store_selector = store_selector_from_opts_table(opts)?;
+                let store_selector = resolve_scoped_store_selector(
+                    &app_data_snapshot,
+                    &selector,
+                    store_selector_from_opts_table(opts)?,
+                )?;
                 let path_scope =
                     scoped_state_path_scope(&app_data_snapshot, store_selector.as_ref())?;
                 kv_delete_result(
@@ -654,7 +729,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
                 proxy.set(
                     "get",
                     lua.create_function(move |lua, (key, opts): (String, Option<Table>)| {
-                        let store_selector = store_selector_from_opts_table(opts)?;
+                        let store_selector = resolve_scoped_store_selector(
+                            &app_data_get,
+                            &sel_get,
+                            store_selector_from_opts_table(opts)?,
+                        )?;
                         let path_scope =
                             scoped_state_path_scope(&app_data_get, store_selector.as_ref())?;
                         kv_get_result(
@@ -675,7 +754,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
                     "set",
                     lua.create_function(
                         move |lua, (key, value, opts): (String, String, Option<Table>)| {
-                            let store_selector = store_selector_from_opts_table(opts)?;
+                            let store_selector = resolve_scoped_store_selector(
+                                &app_data_set,
+                                &sel_set,
+                                store_selector_from_opts_table(opts)?,
+                            )?;
                             let path_scope =
                                 scoped_state_path_scope(&app_data_set, store_selector.as_ref())?;
                             kv_set_result(
@@ -697,7 +780,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
                 proxy.set(
                     "delete",
                     lua.create_function(move |lua, (key, opts): (String, Option<Table>)| {
-                        let store_selector = store_selector_from_opts_table(opts)?;
+                        let store_selector = resolve_scoped_store_selector(
+                            &app_data_delete,
+                            &sel_del,
+                            store_selector_from_opts_table(opts)?,
+                        )?;
                         let path_scope =
                             scoped_state_path_scope(&app_data_delete, store_selector.as_ref())?;
                         kv_delete_result(

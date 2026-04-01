@@ -7,7 +7,9 @@ use crate::harness::stdlib::binding_common::{
     memory_feedback_state_to_lua_value, memory_purge_report_to_lua_value,
     memory_purge_request_from_opts, memory_rows_to_lua_table, memory_search_request_from_opt,
     memory_store_request_from_opts, memory_store_row_to_lua_value, metadata_json_or_empty, nil_err,
-    nil_ok, ok_bool, ok_value, scoped_state_path_scope, store_selector_from_opts_table, string_ok,
+    nil_ok, ok_bool, ok_value, resolve_memory_search_request, resolve_scoped_store_selector,
+    scoped_state_path_scope, scoped_state_path_scope_for_selectors, store_selector_from_opts_table,
+    string_ok,
 };
 use crate::harness::stdlib::context_selectors::selector_from_active_scope_lua;
 use crate::harness::stdlib::scoped_data_backend::{
@@ -31,10 +33,21 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
             mem.set(
                 "search",
                 lua.create_function(move |lua, (query, opts): (String, Option<Value>)| {
-                    let request = memory_search_request_from_opt(lua, opts)?;
                     let selector = selector_from_active_scope_lua(&selector_app, scope)?;
-                    let path_scope =
-                        scoped_state_path_scope(&selector_app, request.store_selector.as_ref())?;
+                    let request = resolve_memory_search_request(
+                        &selector_app,
+                        &selector,
+                        &memory_search_request_from_opt(lua, opts)?,
+                    )?;
+                    let path_scope = scoped_state_path_scope_for_selectors(
+                        &selector_app,
+                        request.store_selector.as_ref().into_iter().chain(
+                            request
+                                .sources
+                                .iter()
+                                .filter_map(|source| source.store_selector.as_ref()),
+                        ),
+                    )?;
                     let manager = manager.clone();
                     let embedding = embedding.clone();
                     let result = bridge_async_result(async move {
@@ -68,7 +81,12 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                     move |lua, (content, metadata, opts): (String, Option<Table>, Option<Table>)| {
                         let selector = selector_from_active_scope_lua(&selector_app, scope)?;
                         let metadata_json = metadata_json_or_empty(lua, metadata)?;
-                        let request = memory_store_request_from_opts(lua, opts)?;
+                        let mut request = memory_store_request_from_opts(lua, opts)?;
+                        request.store_selector = resolve_scoped_store_selector(
+                            &selector_app,
+                            &selector,
+                            request.store_selector.clone(),
+                        )?;
                         let path_scope =
                             scoped_state_path_scope(&selector_app, request.store_selector.as_ref())?;
                         let manager = manager.clone();
@@ -103,7 +121,12 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                     move |lua, (memory_id, signal, opts): (String, Value, Option<Table>)| {
                         let selector = selector_from_active_scope_lua(&selector_app, scope)?;
                         let signal = memory_feedback_signal_from_value(signal)?;
-                        let request = memory_feedback_request_from_opts(lua, opts)?;
+                        let mut request = memory_feedback_request_from_opts(lua, opts)?;
+                        request.store_selector = resolve_scoped_store_selector(
+                            &selector_app,
+                            &selector,
+                            request.store_selector.clone(),
+                        )?;
                         let path_scope = scoped_state_path_scope(
                             &selector_app,
                             request.store_selector.as_ref(),
@@ -142,7 +165,12 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                     )| {
                         let selector = selector_from_active_scope_lua(&selector_app, scope)?;
                         let metadata_json = metadata_json_or_empty(lua, metadata)?;
-                        let request = memory_store_request_from_opts(lua, opts)?;
+                        let mut request = memory_store_request_from_opts(lua, opts)?;
+                        request.store_selector = resolve_scoped_store_selector(
+                            &selector_app,
+                            &selector,
+                            request.store_selector.clone(),
+                        )?;
                         let path_scope = scoped_state_path_scope(
                             &selector_app,
                             request.store_selector.as_ref(),
@@ -178,7 +206,12 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                 "purge",
                 lua.create_function(move |lua, opts: Option<Table>| {
                     let selector = selector_from_active_scope_lua(&selector_app, scope)?;
-                    let request = memory_purge_request_from_opts(lua, opts)?;
+                    let mut request = memory_purge_request_from_opts(lua, opts)?;
+                    request.store_selector = resolve_scoped_store_selector(
+                        &selector_app,
+                        &selector,
+                        request.store_selector.clone(),
+                    )?;
                     let path_scope =
                         scoped_state_path_scope(&selector_app, request.store_selector.as_ref())?;
                     let manager = manager.clone();
@@ -212,7 +245,11 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                 "get",
                 lua.create_function(move |lua, (key, opts): (String, Option<Table>)| {
                     let selector = selector_from_active_scope_lua(&selector_app, scope)?;
-                    let store_selector = store_selector_from_opts_table(opts)?;
+                    let store_selector = resolve_scoped_store_selector(
+                        &selector_app,
+                        &selector,
+                        store_selector_from_opts_table(opts)?,
+                    )?;
                     let path_scope =
                         scoped_state_path_scope(&selector_app, store_selector.as_ref())?;
                     let manager = manager.clone();
@@ -243,7 +280,11 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                 lua.create_function(
                     move |lua, (key, value, opts): (String, String, Option<Table>)| {
                         let selector = selector_from_active_scope_lua(&selector_app, scope)?;
-                        let store_selector = store_selector_from_opts_table(opts)?;
+                        let store_selector = resolve_scoped_store_selector(
+                            &selector_app,
+                            &selector,
+                            store_selector_from_opts_table(opts)?,
+                        )?;
                         let path_scope =
                             scoped_state_path_scope(&selector_app, store_selector.as_ref())?;
                         let manager = manager.clone();
@@ -274,7 +315,11 @@ pub fn register_session_user_aliases(lua: &Lua, app_data: &HarnessAppData) -> Lu
                 "delete",
                 lua.create_function(move |lua, (key, opts): (String, Option<Table>)| {
                     let selector = selector_from_active_scope_lua(&selector_app, scope)?;
-                    let store_selector = store_selector_from_opts_table(opts)?;
+                    let store_selector = resolve_scoped_store_selector(
+                        &selector_app,
+                        &selector,
+                        store_selector_from_opts_table(opts)?,
+                    )?;
                     let path_scope =
                         scoped_state_path_scope(&selector_app, store_selector.as_ref())?;
                     let manager = manager.clone();

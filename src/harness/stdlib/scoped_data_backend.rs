@@ -41,6 +41,7 @@ pub(crate) struct MemorySearchRequest {
     pub include_superseded: bool,
     pub strict: bool,
     pub store_selector: Option<StoreSelector>,
+    pub sources: Vec<MemorySearchSource>,
 }
 
 impl Default for MemorySearchRequest {
@@ -53,8 +54,18 @@ impl Default for MemorySearchRequest {
             include_superseded: false,
             strict: false,
             store_selector: None,
+            sources: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct MemorySearchSource {
+    pub scope_kind: String,
+    pub scope_key: String,
+    pub raw_scope_key: String,
+    pub namespace: String,
+    pub store_selector: Option<StoreSelector>,
 }
 
 #[derive(Debug, Clone)]
@@ -126,12 +137,14 @@ fn visibility_allowed(selector: &ContextSelector) -> anyhow::Result<()> {
 }
 
 #[derive(Debug, Clone)]
-struct ScopedStateRef {
-    scope_kind: String,
-    scope_key: String,
+pub(crate) struct ScopedStateRef {
+    pub scope_kind: String,
+    pub scope_key: String,
+    pub raw_scope_key: Option<String>,
+    pub namespace: String,
 }
 
-fn encode_scope_key(raw_key: &str, namespace: &str) -> String {
+pub(crate) fn encode_scope_key(raw_key: &str, namespace: &str) -> String {
     if namespace == "default" {
         raw_key.to_string()
     } else {
@@ -143,7 +156,7 @@ fn encode_scope_key(raw_key: &str, namespace: &str) -> String {
     }
 }
 
-fn selector_scope_ref(selector: &ContextSelector) -> anyhow::Result<ScopedStateRef> {
+pub(crate) fn selector_scope_ref(selector: &ContextSelector) -> anyhow::Result<ScopedStateRef> {
     visibility_allowed(selector)?;
     if selector.tags.len() == 1
         && let Some((kind, key)) = selector.tags[0].split_once(':')
@@ -151,6 +164,8 @@ fn selector_scope_ref(selector: &ContextSelector) -> anyhow::Result<ScopedStateR
         return Ok(ScopedStateRef {
             scope_kind: kind.to_string(),
             scope_key: encode_scope_key(key, &selector.namespace),
+            raw_scope_key: Some(key.to_string()),
+            namespace: selector.namespace.clone(),
         });
     }
 
@@ -164,6 +179,8 @@ fn selector_scope_ref(selector: &ContextSelector) -> anyhow::Result<ScopedStateR
             "visibility": selector.visibility,
         })
         .to_string(),
+        raw_scope_key: None,
+        namespace: selector.namespace.clone(),
     })
 }
 
@@ -328,8 +345,6 @@ pub(crate) async fn memory_search_backend_with_request(
     request: &MemorySearchRequest,
     path_scope: StorePathScope,
 ) -> anyhow::Result<Vec<MemoryRow>> {
-    let store = open_state_store(manager, request.store_selector.as_ref(), path_scope).await?;
-    let scope = selector_scope_ref(selector)?;
     let query = query.trim();
     if query.is_empty() {
         return Ok(Vec::new());
@@ -390,20 +405,48 @@ pub(crate) async fn memory_search_backend_with_request(
         MemorySearchMode::Semantic => None,
     };
 
-    store
-        .search_memories(
-            &scope.scope_kind,
-            &scope.scope_key,
-            vector.as_deref(),
-            query_embedding_key.as_deref(),
-            query_embedding_dimensions,
-            lexical_query,
-            request.limit,
-            request.min_score,
-            request.include_metadata,
-            request.include_superseded,
-        )
-        .await
+    let default_scope = selector_scope_ref(selector)?;
+    let sources = if request.sources.is_empty() {
+        vec![MemorySearchSource {
+            scope_kind: default_scope.scope_kind,
+            scope_key: default_scope.scope_key,
+            raw_scope_key: default_scope.raw_scope_key.unwrap_or_default(),
+            namespace: default_scope.namespace,
+            store_selector: request.store_selector.clone(),
+        }]
+    } else {
+        request.sources.clone()
+    };
+
+    let mut combined = Vec::new();
+    for source in &sources {
+        let store = open_state_store(manager, source.store_selector.as_ref(), path_scope).await?;
+        let mut rows = store
+            .search_memories(
+                &source.scope_kind,
+                &source.scope_key,
+                vector.as_deref(),
+                query_embedding_key.as_deref(),
+                query_embedding_dimensions,
+                lexical_query,
+                request.limit,
+                request.min_score,
+                request.include_metadata,
+                request.include_superseded,
+            )
+            .await?;
+        combined.append(&mut rows);
+    }
+
+    combined.sort_by(|left, right| {
+        right
+            .score
+            .partial_cmp(&left.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| right.created_at.cmp(&left.created_at))
+    });
+    combined.truncate(request.limit);
+    Ok(combined)
 }
 
 pub(crate) async fn memory_feedback_backend_with_request(

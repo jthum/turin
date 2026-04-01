@@ -138,6 +138,7 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -337,6 +338,7 @@ async fn test_harness_observation() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -450,6 +452,7 @@ async fn test_nested_agent_spawning() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -571,6 +574,7 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -662,6 +666,7 @@ async fn test_dynamic_mode_switching_stateless() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),

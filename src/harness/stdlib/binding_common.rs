@@ -13,8 +13,10 @@ use crate::harness::stdlib::db_support::{
 use crate::harness::stdlib::policy_support::runtime_policy_snapshot;
 use crate::harness::stdlib::scoped_data_backend::{
     MemoryFeedbackRequest, MemoryFeedbackSignal, MemoryPurgeRequest, MemorySearchMode,
-    MemorySearchRequest, MemoryStoreMode, MemoryStoreRequest,
+    MemorySearchRequest, MemorySearchSource, MemoryStoreMode, MemoryStoreRequest, encode_scope_key,
+    selector_scope_ref,
 };
+use crate::kernel::identity::ContextSelector;
 use crate::persistence::manager::{StorePathScope, StoreSelector};
 
 pub fn bridge_async<F>(fut: F) -> F::Output
@@ -138,6 +140,67 @@ struct LuaMemoryPurgeOpts {
     trace: Option<bool>,
 }
 
+fn parse_memory_search_source(source: Value) -> LuaResult<MemorySearchSource> {
+    let table = match source {
+        Value::Table(table) => table,
+        _ => {
+            return Err(mlua::Error::runtime(
+                "invalid memory search source; expected a table",
+            ));
+        }
+    };
+    let scope_kind = table
+        .get::<String>("scope_kind")
+        .map_err(|_| mlua::Error::runtime("memory search source requires 'scope_kind'"))?;
+    let namespace = match table.get::<Value>("namespace")? {
+        Value::Nil => "default".to_string(),
+        Value::String(value) => value.to_str()?.to_string(),
+        _ => {
+            return Err(mlua::Error::runtime(
+                "invalid memory search source namespace; expected string",
+            ));
+        }
+    };
+    let raw_scope_key = match table.get::<Value>("scope_key")? {
+        Value::Nil if scope_kind == "global" => "*".to_string(),
+        Value::Nil => {
+            return Err(mlua::Error::runtime(
+                "memory search source requires 'scope_key' unless scope_kind='global'",
+            ));
+        }
+        Value::String(value) => value.to_str()?.to_string(),
+        _ => {
+            return Err(mlua::Error::runtime(
+                "invalid memory search source scope_key; expected string",
+            ));
+        }
+    };
+    let store_selector = store_selector_from_fields(&table)?;
+    Ok(MemorySearchSource {
+        scope_kind,
+        scope_key: encode_scope_key(&raw_scope_key, &namespace),
+        raw_scope_key,
+        namespace,
+        store_selector,
+    })
+}
+
+fn memory_search_sources_from_table(opts: &Table) -> LuaResult<Vec<MemorySearchSource>> {
+    match opts.get::<Value>("sources")? {
+        Value::Nil => Ok(Vec::new()),
+        Value::Table(values) => {
+            let mut out = Vec::new();
+            for source in values.sequence_values::<Value>() {
+                out.push(parse_memory_search_source(source?)?);
+            }
+            Ok(out)
+        }
+        _ => Err(mlua::Error::runtime(
+            "invalid memory search opts: sources must be an array of tables",
+        )),
+    }
+}
+
 pub(crate) fn memory_search_request_from_opt(
     lua: &Lua,
     arg: Option<Value>,
@@ -158,6 +221,7 @@ pub(crate) fn memory_search_request_from_opt(
                 .map_err(|e| mlua::Error::runtime(format!("invalid memory search opts: {}", e)))?;
             let _ = parsed.trace;
             let store_selector = store_selector_from_fields(&t)?;
+            let sources = memory_search_sources_from_table(&t)?;
             Ok(MemorySearchRequest {
                 limit: parsed.limit.unwrap_or(5).max(0) as usize,
                 mode: parse_memory_search_mode(parsed.mode.as_deref())?,
@@ -166,6 +230,7 @@ pub(crate) fn memory_search_request_from_opt(
                 include_superseded: parsed.include_superseded.unwrap_or(false),
                 strict: parsed.strict.unwrap_or(false),
                 store_selector,
+                sources,
             })
         }
         Some(_) => Err(mlua::Error::runtime(
@@ -309,15 +374,79 @@ pub(crate) fn scoped_state_path_scope(
     app_data: &HarnessAppData,
     selector: Option<&StoreSelector>,
 ) -> LuaResult<StorePathScope> {
+    scoped_state_path_scope_for_selectors(app_data, selector)
+}
+
+pub(crate) fn scoped_state_path_scope_for_selectors<'a>(
+    app_data: &HarnessAppData,
+    selectors: impl IntoIterator<Item = &'a StoreSelector>,
+) -> LuaResult<StorePathScope> {
     let snapshot = runtime_policy_snapshot(app_data).map_err(mlua::Error::runtime)?;
-    if let Some(selector) = selector
-        && selector_denied_by_dynamic_open(&snapshot, selector)
-    {
-        return Err(mlua::Error::runtime(
-            "Policy denial: db.allow_dynamic_open=false",
-        ));
+    for selector in selectors {
+        if selector_denied_by_dynamic_open(&snapshot, selector) {
+            return Err(mlua::Error::runtime(
+                "Policy denial: db.allow_dynamic_open=false",
+            ));
+        }
     }
     Ok(store_path_scope_from_snapshot(&snapshot))
+}
+
+pub(crate) fn resolve_scoped_store_selector(
+    app_data: &HarnessAppData,
+    selector: &ContextSelector,
+    explicit: Option<StoreSelector>,
+) -> LuaResult<Option<StoreSelector>> {
+    if explicit.is_some() {
+        return Ok(explicit);
+    }
+    let scope = selector_scope_ref(selector).map_err(mlua::Error::runtime)?;
+    Ok(resolve_scope_store_selector(
+        &app_data.config,
+        &scope.scope_kind,
+        scope.raw_scope_key.as_deref(),
+        &scope.namespace,
+    ))
+}
+
+pub(crate) fn resolve_scope_store_selector(
+    config: &crate::kernel::config::TurinConfig,
+    scope_kind: &str,
+    raw_scope_key: Option<&str>,
+    namespace: &str,
+) -> Option<StoreSelector> {
+    config
+        .persistence
+        .resolve_store_alias_for_scope(scope_kind, raw_scope_key, namespace)
+        .map(|alias| StoreSelector::Alias(alias.to_string()))
+}
+
+pub(crate) fn resolve_memory_search_request(
+    app_data: &HarnessAppData,
+    selector: &ContextSelector,
+    request: &MemorySearchRequest,
+) -> LuaResult<MemorySearchRequest> {
+    let mut resolved = request.clone();
+    if resolved.sources.is_empty() {
+        resolved.store_selector =
+            resolve_scoped_store_selector(app_data, selector, resolved.store_selector.clone())?;
+    } else {
+        let common_store_selector = resolved.store_selector.clone();
+        for source in &mut resolved.sources {
+            if source.store_selector.is_none() {
+                source.store_selector = common_store_selector.clone().or_else(|| {
+                    resolve_scope_store_selector(
+                        &app_data.config,
+                        &source.scope_kind,
+                        Some(source.raw_scope_key.as_str()),
+                        &source.namespace,
+                    )
+                });
+            }
+        }
+        resolved.store_selector = None;
+    }
+    Ok(resolved)
 }
 
 pub(crate) fn store_selector_from_opts_table(

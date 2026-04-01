@@ -155,6 +155,7 @@ mod tests {
             agent_id: "default".into(),
             store_manager: None,
             embedding_provider: None,
+            config: None,
             allowed_native_tools: std::sync::Arc::new(allowed),
             tools: std::sync::Arc::new(turin_types::ToolsConfig::default()),
         };

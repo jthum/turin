@@ -89,6 +89,11 @@ impl ExecutionHost {
     pub async fn init_state(&mut self) -> Result<()> {
         let db_path = &self.config.persistence.database_path;
         self.store_manager.register_alias("state", db_path).await?;
+        for (alias, store) in &self.config.persistence.stores {
+            self.store_manager
+                .register_alias(alias, &store.path)
+                .await?;
+        }
         let _ = self.store_manager.get_default().await.with_context(|| {
             format!("Failed to initialize default state store at '{}'", db_path)
         })?;

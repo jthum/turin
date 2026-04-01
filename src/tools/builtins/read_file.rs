@@ -82,6 +82,7 @@ mod tests {
             agent_id: "test-agent".to_string(),
             store_manager: None,
             embedding_provider: None,
+            config: None,
             allowed_native_tools: std::sync::Arc::new(crate::tools::policy::full_native_tool_set()),
             tools: std::sync::Arc::new(turin_types::ToolsConfig::default()),
         };
@@ -108,6 +109,7 @@ mod tests {
             agent_id: "test-agent".to_string(),
             store_manager: None,
             embedding_provider: None,
+            config: None,
             allowed_native_tools: std::sync::Arc::new(crate::tools::policy::full_native_tool_set()),
             tools: std::sync::Arc::new(turin_types::ToolsConfig::default()),
         };

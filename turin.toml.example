@@ -75,6 +75,25 @@ initial_spawn_depth = 0
 [persistence]
 database_path = ".turin/state.db"
 
+# Optional named stores for scoped memory/KV, handoffs, or shared KBs.
+# [persistence.stores.rust_kb]
+# path = ".turin/kb/rust.db"
+#
+# Level 1 placement rules: when a memory/KV call omits `store`, Turin resolves:
+# 1. explicit per-call store/path
+# 2. first matching placement rule
+# 3. primary `state` store
+#
+# [[persistence.placements]]
+# scope_kind = "project"
+# store = "rust_kb"
+#
+# [[persistence.placements]]
+# scope_kind = "project"
+# scope_key = "alpha"
+# namespace = "notes"
+# store = "rust_kb"
+
 [harness]
 directory = ".turin/harnesses"
 # fs_root defaults to workspace_root; set to "/" for unrestricted access (not recommended by default)

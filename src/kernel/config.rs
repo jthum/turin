@@ -113,13 +113,59 @@ pub struct PersistenceConfig {
     /// Path to the libSQL database file
     #[serde(default = "default_database_path")]
     pub database_path: String,
+    /// Optional named state stores that can be referenced by alias.
+    #[serde(default)]
+    pub stores: std::collections::HashMap<String, NamedStoreConfig>,
+    /// Optional Level 1 placement rules for scoped memory/KV when no store is provided.
+    #[serde(default)]
+    pub placements: Vec<ScopedStorePlacementConfig>,
 }
 
 impl Default for PersistenceConfig {
     fn default() -> Self {
         Self {
             database_path: default_database_path(),
+            stores: std::collections::HashMap::new(),
+            placements: Vec::new(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize, Default)]
+pub struct NamedStoreConfig {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize, Default)]
+pub struct ScopedStorePlacementConfig {
+    pub scope_kind: String,
+    #[serde(default)]
+    pub scope_key: Option<String>,
+    #[serde(default)]
+    pub namespace: Option<String>,
+    pub store: String,
+}
+
+impl PersistenceConfig {
+    pub fn resolve_store_alias_for_scope(
+        &self,
+        scope_kind: &str,
+        raw_scope_key: Option<&str>,
+        namespace: &str,
+    ) -> Option<&str> {
+        let exact = self.placements.iter().find(|placement| {
+            placement.scope_kind == scope_kind
+                && placement.scope_key.as_deref() == raw_scope_key
+                && placement.namespace.as_deref().unwrap_or("default") == namespace
+        });
+        if let Some(exact) = exact {
+            return Some(exact.store.as_str());
+        }
+
+        self.placements
+            .iter()
+            .find(|placement| placement.scope_kind == scope_kind && placement.scope_key.is_none())
+            .map(|placement| placement.store.as_str())
     }
 }
 
@@ -466,6 +512,54 @@ impl TurinConfig {
             self.remote.event_keepalive_secs > 0,
             "remote.event_keepalive_secs must be greater than 0"
         );
+        for (store_name, store) in &self.persistence.stores {
+            anyhow::ensure!(
+                !store_name.trim().is_empty(),
+                "persistence.stores contains an empty store name"
+            );
+            anyhow::ensure!(
+                store_name != "state",
+                "persistence.stores.state is reserved; use persistence.database_path for the primary state store"
+            );
+            anyhow::ensure!(
+                !store.path.trim().is_empty(),
+                "persistence.stores.{}.path must not be empty",
+                store_name
+            );
+        }
+        for (idx, placement) in self.persistence.placements.iter().enumerate() {
+            anyhow::ensure!(
+                !placement.scope_kind.trim().is_empty(),
+                "persistence.placements[{}].scope_kind must not be empty",
+                idx
+            );
+            if let Some(scope_key) = &placement.scope_key {
+                anyhow::ensure!(
+                    !scope_key.trim().is_empty(),
+                    "persistence.placements[{}].scope_key must not be empty when set",
+                    idx
+                );
+            }
+            if let Some(namespace) = &placement.namespace {
+                anyhow::ensure!(
+                    !namespace.trim().is_empty(),
+                    "persistence.placements[{}].namespace must not be empty when set",
+                    idx
+                );
+            }
+            anyhow::ensure!(
+                !placement.store.trim().is_empty(),
+                "persistence.placements[{}].store must not be empty",
+                idx
+            );
+            anyhow::ensure!(
+                placement.store == "state"
+                    || self.persistence.stores.contains_key(&placement.store),
+                "persistence.placements[{}].store '{}' not found in persistence.stores",
+                idx,
+                placement.store
+            );
+        }
 
         for (harness_id, harness_cfg) in &self.harnesses {
             anyhow::ensure!(
@@ -787,6 +881,52 @@ base_url = "https://my-proxy.example.com/v1"
         assert_eq!(
             provider.base_url.as_ref().unwrap(),
             "https://my-proxy.example.com/v1"
+        );
+    }
+
+    #[test]
+    fn test_parse_persistence_stores_and_placements() {
+        let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[persistence]
+database_path = ".turin/state.db"
+
+[persistence.stores.rust_kb]
+path = ".turin/kb/rust.db"
+
+[[persistence.placements]]
+scope_kind = "project"
+store = "rust_kb"
+
+[[persistence.placements]]
+scope_kind = "project"
+scope_key = "alpha"
+namespace = "notes"
+store = "rust_kb"
+"#;
+
+        let config = TurinConfig::from_str(toml).unwrap();
+        assert_eq!(
+            config.persistence.stores.get("rust_kb").unwrap().path,
+            ".turin/kb/rust.db"
+        );
+        assert_eq!(
+            config
+                .persistence
+                .resolve_store_alias_for_scope("project", Some("alpha"), "notes"),
+            Some("rust_kb")
+        );
+        assert_eq!(
+            config
+                .persistence
+                .resolve_store_alias_for_scope("project", Some("beta"), "default"),
+            Some("rust_kb")
         );
     }
 

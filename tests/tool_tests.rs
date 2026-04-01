@@ -15,6 +15,7 @@ fn make_ctx(dir: &std::path::Path) -> ToolContext {
         agent_id: "test-agent".to_string(),
         store_manager: None,
         embedding_provider: None,
+        config: None,
         allowed_native_tools: std::sync::Arc::new(turin::tools::policy::full_native_tool_set()),
         tools: std::sync::Arc::new(turin_types::ToolsConfig::default()),
     }

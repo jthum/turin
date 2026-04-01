@@ -79,6 +79,7 @@ pub fn base_config(
         },
         persistence: PersistenceConfig {
             database_path: workspace_root.join("test.db").to_string_lossy().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_string_lossy().to_string(),

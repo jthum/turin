@@ -568,6 +568,28 @@ end
 local ok, kerr = runtime.kv.set("last_error", "E0425", ctx)
 ```
 
+Named stores and multi-source search:
+
+```lua
+local project = runtime.context("project", "rust")
+local shared = runtime.context("global")
+
+runtime.memory.store(
+  "Borrow checker note from a shared KB",
+  shared,
+  { layer = "global" },
+  { storage = "lexical_only", store = "rust_kb" }
+)
+
+local hits, err = runtime.memory.search("borrow checker", project, {
+  include_metadata = true,
+  sources = {
+    { scope_kind = "project", scope_key = "rust" }, -- resolves through placements or state
+    { store = "rust_kb", scope_kind = "global" },   -- explicit named store
+  }
+})
+```
+
 ### Cache and code search
 
 Build the index before querying it:
@@ -687,6 +709,9 @@ local file = cache.file("README.md")
 local hits = code.find("grant validation")
 remember("Release notes should stay terse")
 ```
+
+If you omit `store`, Turin resolves memory/KV placement through `[persistence.placements]`
+before falling back to the primary `state` DB.
 
 ### Session/User scoped aliases
 

@@ -192,6 +192,7 @@ mod tests {
             },
             persistence: PersistenceConfig {
                 database_path: tmp.path().join("test.db").to_string_lossy().to_string(),
+                ..PersistenceConfig::default()
             },
             harness: HarnessConfig {
                 directory: default_harness.to_string_lossy().to_string(),

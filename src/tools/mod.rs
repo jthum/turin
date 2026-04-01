@@ -12,6 +12,7 @@ use std::sync::Arc;
 use turin_types::ToolsConfig;
 
 use crate::inference::embeddings::EmbeddingProvider;
+use crate::kernel::config::TurinConfig;
 use crate::persistence::manager::StoreManager;
 
 /// Output from a tool execution.
@@ -56,6 +57,8 @@ pub struct ToolContext {
     pub store_manager: Option<Arc<StoreManager>>,
     /// Optional embedding provider for tools that support semantic memory
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    /// Optional Turin config for tools that need placement or policy metadata
+    pub config: Option<Arc<TurinConfig>>,
     /// Native tools enabled for the current turn after config delegation is resolved
     pub allowed_native_tools: Arc<BTreeSet<String>>,
     /// Global tool configuration resolved from Turin config
@@ -70,6 +73,7 @@ impl std::fmt::Debug for ToolContext {
             .field("agent_id", &self.agent_id)
             .field("store_manager", &self.store_manager.is_some())
             .field("embedding_provider", &self.embedding_provider.is_some())
+            .field("config", &self.config.is_some())
             .field(
                 "allowed_native_tool_count",
                 &self.allowed_native_tools.len(),

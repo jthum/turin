@@ -54,6 +54,7 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -506,6 +507,7 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: default_harness_dir.to_str().unwrap().to_string(),
@@ -658,6 +660,7 @@ async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: default_harness_dir.to_str().unwrap().to_string(),
@@ -802,6 +805,7 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: default_harness_dir.to_str().unwrap().to_string(),
@@ -1067,6 +1071,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: "".to_string(), // Empty — no persistence
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),

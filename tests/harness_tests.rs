@@ -11,7 +11,8 @@ use turin::inference::provider::{
 use turin::kernel::Kernel;
 use turin::kernel::config::{
     AgentConfig, AgentMode, EmbeddingConfig, GovernanceConfig, GovernanceGrantsConfig,
-    GovernanceProfile, HarnessConfig, KernelConfig, PersistenceConfig, ProviderConfig, TurinConfig,
+    GovernanceProfile, HarnessConfig, KernelConfig, NamedStoreConfig, PersistenceConfig,
+    ProviderConfig, ScopedStorePlacementConfig, TurinConfig,
 };
 use turin::kernel::policy::PolicyScope;
 
@@ -223,6 +224,7 @@ async fn test_harness_rejection() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -354,6 +356,7 @@ async fn test_virtual_tool_is_exposed_and_executes_native_call() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -480,6 +483,7 @@ async fn test_virtual_tool_sequence_aggregates_multiple_native_calls() -> Result
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -598,6 +602,7 @@ async fn test_virtual_tool_sequence_callback_shapes_outer_result() -> Result<()>
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -722,6 +727,7 @@ async fn test_virtual_tool_can_call_another_virtual_tool() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -846,6 +852,7 @@ async fn test_virtual_tool_can_forward_reference_later_declaration() -> Result<(
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -967,6 +974,7 @@ async fn test_virtual_tool_recursion_is_rejected() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -1094,6 +1102,7 @@ tool.declare("tool_9", {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -1218,6 +1227,7 @@ async fn test_virtual_tool_callback_can_return_follow_up_plan() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -1321,6 +1331,7 @@ async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Resul
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -1491,6 +1502,7 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
@@ -1648,6 +1660,7 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
@@ -1801,6 +1814,7 @@ async fn test_agent_complete_applies_delegated_capability_ceiling() -> Result<()
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
@@ -1898,6 +1912,7 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -2107,6 +2122,7 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -2252,6 +2268,7 @@ async fn test_runtime_memory_and_kv_support_explicit_store_targets() -> Result<(
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -2353,6 +2370,302 @@ async fn test_runtime_memory_and_kv_support_explicit_store_targets() -> Result<(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_runtime_memory_and_kv_respect_scope_store_placements() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_scope_store_placement.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    let harness_code = r#"
+        function on_turn_prepare(ctx)
+            local project = runtime.context("project", "rust")
+
+            local stored, se = runtime.memory.store(
+                "Placement-routed Rust note",
+                project,
+                { topic = "rust", layer = "project" },
+                { storage = "lexical_only" }
+            )
+            if stored == nil then error("runtime.memory.store failed: " .. tostring(se)) end
+
+            local hits, he = runtime.memory.search("Placement-routed", project, {
+                include_metadata = true,
+            })
+            if hits == nil then error("runtime.memory.search failed: " .. tostring(he)) end
+            if #hits ~= 1 then error("runtime.memory.search returned wrong hit count") end
+            if hits[1].metadata == nil or hits[1].metadata.topic ~= "rust" then
+                error("runtime.memory.search metadata missing")
+            end
+
+            local ok, ke = runtime.kv.set("owner", "Ferris", project)
+            if not ok then error("runtime.kv.set failed: " .. tostring(ke)) end
+
+            local value, ve = runtime.kv.get("owner", project)
+            if ve ~= nil then error("runtime.kv.get failed: " .. tostring(ve)) end
+            if value ~= "Ferris" then error("runtime.kv.get mismatch") end
+
+            return ALLOW
+        end
+    "#;
+    std::fs::write(
+        harness_dir.join("runtime_scope_store_placement.lua"),
+        harness_code,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        tools: Default::default(),
+        agent: AgentConfig {
+            tools: Default::default(),
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Store placement test".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+            stores: HashMap::from([(
+                "rust_kb".to_string(),
+                NamedStoreConfig {
+                    path: ".turin/kb/rust.db".to_string(),
+                },
+            )]),
+            placements: vec![ScopedStorePlacementConfig {
+                scope_kind: "project".to_string(),
+                scope_key: None,
+                namespace: None,
+                store: "rust_kb".to_string(),
+            }],
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: None,
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("exercise scope placement".to_string()))
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    let default_store = kernel.store_manager().get_default().await?;
+    let default_hits = default_store
+        .search_memories(
+            "project",
+            "rust",
+            None,
+            None,
+            None,
+            Some("Placement-routed"),
+            5,
+            0.0,
+            true,
+            false,
+        )
+        .await?;
+    assert!(
+        default_hits.is_empty(),
+        "placement-routed memory should not land in default state db"
+    );
+    assert_eq!(
+        default_store.kv_get("project", "rust", "owner").await?,
+        None,
+        "placement-routed kv should not land in default state db"
+    );
+
+    let kb_store = kernel
+        .store_manager()
+        .open(&turin::persistence::manager::StoreSelector::Alias(
+            "rust_kb".to_string(),
+        ))
+        .await?;
+    let kb_hits = kb_store
+        .search_memories(
+            "project",
+            "rust",
+            None,
+            None,
+            None,
+            Some("Placement-routed"),
+            5,
+            0.0,
+            true,
+            false,
+        )
+        .await?;
+    assert_eq!(kb_hits.len(), 1);
+    assert_eq!(
+        kb_store.kv_get("project", "rust", "owner").await?,
+        Some("Ferris".to_string())
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_runtime_memory_search_supports_multi_source_queries() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_multi_source_search.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    let harness_code = r#"
+        function on_turn_prepare(ctx)
+            local project = runtime.context("project", "rust")
+            local global_ctx = runtime.context("global")
+
+            local stored_project, pe = runtime.memory.store(
+                "Borrow checker advice from the current workspace",
+                project,
+                { layer = "project" },
+                { storage = "lexical_only" }
+            )
+            if stored_project == nil then error("project store failed: " .. tostring(pe)) end
+
+            local stored_global, ge = runtime.memory.store(
+                "Borrow checker advice from the shared Rust KB",
+                global_ctx,
+                { layer = "global" },
+                { storage = "lexical_only", store = "rust_kb" }
+            )
+            if stored_global == nil then error("global store failed: " .. tostring(ge)) end
+
+            local hits, he = runtime.memory.search("borrow checker advice", project, {
+                include_metadata = true,
+                sources = {
+                    { scope_kind = "project", scope_key = "rust" },
+                    { store = "rust_kb", scope_kind = "global" },
+                }
+            })
+            if hits == nil then error("multi-source search failed: " .. tostring(he)) end
+            if #hits ~= 2 then error("multi-source search returned wrong hit count") end
+
+            local seen_project = false
+            local seen_global = false
+            for _, hit in ipairs(hits) do
+                if hit.metadata ~= nil and hit.metadata.layer == "project" then
+                    seen_project = true
+                end
+                if hit.metadata ~= nil and hit.metadata.layer == "global" then
+                    seen_global = true
+                end
+            end
+            if not seen_project or not seen_global then
+                error("multi-source search did not include both scopes")
+            end
+
+            return ALLOW
+        end
+    "#;
+    std::fs::write(
+        harness_dir.join("runtime_multi_source_search.lua"),
+        harness_code,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        tools: Default::default(),
+        agent: AgentConfig {
+            tools: Default::default(),
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Multi-source search test".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+            stores: HashMap::from([(
+                "rust_kb".to_string(),
+                NamedStoreConfig {
+                    path: ".turin/kb/rust.db".to_string(),
+                },
+            )]),
+            ..PersistenceConfig::default()
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: None,
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise multi-source search".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_runtime_policy_api_round_trip() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_runtime_policy.db");
@@ -2424,6 +2737,7 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -2580,6 +2894,7 @@ async fn test_runtime_cache_api_round_trip() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -2937,6 +3252,7 @@ async fn test_runtime_code_search_api_round_trip() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -3059,6 +3375,7 @@ async fn test_runtime_code_search_falls_back_without_embedding_provider() -> Res
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -3197,6 +3514,7 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -3351,6 +3669,7 @@ async fn test_import_scoped_tracks_imported_module_subject_and_root() -> Result<
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -3462,6 +3781,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_import() -> Result<()>
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -3585,6 +3905,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_use() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -3689,6 +4010,7 @@ async fn test_use_scoped_root_mismatch_fails_harness_init() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -3804,6 +4126,7 @@ async fn test_root_max_capabilities_applies_to_top_level_hooks() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -3919,6 +4242,7 @@ async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -4099,6 +4423,7 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
@@ -4292,6 +4617,7 @@ async fn test_runtime_governance_temporary_grants_issue_use_revoke() -> Result<(
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -4454,6 +4780,7 @@ async fn test_temporary_grant_ceiling_propagates_to_peer_submit() -> Result<()> 
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
@@ -4606,6 +4933,7 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -4753,6 +5081,7 @@ async fn test_use_scoped_capability_delegation_is_downward_only() -> Result<()> 
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -4900,6 +5229,7 @@ async fn test_nested_import_cannot_widen_import_delegation() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -5019,6 +5349,7 @@ async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> 
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -5157,6 +5488,7 @@ async fn test_runtime_db_api_and_context_glob() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -5296,6 +5628,7 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
@@ -5477,6 +5810,7 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_string_lossy().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_string_lossy().to_string(),
@@ -5737,6 +6071,7 @@ async fn test_runtime_agent_complete_preserves_nested_grant_context() -> Result<
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_string_lossy().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_string_lossy().to_string(),

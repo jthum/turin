@@ -53,6 +53,7 @@ impl ExecutionHost {
             agent_id: session.identity.agent_id().to_string(),
             store_manager: Some(self.store_manager.clone()),
             embedding_provider: self.embedding_provider.clone(),
+            config: Some(self.config.clone()),
             allowed_native_tools: Arc::clone(&allowed_native_tools),
             tools: Arc::new(effective_tools),
         };

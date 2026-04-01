@@ -4,9 +4,10 @@ use serde_json::Value;
 
 use crate::harness::stdlib::scoped_data_backend::{
     MemorySearchMode, MemorySearchRequest, MemoryStoreMode, MemoryStoreRequest,
-    memory_search_backend_with_request, memory_store_backend_with_request,
+    memory_search_backend_with_request, memory_store_backend_with_request, selector_scope_ref,
 };
 use crate::kernel::identity::ContextSelector;
+use crate::persistence::manager::StoreSelector;
 use crate::tools::{Tool, ToolContext, ToolEffect, ToolError, ToolOutput, parse_args};
 
 pub struct RememberTool;
@@ -85,6 +86,25 @@ fn memory_public_id_string(bytes: &[u8]) -> Result<String, ToolError> {
         .map_err(|e| ToolError::ExecutionError(format!("Invalid stored memory id: {e}")))
 }
 
+fn scoped_store_selector(
+    ctx: &ToolContext,
+    selector: &ContextSelector,
+) -> Result<Option<StoreSelector>, ToolError> {
+    let Some(config) = ctx.config.as_ref() else {
+        return Ok(None);
+    };
+    let scope = selector_scope_ref(selector)
+        .map_err(|e| ToolError::ExecutionError(format!("Invalid memory selector: {e}")))?;
+    Ok(config
+        .persistence
+        .resolve_store_alias_for_scope(
+            &scope.scope_kind,
+            scope.raw_scope_key.as_deref(),
+            &scope.namespace,
+        )
+        .map(|alias| StoreSelector::Alias(alias.to_string())))
+}
+
 #[async_trait]
 impl Tool for RememberTool {
     fn name(&self) -> &str {
@@ -137,7 +157,7 @@ impl Tool for RememberTool {
             source_task: args.source_task,
             tags: args.tags,
             storage: parse_memory_store_mode(args.storage.as_deref())?,
-            store_selector: None,
+            store_selector: scoped_store_selector(ctx, &selector)?,
         };
         let metadata = args.metadata.unwrap_or_else(|| serde_json::json!({}));
         let stored = memory_store_backend_with_request(
@@ -233,7 +253,8 @@ impl Tool for RecallTool {
             include_metadata: args.include_metadata,
             include_superseded: args.include_superseded,
             strict: args.strict,
-            store_selector: None,
+            store_selector: scoped_store_selector(ctx, &selector)?,
+            sources: Vec::new(),
         };
         let rows = memory_search_backend_with_request(
             store_manager,
@@ -302,6 +323,7 @@ mod tests {
             agent_id: "default".to_string(),
             store_manager: Some(std::sync::Arc::new(StoreManager::new(root))),
             embedding_provider: None,
+            config: None,
             allowed_native_tools: std::sync::Arc::new(crate::tools::policy::full_native_tool_set()),
             tools: std::sync::Arc::new(turin_types::ToolsConfig::default()),
         }

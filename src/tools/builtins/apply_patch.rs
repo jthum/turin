@@ -410,6 +410,7 @@ mod tests {
             agent_id: "a".into(),
             store_manager: None,
             embedding_provider: None,
+            config: None,
             allowed_native_tools: std::sync::Arc::new(std::collections::BTreeSet::from([
                 "apply_patch".to_string(),
             ])),
@@ -439,6 +440,7 @@ mod tests {
             agent_id: "a".into(),
             store_manager: None,
             embedding_provider: None,
+            config: None,
             allowed_native_tools: std::sync::Arc::new(std::collections::BTreeSet::from([
                 "apply_patch".to_string(),
             ])),

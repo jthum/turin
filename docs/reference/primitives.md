@@ -433,11 +433,11 @@ Canonical memory API with explicit selector.
 `opts` for `search`:
 
 - number (limit shorthand), or
-- `{ limit = N, mode = "auto"|"lexical"|"semantic"|"hybrid", min_score = 0.0, include_metadata = false, include_superseded = false, strict = false }`
+- `{ limit = N, mode = "auto"|"lexical"|"semantic"|"hybrid", min_score = 0.0, include_metadata = false, include_superseded = false, strict = false, store = "alias"|selector_table, path = "relative/or/absolute.db", sources = { ... } }`
 
 `opts` for `store` / `correct`:
 
-- `{ storage = "auto"|"lexical_only"|"embedded", source_task = "...", tags = { ... } }`
+- `{ storage = "auto"|"lexical_only"|"embedded", source_task = "...", tags = { ... }, store = "alias"|selector_table, path = "relative/or/absolute.db" }`
 
 Notes:
 
@@ -445,6 +445,11 @@ Notes:
 - `storage="embedded"` requires an embedding provider
 - `correct(...)` supersedes the referenced memory and stores a replacement row
 - `purge(...)` defaults to `dry_run = true`
+- when `store`/`path` is omitted, Turin resolves scoped state by:
+  1. explicit per-call target
+  2. matching `[persistence.placements]` rule
+  3. primary `state` store
+- `sources = { ... }` lets one search span multiple scopes and stores
 
 Returns rows like:
 
@@ -459,9 +464,13 @@ Returns rows like:
 
 Canonical KV API with explicit selector.
 
-- `runtime.kv.get(key, ctx) -> string|nil, err?`
-- `runtime.kv.set(key, value, ctx) -> bool, err?`
-- `runtime.kv.delete(key, ctx) -> bool, err?`
+- `runtime.kv.get(key, ctx, opts?) -> string|nil, err?`
+- `runtime.kv.set(key, value, ctx, opts?) -> bool, err?`
+- `runtime.kv.delete(key, ctx, opts?) -> bool, err?`
+
+`opts` for KV:
+
+- `{ store = "alias"|selector_table, path = "relative/or/absolute.db" }`
 
 ## `runtime.cache`
 
@@ -709,16 +718,20 @@ Top-level shortcuts:
 - `remember(content, metadata?, opts?)`
 - `recall(query, opts?)`
 
+All memory variants accept the same `store` / `path` search/store options as `runtime.memory.*`.
+
 ## `kv` (default agent-scoped KV)
 
 Uses a default selector derived from the active agent identity.
 Requires an active session context.
 
-- `kv.get(key)`
-- `kv.set(key, value)`
-- `kv.delete(key)`
+- `kv.get(key, opts?)`
+- `kv.set(key, value, opts?)`
+- `kv.delete(key, opts?)`
 - `kv.as(ctx) -> proxy`
   - proxy methods: `get`, `set`, `delete`
+
+All KV variants accept the same `store` / `path` options as `runtime.kv.*`.
 
 ## `cache`
 

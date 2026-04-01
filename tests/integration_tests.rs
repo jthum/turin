@@ -46,6 +46,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
         },
         persistence: PersistenceConfig {
             database_path: db_path.to_str().unwrap().to_string(),
+            ..PersistenceConfig::default()
         },
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
