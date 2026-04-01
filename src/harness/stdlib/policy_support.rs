@@ -45,17 +45,6 @@ pub(crate) fn policy_u64(
         .unwrap_or(default)
 }
 
-pub(crate) fn policy_string<'a>(
-    snapshot: &'a HashMap<String, serde_json::Value>,
-    key: &str,
-    default: &'a str,
-) -> &'a str {
-    snapshot
-        .get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or(default)
-}
-
 pub(crate) fn policy_scope_from_value(
     app_data: &HarnessAppData,
     scope: Option<Value>,

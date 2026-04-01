@@ -6,13 +6,11 @@ use crate::harness::stdlib::binding_common::{
     nil_err, ok_value,
 };
 use crate::harness::stdlib::db_support::{
-    SqlParams, lua_table_to_sql_params, selector_from_db_opts, selector_from_db_value,
-    sql_value_to_json,
+    SqlParams, lua_table_to_sql_params, selector_denied_by_dynamic_open, selector_from_db_opts,
+    selector_from_db_value, sql_value_to_json, store_path_scope_from_snapshot,
 };
 use crate::harness::stdlib::governance_support::require_capability as require_governance_capability;
-use crate::harness::stdlib::policy_support::{
-    policy_bool, policy_string, policy_u64, runtime_policy_snapshot,
-};
+use crate::harness::stdlib::policy_support::{policy_u64, runtime_policy_snapshot};
 use crate::persistence::manager::{StoreHandleInfo, StoreManager, StorePathScope, StoreSelector};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -26,23 +24,11 @@ struct DbRuntimeSettings {
 
 fn db_runtime_settings(snapshot: &HashMap<String, serde_json::Value>) -> DbRuntimeSettings {
     DbRuntimeSettings {
-        path_scope: StorePathScope::from_policy(policy_string(
-            snapshot,
-            "db.path_scope",
-            "workspace_only",
-        )),
+        path_scope: store_path_scope_from_snapshot(snapshot),
         max_open_handles: policy_u64(snapshot, "db.max_open_handles", 128).clamp(1, u64::MAX)
             as usize,
         idle_close_secs: policy_u64(snapshot, "db.idle_close_secs", 300),
     }
-}
-
-fn selector_denied_by_dynamic_open(
-    snapshot: &HashMap<String, serde_json::Value>,
-    selector: &StoreSelector,
-) -> bool {
-    matches!(selector, StoreSelector::Path(_))
-        && !policy_bool(snapshot, "db.allow_dynamic_open", true)
 }
 
 fn store_handle_info_to_lua_table(lua: &Lua, h: StoreHandleInfo) -> LuaResult<Table> {

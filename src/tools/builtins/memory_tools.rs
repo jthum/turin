@@ -137,6 +137,7 @@ impl Tool for RememberTool {
             source_task: args.source_task,
             tags: args.tags,
             storage: parse_memory_store_mode(args.storage.as_deref())?,
+            store_selector: None,
         };
         let metadata = args.metadata.unwrap_or_else(|| serde_json::json!({}));
         let stored = memory_store_backend_with_request(
@@ -146,6 +147,7 @@ impl Tool for RememberTool {
             &args.content,
             &metadata,
             &request,
+            crate::persistence::manager::StorePathScope::WorkspaceOnly,
         )
         .await
         .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
@@ -231,6 +233,7 @@ impl Tool for RecallTool {
             include_metadata: args.include_metadata,
             include_superseded: args.include_superseded,
             strict: args.strict,
+            store_selector: None,
         };
         let rows = memory_search_backend_with_request(
             store_manager,
@@ -238,6 +241,7 @@ impl Tool for RecallTool {
             &selector,
             &args.query,
             &request,
+            crate::persistence::manager::StorePathScope::WorkspaceOnly,
         )
         .await
         .map_err(|e| ToolError::ExecutionError(e.to_string()))?;

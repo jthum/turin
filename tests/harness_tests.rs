@@ -2174,6 +2174,185 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_runtime_memory_and_kv_support_explicit_store_targets() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_runtime_store_targets.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    let harness_code = r#"
+        function on_turn_prepare(ctx)
+            local project = runtime.context("project", "rust")
+
+            local stored, se = runtime.memory.store(
+                "Rust lifetimes require explicit ownership flow",
+                project,
+                { topic = "rust" },
+                { storage = "lexical_only", store = "rust_kb" }
+            )
+            if stored == nil then error("runtime.memory.store failed: " .. tostring(se)) end
+
+            local hits, he = runtime.memory.search("lifetimes", project, {
+                store = "rust_kb",
+                include_metadata = true,
+            })
+            if hits == nil then error("runtime.memory.search failed: " .. tostring(he)) end
+            if #hits < 1 then error("runtime.memory.search returned no hits") end
+            if hits[1].metadata == nil or hits[1].metadata.topic ~= "rust" then
+                error("runtime.memory.search metadata missing")
+            end
+
+            local ok, ke = runtime.kv.set(
+                "owner",
+                "Ferris",
+                project,
+                { path = ".turin/kb/project.db" }
+            )
+            if not ok then error("runtime.kv.set failed: " .. tostring(ke)) end
+
+            local value, ve = runtime.kv.get("owner", project, { path = ".turin/kb/project.db" })
+            if ve ~= nil then error("runtime.kv.get failed: " .. tostring(ve)) end
+            if value ~= "Ferris" then error("runtime.kv.get mismatch") end
+
+            return ALLOW
+        end
+    "#;
+    std::fs::write(harness_dir.join("runtime_store_targets.lua"), harness_code)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        tools: Default::default(),
+        agent: AgentConfig {
+            tools: Default::default(),
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Store routing test".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        persistence: PersistenceConfig {
+            database_path: db_path.to_str().unwrap().to_string(),
+        },
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: None,
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise explicit store targets".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    let default_store = kernel.store_manager().get_default().await?;
+    let default_hits = default_store
+        .search_memories(
+            "project",
+            "rust",
+            None,
+            None,
+            None,
+            Some("lifetimes"),
+            5,
+            0.0,
+            true,
+            false,
+        )
+        .await?;
+    assert!(
+        default_hits.is_empty(),
+        "explicit store memory should not land in default state db"
+    );
+    assert_eq!(
+        default_store.kv_get("project", "rust", "owner").await?,
+        None,
+        "explicit path kv should not land in default state db"
+    );
+
+    let alias_store = kernel
+        .store_manager()
+        .open(&turin::persistence::manager::StoreSelector::Alias(
+            "rust_kb".to_string(),
+        ))
+        .await?;
+    let alias_hits = alias_store
+        .search_memories(
+            "project",
+            "rust",
+            None,
+            None,
+            None,
+            Some("lifetimes"),
+            5,
+            0.0,
+            true,
+            false,
+        )
+        .await?;
+    assert_eq!(alias_hits.len(), 1);
+    assert!(
+        alias_hits[0]
+            .metadata
+            .as_deref()
+            .unwrap_or_default()
+            .contains("\"topic\":\"rust\"")
+    );
+
+    let explicit_path = tmp.path().join(".turin/kb/project.db");
+    assert!(
+        explicit_path.exists(),
+        "expected explicit path db to be created"
+    );
+    let path_store = kernel
+        .store_manager()
+        .open(&turin::persistence::manager::StoreSelector::Path(
+            ".turin/kb/project.db".to_string(),
+        ))
+        .await?;
+    assert_eq!(
+        path_store.kv_get("project", "rust", "owner").await?,
+        Some("Ferris".to_string())
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_runtime_policy_api_round_trip() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_runtime_policy.db");

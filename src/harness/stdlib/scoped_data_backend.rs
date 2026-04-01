@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::kernel::identity::ContextSelector;
-use crate::persistence::manager::StoreManager;
+use crate::persistence::manager::{StoreManager, StorePathScope, StoreSelector};
 use crate::persistence::schema::{
     MemoryCorrectionRow, MemoryFeedbackState, MemoryPurgeReport, MemoryRow, StoredMemoryRow,
 };
@@ -20,6 +20,7 @@ pub(crate) struct MemoryStoreRequest {
     pub source_task: Option<String>,
     pub tags: Vec<String>,
     pub storage: MemoryStoreMode,
+    pub store_selector: Option<StoreSelector>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -39,6 +40,7 @@ pub(crate) struct MemorySearchRequest {
     pub include_metadata: bool,
     pub include_superseded: bool,
     pub strict: bool,
+    pub store_selector: Option<StoreSelector>,
 }
 
 impl Default for MemorySearchRequest {
@@ -50,6 +52,7 @@ impl Default for MemorySearchRequest {
             include_metadata: false,
             include_superseded: false,
             strict: false,
+            store_selector: None,
         }
     }
 }
@@ -68,6 +71,7 @@ pub(crate) struct MemoryFeedbackRequest {
     pub step: f64,
     pub clamp_min: f64,
     pub clamp_max: f64,
+    pub store_selector: Option<StoreSelector>,
 }
 
 impl Default for MemoryFeedbackRequest {
@@ -78,6 +82,7 @@ impl Default for MemoryFeedbackRequest {
             step: 0.1,
             clamp_min: 0.1,
             clamp_max: 5.0,
+            store_selector: None,
         }
     }
 }
@@ -90,6 +95,7 @@ pub(crate) struct MemoryPurgeRequest {
     pub only_superseded: bool,
     pub all: bool,
     pub dry_run: bool,
+    pub store_selector: Option<StoreSelector>,
 }
 
 impl Default for MemoryPurgeRequest {
@@ -101,6 +107,7 @@ impl Default for MemoryPurgeRequest {
             only_superseded: false,
             all: false,
             dry_run: true,
+            store_selector: None,
         }
     }
 }
@@ -162,19 +169,29 @@ fn selector_scope_ref(selector: &ContextSelector) -> anyhow::Result<ScopedStateR
 
 async fn open_state_store(
     manager: &StoreManager,
+    store_selector: Option<&StoreSelector>,
+    path_scope: StorePathScope,
 ) -> anyhow::Result<Arc<crate::persistence::state::StateStore>> {
-    manager
-        .get_default()
-        .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))
+    match store_selector {
+        Some(selector) => manager
+            .open_with_path_scope(selector, path_scope)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string())),
+        None => manager
+            .get_default()
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string())),
+    }
 }
 
 pub(crate) async fn kv_get_backend(
     manager: &StoreManager,
     selector: &ContextSelector,
     key: &str,
+    store_selector: Option<&StoreSelector>,
+    path_scope: StorePathScope,
 ) -> anyhow::Result<Option<String>> {
-    let store = open_state_store(manager).await?;
+    let store = open_state_store(manager, store_selector, path_scope).await?;
     let scope = selector_scope_ref(selector)?;
     store.kv_get(&scope.scope_kind, &scope.scope_key, key).await
 }
@@ -184,8 +201,10 @@ pub(crate) async fn kv_set_backend(
     selector: &ContextSelector,
     key: &str,
     value: &str,
+    store_selector: Option<&StoreSelector>,
+    path_scope: StorePathScope,
 ) -> anyhow::Result<()> {
-    let store = open_state_store(manager).await?;
+    let store = open_state_store(manager, store_selector, path_scope).await?;
     let scope = selector_scope_ref(selector)?;
     store
         .kv_set(&scope.scope_kind, &scope.scope_key, key, value)
@@ -196,8 +215,10 @@ pub(crate) async fn kv_delete_backend(
     manager: &StoreManager,
     selector: &ContextSelector,
     key: &str,
+    store_selector: Option<&StoreSelector>,
+    path_scope: StorePathScope,
 ) -> anyhow::Result<()> {
-    let store = open_state_store(manager).await?;
+    let store = open_state_store(manager, store_selector, path_scope).await?;
     let scope = selector_scope_ref(selector)?;
     store
         .kv_delete(&scope.scope_kind, &scope.scope_key, key)
@@ -211,6 +232,7 @@ pub(crate) async fn memory_store_backend(
     selector: &ContextSelector,
     content: &str,
     metadata: &serde_json::Value,
+    path_scope: StorePathScope,
 ) -> anyhow::Result<StoredMemoryRow> {
     let request = MemoryStoreRequest::default();
     memory_store_backend_with_request(
@@ -220,6 +242,7 @@ pub(crate) async fn memory_store_backend(
         content,
         metadata,
         &request,
+        path_scope,
     )
     .await
 }
@@ -231,8 +254,9 @@ pub(crate) async fn memory_store_backend_with_request(
     content: &str,
     metadata: &serde_json::Value,
     request: &MemoryStoreRequest,
+    path_scope: StorePathScope,
 ) -> anyhow::Result<StoredMemoryRow> {
-    let store = open_state_store(manager).await?;
+    let store = open_state_store(manager, request.store_selector.as_ref(), path_scope).await?;
     let scope = selector_scope_ref(selector)?;
     let vector = match request.storage {
         MemoryStoreMode::Auto => {
@@ -279,12 +303,21 @@ pub(crate) async fn memory_search_backend(
     selector: &ContextSelector,
     query: &str,
     limit: usize,
+    path_scope: StorePathScope,
 ) -> anyhow::Result<Vec<MemoryRow>> {
     let request = MemorySearchRequest {
         limit,
         ..MemorySearchRequest::default()
     };
-    memory_search_backend_with_request(manager, embedding_provider, selector, query, &request).await
+    memory_search_backend_with_request(
+        manager,
+        embedding_provider,
+        selector,
+        query,
+        &request,
+        path_scope,
+    )
+    .await
 }
 
 pub(crate) async fn memory_search_backend_with_request(
@@ -293,8 +326,9 @@ pub(crate) async fn memory_search_backend_with_request(
     selector: &ContextSelector,
     query: &str,
     request: &MemorySearchRequest,
+    path_scope: StorePathScope,
 ) -> anyhow::Result<Vec<MemoryRow>> {
-    let store = open_state_store(manager).await?;
+    let store = open_state_store(manager, request.store_selector.as_ref(), path_scope).await?;
     let scope = selector_scope_ref(selector)?;
     let query = query.trim();
     if query.is_empty() {
@@ -378,8 +412,9 @@ pub(crate) async fn memory_feedback_backend_with_request(
     memory_id: &str,
     signal: MemoryFeedbackSignal,
     request: &MemoryFeedbackRequest,
+    path_scope: StorePathScope,
 ) -> anyhow::Result<MemoryFeedbackState> {
-    let store = open_state_store(manager).await?;
+    let store = open_state_store(manager, request.store_selector.as_ref(), path_scope).await?;
     let scope = selector_scope_ref(selector)?;
     let public_id = uuid::Uuid::parse_str(memory_id)
         .map_err(|e| anyhow::anyhow!("runtime.memory.feedback: invalid memory id: {}", e))?;
@@ -402,6 +437,7 @@ pub(crate) async fn memory_feedback_backend_with_request(
         .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn memory_correct_backend_with_request(
     manager: &StoreManager,
     embedding_provider: Option<&Arc<dyn EmbeddingProvider>>,
@@ -410,8 +446,9 @@ pub(crate) async fn memory_correct_backend_with_request(
     content: &str,
     metadata: &serde_json::Value,
     request: &MemoryStoreRequest,
+    path_scope: StorePathScope,
 ) -> anyhow::Result<MemoryCorrectionRow> {
-    let store = open_state_store(manager).await?;
+    let store = open_state_store(manager, request.store_selector.as_ref(), path_scope).await?;
     let scope = selector_scope_ref(selector)?;
     let public_id = uuid::Uuid::parse_str(memory_id)
         .map_err(|e| anyhow::anyhow!("runtime.memory.correct: invalid memory id: {}", e))?;
@@ -458,8 +495,9 @@ pub(crate) async fn memory_purge_backend_with_request(
     manager: &StoreManager,
     selector: &ContextSelector,
     request: &MemoryPurgeRequest,
+    path_scope: StorePathScope,
 ) -> anyhow::Result<MemoryPurgeReport> {
-    let store = open_state_store(manager).await?;
+    let store = open_state_store(manager, request.store_selector.as_ref(), path_scope).await?;
     let scope = selector_scope_ref(selector)?;
     store
         .purge_memories(
@@ -532,7 +570,7 @@ mod tests {
         memory_store_backend_with_request,
     };
     use crate::kernel::identity::ContextSelector;
-    use crate::persistence::manager::StoreManager;
+    use crate::persistence::manager::{StoreManager, StorePathScope};
 
     fn test_selector() -> ContextSelector {
         ContextSelector {
@@ -554,13 +592,21 @@ mod tests {
             &selector,
             "alpha beta lexical memory",
             &json!({ "kind": "note" }),
+            StorePathScope::WorkspaceOnly,
         )
         .await
         .expect("lexical-only memory store should succeed");
 
-        let rows = memory_search_backend(&manager, None, &selector, "alpha", 5)
-            .await
-            .expect("lexical-only memory search should succeed");
+        let rows = memory_search_backend(
+            &manager,
+            None,
+            &selector,
+            "alpha",
+            5,
+            StorePathScope::WorkspaceOnly,
+        )
+        .await
+        .expect("lexical-only memory search should succeed");
 
         assert_eq!(rows.len(), 1);
         assert!(rows[0].content.contains("alpha beta lexical memory"));
@@ -582,6 +628,7 @@ mod tests {
                 storage: MemoryStoreMode::Embedded,
                 ..MemoryStoreRequest::default()
             },
+            StorePathScope::WorkspaceOnly,
         )
         .await
         .expect_err("embedded-only store should fail without provider");
@@ -604,6 +651,7 @@ mod tests {
             &selector,
             "alpha beta lexical memory",
             &json!({ "kind": "note" }),
+            StorePathScope::WorkspaceOnly,
         )
         .await
         .expect("lexical-only memory store should succeed");
@@ -617,6 +665,7 @@ mod tests {
                 mode: MemorySearchMode::Semantic,
                 ..MemorySearchRequest::default()
             },
+            StorePathScope::WorkspaceOnly,
         )
         .await
         .expect("semantic search should fall back to lexical when strict is false");
@@ -632,6 +681,7 @@ mod tests {
                 strict: true,
                 ..MemorySearchRequest::default()
             },
+            StorePathScope::WorkspaceOnly,
         )
         .await
         .expect_err("strict semantic search should fail without embeddings");
@@ -653,6 +703,7 @@ mod tests {
             &selector,
             "stale alpha memory",
             &json!({ "kind": "note", "source": "initial" }),
+            StorePathScope::WorkspaceOnly,
         )
         .await
         .expect("initial memory store should succeed");
@@ -670,6 +721,7 @@ mod tests {
                 step: 0.25,
                 ..MemoryFeedbackRequest::default()
             },
+            StorePathScope::WorkspaceOnly,
         )
         .await
         .expect("feedback should succeed");
@@ -686,6 +738,7 @@ mod tests {
                 storage: MemoryStoreMode::LexicalOnly,
                 ..MemoryStoreRequest::default()
             },
+            StorePathScope::WorkspaceOnly,
         )
         .await
         .expect("correction should succeed");
@@ -699,6 +752,7 @@ mod tests {
                 include_metadata: true,
                 ..MemorySearchRequest::default()
             },
+            StorePathScope::WorkspaceOnly,
         )
         .await
         .expect("corrected memory should be searchable");
@@ -720,6 +774,7 @@ mod tests {
             &selector,
             "stale",
             &MemorySearchRequest::default(),
+            StorePathScope::WorkspaceOnly,
         )
         .await
         .expect("superseded search should succeed");
@@ -737,6 +792,7 @@ mod tests {
                 include_superseded: true,
                 ..MemorySearchRequest::default()
             },
+            StorePathScope::WorkspaceOnly,
         )
         .await
         .expect("superseded-inclusive search should succeed");
@@ -749,6 +805,7 @@ mod tests {
                 only_superseded: true,
                 ..MemoryPurgeRequest::default()
             },
+            StorePathScope::WorkspaceOnly,
         )
         .await
         .expect("purge dry-run should succeed");
@@ -764,6 +821,7 @@ mod tests {
                 dry_run: false,
                 ..MemoryPurgeRequest::default()
             },
+            StorePathScope::WorkspaceOnly,
         )
         .await
         .expect("purge should succeed");
@@ -778,6 +836,7 @@ mod tests {
                 include_superseded: true,
                 ..MemorySearchRequest::default()
             },
+            StorePathScope::WorkspaceOnly,
         )
         .await
         .expect("post-purge search should succeed");

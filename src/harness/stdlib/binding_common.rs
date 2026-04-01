@@ -5,11 +5,17 @@ use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::harness::globals::HarnessAppData;
 use crate::harness::globals::block_on_current;
+use crate::harness::stdlib::db_support::{
+    selector_denied_by_dynamic_open, store_path_scope_from_snapshot, store_selector_from_fields,
+};
+use crate::harness::stdlib::policy_support::runtime_policy_snapshot;
 use crate::harness::stdlib::scoped_data_backend::{
     MemoryFeedbackRequest, MemoryFeedbackSignal, MemoryPurgeRequest, MemorySearchMode,
     MemorySearchRequest, MemoryStoreMode, MemoryStoreRequest,
 };
+use crate::persistence::manager::{StorePathScope, StoreSelector};
 
 pub fn bridge_async<F>(fut: F) -> F::Output
 where
@@ -148,9 +154,10 @@ pub(crate) fn memory_search_request_from_opt(
         }),
         Some(Value::Table(t)) => {
             let parsed = lua
-                .from_value::<LuaMemorySearchOpts>(Value::Table(t))
+                .from_value::<LuaMemorySearchOpts>(Value::Table(t.clone()))
                 .map_err(|e| mlua::Error::runtime(format!("invalid memory search opts: {}", e)))?;
             let _ = parsed.trace;
+            let store_selector = store_selector_from_fields(&t)?;
             Ok(MemorySearchRequest {
                 limit: parsed.limit.unwrap_or(5).max(0) as usize,
                 mode: parse_memory_search_mode(parsed.mode.as_deref())?,
@@ -158,6 +165,7 @@ pub(crate) fn memory_search_request_from_opt(
                 include_metadata: parsed.include_metadata.unwrap_or(false),
                 include_superseded: parsed.include_superseded.unwrap_or(false),
                 strict: parsed.strict.unwrap_or(false),
+                store_selector,
             })
         }
         Some(_) => Err(mlua::Error::runtime(
@@ -174,13 +182,15 @@ pub(crate) fn memory_store_request_from_opts(
         None => Ok(MemoryStoreRequest::default()),
         Some(t) => {
             let parsed = lua
-                .from_value::<LuaMemoryStoreOpts>(Value::Table(t))
+                .from_value::<LuaMemoryStoreOpts>(Value::Table(t.clone()))
                 .map_err(|e| mlua::Error::runtime(format!("invalid memory store opts: {}", e)))?;
             let _ = parsed.trace;
+            let store_selector = store_selector_from_fields(&t)?;
             Ok(MemoryStoreRequest {
                 source_task: parsed.source_task,
                 tags: parsed.tags.unwrap_or_default(),
                 storage: parse_memory_store_mode(parsed.storage.as_deref())?,
+                store_selector,
             })
         }
     }
@@ -223,11 +233,12 @@ pub(crate) fn memory_feedback_request_from_opts(
         None => Ok(MemoryFeedbackRequest::default()),
         Some(t) => {
             let parsed = lua
-                .from_value::<LuaMemoryFeedbackOpts>(Value::Table(t))
+                .from_value::<LuaMemoryFeedbackOpts>(Value::Table(t.clone()))
                 .map_err(|e| {
                     mlua::Error::runtime(format!("invalid memory feedback opts: {}", e))
                 })?;
             let _ = parsed.trace;
+            let store_selector = store_selector_from_fields(&t)?;
             let clamp = parsed.clamp.unwrap_or_default();
             Ok(MemoryFeedbackRequest {
                 reason: parsed.reason,
@@ -235,6 +246,7 @@ pub(crate) fn memory_feedback_request_from_opts(
                 step: parsed.step.unwrap_or(0.1),
                 clamp_min: clamp.min.unwrap_or(0.1),
                 clamp_max: clamp.max.unwrap_or(5.0),
+                store_selector,
             })
         }
     }
@@ -276,9 +288,10 @@ pub(crate) fn memory_purge_request_from_opts(
         None => Ok(MemoryPurgeRequest::default()),
         Some(t) => {
             let parsed = lua
-                .from_value::<LuaMemoryPurgeOpts>(Value::Table(t))
+                .from_value::<LuaMemoryPurgeOpts>(Value::Table(t.clone()))
                 .map_err(|e| mlua::Error::runtime(format!("invalid memory purge opts: {}", e)))?;
             let _ = parsed.trace;
+            let store_selector = store_selector_from_fields(&t)?;
             Ok(MemoryPurgeRequest {
                 older_than_days: parsed.older_than_days,
                 min_weight: parsed.min_weight,
@@ -286,8 +299,33 @@ pub(crate) fn memory_purge_request_from_opts(
                 only_superseded: parsed.only_superseded.unwrap_or(false),
                 all: parsed.all.unwrap_or(false),
                 dry_run: parsed.dry_run.unwrap_or(true),
+                store_selector,
             })
         }
+    }
+}
+
+pub(crate) fn scoped_state_path_scope(
+    app_data: &HarnessAppData,
+    selector: Option<&StoreSelector>,
+) -> LuaResult<StorePathScope> {
+    let snapshot = runtime_policy_snapshot(app_data).map_err(mlua::Error::runtime)?;
+    if let Some(selector) = selector
+        && selector_denied_by_dynamic_open(&snapshot, selector)
+    {
+        return Err(mlua::Error::runtime(
+            "Policy denial: db.allow_dynamic_open=false",
+        ));
+    }
+    Ok(store_path_scope_from_snapshot(&snapshot))
+}
+
+pub(crate) fn store_selector_from_opts_table(
+    opts: Option<Table>,
+) -> LuaResult<Option<StoreSelector>> {
+    match opts {
+        Some(table) => store_selector_from_fields(&table),
+        None => Ok(None),
     }
 }
 

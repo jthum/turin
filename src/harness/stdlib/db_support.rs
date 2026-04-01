@@ -1,7 +1,8 @@
 use mlua::{Result as LuaResult, Table, Value};
+use std::collections::HashMap;
 
 use crate::harness::stdlib::context_selectors::table_to_selector;
-use crate::persistence::manager::StoreSelector;
+use crate::persistence::manager::{StorePathScope, StoreSelector};
 
 pub(crate) enum SqlParams {
     None,
@@ -20,6 +21,28 @@ fn parse_store_selector_string(s: &str) -> StoreSelector {
     } else {
         StoreSelector::Alias(s.to_string())
     }
+}
+
+pub(crate) fn store_path_scope_from_snapshot(
+    snapshot: &HashMap<String, serde_json::Value>,
+) -> StorePathScope {
+    StorePathScope::from_policy(
+        snapshot
+            .get("db.path_scope")
+            .and_then(|value| value.as_str())
+            .unwrap_or("workspace_only"),
+    )
+}
+
+pub(crate) fn selector_denied_by_dynamic_open(
+    snapshot: &HashMap<String, serde_json::Value>,
+    selector: &StoreSelector,
+) -> bool {
+    matches!(selector, StoreSelector::Path(_))
+        && !snapshot
+            .get("db.allow_dynamic_open")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true)
 }
 
 pub(crate) fn selector_from_db_value(value: Value) -> LuaResult<StoreSelector> {
@@ -56,6 +79,26 @@ pub(crate) fn selector_from_db_opts(opts: Option<Table>) -> LuaResult<StoreSelec
         Some(t) => selector_from_db_value(Value::Table(t)),
         None => Ok(StoreSelector::Alias("state".to_string())),
     }
+}
+
+pub(crate) fn store_selector_from_fields(opts: &Table) -> LuaResult<Option<StoreSelector>> {
+    let store = opts.get::<Value>("store")?;
+    let path = opts.get::<Value>("path")?;
+    if !matches!(store, Value::Nil) && !matches!(path, Value::Nil) {
+        return Err(mlua::Error::runtime(
+            "invalid opts: only one of 'store' or 'path' may be set",
+        ));
+    }
+    if !matches!(store, Value::Nil) {
+        return selector_from_db_value(store).map(Some);
+    }
+    if !matches!(path, Value::Nil) {
+        return match path {
+            Value::String(s) => Ok(Some(StoreSelector::Path(s.to_str()?.to_string()))),
+            other => selector_from_db_value(other).map(Some),
+        };
+    }
+    Ok(None)
 }
 
 fn lua_value_to_sql_param(value: Value) -> LuaResult<turso::Value> {
