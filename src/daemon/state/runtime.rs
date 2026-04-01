@@ -107,14 +107,25 @@ impl DaemonState {
         }
     }
 
-    pub async fn list_sessions(&self, limit: usize, offset: usize) -> Result<Vec<SessionSummary>> {
-        // Session listing is intentionally primary-state scoped by default.
-        // Cross-state aggregation is a higher-level UI concern rather than a core daemon default.
-        let store = self.kernel.store_manager().get_default().await?;
+    pub async fn list_sessions(
+        &self,
+        limit: usize,
+        offset: usize,
+        store_selector: Option<StoreSelector>,
+    ) -> Result<Vec<SessionSummary>> {
+        // Session listing is intentionally single-store scoped by default. When no explicit
+        // selector is supplied, that store is the primary `state` target.
+        let store = match &store_selector {
+            Some(selector) => self.kernel.store_manager().open(selector).await?,
+            None => self.kernel.store_manager().get_default().await?,
+        };
         let rows = store.list_session_rows(limit, offset).await?;
         Ok(rows
             .iter()
-            .map(super::helpers::session_summary_from_row)
+            .map(|row| match &store_selector {
+                Some(selector) => session_summary_from_row_and_selector(row, selector),
+                None => super::helpers::session_summary_from_row(row),
+            })
             .collect())
     }
 
@@ -124,11 +135,14 @@ impl DaemonState {
         scope: SessionSearchScope,
         limit: usize,
         offset: usize,
+        store_selector: Option<StoreSelector>,
     ) -> Result<Vec<SessionSearchHit>> {
-        // Session history search is intentionally primary-state scoped by default.
-        // Store-qualified session references are supported elsewhere, but global multi-state
-        // aggregation should remain explicit rather than implicit here.
-        let store = self.kernel.store_manager().get_default().await?;
+        // Session history search is intentionally single-store scoped by default. When no
+        // explicit selector is supplied, that store is the primary `state` target.
+        let store = match &store_selector {
+            Some(selector) => self.kernel.store_manager().open(selector).await?,
+            None => self.kernel.store_manager().get_default().await?,
+        };
         let rows = store
             .search_session_history(query, scope, limit, offset)
             .await?;
@@ -136,10 +150,14 @@ impl DaemonState {
             .into_iter()
             .map(|row| {
                 let title = super::helpers::session_title_from_metadata(row.metadata.as_deref());
+                let session_id = super::helpers::format_uuid_bytes_simple(&row.public_id);
                 SessionSearchHit {
                     kind: row.kind,
                     score: row.score,
-                    session_id: super::helpers::format_uuid_bytes_simple(&row.public_id),
+                    session_id: match &store_selector {
+                        Some(selector) => format_session_reference(&session_id, selector),
+                        None => session_id,
+                    },
                     agent_id: row.agent_id,
                     title,
                     created_at: row.created_at,
@@ -518,6 +536,26 @@ impl DaemonState {
                     .unwrap_or_else(|_| snapshot.session_id == wanted)
             })
     }
+}
+
+pub(crate) fn session_store_selector_from_filters(
+    store: Option<&str>,
+    path: Option<&str>,
+) -> Result<Option<StoreSelector>> {
+    if store.is_some() && path.is_some() {
+        anyhow::bail!("Only one of 'store' or 'path' may be supplied");
+    }
+    if let Some(store) = store {
+        let trimmed = store.trim();
+        anyhow::ensure!(!trimmed.is_empty(), "'store' must not be empty");
+        return Ok(Some(StoreSelector::Alias(trimmed.to_string())));
+    }
+    if let Some(path) = path {
+        let trimmed = path.trim();
+        anyhow::ensure!(!trimmed.is_empty(), "'path' must not be empty");
+        return Ok(Some(StoreSelector::Path(trimmed.to_string())));
+    }
+    Ok(None)
 }
 
 fn session_summary_from_row_and_selector(

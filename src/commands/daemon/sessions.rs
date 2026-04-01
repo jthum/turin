@@ -57,12 +57,19 @@ pub async fn run_session_list(
     config_path: &std::path::Path,
     limit: usize,
     offset: usize,
+    store: Option<&str>,
+    path: Option<&str>,
     json_output: bool,
 ) -> Result<()> {
     let response = send_request(
         config_path,
         "session.list",
-        json!({ "limit": limit, "offset": offset }),
+        json!({
+            "limit": limit,
+            "offset": offset,
+            "store": store,
+            "path": path,
+        }),
     )
     .await?;
     if json_output {

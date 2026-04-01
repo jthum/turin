@@ -19,6 +19,7 @@ use crate::daemon::registry::{
 use crate::kernel::Kernel;
 use crate::kernel::config::{AgentMode, ThinkingConfig, TurinConfig};
 
+pub(crate) use runtime::session_store_selector_from_filters;
 pub use types::{
     AgentDetail, ChannelDetail, HarnessDetail, SessionBranchDetail, SessionDetail,
     SessionEventDetail, SessionMessageDetail, SessionSearchHit, SessionSummary,

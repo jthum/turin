@@ -3,6 +3,7 @@ use crate::daemon::protocol::{
     SessionBranchCheckoutParams, SessionBranchCreateParams, SessionIdParams, SessionListParams,
     SessionSearchParams, SessionTitleParams,
 };
+use crate::daemon::state::session_store_selector_from_filters;
 
 use super::{
     DispatchContext, emit_event, not_found_error, serialize_response,
@@ -16,7 +17,17 @@ pub(super) async fn list(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
-    match guard.list_sessions(params.limit, params.offset).await {
+    let store_selector = match session_store_selector_from_filters(
+        params.store.as_deref(),
+        params.path.as_deref(),
+    ) {
+        Ok(selector) => selector,
+        Err(err) => return validation_error(id, err),
+    };
+    match guard
+        .list_sessions(params.limit, params.offset, store_selector)
+        .await
+    {
         Ok(sessions) => ResponseEnvelope::ok(id, serde_json::json!({ "sessions": sessions })),
         Err(err) => super::internal_error(id, err),
     }
@@ -40,6 +51,13 @@ pub(super) async fn search(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
+    let store_selector = match session_store_selector_from_filters(
+        params.store.as_deref(),
+        params.path.as_deref(),
+    ) {
+        Ok(selector) => selector,
+        Err(err) => return validation_error(id, err),
+    };
     match guard
         .search_sessions(
             params.query.as_str(),
@@ -48,6 +66,7 @@ pub(super) async fn search(
                 .unwrap_or(turin_daemon_protocol::SessionSearchScope::All),
             params.limit,
             params.offset,
+            store_selector,
         )
         .await
     {

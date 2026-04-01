@@ -192,6 +192,10 @@ pub struct SessionListParams {
     pub limit: usize,
     #[serde(default)]
     pub offset: usize,
+    #[serde(default)]
+    pub store: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -222,6 +226,10 @@ pub struct SessionSearchParams {
     pub limit: usize,
     #[serde(default)]
     pub offset: usize,
+    #[serde(default)]
+    pub store: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

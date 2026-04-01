@@ -515,10 +515,25 @@ impl ControlClient {
     }
 
     pub async fn list_sessions(&self, limit: usize, offset: usize) -> Result<Vec<SessionSummary>> {
+        self.list_sessions_in(limit, offset, None, None).await
+    }
+
+    pub async fn list_sessions_in(
+        &self,
+        limit: usize,
+        offset: usize,
+        store: Option<&str>,
+        path: Option<&str>,
+    ) -> Result<Vec<SessionSummary>> {
         let response: SessionList = self
             .request_ok(
                 None,
-                DaemonRequest::SessionList(SessionListParams { limit, offset }),
+                DaemonRequest::SessionList(SessionListParams {
+                    limit,
+                    offset,
+                    store: store.map(str::to_string),
+                    path: path.map(str::to_string),
+                }),
             )
             .await?;
         Ok(response.sessions)
@@ -541,6 +556,19 @@ impl ControlClient {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<SessionSearchHit>> {
+        self.search_sessions_in(query, scope, limit, offset, None, None)
+            .await
+    }
+
+    pub async fn search_sessions_in(
+        &self,
+        query: &str,
+        scope: SessionSearchScope,
+        limit: usize,
+        offset: usize,
+        store: Option<&str>,
+        path: Option<&str>,
+    ) -> Result<Vec<SessionSearchHit>> {
         let response: SessionSearchResultList = self
             .request_ok(
                 None,
@@ -549,6 +577,8 @@ impl ControlClient {
                     scope: Some(scope),
                     limit,
                     offset,
+                    store: store.map(str::to_string),
+                    path: path.map(str::to_string),
                 }),
             )
             .await?;

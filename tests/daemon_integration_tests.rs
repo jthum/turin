@@ -422,6 +422,8 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
                 turin::daemon::protocol::SessionListParams {
                     limit: 10,
                     offset: 0,
+                    store: None,
+                    path: None,
                 },
             ))
             .await?,

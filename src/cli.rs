@@ -662,6 +662,8 @@ pub(crate) enum DaemonSessionCommands {
         #[arg(long, default_value_t = 0)]
         offset: usize,
         #[command(flatten)]
+        store: DaemonStoreFilterArgs,
+        #[command(flatten)]
         args: DaemonOutputArgs,
     },
     /// List current live daemon-managed sessions
@@ -772,6 +774,16 @@ pub(crate) struct DaemonOutputArgs {
     /// Output JSON
     #[arg(long)]
     pub(crate) json: bool,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub(crate) struct DaemonStoreFilterArgs {
+    /// Named state/store alias to query for persisted sessions
+    #[arg(long)]
+    pub(crate) store: Option<String>,
+    /// Explicit state DB path to query for persisted sessions
+    #[arg(long)]
+    pub(crate) path: Option<String>,
 }
 
 #[derive(Args, Debug, Clone)]

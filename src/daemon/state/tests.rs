@@ -1,7 +1,30 @@
 use super::*;
+use crate::kernel::session_refs::parse_session_reference;
+use crate::persistence::manager::StoreSelector;
 use serde_json::json;
 use tempfile::tempdir;
 use tokio::time::{Duration, sleep};
+use turin_daemon_protocol::SessionSearchScope;
+
+fn write_agent_with_state_path(root: &Path, agent_id: &str, state_path: &str) -> Result<()> {
+    let agent_dir = root.join("agents").join(agent_id);
+    std::fs::create_dir_all(&agent_dir)?;
+    std::fs::create_dir_all(agent_dir.join("harness"))?;
+    std::fs::write(agent_dir.join("harness").join("main.lua"), "-- local harness\n")?;
+    std::fs::write(
+        agent_dir.join("agent.toml"),
+        format!(
+            r#"id = "{agent_id}"
+model = "mock-model"
+provider = "mock"
+
+[persistence.state]
+path = "{state_path}"
+"#
+        ),
+    )?;
+    Ok(())
+}
 
 fn write_bootstrap(root: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(root.join("default-harness"))?;
@@ -193,7 +216,7 @@ async fn session_list_and_get_expose_persisted_session_details() -> Result<()> {
     }
     assert!(saw_completed, "daemon task did not complete in time");
 
-    let sessions = state.list_sessions(10, 0).await?;
+    let sessions = state.list_sessions(10, 0, None).await?;
     assert!(!sessions.is_empty());
     let session = &sessions[0];
     assert_eq!(session.agent_id, "default");
@@ -206,6 +229,81 @@ async fn session_list_and_get_expose_persisted_session_details() -> Result<()> {
     assert_eq!(detail.session.agent_id, "default");
     assert!(!detail.events.is_empty());
     assert!(!detail.messages.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_list_and_search_can_target_an_explicit_state_store() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    write_agent_with_state_path(temp.path(), "reviewer", "reviewer.db")?;
+    let state = DaemonState::load(&config_path).await?;
+
+    let live = state.open_session("reviewer", None, None).await?;
+    assert!(live.session_id.contains("@"));
+
+    let task = state
+        .submit_task(
+            None,
+            Some(&live.session_id),
+            "alternate store session body".to_string(),
+            Default::default(),
+        )
+        .await?;
+    assert_eq!(
+        state
+            .wait_for_task(&task.request_id, Some(2_000))
+            .await?
+            .state,
+        "completed"
+    );
+
+    let default_sessions = state.list_sessions(20, 0, None).await?;
+    assert!(
+        default_sessions
+            .iter()
+            .all(|session| session.agent_id != "reviewer"),
+        "default session list should remain scoped to primary state"
+    );
+
+    let reviewer_path = temp.path().join("reviewer.db").display().to_string();
+    let reviewer_sessions = state
+        .list_sessions(20, 0, Some(StoreSelector::Path(reviewer_path.clone())))
+        .await?;
+    assert_eq!(reviewer_sessions.len(), 1);
+    assert_eq!(reviewer_sessions[0].agent_id, "reviewer");
+    assert_eq!(
+        parse_session_reference(&reviewer_sessions[0].session_id)?.public_id,
+        parse_session_reference(&live.session_id)?.public_id
+    );
+
+    let default_hits = state
+        .search_sessions(
+            "alternate store session body",
+            SessionSearchScope::Messages,
+            10,
+            0,
+            None,
+        )
+        .await?;
+    assert!(default_hits.is_empty());
+
+    let reviewer_hits = state
+        .search_sessions(
+            "alternate store session body",
+            SessionSearchScope::Messages,
+            10,
+            0,
+            Some(StoreSelector::Path(reviewer_path.clone())),
+        )
+        .await?;
+    assert_eq!(reviewer_hits.len(), 1);
+    assert_eq!(reviewer_hits[0].agent_id, "reviewer");
+    assert_eq!(
+        parse_session_reference(&reviewer_hits[0].session_id)?.public_id,
+        parse_session_reference(&live.session_id)?.public_id
+    );
 
     Ok(())
 }

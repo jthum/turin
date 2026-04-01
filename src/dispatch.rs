@@ -530,9 +530,18 @@ async fn handle_daemon_session_command(command: DaemonSessionCommands) -> Result
         DaemonSessionCommands::List {
             limit,
             offset,
+            store,
             args,
         } => {
-            commands::daemon::run_session_list(&args.config.config, limit, offset, args.json).await
+            commands::daemon::run_session_list(
+                &args.config.config,
+                limit,
+                offset,
+                store.store.as_deref(),
+                store.path.as_deref(),
+                args.json,
+            )
+            .await
         }
         DaemonSessionCommands::Live { args } => {
             commands::daemon::run_session_list_live(&args.config.config, args.json).await
