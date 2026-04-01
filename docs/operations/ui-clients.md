@@ -19,6 +19,12 @@ That means the same core workflows work in both modes:
 - cancel tasks or sessions
 - inspect recent session transcript and tool history
 
+Current multi-DB note:
+
+- the built-in Sessions view and persisted session search default to the primary `state` DB
+- they do not automatically aggregate every configured state DB
+- store-qualified session references still work when a session is opened explicitly from another context
+
 ## Turin TUI: Chat-First Mode
 
 `turin-tui` now opens on a dedicated Chat view instead of dropping you into an operator dashboard first.

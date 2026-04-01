@@ -544,7 +544,7 @@ fn default_heartbeat_interval() -> u32 {
     30
 }
 
-fn default_database_path() -> String {
+fn default_state_path() -> String {
     ".turin/state.db".to_string()
 }
 
@@ -593,7 +593,7 @@ fn default_remote_event_keepalive_secs() -> u64 {
 }
 
 fn default_state_target() -> StoreTargetConfig {
-    StoreTargetConfig::from_path(default_database_path())
+    StoreTargetConfig::from_path(default_state_path())
 }
 
 // ─── Loading ─────────────────────────────────────────────────────

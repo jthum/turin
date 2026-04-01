@@ -77,6 +77,8 @@ pub(crate) fn selector_from_db_value(value: Value) -> LuaResult<StoreSelector> {
 pub(crate) fn selector_from_db_opts(opts: Option<Table>) -> LuaResult<StoreSelector> {
     match opts {
         Some(t) => selector_from_db_value(Value::Table(t)),
+        // Bare DB access defaults to the primary `state` store. Harnesses that need another
+        // store must opt in explicitly with `store`, `path`, or a selector table.
         None => Ok(StoreSelector::Alias("state".to_string())),
     }
 }

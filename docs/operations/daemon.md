@@ -67,6 +67,53 @@ channels_dir = "channels"
 Each channel directory is authoritative the same way an agent directory is.
 If `channels/<id>/channel.toml` exists and is valid, that channel exists.
 
+## Context-Local Persistence Overrides
+
+Turin now distinguishes between:
+
+- `persistence.state`: the owning session/runtime database for that context
+- `persistence.store`: the default scoped-data store for that context
+
+Top-level defaults live in `turin.toml`:
+
+```toml
+[persistence.state]
+path = ".turin/state.db"
+
+# Optional; defaults to the same target as `state`
+# [persistence.store]
+# path = ".turin/store.db"
+```
+
+Agent and channel configs can override those targets locally:
+
+```toml
+# agents/<id>/agent.toml
+[persistence.state]
+path = ".turin/agents/reviewer.db"
+
+[persistence.store]
+path = ".turin/agents/reviewer-store.db"
+```
+
+```toml
+# channels/<id>/channel.toml
+[persistence.state]
+path = ".turin/channels/telegram.db"
+
+# Optional; if omitted, scoped data also uses the channel state DB
+# [persistence.store]
+# path = ".turin/channels/telegram-store.db"
+```
+
+Current implemented local override surfaces are:
+
+- `turin.toml`
+- `agents/<id>/agent.toml`
+- `channels/<id>/channel.toml`
+
+Generic per-scope config files such as `scopes/<kind>/<id>/...` are still planned, not implemented.
+
 ## Runtime Model
 
 The daemon owns a live `Kernel` plus a filesystem-backed registry scan.
@@ -85,6 +132,23 @@ Important distinction:
 - editing `agents/<id>/agent.toml` or creating/removing agent directories is a **daemon registry** change
 - editing `channels/<id>/channel.toml` or creating/removing channel directories is a **daemon registry** change
 - editing `agents/<id>/harness/*.lua` or `harnesses/<id>/*.lua` is a **harness runtime** change
+
+## Session Scope Across Multiple State DBs
+
+Current daemon behavior is intentionally conservative:
+
+- persisted session listing is primary-state scoped by default
+- persisted session history search is primary-state scoped by default
+- bare session ids are interpreted against the primary `state` store unless a caller supplies a store-qualified reference
+
+This means the daemon does not automatically aggregate sessions across every configured state DB.
+That aggregation is a client concern when a UI wants it.
+
+Cross-state references remain explicit:
+
+- bare session: `018f...`
+- aliased session: `018f...@telegram`
+- path-qualified session: `018f...@.turin/channels/telegram.db`
 
 ## Fault Isolation
 

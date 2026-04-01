@@ -43,6 +43,9 @@ pub fn parse_session_reference(raw: &str) -> Result<SessionReference> {
         .map(parse_store_selector_qualifier)
         .transpose()?;
 
+    // A bare session id intentionally does not carry any store qualifier. Callers that resolve
+    // persisted sessions decide what the default context means; today that is the primary
+    // `state` store unless a surrounding runtime context already pins a different store.
     Ok(SessionReference {
         public_id: public_id.to_string(),
         store_selector,

@@ -108,6 +108,8 @@ impl DaemonState {
     }
 
     pub async fn list_sessions(&self, limit: usize, offset: usize) -> Result<Vec<SessionSummary>> {
+        // Session listing is intentionally primary-state scoped by default.
+        // Cross-state aggregation is a higher-level UI concern rather than a core daemon default.
         let store = self.kernel.store_manager().get_default().await?;
         let rows = store.list_session_rows(limit, offset).await?;
         Ok(rows
@@ -123,6 +125,9 @@ impl DaemonState {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<SessionSearchHit>> {
+        // Session history search is intentionally primary-state scoped by default.
+        // Store-qualified session references are supported elsewhere, but global multi-state
+        // aggregation should remain explicit rather than implicit here.
         let store = self.kernel.store_manager().get_default().await?;
         let rows = store
             .search_session_history(query, scope, limit, offset)
@@ -277,6 +282,8 @@ impl DaemonState {
         let session_ref = parse_session_reference(session_id)?;
         let public_id = Uuid::parse_str(&session_ref.public_id)
             .map_err(|_| anyhow!("Invalid session id '{}'", session_ref.public_id))?;
+        // A bare persisted session reference is interpreted against the primary `state` store.
+        // Cross-state access must qualify the session id explicitly, e.g. `<session>@telegram`.
         let store_selector = session_ref
             .store_selector
             .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));

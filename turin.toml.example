@@ -75,9 +75,25 @@ initial_spawn_depth = 0
 [persistence.state]
 path = ".turin/state.db"
 
+# Optional default scoped-data store for top-level memory/KV/entity-style data.
+# When omitted, Turin falls back to the current `state` target.
+# [persistence.store]
+# path = ".turin/store.db"
+#
+# Optional named state aliases for reusable session/runtime stores.
+# [persistence.states.telegram]
+# path = ".turin/channels/telegram.db"
+#
 # Optional named stores for scoped memory/KV, handoffs, or shared KBs.
 # [persistence.stores.rust_kb]
 # path = ".turin/kb/rust.db"
+#
+# Agent and channel configs can override these locally via:
+#   agents/<id>/agent.toml
+#   channels/<id>/channel.toml
+# using the same keys:
+#   [persistence.state]
+#   [persistence.store]
 #
 # Level 1 placement rules: when a memory/KV call omits `store`, Turin resolves:
 # 1. explicit per-call store/path
