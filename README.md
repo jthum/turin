@@ -220,8 +220,8 @@ provider = "anthropic"
 workspace_root = "."
 max_turns = 50
 
-[persistence]
-database_path = ".turin/state.db"
+[persistence.state]
+path = ".turin/state.db"
 
 [harness]
 directory = ".turin/harnesses"

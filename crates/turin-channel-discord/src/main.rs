@@ -87,6 +87,7 @@ async fn run(args: RunArgs) -> Result<()> {
     let runner = ChannelRunner::new(
         daemon.clone(),
         RunnerConfig {
+            channel_id: args.channel_id.clone(),
             state_path: args.bindings_path,
             access_state_path: args.access_state_path,
             idle_ttl: args.idle_ttl_secs.map(Duration::from_secs),

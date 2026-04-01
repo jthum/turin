@@ -7,7 +7,7 @@ use tracing::{info, warn};
 use crate::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::{SessionState, SessionStatus};
-use crate::kernel::session_refs::parse_session_reference;
+use crate::kernel::session_refs::{format_session_reference, parse_session_reference};
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{EventRow, MessageRow};
 use crate::{
@@ -23,11 +23,24 @@ impl ExecutionHost {
 
     /// Create a new session bound to a specific configured agent profile.
     pub async fn create_session_for_agent(&self, agent_id: &str) -> SessionState {
+        self.create_session_for_agent_in_store(agent_id, None).await
+    }
+
+    pub async fn create_session_for_agent_in_store(
+        &self,
+        agent_id: &str,
+        store_selector: Option<StoreSelector>,
+    ) -> SessionState {
         let mut session = SessionState::new();
         session.identity.set_agent_id(agent_id.to_string());
-        session.store_selector = self.resolve_agent_state_selector(agent_id);
+        session.store_selector =
+            store_selector.unwrap_or_else(|| self.resolve_agent_state_selector(agent_id));
         self.attach_session_persistence(&mut session, true).await;
         session
+    }
+
+    pub(crate) fn session_reference(&self, session: &SessionState) -> String {
+        format_session_reference(session.identity.session_id(), &session.store_selector)
     }
 
     /// Resume an existing persisted session into a live runtime.
@@ -144,7 +157,7 @@ impl ExecutionHost {
             return Ok(());
         }
 
-        let session_id = session.identity.session_id().to_string();
+        let session_id = self.session_reference(session);
         info!(session_id = %session_id, "Starting new session");
 
         self.persist_event(
@@ -216,7 +229,7 @@ impl ExecutionHost {
                     "on_session_end",
                     serde_json::json!({
                         "identity": session.identity.clone(),
-                        "session_id": session.identity.session_id(),
+                        "session_id": self.session_reference(session),
                         "turn_count": session.turn_index,
                         "total_input_tokens": session.total_input_tokens,
                         "total_output_tokens": session.total_output_tokens,

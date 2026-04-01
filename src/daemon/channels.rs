@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::{Mutex, broadcast};
 use turin_channel_core::ChannelAdapterManifest;
@@ -341,6 +342,7 @@ impl ChannelRuntimeManager {
                 let runner = turin_channel_runner::ChannelRunner::new(
                     daemon,
                     turin_channel_runner::RunnerConfig {
+                        channel_id: channel.id.clone(),
                         state_path: binding_state,
                         access_state_path: access_state,
                         idle_ttl: channel.idle_ttl_secs.map(Duration::from_secs),
@@ -454,7 +456,7 @@ impl ChannelRuntimeManager {
                     .arg(&settings_json)
                     .stdin(Stdio::null())
                     .stdout(Stdio::inherit())
-                    .stderr(Stdio::inherit())
+                    .stderr(Stdio::piped())
                     .kill_on_drop(true);
                 if let Some(idle_ttl_secs) = channel.idle_ttl_secs {
                     child.arg("--idle-ttl-secs").arg(idle_ttl_secs.to_string());
@@ -467,6 +469,13 @@ impl ChannelRuntimeManager {
                         runner_command.display
                     )
                 })?;
+                let stderr_task = child.stderr.take().map(|mut stderr| {
+                    tokio::spawn(async move {
+                        let mut buf = Vec::new();
+                        stderr.read_to_end(&mut buf).await?;
+                        Ok::<Vec<u8>, std::io::Error>(buf)
+                    })
+                });
 
                 tokio::select! {
                     status = child.wait() => {
@@ -477,15 +486,17 @@ impl ChannelRuntimeManager {
                                 channel.id
                             )
                         })?;
+                        let stderr = collect_child_stderr(stderr_task).await;
                         if status.success() {
                             Ok(())
                         } else {
-                            anyhow::bail!(
-                                "External {} runner for channel '{}' exited with status {}",
-                                channel.kind,
-                                channel.id,
-                                status
+                            let message = format_external_runner_exit_error(
+                                &channel.kind,
+                                &channel.id,
+                                status,
+                                stderr.as_deref(),
                             );
+                            anyhow::bail!(message);
                         }
                     }
                     changed = shutdown_rx.changed() => {
@@ -493,6 +504,7 @@ impl ChannelRuntimeManager {
                             let _ = child.start_kill();
                             let _ = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
                         }
+                        let _ = collect_child_stderr(stderr_task).await;
                         Ok(())
                     }
                 }
@@ -657,6 +669,31 @@ fn classify_runtime_error_code(kind: &str, error: &str) -> String {
     format!("{kind}_runtime_error")
 }
 
+async fn collect_child_stderr(
+    stderr_task: Option<tokio::task::JoinHandle<Result<Vec<u8>, std::io::Error>>>,
+) -> Option<String> {
+    let join = stderr_task?;
+    let bytes = join.await.ok()?.ok()?;
+    let text = String::from_utf8_lossy(&bytes).trim().to_string();
+    if text.is_empty() { None } else { Some(text) }
+}
+
+fn format_external_runner_exit_error(
+    kind: &str,
+    channel_id: &str,
+    status: std::process::ExitStatus,
+    stderr: Option<&str>,
+) -> String {
+    match stderr {
+        Some(stderr) => format!(
+            "External {kind} runner for channel '{channel_id}' exited with status {status}: {stderr}"
+        ),
+        None => {
+            format!("External {kind} runner for channel '{channel_id}' exited with status {status}")
+        }
+    }
+}
+
 fn validate_runner_hello(expected_kind: &str, manifest: &ChannelAdapterManifest) -> Result<()> {
     manifest
         .validate()
@@ -725,6 +762,7 @@ mod tests {
                     kind: "telegram".to_string(),
                     agent_id: "default".to_string(),
                     idle_ttl_secs: Some(60),
+                    persistence: Default::default(),
                     extra: toml::Table::new(),
                 }],
             )

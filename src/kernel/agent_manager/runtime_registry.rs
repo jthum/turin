@@ -10,6 +10,7 @@ use super::peer_runtime::PeerRuntime;
 use super::{
     AgentManager, AgentRuntimeHandle, PeerAgentTaskEnvelope, RuntimeControl, RuntimeSlotKey,
 };
+use crate::persistence::manager::StoreSelector;
 
 impl AgentManager {
     pub(super) async fn ensure_runtime(
@@ -24,6 +25,14 @@ impl AgentManager {
         self: &Arc<Self>,
         runtime_key: RuntimeSlotKey,
     ) -> Result<Arc<AgentRuntimeHandle>> {
+        self.ensure_runtime_slot_in_store(runtime_key, None).await
+    }
+
+    pub(super) async fn ensure_runtime_slot_in_store(
+        self: &Arc<Self>,
+        runtime_key: RuntimeSlotKey,
+        initial_state_selector: Option<StoreSelector>,
+    ) -> Result<Arc<AgentRuntimeHandle>> {
         {
             let runtimes = self.runtimes.read().await;
             if let Some(handle) = runtimes.get(&runtime_key)
@@ -33,7 +42,8 @@ impl AgentManager {
             }
         }
 
-        self.ensure_runtime_with_write_lock(runtime_key).await
+        self.ensure_runtime_with_write_lock(runtime_key, initial_state_selector)
+            .await
     }
 
     pub(super) async fn ensure_runtime_slot_resumed(
@@ -61,6 +71,7 @@ impl AgentManager {
         self: &Arc<Self>,
         runtime_key: &RuntimeSlotKey,
         initial_session_id: Option<&str>,
+        initial_state_selector: Option<StoreSelector>,
     ) -> Result<AgentRuntimeHandle> {
         let agent_id = runtime_key.agent_id.as_str();
         info!(
@@ -105,6 +116,7 @@ impl AgentManager {
                 &slot_id_clone,
                 control_bg,
                 initial_session_id.as_deref(),
+                initial_state_selector,
             )
             .await
             {
@@ -184,6 +196,7 @@ impl AgentManager {
     async fn ensure_runtime_with_write_lock(
         self: &Arc<Self>,
         runtime_key: RuntimeSlotKey,
+        initial_state_selector: Option<StoreSelector>,
     ) -> Result<Arc<AgentRuntimeHandle>> {
         let mut runtimes = self.runtimes.write().await;
         if let Some(handle) = runtimes.get(&runtime_key)
@@ -192,7 +205,10 @@ impl AgentManager {
             return Ok(Arc::clone(handle));
         }
 
-        let handle = Arc::new(self.start_agent(&runtime_key, None).await?);
+        let handle = Arc::new(
+            self.start_agent(&runtime_key, None, initial_state_selector)
+                .await?,
+        );
         runtimes.insert(runtime_key, Arc::clone(&handle));
         Ok(handle)
     }
@@ -214,7 +230,7 @@ impl AgentManager {
         }
 
         let handle = Arc::new(
-            self.start_agent(&runtime_key, initial_session_id.as_deref())
+            self.start_agent(&runtime_key, initial_session_id.as_deref(), None)
                 .await?,
         );
         runtimes.insert(runtime_key, Arc::clone(&handle));

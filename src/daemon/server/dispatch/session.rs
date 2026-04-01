@@ -62,7 +62,11 @@ pub(super) async fn open(
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
     match guard
-        .open_session(&params.agent_id, params.slot_id.as_deref())
+        .open_session(
+            &params.agent_id,
+            params.slot_id.as_deref(),
+            params.channel_id.as_deref(),
+        )
         .await
     {
         Ok(session) => serialize_response_with_event(

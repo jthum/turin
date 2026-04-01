@@ -347,12 +347,18 @@ async fn resolve_cache_session(
         let lock = execution_ctx
             .lock()
             .map_err(|_| "execution context mutex poisoned".to_string())?;
+        let session_ref = lock
+            .session_id
+            .as_deref()
+            .ok_or_else(|| "No active session context".to_string())
+            .and_then(|session_id| {
+                parse_session_reference(session_id).map_err(|e| e.to_string())
+            })?;
         (
-            lock.session_id
-                .clone()
-                .ok_or_else(|| "No active session context".to_string())?,
+            session_ref.public_id,
             lock.session_store_selector
                 .clone()
+                .or(session_ref.store_selector)
                 .unwrap_or_else(|| StoreSelector::Alias("state".to_string())),
         )
     };

@@ -373,8 +373,8 @@ provider = "$TURIN_PROVIDER_KIND"
 workspace_root = "$dir/work"
 max_turns = $max_turns
 
-[persistence]
-database_path = "$dir/state.db"
+[persistence.state]
+path = "$dir/state.db"
 
 [harness]
 directory = "$dir/harnesses"

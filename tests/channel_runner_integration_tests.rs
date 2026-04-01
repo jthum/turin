@@ -126,6 +126,7 @@ base_url = "{mock_response}"
         ChannelRunner::new(
             turin_daemon_client::DaemonClient::new(&self.endpoint),
             RunnerConfig {
+                channel_id: "mock".to_string(),
                 state_path: self.workspace_root.join(".turin/channel-bindings.json"),
                 access_state_path: self.workspace_root.join(".turin/channel-access.json"),
                 idle_ttl: Some(Duration::from_secs(600)),
@@ -277,6 +278,20 @@ impl ChannelDriver for RecordingDriver {
             .expect("sent lock poisoned")
             .push((reply_to, Instant::now()));
         Ok(())
+    }
+
+    fn enrich_outbound_for_event(
+        &self,
+        event: &InboundEvent,
+        mut outbound: OutboundMessage,
+    ) -> OutboundMessage {
+        if let Some(message_id) = event.metadata.get("telegram_message_id") {
+            outbound.metadata.insert(
+                "telegram_reply_to_message_id".to_string(),
+                message_id.clone(),
+            );
+        }
+        outbound
     }
 
     async fn shutdown(&mut self) -> Result<()> {

@@ -15,6 +15,8 @@ use crate::harness::stdlib::identity_support::{
 };
 use crate::harness::stdlib::policy_support::{policy_bool, policy_u64, runtime_policy_snapshot};
 use crate::kernel::session::QueuedTask;
+use crate::kernel::session_refs::parse_session_reference;
+use crate::persistence::manager::StoreSelector;
 
 fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
     app_data
@@ -310,8 +312,14 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             lua.create_function(move |lua, session_id: String| {
                 let manager = manager.clone();
                 let result = bridge_async_result(async move {
-                    let store = manager.get_default().await.map_err(|e| e.to_string())?;
-                    let uuid = uuid::Uuid::parse_str(&session_id).map_err(|e| e.to_string())?;
+                    let session_ref =
+                        parse_session_reference(&session_id).map_err(|e| e.to_string())?;
+                    let selector = session_ref
+                        .store_selector
+                        .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+                    let store = manager.open(&selector).await.map_err(|e| e.to_string())?;
+                    let uuid =
+                        uuid::Uuid::parse_str(&session_ref.public_id).map_err(|e| e.to_string())?;
                     let row = store
                         .get_session_row_by_public_id(uuid)
                         .await

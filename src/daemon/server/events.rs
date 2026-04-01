@@ -234,32 +234,9 @@ fn kernel_event_envelope(agent_id: &str, session_id: &str, event: &KernelEvent) 
     let mut data = serde_json::to_value(event).unwrap_or_else(|_| json!({}));
     if let serde_json::Value::Object(ref mut map) = data {
         map.insert("agent_id".to_string(), json!(agent_id));
-        map.insert(
-            "session_id".to_string(),
-            json!(kernel_event_session_id(event).unwrap_or(session_id)),
-        );
+        map.insert("session_id".to_string(), json!(session_id));
     }
     EventEnvelope::new(event.event_type(), data)
-}
-
-fn kernel_event_session_id(event: &KernelEvent) -> Option<&str> {
-    match event {
-        KernelEvent::Lifecycle(lifecycle) => match lifecycle {
-            crate::kernel::event::LifecycleEvent::SessionStart { identity }
-            | crate::kernel::event::LifecycleEvent::SessionResume { identity }
-            | crate::kernel::event::LifecycleEvent::SessionEnd { identity, .. }
-            | crate::kernel::event::LifecycleEvent::TaskStart { identity, .. }
-            | crate::kernel::event::LifecycleEvent::TaskComplete { identity, .. }
-            | crate::kernel::event::LifecycleEvent::PlanComplete { identity, .. }
-            | crate::kernel::event::LifecycleEvent::AllTasksComplete { identity }
-            | crate::kernel::event::LifecycleEvent::TurnStart { identity, .. }
-            | crate::kernel::event::LifecycleEvent::TurnPrepare { identity, .. }
-            | crate::kernel::event::LifecycleEvent::TurnEnd { identity, .. } => {
-                Some(identity.session_id())
-            }
-        },
-        _ => None,
-    }
 }
 
 fn scope_runtime_snapshot(

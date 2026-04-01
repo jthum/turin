@@ -101,6 +101,7 @@ base_url = "PONG"
         ChannelRunner::new(
             turin_daemon_client::DaemonClient::new(&self.endpoint),
             RunnerConfig {
+                channel_id: "fs".to_string(),
                 state_path: self.workspace_root.join(".turin/channel-bindings.json"),
                 access_state_path: self.workspace_root.join(".turin/channel-access.json"),
                 idle_ttl: Some(Duration::from_secs(600)),
@@ -149,7 +150,7 @@ async fn fs_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
 
     let inbound = json!({
         "conversation": {
-            "channel": { "other": "fs" },
+            "channel": "fs",
             "workspace_id": "workspace",
             "room_id": "room",
             "thread_id": "thread-1",

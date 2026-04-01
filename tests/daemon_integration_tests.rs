@@ -8,6 +8,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, timeout};
 use turin::daemon::protocol::{DaemonRequest, EventEnvelope, RequestEnvelope, ResponseEnvelope};
+use turin::kernel::session_refs::parse_session_reference;
+use turin::persistence::state::StateStore;
 use turin_daemon_protocol::DAEMON_PROTOCOL_VERSION;
 use turin_local_ipc::{
     LocalIpcReadHalf, LocalIpcWriteHalf, connect as connect_local_ipc, current_transport_name,
@@ -357,6 +359,7 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
                 turin::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("chat-thread-1".to_string()),
+                    channel_id: None,
                 },
             ))
             .await?,
@@ -457,6 +460,7 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
                 turin::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("restart-thread".to_string()),
+                    channel_id: None,
                 },
             ))
             .await?,
@@ -758,6 +762,7 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
                 turin::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("filter-session".to_string()),
+                    channel_id: None,
                 },
             ))
             .await?,
@@ -779,6 +784,7 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
             turin::daemon::protocol::OpenSessionParams {
                 agent_id: "default".to_string(),
                 slot_id: Some("other-session".to_string()),
+                channel_id: None,
             },
         ))
         .await?;
@@ -808,6 +814,7 @@ async fn daemon_session_subscription_receives_kernel_stream_events() -> Result<(
                 turin::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("stream-session".to_string()),
+                    channel_id: None,
                 },
             ))
             .await?,
@@ -1235,7 +1242,7 @@ async fn daemon_fs_channel_runtime_processes_inbox_and_reports_runtime_status() 
     tokio::fs::create_dir_all(channel_dir.join("inbox")).await?;
     let inbound = serde_json::json!({
         "conversation": {
-            "channel": { "other": "fs" },
+            "channel": "fs",
             "workspace_id": "workspace",
             "room_id": "room",
             "thread_id": "thread-1",
@@ -1299,6 +1306,79 @@ async fn daemon_fs_channel_runtime_processes_inbox_and_reports_runtime_status() 
         status_after_disable.error.as_ref().map(|error| &error.code),
         Some(turin::daemon::protocol::ErrorCode::ChannelNotFound)
     ));
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_session_open_uses_channel_owned_state_path() -> Result<()> {
+    let tempdir = std::sync::Arc::new(tempfile::tempdir()?);
+    let workspace_root = tempdir.path().join("workspace");
+    let channel_dir = workspace_root.join("channels/fs-isolated");
+    std::fs::create_dir_all(&channel_dir)?;
+    std::fs::write(
+        channel_dir.join("channel.toml"),
+        r#"kind = "fs"
+agent_id = "default"
+
+[persistence.state]
+path = "channels/fs-isolated/state.db"
+
+inbox_dir = "inbox"
+outbox_dir = "outbox"
+processed_dir = "processed"
+failed_dir = "failed"
+poll_interval_ms = 25
+"#,
+    )?;
+
+    let daemon = DaemonHarness::start_in(tempdir.clone()).await?;
+
+    let opened = result_value(
+        daemon
+            .request(DaemonRequest::SessionOpen(
+                turin::daemon::protocol::OpenSessionParams {
+                    agent_id: "default".to_string(),
+                    slot_id: Some("isolated-slot".to_string()),
+                    channel_id: Some("fs-isolated".to_string()),
+                },
+            ))
+            .await?,
+    );
+    let session_id = opened["session_id"]
+        .as_str()
+        .context("session.open should return session_id")?
+        .to_string();
+    assert!(
+        session_id.contains("@channels/fs-isolated/state.db"),
+        "session id should be qualified with the channel-owned store path: {session_id}"
+    );
+
+    let session_ref = parse_session_reference(&session_id)?;
+    let public_id = uuid::Uuid::parse_str(&session_ref.public_id)?;
+
+    let default_store = StateStore::open(&workspace_root.join("test.db").to_string_lossy()).await?;
+    assert!(
+        default_store
+            .get_session_row_by_public_id(public_id)
+            .await?
+            .is_none(),
+        "channel-owned session should not be persisted in the default state db"
+    );
+
+    let channel_store = StateStore::open(
+        &workspace_root
+            .join("channels/fs-isolated/state.db")
+            .to_string_lossy(),
+    )
+    .await?;
+    assert!(
+        channel_store
+            .get_session_row_by_public_id(public_id)
+            .await?
+            .is_some(),
+        "channel-owned session should be persisted in the channel-local state db"
+    );
 
     daemon.stop().await
 }

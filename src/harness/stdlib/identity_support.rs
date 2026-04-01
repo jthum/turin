@@ -2,6 +2,7 @@ use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::HarnessAppData;
 use crate::kernel::identity::RuntimeIdentity;
+use crate::kernel::session_refs::parse_session_reference;
 
 pub(crate) fn get_active_identity(app_data: &HarnessAppData) -> anyhow::Result<RuntimeIdentity> {
     let session_id = app_data
@@ -11,6 +12,9 @@ pub(crate) fn get_active_identity(app_data: &HarnessAppData) -> anyhow::Result<R
         .session_id
         .clone()
         .ok_or_else(|| anyhow::anyhow!("No active session context"))?;
+    let session_id = parse_session_reference(&session_id)
+        .map(|session_ref| session_ref.public_id)
+        .unwrap_or(session_id);
 
     Ok(RuntimeIdentity::new(
         session_id,

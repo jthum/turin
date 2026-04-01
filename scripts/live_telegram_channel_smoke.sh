@@ -128,8 +128,8 @@ provider = "mock"
 [kernel]
 workspace_root = "$ROOT"
 
-[persistence]
-database_path = "$ROOT/.turin/state.db"
+[persistence.state]
+path = "$ROOT/.turin/state.db"
 
 [harness]
 directory = "$ROOT/.turin/harnesses"

@@ -36,7 +36,7 @@ impl ExecutionHost {
                     "on_task_complete",
                     serde_json::json!({
                         "identity": session.identity.clone(),
-                        "session_id": session.identity.session_id(),
+                        "session_id": self.session_reference(session),
                         "task_id": task.task_id.clone(),
                         "trace_id": task.trace_id.clone(),
                         "plan_id": task.plan_id.clone(),
@@ -109,7 +109,7 @@ impl ExecutionHost {
                             "on_plan_complete",
                             serde_json::json!({
                                 "identity": session.identity.clone(),
-                                "session_id": session.identity.session_id(),
+                                "session_id": self.session_reference(session),
                                 "plan_id": plan.plan_id.clone(),
                                 "title": plan.title.clone(),
                                 "total_tasks": plan.total_tasks,
@@ -139,7 +139,7 @@ impl ExecutionHost {
             let harness = runtime.lock_engine();
             if let Some(ref engine) = *harness {
                 engine.set_active_session(
-                    Some(session.identity.session_id()),
+                    Some(&self.session_reference(session)),
                     Some(session.store_selector.clone()),
                     Some(session.mode.clone()),
                 );
@@ -156,7 +156,7 @@ impl ExecutionHost {
                     "on_inference_error",
                     serde_json::json!({
                         "identity": session.identity.clone(),
-                        "session_id": session.identity.session_id(),
+                        "session_id": self.session_reference(session),
                         "task_id": task.task_id.clone(),
                         "trace_id": task.trace_id.clone(),
                         "plan_id": task.plan_id.clone(),

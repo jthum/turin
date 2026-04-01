@@ -9,7 +9,7 @@ use crate::kernel::session::{PlanProgress, QueuedTask, SessionState};
 
 impl ExecutionHost {
     /// Run the agent loop with the given prompt.
-    #[instrument(skip(self, session), fields(session_id = %session.identity.session_id()))]
+    #[instrument(skip(self, session), fields(session_id = %self.session_reference(session)))]
     pub async fn run(&mut self, session: &mut SessionState, prompt: Option<String>) -> Result<()> {
         // Ensure session is started
         self.start_session(session).await?;
@@ -70,7 +70,7 @@ impl ExecutionHost {
 
             if session.stop_requested || task_result.status == TaskTerminalStatus::Cancelled {
                 info!(
-                    session_id = %session.identity.session_id(),
+                    session_id = %self.session_reference(session),
                     "Stopping run loop due to session stop request"
                 );
                 break;
@@ -150,7 +150,7 @@ impl ExecutionHost {
                     "on_all_tasks_complete",
                     serde_json::json!({
                         "identity": session.identity.clone(),
-                        "session_id": session.identity.session_id(),
+                        "session_id": self.session_reference(session),
                         "turn_count": session.turn_index,
                     }),
                 ) {
@@ -249,7 +249,7 @@ impl ExecutionHost {
                 "on_task_start",
                 serde_json::json!({
                     "identity": session.identity.clone(),
-                    "session_id": session.identity.session_id(),
+                    "session_id": self.session_reference(session),
                     "task_id": task.task_id.clone(),
                     "trace_id": task.trace_id.clone(),
                     "plan_id": task.plan_id.clone(),

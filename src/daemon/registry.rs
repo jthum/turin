@@ -92,6 +92,7 @@ pub struct DiscoveredChannel {
     pub kind: String,
     pub agent_id: String,
     pub idle_ttl_secs: Option<u64>,
+    pub persistence: ContextPersistenceConfig,
     pub extra: toml::Table,
 }
 
@@ -495,6 +496,18 @@ fn scan_channel_dir(
         "channel references unknown agent '{}'",
         parsed.agent_id
     );
+    if parsed.persistence.state.is_some() {
+        bootstrap
+            .persistence
+            .resolve_context_state_selector(Some(&parsed.persistence))
+            .context("invalid channel persistence.state")?;
+    }
+    if parsed.persistence.store.is_some() {
+        bootstrap
+            .persistence
+            .resolve_context_store_selector(Some(&parsed.persistence))
+            .context("invalid channel persistence.store")?;
+    }
 
     Ok(Some(DiscoveredChannel {
         id: channel_id,
@@ -503,6 +516,7 @@ fn scan_channel_dir(
         kind: parsed.kind,
         agent_id: parsed.agent_id,
         idle_ttl_secs: parsed.idle_ttl_secs,
+        persistence: parsed.persistence,
         extra: parsed.extra,
     }))
 }

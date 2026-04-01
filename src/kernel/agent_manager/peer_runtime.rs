@@ -10,6 +10,7 @@ use crate::kernel::TaskExecutionResult;
 use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::QueuedTask;
+use crate::persistence::manager::StoreSelector;
 
 use super::{AgentManager, PeerAgentTaskEnvelope, PeerAgentTaskResult, RuntimeControl};
 
@@ -37,6 +38,7 @@ impl PeerRuntime {
         slot_id: &str,
         control: Arc<RuntimeControl>,
         initial_session_id: Option<&str>,
+        initial_state_selector: Option<StoreSelector>,
     ) -> Result<Self> {
         let mut host = fork_peer_kernel(&manager);
         if host.clients.is_empty() {
@@ -46,11 +48,12 @@ impl PeerRuntime {
         let mut session = if let Some(session_id) = initial_session_id {
             host.resume_session_for_agent(agent_id, session_id).await?
         } else {
-            host.create_session_for_agent(agent_id).await
+            host.create_session_for_agent_in_store(agent_id, initial_state_selector)
+                .await
         };
         host.start_session(&mut session).await?;
         control.set_current_session(
-            Some(session.identity.session_id().to_string()),
+            Some(host.session_reference(&session)),
             Some(session.event_tx.clone()),
         );
 
@@ -160,7 +163,7 @@ impl PeerRuntime {
                         "on_task_start",
                         serde_json::json!({
                             "identity": self.session.identity.clone(),
-                            "session_id": self.session.identity.session_id(),
+                            "session_id": self.host.session_reference(&self.session),
                             "task_id": task.task_id.clone(),
                             "trace_id": task.trace_id.clone(),
                             "plan_id": task.plan_id.clone(),
@@ -354,7 +357,7 @@ impl PeerRuntime {
         let mut session = self.host.create_session_for_agent(&self.agent_id).await;
         self.host.start_session(&mut session).await?;
         self.control.set_current_session(
-            Some(session.identity.session_id().to_string()),
+            Some(self.host.session_reference(&session)),
             Some(session.event_tx.clone()),
         );
         self.session = session;
@@ -369,7 +372,7 @@ impl PeerRuntime {
             .await?;
         self.host.start_session(&mut session).await?;
         self.control.set_current_session(
-            Some(session.identity.session_id().to_string()),
+            Some(self.host.session_reference(&session)),
             Some(session.event_tx.clone()),
         );
         self.session = session;

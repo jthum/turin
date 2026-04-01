@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use turin_daemon_protocol::SessionSearchScope;
+use uuid::Uuid;
 
 use super::{
     DaemonState, SessionDetail, SessionEventDetail, SessionMessageDetail, SessionSearchHit,
@@ -11,6 +12,9 @@ use super::{
 use crate::kernel::agent_manager::{AgentStatusSnapshot, TaskStatusSnapshot};
 use crate::kernel::event::KernelEvent;
 use crate::kernel::session::QueuedTask;
+use crate::kernel::session_refs::{format_session_reference, parse_session_reference};
+use crate::persistence::manager::StoreSelector;
+use crate::persistence::schema::SessionRow;
 use turin_types::ToolsConfig;
 
 impl DaemonState {
@@ -168,11 +172,13 @@ impl DaemonState {
         &self,
         agent_id: &str,
         slot_id: Option<&str>,
+        channel_id: Option<&str>,
     ) -> Result<crate::kernel::agent_manager::LiveSessionSnapshot> {
         self.ensure_enabled_agent(agent_id)?;
+        let initial_state_selector = self.resolve_channel_state_selector(channel_id)?;
         self.kernel
             .agent_manager()
-            .open_session(agent_id, slot_id)
+            .open_session(agent_id, slot_id, initial_state_selector)
             .await
     }
 
@@ -188,12 +194,10 @@ impl DaemonState {
     }
 
     pub async fn get_session(&self, session_id: &str) -> Result<Option<SessionDetail>> {
-        let public_id = uuid::Uuid::parse_str(session_id)
-            .map_err(|_| anyhow!("Invalid session id '{}'", session_id))?;
-        let store = self.kernel.store_manager().get_default().await?;
-        let Some(row) = store.get_session_row_by_public_id(public_id).await? else {
+        let Some((store_selector, row)) = self.resolve_persisted_session(session_id).await? else {
             return Ok(None);
         };
+        let store = self.kernel.store_manager().open(&store_selector).await?;
 
         let events = store
             .get_events(row.id)
@@ -243,7 +247,7 @@ impl DaemonState {
             .collect();
 
         Ok(Some(SessionDetail {
-            session: super::helpers::session_summary_from_row(&row),
+            session: session_summary_from_row_and_selector(&row, &store_selector),
             events,
             messages,
             tool_executions,
@@ -255,13 +259,17 @@ impl DaemonState {
         session_id: &str,
         title: Option<&str>,
     ) -> Result<Option<SessionSummary>> {
-        let public_id = uuid::Uuid::parse_str(session_id)
-            .map_err(|_| anyhow!("Invalid session id '{}'", session_id))?;
-        let store = self.kernel.store_manager().get_default().await?;
+        let session_ref = parse_session_reference(session_id)?;
+        let public_id = Uuid::parse_str(&session_ref.public_id)
+            .map_err(|_| anyhow!("Invalid session id '{}'", session_ref.public_id))?;
+        let store_selector = session_ref
+            .store_selector
+            .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+        let store = self.kernel.store_manager().open(&store_selector).await?;
         let updated = store.update_session_title(public_id, title).await?;
         Ok(updated
             .as_ref()
-            .map(super::helpers::session_summary_from_row))
+            .map(|row| session_summary_from_row_and_selector(row, &store_selector)))
     }
 
     pub async fn cancel_session(&self, session_id: &str) -> Result<serde_json::Value> {
@@ -337,6 +345,57 @@ impl DaemonState {
             })
             .collect()
     }
+
+    fn resolve_channel_state_selector(
+        &self,
+        channel_id: Option<&str>,
+    ) -> Result<Option<StoreSelector>> {
+        let Some(channel_id) = channel_id else {
+            return Ok(None);
+        };
+        let Some(channel) = self
+            .registry_load
+            .channels
+            .iter()
+            .find(|channel| channel.id == channel_id)
+        else {
+            return Ok(None);
+        };
+        channel
+            .persistence
+            .state
+            .as_ref()
+            .map(|_| {
+                self.bootstrap_config
+                    .persistence
+                    .resolve_context_state_selector(Some(&channel.persistence))
+            })
+            .transpose()
+    }
+
+    async fn resolve_persisted_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<(StoreSelector, SessionRow)>> {
+        let session_ref = parse_session_reference(session_id)?;
+        let public_id = Uuid::parse_str(&session_ref.public_id)
+            .map_err(|_| anyhow!("Invalid session id '{}'", session_ref.public_id))?;
+        let store_selector = session_ref
+            .store_selector
+            .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+        let store = self.kernel.store_manager().open(&store_selector).await?;
+        let row = store.get_session_row_by_public_id(public_id).await?;
+        Ok(row.map(|row| (store_selector, row)))
+    }
+}
+
+fn session_summary_from_row_and_selector(
+    row: &SessionRow,
+    selector: &StoreSelector,
+) -> SessionSummary {
+    let mut summary = super::helpers::session_summary_from_row(row);
+    summary.session_id = format_session_reference(&summary.session_id, selector);
+    summary
 }
 
 fn summarize_search_hit(text: &str, query: &str) -> String {

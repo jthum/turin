@@ -17,6 +17,7 @@ use crate::harness::stdlib::scoped_data_backend::{
     selector_scope_ref,
 };
 use crate::kernel::identity::ContextSelector;
+use crate::kernel::session_refs::parse_session_reference;
 use crate::persistence::manager::{StorePathScope, StoreSelector};
 
 pub fn bridge_async<F>(fut: F) -> F::Output
@@ -404,7 +405,11 @@ pub(crate) fn resolve_scoped_store_selector(
     if scope.scope_kind == "session"
         && let Some(raw_scope_key) = scope.raw_scope_key.as_deref()
         && let Ok(lock) = app_data.execution_ctx.lock()
-        && lock.session_id.as_deref() == Some(raw_scope_key)
+        && lock
+            .session_id
+            .as_deref()
+            .and_then(|session_id| parse_session_reference(session_id).ok())
+            .is_some_and(|session_ref| session_ref.public_id == raw_scope_key)
         && let Some(selector) = lock.session_store_selector.clone()
     {
         return Ok(Some(selector));

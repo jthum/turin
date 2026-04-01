@@ -20,6 +20,7 @@ use turin_types::ToolsConfig;
 
 #[derive(Debug, Clone)]
 pub struct RunnerConfig {
+    pub channel_id: String,
     pub state_path: PathBuf,
     pub access_state_path: PathBuf,
     pub idle_ttl: Option<Duration>,
@@ -435,6 +436,7 @@ pub trait ChannelDriver {
 #[derive(Clone)]
 pub struct ChannelRunner {
     daemon: DaemonClient,
+    channel_id: String,
     bindings: FileBindingStore,
     access_state: FileAccessStateStore,
     idle_ttl: Option<Duration>,
@@ -496,6 +498,7 @@ impl ChannelRunner {
     pub fn new(daemon: DaemonClient, config: RunnerConfig) -> Self {
         Self {
             daemon,
+            channel_id: config.channel_id,
             bindings: FileBindingStore::new(config.state_path),
             access_state: FileAccessStateStore::new(config.access_state_path),
             idle_ttl: config.idle_ttl,
@@ -556,6 +559,7 @@ impl ChannelRunner {
                         turin_daemon_protocol::DaemonRequest::SessionOpen(OpenSessionParams {
                             agent_id: agent_id.to_string(),
                             slot_id: Some(slot_id),
+                            channel_id: Some(self.channel_id.clone()),
                         }),
                     )
                     .await?
@@ -1648,6 +1652,7 @@ mod tests {
         ChannelRunner::new(
             turin_daemon_client::DaemonClient::new(dir.path().join("dummy.sock")),
             RunnerConfig {
+                channel_id: "test-channel".to_string(),
                 state_path: dir.path().join("bindings.json"),
                 access_state_path: dir.path().join("access.json"),
                 idle_ttl: Some(Duration::from_secs(600)),

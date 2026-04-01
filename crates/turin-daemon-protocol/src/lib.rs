@@ -158,6 +158,8 @@ pub struct OpenSessionParams {
     pub agent_id: String,
     #[serde(default)]
     pub slot_id: Option<String>,
+    #[serde(default)]
+    pub channel_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

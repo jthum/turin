@@ -7,6 +7,8 @@ use tokio::sync::oneshot;
 
 use crate::kernel::event::KernelEvent;
 use crate::kernel::session::QueuedTask;
+use crate::kernel::session_refs::parse_session_reference;
+use crate::persistence::manager::StoreSelector;
 
 use super::{
     AgentManager, AgentRuntimeHandle, AgentStatusSnapshot, LiveSessionSnapshot,
@@ -74,6 +76,7 @@ impl AgentManager {
         self: &Arc<Self>,
         agent_id: &str,
         slot_id: Option<&str>,
+        initial_state_selector: Option<StoreSelector>,
     ) -> Result<LiveSessionSnapshot> {
         let runtime_key = RuntimeSlotKey {
             agent_id: agent_id.to_string(),
@@ -81,7 +84,9 @@ impl AgentManager {
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("sl_{}", uuid::Uuid::now_v7().simple())),
         };
-        let handle = self.ensure_runtime_slot(runtime_key.clone()).await?;
+        let handle = self
+            .ensure_runtime_slot_in_store(runtime_key.clone(), initial_state_selector)
+            .await?;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
         let session_id = loop {
             if let Some(session_id) = handle.control.current_session_id() {
@@ -124,9 +129,13 @@ impl AgentManager {
             });
         }
 
-        let store = self.store_manager.get_default().await?;
-        let public_id = uuid::Uuid::parse_str(session_id)
-            .with_context(|| format!("Invalid session id '{}'", session_id))?;
+        let session_ref = parse_session_reference(session_id)?;
+        let public_id = uuid::Uuid::parse_str(&session_ref.public_id)
+            .with_context(|| format!("Invalid session id '{}'", session_ref.public_id))?;
+        let store_selector = session_ref
+            .store_selector
+            .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+        let store = self.store_manager.open(&store_selector).await?;
         let row = store
             .get_session_row_by_public_id(public_id)
             .await?
@@ -515,9 +524,16 @@ impl AgentManager {
         &self,
         session_id: &str,
     ) -> Option<(RuntimeSlotKey, Arc<AgentRuntimeHandle>)> {
+        let wanted = parse_session_reference(session_id)
+            .map(|session_ref| session_ref.public_id)
+            .ok();
         let runtimes = self.runtimes.read().await;
         runtimes.iter().find_map(|(runtime_key, handle)| {
-            if handle.control.current_session_id().as_deref() == Some(session_id) {
+            let current = handle.control.current_session_id()?;
+            let current_public_id = parse_session_reference(&current)
+                .map(|session_ref| session_ref.public_id)
+                .ok();
+            if current == session_id || (wanted.is_some() && wanted == current_public_id) {
                 Some((runtime_key.clone(), Arc::clone(handle)))
             } else {
                 None

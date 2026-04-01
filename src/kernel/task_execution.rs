@@ -20,7 +20,7 @@ impl ExecutionHost {
         session: &mut SessionState,
         task: &QueuedTask,
     ) -> Result<TaskExecutionResult> {
-        let session_id = session.identity.session_id().to_string();
+        let session_id = self.session_reference(session);
         let prompt = task.prompt.as_str();
 
         if session.cancel_token.is_cancelled() {
@@ -104,8 +104,9 @@ impl ExecutionHost {
         let runtime = self.runtime_for_session(session);
         let harness = runtime.lock_engine();
         if let Some(ref engine) = *harness {
+            let session_id = self.session_reference(session);
             engine.set_active_session(
-                Some(session.identity.session_id()),
+                Some(&session_id),
                 Some(session.store_selector.clone()),
                 Some(session.mode.clone()),
             );

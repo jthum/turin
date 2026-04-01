@@ -131,6 +131,7 @@ base_url = "PONG"
         ChannelRunner::new(
             turin_daemon_client::DaemonClient::new(&self.endpoint),
             RunnerConfig {
+                channel_id: "telegram".to_string(),
                 state_path: self.workspace_root.join(".turin/channel-bindings.json"),
                 access_state_path: self.workspace_root.join(".turin/channel-access.json"),
                 idle_ttl: Some(Duration::from_secs(600)),

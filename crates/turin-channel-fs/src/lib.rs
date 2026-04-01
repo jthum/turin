@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::watch;
@@ -13,6 +13,8 @@ use turin_channel_core::{
     ChannelSetupManifest, ChannelUser, InboundEvent, OutboundMessage,
 };
 use turin_channel_runner::ChannelDriver;
+
+const PARSE_RETRY_GRACE: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone)]
 pub struct FsChannelDriverConfig {
@@ -117,6 +119,7 @@ pub struct FsChannelDriver {
     config: FsChannelDriverConfig,
     shutdown_rx: watch::Receiver<bool>,
     backlog: VecDeque<PathBuf>,
+    parse_failures: HashMap<PathBuf, u32>,
 }
 
 impl FsChannelDriver {
@@ -138,6 +141,7 @@ impl FsChannelDriver {
             config,
             shutdown_rx,
             backlog: VecDeque::new(),
+            parse_failures: HashMap::new(),
         })
     }
 
@@ -221,17 +225,36 @@ impl ChannelDriver for FsChannelDriver {
             if let Some(path) = self.next_inbound_file().await? {
                 match self.load_event(&path).await {
                     Ok(event) => {
+                        self.parse_failures.remove(&path);
                         self.mark_processed(&path).await?;
                         return Ok(Some(event));
                     }
                     Err(err) => {
-                        self.mark_failed(&path).await?;
-                        tracing::warn!(
-                            channel_id = %self.channel_id,
-                            path = %path.display(),
-                            error = %err,
-                            "Failed to parse filesystem channel message"
-                        );
+                        let failures = self
+                            .parse_failures
+                            .entry(path.clone())
+                            .and_modify(|count| *count += 1)
+                            .or_insert(1);
+                        if *failures >= 3
+                            && !path_is_recently_modified(&path, PARSE_RETRY_GRACE).await
+                        {
+                            self.parse_failures.remove(&path);
+                            self.mark_failed(&path).await?;
+                            tracing::warn!(
+                                channel_id = %self.channel_id,
+                                path = %path.display(),
+                                error = %err,
+                                "Failed to parse filesystem channel message after retries"
+                            );
+                        } else {
+                            tracing::debug!(
+                                channel_id = %self.channel_id,
+                                path = %path.display(),
+                                attempt = *failures,
+                                error = %err,
+                                "Retrying filesystem channel message after parse failure"
+                            );
+                        }
                     }
                 }
             }
@@ -355,6 +378,15 @@ async fn move_file(path: &Path, target_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+async fn path_is_recently_modified(path: &Path, grace: Duration) -> bool {
+    tokio::fs::metadata(path)
+        .await
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .is_some_and(|age| age <= grace)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -373,7 +405,7 @@ mod tests {
     fn sample_event() -> serde_json::Value {
         serde_json::json!({
             "conversation": {
-                "channel": { "other": "fs" },
+                "channel": "fs",
                 "workspace_id": "workspace",
                 "room_id": "room",
                 "thread_id": "thread",
@@ -415,6 +447,66 @@ mod tests {
         assert_eq!(event.text, "hello");
         assert!(channel_dir.join("processed/in-1.json").exists());
         assert!(!channel_dir.join("inbox/in-1.json").exists());
+    }
+
+    #[tokio::test]
+    async fn driver_retries_parse_failures_before_marking_failed() {
+        let dir = tempdir().unwrap();
+        let channel_dir = dir.path().join("channel");
+        tokio::fs::create_dir_all(channel_dir.join("inbox"))
+            .await
+            .unwrap();
+        tokio::fs::write(channel_dir.join("inbox/in-1.json"), "{")
+            .await
+            .unwrap();
+
+        let (tx, rx) = watch::channel(false);
+        let mut driver = FsChannelDriver::from_settings("fs", &channel_dir, &sample_settings(), rx)
+            .await
+            .unwrap();
+
+        let drive = tokio::spawn(async move { driver.next_event().await });
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        tx.send(true).unwrap();
+
+        let result = drive.await.unwrap().unwrap();
+        assert!(result.is_none(), "shutdown should stop the driver");
+        assert!(channel_dir.join("failed/in-1.json").exists());
+    }
+
+    #[tokio::test]
+    async fn driver_recovers_if_message_becomes_valid_before_retry_limit() {
+        let dir = tempdir().unwrap();
+        let channel_dir = dir.path().join("channel");
+        tokio::fs::create_dir_all(channel_dir.join("inbox"))
+            .await
+            .unwrap();
+        tokio::fs::write(channel_dir.join("inbox/in-1.json"), "{")
+            .await
+            .unwrap();
+
+        let (_tx, rx) = watch::channel(false);
+        let mut driver = FsChannelDriver::from_settings("fs", &channel_dir, &sample_settings(), rx)
+            .await
+            .unwrap();
+
+        let rewrite_path = channel_dir.join("inbox/in-1.json");
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(35)).await;
+            let tmp_path = rewrite_path.with_extension("json.tmp");
+            tokio::fs::write(
+                &tmp_path,
+                serde_json::to_string_pretty(&sample_event()).unwrap(),
+            )
+            .await
+            .unwrap();
+            tokio::fs::rename(&tmp_path, &rewrite_path).await.unwrap();
+        });
+
+        let event = driver.next_event().await.unwrap().unwrap();
+        assert_eq!(event.text, "hello");
+        assert!(channel_dir.join("processed/in-1.json").exists());
+        assert!(!channel_dir.join("failed/in-1.json").exists());
     }
 
     #[tokio::test]

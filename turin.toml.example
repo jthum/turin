@@ -72,8 +72,8 @@ max_turns = 50
 heartbeat_interval_secs = 30
 initial_spawn_depth = 0
 
-[persistence]
-database_path = ".turin/state.db"
+[persistence.state]
+path = ".turin/state.db"
 
 # Optional named stores for scoped memory/KV, handoffs, or shared KBs.
 # [persistence.stores.rust_kb]

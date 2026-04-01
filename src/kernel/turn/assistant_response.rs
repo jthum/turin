@@ -40,7 +40,7 @@ impl ExecutionHost {
                     "on_turn_end",
                     serde_json::json!({
                         "identity": session.identity.clone(),
-                        "session_id": session.identity.session_id(),
+                        "session_id": self.session_reference(session),
                         "task_id": turn_ctx.task_id.clone(),
                         "trace_id": turn_ctx.trace_id.clone(),
                         "plan_id": turn_ctx.plan_id.clone(),
