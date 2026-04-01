@@ -188,6 +188,7 @@ enum InputMode {
     },
     CreateSessionBranch {
         session_id: String,
+        from_turn_index: Option<u32>,
     },
     ConfirmDiscard {
         action: PendingDraftAction,
@@ -754,7 +755,7 @@ fn handle_key(
         KeyCode::Char('B')
             if matches!(
                 app.tab,
-                TabKind::Chat | TabKind::LiveSessions | TabKind::Sessions
+                TabKind::Chat | TabKind::Search | TabKind::LiveSessions | TabKind::Sessions
             ) =>
         {
             app.start_create_session_branch()
@@ -1057,13 +1058,16 @@ fn handle_input_mode(
                         },
                     )?;
                 }
-                Some(InputMode::CreateSessionBranch { session_id }) => {
+                Some(InputMode::CreateSessionBranch {
+                    session_id,
+                    from_turn_index,
+                }) => {
                     send_command(
                         command_tx,
                         OperatorCommand::CreateSessionBranch {
                             session_id,
                             name: input,
-                            from_turn_index: None,
+                            from_turn_index,
                             activate: true,
                         },
                     )?;
@@ -3343,6 +3347,15 @@ impl TuiApp {
             Some(InputMode::SubmitPrompt { .. }) => {
                 "Enter submits. Esc cancels. Left/Right/Home/End move the cursor. Paste is inserted as one block.".to_string()
             }
+            Some(InputMode::CreateSessionBranch {
+                from_turn_index: Some(turn_index),
+                ..
+            }) => {
+                format!(
+                    "Enter creates a new branch from turn {} and checks it out. Esc cancels.",
+                    turn_index
+                )
+            }
             Some(InputMode::CreateSessionBranch { .. }) => {
                 "Enter creates a new branch from the current active head and checks it out. Esc cancels.".to_string()
             }
@@ -3494,7 +3507,21 @@ impl TuiApp {
                 .record_error("No session is currently selected for branching");
             return;
         };
-        self.begin_input_mode(InputMode::CreateSessionBranch { session_id }, "");
+        let from_turn_index = self.current_branch_source_turn();
+        if let Some(turn_index) = from_turn_index {
+            self.dashboard.record_info(format!(
+                "Creating a branch from turn {} for session {}",
+                turn_index,
+                tail(&session_id, 8)
+            ));
+        }
+        self.begin_input_mode(
+            InputMode::CreateSessionBranch {
+                session_id,
+                from_turn_index,
+            },
+            "",
+        );
     }
 
     fn start_chat_prompt_input(&mut self) {
@@ -5341,6 +5368,21 @@ impl TuiApp {
             })
     }
 
+    fn current_branch_source_turn(&self) -> Option<u32> {
+        match self.tab {
+            TabKind::Chat => self
+                .current_chat_session_id()
+                .and_then(|session_id| self.focused_chat_turn_for_session(session_id)),
+            TabKind::Search => self
+                .selected_search_hit()
+                .and_then(|hit| match &hit.action {
+                    SearchAction::OpenChatSession { focus_turn, .. } => *focus_turn,
+                    _ => None,
+                }),
+            _ => None,
+        }
+    }
+
     fn detail_text(&self) -> String {
         match self.tab {
             TabKind::Chat => pretty_json(&serde_json::json!({
@@ -5696,10 +5738,10 @@ impl TuiApp {
         let shared = "0-9 switch views | Tab cycle | arrows/j/k move | r refresh | q quit";
         let scoped = match self.tab {
             TabKind::Chat => {
-                "Enter opens/resumes or prompts | p prompt | B create branch | [ / ] checkout prev/next branch | ,/. cycle panes | h thinking pane | t inline thinking | v preview | f follow-latest | PgUp/PgDn scroll | Home/End jump"
+                "Enter opens/resumes or prompts | p prompt | B create branch (focused turn when set) | [ / ] checkout prev/next branch | ,/. cycle panes | h thinking pane | t inline thinking | v preview | f follow-latest | PgUp/PgDn scroll | Home/End jump"
             }
             TabKind::Search => {
-                "/ edits query | m cycles scope | [ / ] page | F clears query | Enter opens selected hit"
+                "/ edits query | m cycles scope | [ / ] page | B create branch from selected result turn | F clears query | Enter opens selected hit"
             }
             TabKind::Connections => {
                 "Enter/s connect selected | C connect draft | T test draft | P test selected | E ensure draft local | S update selected | R load recent | [/ ] pick recent | v load current | b load selected | m/o cycle draft | t/g edit draft | a/A save as named | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
