@@ -3155,6 +3155,38 @@ async fn test_agent_persistence_store_overrides_default_scoped_data_store() -> R
                 error("agent.session.list missing current session")
             end
 
+            local branches, branch_err = agent.session.branch_list()
+            if branch_err ~= nil then error("agent.session.branch_list failed: " .. tostring(branch_err)) end
+            if #branches ~= 1 or branches[1].name ~= "main" or branches[1].active ~= true then
+                error("agent.session.branch_list missing main branch")
+            end
+
+            local created, create_err = agent.session.branch_create("alt", { from_turn_index = 0 })
+            if create_err ~= nil then error("agent.session.branch_create failed: " .. tostring(create_err)) end
+            if created == nil or created.name ~= "alt" or created.active ~= false then
+                error("agent.session.branch_create mismatch")
+            end
+
+            local branches_after, branches_after_err = agent.session.branch_list({ session_id = current_session_id })
+            if branches_after_err ~= nil then error("agent.session.branch_list(session_id) failed: " .. tostring(branches_after_err)) end
+            local saw_alt = false
+            for _, row in ipairs(branches_after) do
+                if row.name == "alt" then
+                    saw_alt = true
+                end
+            end
+            if not saw_alt then
+                error("agent.session.branch_list missing created branch")
+            end
+
+            local checked_out, checkout_err = agent.session.branch_checkout("alt")
+            if checked_out ~= nil then
+                error("agent.session.branch_checkout should reject current active session")
+            end
+            if checkout_err == nil or not tostring(checkout_err):find("running harness", 1, true) then
+                error("agent.session.branch_checkout rejection mismatch")
+            end
+
             return ALLOW
         end
     "#;

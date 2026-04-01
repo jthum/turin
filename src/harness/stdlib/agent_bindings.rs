@@ -15,7 +15,7 @@ use crate::harness::stdlib::identity_support::{
 };
 use crate::harness::stdlib::policy_support::{policy_bool, policy_u64, runtime_policy_snapshot};
 use crate::kernel::session::QueuedTask;
-use crate::kernel::session_refs::parse_session_reference;
+use crate::kernel::session_refs::{SessionReference, parse_session_reference};
 use crate::persistence::manager::StoreSelector;
 
 fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
@@ -90,6 +90,86 @@ fn current_session_store_selector(
                 .clone()
                 .unwrap_or_else(|| StoreSelector::Alias("state".to_string()))
         })
+}
+
+fn resolve_session_reference(
+    execution_ctx: &ActiveHarnessExecutionContext,
+    requested: Option<String>,
+) -> Result<SessionReference, String> {
+    let implicit_selector = current_session_store_selector(execution_ctx)?;
+    let raw = match requested {
+        Some(session_id) => session_id,
+        None => execution_ctx
+            .lock()
+            .map_err(|_| "execution context mutex poisoned".to_string())?
+            .session_id
+            .clone()
+            .ok_or_else(|| "No active session context".to_string())?,
+    };
+    let mut session_ref = parse_session_reference(&raw).map_err(|e| e.to_string())?;
+    if session_ref.store_selector.is_none() {
+        session_ref.store_selector = Some(implicit_selector);
+    }
+    Ok(session_ref)
+}
+
+fn current_session_matches(
+    execution_ctx: &ActiveHarnessExecutionContext,
+    target: &SessionReference,
+) -> Result<bool, String> {
+    let current = execution_ctx
+        .lock()
+        .map_err(|_| "execution context mutex poisoned".to_string())?
+        .session_id
+        .clone();
+    let Some(current) = current else {
+        return Ok(false);
+    };
+    let current_ref = resolve_session_reference(execution_ctx, Some(current))?;
+    Ok(current_ref.public_id == target.public_id
+        && current_ref.store_selector == target.store_selector)
+}
+
+fn opt_session_id(opts: Option<&Table>) -> Option<String> {
+    opts.and_then(|table| table.get::<String>("session_id").ok())
+}
+
+fn opt_from_turn_index(opts: Option<&Table>) -> Option<u32> {
+    opts.and_then(|table| table.get::<u32>("from_turn_index").ok())
+}
+
+fn opt_activate(opts: Option<&Table>, default: bool) -> bool {
+    opts.and_then(|table| table.get::<bool>("activate").ok())
+        .unwrap_or(default)
+}
+
+fn bytes_to_simple_uuid(bytes: &[u8]) -> String {
+    uuid::Uuid::from_slice(bytes)
+        .map(|uuid| uuid.simple().to_string())
+        .unwrap_or_else(|_| {
+            let mut out = String::with_capacity(bytes.len() * 2);
+            for byte in bytes {
+                use std::fmt::Write as _;
+                let _ = write!(&mut out, "{:02x}", byte);
+            }
+            out
+        })
+}
+
+fn branch_row_to_lua_table(
+    lua: &Lua,
+    row: &crate::persistence::schema::BranchHeadRow,
+) -> LuaResult<Table> {
+    let table = lua.create_table()?;
+    table.set("branch_id", bytes_to_simple_uuid(&row.public_id))?;
+    table.set("name", row.name.clone())?;
+    match row.head_turn_depth {
+        Some(depth) => table.set("head_turn_index", depth)?,
+        None => table.set("head_turn_index", Value::Nil)?,
+    }
+    table.set("active", row.is_active)?;
+    table.set("created_at", row.created_at.clone())?;
+    Ok(table)
 }
 
 pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
@@ -327,10 +407,10 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 let manager = manager.clone();
                 let execution_ctx = execution_ctx.clone();
                 let result = bridge_async_result(async move {
-                    let session_ref =
-                        parse_session_reference(&session_id).map_err(|e| e.to_string())?;
-                    let implicit_selector = current_session_store_selector(&execution_ctx)?;
-                    let selector = session_ref.store_selector.unwrap_or(implicit_selector);
+                    let session_ref = resolve_session_reference(&execution_ctx, Some(session_id))?;
+                    let selector = session_ref.store_selector.clone().ok_or_else(|| {
+                        "Session reference store could not be resolved".to_string()
+                    })?;
                     let store = manager.open(&selector).await.map_err(|e| e.to_string())?;
                     let uuid =
                         uuid::Uuid::parse_str(&session_ref.public_id).map_err(|e| e.to_string())?;
@@ -345,6 +425,138 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                         Ok(ok_value(Value::Table(session_row_to_lua_table(lua, &row)?)))
                     }
                     Ok(None) => Ok(nil_ok()),
+                    Err(err) => nil_err(lua, &err),
+                }
+            })?,
+        )?;
+    }
+
+    // agent.session.branch_list(opts?)
+    {
+        let manager = app_data.store_manager.clone();
+        let execution_ctx = app_data.execution_ctx.clone();
+        session_ns.set(
+            "branch_list",
+            lua.create_function(move |lua, opts: Option<Table>| {
+                let manager = manager.clone();
+                let execution_ctx = execution_ctx.clone();
+                let requested_session = opt_session_id(opts.as_ref());
+                let result = bridge_async_result(async move {
+                    let session_ref = resolve_session_reference(&execution_ctx, requested_session)?;
+                    let selector = session_ref.store_selector.clone().ok_or_else(|| {
+                        "Session reference store could not be resolved".to_string()
+                    })?;
+                    let store = manager.open(&selector).await.map_err(|e| e.to_string())?;
+                    let uuid =
+                        uuid::Uuid::parse_str(&session_ref.public_id).map_err(|e| e.to_string())?;
+                    let row = store
+                        .get_session_row_by_public_id(uuid)
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| "Session not found".to_string())?;
+                    store
+                        .list_branch_heads(row.id)
+                        .await
+                        .map_err(|e| e.to_string())
+                });
+                match result {
+                    Ok(rows) => {
+                        let out = lua.create_table()?;
+                        for (i, row) in rows.iter().enumerate() {
+                            out.set(i + 1, branch_row_to_lua_table(lua, row)?)?;
+                        }
+                        Ok(ok_value(Value::Table(out)))
+                    }
+                    Err(err) => nil_err(lua, &err),
+                }
+            })?,
+        )?;
+    }
+
+    // agent.session.branch_create(name, opts?)
+    {
+        let manager = app_data.store_manager.clone();
+        let execution_ctx = app_data.execution_ctx.clone();
+        session_ns.set(
+            "branch_create",
+            lua.create_function(move |lua, (name, opts): (String, Option<Table>)| {
+                let manager = manager.clone();
+                let execution_ctx = execution_ctx.clone();
+                let requested_session = opt_session_id(opts.as_ref());
+                let from_turn_index = opt_from_turn_index(opts.as_ref());
+                let activate = opt_activate(opts.as_ref(), false);
+                let result = bridge_async_result(async move {
+                    let session_ref = resolve_session_reference(&execution_ctx, requested_session)?;
+                    let selector = session_ref.store_selector.clone().ok_or_else(|| {
+                        "Session reference store could not be resolved".to_string()
+                    })?;
+                    let store = manager.open(&selector).await.map_err(|e| e.to_string())?;
+                    let uuid =
+                        uuid::Uuid::parse_str(&session_ref.public_id).map_err(|e| e.to_string())?;
+                    let row = store
+                        .get_session_row_by_public_id(uuid)
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| "Session not found".to_string())?;
+                    store
+                        .create_branch_head_from_turn_index(
+                            row.id,
+                            &name,
+                            from_turn_index,
+                            activate,
+                        )
+                        .await
+                        .map_err(|e| e.to_string())
+                });
+                match result {
+                    Ok(branch) => Ok(ok_value(Value::Table(branch_row_to_lua_table(
+                        lua, &branch,
+                    )?))),
+                    Err(err) => nil_err(lua, &err),
+                }
+            })?,
+        )?;
+    }
+
+    // agent.session.branch_checkout(branch, opts?)
+    {
+        let manager = app_data.store_manager.clone();
+        let execution_ctx = app_data.execution_ctx.clone();
+        session_ns.set(
+            "branch_checkout",
+            lua.create_function(move |lua, (branch, opts): (String, Option<Table>)| {
+                let manager = manager.clone();
+                let execution_ctx = execution_ctx.clone();
+                let requested_session = opt_session_id(opts.as_ref());
+                let result = bridge_async_result(async move {
+                    let session_ref = resolve_session_reference(&execution_ctx, requested_session)?;
+                    if current_session_matches(&execution_ctx, &session_ref)? {
+                        return Err(
+                            "Cannot checkout the active session from inside a running harness"
+                                .to_string(),
+                        );
+                    }
+                    let selector = session_ref.store_selector.clone().ok_or_else(|| {
+                        "Session reference store could not be resolved".to_string()
+                    })?;
+                    let store = manager.open(&selector).await.map_err(|e| e.to_string())?;
+                    let uuid =
+                        uuid::Uuid::parse_str(&session_ref.public_id).map_err(|e| e.to_string())?;
+                    let row = store
+                        .get_session_row_by_public_id(uuid)
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| "Session not found".to_string())?;
+                    store
+                        .checkout_branch_head_by_name(row.id, &branch)
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| format!("Branch '{}' not found", branch))
+                });
+                match result {
+                    Ok(branch) => Ok(ok_value(Value::Table(branch_row_to_lua_table(
+                        lua, &branch,
+                    )?))),
                     Err(err) => nil_err(lua, &err),
                 }
             })?,
