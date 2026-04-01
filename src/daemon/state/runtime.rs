@@ -329,9 +329,12 @@ impl DaemonState {
         let Some((store_selector, row)) = self.resolve_persisted_session(session_id).await? else {
             return Ok(None);
         };
-        if self.session_is_live(&row.public_id).await {
+        let live = self.live_session_snapshot(&row.public_id).await;
+        if let Some(snapshot) = &live
+            && (snapshot.active_tasks > 0 || snapshot.queued_tasks > 0)
+        {
             anyhow::bail!(
-                "Cannot check out branch for live session '{}'; stop or resume it later",
+                "Cannot check out branch for busy live session '{}'",
                 session_id
             );
         }
@@ -343,6 +346,12 @@ impl DaemonState {
         } else {
             store.checkout_branch_head_by_name(row.id, branch).await?
         };
+        if branch.is_some() && live.is_some() {
+            self.kernel
+                .agent_manager()
+                .reload_session(session_id)
+                .await?;
+        }
         Ok(branch.map(branch_detail_from_row))
     }
 
@@ -486,14 +495,17 @@ impl DaemonState {
         Ok(row.map(|row| (store_selector, row)))
     }
 
-    async fn session_is_live(&self, public_id: &[u8]) -> bool {
+    async fn live_session_snapshot(
+        &self,
+        public_id: &[u8],
+    ) -> Option<crate::kernel::agent_manager::LiveSessionSnapshot> {
         let wanted = super::helpers::format_uuid_bytes_simple(public_id);
         self.kernel
             .agent_manager()
             .list_live_sessions(None)
             .await
             .into_iter()
-            .any(|snapshot| {
+            .find(|snapshot| {
                 parse_session_reference(&snapshot.session_id)
                     .map(|session_ref| session_ref.public_id == wanted)
                     .unwrap_or_else(|_| snapshot.session_id == wanted)

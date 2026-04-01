@@ -213,6 +213,76 @@ impl AgentManager {
         })
     }
 
+    pub async fn reload_session(self: &Arc<Self>, session_id: &str) -> Result<LiveSessionSnapshot> {
+        let (runtime_key, handle) =
+            self.find_runtime_by_session(session_id)
+                .await
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Session '{}' is not an active managed runtime session",
+                        session_id
+                    )
+                })?;
+
+        if handle.active_tasks.load(Ordering::Relaxed) > 0
+            || handle.queued_tasks.load(Ordering::Relaxed) > 0
+        {
+            anyhow::bail!(
+                "Runtime slot '{}' for agent '{}' is busy",
+                runtime_key.slot_id,
+                runtime_key.agent_id
+            );
+        }
+
+        let wanted = parse_session_reference(session_id)
+            .map(|session_ref| session_ref.public_id)
+            .unwrap_or_else(|_| session_id.to_string());
+        let generation = handle.control.session_generation();
+        handle
+            .control
+            .request_session_resume(session_id.to_string());
+        handle.notify.notify_one();
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let current_matches = handle
+                .control
+                .current_session_id()
+                .as_deref()
+                .map(|current| {
+                    parse_session_reference(current)
+                        .map(|session_ref| session_ref.public_id == wanted)
+                        .unwrap_or(current == wanted)
+                })
+                .unwrap_or(false);
+            if current_matches && handle.control.session_generation() > generation {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "Agent runtime '{}' [{}] did not reload session '{}'",
+                    runtime_key.agent_id,
+                    runtime_key.slot_id,
+                    session_id
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        Ok(LiveSessionSnapshot {
+            agent_id: runtime_key.agent_id,
+            slot_id: runtime_key.slot_id,
+            session_id: handle
+                .control
+                .current_session_id()
+                .unwrap_or_else(|| session_id.to_string()),
+            running: handle.is_running(),
+            active_tasks: handle.active_tasks.load(Ordering::Relaxed),
+            queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
+            current_request_id: handle.control.current_request_id(),
+        })
+    }
+
     pub async fn subscribe_session_events(
         &self,
         session_id: &str,

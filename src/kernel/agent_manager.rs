@@ -6,7 +6,7 @@ mod runtime_registry;
 mod tests;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::{Arc, Mutex, OnceLock, RwLock as StdRwLock};
 
 use crate::inference::embeddings::EmbeddingProvider;
@@ -116,6 +116,7 @@ pub(crate) struct RuntimeControl {
     current_runtime_task_id: StdRwLock<Option<String>>,
     current_cancel_token: Mutex<Option<CancellationToken>>,
     session_reset_request: Mutex<Option<SessionResetRequest>>,
+    session_generation: AtomicU64,
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +139,8 @@ impl RuntimeControl {
             .current_session_events
             .write()
             .expect("runtime control session events lock poisoned") = event_tx;
+        self.session_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     #[cfg(test)]
@@ -150,6 +153,11 @@ impl RuntimeControl {
             .read()
             .expect("runtime control session lock poisoned")
             .clone()
+    }
+
+    fn session_generation(&self) -> u64 {
+        self.session_generation
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn subscribe_current_session_events(&self) -> Option<SessionEventReceiver> {

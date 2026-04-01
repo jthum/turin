@@ -216,23 +216,39 @@ async fn session_branches_can_be_created_listed_and_checked_out() -> Result<()> 
     let config_path = write_bootstrap(temp.path())?;
     let state = DaemonState::load(&config_path).await?;
 
+    let live = state.open_session("default", None, None).await?;
+    let session_id = live.session_id.clone();
+
     let task = state
         .submit_task(
-            Some("default"),
             None,
-            "Hello branches".to_string(),
+            Some(&session_id),
+            "first branch turn".to_string(),
             Default::default(),
         )
         .await?;
-    let completed = state.wait_for_task(&task.request_id, Some(2_000)).await?;
-    assert_eq!(completed.state, "completed");
-
-    let sessions = state.list_sessions(10, 0).await?;
-    let session_id = sessions
-        .first()
-        .expect("persisted session available")
-        .session_id
-        .clone();
+    assert_eq!(
+        state
+            .wait_for_task(&task.request_id, Some(2_000))
+            .await?
+            .state,
+        "completed"
+    );
+    let task = state
+        .submit_task(
+            None,
+            Some(&session_id),
+            "second branch turn".to_string(),
+            Default::default(),
+        )
+        .await?;
+    assert_eq!(
+        state
+            .wait_for_task(&task.request_id, Some(2_000))
+            .await?
+            .state,
+        "completed"
+    );
 
     let initial = state
         .list_session_branches(&session_id)
@@ -257,28 +273,28 @@ async fn session_branches_can_be_created_listed_and_checked_out() -> Result<()> 
     assert!(listed.iter().any(|branch| branch.name == "main"));
     assert!(listed.iter().any(|branch| branch.name == "alt"));
 
-    let _ = state.kill_session(&session_id).await?;
-    let mut stopped = false;
-    for _ in 0..50 {
-        if state
-            .list_live_sessions()
-            .await
-            .into_iter()
-            .all(|session| session.session_id != session_id)
-        {
-            stopped = true;
-            break;
-        }
-        sleep(Duration::from_millis(20)).await;
-    }
-    assert!(stopped, "live session did not stop in time");
-
     let checked_out = state
         .checkout_session_branch(&session_id, "alt")
         .await?
         .expect("branch checkout succeeds");
     assert_eq!(checked_out.name, "alt");
     assert!(checked_out.active);
+
+    let task = state
+        .submit_task(
+            None,
+            Some(&session_id),
+            "third branch turn".to_string(),
+            Default::default(),
+        )
+        .await?;
+    assert_eq!(
+        state
+            .wait_for_task(&task.request_id, Some(2_000))
+            .await?
+            .state,
+        "completed"
+    );
 
     let listed = state
         .list_session_branches(&session_id)
@@ -294,6 +310,15 @@ async fn session_branches_can_be_created_listed_and_checked_out() -> Result<()> 
             .iter()
             .any(|branch| branch.name == "main" && !branch.active)
     );
+
+    let detail = state
+        .get_session(&session_id)
+        .await?
+        .expect("session detail visible");
+    let rendered = serde_json::to_string(&detail.messages)?;
+    assert!(rendered.contains("first branch turn"));
+    assert!(rendered.contains("third branch turn"));
+    assert!(!rendered.contains("second branch turn"));
 
     Ok(())
 }
