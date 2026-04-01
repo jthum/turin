@@ -1,7 +1,8 @@
 mod channel_validation;
 mod helpers;
 mod registry_ops;
-mod runtime;
+mod runtime_sessions;
+mod runtime_tasks;
 #[cfg(test)]
 mod tests;
 mod types;
@@ -19,7 +20,7 @@ use crate::daemon::registry::{
 use crate::kernel::Kernel;
 use crate::kernel::config::{AgentMode, ThinkingConfig, TurinConfig};
 
-pub(crate) use runtime::session_store_selector_from_filters;
+pub(crate) use runtime_sessions::session_store_selector_from_filters;
 pub use types::{
     AgentDetail, ChannelDetail, HarnessDetail, SessionBranchDetail, SessionDetail,
     SessionEventDetail, SessionMessageDetail, SessionSearchHit, SessionSummary,
