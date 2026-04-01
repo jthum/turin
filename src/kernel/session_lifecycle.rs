@@ -101,6 +101,40 @@ impl ExecutionHost {
         Ok(session)
     }
 
+    pub async fn refresh_session_from_persistence(&self, session: &mut SessionState) -> Result<()> {
+        let internal_id = session
+            .internal_id
+            .ok_or_else(|| anyhow!("Session has no internal persistence id"))?;
+        let store = self
+            .store_manager
+            .open(&session.store_selector)
+            .await
+            .context("Session refresh requires a configured persistent state store")?;
+        let row = store.get_session_row(internal_id).await?.ok_or_else(|| {
+            anyhow!(
+                "Persisted session '{}' not found",
+                session.identity.session_id()
+            )
+        })?;
+
+        let messages = store.get_messages(row.id).await?;
+        let events = store.get_events(row.id).await?;
+        let (history, turn_index) = rebuild_history(&messages)?;
+        let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
+            rebuild_session_counters(&events);
+
+        session.default_store_selector =
+            session_default_store_selector_from_metadata(row.metadata.as_deref());
+        session.history = history;
+        session.turn_index = turn_index;
+        session.total_input_tokens = total_input_tokens;
+        session.total_output_tokens = total_output_tokens;
+        session.next_task_id = next_task_id;
+        session.next_plan_id = next_plan_id;
+        session.restored_from_persistence = true;
+        Ok(())
+    }
+
     async fn attach_session_persistence(&self, session: &mut SessionState, create_row: bool) {
         if let Ok(store) = self.store_manager.open(&session.store_selector).await {
             if create_row

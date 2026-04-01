@@ -530,6 +530,26 @@ impl HarnessEngine {
         }
     }
 
+    pub fn request_active_session_branch_checkout(&self, branch: &str) {
+        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
+            && let Ok(mut lock) = app_data.execution_ctx.lock()
+        {
+            lock.pending_branch_checkout = Some(branch.to_string());
+        }
+    }
+
+    pub fn take_pending_session_branch_checkout(&self) -> Option<String> {
+        self.lua
+            .app_data_ref::<HarnessAppData>()
+            .and_then(|app_data| {
+                app_data
+                    .execution_ctx
+                    .lock()
+                    .ok()
+                    .and_then(|mut lock| lock.pending_branch_checkout.take())
+            })
+    }
+
     pub fn get_active_session_mode(&self) -> Option<crate::kernel::config::AgentMode> {
         if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
             && let Ok(lock) = app_data.execution_ctx.lock()

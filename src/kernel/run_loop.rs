@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::harness::verdict::Verdict;
@@ -52,6 +52,7 @@ impl ExecutionHost {
                         Some(error_message),
                     )
                     .await?;
+                    self.apply_pending_branch_checkout(session).await?;
                     if recovered {
                         continue;
                     }
@@ -68,12 +69,68 @@ impl ExecutionHost {
             )
             .await?;
 
+            self.apply_pending_branch_checkout(session).await?;
+
             if session.stop_requested || task_result.status == TaskTerminalStatus::Cancelled {
                 info!(
                     session_id = %self.session_reference(session),
                     "Stopping run loop due to session stop request"
                 );
                 break;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn apply_pending_branch_checkout(&mut self, session: &mut SessionState) -> Result<()> {
+        let branch_name = {
+            let runtime = self.runtime_for_session(session);
+            let harness = runtime.lock_engine();
+            let Some(ref engine) = *harness else {
+                return Ok(());
+            };
+            engine.take_pending_session_branch_checkout()
+        };
+        let Some(branch_name) = branch_name else {
+            return Ok(());
+        };
+
+        let Some(internal_id) = session.internal_id else {
+            warn!(
+                session_id = %self.session_reference(session),
+                branch = %branch_name,
+                "Skipping deferred branch checkout for session without persistence id"
+            );
+            return Ok(());
+        };
+
+        let store = self
+            .store_manager
+            .open(&session.store_selector)
+            .await
+            .context("Deferred branch checkout requires a configured persistent state store")?;
+        match store
+            .checkout_branch_head_by_name(internal_id, &branch_name)
+            .await
+        {
+            Ok(Some(_)) => {
+                self.refresh_session_from_persistence(session).await?;
+            }
+            Ok(None) => {
+                warn!(
+                    session_id = %self.session_reference(session),
+                    branch = %branch_name,
+                    "Deferred branch checkout target no longer exists"
+                );
+            }
+            Err(error) => {
+                warn!(
+                    session_id = %self.session_reference(session),
+                    branch = %branch_name,
+                    error = %error,
+                    "Deferred branch checkout failed"
+                );
             }
         }
 

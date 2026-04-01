@@ -3163,28 +3163,38 @@ async fn test_agent_persistence_store_overrides_default_scoped_data_store() -> R
 
             local created, create_err = agent.session.branch_create("alt", { from_turn_index = 0 })
             if create_err ~= nil then error("agent.session.branch_create failed: " .. tostring(create_err)) end
-            if created == nil or created.name ~= "alt" or created.active ~= false then
+            if created == nil or created.name ~= "alt" or created.active ~= false or created.deferred ~= false then
                 error("agent.session.branch_create mismatch")
+            end
+
+            local created_active, created_active_err = agent.session.branch_create("queued", {
+                from_turn_index = 0,
+                activate = true,
+            })
+            if created_active_err ~= nil then error("agent.session.branch_create activate=true failed: " .. tostring(created_active_err)) end
+            if created_active == nil or created_active.name ~= "queued" or created_active.active ~= false or created_active.deferred ~= true then
+                error("agent.session.branch_create activate=true should defer activation")
             end
 
             local branches_after, branches_after_err = agent.session.branch_list({ session_id = current_session_id })
             if branches_after_err ~= nil then error("agent.session.branch_list(session_id) failed: " .. tostring(branches_after_err)) end
             local saw_alt = false
+            local saw_queued = false
             for _, row in ipairs(branches_after) do
                 if row.name == "alt" then
                     saw_alt = true
+                elseif row.name == "queued" then
+                    saw_queued = true
                 end
             end
-            if not saw_alt then
-                error("agent.session.branch_list missing created branch")
+            if not saw_alt or not saw_queued then
+                error("agent.session.branch_list missing created branches")
             end
 
             local checked_out, checkout_err = agent.session.branch_checkout("alt")
-            if checked_out ~= nil then
-                error("agent.session.branch_checkout should reject current active session")
-            end
-            if checkout_err == nil or not tostring(checkout_err):find("running harness", 1, true) then
-                error("agent.session.branch_checkout rejection mismatch")
+            if checkout_err ~= nil then error("agent.session.branch_checkout failed: " .. tostring(checkout_err)) end
+            if checked_out == nil or checked_out.name ~= "alt" or checked_out.active ~= false or checked_out.deferred ~= true then
+                error("agent.session.branch_checkout should defer current-session checkout")
             end
 
             return ALLOW

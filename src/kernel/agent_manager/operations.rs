@@ -283,6 +283,14 @@ impl AgentManager {
         })
     }
 
+    pub async fn reload_session_if_live(self: &Arc<Self>, session_id: &str) -> Result<bool> {
+        if self.find_runtime_by_session(session_id).await.is_none() {
+            return Ok(false);
+        }
+        self.reload_session(session_id).await?;
+        Ok(true)
+    }
+
     pub async fn subscribe_session_events(
         &self,
         session_id: &str,
