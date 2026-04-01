@@ -8,9 +8,10 @@ use turin_daemon_client::DaemonClient;
 use turin_daemon_protocol::{
     ChannelAccessParams, ChannelAccessRoomParams, DaemonHandshake, DaemonRequest, EntityIdParams,
     EventEnvelope, NoParams, OpenSessionParams, RequestEnvelope, ResponseEnvelope,
-    ResumeSessionParams, RuntimeEventsSubscribeParams, SessionIdParams, SessionListParams,
-    SessionSearchHitKind, SessionSearchParams, SessionSearchScope, SessionTitleParams,
-    SubmitTaskParams, TaskIdParams, UpdateChannelParams, WaitTaskParams,
+    ResumeSessionParams, RuntimeEventsSubscribeParams, SessionBranchCheckoutParams,
+    SessionBranchCreateParams, SessionIdParams, SessionListParams, SessionSearchHitKind,
+    SessionSearchParams, SessionSearchScope, SessionTitleParams, SubmitTaskParams, TaskIdParams,
+    UpdateChannelParams, WaitTaskParams,
 };
 use turin_remote_client::RemoteClient;
 
@@ -335,14 +336,30 @@ pub struct SessionToolExecutionDetail {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionBranchDetail {
+    pub branch_id: String,
+    pub name: String,
+    pub head_turn_index: Option<u32>,
+    pub active: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionDetail {
     pub session: SessionSummary,
+    #[serde(default)]
+    pub branches: Vec<SessionBranchDetail>,
     #[serde(default)]
     pub events: Vec<SessionEventDetail>,
     #[serde(default)]
     pub messages: Vec<SessionMessageDetail>,
     #[serde(default)]
     pub tool_executions: Vec<SessionToolExecutionDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionBranchList {
+    branches: Vec<SessionBranchDetail>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -548,6 +565,55 @@ impl ControlClient {
             DaemonRequest::SessionSetTitle(SessionTitleParams {
                 session_id: session_id.to_string(),
                 title,
+            }),
+        )
+        .await
+    }
+
+    pub async fn list_session_branches(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<SessionBranchDetail>> {
+        let response: SessionBranchList = self
+            .request_ok(
+                None,
+                DaemonRequest::SessionBranchList(SessionIdParams {
+                    session_id: session_id.to_string(),
+                }),
+            )
+            .await?;
+        Ok(response.branches)
+    }
+
+    pub async fn create_session_branch(
+        &self,
+        session_id: &str,
+        name: &str,
+        from_turn_index: Option<u32>,
+        activate: bool,
+    ) -> Result<SessionBranchDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::SessionBranchCreate(SessionBranchCreateParams {
+                session_id: session_id.to_string(),
+                name: name.to_string(),
+                from_turn_index,
+                activate,
+            }),
+        )
+        .await
+    }
+
+    pub async fn checkout_session_branch(
+        &self,
+        session_id: &str,
+        branch: &str,
+    ) -> Result<SessionBranchDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::SessionBranchCheckout(SessionBranchCheckoutParams {
+                session_id: session_id.to_string(),
+                branch: branch.to_string(),
             }),
         )
         .await

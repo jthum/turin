@@ -7,7 +7,8 @@ use turin::daemon::protocol::{ErrorCode, ErrorEnvelope, ResponseEnvelope};
 use super::{
     AgentDetailView, AgentRuntimeView, ChannelDetailView, ChannelRuntimeView, DaemonHealthReport,
     DaemonStartReport, DaemonStatusView, HarnessDetailView, IssueView, LiveSessionListView,
-    LiveSessionView, SessionDetailView, SessionListView, TaskListView, TaskStatusView,
+    LiveSessionView, SessionBranchDetailView, SessionBranchListView, SessionDetailView,
+    SessionListView, TaskListView, TaskStatusView,
 };
 
 pub(super) fn print_response(response: ResponseEnvelope, json_output: bool) -> Result<()> {
@@ -580,6 +581,32 @@ pub(super) fn print_session_detail(session: SessionDetailView) {
         println!("  metadata:   {}", json_snippet(metadata, 120));
     }
 
+    if !session.branches.is_empty() {
+        println!();
+        println!("Branches");
+        let mut rows = Vec::new();
+        rows.push(vec![
+            "BRANCH".to_string(),
+            "NAME".to_string(),
+            "HEAD".to_string(),
+            "ACTIVE".to_string(),
+            "CREATED".to_string(),
+        ]);
+        for branch in &session.branches {
+            rows.push(vec![
+                branch.branch_id.clone(),
+                branch.name.clone(),
+                branch
+                    .head_turn_index
+                    .map(|idx| idx.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                yes_no(branch.active),
+                branch.created_at.clone(),
+            ]);
+        }
+        print_table(&rows);
+    }
+
     println!();
     println!(
         "Counts: {} events, {} messages, {} tool executions",
@@ -673,6 +700,52 @@ pub(super) fn print_session_detail(session: SessionDetailView) {
         }
         print_table(&rows);
     }
+}
+
+pub(super) fn print_session_branch_list(session_id: &str, branches: SessionBranchListView) {
+    println!("Session Branches");
+    println!("  session_id: {}", session_id);
+    if branches.branches.is_empty() {
+        println!("  none");
+        return;
+    }
+
+    let mut rows = Vec::new();
+    rows.push(vec![
+        "BRANCH".to_string(),
+        "NAME".to_string(),
+        "HEAD".to_string(),
+        "ACTIVE".to_string(),
+        "CREATED".to_string(),
+    ]);
+    for branch in branches.branches {
+        rows.push(vec![
+            branch.branch_id,
+            branch.name,
+            branch
+                .head_turn_index
+                .map(|idx| idx.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            yes_no(branch.active),
+            branch.created_at,
+        ]);
+    }
+    print_table(&rows);
+}
+
+pub(super) fn print_session_branch(title: &str, branch: SessionBranchDetailView) {
+    println!("{}", title);
+    println!("  branch_id:    {}", branch.branch_id);
+    println!("  name:         {}", branch.name);
+    println!(
+        "  head_turn:    {}",
+        branch
+            .head_turn_index
+            .map(|idx| idx.to_string())
+            .unwrap_or_else(|| "-".to_string())
+    );
+    println!("  active:       {}", yes_no(branch.active));
+    println!("  created_at:   {}", branch.created_at);
 }
 
 pub(super) fn print_issue_list(title: &str, issues: &[IssueView]) {

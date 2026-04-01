@@ -696,6 +696,37 @@ pub(crate) enum DaemonSessionCommands {
         #[command(flatten)]
         args: DaemonOutputArgs,
     },
+    /// List persisted branches for one session
+    BranchList {
+        /// Session ID
+        session_id: String,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
+    /// Create one persisted branch for a session
+    BranchCreate {
+        /// Session ID
+        session_id: String,
+        /// Branch name
+        name: String,
+        /// Optional turn index to branch from; defaults to current active head
+        #[arg(long)]
+        from_turn: Option<u32>,
+        /// Activate the new branch immediately
+        #[arg(long)]
+        activate: bool,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
+    /// Check out one persisted branch for a stopped session
+    BranchCheckout {
+        /// Session ID
+        session_id: String,
+        /// Branch name or branch ID
+        branch: String,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
     /// Cooperatively cancel one active daemon session
     Cancel {
         /// Session ID

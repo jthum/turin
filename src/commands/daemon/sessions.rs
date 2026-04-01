@@ -94,6 +94,75 @@ pub async fn run_session_get(
     Ok(())
 }
 
+pub async fn run_session_branch_list(
+    config_path: &std::path::Path,
+    session_id: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(
+        config_path,
+        "session.branch_list",
+        json!({ "session_id": session_id }),
+    )
+    .await?;
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let branches: SessionBranchListView = decode_result(response)?;
+    print_session_branch_list(session_id, branches);
+    Ok(())
+}
+
+pub async fn run_session_branch_create(
+    config_path: &std::path::Path,
+    session_id: &str,
+    name: &str,
+    from_turn: Option<u32>,
+    activate: bool,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(
+        config_path,
+        "session.branch_create",
+        json!({
+            "session_id": session_id,
+            "name": name,
+            "from_turn_index": from_turn,
+            "activate": activate,
+        }),
+    )
+    .await?;
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let branch: SessionBranchDetailView = decode_result(response)?;
+    print_session_branch("Created session branch", branch);
+    Ok(())
+}
+
+pub async fn run_session_branch_checkout(
+    config_path: &std::path::Path,
+    session_id: &str,
+    branch: &str,
+    json_output: bool,
+) -> Result<()> {
+    let response = send_request(
+        config_path,
+        "session.branch_checkout",
+        json!({ "session_id": session_id, "branch": branch }),
+    )
+    .await?;
+    if json_output {
+        return print_response(response, true);
+    }
+
+    let branch: SessionBranchDetailView = decode_result(response)?;
+    print_session_branch("Checked out session branch", branch);
+    Ok(())
+}
+
 pub async fn run_session_cancel(
     config_path: &std::path::Path,
     session_id: &str,

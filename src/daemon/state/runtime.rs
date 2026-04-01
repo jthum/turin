@@ -253,8 +253,16 @@ impl DaemonState {
             })
             .collect();
 
+        let branches = store
+            .list_branch_heads(row.id)
+            .await?
+            .into_iter()
+            .map(branch_detail_from_row)
+            .collect();
+
         Ok(Some(SessionDetail {
             session: session_summary_from_row_and_selector(&row, &store_selector),
+            branches,
             events,
             messages,
             tool_executions,

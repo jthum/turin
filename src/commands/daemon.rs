@@ -279,9 +279,25 @@ struct SessionToolExecutionDetailView {
 #[derive(Debug, Deserialize)]
 struct SessionDetailView {
     session: SessionSummaryView,
+    #[serde(default)]
+    branches: Vec<SessionBranchDetailView>,
     events: Vec<SessionEventDetailView>,
     messages: Vec<SessionMessageDetailView>,
     tool_executions: Vec<SessionToolExecutionDetailView>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionBranchDetailView {
+    branch_id: String,
+    name: String,
+    head_turn_index: Option<u32>,
+    active: bool,
+    created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionBranchListView {
+    branches: Vec<SessionBranchDetailView>,
 }
 
 #[derive(Debug, Serialize)]

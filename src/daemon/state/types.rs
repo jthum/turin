@@ -81,6 +81,7 @@ pub struct SessionToolExecutionDetail {
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionDetail {
     pub session: SessionSummary,
+    pub branches: Vec<SessionBranchDetail>,
     pub events: Vec<SessionEventDetail>,
     pub messages: Vec<SessionMessageDetail>,
     pub tool_executions: Vec<SessionToolExecutionDetail>,

@@ -566,6 +566,40 @@ async fn handle_daemon_session_command(command: DaemonSessionCommands) -> Result
         DaemonSessionCommands::Get { session_id, args } => {
             commands::daemon::run_session_get(&args.config.config, &session_id, args.json).await
         }
+        DaemonSessionCommands::BranchList { session_id, args } => {
+            commands::daemon::run_session_branch_list(&args.config.config, &session_id, args.json)
+                .await
+        }
+        DaemonSessionCommands::BranchCreate {
+            session_id,
+            name,
+            from_turn,
+            activate,
+            args,
+        } => {
+            commands::daemon::run_session_branch_create(
+                &args.config.config,
+                &session_id,
+                &name,
+                from_turn,
+                activate,
+                args.json,
+            )
+            .await
+        }
+        DaemonSessionCommands::BranchCheckout {
+            session_id,
+            branch,
+            args,
+        } => {
+            commands::daemon::run_session_branch_checkout(
+                &args.config.config,
+                &session_id,
+                &branch,
+                args.json,
+            )
+            .await
+        }
         DaemonSessionCommands::Cancel { session_id, args } => {
             commands::daemon::run_session_cancel(&args.config.config, &session_id, args.json).await
         }
