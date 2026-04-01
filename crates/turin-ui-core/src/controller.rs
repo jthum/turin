@@ -97,6 +97,16 @@ pub enum OperatorCommand {
     ResumeSession {
         session_id: String,
     },
+    CreateSessionBranch {
+        session_id: String,
+        name: String,
+        from_turn_index: Option<u32>,
+        activate: bool,
+    },
+    CheckoutSessionBranch {
+        session_id: String,
+        branch: String,
+    },
     SetSessionTitle {
         session_id: String,
         title: Option<String>,
@@ -1571,6 +1581,93 @@ fn spawn_command_task(
                 continue;
             }
 
+            if let OperatorCommand::CreateSessionBranch {
+                session_id,
+                name,
+                from_turn_index,
+                activate,
+            } = &command
+            {
+                match client
+                    .create_session_branch(
+                        session_id.as_str(),
+                        name.as_str(),
+                        *from_turn_index,
+                        *activate,
+                    )
+                    .await
+                {
+                    Ok(branch) => {
+                        match client.get_session(session_id.as_str()).await {
+                            Ok(detail) => {
+                                if tx.send(UiUpdate::SessionDetail(Box::new(detail))).is_err() {
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                                    break;
+                                }
+                                continue;
+                            }
+                        }
+                        if tx
+                            .send(UiUpdate::Info(format!(
+                                "Created session branch {} ({}) for {}",
+                                branch.name, branch.branch_id, session_id
+                            )))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+
+            if let OperatorCommand::CheckoutSessionBranch { session_id, branch } = &command {
+                match client
+                    .checkout_session_branch(session_id.as_str(), branch.as_str())
+                    .await
+                {
+                    Ok(checked_out) => {
+                        match client.get_session(session_id.as_str()).await {
+                            Ok(detail) => {
+                                if tx.send(UiUpdate::SessionDetail(Box::new(detail))).is_err() {
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                                    break;
+                                }
+                                continue;
+                            }
+                        }
+                        if tx
+                            .send(UiUpdate::Info(format!(
+                                "Checked out session branch {} ({}) for {}",
+                                checked_out.name, checked_out.branch_id, session_id
+                            )))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+
             if let OperatorCommand::LoadChannelAccess { channel_id } = &command {
                 match client.channel_access(channel_id.as_str()).await {
                     Ok(access) => {
@@ -1892,6 +1989,27 @@ pub async fn execute_operator_command(
             Ok(format!(
                 "Resumed session {} into live slot {}",
                 session.session_id, session.slot_id
+            ))
+        }
+        OperatorCommand::CreateSessionBranch {
+            session_id,
+            name,
+            from_turn_index,
+            activate,
+        } => {
+            let branch = client
+                .create_session_branch(&session_id, &name, from_turn_index, activate)
+                .await?;
+            Ok(format!(
+                "Created session branch {} ({}) for {}",
+                branch.name, branch.branch_id, session_id
+            ))
+        }
+        OperatorCommand::CheckoutSessionBranch { session_id, branch } => {
+            let branch_detail = client.checkout_session_branch(&session_id, &branch).await?;
+            Ok(format!(
+                "Checked out session branch {} ({}) for {}",
+                branch_detail.name, branch_detail.branch_id, session_id
             ))
         }
         OperatorCommand::SetSessionTitle { session_id, title } => {

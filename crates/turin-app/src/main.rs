@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::runtime::Runtime;
 use turin_control_client::{
     AgentRuntime, AgentSummary, ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession,
-    SessionDetail, SessionSummary, TaskStatus,
+    SessionBranchDetail, SessionDetail, SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::EventEnvelope;
 use turin_ui_core::{
@@ -160,6 +160,8 @@ struct TurinDesktopApp {
     save_profile_as_default: bool,
     pending_delete_profile: Option<String>,
     prompt_input: String,
+    branch_name_input: String,
+    activate_new_branch: bool,
     requested_session_detail: Option<String>,
     task_filter: String,
     channel_filter: String,
@@ -235,6 +237,8 @@ impl TurinDesktopApp {
             save_profile_as_default: false,
             pending_delete_profile: None,
             prompt_input: String::new(),
+            branch_name_input: String::new(),
+            activate_new_branch: true,
             requested_session_detail: None,
             task_filter: String::new(),
             channel_filter: String::new(),
@@ -1805,6 +1809,13 @@ impl TurinDesktopApp {
                     });
 
                     ui.add_space(12.0);
+                    self.render_session_branch_controls(
+                        ui,
+                        &session.session_id,
+                        selected_detail.as_ref(),
+                    );
+
+                    ui.add_space(12.0);
                     render_session_detail_panel(ui, selected_detail.as_ref());
                 } else {
                     ui.label("No live sessions are running right now.");
@@ -1863,6 +1874,13 @@ impl TurinDesktopApp {
                         });
                         self.tab = TabKind::LiveSessions;
                     }
+
+                    ui.add_space(12.0);
+                    self.render_session_branch_controls(
+                        ui,
+                        &session.session_id,
+                        selected_detail.as_ref(),
+                    );
 
                     ui.add_space(12.0);
                     render_session_detail_panel(ui, selected_detail.as_ref());
@@ -2119,6 +2137,82 @@ impl TurinDesktopApp {
                 }
             });
         });
+    }
+
+    fn render_session_branch_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        session_id: &str,
+        detail: Option<&SessionDetail>,
+    ) {
+        ui.label(RichText::new("Branches").strong());
+        ui.add_space(8.0);
+
+        let Some(detail) = detail else {
+            ui.label("Loading branch detail...");
+            return;
+        };
+
+        let active_branch = detail.branches.iter().find(|branch| branch.active);
+        detail_kv(ui, "Branch Count", detail.branches.len().to_string());
+        detail_kv(
+            ui,
+            "Active Branch",
+            active_branch
+                .map(branch_descriptor)
+                .unwrap_or_else(|| "main".to_string()),
+        );
+
+        ui.add_space(6.0);
+        ScrollArea::vertical().max_height(140.0).show(ui, |ui| {
+            for branch in &detail.branches {
+                ui.group(|ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        let mut label = branch_descriptor(branch);
+                        if branch.active {
+                            label.push_str("  [active]");
+                        }
+                        ui.label(
+                            RichText::new(label)
+                                .strong()
+                                .color(Color32::from_rgb(173, 214, 255)),
+                        );
+                        ui.label(truncate_for_list(&branch.created_at, 22));
+                        if !branch.active && ui.button("Checkout").clicked() {
+                            self.send_command(OperatorCommand::CheckoutSessionBranch {
+                                session_id: session_id.to_string(),
+                                branch: branch.branch_id.clone(),
+                            });
+                        }
+                    });
+                });
+                ui.add_space(4.0);
+            }
+        });
+
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.label("New Branch");
+            ui.text_edit_singleline(&mut self.branch_name_input);
+        });
+        ui.checkbox(
+            &mut self.activate_new_branch,
+            "Activate immediately after create",
+        );
+        let can_create = !self.branch_name_input.trim().is_empty();
+        if ui
+            .add_enabled(can_create, egui::Button::new("Create Branch"))
+            .clicked()
+        {
+            let name = self.branch_name_input.trim().to_string();
+            self.branch_name_input.clear();
+            self.send_command(OperatorCommand::CreateSessionBranch {
+                session_id: session_id.to_string(),
+                name,
+                from_turn_index: None,
+                activate: self.activate_new_branch,
+            });
+        }
     }
 }
 
@@ -2456,6 +2550,13 @@ fn render_session_detail_panel(ui: &mut egui::Ui, detail: Option<&SessionDetail>
             }
         }
     });
+}
+
+fn branch_descriptor(branch: &SessionBranchDetail) -> String {
+    match branch.head_turn_index {
+        Some(turn_index) => format!("{} · head {}", branch.name, turn_index),
+        None => branch.name.clone(),
+    }
 }
 
 fn json_preview(value: &serde_json::Value, max_chars: usize) -> String {

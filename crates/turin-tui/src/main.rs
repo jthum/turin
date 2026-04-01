@@ -5969,12 +5969,26 @@ fn session_detail_preview(
     detail: Option<&turin_control_client::SessionDetail>,
 ) -> Option<serde_json::Value> {
     detail.map(|detail| {
+        let active_branch = detail.branches.iter().find(|branch| branch.active);
         serde_json::json!({
             "session": {
                 "messages": detail.messages.len(),
                 "events": detail.events.len(),
                 "tool_calls": detail.tool_executions.len(),
+                "branch_count": detail.branches.len(),
+                "active_branch": active_branch.map(|branch| serde_json::json!({
+                    "id": branch.branch_id,
+                    "name": branch.name,
+                    "head_turn_index": branch.head_turn_index,
+                })),
             },
+            "branches": detail.branches.iter().map(|branch| serde_json::json!({
+                "id": branch.branch_id,
+                "name": branch.name,
+                "head_turn_index": branch.head_turn_index,
+                "active": branch.active,
+                "created_at": branch.created_at,
+            })).collect::<Vec<_>>(),
             "recent_messages": detail.messages.iter().rev().take(4).rev().map(|message| serde_json::json!({
                 "role": message.role,
                 "turn": message.turn_index,
@@ -6428,11 +6442,13 @@ fn profile_draft_auth_label(mode: ConnectionProfileDraftAuthMode) -> &'static st
 mod tests {
     use super::{
         cursor_line_col, excerpt_multiline, format_integer_with_commas, nth_char_byte_index,
-        slice_chars, split_input_lines, token_usage_from_detail, wrap_text_chunk,
+        session_detail_preview, slice_chars, split_input_lines, token_usage_from_detail,
+        wrap_text_chunk,
     };
     use serde_json::json;
     use turin_control_client::{
-        SessionDetail, SessionEventDetail, SessionSummary, SessionToolExecutionDetail,
+        SessionBranchDetail, SessionDetail, SessionEventDetail, SessionSummary,
+        SessionToolExecutionDetail,
     };
 
     #[test]
@@ -6496,6 +6512,7 @@ mod tests {
                 metadata: None,
                 created_at: "2026-03-25T00:00:00Z".to_string(),
             },
+            branches: Vec::new(),
             events: vec![
                 SessionEventDetail {
                     id: 1,
@@ -6545,5 +6562,43 @@ mod tests {
         assert_eq!(format_integer_with_commas(12), "12");
         assert_eq!(format_integer_with_commas(1_234), "1,234");
         assert_eq!(format_integer_with_commas(12_345_678), "12,345,678");
+    }
+
+    #[test]
+    fn session_detail_preview_includes_branch_summary() {
+        let detail = SessionDetail {
+            session: SessionSummary {
+                internal_id: 1,
+                session_id: "s_1".to_string(),
+                agent_id: "default".to_string(),
+                metadata: None,
+                created_at: "2026-03-25T00:00:00Z".to_string(),
+            },
+            branches: vec![
+                SessionBranchDetail {
+                    branch_id: "b_main".to_string(),
+                    name: "main".to_string(),
+                    head_turn_index: Some(2),
+                    active: false,
+                    created_at: "2026-03-25T00:00:00Z".to_string(),
+                },
+                SessionBranchDetail {
+                    branch_id: "b_alt".to_string(),
+                    name: "alt".to_string(),
+                    head_turn_index: Some(1),
+                    active: true,
+                    created_at: "2026-03-25T00:05:00Z".to_string(),
+                },
+            ],
+            events: Vec::new(),
+            messages: Vec::new(),
+            tool_executions: Vec::new(),
+        };
+
+        let preview = session_detail_preview(Some(&detail)).expect("preview");
+        assert_eq!(preview["session"]["branch_count"], json!(2));
+        assert_eq!(preview["session"]["active_branch"]["name"], json!("alt"));
+        assert_eq!(preview["branches"][0]["id"], json!("b_main"));
+        assert_eq!(preview["branches"][1]["active"], json!(true));
     }
 }
