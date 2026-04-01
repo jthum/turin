@@ -1,5 +1,5 @@
 use serde_json::json;
-use turin_daemon_protocol::SessionSearchScope;
+use turin_daemon_protocol::{SessionSearchHitKind, SessionSearchScope};
 
 use super::*;
 
@@ -20,7 +20,10 @@ async fn test_schema_initialization() {
 #[tokio::test]
 async fn test_insert_and_get_events() {
     let store = StateStore::open_memory().await.unwrap();
-    let session = 1;
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
 
     store
         .insert_event(session, "session_start", &json!({"session_id": session}))
@@ -40,18 +43,26 @@ async fn test_insert_and_get_events() {
 #[tokio::test]
 async fn test_events_isolated_by_session() {
     let store = StateStore::open_memory().await.unwrap();
+    let session_a = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+    let session_b = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
 
     store
-        .insert_event(1, "session_start", &json!({}))
+        .insert_event(session_a, "session_start", &json!({}))
         .await
         .unwrap();
     store
-        .insert_event(2, "session_start", &json!({}))
+        .insert_event(session_b, "session_start", &json!({}))
         .await
         .unwrap();
 
-    let events_a = store.get_events(1).await.unwrap();
-    let events_b = store.get_events(2).await.unwrap();
+    let events_a = store.get_events(session_a).await.unwrap();
+    let events_b = store.get_events(session_b).await.unwrap();
     assert_eq!(events_a.len(), 1);
     assert_eq!(events_b.len(), 1);
 }
@@ -395,6 +406,143 @@ async fn test_search_session_history_follows_active_branch_path_for_messages_and
     assert_eq!(alt_tool_hits.len(), 1);
     assert_eq!(alt_tool_hits[0].kind, SessionSearchHitKind::ToolExecution);
     assert_eq!(alt_tool_hits[0].turn_index, Some(1));
+}
+
+#[tokio::test]
+async fn test_get_events_uses_hybrid_branch_filtering() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    store
+        .insert_message(
+            session,
+            0,
+            "user",
+            &json!([{"type": "text", "text": "root"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .insert_event(session, "session_start", &json!({"scope": "session"}))
+        .await
+        .unwrap();
+    store
+        .insert_event_with_turn_index(
+            session,
+            Some(1),
+            "turn_end",
+            &json!({"scope": "main-branch"}),
+        )
+        .await
+        .unwrap();
+
+    store
+        .create_branch_head_from_turn_index(session, "alt", Some(0), true)
+        .await
+        .unwrap();
+    store
+        .insert_event_with_turn_index(
+            session,
+            Some(1),
+            "turn_end",
+            &json!({"scope": "alt-branch"}),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_event(session, "all_tasks_complete", &json!({"scope": "session"}))
+        .await
+        .unwrap();
+
+    let events = store.get_events(session).await.unwrap();
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0].event_type, "session_start");
+    assert!(events[0].turn_id.is_none());
+    assert_eq!(events[1].event_type, "turn_end");
+    assert_eq!(events[1].turn_index, Some(1));
+    assert!(events[1].payload.contains("alt-branch"));
+    assert_eq!(events[2].event_type, "all_tasks_complete");
+    assert!(events[2].turn_id.is_none());
+
+    let all_events = store.get_all_events(session).await.unwrap();
+    assert_eq!(all_events.len(), 4);
+}
+
+#[tokio::test]
+async fn test_search_session_history_follows_active_branch_path_for_events() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    store
+        .insert_message(
+            session,
+            0,
+            "user",
+            &json!([{"type": "text", "text": "root"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .insert_event(
+            session,
+            "all_tasks_complete",
+            &json!({"marker": "shared session event"}),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_event_with_turn_index(
+            session,
+            Some(1),
+            "turn_end",
+            &json!({"marker": "main branch event"}),
+        )
+        .await
+        .unwrap();
+
+    store
+        .create_branch_head_from_turn_index(session, "alt", Some(0), true)
+        .await
+        .unwrap();
+    store
+        .insert_event_with_turn_index(
+            session,
+            Some(1),
+            "turn_end",
+            &json!({"marker": "alt branch event"}),
+        )
+        .await
+        .unwrap();
+
+    let main_hits = store
+        .search_session_history("main branch event", SessionSearchScope::Events, 16, 0)
+        .await
+        .unwrap();
+    assert!(main_hits.is_empty());
+
+    let alt_hits = store
+        .search_session_history("alt branch event", SessionSearchScope::Events, 16, 0)
+        .await
+        .unwrap();
+    assert_eq!(alt_hits.len(), 1);
+    assert_eq!(alt_hits[0].kind, SessionSearchHitKind::Event);
+    assert_eq!(alt_hits[0].turn_index, Some(1));
+
+    let shared_hits = store
+        .search_session_history("shared session event", SessionSearchScope::Events, 16, 0)
+        .await
+        .unwrap();
+    assert_eq!(shared_hits.len(), 1);
+    assert_eq!(shared_hits[0].kind, SessionSearchHitKind::Event);
+    assert_eq!(shared_hits[0].turn_index, None);
 }
 
 #[tokio::test]

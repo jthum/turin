@@ -23,6 +23,13 @@ pub struct QueuedTask {
     pub trace_id: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct PersistedKernelEvent {
+    pub internal_id: Option<i64>,
+    pub turn_index: Option<u32>,
+    pub event: KernelEvent,
+}
+
 impl QueuedTask {
     pub fn ad_hoc(prompt: impl Into<String>) -> Self {
         Self {
@@ -101,7 +108,7 @@ pub struct SessionState {
     // Event channel for this session
     pub event_tx: broadcast::Sender<(Option<i64>, KernelEvent)>,
     /// Reliable durability lane (separate from observer fanout).
-    pub durability_tx: Option<mpsc::UnboundedSender<(Option<i64>, KernelEvent)>>,
+    pub durability_tx: Option<mpsc::UnboundedSender<PersistedKernelEvent>>,
     pub event_task: Option<Arc<Mutex<Option<JoinHandle<()>>>>>,
     /// Token to cooperatively cancel the currently running task/turn.
     pub cancel_token: CancellationToken,

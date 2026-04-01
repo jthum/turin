@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 10;
+pub(crate) const SCHEMA_VERSION: u32 = 11;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id  INTEGER NOT NULL REFERENCES sessions(id),
+    turn_id     INTEGER REFERENCES turns(id),
     event_type  TEXT NOT NULL,
     payload     TEXT NOT NULL,
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
@@ -114,6 +115,7 @@ CREATE TABLE IF NOT EXISTS schema_info (
 
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
+CREATE INDEX IF NOT EXISTS idx_events_turn ON events(turn_id);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_executions_session ON tool_executions(session_id);
 CREATE INDEX IF NOT EXISTS idx_kv_scope ON kv(scope_kind, scope_key);
@@ -205,8 +207,10 @@ pub struct SessionRow {
 pub struct EventRow {
     pub id: i64,
     pub session_id: i64,
+    pub turn_id: Option<i64>,
     pub event_type: String,
     pub payload: String,
+    pub turn_index: Option<u32>,
     pub created_at: String,
 }
 

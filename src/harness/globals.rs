@@ -13,7 +13,7 @@ use crate::harness::stdlib::{
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
 use crate::kernel::event::KernelEvent;
-use crate::kernel::session::QueuedTask;
+use crate::kernel::session::{PersistedKernelEvent, QueuedTask};
 use crate::persistence::manager::StoreManager;
 use crate::persistence::manager::StoreSelector;
 
@@ -32,7 +32,7 @@ pub struct HarnessEventContext {
     pub json: bool,
     pub internal_id: Option<i64>,
     pub event_tx: tokio::sync::broadcast::Sender<(Option<i64>, KernelEvent)>,
-    pub durability_tx: Option<tokio::sync::mpsc::UnboundedSender<(Option<i64>, KernelEvent)>>,
+    pub durability_tx: Option<tokio::sync::mpsc::UnboundedSender<PersistedKernelEvent>>,
 }
 
 #[derive(Clone, Default)]

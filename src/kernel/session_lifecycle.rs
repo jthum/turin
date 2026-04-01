@@ -79,7 +79,7 @@ impl ExecutionHost {
         }
 
         let messages = store.get_messages(row.id).await?;
-        let events = store.get_events(row.id).await?;
+        let events = store.get_all_events(row.id).await?;
         let (history, turn_index) = rebuild_history(&messages)?;
         let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
             rebuild_session_counters(&events);
@@ -118,7 +118,7 @@ impl ExecutionHost {
         })?;
 
         let messages = store.get_messages(row.id).await?;
-        let events = store.get_events(row.id).await?;
+        let events = store.get_all_events(row.id).await?;
         let (history, turn_index) = rebuild_history(&messages)?;
         let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
             rebuild_session_counters(&events);
@@ -150,16 +150,26 @@ impl ExecutionHost {
                 }
             }
 
-            let (durability_tx, mut durability_rx) =
-                tokio::sync::mpsc::unbounded_channel::<(Option<i64>, KernelEvent)>();
+            let (durability_tx, mut durability_rx) = tokio::sync::mpsc::unbounded_channel::<
+                crate::kernel::session::PersistedKernelEvent,
+            >();
             session.durability_tx = Some(durability_tx);
             let store_clone = store.clone();
             let handle = tokio::spawn(async move {
-                while let Some((session_id, event)) = durability_rx.recv().await {
+                while let Some(record) = durability_rx.recv().await {
+                    let event = record.event;
                     let event_type = event.event_type().to_string();
                     let payload = serde_json::to_value(&event).unwrap_or_default();
-                    if let Some(iid) = session_id {
-                        if let Err(e) = store_clone.insert_event(iid, &event_type, &payload).await {
+                    if let Some(iid) = record.internal_id {
+                        if let Err(e) = store_clone
+                            .insert_event_with_turn_index(
+                                iid,
+                                record.turn_index,
+                                &event_type,
+                                &payload,
+                            )
+                            .await
+                        {
                             warn!(error = %e, "Background persistence error");
                         }
                     } else {

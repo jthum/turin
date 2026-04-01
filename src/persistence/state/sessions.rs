@@ -399,10 +399,14 @@ impl StateStore {
                        s.agent_id,
                        s.metadata,
                        e.created_at,
+                       t.branch_depth,
                        e.event_type,
-                       e.payload
+                       e.payload,
+                       e.session_id,
+                       e.turn_id
                 FROM events e
                 JOIN sessions s ON s.id = e.session_id
+                LEFT JOIN turns t ON t.id = e.turn_id
                 WHERE LOWER(e.event_type) LIKE ?1
                    OR LOWER(e.payload) LIKE ?1
                 "#,
@@ -411,8 +415,22 @@ impl StateStore {
             .await
             .context("Failed to search persisted events")?;
 
+        let mut active_turn_ids_by_session = HashMap::<i64, HashSet<i64>>::new();
         let mut hits = Vec::new();
         while let Some(row) = rows.next().await? {
+            let session_id = row.get::<i64>(9)?;
+            let turn_id = row.get::<Option<i64>>(10)?;
+            if let Some(turn_id) = turn_id
+                && !self
+                    .active_branch_turn_ids_contains(
+                        session_id,
+                        turn_id,
+                        &mut active_turn_ids_by_session,
+                    )
+                    .await?
+            {
+                continue;
+            }
             hits.push(RankedSessionSearchHit {
                 sort_id: row.get::<i64>(1)?,
                 row: SessionSearchRow {
@@ -422,11 +440,11 @@ impl StateStore {
                     agent_id: row.get::<String>(3)?,
                     metadata: row.get::<Option<String>>(4)?,
                     created_at: row.get::<String>(5)?,
-                    turn_index: None,
+                    turn_index: row.get::<Option<i64>>(6)?.map(|value| value as u32),
                     role: None,
                     tool_name: None,
-                    event_type: Some(row.get::<String>(6)?),
-                    match_text: row.get::<String>(7)?,
+                    event_type: Some(row.get::<String>(7)?),
+                    match_text: row.get::<String>(8)?,
                 },
             });
         }
