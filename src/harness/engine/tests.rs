@@ -9,10 +9,16 @@ fn test_app_data_for_root(root: PathBuf) -> HarnessAppData {
         fs_root: root.clone(),
         workspace_root: root.clone(),
         harness_directory: root.clone(),
-        store_manager: Arc::new(StoreManager::new(root.clone())),
+        store_manager: Arc::new(StoreManager::new(
+            root.clone(),
+            turin_types::layout::default_stores_dir_for_workspace(&root),
+        )),
         agent_manager: Arc::new(crate::kernel::agent_manager::AgentManager::new(
             std::sync::Arc::new(crate::kernel::config::TurinConfig::default()),
-            Arc::new(StoreManager::new(root)),
+            Arc::new(StoreManager::new(
+                root.clone(),
+                turin_types::layout::default_stores_dir_for_workspace(&root),
+            )),
         )),
         policy_manager: Arc::new(crate::kernel::policy::RuntimePolicyManager::new()),
         governance_manager: Arc::new(crate::kernel::governance::GovernanceManager::new(
@@ -375,8 +381,7 @@ fn test_engine_imports_nested_module_from_subdirectory() {
     )
     .unwrap();
 
-    let mut engine =
-        HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
     engine.load_dir(dir.path()).unwrap();
 
     let verdict = engine
@@ -422,8 +427,7 @@ fn test_engine_use_activates_script_and_table_blocks() {
     )
     .unwrap();
 
-    let mut engine =
-        HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
     engine.load_dir(dir.path()).unwrap();
 
     assert_eq!(
@@ -465,8 +469,7 @@ fn test_engine_use_rejected_outside_load_phase() {
     )
     .unwrap();
 
-    let mut engine =
-        HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
     engine.load_dir(dir.path()).unwrap();
 
     let err = engine
@@ -490,11 +493,13 @@ fn test_engine_watch_registers_explicit_roots() {
     )
     .unwrap();
 
-    let mut engine =
-        HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
     engine.load_dir(dir.path()).unwrap();
 
-    assert_eq!(engine.explicit_watch_roots(), vec![dir.path().join("blocks")]);
+    assert_eq!(
+        engine.explicit_watch_roots(),
+        vec![dir.path().join("blocks")]
+    );
 }
 
 #[test]
@@ -751,8 +756,7 @@ async fn test_dx_access_helpers() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_dx_session_user_kv_helpers() {
     let root = TempDir::new().unwrap();
-    let mut engine =
-        HarnessEngine::new(test_app_data_for_root(root.path().to_path_buf())).unwrap();
+    let mut engine = HarnessEngine::new(test_app_data_for_root(root.path().to_path_buf())).unwrap();
 
     let dir = TempDir::new().unwrap();
     std::fs::write(
@@ -794,8 +798,7 @@ async fn test_dx_session_user_kv_helpers() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_dx_runtime_db_proxy_one_and_with_error_precedence() {
     let root = TempDir::new().unwrap();
-    let mut engine =
-        HarnessEngine::new(test_app_data_for_root(root.path().to_path_buf())).unwrap();
+    let mut engine = HarnessEngine::new(test_app_data_for_root(root.path().to_path_buf())).unwrap();
 
     let dir = TempDir::new().unwrap();
     std::fs::write(
@@ -847,8 +850,7 @@ async fn test_dx_runtime_db_proxy_one_and_with_error_precedence() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_dx_runtime_agent_status_proxy_and_fs_json_helpers() {
     let root = TempDir::new().unwrap();
-    let mut engine =
-        HarnessEngine::new(test_app_data_for_root(root.path().to_path_buf())).unwrap();
+    let mut engine = HarnessEngine::new(test_app_data_for_root(root.path().to_path_buf())).unwrap();
 
     let dir = TempDir::new().unwrap();
     std::fs::write(

@@ -381,13 +381,13 @@ mod tests {
             workspace_root: "/tmp/work".into(),
             endpoint: "/tmp/work/.turin/daemon.sock".into(),
             registry: RegistrySnapshot {
-                agents_dir: "/tmp/work/.turin/agents".into(),
+                agents_dir: "/tmp/work/.turin/runtime/agents".into(),
                 harnesses_dir: "/tmp/work/.turin/harnesses".into(),
-                channels_dir: "/tmp/work/.turin/channels".into(),
+                channels_dir: "/tmp/work/.turin/runtime/channels".into(),
                 agents: vec![
                     AgentSummary {
                         id: "default".into(),
-                        directory: "/tmp/work/.turin/agents/default".into(),
+                        directory: "/tmp/work/.turin/runtime/agents/default".into(),
                         enabled: true,
                         provider: "mock".into(),
                         model: "mock-model".into(),
@@ -397,7 +397,7 @@ mod tests {
                     },
                     AgentSummary {
                         id: "writer".into(),
-                        directory: "/tmp/work/.turin/agents/writer".into(),
+                        directory: "/tmp/work/.turin/runtime/agents/writer".into(),
                         enabled: true,
                         provider: "mock".into(),
                         model: "mock-model".into(),
@@ -419,7 +419,7 @@ mod tests {
                 channels: vec![
                     ChannelSummary {
                         id: "default-fs".into(),
-                        directory: "/tmp/work/.turin/channels/default-fs".into(),
+                        directory: "/tmp/work/.turin/runtime/channels/default-fs".into(),
                         enabled: true,
                         kind: "fs".into(),
                         agent_id: "default".into(),
@@ -427,7 +427,7 @@ mod tests {
                     },
                     ChannelSummary {
                         id: "writer-fs".into(),
-                        directory: "/tmp/work/.turin/channels/writer-fs".into(),
+                        directory: "/tmp/work/.turin/runtime/channels/writer-fs".into(),
                         enabled: true,
                         kind: "fs".into(),
                         agent_id: "writer".into(),
@@ -436,15 +436,15 @@ mod tests {
                 ],
                 issues: vec![
                     RegistryIssue {
-                        path: "/tmp/work/.turin/agents/default/config.toml".into(),
+                        path: "/tmp/work/.turin/runtime/agents/default/config.toml".into(),
                         message: "default issue".into(),
                     },
                     RegistryIssue {
-                        path: "/tmp/work/harnesses/reviewer/main.lua".into(),
+                        path: "/tmp/work/.turin/harnesses/reviewer/main.lua".into(),
                         message: "reviewer issue".into(),
                     },
                     RegistryIssue {
-                        path: "/tmp/work/.turin/channels/writer-fs/config.toml".into(),
+                        path: "/tmp/work/.turin/runtime/channels/writer-fs/config.toml".into(),
                         message: "writer channel issue".into(),
                     },
                 ],
@@ -452,14 +452,14 @@ mod tests {
             harnesses: vec![
                 HarnessRuntimeSnapshot {
                     harness_id: "default".into(),
-                    directory: "/tmp/work/.turin/agents/default/harness".into(),
+                    directory: "/tmp/work/.turin/runtime/agents/default/harness".into(),
                     bound_agents: vec!["default".into()],
                     watched_roots: Vec::new(),
                     loaded_scripts: Vec::new(),
                 },
                 HarnessRuntimeSnapshot {
                     harness_id: "reviewer".into(),
-                    directory: "/tmp/work/harnesses/reviewer".into(),
+                    directory: "/tmp/work/.turin/harnesses/reviewer".into(),
                     bound_agents: vec!["writer".into()],
                     watched_roots: Vec::new(),
                     loaded_scripts: Vec::new(),
@@ -490,7 +490,7 @@ mod tests {
                     id: "default-fs".into(),
                     kind: "fs".into(),
                     agent_id: "default".into(),
-                    directory: "/tmp/work/.turin/channels/default-fs".into(),
+                    directory: "/tmp/work/.turin/runtime/channels/default-fs".into(),
                     state: "running".into(),
                     last_error: None,
                     last_error_code: None,
@@ -506,7 +506,7 @@ mod tests {
                     id: "writer-fs".into(),
                     kind: "fs".into(),
                     agent_id: "writer".into(),
-                    directory: "/tmp/work/.turin/channels/writer-fs".into(),
+                    directory: "/tmp/work/.turin/runtime/channels/writer-fs".into(),
                     state: "running".into(),
                     last_error: None,
                     last_error_code: None,

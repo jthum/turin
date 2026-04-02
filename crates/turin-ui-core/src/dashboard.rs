@@ -354,11 +354,12 @@ mod tests {
         format_relative_age, freshness_at,
     };
     use turin_control_client::ConnectionKind;
+    use turin_types::layout::DEFAULT_BOOTSTRAP_CONFIG_PATH;
 
     fn empty_dashboard() -> DashboardState {
         DashboardState {
             connection_kind: ConnectionKind::Local,
-            connection_target: ".turin/config.toml".to_string(),
+            connection_target: DEFAULT_BOOTSTRAP_CONFIG_PATH.to_string(),
             health: None,
             status: None,
             live_sessions: Vec::new(),

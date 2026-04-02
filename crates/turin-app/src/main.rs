@@ -11,6 +11,9 @@ use turin_control_client::{
     SessionBranchDetail, SessionDetail, SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::EventEnvelope;
+use turin_types::layout::{
+    DEFAULT_BOOTSTRAP_CONFIG_PATH, DEFAULT_BOOTSTRAP_DAEMON_ENDPOINT_PATH, DEFAULT_UI_PROFILES_PATH,
+};
 use turin_ui_core::{
     ConnectionDraftHistory, ConnectionOptions, ConnectionPreflightOutcome,
     ConnectionPreflightReport, ConnectionProfileActivityBook, ConnectionProfileAuth,
@@ -1140,9 +1143,10 @@ impl TurinDesktopApp {
                 ui.label(format!("Source: {}", profiles_source.display()));
                 ui.add_space(8.0);
                 if profiles.is_empty() {
-                    ui.label(
-                        "No profiles loaded. Add .turin/ui-profiles.toml or pass --profiles-file.",
-                    );
+                    ui.label(&format!(
+                        "No profiles loaded. Add {} or pass --profiles-file.",
+                        DEFAULT_UI_PROFILES_PATH
+                    ));
                 } else {
                     ScrollArea::vertical().show(ui, |ui| {
                         for (index, profile) in profiles.iter().enumerate() {
@@ -2432,8 +2436,8 @@ fn profile_target_label(kind: ConnectionProfileKind) -> &'static str {
 
 fn profile_target_hint(kind: ConnectionProfileKind) -> &'static str {
     match kind {
-        ConnectionProfileKind::LocalConfig => ".turin/config.toml",
-        ConnectionProfileKind::LocalEndpoint => ".turin/daemon.sock",
+        ConnectionProfileKind::LocalConfig => DEFAULT_BOOTSTRAP_CONFIG_PATH,
+        ConnectionProfileKind::LocalEndpoint => DEFAULT_BOOTSTRAP_DAEMON_ENDPOINT_PATH,
         ConnectionProfileKind::Remote => "http://127.0.0.1:9324",
     }
 }

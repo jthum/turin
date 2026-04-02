@@ -5,6 +5,8 @@ pub mod inference;
 pub mod kernel;
 pub mod persistence;
 pub mod remote;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod tools;
 pub mod tracing_support;
 

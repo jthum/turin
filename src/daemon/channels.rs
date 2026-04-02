@@ -316,7 +316,7 @@ impl ChannelRuntimeManager {
         }
     }
 
-    async fn start_fs_channel(&self, workspace_root: PathBuf, channel: DesiredChannel) {
+    async fn start_fs_channel(&self, _workspace_root: PathBuf, channel: DesiredChannel) {
         let endpoint = self.endpoint.clone();
         let event_tx = self.event_tx.clone();
         let inner = Arc::clone(&self.inner);
@@ -328,12 +328,8 @@ impl ChannelRuntimeManager {
         let join = tokio::spawn(async move {
             let run_result = async {
                 let daemon = turin_daemon_client::DaemonClient::new(&endpoint);
-                let binding_state = workspace_root
-                    .join(".turin/channels")
-                    .join(format!("{}-bindings.json", channel.id));
-                let access_state = workspace_root
-                    .join(".turin/channels")
-                    .join(format!("{}-access.json", channel.id));
+                let binding_state = binding_state_path(&channel.directory);
+                let access_state = access_state_path(&channel.directory);
                 let access_policy =
                     turin_channel_runner::ChannelAccessPolicy::from_settings(&channel.settings)?;
                 let tools = turin_channel_runner::tools_config_from_settings(&channel.settings)?;
@@ -418,7 +414,7 @@ impl ChannelRuntimeManager {
         );
     }
 
-    async fn start_external_channel(&self, workspace_root: PathBuf, channel: DesiredChannel) {
+    async fn start_external_channel(&self, _workspace_root: PathBuf, channel: DesiredChannel) {
         let endpoint = self.endpoint.clone();
         let event_tx = self.event_tx.clone();
         let inner = Arc::clone(&self.inner);
@@ -433,8 +429,8 @@ impl ChannelRuntimeManager {
                     channel_runners::resolve_external_runner_command(&channel.kind)?;
                 let settings_json = serde_json::to_string(&channel.settings)
                     .context("Failed to encode channel settings JSON")?;
-                let binding_state = binding_state_path(&workspace_root, &channel.id);
-                let access_state = access_state_path(&workspace_root, &channel.id);
+                let binding_state = binding_state_path(&channel.directory);
+                let access_state = access_state_path(&channel.directory);
 
                 let mut child = Command::new(&runner_command.program);
                 for arg in &runner_command.args_prefix {
@@ -606,16 +602,12 @@ fn is_supported_kind(kind: &str) -> bool {
         || channel_runners::describe_external_runner(kind).is_ok()
 }
 
-fn binding_state_path(workspace_root: &std::path::Path, channel_id: &str) -> PathBuf {
-    workspace_root
-        .join(".turin/channels")
-        .join(format!("{channel_id}-bindings.json"))
+fn binding_state_path(channel_dir: &std::path::Path) -> PathBuf {
+    channel_dir.join("bindings.json")
 }
 
-fn access_state_path(workspace_root: &std::path::Path, channel_id: &str) -> PathBuf {
-    workspace_root
-        .join(".turin/channels")
-        .join(format!("{channel_id}-access.json"))
+fn access_state_path(channel_dir: &std::path::Path) -> PathBuf {
+    channel_dir.join("access.json")
 }
 
 fn emit_runtime_update(
@@ -731,9 +723,10 @@ mod tests {
     async fn external_channel_runner_process_is_supervised() {
         use std::os::unix::fs::PermissionsExt;
 
+        let _env_guard = crate::test_support::env_lock().lock().await;
         let temp = tempdir().unwrap();
         let workspace_root = temp.path().join("workspace");
-        fs::create_dir_all(workspace_root.join(".turin/channels")).unwrap();
+        fs::create_dir_all(workspace_root.join(".turin/runtime/channels")).unwrap();
 
         let runner = temp.path().join("fake-telegram-runner.sh");
         fs::write(
@@ -757,7 +750,7 @@ mod tests {
                 workspace_root.clone(),
                 vec![DiscoveredChannel {
                     id: "telegram-ops".to_string(),
-                    directory: workspace_root.join(".turin/channels/telegram-ops"),
+                    directory: workspace_root.join(".turin/runtime/channels/telegram-ops"),
                     enabled: true,
                     kind: "telegram".to_string(),
                     agent_id: "default".to_string(),

@@ -118,8 +118,8 @@ impl HarnessManager {
 mod tests {
     use super::*;
     use crate::kernel::config::{
-        AgentConfig, AgentMode, EmbeddingConfig, HarnessConfig, KernelConfig, PersistenceConfig,
-        ProviderConfig, TurinConfig,
+        AgentConfig, AgentMode, EmbeddingConfig, HarnessConfig, KernelConfig, LayoutConfig,
+        PersistenceConfig, ProviderConfig, TurinConfig,
     };
     use std::collections::HashMap;
     use tempfile::tempdir;
@@ -193,6 +193,7 @@ mod tests {
                 heartbeat_interval_secs: 30,
                 initial_spawn_depth: 0,
             },
+            layout: LayoutConfig::default(),
             persistence: PersistenceConfig::with_state_path(
                 tmp.path().join("test.db").to_string_lossy().to_string(),
             ),

@@ -11,6 +11,7 @@ toml = "0.8"
 tokio = { version = "1.0", default-features = false, features = ["io-util", "net", "fs", "time"] }
 turin-daemon-protocol = { path = "../turin-daemon-protocol" }
 turin-local-ipc = { path = "../turin-local-ipc" }
+turin-types = { path = "../turin-types" }
 
 [dev-dependencies]
 tempfile = "3.10"

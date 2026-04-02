@@ -7,10 +7,17 @@ use tokio::time::{Duration, sleep};
 use turin_daemon_protocol::SessionSearchScope;
 
 fn write_agent_with_state_path(root: &Path, agent_id: &str, state_path: &str) -> Result<()> {
-    let agent_dir = root.join(".turin").join("agents").join(agent_id);
+    let agent_dir = root
+        .join(".turin")
+        .join("runtime")
+        .join("agents")
+        .join(agent_id);
     std::fs::create_dir_all(&agent_dir)?;
     std::fs::create_dir_all(agent_dir.join("harness"))?;
-    std::fs::write(agent_dir.join("harness").join("main.lua"), "-- local harness\n")?;
+    std::fs::write(
+        agent_dir.join("harness").join("main.lua"),
+        "-- local harness\n",
+    )?;
     std::fs::write(
         agent_dir.join("config.toml"),
         format!(
@@ -88,6 +95,7 @@ async fn create_disable_and_delete_agent_updates_filesystem_state() -> Result<()
     assert!(
         temp.path()
             .join(".turin")
+            .join("runtime")
             .join("agents")
             .join("docs-reviewer")
             .join("harness")
@@ -126,6 +134,7 @@ async fn create_disable_and_delete_agent_updates_filesystem_state() -> Result<()
         !temp
             .path()
             .join(".turin")
+            .join("runtime")
             .join("agents")
             .join("docs-reviewer")
             .exists()
@@ -574,6 +583,7 @@ async fn channel_create_disable_update_and_delete_are_filesystem_backed() -> Res
         !temp
             .path()
             .join(".turin")
+            .join("runtime")
             .join("channels")
             .join("discord")
             .exists()
@@ -647,6 +657,7 @@ async fn channel_update_rejects_invalid_fs_poll_interval() -> Result<()> {
 async fn channel_create_and_update_accept_valid_telegram_settings() -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
+    let _env_guard = crate::test_support::env_lock().lock().await;
     let temp = tempdir()?;
     let runner = temp.path().join("fake-telegram-runner.sh");
     std::fs::write(
@@ -855,6 +866,7 @@ async fn channel_access_snapshot_and_approval_are_filesystem_backed() -> Result<
 async fn channel_create_rejects_invalid_telegram_settings() -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
+    let _env_guard = crate::test_support::env_lock().lock().await;
     let temp = tempdir()?;
     let runner = temp.path().join("fake-telegram-runner.sh");
     std::fs::write(
@@ -932,6 +944,7 @@ async fn agent_can_bind_shared_harness_and_switch_back_to_local() -> Result<()> 
         !temp
             .path()
             .join(".turin")
+            .join("runtime")
             .join("agents")
             .join("writer")
             .join("harness")
@@ -944,6 +957,7 @@ async fn agent_can_bind_shared_harness_and_switch_back_to_local() -> Result<()> 
     assert!(
         temp.path()
             .join(".turin")
+            .join("runtime")
             .join("agents")
             .join("writer")
             .join("harness")
@@ -957,7 +971,12 @@ async fn agent_can_bind_shared_harness_and_switch_back_to_local() -> Result<()> 
 async fn runtime_errors_surface_invalid_agent_configs_without_global_failure() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;
-    let bad_agent_dir = temp.path().join(".turin").join("agents").join("broken");
+    let bad_agent_dir = temp
+        .path()
+        .join(".turin")
+        .join("runtime")
+        .join("agents")
+        .join("broken");
     std::fs::create_dir_all(&bad_agent_dir)?;
     std::fs::write(bad_agent_dir.join("config.toml"), "provider = [")?;
 
@@ -982,7 +1001,11 @@ async fn harness_issues_surface_broken_shared_harness_without_loaded_runtime() -
     let mut state = DaemonState::load(&config_path).await?;
 
     state.create_shared_harness("reviewer").await?;
-    let harness_dir = temp.path().join(".turin").join("harnesses").join("reviewer");
+    let harness_dir = temp
+        .path()
+        .join(".turin")
+        .join("harnesses")
+        .join("reviewer");
     std::fs::write(harness_dir.join("broken.lua"), "function on_turn_prepare(")?;
 
     let status = state.rescan().await?;
@@ -1022,6 +1045,7 @@ async fn bind_shared_harness_rejects_non_scaffold_local_harness() -> Result<()> 
     let local_main = temp
         .path()
         .join(".turin")
+        .join("runtime")
         .join("agents")
         .join("writer")
         .join("harness")

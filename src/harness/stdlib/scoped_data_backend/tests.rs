@@ -2,14 +2,13 @@ use serde_json::json;
 use tempfile::tempdir;
 use uuid::Uuid;
 
+use super::memory::{memory_search_backend, memory_store_backend};
 use super::{
     MemoryFeedbackRequest, MemoryFeedbackSignal, MemoryPurgeRequest, MemorySearchMode,
-    MemorySearchRequest, MemoryStoreMode, MemoryStoreRequest,
-    memory_correct_backend_with_request, memory_feedback_backend_with_request,
-    memory_purge_backend_with_request, memory_search_backend_with_request,
-    memory_store_backend_with_request,
+    MemorySearchRequest, MemoryStoreMode, MemoryStoreRequest, memory_correct_backend_with_request,
+    memory_feedback_backend_with_request, memory_purge_backend_with_request,
+    memory_search_backend_with_request, memory_store_backend_with_request,
 };
-use super::memory::{memory_search_backend, memory_store_backend};
 use crate::kernel::identity::ContextSelector;
 use crate::persistence::manager::{StoreManager, StorePathScope};
 
@@ -24,7 +23,10 @@ fn test_selector() -> ContextSelector {
 #[tokio::test]
 async fn memory_backend_works_without_embedding_provider() {
     let tmp = tempdir().expect("tempdir");
-    let manager = StoreManager::new(tmp.path());
+    let manager = StoreManager::new(
+        tmp.path(),
+        turin_types::layout::default_stores_dir_for_workspace(tmp.path()),
+    );
     let selector = test_selector();
 
     memory_store_backend(
@@ -56,7 +58,10 @@ async fn memory_backend_works_without_embedding_provider() {
 #[tokio::test]
 async fn memory_store_embedded_mode_requires_embedding_provider() {
     let tmp = tempdir().expect("tempdir");
-    let manager = StoreManager::new(tmp.path());
+    let manager = StoreManager::new(
+        tmp.path(),
+        turin_types::layout::default_stores_dir_for_workspace(tmp.path()),
+    );
     let selector = test_selector();
 
     let err = memory_store_backend_with_request(
@@ -83,7 +88,10 @@ async fn memory_store_embedded_mode_requires_embedding_provider() {
 #[tokio::test]
 async fn memory_search_semantic_mode_falls_back_or_errors_without_embeddings() {
     let tmp = tempdir().expect("tempdir");
-    let manager = StoreManager::new(tmp.path());
+    let manager = StoreManager::new(
+        tmp.path(),
+        turin_types::layout::default_stores_dir_for_workspace(tmp.path()),
+    );
     let selector = test_selector();
 
     memory_store_backend(
@@ -135,7 +143,10 @@ async fn memory_search_semantic_mode_falls_back_or_errors_without_embeddings() {
 #[tokio::test]
 async fn memory_lifecycle_feedback_correct_and_purge_work() {
     let tmp = tempdir().expect("tempdir");
-    let manager = StoreManager::new(tmp.path());
+    let manager = StoreManager::new(
+        tmp.path(),
+        turin_types::layout::default_stores_dir_for_workspace(tmp.path()),
+    );
     let selector = test_selector();
 
     let stored = memory_store_backend(

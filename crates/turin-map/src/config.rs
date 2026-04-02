@@ -2,8 +2,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-
-const DEFAULT_CONFIG_FILE: &str = ".turin/config.toml";
+use turin_types::layout::DEFAULT_BOOTSTRAP_CONFIG_PATH;
 
 #[derive(Debug, Clone)]
 pub(crate) struct LoadedTurinMapConfig {
@@ -43,7 +42,7 @@ pub(crate) fn load_turin_map_config(
     let path = match explicit_path {
         Some(path) => resolve_path(cwd, path),
         None => {
-            let candidate = cwd.join(DEFAULT_CONFIG_FILE);
+            let candidate = cwd.join(DEFAULT_BOOTSTRAP_CONFIG_PATH);
             if !candidate.exists() {
                 return Ok(None);
             }

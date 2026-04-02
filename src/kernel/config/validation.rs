@@ -23,6 +23,48 @@ impl TurinConfig {
             self.kernel.heartbeat_interval_secs > 0,
             "kernel.heartbeat_interval_secs must be greater than 0"
         );
+        if let Some(root) = self.layout.root.as_ref() {
+            anyhow::ensure!(
+                !root.trim().is_empty(),
+                "layout.root must not be empty when set"
+            );
+        }
+        anyhow::ensure!(
+            !self.layout.data_dir.trim().is_empty(),
+            "layout.data_dir must not be empty"
+        );
+        anyhow::ensure!(
+            !self.layout.states_dir.trim().is_empty(),
+            "layout.states_dir must not be empty"
+        );
+        anyhow::ensure!(
+            !self.layout.stores_dir.trim().is_empty(),
+            "layout.stores_dir must not be empty"
+        );
+        anyhow::ensure!(
+            !self.layout.harnesses_dir.trim().is_empty(),
+            "layout.harnesses_dir must not be empty"
+        );
+        anyhow::ensure!(
+            !self.layout.agents_dir.trim().is_empty(),
+            "layout.agents_dir must not be empty"
+        );
+        anyhow::ensure!(
+            !self.layout.channels_dir.trim().is_empty(),
+            "layout.channels_dir must not be empty"
+        );
+        anyhow::ensure!(
+            !self.layout.scopes_dir.trim().is_empty(),
+            "layout.scopes_dir must not be empty"
+        );
+        anyhow::ensure!(
+            !self.layout.env_file.trim().is_empty(),
+            "layout.env_file must not be empty"
+        );
+        anyhow::ensure!(
+            !self.layout.daemon_socket.trim().is_empty(),
+            "layout.daemon_socket must not be empty"
+        );
 
         anyhow::ensure!(
             !self.harness.directory.trim().is_empty(),

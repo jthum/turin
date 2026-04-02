@@ -1,5 +1,6 @@
 use clap::Args;
 use std::path::PathBuf;
+use turin_types::layout::{DEFAULT_BOOTSTRAP_CONFIG_PATH, DEFAULT_LAYOUT_HARNESSES_DIR};
 
 use crate::commands::scaffold::{GovernancePreset, HarnessTemplate, InitProvider};
 
@@ -28,7 +29,7 @@ pub(crate) enum Commands {
         prompt: String,
 
         /// Path to Turin config file
-        #[arg(long, default_value = ".turin/config.toml")]
+        #[arg(long, default_value = DEFAULT_BOOTSTRAP_CONFIG_PATH)]
         config: PathBuf,
 
         /// Override the model from config
@@ -55,7 +56,7 @@ pub(crate) enum Commands {
     /// Start an interactive REPL session
     Repl {
         /// Path to Turin config file
-        #[arg(long, default_value = ".turin/config.toml")]
+        #[arg(long, default_value = DEFAULT_BOOTSTRAP_CONFIG_PATH)]
         config: PathBuf,
 
         /// Override the model from config
@@ -81,7 +82,7 @@ pub(crate) enum Commands {
         path: PathBuf,
 
         /// Path to Turin config file
-        #[arg(long, default_value = ".turin/config.toml")]
+        #[arg(long, default_value = DEFAULT_BOOTSTRAP_CONFIG_PATH)]
         config: PathBuf,
 
         /// Override the model from config
@@ -118,7 +119,7 @@ pub(crate) enum Commands {
     /// Initialize a Turin project if needed and run a first prompt immediately
     Quickstart {
         /// Path to Turin config file
-        #[arg(long, default_value = ".turin/config.toml")]
+        #[arg(long, default_value = DEFAULT_BOOTSTRAP_CONFIG_PATH)]
         config: PathBuf,
         /// Prompt to run after scaffolding or loading config
         #[arg(long)]
@@ -146,7 +147,7 @@ pub(crate) enum Commands {
     /// Validate configuration and harness scripts
     Check {
         /// Path to Turin config file
-        #[arg(long, default_value = ".turin/config.toml")]
+        #[arg(long, default_value = DEFAULT_BOOTSTRAP_CONFIG_PATH)]
         config: std::path::PathBuf,
     },
 
@@ -260,7 +261,7 @@ pub(crate) enum HarnessCommands {
         #[arg(value_enum)]
         template: HarnessTemplate,
         /// Target harness directory
-        #[arg(long, default_value = ".turin/harnesses")]
+        #[arg(long, default_value = DEFAULT_LAYOUT_HARNESSES_DIR)]
         dir: PathBuf,
         /// Overwrite an existing file if the template uses the same path
         #[arg(long)]
@@ -269,7 +270,7 @@ pub(crate) enum HarnessCommands {
     /// Run the configured harness against the mock provider
     Test {
         /// Path to Turin config file
-        #[arg(long, default_value = ".turin/config.toml")]
+        #[arg(long, default_value = DEFAULT_BOOTSTRAP_CONFIG_PATH)]
         config: PathBuf,
         /// Override the harness directory just for this test run
         #[arg(long)]
@@ -748,7 +749,7 @@ pub(crate) enum DaemonSessionCommands {
 #[derive(Args, Debug, Clone)]
 pub(crate) struct DaemonConfigArgs {
     /// Path to Turin config file
-    #[arg(long, default_value = ".turin/config.toml")]
+    #[arg(long, default_value = DEFAULT_BOOTSTRAP_CONFIG_PATH)]
     pub(crate) config: PathBuf,
 }
 

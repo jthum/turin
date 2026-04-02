@@ -78,6 +78,7 @@ pub fn base_config(
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
+        layout: Default::default(),
         persistence: PersistenceConfig::with_state_path(
             workspace_root.join("test.db").to_string_lossy().to_string(),
         ),

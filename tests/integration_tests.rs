@@ -45,6 +45,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
+        layout: Default::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),

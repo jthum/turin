@@ -70,9 +70,9 @@ type = "openai"
     assert_eq!(config.kernel.max_turns, 50);
     assert_eq!(
         config.persistence.state,
-        StoreTargetConfig::from_path(".turin/state.db")
+        StoreTargetConfig::from_path("data/state.db")
     );
-    assert_eq!(config.harness.directory, ".turin/harnesses");
+    assert_eq!(config.harness.directory, "harnesses");
     assert_eq!(config.remote.bind, "127.0.0.1:9324");
     assert_eq!(config.remote.auth_token_env, "TURIN_REMOTE_TOKEN");
     assert!(!config.remote.allow_non_loopback);

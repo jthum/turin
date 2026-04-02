@@ -5,6 +5,10 @@ use anyhow::{Context, Result, anyhow};
 use dialoguer::Confirm;
 use similar::TextDiff;
 use toml_edit::{DocumentMut, Item, Table, Value, value as toml_value};
+use turin_types::layout::{
+    DEFAULT_LAYOUT_CHANNELS_DIR, config_workspace_anchor, default_layout_root_for_workspace,
+    resolve_relative_to,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct PlannedWrite {
@@ -43,13 +47,6 @@ pub(crate) fn config_dir(config_path: &Path) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-fn config_workspace_anchor(base: &Path) -> PathBuf {
-    if base.file_name().and_then(|name| name.to_str()) == Some(".turin") {
-        return base.parent().unwrap_or(base).to_path_buf();
-    }
-    base.to_path_buf()
-}
-
 pub(crate) fn default_workspace_root_for_missing_config(config_path: &Path) -> PathBuf {
     config_workspace_anchor(&config_dir(config_path))
 }
@@ -72,10 +69,23 @@ fn resolve_under_workspace(workspace_root: &Path, value: &str) -> PathBuf {
     }
 }
 
+fn resolve_layout_root(base: &Path, parsed: &toml::Value) -> PathBuf {
+    parsed
+        .get("layout")
+        .and_then(|value| value.get("root"))
+        .and_then(toml::Value::as_str)
+        .map(Path::new)
+        .map(|path| resolve_relative_to(&config_workspace_anchor(base), path))
+        .unwrap_or_else(|| base.to_path_buf())
+}
+
 pub(crate) fn resolve_channels_dir(config_path: &Path) -> Result<PathBuf> {
     let base = config_dir(config_path);
     if !config_path.is_file() {
-        return Ok(default_workspace_root_for_missing_config(config_path).join(".turin/channels"));
+        let workspace_root = default_workspace_root_for_missing_config(config_path);
+        return Ok(
+            default_layout_root_for_workspace(&workspace_root).join(DEFAULT_LAYOUT_CHANNELS_DIR)
+        );
     }
 
     let raw = std::fs::read_to_string(config_path)
@@ -88,12 +98,23 @@ pub(crate) fn resolve_channels_dir(config_path: &Path) -> Result<PathBuf> {
         .and_then(toml::Value::as_str)
         .unwrap_or(".");
     let workspace_root = resolve_workspace_root(&base, workspace_root);
-    let channels_dir = parsed
+    if let Some(channels_dir) = parsed
         .get("daemon")
         .and_then(|value| value.get("channels_dir"))
         .and_then(toml::Value::as_str)
-        .unwrap_or(".turin/channels");
-    Ok(resolve_under_workspace(&workspace_root, channels_dir))
+    {
+        return Ok(resolve_under_workspace(&workspace_root, channels_dir));
+    }
+    let layout_root = resolve_layout_root(&base, &parsed);
+    let layout_channels_dir = parsed
+        .get("layout")
+        .and_then(|value| value.get("channels_dir"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or(DEFAULT_LAYOUT_CHANNELS_DIR);
+    Ok(resolve_relative_to(
+        &layout_root,
+        Path::new(layout_channels_dir),
+    ))
 }
 
 pub(crate) fn load_existing(path: &Path) -> Result<Option<String>> {
@@ -379,7 +400,7 @@ mod tests {
             &config_path,
             "[kernel]\nworkspace_root = \".\"\n\n[daemon]\nchannels_dir = \".turin/channels\"\n",
         )
-            .expect("config written");
+        .expect("config written");
         let channel_dir = temp.path().join(".turin/channels/telegram");
         std::fs::create_dir_all(&channel_dir).expect("channel dir");
         std::fs::write(

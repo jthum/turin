@@ -72,7 +72,7 @@ fn init_scaffolds_project_and_gitignore() -> Result<()> {
 
     assert!(harness.root().join(".turin/config.toml").exists());
     assert!(harness.root().join(".turin/harnesses/main.lua").exists());
-    assert!(harness.root().join(".turin/state.db").exists());
+    assert!(harness.root().join(".turin/data/state.db").exists());
 
     let gitignore = std::fs::read_to_string(harness.root().join(".gitignore"))?;
     assert!(gitignore.contains(".turin/"));

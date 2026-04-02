@@ -1,8 +1,8 @@
 use super::*;
 use crate::kernel::Kernel;
 use crate::kernel::config::{
-    AgentConfig, EmbeddingConfig, GovernanceConfig, HarnessConfig, KernelConfig, PersistenceConfig,
-    ProviderConfig, TurinConfig,
+    AgentConfig, EmbeddingConfig, GovernanceConfig, HarnessConfig, KernelConfig, LayoutConfig,
+    PersistenceConfig, ProviderConfig, TurinConfig,
 };
 use crate::tools::{Tool, ToolContext, ToolEffect, ToolError};
 use async_trait::async_trait;
@@ -73,6 +73,7 @@ fn test_config(workspace_root: &std::path::Path, harness_dir: &std::path::Path) 
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
+        layout: LayoutConfig::default(),
         persistence: PersistenceConfig::with_state_path(
             workspace_root.join("test.db").to_string_lossy().to_string(),
         ),

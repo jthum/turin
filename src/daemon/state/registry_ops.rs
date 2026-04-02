@@ -301,6 +301,10 @@ impl DaemonState {
         self.watch_paths().agents_dir.join(agent_id)
     }
 
+    pub(super) fn channel_dir(&self, channel_id: &str) -> PathBuf {
+        self.watch_paths().channels_dir.join(channel_id)
+    }
+
     fn resolve_harness_issue_root(&self, harness_id: &str) -> Option<PathBuf> {
         if harness_id == "default" {
             return Some(PathBuf::from(&self.bootstrap_config.harness.directory));
@@ -591,10 +595,7 @@ impl DaemonState {
     }
 
     fn channel_access_state_path(&self, channel_id: &str) -> PathBuf {
-        PathBuf::from(&self.bootstrap_config.kernel.workspace_root)
-            .join(".turin")
-            .join("channels")
-            .join(format!("{channel_id}-access.json"))
+        self.channel_dir(channel_id).join("access.json")
     }
 }
 

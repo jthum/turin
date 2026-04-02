@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
+use turin_types::layout::DEFAULT_BOOTSTRAP_CONFIG_PATH;
 
 #[derive(Parser)]
 #[command(author, version, about = "Install, configure, and troubleshoot Turin")]
@@ -24,7 +25,7 @@ enum Command {
 
 #[derive(Args, Debug, Clone)]
 struct InitArgs {
-    #[arg(long, default_value = ".turin/config.toml")]
+    #[arg(long, default_value = DEFAULT_BOOTSTRAP_CONFIG_PATH)]
     config: PathBuf,
     #[arg(long)]
     force: bool,
@@ -32,7 +33,7 @@ struct InitArgs {
 
 #[derive(Args, Debug, Clone)]
 struct DoctorArgs {
-    #[arg(long, default_value = ".turin/config.toml")]
+    #[arg(long, default_value = DEFAULT_BOOTSTRAP_CONFIG_PATH)]
     config: PathBuf,
 }
 
@@ -45,13 +46,13 @@ enum ChannelsCommand {
 
 #[derive(Args, Debug, Clone)]
 struct ChannelsListArgs {
-    #[arg(long, default_value = ".turin/config.toml")]
+    #[arg(long, default_value = DEFAULT_BOOTSTRAP_CONFIG_PATH)]
     config: PathBuf,
 }
 
 #[derive(Args, Debug, Clone)]
 struct ConfigureChannelArgs {
-    #[arg(long, default_value = ".turin/config.toml")]
+    #[arg(long, default_value = DEFAULT_BOOTSTRAP_CONFIG_PATH)]
     config: PathBuf,
     kind: String,
     #[arg(long)]
@@ -62,7 +63,7 @@ struct ConfigureChannelArgs {
 
 #[derive(Args, Debug, Clone)]
 struct ChannelsStatusArgs {
-    #[arg(long, default_value = ".turin/config.toml")]
+    #[arg(long, default_value = DEFAULT_BOOTSTRAP_CONFIG_PATH)]
     config: PathBuf,
 }
 

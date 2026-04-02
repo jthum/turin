@@ -137,6 +137,7 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
+        layout: Default::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -335,6 +336,7 @@ async fn test_harness_observation() -> Result<()> {
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
+        layout: Default::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -447,6 +449,7 @@ async fn test_nested_agent_spawning() -> Result<()> {
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
+        layout: Default::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -567,6 +570,7 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
+        layout: Default::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -657,6 +661,7 @@ async fn test_dynamic_mode_switching_stateless() -> Result<()> {
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
+        layout: Default::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),

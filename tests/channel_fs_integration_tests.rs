@@ -22,14 +22,18 @@ impl DaemonHarness {
         let tempdir = std::sync::Arc::new(tempfile::tempdir()?);
         let workspace_root = tempdir.path().join("workspace");
         let harness_dir = workspace_root.join(".turin/harnesses");
+        let agents_dir = workspace_root.join(".turin/runtime/agents");
+        let channels_dir = workspace_root.join(".turin/runtime/channels");
+        let config_path = workspace_root.join(".turin/config.toml");
 
         std::fs::create_dir_all(&harness_dir)?;
+        std::fs::create_dir_all(&agents_dir)?;
+        std::fs::create_dir_all(&channels_dir)?;
         std::fs::write(
             harness_dir.join("main.lua"),
             "-- channel fs integration harness\n",
         )?;
 
-        let config_path = tempdir.path().join("turin.toml");
         let config_toml = format!(
             r#"[agent]
 id = "default"
@@ -44,19 +48,20 @@ heartbeat_interval_secs = 30
 initial_spawn_depth = 0
 
 [persistence.state]
-path = "{database_path}"
+path = "data/state.db"
 
 [harness]
-directory = "{harness_directory}"
+directory = "harnesses"
 fs_root = "."
 
 [providers.mock]
 type = "mock"
 base_url = "PONG"
+
+[remote]
+bind = "127.0.0.1:0"
 "#,
             workspace_root = workspace_root.display(),
-            database_path = workspace_root.join("test.db").display(),
-            harness_directory = harness_dir.display(),
         );
         std::fs::write(&config_path, config_toml)?;
 
@@ -102,8 +107,12 @@ base_url = "PONG"
             turin_daemon_client::DaemonClient::new(&self.endpoint),
             RunnerConfig {
                 channel_id: "fs".to_string(),
-                state_path: self.workspace_root.join(".turin/channel-bindings.json"),
-                access_state_path: self.workspace_root.join(".turin/channel-access.json"),
+                state_path: self
+                    .workspace_root
+                    .join(".turin/runtime/channels/fs-test/bindings.json"),
+                access_state_path: self
+                    .workspace_root
+                    .join(".turin/runtime/channels/fs-test/access.json"),
                 idle_ttl: Some(Duration::from_secs(600)),
                 access_policy: Default::default(),
                 tools: Default::default(),
@@ -131,7 +140,7 @@ async fn fs_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
     let runner = daemon.runner();
 
-    let channel_dir = daemon.workspace_root.join(".turin/channels/fs-test");
+    let channel_dir = daemon.workspace_root.join(".turin/runtime/channels/fs-test");
     tokio::fs::create_dir_all(channel_dir.join("inbox")).await?;
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);

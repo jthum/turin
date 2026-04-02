@@ -321,7 +321,10 @@ mod tests {
             workspace_root: root.to_path_buf(),
             session_id: uuid::Uuid::now_v7().simple().to_string(),
             agent_id: "default".to_string(),
-            store_manager: Some(std::sync::Arc::new(StoreManager::new(root))),
+            store_manager: Some(std::sync::Arc::new(StoreManager::new(
+                root,
+                turin_types::layout::default_stores_dir_for_workspace(root),
+            ))),
             embedding_provider: None,
             config: None,
             allowed_native_tools: std::sync::Arc::new(crate::tools::policy::full_native_tool_set()),

@@ -14,6 +14,7 @@ use turin_channel_core::{
     ChannelSecretRequirement, ChannelValidationCheck,
 };
 use turin_control_client::{ConnectionSpec, ControlClient};
+use turin_types::layout::{DEFAULT_LAYOUT_HARNESSES_DIR, default_layout_root_for_workspace};
 
 use crate::files::{
     ConfiguredChannel, PlannedWrite, config_dir, confirm_and_write,
@@ -181,7 +182,9 @@ pub(crate) async fn run_init(args: InitArgs) -> Result<()> {
 
     let config_body = generate_turin_config(provider, &model, &system_prompt)?;
     let harness_path =
-        default_workspace_root_for_missing_config(&config_path).join(".turin/harnesses/main.lua");
+        default_layout_root_for_workspace(&default_workspace_root_for_missing_config(&config_path))
+            .join(DEFAULT_LAYOUT_HARNESSES_DIR)
+            .join("main.lua");
     let mut plans = vec![
         PlannedWrite::new(config_path.clone(), config_body),
         PlannedWrite::new(harness_path, starter_harness().to_string()),
@@ -860,11 +863,11 @@ fn generate_turin_config(
         },
         persistence: GeneratedPersistenceConfig {
             state: GeneratedStoreTargetConfig {
-                path: ".turin/state.db".to_string(),
+                path: "data/state.db".to_string(),
             },
         },
         harness: GeneratedHarnessConfig {
-            directory: ".turin/harnesses".to_string(),
+            directory: "harnesses".to_string(),
         },
         providers,
     };

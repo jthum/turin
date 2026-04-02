@@ -50,7 +50,10 @@ impl RuntimeBuilder {
 
     /// Build the Kernel.
     pub fn build(self) -> Result<Kernel> {
-        let store_manager = Arc::new(StoreManager::new(&self.config.kernel.workspace_root));
+        let store_manager = Arc::new(StoreManager::new(
+            &self.config.kernel.workspace_root,
+            &self.config.layout.stores_dir,
+        ));
         let config_arc = Arc::new(self.config);
         let agent_manager = Arc::new(AgentManager::new(config_arc.clone(), store_manager.clone()));
         let policy_manager = Arc::new(RuntimePolicyManager::new());

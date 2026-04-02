@@ -15,6 +15,7 @@ use turin_control_client::{
     SessionSearchHit,
 };
 use turin_daemon_protocol::{EventEnvelope, RuntimeEventsSubscribeParams, SessionSearchScope};
+use turin_types::layout::{DEFAULT_BOOTSTRAP_CONFIG_PATH, DEFAULT_UI_PROFILES_PATH};
 
 use crate::{DashboardSnapshot, DashboardState};
 
@@ -267,7 +268,7 @@ impl Default for ConnectionProfileDraft {
     fn default() -> Self {
         Self {
             kind: ConnectionProfileKind::LocalConfig,
-            target: ".turin/config.toml".to_string(),
+            target: DEFAULT_BOOTSTRAP_CONFIG_PATH.to_string(),
             auth_mode: ConnectionProfileDraftAuthMode::None,
             auth_value: String::new(),
         }
@@ -283,9 +284,12 @@ impl ConnectionProfileDraft {
             ConnectionProfileKind::LocalConfig => ConnectionProfileDraftValidation {
                 target_error: None,
                 auth_error: None,
-                target_notice: target
-                    .is_empty()
-                    .then(|| "Blank config path will default to .turin/config.toml".to_string()),
+                target_notice: target.is_empty().then(|| {
+                    format!(
+                        "Blank config path will default to {}",
+                        DEFAULT_BOOTSTRAP_CONFIG_PATH
+                    )
+                }),
                 auth_notice: None,
             },
             ConnectionProfileKind::LocalEndpoint => ConnectionProfileDraftValidation {
@@ -312,7 +316,7 @@ impl ConnectionProfileDraft {
         match self.kind {
             ConnectionProfileKind::LocalConfig => {
                 if target.is_empty() {
-                    ".turin/config.toml".to_string()
+                    DEFAULT_BOOTSTRAP_CONFIG_PATH.to_string()
                 } else {
                     target.to_string()
                 }
@@ -551,7 +555,7 @@ impl ConnectionOptions {
         Ok(ConnectionSpec::LocalConfig {
             config_path: resolved
                 .config_path
-                .unwrap_or_else(|| PathBuf::from(".turin/config.toml")),
+                .unwrap_or_else(|| PathBuf::from(DEFAULT_BOOTSTRAP_CONFIG_PATH)),
         })
     }
 
@@ -829,7 +833,7 @@ impl ConnectionOptions {
     pub fn profiles_path(&self) -> PathBuf {
         self.profiles_file
             .clone()
-            .unwrap_or_else(|| PathBuf::from(".turin/ui-profiles.toml"))
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_UI_PROFILES_PATH))
     }
 }
 
@@ -1081,7 +1085,7 @@ fn run_local_daemon_ensure(
         ConnectionProfileKind::LocalConfig => options
             .config_path
             .clone()
-            .unwrap_or_else(|| PathBuf::from(".turin/config.toml")),
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_BOOTSTRAP_CONFIG_PATH)),
         ConnectionProfileKind::LocalEndpoint => {
             return Err(anyhow!(
                 "Local endpoint profiles do not imply a config file. Run `turin daemon ensure --config <path>` manually."
@@ -2163,7 +2167,7 @@ impl StoredConnectionProfile {
                 options
                     .config_path
                     .clone()
-                    .unwrap_or_else(|| PathBuf::from(".turin/config.toml")),
+                    .unwrap_or_else(|| PathBuf::from(DEFAULT_BOOTSTRAP_CONFIG_PATH)),
             ),
             endpoint: None,
             remote_url: None,
@@ -2185,7 +2189,7 @@ impl StoredConnectionProfile {
         match draft.kind {
             ConnectionProfileKind::LocalConfig => Ok(Self {
                 config_path: Some(if target.is_empty() {
-                    PathBuf::from(".turin/config.toml")
+                    PathBuf::from(DEFAULT_BOOTSTRAP_CONFIG_PATH)
                 } else {
                     PathBuf::from(target)
                 }),
@@ -2247,7 +2251,7 @@ impl StoredConnectionProfile {
                     .as_ref()
                     .map(|path| path.display().to_string())
             })
-            .unwrap_or_else(|| ".turin/config.toml".to_string())
+            .unwrap_or_else(|| DEFAULT_BOOTSTRAP_CONFIG_PATH.to_string())
     }
 
     fn auth_label(&self) -> Option<ConnectionProfileAuth> {
@@ -2327,6 +2331,10 @@ impl ConnectionProfiles {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use turin_types::layout::{
+        DEFAULT_BOOTSTRAP_CONFIG_PATH, DEFAULT_BOOTSTRAP_DAEMON_ENDPOINT_PATH,
+        DEFAULT_UI_PROFILES_PATH,
+    };
 
     #[test]
     fn connection_options_default_to_local_config() {
@@ -2343,7 +2351,7 @@ mod tests {
 
         match options.to_spec().expect("spec") {
             ConnectionSpec::LocalConfig { config_path } => {
-                assert_eq!(config_path, PathBuf::from(".turin/config.toml"));
+                assert_eq!(config_path, PathBuf::from(DEFAULT_BOOTSTRAP_CONFIG_PATH));
             }
             other => panic!("unexpected spec: {other:?}"),
         }
@@ -2408,7 +2416,7 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
     #[test]
     fn connection_options_can_save_and_delete_profiles() {
         let temp = tempfile::tempdir().expect("temp dir");
-        let profiles_path = temp.path().join(".turin/ui-profiles.toml");
+        let profiles_path = temp.path().join(DEFAULT_UI_PROFILES_PATH);
 
         let remote = ConnectionOptions {
             config_path: None,
@@ -2457,9 +2465,8 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
     #[test]
     fn connection_options_can_duplicate_and_rename_profiles() {
         let temp = tempfile::tempdir().expect("temp dir");
-        let profiles_path = temp.path().join(".turin/ui-profiles.toml");
-        fs::create_dir_all(profiles_path.parent().expect("profiles parent"))
-            .expect("profiles dir");
+        let profiles_path = temp.path().join(DEFAULT_UI_PROFILES_PATH);
+        fs::create_dir_all(profiles_path.parent().expect("profiles parent")).expect("profiles dir");
         fs::write(
             &profiles_path,
             r#"
@@ -2505,7 +2512,7 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
     #[test]
     fn connection_profile_drafts_roundtrip_through_profile_storage() {
         let temp = tempfile::tempdir().expect("temp dir");
-        let profiles_path = temp.path().join(".turin/ui-profiles.toml");
+        let profiles_path = temp.path().join(DEFAULT_UI_PROFILES_PATH);
         let options = ConnectionOptions {
             config_path: None,
             endpoint: None,
@@ -2535,13 +2542,13 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
     #[test]
     fn connection_options_can_materialize_and_resolve_remote_drafts() {
         let options = ConnectionOptions {
-            config_path: Some(PathBuf::from(".turin/config.toml")),
+            config_path: Some(PathBuf::from(DEFAULT_BOOTSTRAP_CONFIG_PATH)),
             endpoint: None,
             remote_url: None,
             auth_token: None,
             auth_token_env: None,
             profile: Some("ignored".to_string()),
-            profiles_file: Some(PathBuf::from(".turin/ui-profiles.toml")),
+            profiles_file: Some(PathBuf::from(DEFAULT_UI_PROFILES_PATH)),
             suppress_profile_resolution: false,
         };
         let draft = ConnectionProfileDraft {
@@ -2565,7 +2572,7 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
         assert!(materialized.profile.is_none());
         assert_eq!(
             materialized.profiles_file.as_deref(),
-            Some(Path::new(".turin/ui-profiles.toml"))
+            Some(Path::new(DEFAULT_UI_PROFILES_PATH))
         );
 
         match options.draft_to_spec(&draft).expect("draft spec") {
@@ -2629,10 +2636,11 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
         .validate();
 
         assert!(validation.is_valid());
-        assert_eq!(
-            validation.target_notice.as_deref(),
-            Some("Blank config path will default to .turin/config.toml")
+        let expected = format!(
+            "Blank config path will default to {}",
+            DEFAULT_BOOTSTRAP_CONFIG_PATH
         );
+        assert_eq!(validation.target_notice.as_deref(), Some(expected.as_str()));
     }
 
     #[test]
@@ -2653,7 +2661,7 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
         });
         history.record_success(&ConnectionProfileDraft {
             kind: ConnectionProfileKind::LocalEndpoint,
-            target: ".turin/daemon.sock".to_string(),
+            target: DEFAULT_BOOTSTRAP_DAEMON_ENDPOINT_PATH.to_string(),
             auth_mode: ConnectionProfileDraftAuthMode::None,
             auth_value: String::new(),
         });

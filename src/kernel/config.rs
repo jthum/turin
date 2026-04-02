@@ -2,16 +2,19 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use turin_local_ipc::resolve_endpoint as resolve_local_ipc_endpoint;
+use turin_types::layout::{config_workspace_anchor, resolve_relative_to};
 
 use crate::persistence::manager::StoreSelector;
 pub use turin_types::{AgentMode, ThinkingConfig, ToolSelectionConfig, ToolsConfig};
 
 mod defaults;
+mod layout;
 #[cfg(test)]
 mod tests;
 mod validation;
 
 use defaults::*;
+pub use layout::{LayoutConfig, ResolvedLayout};
 
 /// Top-level Turin configuration, parsed from the workspace config file.
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -24,6 +27,8 @@ pub struct TurinConfig {
     pub agents: std::collections::HashMap<String, AgentConfig>,
     #[serde(default)]
     pub kernel: KernelConfig,
+    #[serde(default)]
+    pub layout: LayoutConfig,
     #[serde(default)]
     pub persistence: PersistenceConfig,
     #[serde(default)]
@@ -534,15 +539,14 @@ pub struct GovernanceConfig {
 impl TurinConfig {
     /// Load configuration from a TOML file.
     pub fn from_file(path: &Path) -> Result<Self> {
-        if let Some(config_dir) = path.parent() {
-            load_adjacent_env_file(config_dir)?;
-        }
         let contents = std::fs::read_to_string(path)
             .with_context(|| format!("Could not read config file: {}", path.display()))?;
-        let mut config = Self::from_str(&contents)?;
-        if let Some(config_dir) = path.parent() {
-            config.normalize_runtime_paths(config_dir);
-        }
+        let mut config: TurinConfig =
+            toml::from_str(&contents).with_context(|| "Failed to parse Turin config")?;
+        let config_dir = turin_types::layout::config_dir(path);
+        load_env_file(&config.layout.resolve(path).env_file)?;
+        config.normalize_runtime_paths(&config_dir);
+        config.validate()?;
         Ok(config)
     }
 
@@ -578,6 +582,11 @@ impl TurinConfig {
         Ok((harness_id, harness))
     }
 
+    pub fn resolved_layout(&self, config_base: &Path) -> ResolvedLayout {
+        self.layout
+            .resolve_from_config_dir(config_base.join("config.toml"), config_base.to_path_buf())
+    }
+
     /// Resolve the workspace root path relative to a base directory.
     pub fn resolve_workspace_root(&self, base: &Path) -> PathBuf {
         let root = Path::new(&self.kernel.workspace_root);
@@ -589,22 +598,43 @@ impl TurinConfig {
     }
 
     pub fn resolve_daemon_agents_dir(&self, base: &Path) -> PathBuf {
-        resolve_under_workspace(base, &self.kernel.workspace_root, &self.daemon.agents_dir)
+        let layout = self.resolved_layout(base);
+        resolve_runtime_path(
+            base,
+            &self.kernel.workspace_root,
+            &self.daemon.agents_dir,
+            default_daemon_agents_dir().as_str(),
+            &layout.agents_dir,
+        )
     }
 
     pub fn resolve_daemon_harnesses_dir(&self, base: &Path) -> PathBuf {
-        resolve_under_workspace(
+        let layout = self.resolved_layout(base);
+        resolve_runtime_path(
             base,
             &self.kernel.workspace_root,
             &self.daemon.harnesses_dir,
+            default_daemon_harnesses_dir().as_str(),
+            &layout.harnesses_dir,
         )
     }
 
     pub fn resolve_daemon_channels_dir(&self, base: &Path) -> PathBuf {
-        resolve_under_workspace(base, &self.kernel.workspace_root, &self.daemon.channels_dir)
+        let layout = self.resolved_layout(base);
+        resolve_runtime_path(
+            base,
+            &self.kernel.workspace_root,
+            &self.daemon.channels_dir,
+            default_daemon_channels_dir().as_str(),
+            &layout.channels_dir,
+        )
     }
 
     pub fn resolve_daemon_endpoint(&self, base: &Path) -> PathBuf {
+        let layout = self.resolved_layout(base);
+        if self.daemon.endpoint == default_daemon_endpoint() {
+            return layout.daemon_socket;
+        }
         resolve_local_ipc_endpoint(
             &config_workspace_anchor(base),
             &self.kernel.workspace_root,
@@ -613,12 +643,39 @@ impl TurinConfig {
     }
 
     pub fn normalize_runtime_paths(&mut self, config_base: &Path) {
+        let layout = self.resolved_layout(config_base);
         let workspace_root = self.resolve_workspace_root(config_base);
         self.kernel.workspace_root = workspace_root.display().to_string();
+        self.layout.root = Some(layout.root.display().to_string());
+        self.layout.data_dir = layout.data_dir.display().to_string();
+        self.layout.states_dir = layout.states_dir.display().to_string();
+        self.layout.stores_dir = layout.stores_dir.display().to_string();
+        self.layout.harnesses_dir = layout.harnesses_dir.display().to_string();
+        self.layout.agents_dir = layout.agents_dir.display().to_string();
+        self.layout.channels_dir = layout.channels_dir.display().to_string();
+        self.layout.scopes_dir = layout.scopes_dir.display().to_string();
+        self.layout.env_file = layout.env_file.display().to_string();
+        self.layout.daemon_socket = layout.daemon_socket.display().to_string();
 
-        normalize_harness_config_paths(&workspace_root, &mut self.harness);
+        normalize_store_target_path(
+            &workspace_root,
+            &layout.default_state_db,
+            default_state_path().as_str(),
+            &mut self.persistence.state,
+        );
+        if let Some(store) = self.persistence.store.as_mut() {
+            normalize_store_target_path(&workspace_root, &layout.stores_dir, "", store);
+        }
+        for store in self.persistence.states.values_mut() {
+            normalize_named_store_path(&workspace_root, store);
+        }
+        for store in self.persistence.stores.values_mut() {
+            normalize_named_store_path(&workspace_root, store);
+        }
+
+        normalize_harness_config_paths(&workspace_root, &layout.harnesses_dir, &mut self.harness);
         for harness in self.harnesses.values_mut() {
-            normalize_harness_config_paths(&workspace_root, harness);
+            normalize_harness_config_paths(&workspace_root, &layout.harnesses_dir, harness);
         }
 
         for root in self.governance.roots.values_mut() {
@@ -626,16 +683,51 @@ impl TurinConfig {
                 root.path = workspace_root.join(&root.path).display().to_string();
             }
         }
+
+        if self.daemon.agents_dir == default_daemon_agents_dir() {
+            self.daemon.agents_dir = layout.agents_dir.display().to_string();
+        } else if Path::new(&self.daemon.agents_dir).is_relative() {
+            self.daemon.agents_dir = workspace_root
+                .join(&self.daemon.agents_dir)
+                .display()
+                .to_string();
+        }
+        if self.daemon.harnesses_dir == default_daemon_harnesses_dir() {
+            self.daemon.harnesses_dir = layout.harnesses_dir.display().to_string();
+        } else if Path::new(&self.daemon.harnesses_dir).is_relative() {
+            self.daemon.harnesses_dir = workspace_root
+                .join(&self.daemon.harnesses_dir)
+                .display()
+                .to_string();
+        }
+        if self.daemon.channels_dir == default_daemon_channels_dir() {
+            self.daemon.channels_dir = layout.channels_dir.display().to_string();
+        } else if Path::new(&self.daemon.channels_dir).is_relative() {
+            self.daemon.channels_dir = workspace_root
+                .join(&self.daemon.channels_dir)
+                .display()
+                .to_string();
+        }
+        if self.daemon.endpoint == default_daemon_endpoint() {
+            self.daemon.endpoint = layout.daemon_socket.display().to_string();
+        } else if Path::new(&self.daemon.endpoint).is_relative() {
+            self.daemon.endpoint = resolve_local_ipc_endpoint(
+                &config_workspace_anchor(config_base),
+                &self.kernel.workspace_root,
+                &self.daemon.endpoint,
+            )
+            .display()
+            .to_string();
+        }
     }
 }
 
-fn load_adjacent_env_file(config_dir: &Path) -> Result<()> {
-    let env_path = config_dir.join(".env");
+fn load_env_file(env_path: &Path) -> Result<()> {
     if !env_path.is_file() {
         return Ok(());
     }
 
-    for item in dotenvy::from_path_iter(&env_path)
+    for item in dotenvy::from_path_iter(env_path)
         .with_context(|| format!("Failed to parse '{}'", env_path.display()))?
     {
         let (key, value) =
@@ -666,20 +758,58 @@ fn resolve_under_workspace(base: &Path, workspace_root: &str, value: &str) -> Pa
     }
 }
 
-fn config_workspace_anchor(base: &Path) -> PathBuf {
-    if base.file_name().and_then(|name| name.to_str()) == Some(".turin") {
-        return base.parent().unwrap_or(base).to_path_buf();
+fn resolve_runtime_path(
+    base: &Path,
+    workspace_root: &str,
+    value: &str,
+    default_value: &str,
+    layout_path: &Path,
+) -> PathBuf {
+    if value == default_value {
+        layout_path.to_path_buf()
+    } else {
+        resolve_under_workspace(base, workspace_root, value)
     }
-    base.to_path_buf()
 }
 
-fn normalize_harness_config_paths(workspace_root: &Path, harness: &mut HarnessConfig) {
-    if Path::new(&harness.directory).is_relative() {
-        harness.directory = workspace_root.join(&harness.directory).display().to_string();
+fn normalize_harness_config_paths(
+    workspace_root: &Path,
+    default_harnesses_dir: &Path,
+    harness: &mut HarnessConfig,
+) {
+    if harness.directory == default_harness_directory() {
+        harness.directory = default_harnesses_dir.display().to_string();
+    } else if Path::new(&harness.directory).is_relative() {
+        harness.directory = workspace_root
+            .join(&harness.directory)
+            .display()
+            .to_string();
     }
 
     if Path::new(&harness.fs_root).is_relative() && harness.fs_root != "." {
         harness.fs_root = workspace_root.join(&harness.fs_root).display().to_string();
+    }
+}
+
+fn normalize_store_target_path(
+    workspace_root: &Path,
+    layout_default: &Path,
+    default_value: &str,
+    target: &mut StoreTargetConfig,
+) {
+    if let Some(path) = target.path.as_mut() {
+        let resolved = if !default_value.is_empty() && path == default_value {
+            layout_default.to_path_buf()
+        } else {
+            resolve_relative_to(workspace_root, Path::new(path))
+        };
+        *path = resolved.display().to_string();
+    }
+}
+
+fn normalize_named_store_path(workspace_root: &Path, store: &mut NamedStoreConfig) {
+    if Path::new(&store.path).is_relative() {
+        store.path = workspace_root.join(&store.path).display().to_string();
     }
 }
 

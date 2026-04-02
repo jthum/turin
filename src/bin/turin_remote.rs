@@ -4,12 +4,13 @@ use anyhow::Result;
 use clap::Parser;
 use turin::remote::{RemoteServeOptions, serve};
 use turin::tracing_support::init_tracing;
+use turin_types::layout::DEFAULT_BOOTSTRAP_CONFIG_PATH;
 
 #[derive(Parser, Debug)]
 #[command(name = "turin-remote", version, about)]
 struct Cli {
     /// Path to Turin config file
-    #[arg(long, default_value = ".turin/config.toml")]
+    #[arg(long, default_value = DEFAULT_BOOTSTRAP_CONFIG_PATH)]
     config: PathBuf,
 
     /// Override the remote bind address

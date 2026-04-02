@@ -75,16 +75,20 @@ pub struct StoreManager {
 
     /// The root directory for resolving relative paths safely
     workspace_root: PathBuf,
+
+    /// Default root for alias-backed auxiliary stores.
+    store_root: PathBuf,
 }
 
 impl StoreManager {
     /// Create a new StoreManager bound to a workspace root.
-    pub fn new(workspace_root: impl Into<PathBuf>) -> Self {
+    pub fn new(workspace_root: impl Into<PathBuf>, store_root: impl Into<PathBuf>) -> Self {
         Self {
             stores: RwLock::new(HashMap::new()),
             aliases: RwLock::new(HashMap::new()),
             handles: RwLock::new(HashMap::new()),
             workspace_root: workspace_root.into(),
+            store_root: store_root.into(),
         }
     }
 
@@ -121,6 +125,14 @@ impl StoreManager {
         self.open_path_cached(&target_path).await
     }
 
+    pub async fn resolve_path_for_selector(
+        &self,
+        selector: &StoreSelector,
+        path_scope: StorePathScope,
+    ) -> Result<PathBuf> {
+        self.resolve_selector_path(selector, path_scope).await
+    }
+
     /// List registered aliases.
     pub async fn list_aliases(&self) -> Vec<String> {
         let aliases = self.aliases.read().await;
@@ -141,7 +153,8 @@ mod tests {
 
     #[tokio::test]
     async fn store_manager_workspace_scope_rejects_parent_traversal() {
-        let mgr = StoreManager::new(std::env::current_dir().unwrap());
+        let cwd = std::env::current_dir().unwrap();
+        let mgr = StoreManager::new(cwd.clone(), cwd.join(".turin/data/stores"));
         let result = mgr
             .open_with_path_scope(
                 &StoreSelector::Path("../outside.db".to_string()),

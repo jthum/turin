@@ -53,6 +53,7 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
+        layout: Default::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -505,6 +506,7 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
+        layout: Default::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: default_harness_dir.to_str().unwrap().to_string(),
@@ -657,6 +659,7 @@ async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
+        layout: Default::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: default_harness_dir.to_str().unwrap().to_string(),
@@ -801,6 +804,7 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
+        layout: Default::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: default_harness_dir.to_str().unwrap().to_string(),
@@ -1065,6 +1069,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
             heartbeat_interval_secs: 30,
             initial_spawn_depth: 0,
         },
+        layout: Default::default(),
         persistence: PersistenceConfig {
             state: StoreTargetConfig::from_path(""), // Empty — no persistence
             ..PersistenceConfig::default()

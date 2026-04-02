@@ -14,6 +14,9 @@ use turin_local_ipc::{
     LocalIpcReadHalf, connect as connect_local_ipc, current_transport_name,
     resolve_endpoint as resolve_local_ipc_endpoint, split as split_local_ipc,
 };
+use turin_types::layout::{
+    DEFAULT_LAYOUT_DAEMON_SOCKET, config_dir, config_workspace_anchor, resolve_relative_to,
+};
 
 #[derive(Debug, Clone)]
 pub struct DaemonClient {
@@ -105,25 +108,45 @@ impl DaemonClient {
     }
 
     pub async fn from_config(config_path: impl AsRef<Path>) -> Result<Self> {
-        let raw = tokio::fs::read_to_string(config_path.as_ref())
+        let config_path = config_path.as_ref();
+        let raw = tokio::fs::read_to_string(config_path)
             .await
-            .with_context(|| format!("Failed to read '{}'", config_path.as_ref().display()))?;
+            .with_context(|| format!("Failed to read '{}'", config_path.display()))?;
         let value: toml::Value = toml::from_str(&raw)
-            .with_context(|| format!("Failed to parse '{}'", config_path.as_ref().display()))?;
+            .with_context(|| format!("Failed to parse '{}'", config_path.display()))?;
         let workspace_root = value
             .get("kernel")
             .and_then(|k| k.get("workspace_root"))
             .and_then(|v| v.as_str())
             .unwrap_or(".");
-        let endpoint = value
+        if let Some(endpoint) = value
             .get("daemon")
             .and_then(|d| d.get("endpoint"))
             .and_then(|v| v.as_str())
-            .unwrap_or(".turin/daemon.sock");
-        Ok(Self::new(resolve_local_ipc_endpoint(
-            config_path.as_ref().parent().unwrap_or(Path::new(".")),
-            workspace_root,
-            endpoint,
+        {
+            return Ok(Self::new(resolve_local_ipc_endpoint(
+                config_path.parent().unwrap_or(Path::new(".")),
+                workspace_root,
+                endpoint,
+            )));
+        }
+
+        let config_dir = config_dir(config_path);
+        let layout_root = value
+            .get("layout")
+            .and_then(|layout| layout.get("root"))
+            .and_then(|v| v.as_str())
+            .map(Path::new)
+            .map(|path| resolve_relative_to(&config_workspace_anchor(&config_dir), path))
+            .unwrap_or(config_dir);
+        let daemon_socket = value
+            .get("layout")
+            .and_then(|layout| layout.get("daemon_socket"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(DEFAULT_LAYOUT_DAEMON_SOCKET);
+        Ok(Self::new(resolve_relative_to(
+            &layout_root,
+            Path::new(daemon_socket),
         )))
     }
 

@@ -2,6 +2,10 @@ use anyhow::{Context, Result};
 use clap::ValueEnum;
 use std::fs;
 use std::path::{Path, PathBuf};
+use turin_types::layout::{
+    DEFAULT_BOOTSTRAP_CONFIG_PATH, DEFAULT_LAYOUT_HARNESSES_DIR, default_layout_root_for_workspace,
+    default_state_db_for_workspace,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
@@ -247,7 +251,7 @@ end
 }];
 
 pub fn scaffold_project(root: &Path, options: &InitOptions) -> Result<ScaffoldResult> {
-    let config_path = root.join(".turin").join("config.toml");
+    let config_path = root.join(DEFAULT_BOOTSTRAP_CONFIG_PATH);
     if config_path.exists() && !options.force {
         anyhow::bail!(
             "config already exists at '{}'; rerun with --force to overwrite it",
@@ -255,7 +259,7 @@ pub fn scaffold_project(root: &Path, options: &InitOptions) -> Result<ScaffoldRe
         );
     }
 
-    let harness_dir = root.join(".turin").join("harnesses");
+    let harness_dir = default_layout_root_for_workspace(root).join(DEFAULT_LAYOUT_HARNESSES_DIR);
     fs::create_dir_all(&harness_dir)
         .with_context(|| format!("failed to create '{}'", harness_dir.display()))?;
     let mut created_paths = vec![harness_dir.clone()];
@@ -265,7 +269,7 @@ pub fn scaffold_project(root: &Path, options: &InitOptions) -> Result<ScaffoldRe
         scaffold_harness_template(&harness_dir, options.harness_template, options.force)?;
     created_paths.extend(template_paths);
 
-    let state_db_path = root.join(".turin").join("state.db");
+    let state_db_path = default_state_db_for_workspace(root);
     if !state_db_path.exists() {
         if let Some(parent) = state_db_path.parent() {
             fs::create_dir_all(parent)
@@ -372,10 +376,10 @@ pub fn render_turin_toml(options: &InitOptions) -> String {
     toml.push_str("initial_spawn_depth = 0\n\n");
 
     toml.push_str("[persistence.state]\n");
-    toml.push_str("path = \".turin/state.db\"\n\n");
+    toml.push_str("path = \"data/state.db\"\n\n");
 
     toml.push_str("[harness]\n");
-    toml.push_str("directory = \".turin/harnesses\"\n");
+    toml.push_str("directory = \"harnesses\"\n");
     toml.push_str("fs_root = \".\"\n\n");
 
     render_provider_block(&mut toml, options.provider);

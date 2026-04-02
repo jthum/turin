@@ -1,4 +1,8 @@
 use super::StoreTargetConfig;
+use turin_types::layout::{
+    DEFAULT_LAYOUT_AGENTS_DIR, DEFAULT_LAYOUT_CHANNELS_DIR, DEFAULT_LAYOUT_DAEMON_SOCKET,
+    DEFAULT_LAYOUT_DATA_DIR, DEFAULT_LAYOUT_HARNESSES_DIR,
+};
 
 pub(super) fn default_system_prompt() -> String {
     "You are a helpful coding assistant.".to_string()
@@ -21,11 +25,11 @@ pub(super) fn default_heartbeat_interval() -> u32 {
 }
 
 pub(super) fn default_state_path() -> String {
-    ".turin/state.db".to_string()
+    format!("{DEFAULT_LAYOUT_DATA_DIR}/state.db")
 }
 
 pub(super) fn default_harness_directory() -> String {
-    ".turin/harnesses".to_string()
+    DEFAULT_LAYOUT_HARNESSES_DIR.to_string()
 }
 
 pub(super) fn default_harness_fs_root() -> String {
@@ -41,19 +45,19 @@ pub(super) fn default_embedding_dimensions() -> usize {
 }
 
 pub(super) fn default_daemon_agents_dir() -> String {
-    ".turin/agents".to_string()
+    DEFAULT_LAYOUT_AGENTS_DIR.to_string()
 }
 
 pub(super) fn default_daemon_harnesses_dir() -> String {
-    ".turin/harnesses".to_string()
+    DEFAULT_LAYOUT_HARNESSES_DIR.to_string()
 }
 
 pub(super) fn default_daemon_channels_dir() -> String {
-    ".turin/channels".to_string()
+    DEFAULT_LAYOUT_CHANNELS_DIR.to_string()
 }
 
 pub(super) fn default_daemon_endpoint() -> String {
-    ".turin/daemon.sock".to_string()
+    DEFAULT_LAYOUT_DAEMON_SOCKET.to_string()
 }
 
 pub(super) fn default_remote_bind() -> String {

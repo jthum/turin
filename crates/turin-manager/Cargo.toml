@@ -23,6 +23,7 @@ toml = "0.8"
 toml_edit = "0.22"
 turin-channel-core = { path = "../turin-channel-core" }
 turin-control-client = { path = "../turin-control-client" }
+turin-types = { path = "../turin-types" }
 
 [dev-dependencies]
 tempfile = "3.10"

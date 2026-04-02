@@ -8,10 +8,7 @@ use crate::persistence::manager::{StoreManager, StorePathScope, StoreSelector};
 impl StoreManager {
     pub(super) fn default_alias_path(&self, alias: &str) -> PathBuf {
         let file_name = format!("{}.db", sanitize_alias(alias));
-        self.workspace_root
-            .join(".turin")
-            .join("stores")
-            .join(file_name)
+        self.store_root.join(file_name)
     }
 
     pub(super) async fn resolve_selector_with_alias(

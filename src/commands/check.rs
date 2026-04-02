@@ -142,9 +142,17 @@ pub async fn run_check(config_path: &Path) -> Result<()> {
             .states
             .get(&alias)
             .map(|target| target.path.clone())
-            .unwrap_or_else(|| ".turin/state.db".to_string()),
+            .unwrap_or_else(|| {
+                Path::new(&config.layout.data_dir)
+                    .join("state.db")
+                    .display()
+                    .to_string()
+            }),
         StoreSelector::Path(path) => path,
-        StoreSelector::Handle(_) => ".turin/state.db".to_string(),
+        StoreSelector::Handle(_) => Path::new(&config.layout.data_dir)
+            .join("state.db")
+            .display()
+            .to_string(),
     };
     let db_path = Path::new(&state_path);
     if db_path.exists() {
