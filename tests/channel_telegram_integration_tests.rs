@@ -218,14 +218,16 @@ async fn wait_for_telegram_outbound(
                     );
                 }
                 Ok(Ok(Err(err))) => {
-                    return Err(err.context("telegram channel runner exited before outbound response"));
+                    return Err(
+                        err.context("telegram channel runner exited before outbound response")
+                    );
                 }
                 Ok(Err(join_err)) => {
                     return Err(anyhow!("telegram channel runner join failed: {join_err}"));
                 }
-                Err(_) => anyhow::bail!(
-                    "timed out joining telegram channel runner after early exit"
-                ),
+                Err(_) => {
+                    anyhow::bail!("timed out joining telegram channel runner after early exit")
+                }
             }
         }
         if Instant::now() >= deadline {
@@ -238,6 +240,57 @@ async fn wait_for_telegram_outbound(
                 .collect::<Vec<_>>();
             anyhow::bail!(
                 "telegram channel did not produce outbound response; requests: {:?}",
+                methods
+            );
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
+}
+
+async fn wait_for_telegram_requests(
+    server: &TelegramMockServer,
+    run: &mut JoinHandle<Result<()>>,
+    predicate: impl Fn(&[String]) -> bool,
+    description: &str,
+) -> Result<Vec<String>> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let methods = server
+            .requests
+            .lock()
+            .expect("telegram mock requests lock poisoned")
+            .iter()
+            .map(|request| request.method.clone())
+            .collect::<Vec<_>>();
+        if predicate(&methods) {
+            return Ok(methods);
+        }
+        if run.is_finished() {
+            match timeout(Duration::from_secs(1), run).await {
+                Ok(Ok(Ok(()))) => {
+                    anyhow::bail!(
+                        "telegram channel runner exited before {}; requests: {:?}",
+                        description,
+                        methods
+                    );
+                }
+                Ok(Ok(Err(err))) => {
+                    return Err(err.context(format!(
+                        "telegram channel runner exited before {description}"
+                    )));
+                }
+                Ok(Err(join_err)) => {
+                    return Err(anyhow!("telegram channel runner join failed: {join_err}"));
+                }
+                Err(_) => {
+                    anyhow::bail!("timed out joining telegram channel runner after early exit")
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "timed out waiting for {}; requests: {:?}",
+                description,
                 methods
             );
         }
@@ -690,36 +743,22 @@ async fn telegram_channel_driver_streams_progress_before_final_message() -> Resu
         shutdown_rx,
     )?;
 
-    let run =
+    let mut run =
         tokio::spawn(async move { runner.run_driver("default", &mut driver, Some(5_000)).await });
 
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        let methods = server
-            .requests
-            .lock()
-            .expect("telegram mock requests lock poisoned")
-            .iter()
-            .map(|request| request.method.clone())
-            .collect::<Vec<_>>();
-        if methods.iter().any(|method| method == "sendMessage")
-            && methods
-                .iter()
-                .any(|method| method == "sendMessageDraft" || method == "editMessageText")
-            && methods.iter().any(|method| method == "sendChatAction")
-        {
-            break;
-        }
-        sleep(Duration::from_millis(25)).await;
-    }
-
-    let methods = server
-        .requests
-        .lock()
-        .expect("telegram mock requests lock poisoned")
-        .iter()
-        .map(|request| request.method.clone())
-        .collect::<Vec<_>>();
+    let methods = wait_for_telegram_requests(
+        &server,
+        &mut run,
+        |methods| {
+            methods.iter().any(|method| method == "sendMessage")
+                && methods
+                    .iter()
+                    .any(|method| method == "sendMessageDraft" || method == "editMessageText")
+                && methods.iter().any(|method| method == "sendChatAction")
+        },
+        "telegram streaming preview and final message",
+    )
+    .await?;
     assert!(
         methods.iter().any(|method| method == "sendChatAction"),
         "expected typing action in request log: {methods:?}"

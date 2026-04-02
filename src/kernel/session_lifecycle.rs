@@ -7,7 +7,7 @@ use tracing::{info, warn};
 use crate::kernel::config::StoreTargetConfig;
 use crate::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::ExecutionHost;
-use crate::kernel::session::{SessionState, SessionStatus};
+use crate::kernel::session::{PersistedKernelRecord, SessionState, SessionStatus};
 use crate::kernel::session_refs::{format_session_reference, parse_session_reference};
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{EventRow, MessageRow};
@@ -150,30 +150,39 @@ impl ExecutionHost {
                 }
             }
 
-            let (durability_tx, mut durability_rx) = tokio::sync::mpsc::unbounded_channel::<
-                crate::kernel::session::PersistedKernelEvent,
-            >();
+            let (durability_tx, mut durability_rx) =
+                tokio::sync::mpsc::unbounded_channel::<PersistedKernelRecord>();
             session.durability_tx = Some(durability_tx);
             let store_clone = store.clone();
+            let persistence_lock = Arc::clone(&session.persistence_lock);
             let handle = tokio::spawn(async move {
                 while let Some(record) = durability_rx.recv().await {
-                    let event = record.event;
-                    let event_type = event.event_type().to_string();
-                    let payload = serde_json::to_value(&event).unwrap_or_default();
-                    if let Some(iid) = record.internal_id {
-                        if let Err(e) = store_clone
-                            .insert_event_with_turn_index(
-                                iid,
-                                record.turn_index,
-                                &event_type,
-                                &payload,
-                            )
-                            .await
-                        {
-                            warn!(error = %e, "Background persistence error");
+                    match record {
+                        PersistedKernelRecord::Event(record) => {
+                            let event = record.event;
+                            let event_type = event.event_type().to_string();
+                            let payload = serde_json::to_value(&event).unwrap_or_default();
+                            if let Some(iid) = record.internal_id {
+                                let _guard = persistence_lock.lock().await;
+                                if let Err(e) = store_clone
+                                    .insert_event_with_turn_index(
+                                        iid,
+                                        record.turn_index,
+                                        &event_type,
+                                        &payload,
+                                    )
+                                    .await
+                                {
+                                    warn!(error = %e, "Background persistence error");
+                                }
+                            } else {
+                                warn!("Dropping event: no internal_id for session");
+                            }
                         }
-                    } else {
-                        warn!("Dropping event: no internal_id for session");
+                        PersistedKernelRecord::Barrier(tx) => {
+                            let _guard = persistence_lock.lock().await;
+                            let _ = tx.send(());
+                        }
                     }
                 }
             });

@@ -68,6 +68,7 @@ impl ExecutionHost {
                 parts
             };
             if let Some(iid) = session.internal_id {
+                let _guard = session.persistence_lock.lock().await;
                 let _ = store
                     .insert_message(
                         iid,

@@ -3,8 +3,8 @@ use tracing::{debug, instrument, warn};
 
 use crate::kernel::event::KernelEvent;
 use crate::kernel::execution_host::ExecutionHost;
-use crate::kernel::session::PersistedKernelEvent;
 use crate::kernel::session::SessionState;
+use crate::kernel::session::{PersistedKernelEvent, PersistedKernelRecord};
 
 impl ExecutionHost {
     /// Persist an event to the state store in the background.
@@ -68,7 +68,7 @@ impl ExecutionHost {
     pub(crate) fn persist_event_internal(
         &self,
         tx: &broadcast::Sender<(Option<i64>, KernelEvent)>,
-        durability_tx: Option<&tokio::sync::mpsc::UnboundedSender<PersistedKernelEvent>>,
+        durability_tx: Option<&tokio::sync::mpsc::UnboundedSender<PersistedKernelRecord>>,
         session: &SessionState,
         event: &KernelEvent,
     ) {
@@ -81,11 +81,13 @@ impl ExecutionHost {
         }
         if let Some(durability_tx) = durability_tx
             && durability_tx
-                .send(PersistedKernelEvent {
-                    internal_id: session.internal_id,
-                    turn_index: persisted_turn_index_for_event(session, event),
-                    event: event.clone(),
-                })
+                .send(PersistedKernelRecord::Event(Box::new(
+                    PersistedKernelEvent {
+                        internal_id: session.internal_id,
+                        turn_index: persisted_turn_index_for_event(session, event),
+                        event: event.clone(),
+                    },
+                )))
                 .is_err()
         {
             warn!("Event durability send failed — persistence task unavailable");

@@ -1,10 +1,11 @@
 use anyhow::Result;
+use tokio::sync::oneshot;
 use tracing::{info, warn};
 
 use crate::harness::verdict::Verdict;
 use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
 use crate::kernel::execution_host::ExecutionHost;
-use crate::kernel::session::{QueuedTask, SessionState};
+use crate::kernel::session::{PersistedKernelRecord, QueuedTask, SessionState};
 
 impl ExecutionHost {
     pub(crate) async fn complete_task(
@@ -125,7 +126,28 @@ impl ExecutionHost {
             }
         }
 
+        self.wait_for_session_durability(session).await;
         Ok(())
+    }
+
+    async fn wait_for_session_durability(&self, session: &SessionState) {
+        let Some(durability_tx) = &session.durability_tx else {
+            return;
+        };
+        let (tx, rx) = oneshot::channel();
+        if durability_tx
+            .send(PersistedKernelRecord::Barrier(tx))
+            .is_err()
+        {
+            warn!("Event durability barrier send failed — persistence task unavailable");
+            return;
+        }
+        if tokio::time::timeout(std::time::Duration::from_secs(5), rx)
+            .await
+            .is_err()
+        {
+            warn!("Timed out waiting for event durability barrier");
+        }
     }
 
     pub(super) async fn handle_inference_error(

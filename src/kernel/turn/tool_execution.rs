@@ -678,6 +678,7 @@ impl ExecutionHost {
             if let Ok(store) = self.store_manager.open(&session.store_selector).await
                 && let Some(iid) = session.internal_id
             {
+                let _guard = session.persistence_lock.lock().await;
                 let _ = store
                     .insert_tool_execution(
                         iid,
@@ -738,6 +739,7 @@ impl ExecutionHost {
                     })
                     .collect();
                 if let Some(iid) = session.internal_id {
+                    let _guard = session.persistence_lock.lock().await;
                     let _ = store
                         .insert_message(
                             iid,

@@ -85,6 +85,7 @@ impl ExecutionHost {
     async fn persist_task_user_message(&self, session: &SessionState, prompt: &str) {
         if let Ok(store) = self.store_manager.open(&session.store_selector).await {
             if let Some(iid) = session.internal_id {
+                let _guard = session.persistence_lock.lock().await;
                 let _ = store
                     .insert_message(
                         iid,

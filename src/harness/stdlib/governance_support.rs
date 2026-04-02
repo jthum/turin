@@ -1,7 +1,7 @@
 use crate::harness::globals::HarnessAppData;
 use crate::kernel::event::{AuditEvent, KernelEvent};
 use crate::kernel::governance::{CapabilityDecision, GovernanceSubject};
-use crate::kernel::session::PersistedKernelEvent;
+use crate::kernel::session::{PersistedKernelEvent, PersistedKernelRecord};
 use mlua::{Result as LuaResult, Table, Value};
 use std::collections::BTreeMap;
 
@@ -182,10 +182,12 @@ pub(crate) fn emit_governance_audit_event(app_data: &HarnessAppData, audit_event
     }
     let _ = ctx.event_tx.send((ctx.internal_id, event.clone()));
     if let Some(durability_tx) = ctx.durability_tx {
-        let _ = durability_tx.send(PersistedKernelEvent {
-            internal_id: ctx.internal_id,
-            turn_index: None,
-            event,
-        });
+        let _ = durability_tx.send(PersistedKernelRecord::Event(Box::new(
+            PersistedKernelEvent {
+                internal_id: ctx.internal_id,
+                turn_index: None,
+                event,
+            },
+        )));
     }
 }

@@ -30,6 +30,11 @@ pub struct PersistedKernelEvent {
     pub event: KernelEvent,
 }
 
+pub enum PersistedKernelRecord {
+    Event(Box<PersistedKernelEvent>),
+    Barrier(tokio::sync::oneshot::Sender<()>),
+}
+
 impl QueuedTask {
     pub fn ad_hoc(prompt: impl Into<String>) -> Self {
         Self {
@@ -108,7 +113,9 @@ pub struct SessionState {
     // Event channel for this session
     pub event_tx: broadcast::Sender<(Option<i64>, KernelEvent)>,
     /// Reliable durability lane (separate from observer fanout).
-    pub durability_tx: Option<mpsc::UnboundedSender<PersistedKernelEvent>>,
+    pub durability_tx: Option<mpsc::UnboundedSender<PersistedKernelRecord>>,
+    /// Serializes branch-scoped persistence so turn creation stays consistent.
+    pub persistence_lock: Arc<Mutex<()>>,
     pub event_task: Option<Arc<Mutex<Option<JoinHandle<()>>>>>,
     /// Token to cooperatively cancel the currently running task/turn.
     pub cancel_token: CancellationToken,
@@ -144,6 +151,7 @@ impl SessionState {
             total_output_tokens: 0,
             event_tx: tx,
             durability_tx: None,
+            persistence_lock: Arc::new(Mutex::new(())),
             event_task: Some(Arc::new(Mutex::new(None))),
             cancel_token: CancellationToken::new(),
             next_task_id: 1,
