@@ -57,7 +57,7 @@ turin-manager channels status
 turin-manager doctor
 ```
 
-`turin-manager channels configure telegram` validates the token, stages the resulting `channel.toml` diff, and can write the token into a `.env` file next to `turin.toml`. Turin loads that adjacent `.env` automatically on startup.
+`turin-manager channels configure telegram` validates the token, stages the resulting `config.toml` diff, and can write the token into a `.env` file next to `.turin/config.toml`. Turin loads that adjacent `.env` automatically on startup.
 
 ## 2. Decide Which Telegram Surfaces You Want
 
@@ -322,9 +322,9 @@ turin daemon channel status telegram-ops --json
 
 The normalized `last_error_code` is especially useful for fast diagnosis.
 
-## 8. Equivalent `channel.toml`
+## 8. Equivalent `config.toml`
 
-The daemon stores channel settings under `channels/<id>/channel.toml`.
+The daemon stores channel settings under `.turin/runtime/channels/<id>/config.toml`.
 
 Example:
 

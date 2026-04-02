@@ -8,7 +8,7 @@ For operator shells on top of the same control surface, see `docs/operations/ui-
 The daemon is built around three rules:
 
 1. The filesystem is the persisted source of truth.
-2. `turin.toml` remains bootstrap/global config, not a live mutable registry.
+2. `.turin/config.toml` remains bootstrap/global config, not a live mutable registry.
 3. Bad agents or harnesses fail in isolation instead of poisoning the whole runtime.
 
 ## Authoritative Filesystem Layout
@@ -16,42 +16,44 @@ The daemon is built around three rules:
 The daemon treats these paths as authoritative:
 
 ```text
-turin.toml
-agents/
-  docs-reviewer/
-    agent.toml
-    harness/
+.turin/
+  config.toml
+  harnesses/
+    reviewer/
       main.lua
-harnesses/
-  reviewer/
-    main.lua
-channels/
-  discord/
-    channel.toml
+  runtime/
+    agents/
+      docs-reviewer/
+        config.toml
+        harness/
+          main.lua
+    channels/
+      discord/
+        config.toml
 ```
 
 Default dynamic shape:
 
-- `agents/<id>/agent.toml` defines the agent.
-- `agents/<id>/harness/` is that agent's local harness.
+- `.turin/runtime/agents/<id>/config.toml` defines the agent.
+- `.turin/runtime/agents/<id>/harness/` is that agent's local harness.
 
 Optional shared harness shape:
 
-- `harnesses/<id>/` defines a reusable shared harness program.
-- `agents/<id>/agent.toml` can bind to it with `harness = "<id>"`.
+- `.turin/harnesses/<id>/` defines a reusable shared harness program.
+- `.turin/runtime/agents/<id>/config.toml` can bind to it with `harness = "<id>"`.
 
-If an agent directory exists with a valid `agent.toml`, that agent exists.
+If an agent directory exists with a valid `config.toml`, that agent exists.
 If the directory is removed, the agent is removed.
 
 ## Bootstrap Config
 
-Daemon-related bootstrap settings live under `[daemon]` in `turin.toml`:
+Daemon-related bootstrap settings live under `[daemon]` in `.turin/config.toml`:
 
 ```toml
 [daemon]
-agents_dir = "agents"
+agents_dir = "runtime/agents"
 harnesses_dir = "harnesses"
-endpoint = ".turin/daemon.sock"
+endpoint = "daemon.sock"
 ```
 
 These values define where the daemon reads and watches filesystem-backed state.
@@ -61,11 +63,11 @@ Channel-related bootstrap settings also live under `[daemon]`:
 
 ```toml
 [daemon]
-channels_dir = "channels"
+channels_dir = "runtime/channels"
 ```
 
 Each channel directory is authoritative the same way an agent directory is.
-If `channels/<id>/channel.toml` exists and is valid, that channel exists.
+If `.turin/runtime/channels/<id>/config.toml` exists and is valid, that channel exists.
 
 ## Context-Local Persistence Overrides
 
@@ -74,45 +76,45 @@ Turin now distinguishes between:
 - `persistence.state`: the owning session/runtime database for that context
 - `persistence.store`: the default scoped-data store for that context
 
-Top-level defaults live in `turin.toml`:
+Top-level defaults live in `.turin/config.toml`:
 
 ```toml
 [persistence.state]
-path = ".turin/state.db"
+path = ".turin/data/state.db"
 
 # Optional; defaults to the same target as `state`
 # [persistence.store]
-# path = ".turin/store.db"
+# path = ".turin/data/store.db"
 ```
 
 Agent and channel configs can override those targets locally:
 
 ```toml
-# agents/<id>/agent.toml
+# .turin/runtime/agents/<id>/config.toml
 [persistence.state]
-path = ".turin/agents/reviewer.db"
+path = ".turin/data/states/reviewer.db"
 
 [persistence.store]
-path = ".turin/agents/reviewer-store.db"
+path = ".turin/data/stores/reviewer-store.db"
 ```
 
 ```toml
-# channels/<id>/channel.toml
+# .turin/runtime/channels/<id>/config.toml
 [persistence.state]
-path = ".turin/channels/telegram.db"
+path = ".turin/data/states/telegram.db"
 
 # Optional; if omitted, scoped data also uses the channel state DB
 # [persistence.store]
-# path = ".turin/channels/telegram-store.db"
+# path = ".turin/data/stores/telegram-store.db"
 ```
 
 Current implemented local override surfaces are:
 
-- `turin.toml`
-- `agents/<id>/agent.toml`
-- `channels/<id>/channel.toml`
+- `.turin/config.toml`
+- `.turin/runtime/agents/<id>/config.toml`
+- `.turin/runtime/channels/<id>/config.toml`
 
-Generic per-scope config files such as `scopes/<kind>/<id>/...` are still planned, not implemented.
+Generic per-scope config files such as `.turin/scopes/<kind>/<id>/...` are still planned, not implemented.
 
 ## Runtime Model
 
@@ -120,8 +122,8 @@ The daemon owns a live `Kernel` plus a filesystem-backed registry scan.
 
 It:
 
-- scans `agents/` and `harnesses/`
-- scans `channels/`
+- scans `.turin/runtime/agents/` and `.turin/harnesses/`
+- scans `.turin/runtime/channels/`
 - synthesizes effective runtime config
 - rebuilds the live kernel on daemon-level rescan
 - watches the daemon registry roots for changes
@@ -129,9 +131,9 @@ It:
 
 Important distinction:
 
-- editing `agents/<id>/agent.toml` or creating/removing agent directories is a **daemon registry** change
-- editing `channels/<id>/channel.toml` or creating/removing channel directories is a **daemon registry** change
-- editing `agents/<id>/harness/*.lua` or `harnesses/<id>/*.lua` is a **harness runtime** change
+- editing `.turin/runtime/agents/<id>/config.toml` or creating/removing agent directories is a **daemon registry** change
+- editing `.turin/runtime/channels/<id>/config.toml` or creating/removing channel directories is a **daemon registry** change
+- editing `.turin/runtime/agents/<id>/harness/*.lua` or `.turin/harnesses/<id>/*.lua` is a **harness runtime** change
 
 ## Session Scope Across Multiple State DBs
 
@@ -148,7 +150,7 @@ Cross-state references remain explicit:
 
 - bare session: `018f...`
 - aliased session: `018f...@telegram`
-- path-qualified session: `018f...@.turin/channels/telegram.db`
+- path-qualified session: `018f...@.turin/data/states/telegram.db`
 
 ## Fault Isolation
 
@@ -156,9 +158,9 @@ One broken agent or harness should not stop the daemon.
 
 Current behavior:
 
-- invalid `agent.toml` becomes a daemon runtime issue
+- invalid agent `config.toml` becomes a daemon runtime issue
 - invalid harness config/load only affects that harness
-- invalid `channel.toml` only affects that channel
+- invalid channel `config.toml` only affects that channel
 - unrelated agents and harnesses keep running
 
 Use:
@@ -328,7 +330,7 @@ turin daemon channel delete fs-local
 ```
 
 Channel settings are intentionally adapter-specific. The daemon accepts repeated
-`--setting key=value` entries and persists them into `channel.toml`. Values are
+`--setting key=value` entries and persists them into the channel `config.toml`. Values are
 parsed as JSON when possible, otherwise they are stored as strings.
 
 For known channel kinds (`fs`, `discord`, `telegram`), settings are validated on
@@ -356,10 +358,10 @@ Those settings are enforced before a message is routed into a Turin session, whi
 
 Channel tool selection is downward-only: channel `[tools].allow` and
 `[tools].exclude` can only subset the native tool surface already granted by
-`turin.toml` and the bound `agents/<id>/agent.toml`.
+`.turin/config.toml` and the bound `.turin/runtime/agents/<id>/config.toml`.
 
 Channel tool behavior can also override inherited defaults through nested
-`[tools.<name>]` tables in `channel.toml`, for example `[tools.web_fetch]` or
+`[tools.<name>]` tables in the channel `config.toml`, for example `[tools.web_fetch]` or
 `[tools.web_search]`.
 
 Supported native tool groups are:

@@ -30,7 +30,7 @@ By default, Rocket.Chat now behaves like Telegram:
 
 If you want a static setup instead, set an optional `room_id` or `room_name` filter to pin the channel to one specific room or DM.
 
-The token is typically written to a `.env` file next to `turin.toml`, and Turin will load that adjacent `.env` automatically on startup.
+The token is typically written to a `.env` file next to `.turin/config.toml`, and Turin will load that adjacent `.env` automatically on startup.
 
 ## Settings
 

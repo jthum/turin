@@ -617,7 +617,7 @@ turin-map index
 turin-map status
 ```
 
-`turin-map` automatically reuses `./turin.toml` when run from a Turin project root. Use `turin-map index --config path/to/turin.toml` if the config lives elsewhere, and use explicit `--embedding-*` flags only when you want to override the configured profile for one run.
+`turin-map` automatically reuses `./.turin/config.toml` when run from a Turin project root. Use `turin-map index --config path/to/.turin/config.toml` if the config lives elsewhere, and use explicit `--embedding-*` flags only when you want to override the configured profile for one run.
 
 The quick success check is simple: `turin-map status` should report `Semantic: enabled (...)`. If it still says `disabled`, Turin will stay on lexical-only search until the local endpoint, model, and dimensions line up.
 

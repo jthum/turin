@@ -61,14 +61,14 @@ The transcript view uses a bounded in-memory window instead of keeping the entir
 For local use, make sure the daemon is running:
 
 ```bash
-turin daemon ensure --config turin.toml
+turin daemon ensure --config .turin/config.toml
 ```
 
 For remote use, make sure both are running:
 
 ```bash
-turin daemon ensure --config turin.toml
-turin-remote --config turin.toml
+turin daemon ensure --config .turin/config.toml
+turin-remote --config .turin/config.toml
 ```
 
 See `docs/operations/daemon.md` for the daemon model and `docs/operations/remote.md` for the network bridge.
@@ -84,13 +84,13 @@ cargo build --release -p turin-tui -p turin-app
 TUI against the local daemon:
 
 ```bash
-target/release/turin-tui --config turin.toml
+target/release/turin-tui --config .turin/config.toml
 ```
 
 Desktop app against the local daemon:
 
 ```bash
-target/release/turin-app --config turin.toml
+target/release/turin-app --config .turin/config.toml
 ```
 
 If you want to bypass config-based endpoint resolution and point directly at a daemon endpoint:
@@ -134,7 +134,7 @@ target/release/turin-app \
 
 The UI clients share one connection-profile format.
 
-By default, `--profile` reads from `ui-profiles.toml` in the current working directory:
+By default, `--profile` reads from `.turin/ui-profiles.toml`:
 
 ```bash
 target/release/turin-tui --profile local
@@ -154,7 +154,7 @@ Example:
 default_profile = "local"
 
 [profiles.local]
-config = "turin.toml"
+config = ".turin/config.toml"
 
 [profiles.lab]
 remote_url = "http://192.168.1.50:9324"

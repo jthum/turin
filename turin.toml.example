@@ -1,6 +1,6 @@
 # Turin Example Configuration
-# Copy this file to turin.toml and customize for your runtime.
-# If a `.env` file sits next to `turin.toml`, Turin will load it automatically.
+# Copy this file to .turin/config.toml and customize for your runtime.
+# If a `.env` file sits next to `.turin/config.toml`, Turin will load it automatically.
 
 # Optional global native tool ceiling for every agent and channel.
 # Defaults to Turin's standard built-in surface.
@@ -73,24 +73,24 @@ heartbeat_interval_secs = 30
 initial_spawn_depth = 0
 
 [persistence.state]
-path = ".turin/state.db"
+path = ".turin/data/state.db"
 
 # Optional default scoped-data store for top-level memory/KV/entity-style data.
 # When omitted, Turin falls back to the current `state` target.
 # [persistence.store]
-# path = ".turin/store.db"
+# path = ".turin/data/store.db"
 #
 # Optional named state aliases for reusable session/runtime stores.
 # [persistence.states.telegram]
-# path = ".turin/channels/telegram.db"
+# path = ".turin/data/states/telegram.db"
 #
 # Optional named stores for scoped memory/KV, handoffs, or shared KBs.
 # [persistence.stores.rust_kb]
-# path = ".turin/kb/rust.db"
+# path = ".turin/data/stores/rust-kb.db"
 #
 # Agent and channel configs can override these locally via:
-#   agents/<id>/agent.toml
-#   channels/<id>/channel.toml
+#   .turin/runtime/agents/<id>/config.toml
+#   .turin/runtime/channels/<id>/config.toml
 # using the same keys:
 #   [persistence.state]
 #   [persistence.store]
@@ -160,7 +160,7 @@ type = "mock"
 # dimensions = 1536            # set this to the model's actual output size
 #
 # Then run `turin-map index` from the project root.
-# It reuses ./turin.toml automatically unless you override with --config / --embedding-*.
+# It reuses ./.turin/config.toml automatically unless you override with --config / --embedding-*.
 
 # -----------------------------------------------------------------------------
 # Governance (opt-in, flexibility-first)

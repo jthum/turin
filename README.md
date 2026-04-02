@@ -115,7 +115,7 @@ target/release/turin quickstart --prompt "Summarize this workspace."
 
 That will:
 
-- scaffold `turin.toml`
+- scaffold `.turin/config.toml`
 - create `.turin/harnesses/`
 - add `.turin/` to `.gitignore`
 - run a real Turin session with the mock provider
@@ -151,7 +151,7 @@ target/release/turin-manager channels status
 target/release/turin-manager doctor
 ```
 
-`turin-manager` stages diffs before writing, validates assembled channel settings through the sidecar before it writes files, and stores optional secrets in a `.env` file next to `turin.toml`. Turin auto-loads that adjacent `.env` file at startup.
+`turin-manager` stages diffs before writing, validates assembled channel settings through the sidecar before it writes files, and stores optional secrets in a `.env` file next to `.turin/config.toml`. Turin auto-loads that adjacent `.env` file at startup.
 
 External channel sidecars are described in [docs/reference/channel-sidecars.md](docs/reference/channel-sidecars.md).
 
@@ -170,12 +170,13 @@ Tool behavior notes:
 - API-backed search providers are configured with environment-variable references such as `api_key_env = "TAVILY_API_KEY"`
 - the same `[tools.<name>]` tables can also be used under `[agent.tools]`, `[agents.<id>.tools]`, and channel `settings.tools` to override inherited behavior
 
-### 4. Manual `turin.toml` path
+### 4. Manual `.turin/config.toml` path
 
 If you prefer hand-edited config, start from the example:
 
 ```bash
-cp turin.toml.example turin.toml
+mkdir -p .turin
+cp turin.toml.example .turin/config.toml
 ```
 
 Minimal example:
@@ -221,7 +222,7 @@ workspace_root = "."
 max_turns = 50
 
 [persistence.state]
-path = ".turin/state.db"
+path = ".turin/data/state.db"
 
 [harness]
 directory = ".turin/harnesses"
@@ -272,7 +273,7 @@ target/release/turin-map status
 
 You should see `Semantic: enabled (...)` in the status output once the local endpoint, model, and dimensions are wired correctly.
 
-Use `--config path/to/turin.toml` if the config file lives elsewhere, and use explicit `--embedding-*` flags only when you want to override the configured profile for one run.
+Use `--config path/to/.turin/config.toml` if the config file lives elsewhere, and use explicit `--embedding-*` flags only when you want to override the configured profile for one run.
 
 Turin matches semantic/hybrid queries against the index embedding profile. If the runtime provider and index disagree on driver, base URL, model, or dimensions, `strict = false` falls back to lexical search and `strict = true` returns an error. If you do not configure embeddings at all, Turin still works with lexical-only recall and code search.
 
@@ -324,10 +325,10 @@ Turin now has a local-first daemon mode for dynamic agent and harness management
 
 The daemon uses:
 
-- `turin.toml` for bootstrap/global config
-- `agents/<id>/agent.toml` for daemon-managed agents
-- `agents/<id>/harness/` for local per-agent harnesses
-- optional `harnesses/<id>/` for shared harness programs
+- `.turin/config.toml` for bootstrap/global config
+- `.turin/runtime/agents/<id>/config.toml` for daemon-managed agents
+- `.turin/runtime/agents/<id>/harness/` for local per-agent harnesses
+- optional `.turin/harnesses/<id>/` for shared harness programs
 
 Core commands:
 
@@ -362,12 +363,12 @@ Turin also ships two operator-facing daemon clients:
 
 Both clients can connect either:
 
-- locally through the daemon endpoint resolved from `turin.toml`
+- locally through the daemon endpoint resolved from `.turin/config.toml`
 - remotely through `turin-remote`
 
 Both clients now share:
 
-- `ui-profiles.toml` connection profiles
+- `.turin/ui-profiles.toml` connection profiles
 - in-UI profile switching and draft editing
 - draft/selected-profile preflight checks before reconnecting
 - task, channel, and event filtering in the operator views
@@ -375,14 +376,14 @@ Both clients now share:
 Examples:
 
 ```bash
-target/release/turin-tui --config turin.toml
-target/release/turin-app --config turin.toml
+target/release/turin-tui --config .turin/config.toml
+target/release/turin-app --config .turin/config.toml
 
 target/release/turin-tui --remote-url http://127.0.0.1:9324 --auth-token-env TURIN_REMOTE_TOKEN
 target/release/turin-app --profile lab
 ```
 
-Shared connection profiles live in `ui-profiles.toml` by convention. A copyable example is included at `ui-profiles.toml.example`.
+Shared connection profiles live in `.turin/ui-profiles.toml` by convention. A copyable example is included at `ui-profiles.toml.example`.
 `turin-tui` also supports a separate `turin-tui.toml` settings file for chat layout, transcript budget, live preview controls, and the UI-only user label. A copyable example is included at `turin-tui.toml.example`.
 
 See `docs/operations/ui-clients.md` for local/remote usage, profile files, and current UI scope.

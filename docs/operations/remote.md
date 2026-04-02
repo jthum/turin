@@ -20,14 +20,14 @@ For the operator-facing TUI and desktop shells that use this remote bridge, see 
 Make sure the Turin daemon is already running:
 
 ```bash
-turin daemon ensure --config turin.toml
+turin daemon ensure --config .turin/config.toml
 ```
 
-`turin-remote` expects the daemon endpoint configured in the same `turin.toml`.
+`turin-remote` expects the daemon endpoint configured in the same `.turin/config.toml`.
 
 ## Config
 
-Add or review the `[remote]` section in `turin.toml`:
+Add or review the `[remote]` section in `.turin/config.toml`:
 
 ```toml
 [remote]
@@ -62,14 +62,14 @@ export TURIN_REMOTE_TOKEN="replace-with-a-long-random-token"
 Then start the server:
 
 ```bash
-turin-remote --config turin.toml
+turin-remote --config .turin/config.toml
 ```
 
 Useful overrides:
 
 ```bash
 turin-remote \
-  --config turin.toml \
+  --config .turin/config.toml \
   --bind 0.0.0.0:9324 \
   --allow-non-loopback \
   --auth-token-env TURIN_REMOTE_TOKEN \
@@ -79,7 +79,7 @@ turin-remote \
 You can also pass the token directly:
 
 ```bash
-turin-remote --config turin.toml --auth-token "replace-me"
+turin-remote --config .turin/config.toml --auth-token "replace-me"
 ```
 
 ## Auth

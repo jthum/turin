@@ -55,7 +55,7 @@ file target/release/turin
 ## One-shot run
 
 ```bash
-target/release/turin run --config turin.toml --prompt "Summarize this repository"
+target/release/turin run --config .turin/config.toml --prompt "Summarize this repository"
 ```
 
 Options worth using while debugging:
@@ -68,7 +68,7 @@ Options worth using while debugging:
 ## REPL mode
 
 ```bash
-target/release/turin repl --config turin.toml
+target/release/turin repl --config .turin/config.toml
 ```
 
 Useful REPL slash commands include `/reload` (reload harness scripts).
@@ -80,7 +80,7 @@ Useful REPL slash commands include `/reload` (reload harness scripts).
 Static validation of config + harness scripts:
 
 ```bash
-target/release/turin check --config turin.toml
+target/release/turin check --config .turin/config.toml
 ```
 
 Use this before live runs when editing harness scripts heavily.

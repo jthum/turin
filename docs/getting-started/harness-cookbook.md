@@ -10,7 +10,7 @@ For a no-key local smoke:
 turin quickstart --prompt "Summarize this workspace."
 ```
 
-That creates `turin.toml`, `.turin/harnesses/`, a starter state DB, and runs the prompt with the mock provider.
+That creates `.turin/config.toml`, `.turin/harnesses/`, a starter state DB, and runs the prompt with the mock provider.
 
 For a real project scaffold:
 

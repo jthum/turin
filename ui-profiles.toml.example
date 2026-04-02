@@ -1,7 +1,7 @@
 default_profile = "local"
 
 [profiles.local]
-config = "turin.toml"
+config = ".turin/config.toml"
 
 [profiles.lab]
 remote_url = "http://127.0.0.1:9324"
