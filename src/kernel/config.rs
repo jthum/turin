@@ -2,19 +2,21 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use turin_local_ipc::resolve_endpoint as resolve_local_ipc_endpoint;
-use turin_types::layout::{config_workspace_anchor, resolve_relative_to};
+use turin_types::layout::config_workspace_anchor;
 
 use crate::persistence::manager::StoreSelector;
 pub use turin_types::{AgentMode, ThinkingConfig, ToolSelectionConfig, ToolsConfig};
 
 mod defaults;
 mod layout;
+mod persistence;
 #[cfg(test)]
 mod tests;
 mod validation;
 
 use defaults::*;
 pub use layout::{LayoutConfig, ResolvedLayout};
+pub use persistence::ResolvedPersistenceConfig;
 
 /// Top-level Turin configuration, parsed from the workspace config file.
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -587,6 +589,12 @@ impl TurinConfig {
             .resolve_from_config_dir(config_base.join("config.toml"), config_base.to_path_buf())
     }
 
+    pub fn resolved_persistence(&self, config_base: &Path) -> ResolvedPersistenceConfig {
+        let layout = self.resolved_layout(config_base);
+        let workspace_root = self.resolve_workspace_root(config_base);
+        ResolvedPersistenceConfig::from_parts(&workspace_root, &layout, &self.persistence)
+    }
+
     /// Resolve the workspace root path relative to a base directory.
     pub fn resolve_workspace_root(&self, base: &Path) -> PathBuf {
         let root = Path::new(&self.kernel.workspace_root);
@@ -645,6 +653,7 @@ impl TurinConfig {
     pub fn normalize_runtime_paths(&mut self, config_base: &Path) {
         let layout = self.resolved_layout(config_base);
         let workspace_root = self.resolve_workspace_root(config_base);
+        let resolved_persistence = self.resolved_persistence(config_base);
         self.kernel.workspace_root = workspace_root.display().to_string();
         self.layout.root = Some(layout.root.display().to_string());
         self.layout.data_dir = layout.data_dir.display().to_string();
@@ -656,22 +665,10 @@ impl TurinConfig {
         self.layout.scopes_dir = layout.scopes_dir.display().to_string();
         self.layout.env_file = layout.env_file.display().to_string();
         self.layout.daemon_socket = layout.daemon_socket.display().to_string();
-
-        normalize_store_target_path(
-            &workspace_root,
-            &layout.default_state_db,
-            default_state_path().as_str(),
-            &mut self.persistence.state,
-        );
-        if let Some(store) = self.persistence.store.as_mut() {
-            normalize_store_target_path(&workspace_root, &layout.stores_dir, "", store);
-        }
-        for store in self.persistence.states.values_mut() {
-            normalize_named_store_path(&workspace_root, store);
-        }
-        for store in self.persistence.stores.values_mut() {
-            normalize_named_store_path(&workspace_root, store);
-        }
+        self.persistence.state = resolved_persistence.state;
+        self.persistence.store = resolved_persistence.store;
+        self.persistence.states = resolved_persistence.states;
+        self.persistence.stores = resolved_persistence.stores;
 
         normalize_harness_config_paths(&workspace_root, &layout.harnesses_dir, &mut self.harness);
         for harness in self.harnesses.values_mut() {
@@ -788,28 +785,6 @@ fn normalize_harness_config_paths(
 
     if Path::new(&harness.fs_root).is_relative() && harness.fs_root != "." {
         harness.fs_root = workspace_root.join(&harness.fs_root).display().to_string();
-    }
-}
-
-fn normalize_store_target_path(
-    workspace_root: &Path,
-    layout_default: &Path,
-    default_value: &str,
-    target: &mut StoreTargetConfig,
-) {
-    if let Some(path) = target.path.as_mut() {
-        let resolved = if !default_value.is_empty() && path == default_value {
-            layout_default.to_path_buf()
-        } else {
-            resolve_relative_to(workspace_root, Path::new(path))
-        };
-        *path = resolved.display().to_string();
-    }
-}
-
-fn normalize_named_store_path(workspace_root: &Path, store: &mut NamedStoreConfig) {
-    if Path::new(&store.path).is_relative() {
-        store.path = workspace_root.join(&store.path).display().to_string();
     }
 }
 

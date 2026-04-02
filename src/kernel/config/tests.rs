@@ -146,6 +146,35 @@ store = "rust_kb"
 }
 
 #[test]
+fn test_resolved_persistence_separates_layout_defaults_from_effective_targets() {
+    let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[persistence.stores.rust_kb]
+path = "kb/rust.db"
+"#;
+
+    let config = TurinConfig::from_str(toml).unwrap();
+    let workspace_root = config.resolve_workspace_root(Path::new("/tmp/workspace/.turin"));
+    let resolved = config.resolved_persistence(Path::new("/tmp/workspace/.turin"));
+
+    assert_eq!(
+        resolved.state,
+        StoreTargetConfig::from_path("/tmp/workspace/.turin/data/state.db")
+    );
+    assert!(resolved.store.is_none());
+    assert_eq!(
+        resolved.stores.get("rust_kb").unwrap().path,
+        workspace_root.join("kb/rust.db").display().to_string()
+    );
+}
+
+#[test]
 fn test_resolve_workspace_root_relative() {
     let toml = r#"
 [agent]
