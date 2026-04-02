@@ -506,32 +506,7 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
     );
     assert_eq!(waited["status"], "success");
 
-    let persistence_deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let detail = result_value(
-            daemon
-                .request(DaemonRequest::SessionGet(
-                    turin::daemon::protocol::SessionIdParams {
-                        session_id: session_id.clone(),
-                    },
-                ))
-                .await?,
-        );
-        let messages = detail["messages"]
-            .as_array()
-            .context("session detail should include messages")?;
-        let persisted_user_count = messages
-            .iter()
-            .filter(|message| message["role"] == "user")
-            .count();
-        if persisted_user_count >= 1 {
-            break;
-        }
-        if Instant::now() >= persistence_deadline {
-            anyhow::bail!("Timed out waiting for initial session messages to persist");
-        }
-        sleep(Duration::from_millis(25)).await;
-    }
+    wait_for_persisted_user_messages(&daemon, &session_id, 1).await?;
 
     let daemon = daemon.restart().await?;
 
@@ -576,28 +551,45 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
     );
     assert_eq!(waited["status"], "success");
 
-    let detail = result_value(
-        daemon
-            .request(DaemonRequest::SessionGet(
-                turin::daemon::protocol::SessionIdParams {
-                    session_id: session_id.clone(),
-                },
-            ))
-            .await?,
-    );
-    let messages = detail["messages"]
-        .as_array()
-        .context("session detail should include messages")?;
-    let user_count = messages
-        .iter()
-        .filter(|message| message["role"] == "user")
-        .count();
-    assert!(
-        user_count >= 2,
-        "expected resumed session to preserve earlier history and append new messages"
-    );
+    wait_for_persisted_user_messages(&daemon, &session_id, 2).await?;
 
     daemon.stop().await
+}
+
+async fn wait_for_persisted_user_messages(
+    daemon: &DaemonHarness,
+    session_id: &str,
+    expected_user_count: usize,
+) -> Result<()> {
+    let persistence_deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let detail = result_value(
+            daemon
+                .request(DaemonRequest::SessionGet(
+                    turin::daemon::protocol::SessionIdParams {
+                        session_id: session_id.to_string(),
+                    },
+                ))
+                .await?,
+        );
+        let messages = detail["messages"]
+            .as_array()
+            .context("session detail should include messages")?;
+        let persisted_user_count = messages
+            .iter()
+            .filter(|message| message["role"] == "user")
+            .count();
+        if persisted_user_count >= expected_user_count {
+            return Ok(());
+        }
+        if Instant::now() >= persistence_deadline {
+            anyhow::bail!(
+                "Timed out waiting for persisted session history to reach {} user messages",
+                expected_user_count
+            );
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
