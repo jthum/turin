@@ -1,3 +1,5 @@
+mod support;
+
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -21,51 +23,9 @@ impl DaemonHarness {
     async fn start() -> Result<Self> {
         let tempdir = std::sync::Arc::new(tempfile::tempdir()?);
         let workspace_root = tempdir.path().join("workspace");
-        let harness_dir = workspace_root.join(".turin/harnesses");
-        let agents_dir = workspace_root.join(".turin/runtime/agents");
-        let channels_dir = workspace_root.join(".turin/runtime/channels");
-        let config_path = workspace_root.join(".turin/config.toml");
-
-        std::fs::create_dir_all(&harness_dir)?;
-        std::fs::create_dir_all(&agents_dir)?;
-        std::fs::create_dir_all(&channels_dir)?;
-        std::fs::write(
-            harness_dir.join("main.lua"),
-            "-- channel fs integration harness\n",
-        )?;
-
-        let config_toml = format!(
-            r#"[agent]
-id = "default"
-model = "mock-model"
-provider = "mock"
-system_prompt = "FS channel integration"
-
-[kernel]
-workspace_root = "{workspace_root}"
-max_turns = 4
-heartbeat_interval_secs = 30
-initial_spawn_depth = 0
-
-[persistence.state]
-path = "data/state.db"
-
-[harness]
-directory = "harnesses"
-fs_root = "."
-
-[providers.mock]
-type = "mock"
-base_url = "PONG"
-
-[remote]
-bind = "127.0.0.1:0"
-"#,
-            workspace_root = workspace_root.display(),
-        );
-        std::fs::write(&config_path, config_toml)?;
-
-        let endpoint = workspace_root.join(".turin/daemon.sock");
+        let config_path =
+            support::write_mock_runtime_config(&workspace_root, "FS channel integration", "PONG")?;
+        let endpoint = support::workspace_daemon_socket(&workspace_root);
         let serve_config_path = config_path.clone();
         let join =
             tokio::spawn(async move { turin::daemon::server::serve(&serve_config_path).await });
@@ -107,12 +67,10 @@ bind = "127.0.0.1:0"
             turin_daemon_client::DaemonClient::new(&self.endpoint),
             RunnerConfig {
                 channel_id: "fs".to_string(),
-                state_path: self
-                    .workspace_root
-                    .join(".turin/runtime/channels/fs-test/bindings.json"),
-                access_state_path: self
-                    .workspace_root
-                    .join(".turin/runtime/channels/fs-test/access.json"),
+                state_path: support::channel_runtime_dir(&self.workspace_root, "fs-test")
+                    .join("bindings.json"),
+                access_state_path: support::channel_runtime_dir(&self.workspace_root, "fs-test")
+                    .join("access.json"),
                 idle_ttl: Some(Duration::from_secs(600)),
                 access_policy: Default::default(),
                 tools: Default::default(),
@@ -140,7 +98,7 @@ async fn fs_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
     let runner = daemon.runner();
 
-    let channel_dir = daemon.workspace_root.join(".turin/runtime/channels/fs-test");
+    let channel_dir = support::channel_runtime_dir(&daemon.workspace_root, "fs-test");
     tokio::fs::create_dir_all(channel_dir.join("inbox")).await?;
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);

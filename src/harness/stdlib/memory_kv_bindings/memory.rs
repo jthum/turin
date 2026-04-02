@@ -7,10 +7,9 @@ use super::{
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{
     memory_feedback_request_from_opts, memory_feedback_signal_from_value,
-    memory_purge_request_from_opts, memory_search_request_from_opt,
-    memory_store_request_from_opts, metadata_json_or_empty, nil_err,
-    resolve_memory_search_request, resolve_scoped_store_selector, scoped_state_path_scope,
-    scoped_state_path_scope_for_selectors,
+    memory_purge_request_from_opts, memory_search_request_from_opt, memory_store_request_from_opts,
+    metadata_json_or_empty, nil_err, resolve_memory_search_request, resolve_scoped_store_selector,
+    scoped_state_path_scope, scoped_state_path_scope_for_selectors,
 };
 use crate::harness::stdlib::context_selectors::table_to_selector;
 

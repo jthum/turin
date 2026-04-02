@@ -476,9 +476,9 @@ mod tests {
         semantic: bool,
         hybrid: bool,
     ) -> Result<std::path::PathBuf> {
-        let index_dir = root.join(".turin");
+        let index_dir = turin_types::layout::default_layout_root_for_workspace(root);
         std::fs::create_dir_all(&index_dir)?;
-        let index_path = index_dir.join("codebase.db");
+        let index_path = turin_types::layout::default_code_index_db_for_workspace(root);
         let db = turso::Builder::new_local(index_path.to_str().unwrap())
             .experimental_index_method(true)
             .build()

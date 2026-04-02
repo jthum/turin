@@ -7,6 +7,7 @@ use std::time::Duration;
 use turin::daemon::protocol::{RequestEnvelope, ResponseEnvelope};
 use turin::kernel::config::TurinConfig;
 use turin_daemon_client::{DaemonClient, DaemonHealth, DaemonHealthState};
+use turin_types::layout::DEFAULT_LAYOUT_DAEMON_LOG_FILE;
 
 use super::{DaemonHealthReport, DaemonStartReport};
 
@@ -105,8 +106,9 @@ pub(super) fn resolve_daemon_log_path(
     let config = TurinConfig::from_file(config_path)?;
     let config_base = config_path.parent().unwrap_or_else(|| Path::new("."));
     Ok(config
-        .resolve_workspace_root(config_base)
-        .join(".turin/daemon.log"))
+        .resolved_layout(config_base)
+        .root
+        .join(DEFAULT_LAYOUT_DAEMON_LOG_FILE))
 }
 
 pub(super) fn tail_lines(path: &Path, count: usize) -> Result<Vec<String>> {

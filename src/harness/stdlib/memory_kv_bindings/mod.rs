@@ -9,9 +9,8 @@ use mlua::{Lua, Result as LuaResult, Value};
 use crate::harness::globals::{ActiveHarnessExecutionContext, HarnessAppData};
 use crate::harness::stdlib::binding_common::{
     bool_err, bridge_async_result, memory_correction_row_to_lua_value,
-    memory_feedback_state_to_lua_value, memory_purge_report_to_lua_value,
-    memory_rows_to_lua_table, memory_store_row_to_lua_value, nil_err, nil_ok, ok_bool, ok_value,
-    string_ok,
+    memory_feedback_state_to_lua_value, memory_purge_report_to_lua_value, memory_rows_to_lua_table,
+    memory_store_row_to_lua_value, nil_err, nil_ok, ok_bool, ok_value, string_ok,
 };
 use crate::harness::stdlib::scoped_data_backend::{
     MemoryFeedbackRequest, MemoryFeedbackSignal, MemoryPurgeRequest, MemorySearchRequest,

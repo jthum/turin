@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use anyhow::Result;
 use std::collections::HashMap;
 use std::fs;
@@ -6,6 +8,10 @@ use turin::kernel::Kernel;
 use turin::kernel::config::{
     AgentConfig, EmbeddingConfig, GovernanceConfig, HarnessConfig, KernelConfig, PersistenceConfig,
     ProviderConfig, TurinConfig,
+};
+use turin_types::layout::{
+    DEFAULT_BOOTSTRAP_CONFIG_PATH, DEFAULT_LAYOUT_AGENTS_DIR, DEFAULT_LAYOUT_CHANNELS_DIR,
+    DEFAULT_LAYOUT_HARNESSES_DIR, default_layout_root_for_workspace,
 };
 
 pub fn repo_path(relative: impl AsRef<Path>) -> PathBuf {
@@ -49,6 +55,94 @@ pub fn mock_provider(response: &str) -> ProviderConfig {
         base_url: Some(response.to_string()),
         ..ProviderConfig::default()
     }
+}
+
+pub fn workspace_turin_root(workspace_root: &Path) -> PathBuf {
+    default_layout_root_for_workspace(workspace_root)
+}
+
+pub fn workspace_config_path(workspace_root: &Path) -> PathBuf {
+    workspace_root.join(DEFAULT_BOOTSTRAP_CONFIG_PATH)
+}
+
+pub fn workspace_harnesses_dir(workspace_root: &Path) -> PathBuf {
+    workspace_turin_root(workspace_root).join(DEFAULT_LAYOUT_HARNESSES_DIR)
+}
+
+pub fn workspace_runtime_agents_dir(workspace_root: &Path) -> PathBuf {
+    workspace_turin_root(workspace_root).join(DEFAULT_LAYOUT_AGENTS_DIR)
+}
+
+pub fn workspace_runtime_channels_dir(workspace_root: &Path) -> PathBuf {
+    workspace_turin_root(workspace_root).join(DEFAULT_LAYOUT_CHANNELS_DIR)
+}
+
+pub fn workspace_daemon_socket(workspace_root: &Path) -> PathBuf {
+    workspace_turin_root(workspace_root).join("daemon.sock")
+}
+
+pub fn channel_runtime_dir(workspace_root: &Path, channel_id: &str) -> PathBuf {
+    workspace_runtime_channels_dir(workspace_root).join(channel_id)
+}
+
+pub fn ensure_runtime_layout_dirs(workspace_root: &Path) -> Result<()> {
+    fs::create_dir_all(workspace_harnesses_dir(workspace_root))?;
+    fs::create_dir_all(workspace_runtime_agents_dir(workspace_root))?;
+    fs::create_dir_all(workspace_runtime_channels_dir(workspace_root))?;
+    fs::create_dir_all(
+        workspace_config_path(workspace_root)
+            .parent()
+            .expect("workspace config parent"),
+    )?;
+    Ok(())
+}
+
+pub fn write_mock_runtime_config(
+    workspace_root: &Path,
+    system_prompt: &str,
+    base_url: &str,
+) -> Result<PathBuf> {
+    ensure_runtime_layout_dirs(workspace_root)?;
+    let harness_dir = workspace_harnesses_dir(workspace_root);
+    fs::write(
+        harness_dir.join("main.lua"),
+        "-- integration test harness\n",
+    )?;
+
+    let config_path = workspace_config_path(workspace_root);
+    let config_toml = format!(
+        r#"[agent]
+id = "default"
+model = "mock-model"
+provider = "mock"
+system_prompt = "{system_prompt}"
+
+[kernel]
+workspace_root = "{workspace_root}"
+max_turns = 4
+heartbeat_interval_secs = 30
+initial_spawn_depth = 0
+
+[persistence.state]
+path = "data/state.db"
+
+[harness]
+directory = "harnesses"
+fs_root = "."
+
+[providers.mock]
+type = "mock"
+base_url = "{base_url}"
+
+[remote]
+bind = "127.0.0.1:0"
+"#,
+        system_prompt = system_prompt,
+        workspace_root = workspace_root.display(),
+        base_url = base_url,
+    );
+    fs::write(&config_path, config_toml)?;
+    Ok(config_path)
 }
 
 pub fn base_config(

@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
+use turin_types::layout::DEFAULT_BOOTSTRAP_CONFIG_PATH;
 
 use turin::display;
 
@@ -65,7 +66,8 @@ pub fn run_init(args: InitArgs) -> Result<()> {
                 )
             );
             println!(
-                "  2. Replace [providers.mock] in .turin/config.toml when you are ready for a real model."
+                "  2. Replace [providers.mock] in {} when you are ready for a real model.",
+                DEFAULT_BOOTSTRAP_CONFIG_PATH
             );
         }
     }

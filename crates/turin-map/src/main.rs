@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
+use turin_types::layout::DEFAULT_BOOTSTRAP_CONFIG_PATH;
 
 use turin_code_index::code_index_reader::{CodebaseSelector, status as read_status};
 use turin_code_index::code_index_writer::{
@@ -18,7 +19,7 @@ use output::{print_build_report, print_remove_report, print_status};
 const CLI_EXAMPLES: &str = "Examples:
   turin-map index
   turin-map status
-  turin-map index --config path/to/.turin/config.toml
+  turin-map index --config path/to/config.toml
   turin-map index --embedding-provider openai --embedding-base-url http://127.0.0.1:11434/v1 --embedding-model your-small-embedding-model --embedding-dimensions 384";
 
 #[derive(Parser, Debug)]
@@ -52,7 +53,7 @@ struct RootArgs {
 
     #[arg(
         long,
-        help = "Override the index database path (defaults to <root>/.turin/codebase.db)"
+        help = "Override the index database path (defaults to the Turin code index path under the project root)"
     )]
     index_path: Option<PathBuf>,
 
@@ -70,7 +71,7 @@ struct IndexArgs {
 
     #[arg(
         long,
-        help = "Load provider and embedding defaults from a Turin config file; defaults to ./.turin/config.toml if present"
+        help = "Load provider and embedding defaults from a Turin config file; defaults to the Turin bootstrap config if present"
     )]
     config: Option<PathBuf>,
 
@@ -99,9 +100,13 @@ async fn main() -> Result<()> {
     let cwd = std::env::current_dir()?;
     match cli.command {
         Command::Index(args) => {
-            let config = load_turin_map_config(&cwd, args.config.as_deref()).with_context(
-                || "Hint: run from the Turin project root or pass --config path/to/.turin/config.toml",
-            )?;
+            let config =
+                load_turin_map_config(&cwd, args.config.as_deref()).with_context(|| {
+                    format!(
+                        "Hint: run from the Turin project root or pass --config path/to/{}",
+                        DEFAULT_BOOTSTRAP_CONFIG_PATH
+                    )
+                })?;
             let report = build_index_with_options(
                 &args.root.root,
                 args.root.index_path.as_deref(),
@@ -112,9 +117,13 @@ async fn main() -> Result<()> {
             print_build_report(args.root.json, &report)?;
         }
         Command::Rebuild(args) => {
-            let config = load_turin_map_config(&cwd, args.config.as_deref()).with_context(
-                || "Hint: run from the Turin project root or pass --config path/to/.turin/config.toml",
-            )?;
+            let config =
+                load_turin_map_config(&cwd, args.config.as_deref()).with_context(|| {
+                    format!(
+                        "Hint: run from the Turin project root or pass --config path/to/{}",
+                        DEFAULT_BOOTSTRAP_CONFIG_PATH
+                    )
+                })?;
             let report = rebuild_index_with_options(
                 &args.root.root,
                 args.root.index_path.as_deref(),

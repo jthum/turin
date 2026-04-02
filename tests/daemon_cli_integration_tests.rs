@@ -1,3 +1,5 @@
+mod support;
+
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -14,49 +16,8 @@ impl DaemonCliHarness {
     fn new() -> Result<Self> {
         let tempdir = tempfile::tempdir()?;
         let workspace_root = tempdir.path().join("workspace");
-        let harness_dir = workspace_root.join(".turin/harnesses");
-        let agents_dir = workspace_root.join(".turin/runtime/agents");
-        let channels_dir = workspace_root.join(".turin/runtime/channels");
-        let config_path = workspace_root.join(".turin/config.toml");
-
-        std::fs::create_dir_all(&harness_dir)?;
-        std::fs::create_dir_all(&agents_dir)?;
-        std::fs::create_dir_all(&channels_dir)?;
-        std::fs::write(
-            harness_dir.join("main.lua"),
-            "-- daemon cli integration harness\n",
-        )?;
-
-        let config_toml = format!(
-            r#"[agent]
-id = "default"
-model = "mock-model"
-provider = "mock"
-system_prompt = "Daemon CLI integration"
-
-[kernel]
-workspace_root = "{workspace_root}"
-max_turns = 4
-heartbeat_interval_secs = 30
-initial_spawn_depth = 0
-
-[persistence.state]
-path = "data/state.db"
-
-[harness]
-directory = "harnesses"
-fs_root = "."
-
-[providers.mock]
-type = "mock"
-base_url = "PONG"
-
-[remote]
-bind = "127.0.0.1:0"
-"#,
-            workspace_root = workspace_root.display(),
-        );
-        std::fs::write(&config_path, config_toml)?;
+        let config_path =
+            support::write_mock_runtime_config(&workspace_root, "Daemon CLI integration", "PONG")?;
 
         Ok(Self {
             _tempdir: tempdir,

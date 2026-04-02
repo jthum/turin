@@ -2,6 +2,7 @@ use anyhow::Result;
 use turin_code_index::code_index_reader::CodeIndexStatus;
 use turin_code_index::code_index_writer::{CodeIndexBuildReport, CodeIndexRemoveReport};
 use turin_code_index::metadata::CodeIndexSemanticStatus;
+use turin_types::layout::DEFAULT_BOOTSTRAP_CONFIG_PATH;
 
 pub(crate) fn print_build_report(json: bool, report: &CodeIndexBuildReport) -> Result<()> {
     if json {
@@ -27,7 +28,8 @@ pub(crate) fn print_build_report(json: bool, report: &CodeIndexBuildReport) -> R
         println!("Updated: {}", report.updated_at);
         if report.semantic.embedded_chunks == 0 {
             println!(
-                "Hint: add [providers.local_embeddings] plus [embeddings] to .turin/config.toml, rerun `turin-map index`, then confirm `turin-map status` shows `Semantic: enabled`."
+                "Hint: add [providers.local_embeddings] plus [embeddings] to {}, rerun `turin-map index`, then confirm `turin-map status` shows `Semantic: enabled`.",
+                DEFAULT_BOOTSTRAP_CONFIG_PATH
             );
         }
         Ok(())
@@ -69,7 +71,8 @@ pub(crate) fn print_status(json: bool, status: &CodeIndexStatus) -> Result<()> {
         println!("Age: {}s", status.index_age_seconds);
         if status.semantic.embedded_chunks == 0 {
             println!(
-                "Hint: add [providers.local_embeddings] plus [embeddings] to .turin/config.toml, rerun `turin-map index`, then confirm this command shows `Semantic: enabled`."
+                "Hint: add [providers.local_embeddings] plus [embeddings] to {}, rerun `turin-map index`, then confirm this command shows `Semantic: enabled`.",
+                DEFAULT_BOOTSTRAP_CONFIG_PATH
             );
         }
         Ok(())

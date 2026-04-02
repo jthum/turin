@@ -44,16 +44,22 @@ fn rescan_filter_ignores_harness_script_edits_but_tracks_registry_changes() {
     ));
     assert!(should_rescan_daemon(
         &watch_paths,
-        &[PathBuf::from("/tmp/turin/.turin/channels/discord/config.toml")]
+        &[PathBuf::from(
+            "/tmp/turin/.turin/channels/discord/config.toml"
+        )]
     ));
 
     assert!(!should_rescan_daemon(
         &watch_paths,
-        &[PathBuf::from("/tmp/turin/.turin/agents/docs/harness/main.lua")]
+        &[PathBuf::from(
+            "/tmp/turin/.turin/agents/docs/harness/main.lua"
+        )]
     ));
     assert!(!should_rescan_daemon(
         &watch_paths,
-        &[PathBuf::from("/tmp/turin/.turin/harnesses/reviewer/main.lua")]
+        &[PathBuf::from(
+            "/tmp/turin/.turin/harnesses/reviewer/main.lua"
+        )]
     ));
 }
 

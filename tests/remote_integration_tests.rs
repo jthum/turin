@@ -1,3 +1,5 @@
+mod support;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,52 +29,9 @@ impl DaemonHarness {
     async fn start() -> Result<Self> {
         let tempdir = Arc::new(tempfile::tempdir()?);
         let workspace_root = tempdir.path().join("workspace");
-        let harness_dir = workspace_root.join(".turin/harnesses");
-        let agents_dir = workspace_root.join(".turin/runtime/agents");
-        let channels_dir = workspace_root.join(".turin/runtime/channels");
-
-        std::fs::create_dir_all(&harness_dir)?;
-        std::fs::create_dir_all(&agents_dir)?;
-        std::fs::create_dir_all(&channels_dir)?;
-        std::fs::write(
-            harness_dir.join("main.lua"),
-            "-- remote integration harness\n",
-        )?;
-
-        let config_path = workspace_root.join(".turin/config.toml");
-        std::fs::create_dir_all(config_path.parent().expect("config parent"))?;
-        let config_toml = format!(
-            r#"[agent]
-id = "default"
-model = "mock-model"
-provider = "mock"
-system_prompt = "Remote integration"
-
-[kernel]
-workspace_root = "{workspace_root}"
-max_turns = 4
-heartbeat_interval_secs = 30
-initial_spawn_depth = 0
-
-[persistence.state]
-path = "data/state.db"
-
-[harness]
-directory = "harnesses"
-fs_root = "."
-
-[providers.mock]
-type = "mock"
-base_url = "PONG"
-
-[remote]
-bind = "127.0.0.1:0"
-"#,
-            workspace_root = workspace_root.display(),
-        );
-        std::fs::write(&config_path, config_toml)?;
-
-        let endpoint = workspace_root.join(".turin/daemon.sock");
+        let config_path =
+            support::write_mock_runtime_config(&workspace_root, "Remote integration", "PONG")?;
+        let endpoint = support::workspace_daemon_socket(&workspace_root);
         let serve_config_path = config_path.clone();
         let join =
             tokio::spawn(async move { turin::daemon::server::serve(&serve_config_path).await });

@@ -108,7 +108,7 @@ pub(crate) enum Commands {
         /// Governance preset for the generated config
         #[arg(long, value_enum)]
         governance: Option<GovernancePreset>,
-        /// Overwrite an existing .turin/config.toml / starter harness files
+        /// Overwrite an existing Turin config / starter harness files
         #[arg(long)]
         force: bool,
         /// Skip prompts and accept defaults
@@ -136,7 +136,7 @@ pub(crate) enum Commands {
         /// Governance preset when scaffolding a new project
         #[arg(long, value_enum)]
         governance: Option<GovernancePreset>,
-        /// Overwrite an existing .turin/config.toml / starter harness files when scaffolding
+        /// Overwrite an existing Turin config / starter harness files when scaffolding
         #[arg(long)]
         force: bool,
         /// Skip prompts and accept defaults when scaffolding

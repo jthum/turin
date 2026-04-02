@@ -11,6 +11,8 @@ pub const DEFAULT_LAYOUT_CHANNELS_DIR: &str = "runtime/channels";
 pub const DEFAULT_LAYOUT_SCOPES_DIR: &str = "scopes";
 pub const DEFAULT_LAYOUT_ENV_FILE: &str = ".env";
 pub const DEFAULT_LAYOUT_DAEMON_SOCKET: &str = "daemon.sock";
+pub const DEFAULT_LAYOUT_DAEMON_LOG_FILE: &str = "daemon.log";
+pub const DEFAULT_CODE_INDEX_DB_FILE: &str = "codebase.db";
 pub const DEFAULT_UI_PROFILES_PATH: &str = ".turin/ui-profiles.toml";
 pub const DEFAULT_BOOTSTRAP_DAEMON_ENDPOINT_PATH: &str = ".turin/daemon.sock";
 
@@ -54,4 +56,12 @@ pub fn default_stores_dir_for_workspace(workspace_root: &Path) -> PathBuf {
 
 pub fn default_state_db_for_workspace(workspace_root: &Path) -> PathBuf {
     default_data_dir_for_workspace(workspace_root).join("state.db")
+}
+
+pub fn default_daemon_log_for_workspace(workspace_root: &Path) -> PathBuf {
+    default_layout_root_for_workspace(workspace_root).join(DEFAULT_LAYOUT_DAEMON_LOG_FILE)
+}
+
+pub fn default_code_index_db_for_workspace(workspace_root: &Path) -> PathBuf {
+    default_layout_root_for_workspace(workspace_root).join(DEFAULT_CODE_INDEX_DB_FILE)
 }

@@ -3,6 +3,7 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use turin_types::layout::default_code_index_db_for_workspace;
 
 use crate::embeddings::CodeEmbeddingProvider;
 use crate::metadata::CodeIndexSemanticStatus;
@@ -269,7 +270,7 @@ fn resolve_index_path(root: &Path, index_path: Option<&Path>) -> Result<PathBuf>
     Ok(match index_path {
         Some(path) if path.is_absolute() => path.to_path_buf(),
         Some(path) => root.join(path),
-        None => root.join(".turin").join("codebase.db"),
+        None => default_code_index_db_for_workspace(root),
     })
 }
 

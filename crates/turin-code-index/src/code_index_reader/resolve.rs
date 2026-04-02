@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, anyhow, bail};
 use std::path::{Path, PathBuf};
+use turin_types::layout::default_code_index_db_for_workspace;
 use turso::Connection;
 
 use crate::metadata::{CodeIndexSemanticStatus, CodeIndexVectorFormat};
@@ -121,7 +122,7 @@ fn resolve_codebase(workspace_root: &Path, selector: CodebaseSelector) -> Result
                 root.join(candidate)
             }
         }
-        None => root.join(".turin").join("codebase.db"),
+        None => default_code_index_db_for_workspace(&root),
     };
 
     let index_path = std::fs::canonicalize(&index_path)

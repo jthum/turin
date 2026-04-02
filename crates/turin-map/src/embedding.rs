@@ -26,7 +26,7 @@ pub(crate) struct EmbeddingArgs {
     #[arg(
         long,
         value_enum,
-        help = "Override the embedding driver for this run instead of using [embeddings] from .turin/config.toml"
+        help = "Override the embedding driver for this run instead of using [embeddings] from the Turin config file"
     )]
     pub embedding_provider: Option<EmbeddingProviderKind>,
 

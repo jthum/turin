@@ -21,13 +21,13 @@ mod loader;
 #[cfg(test)]
 mod tests;
 
-use loader::{
-    active_module_names, clear_active_modules, explicit_watch_roots, format_lua_error,
-    set_loading_phase,
-};
 pub(crate) use loader::{
     ModuleLoadOptions, is_loading_phase, load_module_from_source,
     lookup_loaded_module_by_canonical_path, register_watch_root, resolve_governance_root_name,
+};
+use loader::{
+    active_module_names, clear_active_modules, explicit_watch_roots, format_lua_error,
+    set_loading_phase,
 };
 
 /// The harness engine manages script loading and hook evaluation.
