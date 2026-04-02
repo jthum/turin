@@ -506,8 +506,6 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
     );
     assert_eq!(waited["status"], "success");
 
-    wait_for_persisted_user_messages(&daemon, &session_id, 1).await?;
-
     let daemon = daemon.restart().await?;
 
     let resumed = result_value(
