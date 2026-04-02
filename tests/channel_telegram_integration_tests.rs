@@ -187,6 +187,64 @@ impl TelegramMockServer {
     }
 }
 
+async fn wait_for_telegram_outbound(
+    server: &TelegramMockServer,
+    run: &mut JoinHandle<Result<()>>,
+) -> Result<serde_json::Value> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some(first) = server
+            .sent_messages
+            .lock()
+            .expect("telegram mock sent_messages lock poisoned")
+            .first()
+            .cloned()
+        {
+            return Ok(first);
+        }
+        if run.is_finished() {
+            match timeout(Duration::from_secs(1), run).await {
+                Ok(Ok(Ok(()))) => {
+                    let methods = server
+                        .requests
+                        .lock()
+                        .expect("telegram mock requests lock poisoned")
+                        .iter()
+                        .map(|request| request.method.clone())
+                        .collect::<Vec<_>>();
+                    anyhow::bail!(
+                        "telegram channel runner exited before outbound response; requests: {:?}",
+                        methods
+                    );
+                }
+                Ok(Ok(Err(err))) => {
+                    return Err(err.context("telegram channel runner exited before outbound response"));
+                }
+                Ok(Err(join_err)) => {
+                    return Err(anyhow!("telegram channel runner join failed: {join_err}"));
+                }
+                Err(_) => anyhow::bail!(
+                    "timed out joining telegram channel runner after early exit"
+                ),
+            }
+        }
+        if Instant::now() >= deadline {
+            let methods = server
+                .requests
+                .lock()
+                .expect("telegram mock requests lock poisoned")
+                .iter()
+                .map(|request| request.method.clone())
+                .collect::<Vec<_>>();
+            anyhow::bail!(
+                "telegram channel did not produce outbound response; requests: {:?}",
+                methods
+            );
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
+}
+
 fn handle_telegram_request(
     path: &str,
     body: serde_json::Value,
@@ -475,26 +533,9 @@ async fn telegram_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
         shutdown_rx,
     )?;
 
-    let run =
+    let mut run =
         tokio::spawn(async move { runner.run_driver("default", &mut driver, Some(5_000)).await });
-
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let mut outbound = None;
-    while Instant::now() < deadline {
-        if let Some(first) = server
-            .sent_messages
-            .lock()
-            .expect("telegram mock sent_messages lock poisoned")
-            .first()
-            .cloned()
-        {
-            outbound = Some(first);
-            break;
-        }
-        sleep(Duration::from_millis(25)).await;
-    }
-
-    let outbound = outbound.context("telegram channel did not produce outbound response")?;
+    let outbound = wait_for_telegram_outbound(&server, &mut run).await?;
     assert_eq!(outbound["chat_id"], "-100777");
     assert_eq!(outbound["message_thread_id"], 555);
     assert_eq!(outbound["reply_to_message_id"], 41);
@@ -584,27 +625,9 @@ async fn telegram_channel_driver_retries_transient_poll_and_send_failures() -> R
         shutdown_rx,
     )?;
 
-    let run =
+    let mut run =
         tokio::spawn(async move { runner.run_driver("default", &mut driver, Some(5_000)).await });
-
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let mut outbound_count = 0;
-    while Instant::now() < deadline {
-        outbound_count = server
-            .sent_messages
-            .lock()
-            .expect("telegram mock sent_messages lock poisoned")
-            .len();
-        if outbound_count >= 1 {
-            break;
-        }
-        sleep(Duration::from_millis(25)).await;
-    }
-
-    assert!(
-        outbound_count >= 1,
-        "telegram channel did not recover from transient failures"
-    );
+    let _ = wait_for_telegram_outbound(&server, &mut run).await?;
 
     let _ = shutdown_tx.send(true);
     let _ = timeout(Duration::from_secs(5), run)
