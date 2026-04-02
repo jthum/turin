@@ -1650,19 +1650,14 @@ impl ChannelDriver for RocketChatChannelDriver {
         ));
 
         for (index, chunk) in chunks.into_iter().enumerate() {
-            let rendered_chunk = if index == 0
-                && matches!(self.config.reply_mode, RocketChatReplyMode::Channel)
-            {
-                prepend_channel_reply_quote(&chunk, &message)
-            } else {
-                chunk
-            };
-            let payload = build_rocketchat_send_payload(
-                room_id,
-                &rendered_chunk,
-                reply_target,
-                &[],
-            );
+            let rendered_chunk =
+                if index == 0 && matches!(self.config.reply_mode, RocketChatReplyMode::Channel) {
+                    prepend_channel_reply_quote(&chunk, &message)
+                } else {
+                    chunk
+                };
+            let payload =
+                build_rocketchat_send_payload(room_id, &rendered_chunk, reply_target, &[]);
             if let Some(thread_id) = reply_target.thread_id
                 && index == 0
             {
