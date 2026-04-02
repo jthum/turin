@@ -18,6 +18,32 @@ These should be your default validation loop.
 Prefer `cargo check` plus targeted tests during normal iteration.
 Reserve `cargo build --release` for checkpointing binary size or release-quality sanity.
 
+### 1.5. CI-sensitive stress loop (manual / targeted)
+
+Some integration regressions are timing-sensitive and show up on slower or more
+contended runners before they show up locally. Use the local stress runner when
+touching branching persistence, daemon restart behavior, or daemon-owned
+Telegram channel flows:
+
+```bash
+scripts/ci_stress.sh --repeat 30
+```
+
+Target only the known-sensitive cases if you want a faster pass:
+
+```bash
+scripts/ci_stress.sh --tests daemon-restart,telegram-roundtrip
+```
+
+Supported stress targets:
+
+- `daemon-restart`
+- `telegram-roundtrip`
+- `telegram-streaming`
+
+The script runs each selected test in a loop and preserves the failing
+iteration's log on first error.
+
 ### 2. Live endpoint validation (manual / opt-in)
 
 - `scripts/live_minimax_smoke.sh`
