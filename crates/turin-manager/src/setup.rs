@@ -16,8 +16,9 @@ use turin_channel_core::{
 use turin_control_client::{ConnectionSpec, ControlClient};
 
 use crate::files::{
-    ConfiguredChannel, PlannedWrite, config_dir, confirm_and_write, load_configured_channels,
-    load_existing, merge_env_file, render_channel_file, resolve_channels_dir,
+    ConfiguredChannel, PlannedWrite, config_dir, confirm_and_write,
+    default_workspace_root_for_missing_config, load_configured_channels, load_existing,
+    merge_env_file, render_channel_file, resolve_channels_dir,
 };
 use crate::runner::{
     describe_external_runner, discover_external_runner_kinds, poll_external_auth_flow,
@@ -179,7 +180,8 @@ pub(crate) async fn run_init(args: InitArgs) -> Result<()> {
     };
 
     let config_body = generate_turin_config(provider, &model, &system_prompt)?;
-    let harness_path = config_dir(&config_path).join(".turin/harnesses/main.lua");
+    let harness_path =
+        default_workspace_root_for_missing_config(&config_path).join(".turin/harnesses/main.lua");
     let mut plans = vec![
         PlannedWrite::new(config_path.clone(), config_body),
         PlannedWrite::new(harness_path, starter_harness().to_string()),
@@ -492,7 +494,7 @@ pub(crate) async fn run_configure_channel(args: ConfigureChannelArgs) -> Result<
 
     let channel_path = resolve_channels_dir(&config_path)?
         .join(&channel_id)
-        .join("channel.toml");
+        .join("config.toml");
     let existing_channel = load_existing(&channel_path)?;
     let channel_body = render_channel_file(
         existing_channel.as_deref(),
@@ -506,7 +508,7 @@ pub(crate) async fn run_configure_channel(args: ConfigureChannelArgs) -> Result<
     let mut secrets_written = false;
     if !env_updates.is_empty()
         && Confirm::new()
-            .with_prompt("Write generated secrets and env vars to .env next to turin.toml?")
+            .with_prompt("Write generated secrets and env vars to .env next to the Turin config?")
             .default(true)
             .interact()?
     {
@@ -867,7 +869,7 @@ fn generate_turin_config(
         providers,
     };
 
-    toml::to_string_pretty(&config).context("Failed to render turin.toml")
+    toml::to_string_pretty(&config).context("Failed to render Turin config")
 }
 
 fn starter_harness() -> &'static str {

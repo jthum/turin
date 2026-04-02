@@ -70,7 +70,7 @@ fn init_scaffolds_project_and_gitignore() -> Result<()> {
         "open",
     ])?;
 
-    assert!(harness.root().join("turin.toml").exists());
+    assert!(harness.root().join(".turin/config.toml").exists());
     assert!(harness.root().join(".turin/harnesses/main.lua").exists());
     assert!(harness.root().join(".turin/state.db").exists());
 
@@ -86,7 +86,7 @@ fn quickstart_creates_project_and_runs_prompt() -> Result<()> {
     let output =
         harness.successful_output(&["quickstart", "--yes", "--prompt", "Say QUICKSTART_OK"])?;
 
-    assert!(harness.root().join("turin.toml").exists());
+    assert!(harness.root().join(".turin/config.toml").exists());
     assert!(
         harness
             .root()

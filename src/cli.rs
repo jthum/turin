@@ -27,8 +27,8 @@ pub(crate) enum Commands {
         #[arg(long)]
         prompt: String,
 
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
+        /// Path to Turin config file
+        #[arg(long, default_value = ".turin/config.toml")]
         config: PathBuf,
 
         /// Override the model from config
@@ -54,8 +54,8 @@ pub(crate) enum Commands {
 
     /// Start an interactive REPL session
     Repl {
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
+        /// Path to Turin config file
+        #[arg(long, default_value = ".turin/config.toml")]
         config: PathBuf,
 
         /// Override the model from config
@@ -80,8 +80,8 @@ pub(crate) enum Commands {
         /// Path to the Lua script to run
         path: PathBuf,
 
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
+        /// Path to Turin config file
+        #[arg(long, default_value = ".turin/config.toml")]
         config: PathBuf,
 
         /// Override the model from config
@@ -107,7 +107,7 @@ pub(crate) enum Commands {
         /// Governance preset for the generated config
         #[arg(long, value_enum)]
         governance: Option<GovernancePreset>,
-        /// Overwrite an existing turin.toml / starter harness files
+        /// Overwrite an existing .turin/config.toml / starter harness files
         #[arg(long)]
         force: bool,
         /// Skip prompts and accept defaults
@@ -117,8 +117,8 @@ pub(crate) enum Commands {
 
     /// Initialize a Turin project if needed and run a first prompt immediately
     Quickstart {
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
+        /// Path to Turin config file
+        #[arg(long, default_value = ".turin/config.toml")]
         config: PathBuf,
         /// Prompt to run after scaffolding or loading config
         #[arg(long)]
@@ -135,7 +135,7 @@ pub(crate) enum Commands {
         /// Governance preset when scaffolding a new project
         #[arg(long, value_enum)]
         governance: Option<GovernancePreset>,
-        /// Overwrite an existing turin.toml / starter harness files when scaffolding
+        /// Overwrite an existing .turin/config.toml / starter harness files when scaffolding
         #[arg(long)]
         force: bool,
         /// Skip prompts and accept defaults when scaffolding
@@ -145,8 +145,8 @@ pub(crate) enum Commands {
 
     /// Validate configuration and harness scripts
     Check {
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
+        /// Path to Turin config file
+        #[arg(long, default_value = ".turin/config.toml")]
         config: std::path::PathBuf,
     },
 
@@ -268,8 +268,8 @@ pub(crate) enum HarnessCommands {
     },
     /// Run the configured harness against the mock provider
     Test {
-        /// Path to turin.toml config file
-        #[arg(long, default_value = "turin.toml")]
+        /// Path to Turin config file
+        #[arg(long, default_value = ".turin/config.toml")]
         config: PathBuf,
         /// Override the harness directory just for this test run
         #[arg(long)]
@@ -747,8 +747,8 @@ pub(crate) enum DaemonSessionCommands {
 
 #[derive(Args, Debug, Clone)]
 pub(crate) struct DaemonConfigArgs {
-    /// Path to turin.toml config file
-    #[arg(long, default_value = "turin.toml")]
+    /// Path to Turin config file
+    #[arg(long, default_value = ".turin/config.toml")]
     pub(crate) config: PathBuf,
 }
 

@@ -36,8 +36,8 @@ impl DaemonHarness {
     async fn start_in(tempdir: std::sync::Arc<TempDir>) -> Result<Self> {
         let workspace_root = tempdir.path().join("workspace");
         let harness_dir = workspace_root.join(".turin/harnesses");
-        let agents_dir = workspace_root.join("agents");
-        let harnesses_dir = workspace_root.join("harnesses");
+        let agents_dir = workspace_root.join(".turin/agents");
+        let harnesses_dir = workspace_root.join(".turin/harnesses");
 
         std::fs::create_dir_all(&harness_dir)?;
         std::fs::create_dir_all(&agents_dir)?;
@@ -47,7 +47,8 @@ impl DaemonHarness {
             "-- daemon integration harness\n",
         )?;
 
-        let config_path = tempdir.path().join("turin.toml");
+        let config_path = tempdir.path().join(".turin/config.toml");
+        std::fs::create_dir_all(config_path.parent().expect("config parent"))?;
         let config_toml = format!(
             r#"[agent]
 id = "default"
@@ -499,6 +500,33 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
             .await?,
     );
     assert_eq!(waited["status"], "success");
+
+    let persistence_deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let detail = result_value(
+            daemon
+                .request(DaemonRequest::SessionGet(
+                    turin::daemon::protocol::SessionIdParams {
+                        session_id: session_id.clone(),
+                    },
+                ))
+                .await?,
+        );
+        let messages = detail["messages"]
+            .as_array()
+            .context("session detail should include messages")?;
+        let persisted_user_count = messages
+            .iter()
+            .filter(|message| message["role"] == "user")
+            .count();
+        if persisted_user_count >= 1 {
+            break;
+        }
+        if Instant::now() >= persistence_deadline {
+            anyhow::bail!("Timed out waiting for initial session messages to persist");
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
 
     let daemon = daemon.restart().await?;
 
@@ -1010,10 +1038,13 @@ async fn daemon_event_subscription_receives_channel_runtime_events() -> Result<(
 #[tokio::test(flavor = "multi_thread")]
 async fn daemon_channel_registry_round_trip_over_endpoint() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
-    let channels_dir = daemon.tempdir.path().join("workspace/channels/discord");
+    let channels_dir = daemon
+        .tempdir
+        .path()
+        .join("workspace/.turin/channels/discord");
     std::fs::create_dir_all(&channels_dir)?;
     std::fs::write(
-        channels_dir.join("channel.toml"),
+        channels_dir.join("config.toml"),
         r#"
 kind = "discord"
 agent_id = "default"
@@ -1143,7 +1174,7 @@ async fn daemon_channel_management_round_trip_over_endpoint() -> Result<()> {
         !daemon
             .tempdir
             .path()
-            .join("workspace/channels/discord")
+            .join("workspace/.turin/channels/discord")
             .exists()
     );
 
@@ -1240,7 +1271,10 @@ async fn daemon_fs_channel_runtime_processes_inbox_and_reports_runtime_status() 
             .any(|entry| entry["id"] == "fs-local" && entry["state"] == "running")
     );
 
-    let channel_dir = daemon.tempdir.path().join("workspace/channels/fs-local");
+    let channel_dir = daemon
+        .tempdir
+        .path()
+        .join("workspace/.turin/channels/fs-local");
     tokio::fs::create_dir_all(channel_dir.join("inbox")).await?;
     let inbound = serde_json::json!({
         "conversation": {
@@ -1316,15 +1350,15 @@ async fn daemon_fs_channel_runtime_processes_inbox_and_reports_runtime_status() 
 async fn daemon_session_open_uses_channel_owned_state_path() -> Result<()> {
     let tempdir = std::sync::Arc::new(tempfile::tempdir()?);
     let workspace_root = tempdir.path().join("workspace");
-    let channel_dir = workspace_root.join("channels/fs-isolated");
+    let channel_dir = workspace_root.join(".turin/channels/fs-isolated");
     std::fs::create_dir_all(&channel_dir)?;
     std::fs::write(
-        channel_dir.join("channel.toml"),
+        channel_dir.join("config.toml"),
         r#"kind = "fs"
 agent_id = "default"
 
 [persistence.state]
-path = "channels/fs-isolated/state.db"
+path = ".turin/channels/fs-isolated/state.db"
 
 inbox_dir = "inbox"
 outbox_dir = "outbox"
@@ -1352,7 +1386,7 @@ poll_interval_ms = 25
         .context("session.open should return session_id")?
         .to_string();
     assert!(
-        session_id.contains("@channels/fs-isolated/state.db"),
+        session_id.contains("@.turin/channels/fs-isolated/state.db"),
         "session id should be qualified with the channel-owned store path: {session_id}"
     );
 
@@ -1370,7 +1404,7 @@ poll_interval_ms = 25
 
     let channel_store = StateStore::open(
         &workspace_root
-            .join("channels/fs-isolated/state.db")
+            .join(".turin/channels/fs-isolated/state.db")
             .to_string_lossy(),
     )
     .await?;

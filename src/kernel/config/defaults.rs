@@ -41,15 +41,15 @@ pub(super) fn default_embedding_dimensions() -> usize {
 }
 
 pub(super) fn default_daemon_agents_dir() -> String {
-    "agents".to_string()
+    ".turin/agents".to_string()
 }
 
 pub(super) fn default_daemon_harnesses_dir() -> String {
-    "harnesses".to_string()
+    ".turin/harnesses".to_string()
 }
 
 pub(super) fn default_daemon_channels_dir() -> String {
-    "channels".to_string()
+    ".turin/channels".to_string()
 }
 
 pub(super) fn default_daemon_endpoint() -> String {

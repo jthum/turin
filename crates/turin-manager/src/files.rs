@@ -43,22 +43,57 @@ pub(crate) fn config_dir(config_path: &Path) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+fn config_workspace_anchor(base: &Path) -> PathBuf {
+    if base.file_name().and_then(|name| name.to_str()) == Some(".turin") {
+        return base.parent().unwrap_or(base).to_path_buf();
+    }
+    base.to_path_buf()
+}
+
+pub(crate) fn default_workspace_root_for_missing_config(config_path: &Path) -> PathBuf {
+    config_workspace_anchor(&config_dir(config_path))
+}
+
+fn resolve_workspace_root(base: &Path, workspace_root: &str) -> PathBuf {
+    let path = Path::new(workspace_root);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        config_workspace_anchor(base).join(path)
+    }
+}
+
+fn resolve_under_workspace(workspace_root: &Path, value: &str) -> PathBuf {
+    let path = Path::new(value);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        workspace_root.join(path)
+    }
+}
+
 pub(crate) fn resolve_channels_dir(config_path: &Path) -> Result<PathBuf> {
     let base = config_dir(config_path);
     if !config_path.is_file() {
-        return Ok(base.join("channels"));
+        return Ok(default_workspace_root_for_missing_config(config_path).join(".turin/channels"));
     }
 
     let raw = std::fs::read_to_string(config_path)
         .with_context(|| format!("Failed to read '{}'", config_path.display()))?;
     let parsed: toml::Value = toml::from_str(&raw)
         .with_context(|| format!("Failed to parse '{}'", config_path.display()))?;
+    let workspace_root = parsed
+        .get("kernel")
+        .and_then(|value| value.get("workspace_root"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or(".");
+    let workspace_root = resolve_workspace_root(&base, workspace_root);
     let channels_dir = parsed
         .get("daemon")
         .and_then(|value| value.get("channels_dir"))
         .and_then(toml::Value::as_str)
-        .unwrap_or("channels");
-    Ok(base.join(channels_dir))
+        .unwrap_or(".turin/channels");
+    Ok(resolve_under_workspace(&workspace_root, channels_dir))
 }
 
 pub(crate) fn load_existing(path: &Path) -> Result<Option<String>> {
@@ -87,7 +122,7 @@ pub(crate) fn load_configured_channels(config_path: &Path) -> Result<Vec<Configu
         }
 
         let channel_id = entry.file_name().to_string_lossy().to_string();
-        let channel_path = entry_path.join("channel.toml");
+        let channel_path = entry_path.join("config.toml");
         if !channel_path.is_file() {
             continue;
         }
@@ -263,7 +298,7 @@ pub(crate) fn render_channel_file(
 ) -> Result<String> {
     let mut doc = if let Some(existing) = existing {
         existing.parse::<DocumentMut>().with_context(
-            || "Failed to parse existing channel.toml while staging updated channel settings",
+            || "Failed to parse existing channel config while staging updated channel settings",
         )?
     } else {
         DocumentMut::new()
@@ -338,13 +373,17 @@ mod tests {
     #[test]
     fn load_configured_channels_reads_channel_directories() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let config_path = temp.path().join("turin.toml");
-        std::fs::write(&config_path, "[daemon]\nchannels_dir = \"channels\"\n")
+        let config_path = temp.path().join(".turin/config.toml");
+        std::fs::create_dir_all(config_path.parent().expect("config parent")).expect("config dir");
+        std::fs::write(
+            &config_path,
+            "[kernel]\nworkspace_root = \".\"\n\n[daemon]\nchannels_dir = \".turin/channels\"\n",
+        )
             .expect("config written");
-        let channel_dir = temp.path().join("channels/telegram");
+        let channel_dir = temp.path().join(".turin/channels/telegram");
         std::fs::create_dir_all(&channel_dir).expect("channel dir");
         std::fs::write(
-            channel_dir.join("channel.toml"),
+            channel_dir.join("config.toml"),
             "enabled = true\nkind = \"telegram\"\nagent_id = \"default\"\n",
         )
         .expect("channel file");

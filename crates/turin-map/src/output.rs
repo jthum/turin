@@ -27,7 +27,7 @@ pub(crate) fn print_build_report(json: bool, report: &CodeIndexBuildReport) -> R
         println!("Updated: {}", report.updated_at);
         if report.semantic.embedded_chunks == 0 {
             println!(
-                "Hint: add [providers.local_embeddings] plus [embeddings] to turin.toml, rerun `turin-map index`, then confirm `turin-map status` shows `Semantic: enabled`."
+                "Hint: add [providers.local_embeddings] plus [embeddings] to .turin/config.toml, rerun `turin-map index`, then confirm `turin-map status` shows `Semantic: enabled`."
             );
         }
         Ok(())
@@ -69,7 +69,7 @@ pub(crate) fn print_status(json: bool, status: &CodeIndexStatus) -> Result<()> {
         println!("Age: {}s", status.index_age_seconds);
         if status.semantic.embedded_chunks == 0 {
             println!(
-                "Hint: add [providers.local_embeddings] plus [embeddings] to turin.toml, rerun `turin-map index`, then confirm this command shows `Semantic: enabled`."
+                "Hint: add [providers.local_embeddings] plus [embeddings] to .turin/config.toml, rerun `turin-map index`, then confirm this command shows `Semantic: enabled`."
             );
         }
         Ok(())

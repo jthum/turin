@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-const DEFAULT_CONFIG_FILE: &str = "turin.toml";
+const DEFAULT_CONFIG_FILE: &str = ".turin/config.toml";
 
 #[derive(Debug, Clone)]
 pub(crate) struct LoadedTurinMapConfig {

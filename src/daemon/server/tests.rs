@@ -12,61 +12,61 @@ use super::watch::should_rescan_daemon;
 #[test]
 fn rescan_filter_ignores_harness_script_edits_but_tracks_registry_changes() {
     let watch_paths = DaemonWatchPaths {
-        config_path: PathBuf::from("/tmp/turin/turin.toml"),
-        agents_dir: PathBuf::from("/tmp/turin/agents"),
-        harnesses_dir: PathBuf::from("/tmp/turin/harnesses"),
-        channels_dir: PathBuf::from("/tmp/turin/channels"),
+        config_path: PathBuf::from("/tmp/turin/.turin/config.toml"),
+        agents_dir: PathBuf::from("/tmp/turin/.turin/agents"),
+        harnesses_dir: PathBuf::from("/tmp/turin/.turin/harnesses"),
+        channels_dir: PathBuf::from("/tmp/turin/.turin/channels"),
     };
 
     assert!(should_rescan_daemon(
         &watch_paths,
-        &[PathBuf::from("/tmp/turin/turin.toml")]
+        &[PathBuf::from("/tmp/turin/.turin/config.toml")]
     ));
     assert!(should_rescan_daemon(
         &watch_paths,
-        &[PathBuf::from("/tmp/turin/agents/docs/agent.toml")]
+        &[PathBuf::from("/tmp/turin/.turin/agents/docs/config.toml")]
     ));
     assert!(should_rescan_daemon(
         &watch_paths,
-        &[PathBuf::from("/tmp/turin/agents/docs")]
+        &[PathBuf::from("/tmp/turin/.turin/agents/docs")]
     ));
     assert!(should_rescan_daemon(
         &watch_paths,
-        &[PathBuf::from("/tmp/turin/agents/docs/harness")]
+        &[PathBuf::from("/tmp/turin/.turin/agents/docs/harness")]
     ));
     assert!(should_rescan_daemon(
         &watch_paths,
-        &[PathBuf::from("/tmp/turin/harnesses/reviewer")]
+        &[PathBuf::from("/tmp/turin/.turin/harnesses/reviewer")]
     ));
     assert!(should_rescan_daemon(
         &watch_paths,
-        &[PathBuf::from("/tmp/turin/channels/discord")]
+        &[PathBuf::from("/tmp/turin/.turin/channels/discord")]
     ));
     assert!(should_rescan_daemon(
         &watch_paths,
-        &[PathBuf::from("/tmp/turin/channels/discord/channel.toml")]
+        &[PathBuf::from("/tmp/turin/.turin/channels/discord/config.toml")]
     ));
 
     assert!(!should_rescan_daemon(
         &watch_paths,
-        &[PathBuf::from("/tmp/turin/agents/docs/harness/main.lua")]
+        &[PathBuf::from("/tmp/turin/.turin/agents/docs/harness/main.lua")]
     ));
     assert!(!should_rescan_daemon(
         &watch_paths,
-        &[PathBuf::from("/tmp/turin/harnesses/reviewer/main.lua")]
+        &[PathBuf::from("/tmp/turin/.turin/harnesses/reviewer/main.lua")]
     ));
 }
 
 #[test]
 fn classify_registry_issue_recognizes_agent_and_harness_paths() {
     let status = DaemonStatus {
-        config_path: "turin.toml".to_string(),
+        config_path: ".turin/config.toml".to_string(),
         workspace_root: ".".to_string(),
         endpoint: ".turin/daemon.sock".to_string(),
         registry: RegistrySnapshot {
-            agents_dir: "/tmp/work/agents".to_string(),
-            harnesses_dir: "/tmp/work/harnesses".to_string(),
-            channels_dir: "/tmp/work/channels".to_string(),
+            agents_dir: "/tmp/work/.turin/agents".to_string(),
+            harnesses_dir: "/tmp/work/.turin/harnesses".to_string(),
+            channels_dir: "/tmp/work/.turin/channels".to_string(),
             agents: Vec::new(),
             shared_harnesses: Vec::new(),
             channels: Vec::new(),
@@ -77,15 +77,15 @@ fn classify_registry_issue_recognizes_agent_and_harness_paths() {
     };
 
     let agent_issue = RegistryIssue {
-        path: "/tmp/work/agents/docs-reviewer/agent.toml".to_string(),
+        path: "/tmp/work/.turin/agents/docs-reviewer/config.toml".to_string(),
         message: "bad toml".to_string(),
     };
     let harness_issue = RegistryIssue {
-        path: "/tmp/work/harnesses/reviewer/main.lua".to_string(),
+        path: "/tmp/work/.turin/harnesses/reviewer/main.lua".to_string(),
         message: "bad lua".to_string(),
     };
     let channel_issue = RegistryIssue {
-        path: "/tmp/work/channels/discord/channel.toml".to_string(),
+        path: "/tmp/work/.turin/channels/discord/config.toml".to_string(),
         message: "bad toml".to_string(),
     };
 

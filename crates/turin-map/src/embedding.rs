@@ -26,7 +26,7 @@ pub(crate) struct EmbeddingArgs {
     #[arg(
         long,
         value_enum,
-        help = "Override the embedding driver for this run instead of using [embeddings] from turin.toml"
+        help = "Override the embedding driver for this run instead of using [embeddings] from .turin/config.toml"
     )]
     pub embedding_provider: Option<EmbeddingProviderKind>,
 
@@ -357,7 +357,7 @@ mod tests {
             },
         );
         LoadedTurinMapConfig {
-            path: PathBuf::from("turin.toml"),
+            path: PathBuf::from(".turin/config.toml"),
             providers,
             embeddings: Some(MapEmbeddingConfig {
                 provider: "local_embeddings".to_string(),

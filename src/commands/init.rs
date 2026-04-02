@@ -65,7 +65,7 @@ pub fn run_init(args: InitArgs) -> Result<()> {
                 )
             );
             println!(
-                "  2. Replace [providers.mock] in turin.toml when you are ready for a real model."
+                "  2. Replace [providers.mock] in .turin/config.toml when you are ready for a real model."
             );
         }
     }
@@ -84,11 +84,7 @@ pub async fn run_quickstart(args: QuickstartArgs) -> Result<()> {
 
     if !config_exists {
         let options = resolve_quickstart_options(&args)?;
-        let root = args
-            .config
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .to_path_buf();
+        let root = project_root_for_config_path(&args.config);
         let summary = scaffold_project(&root, &options)?;
         println!("{}", display::header("Quickstart scaffolded", ansi));
         print_scaffold_summary(&summary, ansi);
@@ -306,4 +302,12 @@ fn default_index<T: Copy + Eq>(choices: &[T], default: T) -> usize {
 
 fn default_quickstart_prompt() -> String {
     "Summarize this workspace and tell me which harness files are active.".to_string()
+}
+
+fn project_root_for_config_path(config_path: &Path) -> std::path::PathBuf {
+    let base = config_path.parent().unwrap_or_else(|| Path::new("."));
+    if base.file_name().and_then(|name| name.to_str()) == Some(".turin") {
+        return base.parent().unwrap_or(base).to_path_buf();
+    }
+    base.to_path_buf()
 }

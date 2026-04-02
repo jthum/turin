@@ -24,7 +24,7 @@ enum Command {
 
 #[derive(Args, Debug, Clone)]
 struct InitArgs {
-    #[arg(long, default_value = "turin.toml")]
+    #[arg(long, default_value = ".turin/config.toml")]
     config: PathBuf,
     #[arg(long)]
     force: bool,
@@ -32,7 +32,7 @@ struct InitArgs {
 
 #[derive(Args, Debug, Clone)]
 struct DoctorArgs {
-    #[arg(long, default_value = "turin.toml")]
+    #[arg(long, default_value = ".turin/config.toml")]
     config: PathBuf,
 }
 
@@ -45,13 +45,13 @@ enum ChannelsCommand {
 
 #[derive(Args, Debug, Clone)]
 struct ChannelsListArgs {
-    #[arg(long, default_value = "turin.toml")]
+    #[arg(long, default_value = ".turin/config.toml")]
     config: PathBuf,
 }
 
 #[derive(Args, Debug, Clone)]
 struct ConfigureChannelArgs {
-    #[arg(long, default_value = "turin.toml")]
+    #[arg(long, default_value = ".turin/config.toml")]
     config: PathBuf,
     kind: String,
     #[arg(long)]
@@ -62,7 +62,7 @@ struct ConfigureChannelArgs {
 
 #[derive(Args, Debug, Clone)]
 struct ChannelsStatusArgs {
-    #[arg(long, default_value = "turin.toml")]
+    #[arg(long, default_value = ".turin/config.toml")]
     config: PathBuf,
 }
 

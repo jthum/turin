@@ -18,7 +18,7 @@ use output::{print_build_report, print_remove_report, print_status};
 const CLI_EXAMPLES: &str = "Examples:
   turin-map index
   turin-map status
-  turin-map index --config path/to/turin.toml
+  turin-map index --config path/to/.turin/config.toml
   turin-map index --embedding-provider openai --embedding-base-url http://127.0.0.1:11434/v1 --embedding-model your-small-embedding-model --embedding-dimensions 384";
 
 #[derive(Parser, Debug)]
@@ -70,7 +70,7 @@ struct IndexArgs {
 
     #[arg(
         long,
-        help = "Load provider and embedding defaults from a Turin config file; defaults to ./turin.toml if present"
+        help = "Load provider and embedding defaults from a Turin config file; defaults to ./.turin/config.toml if present"
     )]
     config: Option<PathBuf>,
 
@@ -100,7 +100,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Index(args) => {
             let config = load_turin_map_config(&cwd, args.config.as_deref()).with_context(
-                || "Hint: run from the Turin project root or pass --config path/to/turin.toml",
+                || "Hint: run from the Turin project root or pass --config path/to/.turin/config.toml",
             )?;
             let report = build_index_with_options(
                 &args.root.root,
@@ -113,7 +113,7 @@ async fn main() -> Result<()> {
         }
         Command::Rebuild(args) => {
             let config = load_turin_map_config(&cwd, args.config.as_deref()).with_context(
-                || "Hint: run from the Turin project root or pass --config path/to/turin.toml",
+                || "Hint: run from the Turin project root or pass --config path/to/.turin/config.toml",
             )?;
             let report = rebuild_index_with_options(
                 &args.root.root,

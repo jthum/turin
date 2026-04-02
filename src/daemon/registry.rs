@@ -152,7 +152,7 @@ fn default_enabled() -> bool {
 }
 
 pub(crate) fn read_agent_file(agent_dir: &Path) -> Result<Option<AgentFileConfig>> {
-    let agent_toml = agent_dir.join("agent.toml");
+    let agent_toml = agent_dir.join("config.toml");
     if !agent_toml.exists() {
         return Ok(None);
     }
@@ -165,7 +165,7 @@ pub(crate) fn read_agent_file(agent_dir: &Path) -> Result<Option<AgentFileConfig
 }
 
 pub(crate) fn read_channel_file(channel_dir: &Path) -> Result<Option<ChannelFileConfig>> {
-    let channel_toml = channel_dir.join("channel.toml");
+    let channel_toml = channel_dir.join("config.toml");
     if !channel_toml.exists() {
         return Ok(None);
     }
@@ -180,8 +180,8 @@ pub(crate) fn read_channel_file(channel_dir: &Path) -> Result<Option<ChannelFile
 pub(crate) fn write_agent_file(agent_dir: &Path, config: &AgentFileConfig) -> Result<()> {
     fs::create_dir_all(agent_dir)
         .with_context(|| format!("Failed to create agent directory '{}'", agent_dir.display()))?;
-    let agent_toml = agent_dir.join("agent.toml");
-    let tmp_path = agent_dir.join(format!(".agent.toml.{}.tmp", uuid::Uuid::now_v7().simple()));
+    let agent_toml = agent_dir.join("config.toml");
+    let tmp_path = agent_dir.join(format!(".config.toml.{}.tmp", uuid::Uuid::now_v7().simple()));
     let body = toml::to_string_pretty(config)
         .with_context(|| format!("Failed to serialize '{}'", agent_toml.display()))?;
     fs::write(&tmp_path, body)
@@ -203,9 +203,9 @@ pub(crate) fn write_channel_file(channel_dir: &Path, config: &ChannelFileConfig)
             channel_dir.display()
         )
     })?;
-    let channel_toml = channel_dir.join("channel.toml");
+    let channel_toml = channel_dir.join("config.toml");
     let tmp_path = channel_dir.join(format!(
-        ".channel.toml.{}.tmp",
+        ".config.toml.{}.tmp",
         uuid::Uuid::now_v7().simple()
     ));
     let body = toml::to_string_pretty(config)
@@ -391,7 +391,7 @@ fn scan_agent_dir(
         && explicit_id != &agent_id
     {
         anyhow::bail!(
-            "agent.toml id '{}' does not match directory name '{}'",
+            "agent config id '{}' does not match directory name '{}'",
             explicit_id,
             agent_id
         );
@@ -478,7 +478,7 @@ fn scan_channel_dir(
         && explicit_id != &channel_id
     {
         anyhow::bail!(
-            "channel.toml id '{}' does not match directory name '{}'",
+            "channel config id '{}' does not match directory name '{}'",
             explicit_id,
             channel_id
         );
@@ -668,9 +668,9 @@ mod tests {
         let tmp = tempdir()?;
         let root = tmp.path();
         fs::create_dir_all(root.join("default-harness"))?;
-        fs::create_dir_all(root.join("agents/docs-reviewer/harness"))?;
+        fs::create_dir_all(root.join(".turin/agents/docs-reviewer/harness"))?;
         fs::write(
-            root.join("agents/docs-reviewer/agent.toml"),
+            root.join(".turin/agents/docs-reviewer/config.toml"),
             r#"
 model = "mock-model"
 provider = "mock"
@@ -696,16 +696,16 @@ system_prompt = "Docs reviewer"
         let tmp = tempdir()?;
         let root = tmp.path();
         fs::create_dir_all(root.join("default-harness"))?;
-        fs::create_dir_all(root.join("agents/good/harness"))?;
-        fs::create_dir_all(root.join("agents/bad/harness"))?;
+        fs::create_dir_all(root.join(".turin/agents/good/harness"))?;
+        fs::create_dir_all(root.join(".turin/agents/bad/harness"))?;
         fs::write(
-            root.join("agents/good/agent.toml"),
+            root.join(".turin/agents/good/config.toml"),
             r#"
 model = "mock-model"
 provider = "mock"
 "#,
         )?;
-        fs::write(root.join("agents/bad/agent.toml"), "not = [valid")?;
+        fs::write(root.join(".turin/agents/bad/config.toml"), "not = [valid")?;
 
         let bootstrap = bootstrap_config(root);
         let load = scan_registry(&bootstrap, root)?;
@@ -720,28 +720,28 @@ provider = "mock"
         let tmp = tempdir()?;
         let root = tmp.path();
         fs::create_dir_all(root.join("default-harness"))?;
-        fs::create_dir_all(root.join("agents/good/harness"))?;
-        fs::create_dir_all(root.join("agents/bad/harness"))?;
+        fs::create_dir_all(root.join(".turin/agents/good/harness"))?;
+        fs::create_dir_all(root.join(".turin/agents/bad/harness"))?;
         fs::write(
-            root.join("agents/good/agent.toml"),
+            root.join(".turin/agents/good/config.toml"),
             r#"
 model = "mock-model"
 provider = "mock"
 "#,
         )?;
         fs::write(
-            root.join("agents/good/harness/main.lua"),
+            root.join(".turin/agents/good/harness/main.lua"),
             "function on_turn_prepare(ctx)\n  return ALLOW\nend\n",
         )?;
         fs::write(
-            root.join("agents/bad/agent.toml"),
+            root.join(".turin/agents/bad/config.toml"),
             r#"
 model = "mock-model"
 provider = "mock"
 "#,
         )?;
         fs::write(
-            root.join("agents/bad/harness/main.lua"),
+            root.join(".turin/agents/bad/harness/main.lua"),
             "function on_turn_prepare(",
         )?;
 
@@ -750,7 +750,7 @@ provider = "mock"
         assert_eq!(load.agents.len(), 1);
         assert_eq!(load.agents[0].id, "good");
         assert_eq!(load.issues.len(), 1);
-        assert!(load.issues[0].path.contains("agents/bad"));
+        assert!(load.issues[0].path.contains(".turin/agents/bad"));
         Ok(())
     }
 
@@ -759,10 +759,10 @@ provider = "mock"
         let tmp = tempdir()?;
         let root = tmp.path();
         fs::create_dir_all(root.join("default-harness"))?;
-        fs::create_dir_all(root.join("harnesses/reviewer"))?;
-        fs::create_dir_all(root.join("agents/docs-reviewer"))?;
+        fs::create_dir_all(root.join(".turin/harnesses/reviewer"))?;
+        fs::create_dir_all(root.join(".turin/agents/docs-reviewer"))?;
         fs::write(
-            root.join("agents/docs-reviewer/agent.toml"),
+            root.join(".turin/agents/docs-reviewer/config.toml"),
             r#"
 model = "mock-model"
 provider = "mock"

@@ -267,7 +267,7 @@ impl Default for ConnectionProfileDraft {
     fn default() -> Self {
         Self {
             kind: ConnectionProfileKind::LocalConfig,
-            target: "turin.toml".to_string(),
+            target: ".turin/config.toml".to_string(),
             auth_mode: ConnectionProfileDraftAuthMode::None,
             auth_value: String::new(),
         }
@@ -285,7 +285,7 @@ impl ConnectionProfileDraft {
                 auth_error: None,
                 target_notice: target
                     .is_empty()
-                    .then(|| "Blank config path will default to turin.toml".to_string()),
+                    .then(|| "Blank config path will default to .turin/config.toml".to_string()),
                 auth_notice: None,
             },
             ConnectionProfileKind::LocalEndpoint => ConnectionProfileDraftValidation {
@@ -312,7 +312,7 @@ impl ConnectionProfileDraft {
         match self.kind {
             ConnectionProfileKind::LocalConfig => {
                 if target.is_empty() {
-                    "turin.toml".to_string()
+                    ".turin/config.toml".to_string()
                 } else {
                     target.to_string()
                 }
@@ -551,7 +551,7 @@ impl ConnectionOptions {
         Ok(ConnectionSpec::LocalConfig {
             config_path: resolved
                 .config_path
-                .unwrap_or_else(|| PathBuf::from("turin.toml")),
+                .unwrap_or_else(|| PathBuf::from(".turin/config.toml")),
         })
     }
 
@@ -829,7 +829,7 @@ impl ConnectionOptions {
     pub fn profiles_path(&self) -> PathBuf {
         self.profiles_file
             .clone()
-            .unwrap_or_else(|| PathBuf::from("ui-profiles.toml"))
+            .unwrap_or_else(|| PathBuf::from(".turin/ui-profiles.toml"))
     }
 }
 
@@ -1081,7 +1081,7 @@ fn run_local_daemon_ensure(
         ConnectionProfileKind::LocalConfig => options
             .config_path
             .clone()
-            .unwrap_or_else(|| PathBuf::from("turin.toml")),
+            .unwrap_or_else(|| PathBuf::from(".turin/config.toml")),
         ConnectionProfileKind::LocalEndpoint => {
             return Err(anyhow!(
                 "Local endpoint profiles do not imply a config file. Run `turin daemon ensure --config <path>` manually."
@@ -2163,7 +2163,7 @@ impl StoredConnectionProfile {
                 options
                     .config_path
                     .clone()
-                    .unwrap_or_else(|| PathBuf::from("turin.toml")),
+                    .unwrap_or_else(|| PathBuf::from(".turin/config.toml")),
             ),
             endpoint: None,
             remote_url: None,
@@ -2185,7 +2185,7 @@ impl StoredConnectionProfile {
         match draft.kind {
             ConnectionProfileKind::LocalConfig => Ok(Self {
                 config_path: Some(if target.is_empty() {
-                    PathBuf::from("turin.toml")
+                    PathBuf::from(".turin/config.toml")
                 } else {
                     PathBuf::from(target)
                 }),
@@ -2247,7 +2247,7 @@ impl StoredConnectionProfile {
                     .as_ref()
                     .map(|path| path.display().to_string())
             })
-            .unwrap_or_else(|| "turin.toml".to_string())
+            .unwrap_or_else(|| ".turin/config.toml".to_string())
     }
 
     fn auth_label(&self) -> Option<ConnectionProfileAuth> {
@@ -2343,7 +2343,7 @@ mod tests {
 
         match options.to_spec().expect("spec") {
             ConnectionSpec::LocalConfig { config_path } => {
-                assert_eq!(config_path, PathBuf::from("turin.toml"));
+                assert_eq!(config_path, PathBuf::from(".turin/config.toml"));
             }
             other => panic!("unexpected spec: {other:?}"),
         }
@@ -2408,7 +2408,7 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
     #[test]
     fn connection_options_can_save_and_delete_profiles() {
         let temp = tempfile::tempdir().expect("temp dir");
-        let profiles_path = temp.path().join("ui-profiles.toml");
+        let profiles_path = temp.path().join(".turin/ui-profiles.toml");
 
         let remote = ConnectionOptions {
             config_path: None,
@@ -2457,7 +2457,9 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
     #[test]
     fn connection_options_can_duplicate_and_rename_profiles() {
         let temp = tempfile::tempdir().expect("temp dir");
-        let profiles_path = temp.path().join("ui-profiles.toml");
+        let profiles_path = temp.path().join(".turin/ui-profiles.toml");
+        fs::create_dir_all(profiles_path.parent().expect("profiles parent"))
+            .expect("profiles dir");
         fs::write(
             &profiles_path,
             r#"
@@ -2503,7 +2505,7 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
     #[test]
     fn connection_profile_drafts_roundtrip_through_profile_storage() {
         let temp = tempfile::tempdir().expect("temp dir");
-        let profiles_path = temp.path().join("ui-profiles.toml");
+        let profiles_path = temp.path().join(".turin/ui-profiles.toml");
         let options = ConnectionOptions {
             config_path: None,
             endpoint: None,
@@ -2533,13 +2535,13 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
     #[test]
     fn connection_options_can_materialize_and_resolve_remote_drafts() {
         let options = ConnectionOptions {
-            config_path: Some(PathBuf::from("turin.toml")),
+            config_path: Some(PathBuf::from(".turin/config.toml")),
             endpoint: None,
             remote_url: None,
             auth_token: None,
             auth_token_env: None,
             profile: Some("ignored".to_string()),
-            profiles_file: Some(PathBuf::from("ui-profiles.toml")),
+            profiles_file: Some(PathBuf::from(".turin/ui-profiles.toml")),
             suppress_profile_resolution: false,
         };
         let draft = ConnectionProfileDraft {
@@ -2563,7 +2565,7 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
         assert!(materialized.profile.is_none());
         assert_eq!(
             materialized.profiles_file.as_deref(),
-            Some(Path::new("ui-profiles.toml"))
+            Some(Path::new(".turin/ui-profiles.toml"))
         );
 
         match options.draft_to_spec(&draft).expect("draft spec") {
@@ -2629,7 +2631,7 @@ auth_token_env = "TURIN_REMOTE_TOKEN"
         assert!(validation.is_valid());
         assert_eq!(
             validation.target_notice.as_deref(),
-            Some("Blank config path will default to turin.toml")
+            Some("Blank config path will default to .turin/config.toml")
         );
     }
 

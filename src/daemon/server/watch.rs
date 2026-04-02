@@ -243,7 +243,7 @@ fn push_watch_root(roots: &mut Vec<DaemonWatchRoot>, path: &Path, recursive: boo
 }
 
 fn is_agent_toml(path: &Path, agents_dir: &Path) -> bool {
-    path.file_name().and_then(|name| name.to_str()) == Some("agent.toml")
+    path.file_name().and_then(|name| name.to_str()) == Some("config.toml")
         && path.starts_with(agents_dir)
 }
 
@@ -260,6 +260,6 @@ fn is_agent_harness_dir(path: &Path, agents_dir: &Path) -> bool {
 }
 
 fn is_channel_toml(path: &Path, channels_dir: &Path) -> bool {
-    path.file_name().and_then(|name| name.to_str()) == Some("channel.toml")
+    path.file_name().and_then(|name| name.to_str()) == Some("config.toml")
         && path.starts_with(channels_dir)
 }

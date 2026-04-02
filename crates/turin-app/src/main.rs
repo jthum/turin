@@ -1140,7 +1140,9 @@ impl TurinDesktopApp {
                 ui.label(format!("Source: {}", profiles_source.display()));
                 ui.add_space(8.0);
                 if profiles.is_empty() {
-                    ui.label("No profiles loaded. Add ui-profiles.toml or pass --profiles-file.");
+                    ui.label(
+                        "No profiles loaded. Add .turin/ui-profiles.toml or pass --profiles-file.",
+                    );
                 } else {
                     ScrollArea::vertical().show(ui, |ui| {
                         for (index, profile) in profiles.iter().enumerate() {
@@ -2430,7 +2432,7 @@ fn profile_target_label(kind: ConnectionProfileKind) -> &'static str {
 
 fn profile_target_hint(kind: ConnectionProfileKind) -> &'static str {
     match kind {
-        ConnectionProfileKind::LocalConfig => "turin.toml",
+        ConnectionProfileKind::LocalConfig => ".turin/config.toml",
         ConnectionProfileKind::LocalEndpoint => ".turin/daemon.sock",
         ConnectionProfileKind::Remote => "http://127.0.0.1:9324",
     }

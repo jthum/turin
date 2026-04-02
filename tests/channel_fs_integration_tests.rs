@@ -131,7 +131,7 @@ async fn fs_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
     let runner = daemon.runner();
 
-    let channel_dir = daemon.workspace_root.join("channels/fs-test");
+    let channel_dir = daemon.workspace_root.join(".turin/channels/fs-test");
     tokio::fs::create_dir_all(channel_dir.join("inbox")).await?;
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);

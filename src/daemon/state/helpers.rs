@@ -6,22 +6,7 @@ use crate::daemon::state::SessionSummary;
 use crate::kernel::config::TurinConfig;
 
 pub(super) fn normalize_bootstrap_paths(config: &mut TurinConfig, config_base: &Path) {
-    let workspace_root = config.resolve_workspace_root(config_base);
-    config.kernel.workspace_root = workspace_root.display().to_string();
-
-    if Path::new(&config.harness.directory).is_relative() {
-        config.harness.directory = workspace_root
-            .join(&config.harness.directory)
-            .display()
-            .to_string();
-    }
-
-    if Path::new(&config.harness.fs_root).is_relative() && config.harness.fs_root != "." {
-        config.harness.fs_root = workspace_root
-            .join(&config.harness.fs_root)
-            .display()
-            .to_string();
-    }
+    config.normalize_runtime_paths(config_base);
 }
 
 pub(super) fn validate_agent_id(agent_id: &str) -> Result<()> {

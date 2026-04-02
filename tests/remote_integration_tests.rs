@@ -28,8 +28,8 @@ impl DaemonHarness {
         let tempdir = Arc::new(tempfile::tempdir()?);
         let workspace_root = tempdir.path().join("workspace");
         let harness_dir = workspace_root.join(".turin/harnesses");
-        let agents_dir = workspace_root.join("agents");
-        let harnesses_dir = workspace_root.join("harnesses");
+        let agents_dir = workspace_root.join(".turin/agents");
+        let harnesses_dir = workspace_root.join(".turin/harnesses");
 
         std::fs::create_dir_all(&harness_dir)?;
         std::fs::create_dir_all(&agents_dir)?;
@@ -39,7 +39,8 @@ impl DaemonHarness {
             "-- remote integration harness\n",
         )?;
 
-        let config_path = tempdir.path().join("turin.toml");
+        let config_path = tempdir.path().join(".turin/config.toml");
+        std::fs::create_dir_all(config_path.parent().expect("config parent"))?;
         let config_toml = format!(
             r#"[agent]
 id = "default"

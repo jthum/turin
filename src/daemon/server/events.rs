@@ -377,17 +377,17 @@ mod tests {
     #[test]
     fn scoped_snapshot_filters_agent_related_state() {
         let snapshot = DaemonRuntimeSnapshot {
-            config_path: "turin.toml".into(),
+            config_path: ".turin/config.toml".into(),
             workspace_root: "/tmp/work".into(),
             endpoint: "/tmp/work/.turin/daemon.sock".into(),
             registry: RegistrySnapshot {
-                agents_dir: "/tmp/work/agents".into(),
-                harnesses_dir: "/tmp/work/harnesses".into(),
-                channels_dir: "/tmp/work/channels".into(),
+                agents_dir: "/tmp/work/.turin/agents".into(),
+                harnesses_dir: "/tmp/work/.turin/harnesses".into(),
+                channels_dir: "/tmp/work/.turin/channels".into(),
                 agents: vec![
                     AgentSummary {
                         id: "default".into(),
-                        directory: "/tmp/work/agents/default".into(),
+                        directory: "/tmp/work/.turin/agents/default".into(),
                         enabled: true,
                         provider: "mock".into(),
                         model: "mock-model".into(),
@@ -397,7 +397,7 @@ mod tests {
                     },
                     AgentSummary {
                         id: "writer".into(),
-                        directory: "/tmp/work/agents/writer".into(),
+                        directory: "/tmp/work/.turin/agents/writer".into(),
                         enabled: true,
                         provider: "mock".into(),
                         model: "mock-model".into(),
@@ -409,17 +409,17 @@ mod tests {
                 shared_harnesses: vec![
                     SharedHarnessSummary {
                         id: "reviewer".into(),
-                        directory: "/tmp/work/harnesses/reviewer".into(),
+                        directory: "/tmp/work/.turin/harnesses/reviewer".into(),
                     },
                     SharedHarnessSummary {
                         id: "other".into(),
-                        directory: "/tmp/work/harnesses/other".into(),
+                        directory: "/tmp/work/.turin/harnesses/other".into(),
                     },
                 ],
                 channels: vec![
                     ChannelSummary {
                         id: "default-fs".into(),
-                        directory: "/tmp/work/channels/default-fs".into(),
+                        directory: "/tmp/work/.turin/channels/default-fs".into(),
                         enabled: true,
                         kind: "fs".into(),
                         agent_id: "default".into(),
@@ -427,7 +427,7 @@ mod tests {
                     },
                     ChannelSummary {
                         id: "writer-fs".into(),
-                        directory: "/tmp/work/channels/writer-fs".into(),
+                        directory: "/tmp/work/.turin/channels/writer-fs".into(),
                         enabled: true,
                         kind: "fs".into(),
                         agent_id: "writer".into(),
@@ -436,7 +436,7 @@ mod tests {
                 ],
                 issues: vec![
                     RegistryIssue {
-                        path: "/tmp/work/agents/default/agent.toml".into(),
+                        path: "/tmp/work/.turin/agents/default/config.toml".into(),
                         message: "default issue".into(),
                     },
                     RegistryIssue {
@@ -444,7 +444,7 @@ mod tests {
                         message: "reviewer issue".into(),
                     },
                     RegistryIssue {
-                        path: "/tmp/work/channels/writer-fs/channel.toml".into(),
+                        path: "/tmp/work/.turin/channels/writer-fs/config.toml".into(),
                         message: "writer channel issue".into(),
                     },
                 ],
@@ -452,7 +452,7 @@ mod tests {
             harnesses: vec![
                 HarnessRuntimeSnapshot {
                     harness_id: "default".into(),
-                    directory: "/tmp/work/agents/default/harness".into(),
+                    directory: "/tmp/work/.turin/agents/default/harness".into(),
                     bound_agents: vec!["default".into()],
                     watched_roots: Vec::new(),
                     loaded_scripts: Vec::new(),
@@ -490,7 +490,7 @@ mod tests {
                     id: "default-fs".into(),
                     kind: "fs".into(),
                     agent_id: "default".into(),
-                    directory: "/tmp/work/channels/default-fs".into(),
+                    directory: "/tmp/work/.turin/channels/default-fs".into(),
                     state: "running".into(),
                     last_error: None,
                     last_error_code: None,
@@ -506,7 +506,7 @@ mod tests {
                     id: "writer-fs".into(),
                     kind: "fs".into(),
                     agent_id: "writer".into(),
-                    directory: "/tmp/work/channels/writer-fs".into(),
+                    directory: "/tmp/work/.turin/channels/writer-fs".into(),
                     state: "running".into(),
                     last_error: None,
                     last_error_code: None,

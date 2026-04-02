@@ -247,10 +247,10 @@ end
 }];
 
 pub fn scaffold_project(root: &Path, options: &InitOptions) -> Result<ScaffoldResult> {
-    let config_path = root.join("turin.toml");
+    let config_path = root.join(".turin").join("config.toml");
     if config_path.exists() && !options.force {
         anyhow::bail!(
-            "turin.toml already exists at '{}'; rerun with --force to overwrite it",
+            "config already exists at '{}'; rerun with --force to overwrite it",
             config_path.display()
         );
     }

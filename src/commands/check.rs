@@ -12,7 +12,7 @@ pub async fn run_check(config_path: &Path) -> Result<()> {
         display::header("Checking Turin project configuration...", ansi)
     );
 
-    // 1. Load turin.toml
+    // 1. Load config
     let config = match TurinConfig::from_file(config_path) {
         Ok(c) => {
             println!(

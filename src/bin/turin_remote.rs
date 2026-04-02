@@ -8,8 +8,8 @@ use turin::tracing_support::init_tracing;
 #[derive(Parser, Debug)]
 #[command(name = "turin-remote", version, about)]
 struct Cli {
-    /// Path to turin.toml config file
-    #[arg(long, default_value = "turin.toml")]
+    /// Path to Turin config file
+    #[arg(long, default_value = ".turin/config.toml")]
     config: PathBuf,
 
     /// Override the remote bind address

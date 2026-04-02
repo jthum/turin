@@ -358,7 +358,7 @@ mod tests {
     fn empty_dashboard() -> DashboardState {
         DashboardState {
             connection_kind: ConnectionKind::Local,
-            connection_target: "turin.toml".to_string(),
+            connection_target: ".turin/config.toml".to_string(),
             health: None,
             status: None,
             live_sessions: Vec::new(),

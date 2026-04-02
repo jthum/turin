@@ -13,7 +13,7 @@ mod validation;
 
 use defaults::*;
 
-/// Top-level Turin configuration, parsed from `turin.toml`.
+/// Top-level Turin configuration, parsed from the workspace config file.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct TurinConfig {
     #[serde(default)]
@@ -539,14 +539,18 @@ impl TurinConfig {
         }
         let contents = std::fs::read_to_string(path)
             .with_context(|| format!("Could not read config file: {}", path.display()))?;
-        Self::from_str(&contents)
+        let mut config = Self::from_str(&contents)?;
+        if let Some(config_dir) = path.parent() {
+            config.normalize_runtime_paths(config_dir);
+        }
+        Ok(config)
     }
 
     /// Parse configuration from a TOML string.
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(toml_str: &str) -> Result<Self> {
         let config: TurinConfig =
-            toml::from_str(toml_str).with_context(|| "Failed to parse turin.toml")?;
+            toml::from_str(toml_str).with_context(|| "Failed to parse Turin config")?;
         config.validate()?;
         Ok(config)
     }
@@ -580,7 +584,7 @@ impl TurinConfig {
         if root.is_absolute() {
             root.to_path_buf()
         } else {
-            base.join(root)
+            config_workspace_anchor(base).join(root)
         }
     }
 
@@ -601,7 +605,27 @@ impl TurinConfig {
     }
 
     pub fn resolve_daemon_endpoint(&self, base: &Path) -> PathBuf {
-        resolve_local_ipc_endpoint(base, &self.kernel.workspace_root, &self.daemon.endpoint)
+        resolve_local_ipc_endpoint(
+            &config_workspace_anchor(base),
+            &self.kernel.workspace_root,
+            &self.daemon.endpoint,
+        )
+    }
+
+    pub fn normalize_runtime_paths(&mut self, config_base: &Path) {
+        let workspace_root = self.resolve_workspace_root(config_base);
+        self.kernel.workspace_root = workspace_root.display().to_string();
+
+        normalize_harness_config_paths(&workspace_root, &mut self.harness);
+        for harness in self.harnesses.values_mut() {
+            normalize_harness_config_paths(&workspace_root, harness);
+        }
+
+        for root in self.governance.roots.values_mut() {
+            if Path::new(&root.path).is_relative() {
+                root.path = workspace_root.join(&root.path).display().to_string();
+            }
+        }
     }
 }
 
@@ -631,7 +655,7 @@ fn resolve_under_workspace(base: &Path, workspace_root: &str, value: &str) -> Pa
     let workspace = if workspace_root.is_absolute() {
         workspace_root.to_path_buf()
     } else {
-        base.join(workspace_root)
+        config_workspace_anchor(base).join(workspace_root)
     };
 
     let path = Path::new(value);
@@ -639,6 +663,23 @@ fn resolve_under_workspace(base: &Path, workspace_root: &str, value: &str) -> Pa
         path.to_path_buf()
     } else {
         workspace.join(path)
+    }
+}
+
+fn config_workspace_anchor(base: &Path) -> PathBuf {
+    if base.file_name().and_then(|name| name.to_str()) == Some(".turin") {
+        return base.parent().unwrap_or(base).to_path_buf();
+    }
+    base.to_path_buf()
+}
+
+fn normalize_harness_config_paths(workspace_root: &Path, harness: &mut HarnessConfig) {
+    if Path::new(&harness.directory).is_relative() {
+        harness.directory = workspace_root.join(&harness.directory).display().to_string();
+    }
+
+    if Path::new(&harness.fs_root).is_relative() && harness.fs_root != "." {
+        harness.fs_root = workspace_root.join(&harness.fs_root).display().to_string();
     }
 }
 

@@ -757,7 +757,7 @@ mod tests {
                 workspace_root.clone(),
                 vec![DiscoveredChannel {
                     id: "telegram-ops".to_string(),
-                    directory: workspace_root.join("channels/telegram-ops"),
+                    directory: workspace_root.join(".turin/channels/telegram-ops"),
                     enabled: true,
                     kind: "telegram".to_string(),
                     agent_id: "default".to_string(),
@@ -798,7 +798,7 @@ mod tests {
                     id: "telegram-ops".to_string(),
                     kind: "telegram".to_string(),
                     agent_id: "default".to_string(),
-                    directory: "/tmp/workspace/channels/telegram-ops".to_string(),
+                    directory: "/tmp/workspace/.turin/channels/telegram-ops".to_string(),
                     state: "starting".to_string(),
                     last_error: None,
                     last_error_code: None,
