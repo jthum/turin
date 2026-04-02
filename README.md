@@ -341,6 +341,9 @@ turin daemon agent list
 turin daemon agent create docs-reviewer --provider mock --model mock-model
 turin daemon session open docs-reviewer
 turin daemon session resume <session-id>
+turin daemon session branch-list <session-id>
+turin daemon session branch-create <session-id> alt --from-turn 12 --activate
+turin daemon session branch-checkout <session-id> alt
 turin daemon task submit docs-reviewer "Review the docs" --wait
 turin daemon events
 ```

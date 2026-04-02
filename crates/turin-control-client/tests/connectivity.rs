@@ -10,6 +10,11 @@ use turin::remote::{RemoteServeOptions, start as start_remote};
 use turin_control_client::{ConnectionKind, ConnectionSpec, ControlClient};
 use turin_daemon_protocol::{DaemonRequest, NoParams, RuntimeEventsSubscribeParams};
 
+const DEFAULT_BOOTSTRAP_CONFIG_PATH: &str = ".turin/config.toml";
+const DEFAULT_LAYOUT_HARNESSES_DIR: &str = "harnesses";
+const DEFAULT_LAYOUT_AGENTS_DIR: &str = "runtime/agents";
+const DEFAULT_LAYOUT_ROOT: &str = ".turin";
+
 struct DaemonHarness {
     _tempdir: Arc<TempDir>,
     endpoint: PathBuf,
@@ -21,19 +26,19 @@ impl DaemonHarness {
     async fn start() -> Result<Self> {
         let tempdir = Arc::new(tempfile::tempdir()?);
         let workspace_root = tempdir.path().join("workspace");
-        let harness_dir = workspace_root.join(".turin/harnesses");
-        let agents_dir = workspace_root.join("agents");
-        let harnesses_dir = workspace_root.join("harnesses");
+        let turin_root = workspace_root.join(DEFAULT_LAYOUT_ROOT);
+        let harness_dir = turin_root.join(DEFAULT_LAYOUT_HARNESSES_DIR);
+        let agents_dir = turin_root.join(DEFAULT_LAYOUT_AGENTS_DIR);
 
         std::fs::create_dir_all(&harness_dir)?;
         std::fs::create_dir_all(&agents_dir)?;
-        std::fs::create_dir_all(&harnesses_dir)?;
         std::fs::write(
             harness_dir.join("main.lua"),
             "-- control client integration harness\n",
         )?;
 
-        let config_path = tempdir.path().join("turin.toml");
+        let config_path = workspace_root.join(DEFAULT_BOOTSTRAP_CONFIG_PATH);
+        std::fs::create_dir_all(config_path.parent().expect("config parent"))?;
         let config_toml = format!(
             r#"[agent]
 id = "default"
@@ -59,12 +64,12 @@ type = "mock"
 base_url = "PONG"
 "#,
             workspace_root = workspace_root.display(),
-            database_path = workspace_root.join("test.db").display(),
+            database_path = turin_root.join("data/state.db").display(),
             harness_directory = harness_dir.display(),
         );
         std::fs::write(&config_path, config_toml)?;
 
-        let endpoint = workspace_root.join(".turin/daemon.sock");
+        let endpoint = turin_root.join("daemon.sock");
         let serve_config_path = config_path.clone();
         let join =
             tokio::spawn(async move { turin::daemon::server::serve(&serve_config_path).await });

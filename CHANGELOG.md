@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-04-02
+
 ### Added
 - **Rocket.Chat Channel**
   - Added a new external `turin-channel-rocketchat` sidecar with manifest-driven setup, realtime Rocket.Chat inbound delivery by default, polling fallback support, dynamic multi-room discovery, generic pairing and room approval, and Rocket.Chat message sending.
@@ -52,6 +54,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added downward-only tool delegation, so `turin.toml` defines the maximum native tool surface and agents/channels can only further subset it.
   - Added built-in tool groups such as `group:fs`, `group:web`, `group:shell`, `group:memory`, `group:planning`, `group:integration`, and `group:all`.
   - Added the native `apply_patch` tool for structured multi-file surgical edits; it is available for opt-in configs but excluded from the default exposed built-in tool set.
+- **Session Branching**
+  - Added persisted turn/branch-head storage with active-path materialization, so sessions can fork from prior turns without duplicating full transcript prefixes.
+  - Added daemon, control-client, CLI, and harness branch operations for listing, creating, and checking out branches.
+  - Added deferred branch checkout for the currently running harness session, so branch switches can be requested safely mid-turn and applied before the next queued task.
+  - Added TUI and app branch controls, including branch creation from the focused turn in chat/search views and adjacent-branch checkout in the TUI.
+- **Scoped State And Multi-DB Routing**
+  - Added scoped `memories` and scoped `kv` storage backed by explicit `scope_kind` / `scope_key` semantics.
+  - Added explicit store/path selection for memory and KV APIs, including multi-source memory search across named stores.
+  - Added context-owned state routing so sessions can live in non-default state DBs while shared stores remain optional and explicit.
+  - Added daemon/control/CLI store filters for persisted session list/search against non-default state DBs.
+
+### Changed
+- **Persistence Model**
+  - Session search, tool search, and persisted transcript/event reads now follow the active branch instead of leaking inactive-branch content.
+  - Persisted events now use a hybrid model: session-global audit/lifecycle data remains session-wide, while turn-bound transcript/tool events are filtered to the active branch path.
+  - State schema version advanced to `11`; existing state DBs must still be deleted and recreated because no migration path is provided.
+- **Workspace Layout**
+  - Default bootstrap config is now `.turin/config.toml`, with derived defaults under `.turin/data/`, `.turin/harnesses/`, and `.turin/runtime/...`.
+  - Layout/default-path resolution is now centralized, and runtime docs/examples now consistently reflect the `.turin` layout.
+- **Runtime Structure**
+  - Split persistence, daemon-state, harness-engine, and scoped-state hot spots into smaller modules to reduce the largest code hotspots before further runtime expansion.
 
 ## [0.26.0] - 2026-03-26
 

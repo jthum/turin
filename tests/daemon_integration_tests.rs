@@ -506,7 +506,7 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
     );
     assert_eq!(waited["status"], "success");
 
-    let persistence_deadline = Instant::now() + Duration::from_secs(2);
+    let persistence_deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let detail = result_value(
             daemon

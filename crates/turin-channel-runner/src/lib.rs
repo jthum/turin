@@ -1627,7 +1627,7 @@ mod tests {
         let tools = tools_config_from_settings(&serde_json::json!({
             "tools": {
                 "allow": ["group:web", "read_file"],
-                "exclude": "web_search"
+                "exclude": ["web_search"]
             }
         }))
         .unwrap();

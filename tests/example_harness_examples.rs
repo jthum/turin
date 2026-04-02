@@ -2,7 +2,9 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 use tempfile::tempdir;
+use tokio::time::sleep;
 use turin::kernel::Kernel;
 use turin::kernel::config::{
     AgentConfig, GovernanceConfig, GovernanceGrantsConfig, GovernanceProfile,
@@ -20,6 +22,43 @@ fn library_block_path(name: &str) -> PathBuf {
 
 fn library_workflow_path(name: &str) -> PathBuf {
     repo_path(Path::new("library").join("workflows").join(name))
+}
+
+async fn wait_for_persisted_agent_output(
+    kernel: &Kernel,
+    agent_id: &str,
+    expected_fragment: &str,
+) -> Result<bool> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let store = kernel.store_manager().get_default().await?;
+        let conn = store.get_connection().await?;
+        let mut rows = conn
+            .query(
+                "SELECT s.agent_id, m.role, m.content \
+                 FROM sessions s \
+                 JOIN messages m ON m.session_id = s.id \
+                 WHERE s.agent_id = ?1 \
+                 ORDER BY m.id",
+                [agent_id],
+            )
+            .await?;
+        while let Some(row) = rows.next().await? {
+            let row_agent_id: String = row.get(0)?;
+            let role: String = row.get(1)?;
+            let content: String = row.get(2)?;
+            if row_agent_id == agent_id
+                && role == "assistant"
+                && content.contains(expected_fragment)
+            {
+                return Ok(true);
+            }
+        }
+        if Instant::now() >= deadline {
+            return Ok(false);
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
 }
 
 struct WorkflowFixture {
@@ -796,28 +835,8 @@ async fn test_governed_peer_review_example() -> Result<()> {
     assert_eq!(fs::read_to_string(review_artifact)?, "REVIEW_OK");
     assert_eq!(fs::read_to_string(input_artifact)?, prompt);
 
-    let store = kernel.store_manager().get_default().await?;
-    let conn = store.get_connection().await?;
-    let mut rows = conn
-        .query(
-            "SELECT s.agent_id, m.role, m.content \
-             FROM sessions s \
-             JOIN messages m ON m.session_id = s.id \
-             WHERE s.agent_id = 'reviewer' \
-             ORDER BY m.id",
-            (),
-        )
-        .await?;
-    let mut saw_reviewer_output = false;
-    while let Some(row) = rows.next().await? {
-        let agent_id: String = row.get(0)?;
-        let role: String = row.get(1)?;
-        let content: String = row.get(2)?;
-        if agent_id == "reviewer" && role == "assistant" && content.contains("REVIEW_OK") {
-            saw_reviewer_output = true;
-            break;
-        }
-    }
+    let saw_reviewer_output =
+        wait_for_persisted_agent_output(&kernel, "reviewer", "REVIEW_OK").await?;
     assert!(
         saw_reviewer_output,
         "expected persisted reviewer assistant output"
@@ -1296,29 +1315,8 @@ async fn test_delegated_peer_capabilities_example() -> Result<()> {
     assert_eq!(fs::read_to_string(review_artifact)?, "DELEGATED_REVIEW_OK");
     assert_eq!(fs::read_to_string(input_artifact)?, prompt);
 
-    let store = kernel.store_manager().get_default().await?;
-    let conn = store.get_connection().await?;
-    let mut rows = conn
-        .query(
-            "SELECT s.agent_id, m.role, m.content \
-             FROM sessions s \
-             JOIN messages m ON m.session_id = s.id \
-             WHERE s.agent_id = 'reviewer' \
-             ORDER BY m.id",
-            (),
-        )
-        .await?;
-    let mut saw_reviewer_output = false;
-    while let Some(row) = rows.next().await? {
-        let agent_id: String = row.get(0)?;
-        let role: String = row.get(1)?;
-        let content: String = row.get(2)?;
-        if agent_id == "reviewer" && role == "assistant" && content.contains("DELEGATED_REVIEW_OK")
-        {
-            saw_reviewer_output = true;
-            break;
-        }
-    }
+    let saw_reviewer_output =
+        wait_for_persisted_agent_output(&kernel, "reviewer", "DELEGATED_REVIEW_OK").await?;
     assert!(
         saw_reviewer_output,
         "expected persisted reviewer assistant output"

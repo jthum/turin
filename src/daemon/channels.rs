@@ -816,7 +816,7 @@ mod tests {
                     ..ChannelAdapterManifest::default()
                 },
                 runner_binary: Some("turin-channel-telegram".to_string()),
-                runner_version: Some("0.26.0".to_string()),
+                runner_version: Some(env!("CARGO_PKG_VERSION").to_string()),
                 pid: Some(1234),
             })
             .await

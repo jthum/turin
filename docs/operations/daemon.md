@@ -152,6 +152,37 @@ Cross-state references remain explicit:
 - aliased session: `018f...@telegram`
 - path-qualified session: `018f...@.turin/data/states/telegram.db`
 
+Persisted session queries can now also target an explicit state DB:
+
+```bash
+turin daemon session list --store telegram
+turin daemon session search "borrow checker" --store telegram
+turin daemon session list --path /srv/turin/project-alpha.db
+```
+
+## Session Branches
+
+Sessions now support first-class branching with one active branch head per session.
+
+- persisted transcript, tool history, and turn-bound events follow the active branch path
+- branch creation can fork from the current head or an earlier `turn_index`
+- live branch checkout is supported for idle sessions, and harness-initiated self-checkout is deferred until the current turn completes
+
+CLI examples:
+
+```bash
+turin daemon session branch-list 018f...
+turin daemon session branch-create 018f... alt --from-turn 12 --activate
+turin daemon session branch-checkout 018f... alt
+```
+
+Current scope:
+
+- branch create / list / checkout: supported
+- branch creation from focused turns: supported in the TUI
+- branch rename / delete / archive: not implemented yet
+- merge/rebase semantics: intentionally not implemented
+
 ## Fault Isolation
 
 One broken agent or harness should not stop the daemon.

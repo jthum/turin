@@ -1143,7 +1143,7 @@ impl TurinDesktopApp {
                 ui.label(format!("Source: {}", profiles_source.display()));
                 ui.add_space(8.0);
                 if profiles.is_empty() {
-                    ui.label(&format!(
+                    ui.label(format!(
                         "No profiles loaded. Add {} or pass --profiles-file.",
                         DEFAULT_UI_PROFILES_PATH
                     ));

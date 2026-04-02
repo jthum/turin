@@ -46,6 +46,8 @@ The current chat hotkeys are:
 
 - `Enter`: prompt the current live chat session, or open/resume the selected agent/session from the left pane
 - `p`: prompt the current live chat session
+- `B`: create a new branch for the current session; if a transcript turn or search hit is focused, branch from that turn
+- `[` / `]`: check out the previous/next branch for the current session
 - `,`: cycle the left pane between `sessions`, `agents`, `channels`, `events`, and `none`
 - `.`: cycle the right pane between `thinking`, `tools`, `events`, `session`, and `none`
 - `h`: show/hide the thinking pane
