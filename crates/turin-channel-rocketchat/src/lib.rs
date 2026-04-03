@@ -34,6 +34,12 @@ const SEEN_MESSAGE_IDS_LIMIT: usize = 1_024;
 const RECENT_SENT_MESSAGE_IDS_LIMIT: usize = 256;
 const DEFAULT_REALTIME_RECONNECT_DELAY_MS: u64 = 2_000;
 const ROCKETCHAT_TYPING_STATUS_INTERVAL_SECS: u64 = 4;
+const ROCKETCHAT_HTTP_TIMEOUT_SECS: u64 = 30;
+const ROCKETCHAT_HTTP_CONNECT_TIMEOUT_SECS: u64 = 10;
+const ROCKETCHAT_REALTIME_CONNECT_TIMEOUT_SECS: u64 = 15;
+const ROCKETCHAT_REALTIME_HANDSHAKE_TIMEOUT_SECS: u64 = 15;
+const ROCKETCHAT_REALTIME_KEEPALIVE_SECS: u64 = 15;
+const ROCKETCHAT_REALTIME_STALE_SECS: u64 = 45;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RocketChatRespondMode {
@@ -709,6 +715,8 @@ pub struct RocketChatChannelDriver {
     rooms_updated_since: Option<String>,
     last_room_refresh: Option<Instant>,
     last_typing_at: HashMap<String, Instant>,
+    last_realtime_activity_at: Option<Instant>,
+    last_realtime_keepalive_at: Option<Instant>,
     next_realtime_request_id: u64,
 }
 
@@ -721,7 +729,7 @@ impl RocketChatChannelDriver {
     ) -> Result<Self> {
         let config =
             RocketChatChannelDriverConfig::from_settings(settings, allow_unconfigured_rooms)?;
-        let client = Client::builder().build()?;
+        let client = build_http_client()?;
 
         let mut driver = Self {
             channel_id: channel_id.into(),
@@ -742,6 +750,8 @@ impl RocketChatChannelDriver {
             rooms_updated_since: None,
             last_room_refresh: None,
             last_typing_at: HashMap::new(),
+            last_realtime_activity_at: None,
+            last_realtime_keepalive_at: None,
             next_realtime_request_id: 1,
         };
 
@@ -1144,11 +1154,53 @@ impl RocketChatChannelDriver {
         Ok(())
     }
 
+    fn note_realtime_activity(&mut self) {
+        self.last_realtime_activity_at = Some(Instant::now());
+    }
+
+    fn should_send_realtime_keepalive(&self) -> bool {
+        let Some(last_activity) = self.last_realtime_activity_at else {
+            return false;
+        };
+        if self.ws_stream.is_none() {
+            return false;
+        }
+        if last_activity.elapsed() < Duration::from_secs(ROCKETCHAT_REALTIME_KEEPALIVE_SECS) {
+            return false;
+        }
+        self.last_realtime_keepalive_at
+            .is_none_or(|last_keepalive| {
+                last_keepalive.elapsed() >= Duration::from_secs(ROCKETCHAT_REALTIME_KEEPALIVE_SECS)
+            })
+    }
+
+    fn realtime_connection_stale(&self) -> bool {
+        self.ws_stream.is_some()
+            && self.last_realtime_activity_at.is_some_and(|last_activity| {
+                last_activity.elapsed() >= Duration::from_secs(ROCKETCHAT_REALTIME_STALE_SECS)
+            })
+    }
+
+    async fn send_realtime_keepalive(&mut self) -> Result<()> {
+        let Some(stream) = self.ws_stream.as_mut() else {
+            return Ok(());
+        };
+        send_ws_json(stream, serde_json::json!({ "msg": "ping" }))
+            .await
+            .context(
+                "[rocketchat_realtime_keepalive_failed] Failed to send Rocket.Chat realtime keepalive ping",
+            )?;
+        self.last_realtime_keepalive_at = Some(Instant::now());
+        Ok(())
+    }
+
     fn reset_transport_state(&mut self) -> Result<()> {
         self.ws_stream = None;
         self.realtime_subscribed_room_ids.clear();
         self.last_typing_at.clear();
-        self.client = Client::builder().build().context(
+        self.last_realtime_activity_at = None;
+        self.last_realtime_keepalive_at = None;
+        self.client = build_http_client().context(
             "[rocketchat_http_client_rebuild_failed] Failed to rebuild Rocket.Chat HTTP client",
         )?;
         Ok(())
@@ -1261,8 +1313,17 @@ impl RocketChatChannelDriver {
         }
 
         let websocket_url = self.config.websocket_url.clone();
-        let (mut stream, _) = connect_async(&websocket_url)
-            .await
+        let (mut stream, _) = tokio::time::timeout(
+            Duration::from_secs(ROCKETCHAT_REALTIME_CONNECT_TIMEOUT_SECS),
+            connect_async(&websocket_url),
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "[rocketchat_realtime_connect_timeout] Timed out connecting to Rocket.Chat websocket '{}'",
+                websocket_url
+            )
+        })?
             .with_context(|| {
                 format!(
                     "[rocketchat_realtime_connect_failed] Failed to connect to Rocket.Chat websocket '{}'",
@@ -1281,10 +1342,26 @@ impl RocketChatChannelDriver {
         .await
         .context("[rocketchat_realtime_connect_send_failed] Failed to send DDP connect message")?;
 
-        self.await_connected(&mut stream).await?;
-        self.login_realtime(&mut stream).await?;
+        tokio::time::timeout(
+            Duration::from_secs(ROCKETCHAT_REALTIME_HANDSHAKE_TIMEOUT_SECS),
+            self.await_connected(&mut stream),
+        )
+        .await
+        .context(
+            "[rocketchat_realtime_connect_timeout] Timed out waiting for Rocket.Chat DDP connect acknowledgement",
+        )??;
+        tokio::time::timeout(
+            Duration::from_secs(ROCKETCHAT_REALTIME_HANDSHAKE_TIMEOUT_SECS),
+            self.login_realtime(&mut stream),
+        )
+        .await
+        .context(
+            "[rocketchat_realtime_login_timeout] Timed out waiting for Rocket.Chat DDP login response",
+        )??;
 
         self.ws_stream = Some(stream);
+        self.note_realtime_activity();
+        self.last_realtime_keepalive_at = None;
         self.realtime_subscribed_room_ids.clear();
         self.sync_realtime_subscriptions().await?;
 
@@ -1421,6 +1498,40 @@ impl RocketChatChannelDriver {
                 return Ok(Some(event));
             }
 
+            if self.realtime_connection_stale() {
+                warn!(
+                    channel_id = %self.channel_id,
+                    stale_after_secs = ROCKETCHAT_REALTIME_STALE_SECS,
+                    "Rocket.Chat realtime connection went idle; resetting transport"
+                );
+                if let Err(reset_err) = self.reset_transport_state() {
+                    warn!(
+                        channel_id = %self.channel_id,
+                        error = ?reset_err,
+                        "Rocket.Chat transport reset failed"
+                    );
+                }
+                continue;
+            }
+
+            if self.should_send_realtime_keepalive()
+                && let Err(err) = self.send_realtime_keepalive().await
+            {
+                warn!(
+                    channel_id = %self.channel_id,
+                    error = ?err,
+                    "Rocket.Chat realtime keepalive failed; resetting transport"
+                );
+                if let Err(reset_err) = self.reset_transport_state() {
+                    warn!(
+                        channel_id = %self.channel_id,
+                        error = ?reset_err,
+                        "Rocket.Chat transport reset failed"
+                    );
+                }
+                continue;
+            }
+
             if self
                 .last_room_refresh
                 .is_none_or(|last| last.elapsed() >= self.config.poll_interval)
@@ -1484,6 +1595,8 @@ impl RocketChatChannelDriver {
             match result {
                 Ok(None) => continue,
                 Ok(Some(frame)) => {
+                    self.note_realtime_activity();
+                    self.last_realtime_keepalive_at = None;
                     if let Some(event) = self.process_realtime_frame(frame)? {
                         return Ok(Some(event));
                     }
@@ -2161,6 +2274,14 @@ async fn send_ws_json(stream: &mut RocketChatWsStream, payload: serde_json::Valu
         .send(WsMessage::Text(payload.to_string()))
         .await
         .context("Failed to send Rocket.Chat websocket frame")
+}
+
+fn build_http_client() -> Result<Client> {
+    Client::builder()
+        .connect_timeout(Duration::from_secs(ROCKETCHAT_HTTP_CONNECT_TIMEOUT_SECS))
+        .timeout(Duration::from_secs(ROCKETCHAT_HTTP_TIMEOUT_SECS))
+        .build()
+        .context("[rocketchat_http_client_build_failed] Failed to build Rocket.Chat HTTP client")
 }
 
 async fn read_ddp_frame(stream: &mut RocketChatWsStream) -> Result<RocketChatDdpFrame> {
@@ -3123,6 +3244,8 @@ mod tests {
             rooms_updated_since: None,
             last_room_refresh: None,
             last_typing_at: HashMap::new(),
+            last_realtime_activity_at: None,
+            last_realtime_keepalive_at: None,
             next_realtime_request_id: 1,
         };
         let room = driver.rooms.get("room1").expect("room state").room.clone();
@@ -3191,6 +3314,8 @@ mod tests {
             rooms_updated_since: Some("2026-03-29T17:12:01Z".to_string()),
             last_room_refresh: None,
             last_typing_at: HashMap::new(),
+            last_realtime_activity_at: Some(Instant::now()),
+            last_realtime_keepalive_at: Some(Instant::now()),
             next_realtime_request_id: 1,
         };
 
@@ -3198,6 +3323,8 @@ mod tests {
 
         assert!(driver.ws_stream.is_none());
         assert!(driver.realtime_subscribed_room_ids.is_empty());
+        assert!(driver.last_realtime_activity_at.is_none());
+        assert!(driver.last_realtime_keepalive_at.is_none());
     }
 
     #[test]
@@ -3244,6 +3371,8 @@ mod tests {
             rooms_updated_since: None,
             last_room_refresh: None,
             last_typing_at: HashMap::new(),
+            last_realtime_activity_at: None,
+            last_realtime_keepalive_at: None,
             next_realtime_request_id: 1,
         };
         let room = RocketChatResolvedRoom {
@@ -3323,6 +3452,8 @@ mod tests {
             rooms_updated_since: None,
             last_room_refresh: None,
             last_typing_at: HashMap::new(),
+            last_realtime_activity_at: None,
+            last_realtime_keepalive_at: None,
             next_realtime_request_id: 1,
         };
         let room = RocketChatResolvedRoom {
@@ -3405,6 +3536,8 @@ mod tests {
             rooms_updated_since: None,
             last_room_refresh: None,
             last_typing_at: HashMap::new(),
+            last_realtime_activity_at: None,
+            last_realtime_keepalive_at: None,
             next_realtime_request_id: 1,
         };
         let room = RocketChatResolvedRoom {
@@ -3588,6 +3721,8 @@ mod tests {
             rooms_updated_since: None,
             last_room_refresh: None,
             last_typing_at: HashMap::new(),
+            last_realtime_activity_at: None,
+            last_realtime_keepalive_at: None,
             next_realtime_request_id: 1,
         };
         let room = RocketChatResolvedRoom {
