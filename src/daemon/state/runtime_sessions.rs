@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use tracing::{debug, info, instrument};
 use turin_daemon_protocol::SessionSearchScope;
 use uuid::Uuid;
 
@@ -6,11 +7,14 @@ use super::{
     DaemonState, SessionBranchDetail, SessionDetail, SessionEventDetail, SessionMessageDetail,
     SessionSearchHit, SessionSummary, SessionToolExecutionDetail,
 };
-use crate::kernel::session_refs::{format_session_reference, parse_session_reference};
+use crate::kernel::session_refs::{
+    describe_store_selector, format_session_reference, parse_session_reference,
+};
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{BranchHeadRow, SessionRow};
 
 impl DaemonState {
+    #[instrument(skip(self), fields(store = %store_selector_label_opt(store_selector.as_ref())))]
     pub async fn list_sessions(
         &self,
         limit: usize,
@@ -24,6 +28,7 @@ impl DaemonState {
             None => self.kernel.store_manager().get_default().await?,
         };
         let rows = store.list_session_rows(limit, offset).await?;
+        debug!(count = rows.len(), "Listed persisted sessions");
         Ok(rows
             .iter()
             .map(|row| match &store_selector {
@@ -33,6 +38,13 @@ impl DaemonState {
             .collect())
     }
 
+    #[instrument(
+        skip(self, query),
+        fields(
+            scope = ?scope,
+            store = %store_selector_label_opt(store_selector.as_ref())
+        )
+    )]
     pub async fn search_sessions(
         &self,
         query: &str,
@@ -50,6 +62,7 @@ impl DaemonState {
         let rows = store
             .search_session_history(query, scope, limit, offset)
             .await?;
+        debug!(count = rows.len(), "Searched persisted session history");
         Ok(rows
             .into_iter()
             .map(|row| {
@@ -76,10 +89,15 @@ impl DaemonState {
             .collect())
     }
 
+    #[instrument(skip(self), fields(session_id = %session_id))]
     pub async fn get_session(&self, session_id: &str) -> Result<Option<SessionDetail>> {
         let Some((store_selector, row)) = self.resolve_persisted_session(session_id).await? else {
             return Ok(None);
         };
+        debug!(
+            store = %describe_store_selector(&store_selector),
+            "Resolved persisted session detail target"
+        );
         let store = self.kernel.store_manager().open(&store_selector).await?;
 
         let events = store
@@ -158,6 +176,11 @@ impl DaemonState {
         let store_selector = session_ref
             .store_selector
             .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+        debug!(
+            session_id = %session_id,
+            store = %describe_store_selector(&store_selector),
+            "Updating persisted session title"
+        );
         let store = self.kernel.store_manager().open(&store_selector).await?;
         let updated = store.update_session_title(public_id, title).await?;
         Ok(updated
@@ -165,6 +188,7 @@ impl DaemonState {
             .map(|row| session_summary_from_row_and_selector(row, &store_selector)))
     }
 
+    #[instrument(skip(self), fields(session_id = %session_id))]
     pub async fn list_session_branches(
         &self,
         session_id: &str,
@@ -172,6 +196,10 @@ impl DaemonState {
         let Some((store_selector, row)) = self.resolve_persisted_session(session_id).await? else {
             return Ok(None);
         };
+        debug!(
+            store = %describe_store_selector(&store_selector),
+            "Listing session branches"
+        );
         let store = self.kernel.store_manager().open(&store_selector).await?;
         let branches = store
             .list_branch_heads(row.id)
@@ -182,6 +210,10 @@ impl DaemonState {
         Ok(Some(branches))
     }
 
+    #[instrument(
+        skip(self),
+        fields(session_id = %session_id, branch = %name, from_turn_index = ?from_turn_index, activate = activate)
+    )]
     pub async fn create_session_branch(
         &self,
         session_id: &str,
@@ -192,13 +224,25 @@ impl DaemonState {
         let Some((store_selector, row)) = self.resolve_persisted_session(session_id).await? else {
             return Ok(None);
         };
+        debug!(
+            store = %describe_store_selector(&store_selector),
+            "Creating session branch"
+        );
         let store = self.kernel.store_manager().open(&store_selector).await?;
         let branch = store
             .create_branch_head_from_turn_index(row.id, name, from_turn_index, activate)
             .await?;
+        info!(
+            session_id = %session_id,
+            store = %describe_store_selector(&store_selector),
+            branch = %branch.name,
+            activate = activate,
+            "Created session branch"
+        );
         Ok(Some(branch_detail_from_row(branch)))
     }
 
+    #[instrument(skip(self), fields(session_id = %session_id, branch = %branch))]
     pub async fn checkout_session_branch(
         &self,
         session_id: &str,
@@ -216,6 +260,11 @@ impl DaemonState {
                 session_id
             );
         }
+        debug!(
+            store = %describe_store_selector(&store_selector),
+            live_session = live.is_some(),
+            "Checking out session branch"
+        );
         let store = self.kernel.store_manager().open(&store_selector).await?;
         let branch = if let Ok(branch_id) = Uuid::parse_str(branch) {
             store
@@ -229,6 +278,15 @@ impl DaemonState {
                 .agent_manager()
                 .reload_session(session_id)
                 .await?;
+        }
+        if let Some(branch) = &branch {
+            info!(
+                session_id = %session_id,
+                store = %describe_store_selector(&store_selector),
+                branch = %branch.name,
+                reloaded_live_session = live.is_some(),
+                "Checked out session branch"
+            );
         }
         Ok(branch.map(branch_detail_from_row))
     }
@@ -247,6 +305,12 @@ impl DaemonState {
         let row = store.get_session_row_by_public_id(public_id).await?;
         Ok(row.map(|row| (store_selector, row)))
     }
+}
+
+fn store_selector_label_opt(selector: Option<&StoreSelector>) -> String {
+    selector
+        .map(describe_store_selector)
+        .unwrap_or_else(|| "state".to_string())
 }
 
 pub(crate) fn session_store_selector_from_filters(

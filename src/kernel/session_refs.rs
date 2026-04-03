@@ -26,6 +26,14 @@ pub fn format_session_reference(public_id: &str, store_selector: &StoreSelector)
     }
 }
 
+pub fn describe_store_selector(store_selector: &StoreSelector) -> String {
+    match store_selector {
+        StoreSelector::Alias(alias) => alias.clone(),
+        StoreSelector::Path(path) => path.clone(),
+        StoreSelector::Handle(handle) => format!("handle:{handle}"),
+    }
+}
+
 pub fn parse_session_reference(raw: &str) -> Result<SessionReference> {
     let trimmed = raw.trim();
     anyhow::ensure!(!trimmed.is_empty(), "Session reference must not be empty");

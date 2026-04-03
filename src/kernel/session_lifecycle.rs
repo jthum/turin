@@ -8,7 +8,9 @@ use crate::kernel::config::StoreTargetConfig;
 use crate::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::{PersistedKernelRecord, SessionState, SessionStatus};
-use crate::kernel::session_refs::{format_session_reference, parse_session_reference};
+use crate::kernel::session_refs::{
+    describe_store_selector, format_session_reference, parse_session_reference,
+};
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{EventRow, MessageRow};
 use crate::{
@@ -249,7 +251,12 @@ impl ExecutionHost {
         }
 
         let session_id = self.session_reference(session);
-        info!(session_id = %session_id, "Starting new session");
+        info!(
+            session_id = %session_id,
+            store = %describe_store_selector(&session.store_selector),
+            resumed = session.restored_from_persistence,
+            "Starting new session"
+        );
 
         self.persist_event(
             session,
@@ -301,6 +308,13 @@ impl ExecutionHost {
         if session.status == SessionStatus::Inactive {
             return Ok(());
         }
+
+        info!(
+            session_id = %self.session_reference(session),
+            store = %describe_store_selector(&session.store_selector),
+            turn_count = session.turn_index,
+            "Ending session"
+        );
 
         self.persist_event(
             session,

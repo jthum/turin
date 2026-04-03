@@ -6,10 +6,17 @@ use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::event::{KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::{PlanProgress, QueuedTask, SessionState};
+use crate::kernel::session_refs::describe_store_selector;
 
 impl ExecutionHost {
     /// Run the agent loop with the given prompt.
-    #[instrument(skip(self, session), fields(session_id = %self.session_reference(session)))]
+    #[instrument(
+        skip(self, session),
+        fields(
+            session_id = %self.session_reference(session),
+            store = %describe_store_selector(&session.store_selector)
+        )
+    )]
     pub async fn run(&mut self, session: &mut SessionState, prompt: Option<String>) -> Result<()> {
         // Ensure session is started
         self.start_session(session).await?;
@@ -34,7 +41,13 @@ impl ExecutionHost {
                 continue;
             }
 
-            info!(task_id = %task.task_id, trace_id = %task.trace_id, prompt = %task.prompt, "Running task");
+            info!(
+                task_id = %task.task_id,
+                trace_id = %task.trace_id,
+                store = %describe_store_selector(&session.store_selector),
+                prompt = %task.prompt,
+                "Running task"
+            );
 
             let task_result = match self.run_task(session, &task).await {
                 Ok(result) => result,
@@ -99,6 +112,7 @@ impl ExecutionHost {
         let Some(internal_id) = session.internal_id else {
             warn!(
                 session_id = %self.session_reference(session),
+                store = %describe_store_selector(&session.store_selector),
                 branch = %branch_name,
                 "Skipping deferred branch checkout for session without persistence id"
             );
@@ -115,11 +129,18 @@ impl ExecutionHost {
             .await
         {
             Ok(Some(_)) => {
+                info!(
+                    session_id = %self.session_reference(session),
+                    store = %describe_store_selector(&session.store_selector),
+                    branch = %branch_name,
+                    "Applied deferred branch checkout"
+                );
                 self.refresh_session_from_persistence(session).await?;
             }
             Ok(None) => {
                 warn!(
                     session_id = %self.session_reference(session),
+                    store = %describe_store_selector(&session.store_selector),
                     branch = %branch_name,
                     "Deferred branch checkout target no longer exists"
                 );
@@ -127,6 +148,7 @@ impl ExecutionHost {
             Err(error) => {
                 warn!(
                     session_id = %self.session_reference(session),
+                    store = %describe_store_selector(&session.store_selector),
                     branch = %branch_name,
                     error = %error,
                     "Deferred branch checkout failed"
