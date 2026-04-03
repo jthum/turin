@@ -210,8 +210,9 @@ impl StateStore {
     ) -> Result<CacheResetReport> {
         let conn = self.connect().await?;
         let (removed_reads, removed_versions, scope) = if global {
-            let removed_reads = count_table_rows(&conn, "file_cache_reads", None).await?;
-            let removed_versions = count_table_rows(&conn, "file_cache_versions", None).await?;
+            let removed_reads = count_table_rows(&conn, CountTable::FileCacheReads, None).await?;
+            let removed_versions =
+                count_table_rows(&conn, CountTable::FileCacheVersions, None).await?;
             if !dry_run {
                 conn.execute("DELETE FROM file_cache_reads", ())
                     .await
@@ -224,9 +225,12 @@ impl StateStore {
         } else {
             let session_id =
                 session_id.context("session-scoped cache reset requires a session id")?;
-            let removed_reads =
-                count_table_rows(&conn, "file_cache_reads", Some(("session_id", session_id)))
-                    .await?;
+            let removed_reads = count_table_rows(
+                &conn,
+                CountTable::FileCacheReads,
+                Some(CountFilter::SessionId(session_id)),
+            )
+            .await?;
             if !dry_run {
                 conn.execute(
                     "DELETE FROM file_cache_reads WHERE session_id = ?1",
@@ -301,21 +305,45 @@ async fn cache_timestamp(conn: &turso::Connection) -> Result<String> {
         .context("Cache timestamp query returned no row")
 }
 
+#[derive(Clone, Copy)]
+enum CountTable {
+    FileCacheReads,
+    FileCacheVersions,
+}
+
+impl CountTable {
+    fn as_sql_identifier(self) -> &'static str {
+        match self {
+            Self::FileCacheReads => "file_cache_reads",
+            Self::FileCacheVersions => "file_cache_versions",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum CountFilter {
+    SessionId(i64),
+}
+
 async fn count_table_rows(
     conn: &turso::Connection,
-    table: &str,
-    session_filter: Option<(&str, i64)>,
+    table: CountTable,
+    filter: Option<CountFilter>,
 ) -> Result<u64> {
-    let mut rows = if let Some((column, value)) = session_filter {
-        let sql = format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?1");
+    let table_name = table.as_sql_identifier();
+    let mut rows = if let Some(filter) = filter {
+        let (column_name, value) = match filter {
+            CountFilter::SessionId(value) => ("session_id", value),
+        };
+        let sql = format!("SELECT COUNT(*) FROM {table_name} WHERE {column_name} = ?1");
         conn.query(&sql, turso::params![value])
             .await
-            .with_context(|| format!("Failed to count rows in '{table}'"))?
+            .with_context(|| format!("Failed to count rows in '{table_name}'"))?
     } else {
-        let sql = format!("SELECT COUNT(*) FROM {table}");
+        let sql = format!("SELECT COUNT(*) FROM {table_name}");
         conn.query(&sql, ())
             .await
-            .with_context(|| format!("Failed to count rows in '{table}'"))?
+            .with_context(|| format!("Failed to count rows in '{table_name}'"))?
     };
     let row = rows.next().await?.context("Count query returned no row")?;
     Ok(row.get::<i64>(0)? as u64)

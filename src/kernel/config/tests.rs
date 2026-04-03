@@ -411,8 +411,9 @@ require_audit_reason = true
     assert!(config.governance.grants.enabled);
 }
 
-#[test]
-fn from_file_loads_adjacent_dotenv_without_overriding_existing_env() {
+#[tokio::test]
+async fn from_file_loads_adjacent_dotenv_without_overriding_existing_env() {
+    let _env_guard = crate::test_support::env_lock().lock().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let config_path = temp.path().join("turin.toml");
     let env_path = temp.path().join(".env");

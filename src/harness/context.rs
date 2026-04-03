@@ -232,11 +232,12 @@ impl UserData for ContextWrapper {
                 }
                 "plan_id" => {
                     let state = this.lock_state();
-                    Ok(state
+                    state
                         .plan_id
-                        .clone()
-                        .map(|s| Value::String(lua.create_string(&s).unwrap()))
-                        .unwrap_or(Value::Nil))
+                        .as_deref()
+                        .map(|s| lua.create_string(s).map(Value::String))
+                        .transpose()
+                        .map(|value| value.unwrap_or(Value::Nil))
                 }
                 "token_limit" => {
                     let state = this.lock_state();
@@ -257,11 +258,12 @@ impl UserData for ContextWrapper {
                 }
                 "prompt" => {
                     let state = this.lock_state();
-                    Ok(state
+                    state
                         .prompt
-                        .clone()
-                        .map(|s| Value::String(lua.create_string(&s).unwrap()))
-                        .unwrap_or(Value::Nil))
+                        .as_deref()
+                        .map(|s| lua.create_string(s).map(Value::String))
+                        .transpose()
+                        .map(|value| value.unwrap_or(Value::Nil))
                 }
                 "messages" => {
                     let state = this.lock_state();
