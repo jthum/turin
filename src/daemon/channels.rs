@@ -10,11 +10,30 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::{Mutex, broadcast};
 use turin_channel_core::ChannelAdapterManifest;
-use turin_daemon_protocol::ChannelRunnerHelloParams;
+use turin_daemon_protocol::{ChannelRunnerHeartbeatParams, ChannelRunnerHelloParams};
 
 use crate::daemon::channel_runners;
 use crate::daemon::protocol::EventEnvelope;
 use crate::daemon::registry::DiscoveredChannel;
+
+#[cfg(not(test))]
+const CHANNEL_SUPERVISOR_INTERVAL: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const CHANNEL_SUPERVISOR_INTERVAL: Duration = Duration::from_millis(100);
+
+#[cfg(not(test))]
+const EXTERNAL_CHANNEL_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(45);
+#[cfg(test)]
+const EXTERNAL_CHANNEL_HEARTBEAT_TIMEOUT: Duration = Duration::from_millis(300);
+#[cfg(not(test))]
+const CHANNEL_RESTART_BACKOFF_BASE: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const CHANNEL_RESTART_BACKOFF_BASE: Duration = Duration::from_millis(100);
+
+#[cfg(not(test))]
+const CHANNEL_RESTART_BACKOFF_MAX: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const CHANNEL_RESTART_BACKOFF_MAX: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ChannelRunnerHandshakeSnapshot {
@@ -139,6 +158,8 @@ impl DesiredChannel {
 }
 
 struct Inner {
+    workspace_root: PathBuf,
+    desired_channels: HashMap<String, DiscoveredChannel>,
     by_id: HashMap<String, ChannelRuntimeSnapshot>,
     handles: HashMap<String, RuntimeHandle>,
 }
@@ -147,6 +168,7 @@ pub struct ChannelRuntimeManager {
     endpoint: PathBuf,
     event_tx: broadcast::Sender<EventEnvelope>,
     inner: Arc<Mutex<Inner>>,
+    sync_lock: Arc<Mutex<()>>,
 }
 
 impl ChannelRuntimeManager {
@@ -155,10 +177,26 @@ impl ChannelRuntimeManager {
             endpoint,
             event_tx,
             inner: Arc::new(Mutex::new(Inner {
+                workspace_root: PathBuf::from("."),
+                desired_channels: HashMap::new(),
                 by_id: HashMap::new(),
                 handles: HashMap::new(),
             })),
+            sync_lock: Arc::new(Mutex::new(())),
         }
+    }
+
+    pub fn start_supervisor(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(CHANNEL_SUPERVISOR_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                if let Err(err) = self.supervise_once().await {
+                    tracing::warn!(error = %err, "Channel runtime supervisor pass failed");
+                }
+            }
+        })
     }
 
     pub async fn sync(
@@ -166,16 +204,20 @@ impl ChannelRuntimeManager {
         workspace_root: PathBuf,
         channels: Vec<DiscoveredChannel>,
     ) -> Result<()> {
-        let desired: Vec<DesiredChannel> = channels
+        let _sync_guard = self.sync_lock.lock().await;
+        let desired_registry_channels: Vec<DiscoveredChannel> = channels
             .into_iter()
             .filter(|channel| channel.enabled)
+            .collect();
+        let desired: Vec<DesiredChannel> = desired_registry_channels
+            .iter()
             .map(|channel| DesiredChannel {
-                id: channel.id,
-                kind: channel.kind,
-                agent_id: channel.agent_id,
-                directory: channel.directory,
+                id: channel.id.clone(),
+                kind: channel.kind.clone(),
+                agent_id: channel.agent_id.clone(),
+                directory: channel.directory.clone(),
                 idle_ttl_secs: channel.idle_ttl_secs,
-                settings: serde_json::to_value(channel.extra).unwrap_or_default(),
+                settings: serde_json::to_value(channel.extra.clone()).unwrap_or_default(),
             })
             .collect();
 
@@ -189,6 +231,11 @@ impl ChannelRuntimeManager {
 
         {
             let mut inner = self.inner.lock().await;
+            inner.workspace_root = workspace_root.clone();
+            inner.desired_channels = desired_registry_channels
+                .iter()
+                .map(|channel| (channel.id.clone(), channel.clone()))
+                .collect();
 
             let existing_ids: Vec<String> = inner.by_id.keys().cloned().collect();
             for channel_id in existing_ids {
@@ -205,6 +252,11 @@ impl ChannelRuntimeManager {
                 let signature = channel.signature();
                 let existing_signature =
                     inner.handles.get(&channel.id).map(|h| h.signature.clone());
+                let auto_restart = existing_signature.is_none()
+                    && inner
+                        .by_id
+                        .get(&channel.id)
+                        .is_some_and(|status| status.start_count > 0);
 
                 let needs_restart = existing_signature
                     .as_ref()
@@ -286,7 +338,7 @@ impl ChannelRuntimeManager {
                     snapshot.last_error = None;
                     snapshot.last_error_code = None;
                     snapshot.start_count = snapshot.start_count.saturating_add(1);
-                    if needs_restart {
+                    if needs_restart || auto_restart {
                         snapshot.restart_count = snapshot.restart_count.saturating_add(1);
                     }
                     snapshot.last_transition_unix_ms = now;
@@ -350,6 +402,36 @@ impl ChannelRuntimeManager {
             pid: params.pid,
             last_handshake_unix_ms: now_unix_ms(),
         });
+
+        let snapshot = status.clone();
+        emit_runtime_update(&self.event_tx, &snapshot);
+        Ok(snapshot)
+    }
+
+    pub async fn record_external_heartbeat(
+        &self,
+        params: ChannelRunnerHeartbeatParams,
+    ) -> Result<ChannelRuntimeSnapshot> {
+        let mut inner = self.inner.lock().await;
+        let status = inner.by_id.get_mut(&params.channel_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Channel runtime '{}' was not found for runner heartbeat",
+                params.channel_id
+            )
+        })?;
+
+        let handshake = status.handshake.as_mut().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Channel runtime '{}' received heartbeat before hello",
+                params.channel_id
+            )
+        })?;
+
+        handshake.last_handshake_unix_ms = now_unix_ms();
+        status.state = "running".to_string();
+        status.last_error = None;
+        status.last_error_code = None;
+        status.last_transition_unix_ms = now_unix_ms();
 
         let snapshot = status.clone();
         emit_runtime_update(&self.event_tx, &snapshot);
@@ -567,7 +649,82 @@ impl ChannelRuntimeManager {
         }
     }
 
-    fn prune_finished_inner(inner: &mut Inner) {
+    async fn supervise_once(&self) -> Result<()> {
+        let mut updates = Vec::new();
+        let mut stale_handles = Vec::new();
+
+        let (workspace_root, desired_channels, needs_resync) = {
+            let mut inner = self.inner.lock().await;
+            updates.extend(Self::prune_finished_inner(&mut inner));
+
+            let now = now_unix_ms();
+            let stale_ids: Vec<String> = inner
+                .handles
+                .keys()
+                .filter_map(|channel_id| {
+                    let status = inner.by_id.get(channel_id)?;
+                    let handshake = status.handshake.as_ref()?;
+                    (status.kind != "fs"
+                        && status.state == "running"
+                        && now.saturating_sub(handshake.last_handshake_unix_ms)
+                            > EXTERNAL_CHANNEL_HEARTBEAT_TIMEOUT.as_millis() as u64)
+                        .then(|| channel_id.clone())
+                })
+                .collect();
+
+            for channel_id in stale_ids {
+                if let Some(status) = inner.by_id.get_mut(&channel_id) {
+                    status.state = "failed".to_string();
+                    status.last_error = Some(format!(
+                        "Channel runner heartbeat timed out after {} seconds",
+                        EXTERNAL_CHANNEL_HEARTBEAT_TIMEOUT.as_secs()
+                    ));
+                    status.last_error_code = Some("channel_runner_heartbeat_stale".to_string());
+                    status.failure_count = status.failure_count.saturating_add(1);
+                    status.last_transition_unix_ms = now;
+                    status.last_stopped_unix_ms = Some(now);
+                    updates.push(status.clone());
+                }
+                if let Some(handle) = inner.handles.remove(&channel_id) {
+                    stale_handles.push(handle);
+                }
+            }
+
+            let workspace_root = inner.workspace_root.clone();
+            let desired_channels: Vec<DiscoveredChannel> =
+                inner.desired_channels.values().cloned().collect();
+
+            let needs_resync = desired_channels.iter().any(|channel| {
+                if inner.handles.contains_key(&channel.id) {
+                    return false;
+                }
+                match inner.by_id.get(&channel.id) {
+                    Some(status) => restart_backoff_elapsed(status, now),
+                    None => true,
+                }
+            });
+
+            (workspace_root, desired_channels, needs_resync)
+        };
+
+        self.emit_runtime_updates(updates);
+
+        for handle in stale_handles {
+            let _ = handle.shutdown_tx.send(true);
+            tokio::spawn(async move {
+                let _ = tokio::time::timeout(Duration::from_secs(2), handle.join).await;
+            });
+        }
+
+        if needs_resync {
+            self.sync(workspace_root, desired_channels).await?;
+        }
+
+        Ok(())
+    }
+
+    fn prune_finished_inner(inner: &mut Inner) -> Vec<ChannelRuntimeSnapshot> {
+        let mut updates = Vec::new();
         let finished: Vec<String> = inner
             .handles
             .iter()
@@ -584,13 +741,17 @@ impl ChannelRuntimeManager {
                 status.state = "stopped".to_string();
                 status.last_transition_unix_ms = now_unix_ms();
                 status.last_stopped_unix_ms = Some(status.last_transition_unix_ms);
+                updates.push(status.clone());
             }
         }
+        updates
     }
 
     async fn prune_finished(&self) {
         let mut inner = self.inner.lock().await;
-        Self::prune_finished_inner(&mut inner);
+        let updates = Self::prune_finished_inner(&mut inner);
+        drop(inner);
+        self.emit_runtime_updates(updates);
     }
 
     fn emit_runtime_updates(&self, updates: Vec<ChannelRuntimeSnapshot>) {
@@ -701,6 +862,27 @@ fn format_external_runner_exit_error(
     }
 }
 
+fn restart_backoff_elapsed(status: &ChannelRuntimeSnapshot, now_unix_ms: u64) -> bool {
+    let delay = if status.state == "failed" {
+        restart_backoff_delay(status.failure_count.max(1))
+    } else {
+        Duration::from_secs(0)
+    };
+    let Some(last_stopped) = status.last_stopped_unix_ms else {
+        return true;
+    };
+    now_unix_ms.saturating_sub(last_stopped) >= delay.as_millis() as u64
+}
+
+fn restart_backoff_delay(failure_count: u64) -> Duration {
+    let exponent = failure_count.saturating_sub(1).min(4) as u32;
+    let multiplier = 1u32 << exponent;
+    std::cmp::min(
+        CHANNEL_RESTART_BACKOFF_MAX,
+        CHANNEL_RESTART_BACKOFF_BASE.saturating_mul(multiplier),
+    )
+}
+
 fn validate_runner_hello(expected_kind: &str, manifest: &ChannelAdapterManifest) -> Result<()> {
     manifest
         .validate()
@@ -731,7 +913,20 @@ fn extract_bracketed_error_code(error: &str) -> Option<String> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::Arc;
     use tempfile::tempdir;
+    use tokio::time::{Duration, Instant, sleep};
+
+    async fn wait_until(timeout: Duration, mut predicate: impl FnMut() -> bool, description: &str) {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if predicate() {
+                return;
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+        panic!("timed out waiting for {description}");
+    }
 
     #[cfg(unix)]
     #[tokio::test]
@@ -793,6 +988,204 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn supervisor_restarts_exited_external_runner() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _env_guard = crate::test_support::env_lock().lock().await;
+        let temp = tempdir().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let channel_dir = workspace_root.join(".turin/runtime/channels/telegram-ops");
+        fs::create_dir_all(&channel_dir).unwrap();
+
+        let counter_path = temp.path().join("runner-count.txt");
+        let runner = temp.path().join("fake-telegram-runner.sh");
+        fs::write(
+            &runner,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"describe\" ]; then\n  printf '%s\\n' '{{\"protocol_version\":2,\"kind\":\"telegram\"}}'\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  count=0\n  if [ -f \"{counter}\" ]; then count=$(cat \"{counter}\"); fi\n  count=$((count + 1))\n  printf '%s' \"$count\" > \"{counter}\"\n  exit 0\nfi\nif [ \"$1\" = \"validate-settings\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"setup-auth-flow-start\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"setup-auth-flow-poll\" ]; then\n  exit 1\nfi\nexit 0\n",
+                counter = counter_path.display()
+            ),
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&runner).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&runner, perms).unwrap();
+
+        let previous = std::env::var_os("TURIN_CHANNEL_TELEGRAM_BIN");
+        unsafe {
+            std::env::set_var("TURIN_CHANNEL_TELEGRAM_BIN", &runner);
+        }
+
+        let event_tx = broadcast::channel(8).0;
+        let manager = Arc::new(ChannelRuntimeManager::new(
+            temp.path().join("daemon.sock"),
+            event_tx,
+        ));
+        let supervisor = manager.clone().start_supervisor();
+
+        manager
+            .sync(
+                workspace_root.clone(),
+                vec![DiscoveredChannel {
+                    id: "telegram-ops".to_string(),
+                    directory: channel_dir,
+                    enabled: true,
+                    kind: "telegram".to_string(),
+                    agent_id: "default".to_string(),
+                    idle_ttl_secs: Some(60),
+                    persistence: Default::default(),
+                    extra: toml::Table::new(),
+                }],
+            )
+            .await
+            .unwrap();
+
+        wait_until(
+            Duration::from_secs(5),
+            || {
+                fs::read_to_string(&counter_path)
+                    .ok()
+                    .and_then(|raw| raw.trim().parse::<u64>().ok())
+                    .is_some_and(|count| count >= 2)
+            },
+            "external channel auto-restart",
+        )
+        .await;
+
+        let runtime = manager.get("telegram-ops").await.expect("runtime exists");
+        assert!(runtime.restart_count >= 1);
+
+        supervisor.abort();
+        manager.shutdown().await;
+        if let Some(value) = previous {
+            unsafe {
+                std::env::set_var("TURIN_CHANNEL_TELEGRAM_BIN", value);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("TURIN_CHANNEL_TELEGRAM_BIN");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn supervisor_restarts_runner_when_heartbeat_goes_stale() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _env_guard = crate::test_support::env_lock().lock().await;
+        let temp = tempdir().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let channel_dir = workspace_root.join(".turin/runtime/channels/telegram-ops");
+        fs::create_dir_all(&channel_dir).unwrap();
+
+        let runner = temp.path().join("fake-telegram-runner.sh");
+        fs::write(
+            &runner,
+            "#!/bin/sh\nif [ \"$1\" = \"describe\" ]; then\n  printf '%s\\n' '{\"protocol_version\":2,\"kind\":\"telegram\"}'\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  sleep 30\n  exit 0\nfi\nif [ \"$1\" = \"validate-settings\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"setup-auth-flow-start\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"setup-auth-flow-poll\" ]; then\n  exit 1\nfi\nexit 0\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&runner).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&runner, perms).unwrap();
+
+        let previous = std::env::var_os("TURIN_CHANNEL_TELEGRAM_BIN");
+        unsafe {
+            std::env::set_var("TURIN_CHANNEL_TELEGRAM_BIN", &runner);
+        }
+
+        let event_tx = broadcast::channel(8).0;
+        let manager = Arc::new(ChannelRuntimeManager::new(
+            temp.path().join("daemon.sock"),
+            event_tx,
+        ));
+        let supervisor = manager.clone().start_supervisor();
+
+        manager
+            .sync(
+                workspace_root.clone(),
+                vec![DiscoveredChannel {
+                    id: "telegram-ops".to_string(),
+                    directory: channel_dir,
+                    enabled: true,
+                    kind: "telegram".to_string(),
+                    agent_id: "default".to_string(),
+                    idle_ttl_secs: Some(60),
+                    persistence: Default::default(),
+                    extra: toml::Table::new(),
+                }],
+            )
+            .await
+            .unwrap();
+
+        let start_deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if manager
+                .get("telegram-ops")
+                .await
+                .is_some_and(|runtime| runtime.state == "starting")
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < start_deadline,
+                "timed out waiting for external channel start"
+            );
+            sleep(Duration::from_millis(25)).await;
+        }
+
+        manager
+            .record_external_hello(ChannelRunnerHelloParams {
+                channel_id: "telegram-ops".to_string(),
+                manifest: ChannelAdapterManifest {
+                    protocol_version: turin_channel_core::CHANNEL_ADAPTER_PROTOCOL_VERSION,
+                    kind: "telegram".to_string(),
+                    display_name: "Telegram".to_string(),
+                    ..ChannelAdapterManifest::default()
+                },
+                runner_binary: Some("turin-channel-telegram".to_string()),
+                runner_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                pid: Some(1234),
+            })
+            .await
+            .expect("hello recorded");
+
+        let restart_deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if manager
+                .get("telegram-ops")
+                .await
+                .is_some_and(|runtime| runtime.restart_count >= 1)
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < restart_deadline,
+                "timed out waiting for stale runner restart: {:?}",
+                manager.get("telegram-ops").await
+            );
+            sleep(Duration::from_millis(25)).await;
+        }
+
+        let runtime = manager.get("telegram-ops").await.expect("runtime exists");
+        assert!(matches!(runtime.state.as_str(), "starting" | "running"));
+        assert!(runtime.restart_count >= 1);
+
+        supervisor.abort();
+        manager.shutdown().await;
+        if let Some(value) = previous {
+            unsafe {
+                std::env::set_var("TURIN_CHANNEL_TELEGRAM_BIN", value);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("TURIN_CHANNEL_TELEGRAM_BIN");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn external_runner_hello_marks_channel_running() {
         let event_tx = broadcast::channel(8).0;
@@ -841,6 +1234,29 @@ mod tests {
         assert_eq!(
             snapshot.handshake.as_ref().expect("handshake").display_name,
             "Telegram"
+        );
+
+        let first_contact = snapshot
+            .handshake
+            .as_ref()
+            .expect("handshake")
+            .last_handshake_unix_ms;
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        let heartbeat = manager
+            .record_external_heartbeat(ChannelRunnerHeartbeatParams {
+                channel_id: "telegram-ops".to_string(),
+            })
+            .await
+            .expect("heartbeat recorded");
+        assert_eq!(heartbeat.state, "running");
+        assert!(
+            heartbeat
+                .handshake
+                .as_ref()
+                .expect("handshake")
+                .last_handshake_unix_ms
+                >= first_contact
         );
     }
 }

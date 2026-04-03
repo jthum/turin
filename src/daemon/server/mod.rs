@@ -63,6 +63,7 @@ pub async fn serve(config_path: &Path) -> Result<()> {
         endpoint.clone(),
         event_tx.clone(),
     ));
+    let channel_supervisor = channel_runtimes.clone().start_supervisor();
     {
         let guard = state.read().await;
         let workspace_root = PathBuf::from(&guard.bootstrap_config.kernel.workspace_root);
@@ -128,6 +129,7 @@ pub async fn serve(config_path: &Path) -> Result<()> {
         *slot = None;
     }
     channel_runtimes.shutdown().await;
+    channel_supervisor.abort();
     remove_endpoint(&endpoint).await.ok();
     Ok(())
 }

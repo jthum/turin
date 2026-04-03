@@ -125,6 +125,9 @@ pub(super) async fn dispatch(
         DaemonRequest::ChannelRunnerHello(params) => {
             channel::runner_hello(id, params, &context).await
         }
+        DaemonRequest::ChannelRunnerHeartbeat(params) => {
+            channel::runner_heartbeat(id, params, &context).await
+        }
         DaemonRequest::ChannelDelete(params) => channel::delete(id, params, &context).await,
     }
 }

@@ -2,8 +2,9 @@ use serde_json::json;
 
 use crate::daemon::protocol::ErrorCode;
 use crate::daemon::protocol::{
-    ChannelAccessParams, ChannelAccessRoomParams, ChannelRunnerHelloParams, CreateChannelParams,
-    EntityIdParams, NoParams, ResponseEnvelope, UpdateChannelParams,
+    ChannelAccessParams, ChannelAccessRoomParams, ChannelRunnerHeartbeatParams,
+    ChannelRunnerHelloParams, CreateChannelParams, EntityIdParams, NoParams, ResponseEnvelope,
+    UpdateChannelParams,
 };
 use crate::daemon::state::{CreateChannelInput, UpdateChannelInput};
 
@@ -63,6 +64,17 @@ pub(super) async fn runner_hello(
 ) -> ResponseEnvelope {
     match ctx.channel_runtimes.record_external_hello(params).await {
         Ok(snapshot) => serialize_response(id, snapshot, "channel runner hello"),
+        Err(err) => validation_error(id, err),
+    }
+}
+
+pub(super) async fn runner_heartbeat(
+    id: Option<String>,
+    params: ChannelRunnerHeartbeatParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    match ctx.channel_runtimes.record_external_heartbeat(params).await {
+        Ok(snapshot) => serialize_response(id, snapshot, "channel runner heartbeat"),
         Err(err) => validation_error(id, err),
     }
 }

@@ -8,9 +8,11 @@ use tokio::sync::watch;
 use tracing_subscriber::EnvFilter;
 use turin_channel_core::{ChannelAuthFlowPollRequest, ChannelAuthFlowStartRequest};
 use turin_channel_rocketchat::RocketChatChannelDriver;
-use turin_channel_runner::{ChannelAccessPolicy, ChannelRunner, RunnerConfig};
+use turin_channel_runner::{
+    ChannelAccessPolicy, ChannelRunner, RunnerConfig, RunnerPresence, announce_runner_presence,
+    spawn_runner_heartbeat,
+};
 use turin_daemon_client::DaemonClient;
-use turin_daemon_protocol::ChannelRunnerHelloParams;
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -79,6 +81,7 @@ async fn run(args: RunArgs) -> Result<()> {
     let task_timeout_ms = turin_channel_runner::task_timeout_ms_from_settings(&settings)?;
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let heartbeat_shutdown_rx = shutdown_rx.clone();
     tokio::spawn(async move {
         wait_for_shutdown_signal().await;
         let _ = shutdown_tx.send(true);
@@ -111,21 +114,29 @@ async fn run(args: RunArgs) -> Result<()> {
         )
     })?;
 
-    daemon
-        .channel_runner_hello(ChannelRunnerHelloParams {
-            channel_id: args.channel_id.clone(),
+    announce_runner_presence(
+        &daemon,
+        &args.channel_id,
+        RunnerPresence {
             manifest: turin_channel_rocketchat::adapter_manifest(),
             runner_binary: Some(env!("CARGO_BIN_NAME").to_string()),
             runner_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             pid: Some(std::process::id()),
-        })
-        .await
-        .with_context(|| {
-            format!(
-                "Failed to send runner hello for channel '{}'",
-                args.channel_id
-            )
-        })?;
+        },
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "Failed to send runner hello for channel '{}'",
+            args.channel_id
+        )
+    })?;
+
+    let _heartbeat_task = spawn_runner_heartbeat(
+        daemon.clone(),
+        args.channel_id.clone(),
+        heartbeat_shutdown_rx,
+    );
 
     runner
         .run_driver(&args.agent_id, &mut driver, task_timeout_ms)

@@ -137,6 +137,11 @@ pub struct ChannelRunnerHelloParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ChannelRunnerHeartbeatParams {
+    pub channel_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BindHarnessParams {
     pub id: String,
     pub harness_id: String,
@@ -370,6 +375,8 @@ pub enum DaemonRequest {
     ChannelAccessRevoke(ChannelAccessRoomParams),
     #[serde(rename = "channel.runner.hello")]
     ChannelRunnerHello(ChannelRunnerHelloParams),
+    #[serde(rename = "channel.runner.heartbeat")]
+    ChannelRunnerHeartbeat(ChannelRunnerHeartbeatParams),
     #[serde(rename = "channel.delete")]
     ChannelDelete(EntityIdParams),
 }
