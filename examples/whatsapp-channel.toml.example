@@ -1,0 +1,50 @@
+enabled = true
+kind = "whatsapp"
+agent_id = "default"
+
+# Personal mode is safer for a number you already use for normal WhatsApp chats.
+# Dedicated mode is cleaner when the number belongs only to the agent.
+account_mode = "personal"
+
+# Usually fine to leave alone.
+workspace_id = "whatsapp"
+
+# Shared runner admission policy:
+# - auto: approve new chats immediately
+# - pending: hold new chats for operator approval
+# - off: do not admit new chats automatically
+pairing_mode = "pending"
+
+# Session routing:
+# - user: one Turin session per sender inside a chat
+# - room: one Turin session shared by the whole chat
+session_scope = "user"
+
+# Personal mode defaults to "/turin" if omitted.
+# Dedicated accounts usually leave this empty.
+trigger_prefix = "/turin"
+
+# Optional chat allow/deny lists.
+# Use full chat identifiers such as WhatsApp JIDs or group IDs.
+# allowed_chats = ["120363400000000000@g.us"]
+# banned_chats = ["status@broadcast"]
+
+# Optional sender allow/deny lists for the shared channel runner.
+# Pairing users control who can admit a new chat when pairing_mode is auto/pending.
+# pairing_users = ["15551234567", "15551234567@s.whatsapp.net"]
+# allowed_users = ["15551234567"]
+# banned_users = ["15557654321"]
+
+# Optional explicit linked-device session store path.
+# Leave unset to let the pairing flow generate and write it automatically.
+# session_store_path = ".turin/data/whatsapp/session.db"
+
+# Headless pairing-code flow:
+# pair_code_phone_number = "15551234567"
+# pair_code_custom_code = "ABCD1234"
+
+# Dedicated-account baseline:
+# account_mode = "dedicated"
+# pairing_mode = "auto"
+# session_scope = "room"
+# trigger_prefix = ""

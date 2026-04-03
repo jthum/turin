@@ -51,3 +51,4 @@ This is the documentation landing page for Turin.
 ## Channel Setup
 
 - `docs/guides/channels/telegram.md` — step-by-step Telegram bot, chat-id, webhook, and Turin channel setup
+- `docs/guides/channels/whatsapp.md` — step-by-step WhatsApp linked-device setup, personal vs dedicated account guidance, and Turin channel setup

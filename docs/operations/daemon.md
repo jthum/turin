@@ -347,6 +347,7 @@ turin daemon channel list
 turin daemon channel create fs-local --kind fs --agent default --setting inbox_dir=inbox --setting outbox_dir=outbox
 turin daemon channel create discord-dev --kind discord --agent default --setting token_env=DISCORD_TOKEN --setting channel_id=1234567890
 turin daemon channel create telegram-ops --kind telegram --agent default --setting token_env=TELEGRAM_BOT_TOKEN --setting chat_id=-1001234567890
+turin daemon channel create whatsapp-agent --kind whatsapp --agent default --setting account_mode=personal --setting pairing_mode=pending --setting trigger_prefix=/turin
 turin daemon channel get fs-local
 turin daemon channel status fs-local
 turin daemon channel issues fs-local
@@ -364,7 +365,7 @@ Channel settings are intentionally adapter-specific. The daemon accepts repeated
 `--setting key=value` entries and persists them into the channel `config.toml`. Values are
 parsed as JSON when possible, otherwise they are stored as strings.
 
-For known channel kinds (`fs`, `discord`, `telegram`), settings are validated on
+For known channel kinds (`fs`, `discord`, `telegram`, `whatsapp`), settings are validated on
 `channel.create` and `channel.update` before write/rescan.
 
 `channel.update --setting ...` performs a partial merge into existing settings
@@ -384,6 +385,7 @@ Some channel adapters also support `session_scope`, for example:
 
 - Telegram: `user | thread | room`
 - Discord: `user | thread`
+- WhatsApp: `user | room`
 
 Those settings are enforced before a message is routed into a Turin session, which is why they live in the shared channel runner rather than in a harness script.
 
@@ -458,16 +460,40 @@ turin daemon channel update telegram-ops \
   - `ignore_bot_messages`
   - `base_url`
 
+`kind = "whatsapp"` is also available through a daemon-managed sidecar runner:
+
+- uses a WhatsApp linked-device session for inbound and outbound traffic
+- supports QR pairing by default and pairing-code auth for headless servers
+- accepts inbound text messages and sends outbound text replies
+- supports direct messages and group chats
+- common settings:
+  - `account_mode` (`personal` default, or `dedicated`)
+  - `pairing_mode` (`auto`, `pending`, `off`)
+  - `session_scope` (`user`, `room`)
+  - `workspace_id`
+  - `trigger_prefix`
+  - `allowed_chats`
+  - `banned_chats`
+  - `session_store_path`
+  - `pair_code_phone_number`
+  - `pair_code_custom_code`
+- current behavior notes:
+  - self-originated messages are ignored
+  - personal mode defaults `trigger_prefix` to `/turin` when unset
+  - dedicated mode does not force a prefix
+  - text only; attachments and streaming are not implemented yet
+
 When a channel is `enabled`, the daemon owns the runtime lifecycle:
 - `channel.status <id>` reports live runtime status (`starting`, `running`, `stopped`, `failed`, `unsupported`)
 - `daemon.status` includes a `channel_runtimes` snapshot for control-plane visibility
 - channel runtime state updates automatically after channel/agent/harness/runtime changes and watcher rescans
 
-For sidecar-backed kinds (`discord`, `telegram`), the daemon resolves and starts the runner automatically. Resolution order is:
+For sidecar-backed kinds (`discord`, `telegram`, `whatsapp`), the daemon resolves and starts the runner automatically. Resolution order is:
 
 1. explicit env override
    - `TURIN_CHANNEL_DISCORD_BIN`
    - `TURIN_CHANNEL_TELEGRAM_BIN`
+   - `TURIN_CHANNEL_WHATSAPP_BIN`
 2. a sibling binary next to the running `turin` executable
 3. the binary name on `PATH`
 4. during source-checkout development, `cargo run -p <runner> -- ...` as a fallback
@@ -516,6 +542,7 @@ Telegram outbound metadata keys:
 - `telegram_parse_mode`: currently supports `html`
 
 For a step-by-step operator walkthrough, see `docs/guides/channels/telegram.md`.
+For WhatsApp-specific setup and account-mode guidance, see `docs/guides/channels/whatsapp.md`.
 
 To emit rich outbound payloads from task output, return a JSON envelope with
 `_turin_channel_outbound = true`, for example:

@@ -22,6 +22,10 @@ Use `examples/` for:
 - tiny demonstrations of a specific primitive or pattern
 - one-off material that would be too small or too incomplete for the Harness Library
 
+Current examples include:
+
+- `examples/whatsapp-channel.toml.example`
+
 Use `library/` for:
 
 - production-grade baselines

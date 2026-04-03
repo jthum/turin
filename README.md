@@ -45,7 +45,7 @@ Simple things should be simple. Powerful things should be possible.
 ## Core Features
 
 - **Lean core runtime** (`turin`) with no required services beyond your configured provider and local SQLite/libSQL database
-- **Auto-managed channel sidecars** for network channels such as Telegram and Discord, so the daemon can support more adapters without bloating the core runtime binary
+- **Auto-managed channel sidecars** for network channels such as Telegram, Discord, and WhatsApp, so the daemon can support more adapters without bloating the core runtime binary
 - **Optional indexing companion** (`turin-map`) for code-search indexing without bloating the runtime execution path
 - **Harness scripting in Luau** for governance, workflows, context engineering, memory policies, and orchestration
 - **Canonical stdlib API**:
@@ -101,8 +101,8 @@ cargo build --release -p turin-manager
 # Optional: build the code-indexing companion if you want runtime code search setup
 cargo build --release -p turin-map
 
-# Optional: build channel sidecars if you want daemon-managed Telegram or Discord
-cargo build --release -p turin-channel-telegram -p turin-channel-discord --bins
+# Optional: build channel sidecars if you want daemon-managed Telegram, Discord, or WhatsApp
+cargo build --release -p turin-channel-telegram -p turin-channel-discord -p turin-channel-whatsapp --bins
 ```
 
 ### 2. Try Turin with no API key
@@ -609,6 +609,7 @@ The library is exercised by `cargo test --test example_harness_examples`, so it 
 - `docs/guides/harness-guide.md` — writing production harness scripts
 - `docs/guides/harness-library.md` — ready-to-use harness library entries
 - `docs/guides/channels/telegram.md` — step-by-step Telegram channel setup
+- `docs/guides/channels/whatsapp.md` — WhatsApp personal vs dedicated account guidance and linked-device setup
 - `docs/concepts/governance.md` — capability model, profiles, import scoping, grants
 - `docs/operations/remote.md` — authenticated remote bridge for HTTP + SSE/WebSocket daemon access
 - `docs/operations/ui-clients.md` — TUI/desktop operator clients and shared connection profiles
