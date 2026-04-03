@@ -20,14 +20,14 @@ The harness reads those files, builds a working brief, routes planning/review re
 - `harness/main.lua`
 - `agents/planner/main.lua`
 - `agents/reviewer/main.lua`
-- `turin.toml.example`
+- `examples/config/config.toml.example`
 
 ## Copy Into a Project
 
 1. Copy the `workspace/` files into your project root.
 2. Copy `harness/main.lua` into your main harness directory.
 3. Copy the `agents/` directories into agent-specific harness directories.
-4. Start from `turin.toml.example` and point the `planner` and `reviewer` agents at those harness directories.
+4. Start from `examples/config/config.toml.example` and point the `planner` and `reviewer` agents at those harness directories.
 
 ## What It Does
 

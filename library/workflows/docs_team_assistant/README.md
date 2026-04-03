@@ -13,7 +13,7 @@ It reads checked-in docs context, runs a docs reviewer specialist to identify dr
 - `harness/main.lua`
 - `agents/docs_reviewer/main.lua`
 - `agents/draft_writer/main.lua`
-- `turin.toml.example`
+- `examples/config/config.toml.example`
 
 ## What It Does
 

@@ -6,7 +6,7 @@ It complements:
 
 - `docs/operations/daemon.md` for the daemon and channel reference
 - `docs/reference/channel-sidecars.md` for the shared sidecar/auth-flow protocol
-- `examples/whatsapp-channel.toml.example` for a ready-to-adapt channel config
+- `examples/config/channels/whatsapp-channel.toml.example` for a ready-to-adapt channel config
 
 ## What The Current WhatsApp Adapter Supports
 
@@ -149,7 +149,7 @@ Recommended dedicated-account baseline:
 
 Start from:
 
-- `examples/whatsapp-channel.toml.example`
+- `examples/config/channels/whatsapp-channel.toml.example`
 
 Typical personal-account config:
 

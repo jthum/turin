@@ -13,7 +13,7 @@ It reads checked-in coding context, produces an execution plan through a planner
 - `harness/main.lua`
 - `agents/planner/main.lua`
 - `agents/reviewer/main.lua`
-- `turin.toml.example`
+- `examples/config/config.toml.example`
 
 ## What It Does
 

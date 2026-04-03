@@ -163,7 +163,7 @@ remote_url = "http://192.168.1.50:9324"
 auth_token_env = "TURIN_REMOTE_TOKEN"
 ```
 
-There is also a copyable example at `ui-profiles.toml.example`.
+There is also a copyable example at `examples/config/ui-profiles.toml.example`.
 
 ## Turin TUI Settings
 
@@ -175,7 +175,7 @@ By default it looks for `turin-tui.toml` in the current working directory. You c
 target/release/turin-tui --tui-config path/to/turin-tui.toml
 ```
 
-A copyable example is included at `turin-tui.toml.example`.
+A copyable example is included at `examples/config/turin-tui.toml.example`.
 
 Current settings:
 

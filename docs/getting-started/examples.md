@@ -22,9 +22,10 @@ Use `examples/` for:
 - tiny demonstrations of a specific primitive or pattern
 - one-off material that would be too small or too incomplete for the Harness Library
 
-Current examples include:
+Current example folders include:
 
-- `examples/whatsapp-channel.toml.example`
+- `examples/config/`
+- `examples/config/channels/`
 
 Use `library/` for:
 

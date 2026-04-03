@@ -14,7 +14,7 @@ It reads checked-in release context, runs a readiness reviewer specialist to ass
 - `harness/main.lua`
 - `agents/readiness_reviewer/main.lua`
 - `agents/changelog_writer/main.lua`
-- `turin.toml.example`
+- `examples/config/config.toml.example`
 
 ## What It Does
 

@@ -2,9 +2,10 @@
 
 This directory is reserved for smaller examples, snippets, and instructional material.
 
-Current examples:
+Folders:
 
-- `examples/whatsapp-channel.toml.example` — WhatsApp channel config covering personal and dedicated account setups
+- `examples/config/` — bootstrap runtime config, UI client config, and channel config examples
+- `examples/harnesses/` — reserved for small instructional harness examples
 
 The serious, ready-to-use harnesses now live in:
 

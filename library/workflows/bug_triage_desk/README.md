@@ -13,7 +13,7 @@ It reads checked-in triage policy and ownership context, runs a triager speciali
 - `harness/main.lua`
 - `agents/triager/main.lua`
 - `agents/responder/main.lua`
-- `turin.toml.example`
+- `examples/config/config.toml.example`
 
 ## What It Does
 
