@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 use tokio::time::{Instant, MissedTickBehavior};
 use turin_channel_core::{
     ChannelAdapterManifest, ChannelCapabilities, ChannelConversationKey, ChannelKind, ChannelUser,
@@ -489,6 +490,7 @@ pub struct ChannelRunner {
     daemon: DaemonClient,
     channel_id: String,
     bindings: FileBindingStore,
+    bindings_lock: Arc<Mutex<()>>,
     access_state: FileAccessStateStore,
     idle_ttl: Option<Duration>,
     access_policy: ChannelAccessPolicy,
@@ -551,6 +553,7 @@ impl ChannelRunner {
             daemon,
             channel_id: config.channel_id,
             bindings: FileBindingStore::new(config.state_path),
+            bindings_lock: Arc::new(Mutex::new(())),
             access_state: FileAccessStateStore::new(config.access_state_path),
             idle_ttl: config.idle_ttl,
             access_policy: config.access_policy,
@@ -564,16 +567,20 @@ impl ChannelRunner {
         key: &ChannelConversationKey,
         reset_requested: bool,
     ) -> Result<ConversationBinding> {
-        let mut bindings = self.bindings.load().await?;
         let binding_key = serialize_binding_key(key)?;
-        let current = bindings.get(&binding_key);
-        let decision = decide_routing(
-            key,
-            current,
-            SystemTime::now(),
-            self.idle_ttl,
-            reset_requested,
-        );
+        let (current, decision) = {
+            let _guard = self.bindings_lock.lock().await;
+            let bindings = self.bindings.load().await?;
+            let current = bindings.get(&binding_key).cloned();
+            let decision = decide_routing(
+                key,
+                current.as_ref(),
+                SystemTime::now(),
+                self.idle_ttl,
+                reset_requested,
+            );
+            (current, decision)
+        };
 
         let session: serde_json::Value = match decision {
             RoutingDecision::Reuse {
@@ -623,8 +630,12 @@ impl ChannelRunner {
             .context("daemon session response missing session_id")?;
         let mut binding = ConversationBinding::new(agent_id, session_id, key, SystemTime::now());
         binding.touch(SystemTime::now());
-        bindings.insert(binding_key, binding.clone());
-        self.bindings.save(&bindings).await?;
+        {
+            let _guard = self.bindings_lock.lock().await;
+            let mut bindings = self.bindings.load().await?;
+            bindings.insert(binding_key, binding.clone());
+            self.bindings.save(&bindings).await?;
+        }
         Ok(binding)
     }
 
@@ -1231,6 +1242,7 @@ impl ChannelRunner {
     }
 
     pub async fn clear_binding(&self, key: &ChannelConversationKey) -> Result<()> {
+        let _guard = self.bindings_lock.lock().await;
         let mut bindings = self.bindings.load().await?;
         bindings.remove(&serialize_binding_key(key)?);
         self.bindings.save(&bindings).await
@@ -1240,6 +1252,7 @@ impl ChannelRunner {
         let Some(ttl) = self.idle_ttl else {
             return Ok(());
         };
+        let _guard = self.bindings_lock.lock().await;
         let mut bindings = self.bindings.load().await?;
         let now = SystemTime::now();
         bindings.retain(|_, binding| !binding.is_expired(now, ttl));

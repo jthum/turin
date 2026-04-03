@@ -12,7 +12,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, timeout};
 use turin_channel_core::{
     ChannelConversationKey, ChannelKind, ChannelMessageRef, ChannelSessionScope, ChannelUser,
-    InboundEvent, OutboundMessage,
+    InboundEvent, MessageBlock, OutboundMessage,
 };
 use turin_channel_runner::{
     ChannelDriver, ChannelProgressUpdate, ChannelRunner, ChannelStreamMode, RunnerConfig,
@@ -35,7 +35,7 @@ struct MockDriver {
 
 struct RecordingDriver {
     events: VecDeque<InboundEvent>,
-    sent: Arc<Mutex<Vec<(String, Instant)>>>,
+    sent: Arc<Mutex<Vec<(String, String, Instant)>>>,
     shutdown_called: Arc<Mutex<bool>>,
 }
 
@@ -244,10 +244,19 @@ impl ChannelDriver for RecordingDriver {
             .and_then(|value| value.as_str())
             .unwrap_or_default()
             .to_string();
+        let text = message
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                MessageBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         self.sent
             .lock()
             .expect("sent lock poisoned")
-            .push((reply_to, Instant::now()));
+            .push((reply_to, text, Instant::now()));
         Ok(())
     }
 
@@ -414,13 +423,25 @@ async fn channel_runner_processes_different_conversations_in_parallel() -> Resul
         .await?;
 
     let elapsed = started_at.elapsed();
+    let send_gap = {
+        let sent = sent.lock().expect("sent lock poisoned");
+        assert_eq!(sent.len(), 2);
+        assert!(
+            sent.iter().all(|(_, text, _)| text.contains("PONG")),
+            "parallel conversations should both succeed, sent={sent:?}"
+        );
+        sent[0]
+            .2
+            .checked_duration_since(sent[1].2)
+            .unwrap_or_else(|| sent[1].2.duration_since(sent[0].2))
+    };
     {
         let sent = sent.lock().expect("sent lock poisoned");
         assert_eq!(sent.len(), 2);
     }
     assert!(
-        elapsed < Duration::from_millis(1_050),
-        "different conversations should overlap, elapsed={elapsed:?}"
+        send_gap < Duration::from_millis(450),
+        "different conversations should overlap, elapsed={elapsed:?}, send_gap={send_gap:?}"
     );
 
     daemon.stop().await
@@ -441,15 +462,20 @@ async fn channel_runner_serializes_same_conversation_events() -> Result<()> {
         .await?;
 
     let elapsed = started_at.elapsed();
-    {
+    let send_gap = {
         let sent = sent.lock().expect("sent lock poisoned");
         assert_eq!(sent.len(), 2);
         assert_eq!(sent[0].0, "msg-a");
         assert_eq!(sent[1].0, "msg-b");
-    }
+        assert!(
+            sent.iter().all(|(_, text, _)| text.contains("PONG")),
+            "serialized conversation should still succeed, sent={sent:?}"
+        );
+        sent[1].2.duration_since(sent[0].2)
+    };
     assert!(
-        elapsed >= Duration::from_millis(1_050),
-        "same conversation should stay serialized, elapsed={elapsed:?}"
+        send_gap >= Duration::from_millis(500),
+        "same conversation should stay serialized, elapsed={elapsed:?}, send_gap={send_gap:?}"
     );
 
     daemon.stop().await
