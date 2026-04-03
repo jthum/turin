@@ -179,6 +179,7 @@ pub fn base_config(
         harness: HarnessConfig {
             directory: harness_dir.to_string_lossy().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: HashMap::new(),
         providers,
@@ -195,6 +196,7 @@ pub fn bind_named_harness(config: &mut TurinConfig, harness_id: &str, harness_di
         HarnessConfig {
             directory: harness_dir.to_string_lossy().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
     );
 }

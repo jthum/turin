@@ -80,6 +80,7 @@ fn test_config(workspace_root: &std::path::Path, harness_dir: &std::path::Path) 
         harness: HarnessConfig {
             directory: harness_dir.to_string_lossy().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: HashMap::new(),
         providers,

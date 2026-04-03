@@ -71,6 +71,10 @@ impl TurinConfig {
             "harness.directory must not be empty"
         );
         anyhow::ensure!(
+            self.harness.memory_limit_mb > 0,
+            "harness.memory_limit_mb must be greater than 0"
+        );
+        anyhow::ensure!(
             !self.daemon.agents_dir.trim().is_empty(),
             "daemon.agents_dir must not be empty"
         );
@@ -189,6 +193,11 @@ impl TurinConfig {
             anyhow::ensure!(
                 !harness_cfg.directory.trim().is_empty(),
                 "harnesses.{}.directory must not be empty",
+                harness_id
+            );
+            anyhow::ensure!(
+                harness_cfg.memory_limit_mb > 0,
+                "harnesses.{}.memory_limit_mb must be greater than 0",
                 harness_id
             );
         }

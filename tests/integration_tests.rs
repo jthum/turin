@@ -50,6 +50,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,

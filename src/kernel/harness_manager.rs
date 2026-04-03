@@ -200,12 +200,14 @@ mod tests {
             harness: HarnessConfig {
                 directory: default_harness.to_string_lossy().to_string(),
                 fs_root: ".".to_string(),
+                memory_limit_mb: 32,
             },
             harnesses: HashMap::from([(
                 "shared".to_string(),
                 HarnessConfig {
                     directory: shared_harness.to_string_lossy().to_string(),
                     fs_root: ".".to_string(),
+                    memory_limit_mb: 32,
                 },
             )]),
             providers,

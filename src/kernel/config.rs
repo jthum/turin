@@ -347,6 +347,9 @@ pub struct HarnessConfig {
     /// Set to "/" for unrestricted filesystem access.
     #[serde(default = "default_harness_fs_root")]
     pub fs_root: String,
+    /// Maximum Lua VM memory in MiB for a single harness engine.
+    #[serde(default = "default_harness_memory_limit_mb")]
+    pub memory_limit_mb: u32,
 }
 
 impl Default for HarnessConfig {
@@ -354,6 +357,7 @@ impl Default for HarnessConfig {
         Self {
             directory: default_harness_directory(),
             fs_root: default_harness_fs_root(),
+            memory_limit_mb: default_harness_memory_limit_mb(),
         }
     }
 }

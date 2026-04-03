@@ -58,6 +58,8 @@ impl HarnessEngine {
     ///
     /// `app_data` provides the globals context (fs root, state store, etc.).
     pub fn new(app_data: HarnessAppData) -> Result<Self> {
+        let max_lua_memory = app_data.config.harness.memory_limit_mb as usize * 1024 * 1024;
+
         // Defense-in-depth: exclude IO, OS, FFI, PACKAGE standard library modules.
         // Even though sandbox() removes access to dangerous functions, excluding
         // them at VM creation ensures they cannot be reached even if sandbox is
@@ -77,9 +79,8 @@ impl HarnessEngine {
         lua.sandbox(true)
             .map_err(|e| anyhow::anyhow!("Failed to enable Luau sandbox: {}", e))?;
 
-        // Defense-in-depth: cap Lua memory at 32MB to prevent OOM from runaway scripts.
-        const MAX_LUA_MEMORY: usize = 32 * 1024 * 1024;
-        lua.set_memory_limit(MAX_LUA_MEMORY)?;
+        // Defense-in-depth: cap Lua memory to prevent OOM from runaway scripts.
+        lua.set_memory_limit(max_lua_memory)?;
 
         Ok(Self { lua })
     }

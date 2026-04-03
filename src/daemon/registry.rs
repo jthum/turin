@@ -535,6 +535,7 @@ pub fn build_effective_config(bootstrap: &TurinConfig, load: &RegistryLoad) -> R
             HarnessConfig {
                 directory: shared.directory.to_string_lossy().to_string(),
                 fs_root: bootstrap.harness.fs_root.clone(),
+                memory_limit_mb: bootstrap.harness.memory_limit_mb,
             },
         );
     }
@@ -550,6 +551,7 @@ pub fn build_effective_config(bootstrap: &TurinConfig, load: &RegistryLoad) -> R
                 HarnessConfig {
                     directory: dir.to_string_lossy().to_string(),
                     fs_root: bootstrap.harness.fs_root.clone(),
+                    memory_limit_mb: bootstrap.harness.memory_limit_mb,
                 },
             );
         }

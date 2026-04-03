@@ -36,6 +36,10 @@ pub(super) fn default_harness_fs_root() -> String {
     ".".to_string()
 }
 
+pub(super) fn default_harness_memory_limit_mb() -> u32 {
+    32
+}
+
 pub(super) fn default_embedding_model() -> String {
     "text-embedding-3-small".to_string()
 }

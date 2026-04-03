@@ -58,6 +58,7 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -511,12 +512,14 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
         harness: HarnessConfig {
             directory: default_harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::from([(
             "reviewer".to_string(),
             HarnessConfig {
                 directory: reviewer_harness_dir.to_string_lossy().to_string(),
                 fs_root: ".".to_string(),
+                memory_limit_mb: 32,
             },
         )]),
         providers,
@@ -664,12 +667,14 @@ async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
         harness: HarnessConfig {
             directory: default_harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::from([(
             "writer".to_string(),
             HarnessConfig {
                 directory: writer_harness_dir.to_string_lossy().to_string(),
                 fs_root: ".".to_string(),
+                memory_limit_mb: 32,
             },
         )]),
         providers,
@@ -809,12 +814,14 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
         harness: HarnessConfig {
             directory: default_harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::from([(
             "writer".to_string(),
             HarnessConfig {
                 directory: writer_harness_dir.to_string_lossy().to_string(),
                 fs_root: ".".to_string(),
+                memory_limit_mb: 32,
             },
         )]),
         providers,
@@ -1077,6 +1084,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,

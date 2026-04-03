@@ -229,6 +229,7 @@ async fn test_harness_rejection() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -360,6 +361,7 @@ async fn test_virtual_tool_is_exposed_and_executes_native_call() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -486,6 +488,7 @@ async fn test_virtual_tool_sequence_aggregates_multiple_native_calls() -> Result
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -604,6 +607,7 @@ async fn test_virtual_tool_sequence_callback_shapes_outer_result() -> Result<()>
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -728,6 +732,7 @@ async fn test_virtual_tool_can_call_another_virtual_tool() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -852,6 +857,7 @@ async fn test_virtual_tool_can_forward_reference_later_declaration() -> Result<(
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -973,6 +979,7 @@ async fn test_virtual_tool_recursion_is_rejected() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -1100,6 +1107,7 @@ tool.declare("tool_9", {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -1224,6 +1232,7 @@ async fn test_virtual_tool_callback_can_return_follow_up_plan() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -1327,6 +1336,7 @@ async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Resul
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -1498,12 +1508,14 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::from([(
             "worker".to_string(),
             HarnessConfig {
                 directory: worker_harness_dir.to_string_lossy().to_string(),
                 fs_root: ".".to_string(),
+                memory_limit_mb: 32,
             },
         )]),
         providers,
@@ -1657,12 +1669,14 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::from([(
             "worker".to_string(),
             HarnessConfig {
                 directory: worker_harness_dir.to_string_lossy().to_string(),
                 fs_root: ".".to_string(),
+                memory_limit_mb: 32,
             },
         )]),
         providers,
@@ -1811,12 +1825,14 @@ async fn test_agent_complete_applies_delegated_capability_ceiling() -> Result<()
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::from([(
             "worker".to_string(),
             HarnessConfig {
                 directory: worker_harness_dir.to_string_lossy().to_string(),
                 fs_root: ".".to_string(),
+                memory_limit_mb: 32,
             },
         )]),
         providers,
@@ -1908,6 +1924,7 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -2117,6 +2134,7 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -2262,6 +2280,7 @@ async fn test_runtime_memory_and_kv_support_explicit_store_targets() -> Result<(
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -2453,6 +2472,7 @@ async fn test_runtime_memory_and_kv_respect_scope_store_placements() -> Result<(
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -2633,6 +2653,7 @@ async fn test_runtime_memory_search_supports_multi_source_queries() -> Result<()
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -2735,6 +2756,7 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -2891,6 +2913,7 @@ async fn test_runtime_cache_api_round_trip() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -3266,6 +3289,7 @@ async fn test_agent_persistence_store_overrides_default_scoped_data_store() -> R
         harness: HarnessConfig {
             directory: harness_dir.to_string_lossy().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -3469,6 +3493,7 @@ async fn test_runtime_code_search_api_round_trip() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -3591,6 +3616,7 @@ async fn test_runtime_code_search_falls_back_without_embedding_provider() -> Res
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -3729,6 +3755,7 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -3883,6 +3910,7 @@ async fn test_import_scoped_tracks_imported_module_subject_and_root() -> Result<
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -3994,6 +4022,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_import() -> Result<()>
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -4117,6 +4146,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_use() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -4221,6 +4251,7 @@ async fn test_use_scoped_root_mismatch_fails_harness_init() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -4336,6 +4367,7 @@ async fn test_root_max_capabilities_applies_to_top_level_hooks() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -4451,6 +4483,7 @@ async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -4632,12 +4665,14 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::from([(
             "reviewer".to_string(),
             HarnessConfig {
                 directory: reviewer_harness_dir.to_string_lossy().to_string(),
                 fs_root: ".".to_string(),
+                memory_limit_mb: 32,
             },
         )]),
         providers,
@@ -4825,6 +4860,7 @@ async fn test_runtime_governance_temporary_grants_issue_use_revoke() -> Result<(
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -4988,12 +5024,14 @@ async fn test_temporary_grant_ceiling_propagates_to_peer_submit() -> Result<()> 
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::from([(
             "worker".to_string(),
             HarnessConfig {
                 directory: worker_harness_dir.to_string_lossy().to_string(),
                 fs_root: ".".to_string(),
+                memory_limit_mb: 32,
             },
         )]),
         providers,
@@ -5140,6 +5178,7 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -5287,6 +5326,7 @@ async fn test_use_scoped_capability_delegation_is_downward_only() -> Result<()> 
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -5434,6 +5474,7 @@ async fn test_nested_import_cannot_widen_import_delegation() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -5553,6 +5594,7 @@ async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> 
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -5691,6 +5733,7 @@ async fn test_runtime_db_api_and_context_glob() -> Result<()> {
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::new(),
         providers,
@@ -5831,12 +5874,14 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::from([(
             "worker".to_string(),
             HarnessConfig {
                 directory: worker_harness_dir.to_string_lossy().to_string(),
                 fs_root: ".".to_string(),
+                memory_limit_mb: 32,
             },
         )]),
         providers,
@@ -6013,12 +6058,14 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_string_lossy().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::from([(
             "worker".to_string(),
             HarnessConfig {
                 directory: worker_harness_dir.to_string_lossy().to_string(),
                 fs_root: ".".to_string(),
+                memory_limit_mb: 32,
             },
         )]),
         providers,
@@ -6274,12 +6321,14 @@ async fn test_runtime_agent_complete_preserves_nested_grant_context() -> Result<
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_string_lossy().to_string(),
             fs_root: ".".to_string(),
+            memory_limit_mb: 32,
         },
         harnesses: std::collections::HashMap::from([(
             "worker".to_string(),
             HarnessConfig {
                 directory: worker_harness_dir.to_string_lossy().to_string(),
                 fs_root: ".".to_string(),
+                memory_limit_mb: 32,
             },
         )]),
         providers,

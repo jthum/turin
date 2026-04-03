@@ -40,6 +40,7 @@ api_key_env = "OPENAI_API_KEY"
         StoreTargetConfig::from_path(".turin/state.db")
     );
     assert_eq!(config.harness.directory, ".turin/harnesses");
+    assert_eq!(config.harness.memory_limit_mb, 32);
     assert_eq!(
         config
             .providers
@@ -73,6 +74,7 @@ type = "openai"
         StoreTargetConfig::from_path("data/state.db")
     );
     assert_eq!(config.harness.directory, "harnesses");
+    assert_eq!(config.harness.memory_limit_mb, 32);
     assert_eq!(config.remote.bind, "127.0.0.1:9324");
     assert_eq!(config.remote.auth_token_env, "TURIN_REMOTE_TOKEN");
     assert!(!config.remote.allow_non_loopback);
@@ -242,6 +244,22 @@ provider = "openai"
 
 [kernel]
 max_turns = 0
+"#;
+    assert!(TurinConfig::from_str(toml).is_err());
+}
+
+#[test]
+fn test_validate_zero_harness_memory_limit() {
+    let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[harness]
+memory_limit_mb = 0
 "#;
     assert!(TurinConfig::from_str(toml).is_err());
 }
