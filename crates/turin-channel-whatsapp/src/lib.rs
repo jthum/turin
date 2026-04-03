@@ -15,9 +15,10 @@ use turin_channel_core::{
     ChannelAuthFlowPollRequest, ChannelAuthFlowPollResponse, ChannelAuthFlowResolvedValue,
     ChannelAuthFlowStartRequest, ChannelAuthFlowStartResponse, ChannelCapabilities,
     ChannelConfigField, ChannelConfigFieldOption, ChannelConfigTarget, ChannelConfigTargetKind,
-    ChannelConversationKey, ChannelIdentitySelectors, ChannelInstallManifest, ChannelKind,
-    ChannelMessageRef, ChannelRuntimeCapabilities, ChannelRuntimeManifest, ChannelSessionScope,
-    ChannelSetupManifest, ChannelUser, InboundEvent, OutboundMessage,
+    ChannelConversationKey, ChannelFieldVisibilityRule, ChannelIdentitySelectors,
+    ChannelInstallManifest, ChannelKind, ChannelMessageRef, ChannelRuntimeCapabilities,
+    ChannelRuntimeManifest, ChannelSessionScope, ChannelSetupManifest, ChannelUser, InboundEvent,
+    OutboundMessage,
 };
 use turin_channel_runner::ChannelDriver;
 use uuid::Uuid;
@@ -38,12 +39,23 @@ const DEFAULT_AUTH_FLOW_ID: &str = "pair";
 const DEFAULT_AUTH_POLL_INTERVAL_SECS: u64 = 3;
 const DEFAULT_AUTH_TIMEOUT_SECS: u64 = 300;
 const DEFAULT_RUNTIME_STORE_BASENAME: &str = "whatsapp-session.db";
+const DEFAULT_PERSONAL_TRIGGER_PREFIX: &str = "/turin";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WhatsAppAccountMode {
+    Personal,
+    Dedicated,
+}
 
 #[derive(Debug, Clone)]
 pub struct WhatsAppChannelDriverConfig {
     pub workspace_id: String,
+    account_mode: WhatsAppAccountMode,
     pub session_scope: ChannelSessionScope,
     pub session_store_path: PathBuf,
+    trigger_prefix: Option<String>,
+    allowed_chats: Vec<String>,
+    banned_chats: Vec<String>,
 }
 
 pub struct WhatsAppChannelDriver {
@@ -157,6 +169,34 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
             validation_checks: vec![],
             config_fields: vec![
                 ChannelConfigField {
+                    key: "account_mode".to_string(),
+                    label: Some("Account Mode".to_string()),
+                    field_type: "select".to_string(),
+                    prompt: Some(
+                        "Will Turin use a personal WhatsApp account or a dedicated agent number?"
+                            .to_string(),
+                    ),
+                    help: Some(
+                        "Personal mode defaults to a trigger prefix so normal chats stay quiet. Dedicated mode is better when the linked account belongs only to the agent.".to_string(),
+                    ),
+                    default: Some(json!("personal")),
+                    options: vec![
+                        ChannelConfigFieldOption {
+                            value: "personal".to_string(),
+                            label: Some("Personal account".to_string()),
+                        },
+                        ChannelConfigFieldOption {
+                            value: "dedicated".to_string(),
+                            label: Some("Dedicated agent number".to_string()),
+                        },
+                    ],
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "account_mode".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+                ChannelConfigField {
                     key: "workspace_id".to_string(),
                     label: Some("Workspace ID".to_string()),
                     field_type: "text".to_string(),
@@ -231,6 +271,28 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
+                    key: "trigger_prefix".to_string(),
+                    label: Some("Trigger Prefix".to_string()),
+                    field_type: "text".to_string(),
+                    prompt: Some(
+                        "Prefix required before Turin should answer in this WhatsApp account"
+                            .to_string(),
+                    ),
+                    help: Some(
+                        "Personal mode defaults to '/turin'. Dedicated accounts can usually leave this empty.".to_string(),
+                    ),
+                    default: Some(json!(DEFAULT_PERSONAL_TRIGGER_PREFIX)),
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "trigger_prefix".to_string(),
+                    }),
+                    visible_if: Some(ChannelFieldVisibilityRule {
+                        key: "account_mode".to_string(),
+                        equals: json!("personal"),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+                ChannelConfigField {
                     key: "pairing_users".to_string(),
                     label: Some("Pairing Users".to_string()),
                     field_type: "string_list".to_string(),
@@ -273,6 +335,40 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     target: Some(ChannelConfigTarget {
                         kind: ChannelConfigTargetKind::ChannelSetting,
                         name: "banned_users".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+                ChannelConfigField {
+                    key: "allowed_chats".to_string(),
+                    label: Some("Allowed Chats".to_string()),
+                    field_type: "string_list".to_string(),
+                    prompt: Some(
+                        "Optional WhatsApp chats where Turin is allowed to listen".to_string(),
+                    ),
+                    help: Some(
+                        "Use full JIDs like '15551234567@s.whatsapp.net' or group IDs. Leave empty to allow any chat not explicitly banned.".to_string(),
+                    ),
+                    advanced: true,
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "allowed_chats".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+                ChannelConfigField {
+                    key: "banned_chats".to_string(),
+                    label: Some("Banned Chats".to_string()),
+                    field_type: "string_list".to_string(),
+                    prompt: Some(
+                        "Optional WhatsApp chats where Turin must stay silent".to_string(),
+                    ),
+                    help: Some(
+                        "Banned chats override allowed chats. Use this to keep personal or administrative chats out of the agent.".to_string(),
+                    ),
+                    advanced: true,
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "banned_chats".to_string(),
                     }),
                     ..ChannelConfigField::default()
                 },
@@ -580,12 +676,20 @@ impl WhatsAppChannelDriver {
             return None;
         }
 
-        let text = message.text_content()?.trim().to_string();
-        if text.is_empty() {
+        let chat_id = info.source.chat.to_string();
+        if !chat_is_allowed(
+            &chat_id,
+            &self.config.allowed_chats,
+            &self.config.banned_chats,
+        ) {
             return None;
         }
 
-        let chat_id = info.source.chat.to_string();
+        let text = inbound_text(
+            message.text_content()?,
+            self.config.account_mode,
+            self.config.trigger_prefix.as_deref(),
+        )?;
         let sender_id = info.source.sender.to_string();
         let thread_id = match self.config.session_scope {
             ChannelSessionScope::User if info.source.is_group => {
@@ -731,7 +835,15 @@ fn parse_settings(
     let map = settings_object(settings)?;
     let workspace_id = optional_nonempty_string(map, "workspace_id")?
         .unwrap_or_else(|| DEFAULT_WORKSPACE_ID.to_string());
+    let account_mode = parse_account_mode(map.get("account_mode"))?;
     let session_scope = parse_session_scope(map.get("session_scope"))?;
+    let trigger_prefix = optional_nonempty_string(map, "trigger_prefix")?;
+    let trigger_prefix = match (account_mode, trigger_prefix) {
+        (WhatsAppAccountMode::Personal, None) => Some(DEFAULT_PERSONAL_TRIGGER_PREFIX.to_string()),
+        (_, value) => value,
+    };
+    let allowed_chats = parse_string_list(map.get("allowed_chats"), "allowed_chats")?;
+    let banned_chats = parse_string_list(map.get("banned_chats"), "banned_chats")?;
 
     let pair_code_phone_number = optional_nonempty_string(map, "pair_code_phone_number")?;
     let pair_code_custom_code = optional_nonempty_string(map, "pair_code_custom_code")?;
@@ -754,8 +866,12 @@ fn parse_settings(
 
     Ok(WhatsAppChannelDriverConfig {
         workspace_id,
+        account_mode,
         session_scope,
         session_store_path,
+        trigger_prefix,
+        allowed_chats,
+        banned_chats,
     })
 }
 
@@ -944,6 +1060,59 @@ fn render_whatsapp_message(message: &OutboundMessage) -> String {
     parts.join("\n\n")
 }
 
+fn inbound_text(
+    raw: &str,
+    account_mode: WhatsAppAccountMode,
+    trigger_prefix: Option<&str>,
+) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let required_prefix = trigger_prefix.or(match account_mode {
+        WhatsAppAccountMode::Personal => Some(DEFAULT_PERSONAL_TRIGGER_PREFIX),
+        WhatsAppAccountMode::Dedicated => None,
+    });
+
+    let Some(prefix) = required_prefix else {
+        return Some(trimmed.to_string());
+    };
+
+    let candidate = trimmed.strip_prefix(prefix)?.trim_start();
+    if candidate.is_empty() {
+        None
+    } else {
+        Some(candidate.to_string())
+    }
+}
+
+fn chat_is_allowed(chat_jid: &str, allowed_chats: &[String], banned_chats: &[String]) -> bool {
+    if selector_matches_chat_list(chat_jid, banned_chats) {
+        return false;
+    }
+    allowed_chats.is_empty() || selector_matches_chat_list(chat_jid, allowed_chats)
+}
+
+fn selector_matches_chat_list(chat_jid: &str, selectors: &[String]) -> bool {
+    selectors
+        .iter()
+        .any(|selector| chat_selector_matches(selector, chat_jid))
+}
+
+fn chat_selector_matches(selector: &str, chat_jid: &str) -> bool {
+    let selector = selector.trim();
+    if selector.is_empty() {
+        return false;
+    }
+
+    selector.eq_ignore_ascii_case(chat_jid)
+        || selector
+            .strip_prefix('@')
+            .is_some_and(|value| value.eq_ignore_ascii_case(chat_jid))
+        || selector.eq_ignore_ascii_case(chat_jid.split('@').next().unwrap_or(chat_jid))
+}
+
 fn settings_object(settings: &Value) -> Result<&Map<String, Value>> {
     settings
         .as_object()
@@ -973,6 +1142,42 @@ fn parse_session_scope(value: Option<&Value>) -> Result<ChannelSessionScope> {
         other => {
             bail!("channel setting 'session_scope' must be one of: user, room (got '{other}')")
         }
+    }
+}
+
+fn parse_account_mode(value: Option<&Value>) -> Result<WhatsAppAccountMode> {
+    let mode = match value {
+        None | Some(Value::Null) => "personal",
+        Some(Value::String(value)) => value.as_str(),
+        Some(_) => bail!("channel setting 'account_mode' must be a string"),
+    };
+
+    match mode {
+        "personal" => Ok(WhatsAppAccountMode::Personal),
+        "dedicated" => Ok(WhatsAppAccountMode::Dedicated),
+        other => bail!(
+            "channel setting 'account_mode' must be one of: personal, dedicated (got '{other}')"
+        ),
+    }
+}
+
+fn parse_string_list(value: Option<&Value>, key: &str) -> Result<Vec<String>> {
+    match value {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(values)) => {
+            let mut out = Vec::with_capacity(values.len());
+            for value in values {
+                let Some(value) = value.as_str() else {
+                    bail!("channel setting '{key}' must contain only strings");
+                };
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    out.push(trimmed.to_string());
+                }
+            }
+            Ok(out)
+        }
+        Some(_) => bail!("channel setting '{key}' must be an array of strings"),
     }
 }
 
@@ -1094,6 +1299,55 @@ mod tests {
             config.session_store_path,
             temp.path().join(DEFAULT_RUNTIME_STORE_BASENAME)
         );
+        assert_eq!(config.account_mode, WhatsAppAccountMode::Personal);
+        assert_eq!(
+            config.trigger_prefix.as_deref(),
+            Some(DEFAULT_PERSONAL_TRIGGER_PREFIX)
+        );
+    }
+
+    #[test]
+    fn dedicated_mode_does_not_force_trigger_prefix() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config = parse_settings(&json!({"account_mode": "dedicated"}), Some(temp.path()))
+            .expect("settings");
+        assert_eq!(config.account_mode, WhatsAppAccountMode::Dedicated);
+        assert_eq!(config.trigger_prefix, None);
+    }
+
+    #[test]
+    fn inbound_text_requires_prefix_for_personal_mode() {
+        assert_eq!(
+            inbound_text(
+                "/turin status",
+                WhatsAppAccountMode::Personal,
+                Some(DEFAULT_PERSONAL_TRIGGER_PREFIX)
+            ),
+            Some("status".to_string())
+        );
+        assert_eq!(
+            inbound_text("status", WhatsAppAccountMode::Personal, Some("/turin")),
+            None
+        );
+        assert_eq!(
+            inbound_text("status", WhatsAppAccountMode::Dedicated, None),
+            Some("status".to_string())
+        );
+    }
+
+    #[test]
+    fn banned_chats_override_allowed_chats() {
+        let allowed = vec![
+            "15551234567@s.whatsapp.net".to_string(),
+            "120363123456789@g.us".to_string(),
+        ];
+        let banned = vec!["15551234567".to_string()];
+        assert!(!chat_is_allowed(
+            "15551234567@s.whatsapp.net",
+            &allowed,
+            &banned
+        ));
+        assert!(chat_is_allowed("120363123456789@g.us", &allowed, &banned));
     }
 
     #[test]
