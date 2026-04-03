@@ -23,7 +23,7 @@ Reserve `cargo build --release` for checkpointing binary size or release-quality
 Some integration regressions are timing-sensitive and show up on slower or more
 contended runners before they show up locally. Use the local stress runner when
 touching branching persistence, daemon restart behavior, or daemon-owned
-Telegram channel flows:
+Telegram channel flows, or peer-agent example persistence:
 
 ```bash
 scripts/ci_stress.sh --repeat 30
@@ -35,11 +35,17 @@ Target only the known-sensitive cases if you want a faster pass:
 scripts/ci_stress.sh --tests daemon-restart,telegram-roundtrip
 ```
 
+```bash
+scripts/ci_stress.sh --tests governed-peer-review,delegated-peer-review
+```
+
 Supported stress targets:
 
 - `daemon-restart`
 - `telegram-roundtrip`
 - `telegram-streaming`
+- `governed-peer-review`
+- `delegated-peer-review`
 
 The script runs each selected test in a loop and preserves the failing
 iteration's log on first error.

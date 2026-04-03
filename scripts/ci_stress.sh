@@ -6,7 +6,7 @@ PACKAGE="turin"
 REPEAT=20
 KEEP_LOGS=0
 LOG_DIR=""
-TESTS=("daemon-restart" "telegram-roundtrip" "telegram-streaming")
+TESTS=("daemon-restart" "telegram-roundtrip" "telegram-streaming" "governed-peer-review" "delegated-peer-review")
 
 usage() {
   cat <<'USAGE'
@@ -18,7 +18,7 @@ catch CI-only races locally before pushing.
 Options:
   --repeat N                Number of iterations per test (default: 20)
   --tests CSV               Comma-separated test ids to run
-                            (daemon-restart,telegram-roundtrip,telegram-streaming)
+                            (daemon-restart,telegram-roundtrip,telegram-streaming,governed-peer-review,delegated-peer-review)
   --log-dir PATH            Directory for per-iteration logs
   --keep-logs               Keep logs even when all runs pass
   --cargo PATH              Cargo binary to use (default: cargo)
@@ -37,6 +37,8 @@ list_tests() {
 daemon-restart       daemon_session_resume_round_trip_over_restart
 telegram-roundtrip   telegram_channel_driver_round_trip_with_daemon_runner
 telegram-streaming   telegram_channel_driver_streams_progress_before_final_message
+governed-peer-review test_governed_peer_review_example
+delegated-peer-review test_delegated_peer_capabilities_example
 TESTS
 }
 
@@ -113,6 +115,14 @@ run_case() {
     telegram-streaming)
       label="telegram_channel_driver_streams_progress_before_final_message"
       cargo_args=(test -q -p "$PACKAGE" telegram_channel_driver_streams_progress_before_final_message --test channel_telegram_integration_tests -- --nocapture)
+      ;;
+    governed-peer-review)
+      label="test_governed_peer_review_example"
+      cargo_args=(test -q -p "$PACKAGE" test_governed_peer_review_example --test example_harness_examples -- --nocapture)
+      ;;
+    delegated-peer-review)
+      label="test_delegated_peer_capabilities_example"
+      cargo_args=(test -q -p "$PACKAGE" test_delegated_peer_capabilities_example --test example_harness_examples -- --nocapture)
       ;;
     *)
       echo "Unknown test id: $id" >&2

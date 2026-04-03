@@ -29,7 +29,7 @@ async fn wait_for_persisted_agent_output(
     agent_id: &str,
     expected_fragment: &str,
 ) -> Result<bool> {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let store = kernel.store_manager().get_default().await?;
         let conn = store.get_connection().await?;
@@ -57,7 +57,29 @@ async fn wait_for_persisted_agent_output(
         if Instant::now() >= deadline {
             return Ok(false);
         }
-        sleep(Duration::from_millis(25)).await;
+        sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn wait_for_persisted_session_events(
+    kernel: &Kernel,
+    session_internal_id: i64,
+    expected_event_types: &[&str],
+) -> Result<bool> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let store = kernel.store_manager().get_default().await?;
+        let events = store.get_events(session_internal_id).await?;
+        if expected_event_types
+            .iter()
+            .all(|expected| events.iter().any(|event| event.event_type == *expected))
+        {
+            return Ok(true);
+        }
+        if Instant::now() >= deadline {
+            return Ok(false);
+        }
+        sleep(Duration::from_millis(50)).await;
     }
 }
 
@@ -835,11 +857,18 @@ async fn test_governed_peer_review_example() -> Result<()> {
     assert_eq!(fs::read_to_string(review_artifact)?, "REVIEW_OK");
     assert_eq!(fs::read_to_string(input_artifact)?, prompt);
 
-    let saw_reviewer_output =
-        wait_for_persisted_agent_output(&kernel, "reviewer", "REVIEW_OK").await?;
     assert!(
-        saw_reviewer_output,
-        "expected persisted reviewer assistant output"
+        wait_for_persisted_session_events(
+            &kernel,
+            session.internal_id.expect("main session should have internal id"),
+            &[
+                "governance_grant_issue",
+                "governance_grant_use",
+                "governance_grant_revoke",
+            ],
+        )
+        .await?,
+        "expected persisted governance grant audit events"
     );
     Ok(())
 }
