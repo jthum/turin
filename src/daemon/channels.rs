@@ -50,6 +50,69 @@ struct RuntimeHandle {
     join: tokio::task::JoinHandle<()>,
 }
 
+#[derive(Clone)]
+struct ChannelLifecycle {
+    channel_id: String,
+    kind: String,
+    event_tx: broadcast::Sender<EventEnvelope>,
+    inner: Arc<Mutex<Inner>>,
+}
+
+impl ChannelLifecycle {
+    fn new(
+        channel_id: String,
+        kind: String,
+        event_tx: broadcast::Sender<EventEnvelope>,
+        inner: Arc<Mutex<Inner>>,
+    ) -> Self {
+        Self {
+            channel_id,
+            kind,
+            event_tx,
+            inner,
+        }
+    }
+
+    async fn mark_running(&self) {
+        let mut guard = self.inner.lock().await;
+        if let Some(status) = guard.by_id.get_mut(&self.channel_id) {
+            status.state = "running".to_string();
+            status.last_error = None;
+            status.last_error_code = None;
+            status.last_transition_unix_ms = now_unix_ms();
+            status.last_started_unix_ms = Some(status.last_transition_unix_ms);
+            emit_runtime_update(&self.event_tx, status);
+        }
+    }
+
+    async fn finish(&self, run_result: Result<()>) {
+        let mut guard = self.inner.lock().await;
+        if let Some(status) = guard.by_id.get_mut(&self.channel_id) {
+            match run_result {
+                Ok(()) => {
+                    status.state = "stopped".to_string();
+                    status.last_error = None;
+                    status.last_error_code = None;
+                    status.last_transition_unix_ms = now_unix_ms();
+                    status.last_stopped_unix_ms = Some(status.last_transition_unix_ms);
+                    emit_runtime_update(&self.event_tx, status);
+                }
+                Err(err) => {
+                    status.state = "failed".to_string();
+                    let error_text = format!("{:#}", err);
+                    status.last_error = Some(error_text.clone());
+                    status.last_error_code =
+                        Some(classify_runtime_error_code(&self.kind, &error_text));
+                    status.failure_count = status.failure_count.saturating_add(1);
+                    status.last_transition_unix_ms = now_unix_ms();
+                    status.last_stopped_unix_ms = Some(status.last_transition_unix_ms);
+                    emit_runtime_update(&self.event_tx, status);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct DesiredChannel {
     id: String,
@@ -318,8 +381,12 @@ impl ChannelRuntimeManager {
 
     async fn start_fs_channel(&self, _workspace_root: PathBuf, channel: DesiredChannel) {
         let endpoint = self.endpoint.clone();
-        let event_tx = self.event_tx.clone();
-        let inner = Arc::clone(&self.inner);
+        let lifecycle = ChannelLifecycle::new(
+            channel.id.clone(),
+            channel.kind.clone(),
+            self.event_tx.clone(),
+            Arc::clone(&self.inner),
+        );
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         let channel_id = channel.id.clone();
@@ -358,17 +425,7 @@ impl ChannelRuntimeManager {
                     format!("Failed to initialize fs channel driver '{}'", channel.id)
                 })?;
 
-                {
-                    let mut guard = inner.lock().await;
-                    if let Some(status) = guard.by_id.get_mut(&channel.id) {
-                        status.state = "running".to_string();
-                        status.last_error = None;
-                        status.last_error_code = None;
-                        status.last_transition_unix_ms = now_unix_ms();
-                        status.last_started_unix_ms = Some(status.last_transition_unix_ms);
-                        emit_runtime_update(&event_tx, status);
-                    }
-                }
+                lifecycle.mark_running().await;
 
                 runner
                     .run_driver(&channel.agent_id, &mut driver, task_timeout_ms)
@@ -377,30 +434,7 @@ impl ChannelRuntimeManager {
             }
             .await;
 
-            let mut guard = inner.lock().await;
-            if let Some(status) = guard.by_id.get_mut(&channel.id) {
-                match run_result {
-                    Ok(()) => {
-                        status.state = "stopped".to_string();
-                        status.last_error = None;
-                        status.last_error_code = None;
-                        status.last_transition_unix_ms = now_unix_ms();
-                        status.last_stopped_unix_ms = Some(status.last_transition_unix_ms);
-                        emit_runtime_update(&event_tx, status);
-                    }
-                    Err(err) => {
-                        status.state = "failed".to_string();
-                        let error_text = format!("{:#}", err);
-                        status.last_error = Some(error_text.clone());
-                        status.last_error_code =
-                            Some(classify_runtime_error_code(&channel.kind, &error_text));
-                        status.failure_count = status.failure_count.saturating_add(1);
-                        status.last_transition_unix_ms = now_unix_ms();
-                        status.last_stopped_unix_ms = Some(status.last_transition_unix_ms);
-                        emit_runtime_update(&event_tx, status);
-                    }
-                }
-            }
+            lifecycle.finish(run_result).await;
         });
 
         let mut guard = self.inner.lock().await;
@@ -416,8 +450,12 @@ impl ChannelRuntimeManager {
 
     async fn start_external_channel(&self, _workspace_root: PathBuf, channel: DesiredChannel) {
         let endpoint = self.endpoint.clone();
-        let event_tx = self.event_tx.clone();
-        let inner = Arc::clone(&self.inner);
+        let lifecycle = ChannelLifecycle::new(
+            channel.id.clone(),
+            channel.kind.clone(),
+            self.event_tx.clone(),
+            Arc::clone(&self.inner),
+        );
 
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
         let channel_id = channel.id.clone();
@@ -507,30 +545,7 @@ impl ChannelRuntimeManager {
             }
             .await;
 
-            let mut guard = inner.lock().await;
-            if let Some(status) = guard.by_id.get_mut(&channel.id) {
-                match run_result {
-                    Ok(()) => {
-                        status.state = "stopped".to_string();
-                        status.last_error = None;
-                        status.last_error_code = None;
-                        status.last_transition_unix_ms = now_unix_ms();
-                        status.last_stopped_unix_ms = Some(status.last_transition_unix_ms);
-                        emit_runtime_update(&event_tx, status);
-                    }
-                    Err(err) => {
-                        status.state = "failed".to_string();
-                        let error_text = format!("{:#}", err);
-                        status.last_error = Some(error_text.clone());
-                        status.last_error_code =
-                            Some(classify_runtime_error_code(&channel.kind, &error_text));
-                        status.failure_count = status.failure_count.saturating_add(1);
-                        status.last_transition_unix_ms = now_unix_ms();
-                        status.last_stopped_unix_ms = Some(status.last_transition_unix_ms);
-                        emit_runtime_update(&event_tx, status);
-                    }
-                }
-            }
+            lifecycle.finish(run_result).await;
         });
 
         let mut guard = self.inner.lock().await;
