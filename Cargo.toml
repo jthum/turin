@@ -17,6 +17,7 @@ members = [
     "crates/turin-manager",
     "crates/turin-code-index",
     "crates/turin-map",
+    "crates/turin-web",
     "crates/turin-tui",
     "crates/turin-app",
 ]
@@ -108,8 +109,6 @@ hyper-util = { version = "0.1", features = ["server", "http1", "tokio"] }
 sha1 = "0.10"
 tokio-tungstenite = { version = "0.24", default-features = false }
 url = "2.5"
-reqwest = { version = "0.13", default-features = false, features = ["brotli", "deflate", "gzip", "json", "query", "rustls"] }
-scraper = "0.23"
 
 [dev-dependencies]
 tempfile = "3.10"
