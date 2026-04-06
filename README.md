@@ -47,7 +47,6 @@ Simple things should be simple. Powerful things should be possible.
 - **Lean core runtime** (`turin`) with no required services beyond your configured provider and local SQLite/libSQL database
 - **Auto-managed channel sidecars** for network channels such as Telegram, Discord, and WhatsApp, so the daemon can support more adapters without bloating the core runtime binary
 - **Optional indexing companion** (`turin-map`) for code-search indexing without bloating the runtime execution path
-- **Optional web-tools companion** (`turin-web`) for `web_fetch` and `web_search` without pulling HTML parsing and compression stacks into the core runtime binary
 - **Harness scripting in Luau** for governance, workflows, context engineering, memory policies, and orchestration
 - **Canonical stdlib API**:
   - `runtime.context`, `runtime.memory`, `runtime.cache`, `runtime.code.search`, `runtime.kv`, `runtime.db`, `runtime.agent`, `runtime.policy`, `runtime.governance`
@@ -101,9 +100,6 @@ cargo build --release -p turin-manager
 
 # Optional: build the code-indexing companion if you want runtime code search setup
 cargo build --release -p turin-map
-
-# Optional: build the web-tools companion if you want web_fetch / web_search
-cargo build --release -p turin-web
 
 # Optional: build channel sidecars if you want daemon-managed Telegram, Discord, or WhatsApp
 cargo build --release -p turin-channel-telegram -p turin-channel-discord -p turin-channel-whatsapp --bins
