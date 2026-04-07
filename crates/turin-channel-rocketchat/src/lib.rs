@@ -19,7 +19,7 @@ use turin_channel_core::{
     ChannelConfigTargetKind, ChannelConversationKey, ChannelEnumSetting, ChannelIdentitySelectors,
     ChannelInstallManifest, ChannelKind, ChannelMessageRef, ChannelRuntimeCapabilities,
     ChannelRuntimeManifest, ChannelSecretRequirement, ChannelSessionScope, ChannelSetupManifest,
-    ChannelUser, InboundEvent, MessageBlock, OutboundMessage,
+    ChannelUser, InboundEvent, MessageBlock, OutboundMessage, bound_inbound_text,
 };
 use turin_channel_runner::{ChannelDriver, ChannelProgressUpdate, ChannelStreamMode};
 
@@ -1015,6 +1015,7 @@ impl RocketChatChannelDriver {
         if let Some(tmid) = message.thread_root_id {
             metadata.insert("rocketchat_thread_id".to_string(), serde_json::json!(tmid));
         }
+        text = bound_inbound_text(text, &mut metadata);
 
         Ok(Some(InboundEvent {
             message: ChannelMessageRef {

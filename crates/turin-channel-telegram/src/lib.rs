@@ -16,6 +16,7 @@ use turin_channel_core::{
     ChannelInstallManifest, ChannelKind, ChannelMessageRef, ChannelRuntimeCapabilities,
     ChannelRuntimeManifest, ChannelSecretRequirement, ChannelSessionScope, ChannelSetupManifest,
     ChannelUser, ChannelValidationCheck, InboundEvent, MessageBlock, OutboundMessage,
+    bound_inbound_text,
 };
 use turin_channel_runner::{ChannelDriver, ChannelProgressUpdate, ChannelStreamMode};
 
@@ -1028,6 +1029,7 @@ impl TelegramChannelDriver {
             "telegram_chat_type".to_string(),
             serde_json::json!(message.chat.chat_type),
         );
+        let text = bound_inbound_text(text, &mut metadata);
 
         let session_scope = effective_telegram_session_scope(&self.config, &message.chat);
         let conversation = ChannelConversationKey {

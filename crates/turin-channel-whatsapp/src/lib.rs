@@ -1,4 +1,6 @@
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -18,7 +20,7 @@ use turin_channel_core::{
     ChannelConversationKey, ChannelFieldVisibilityRule, ChannelIdentitySelectors,
     ChannelInstallManifest, ChannelKind, ChannelMessageRef, ChannelRuntimeCapabilities,
     ChannelRuntimeManifest, ChannelSessionScope, ChannelSetupManifest, ChannelUser, InboundEvent,
-    OutboundMessage,
+    OutboundMessage, bound_inbound_text,
 };
 use turin_channel_runner::ChannelDriver;
 use uuid::Uuid;
@@ -712,6 +714,7 @@ impl WhatsAppChannelDriver {
         metadata.insert("chat_jid".to_string(), Value::String(chat_id.clone()));
         metadata.insert("sender_jid".to_string(), Value::String(sender_id.clone()));
         metadata.insert("is_group".to_string(), Value::Bool(info.source.is_group));
+        let text = bound_inbound_text(text, &mut metadata);
 
         Some(InboundEvent {
             message: ChannelMessageRef {
@@ -889,6 +892,8 @@ async fn build_bot(
                 parent.display()
             )
         })?;
+        tighten_path_permissions(parent, 0o700)
+            .with_context(|| format!("Failed to harden permissions for '{}'", parent.display()))?;
     }
 
     let database_url = session_store_path.to_string_lossy().to_string();
@@ -898,6 +903,12 @@ async fn build_bot(
             session_store_path.display()
         )
     })?);
+    tighten_path_permissions(session_store_path, 0o600).with_context(|| {
+        format!(
+            "Failed to harden permissions for WhatsApp session store '{}'",
+            session_store_path.display()
+        )
+    })?;
     let transport_factory = TokioWebSocketTransportFactory::new();
     let http_client = UreqHttpClient::new();
 
@@ -1032,6 +1043,22 @@ async fn build_bot(
         .context("Failed to build WhatsApp bot")?;
     let client = bot.client();
     Ok((client, bot))
+}
+
+#[cfg(unix)]
+fn tighten_path_permissions(path: &Path, mode: u32) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut permissions = fs::metadata(path)?.permissions();
+    permissions.set_mode(mode);
+    fs::set_permissions(path, permissions)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn tighten_path_permissions(_path: &Path, _mode: u32) -> Result<()> {
+    Ok(())
 }
 
 fn render_whatsapp_message(message: &OutboundMessage) -> String {

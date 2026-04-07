@@ -2,6 +2,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::time::{Duration, SystemTime};
 
 pub const CHANNEL_ADAPTER_PROTOCOL_VERSION: u32 = 2;
+pub const MAX_INBOUND_TEXT_CHARS: usize = 16_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
@@ -174,6 +175,30 @@ impl InboundEvent {
 
         format!("[Message from {}]\n{}", self.user.prompt_label(), self.text)
     }
+}
+
+pub fn bound_inbound_text(
+    text: String,
+    metadata: &mut serde_json::Map<String, serde_json::Value>,
+) -> String {
+    let original_chars = text.chars().count();
+    if original_chars <= MAX_INBOUND_TEXT_CHARS {
+        return text;
+    }
+
+    metadata.insert(
+        "turin_text_truncated".to_string(),
+        serde_json::Value::Bool(true),
+    );
+    metadata.insert(
+        "turin_original_text_chars".to_string(),
+        serde_json::Value::Number(original_chars.into()),
+    );
+    metadata.insert(
+        "turin_text_char_limit".to_string(),
+        serde_json::Value::Number(MAX_INBOUND_TEXT_CHARS.into()),
+    );
+    text.chars().take(MAX_INBOUND_TEXT_CHARS).collect()
 }
 
 impl ChannelUser {
@@ -716,6 +741,32 @@ mod tests {
         };
 
         assert_eq!(event.prompt_text(), "[Message from Jay (@jthum)]\nhello");
+    }
+
+    #[test]
+    fn bound_inbound_text_leaves_short_messages_unchanged() {
+        let mut metadata = serde_json::Map::new();
+        let text = bound_inbound_text("hello".into(), &mut metadata);
+        assert_eq!(text, "hello");
+        assert!(metadata.is_empty());
+    }
+
+    #[test]
+    fn bound_inbound_text_truncates_and_marks_metadata() {
+        let mut metadata = serde_json::Map::new();
+        let input = "a".repeat(MAX_INBOUND_TEXT_CHARS + 5);
+        let text = bound_inbound_text(input, &mut metadata);
+        assert_eq!(text.chars().count(), MAX_INBOUND_TEXT_CHARS);
+        assert_eq!(
+            metadata.get("turin_text_truncated"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(
+            metadata.get("turin_original_text_chars"),
+            Some(&serde_json::Value::Number(
+                (MAX_INBOUND_TEXT_CHARS + 5).into()
+            ))
+        );
     }
 
     #[test]

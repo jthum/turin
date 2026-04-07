@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -95,6 +95,8 @@ impl GovernanceSubject {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GovernanceGrantSnapshot {
     pub grant_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issued_from_grant_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub issuer_agent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -436,8 +438,35 @@ impl GovernanceManager {
         let issued_at_ms = now_unix_ms()?;
         let expires_at_ms = ttl_ms.map(|ttl| issued_at_ms.saturating_add(ttl));
         let grant_id = format!("g_{}", uuid::Uuid::new_v4().simple());
+        let mut grants = self
+            .grants
+            .lock()
+            .map_err(|_| "governance grants mutex poisoned")?;
+        let issued_from_grant_id = if let Some(parent_grant_id) = subject.grant_id.as_deref() {
+            let parent_snapshot =
+                validate_grant_chain_locked(&mut grants, subject, parent_grant_id, issued_at_ms)
+                    .map_err(GrantChainValidationError::into_message)?;
+            for (capability, allowed) in &capabilities {
+                if !*allowed {
+                    continue;
+                }
+                if let Some(reason) = capability_ceiling_denial_reason_bool_map(
+                    &parent_snapshot.capabilities,
+                    capability,
+                    "temporary grant",
+                    parent_grant_id,
+                    true,
+                ) {
+                    return Err(reason);
+                }
+            }
+            Some(parent_grant_id.to_string())
+        } else {
+            None
+        };
         let snapshot = GovernanceGrantSnapshot {
             grant_id: grant_id.clone(),
+            issued_from_grant_id,
             issuer_agent_id: subject.agent_id.clone(),
             issuer_module_name: subject.module_name.clone(),
             issuer_root_name: subject.root_name.clone(),
@@ -449,10 +478,6 @@ impl GovernanceManager {
             uses_remaining: max_uses,
         };
 
-        let mut grants = self
-            .grants
-            .lock()
-            .map_err(|_| "governance grants mutex poisoned")?;
         grants.insert(
             grant_id,
             ActiveGovernanceGrant {
@@ -472,17 +497,15 @@ impl GovernanceManager {
             .lock()
             .map_err(|_| "governance grants mutex poisoned")?;
         let now_ms = now_unix_ms()?;
-        if let Some(entry) = grants.get(grant_id)
-            && grant_expired(&entry.snapshot, now_ms)
-        {
-            grants.remove(grant_id);
-            return Ok(None);
+        match validate_grant_chain_locked(&mut grants, subject, grant_id, now_ms) {
+            Ok(snapshot) => Ok(Some(snapshot)),
+            Err(
+                GrantChainValidationError::NotActive(_)
+                | GrantChainValidationError::Expired(_)
+                | GrantChainValidationError::Invalid(_),
+            ) => Ok(None),
+            Err(GrantChainValidationError::Forbidden(message)) => Err(message),
         }
-        let Some(entry) = grants.get(grant_id) else {
-            return Ok(None);
-        };
-        ensure_grant_subject_access(subject, &entry.snapshot)?;
-        Ok(Some(entry.snapshot.clone()))
     }
 
     pub fn revoke_grant_for_subject(
@@ -518,17 +541,12 @@ impl GovernanceManager {
             .lock()
             .map_err(|_| "governance grants mutex poisoned")?;
         let now_ms = now_unix_ms()?;
-        if let Some(entry) = grants.get(grant_id)
-            && grant_expired(&entry.snapshot, now_ms)
-        {
-            grants.remove(grant_id);
-            return Err(format!("Governance grant '{}' has expired", grant_id));
-        }
+        validate_grant_chain_locked(&mut grants, subject, grant_id, now_ms)
+            .map_err(GrantChainValidationError::into_message)?;
 
         let entry = grants
             .get_mut(grant_id)
             .ok_or_else(|| format!("Governance grant '{}' not found", grant_id))?;
-        ensure_grant_subject_access(subject, &entry.snapshot)?;
 
         if let Some(uses_remaining) = entry.snapshot.uses_remaining.as_mut() {
             if *uses_remaining == 0 {
@@ -555,27 +573,13 @@ impl GovernanceManager {
     ) -> Option<String> {
         let now_ms = now_unix_ms().ok()?;
         let mut grants = self.grants.lock().ok()?;
-        let Some(entry) = grants.get(grant_id) else {
-            return Some(format!(
-                "Governance denial: grant '{}' is not active",
-                grant_id
-            ));
+        let entry = match validate_grant_chain_locked(&mut grants, subject, grant_id, now_ms) {
+            Ok(snapshot) => snapshot,
+            Err(err) => return Some(format!("Governance denial: {}", err.into_message())),
         };
 
-        if grant_expired(&entry.snapshot, now_ms) {
-            grants.remove(grant_id);
-            return Some(format!(
-                "Governance denial: grant '{}' has expired",
-                grant_id
-            ));
-        }
-
-        if let Err(err) = ensure_grant_subject_access(subject, &entry.snapshot) {
-            return Some(format!("Governance denial: {}", err));
-        }
-
         capability_ceiling_denial_reason_bool_map(
-            &entry.snapshot.capabilities,
+            &entry.capabilities,
             capability,
             "temporary grant",
             grant_id,
@@ -595,6 +599,83 @@ fn grant_expired(grant: &GovernanceGrantSnapshot, now_ms: u64) -> bool {
     grant
         .expires_at_ms
         .is_some_and(|expires_at_ms| now_ms >= expires_at_ms)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GrantChainValidationError {
+    NotActive(String),
+    Expired(String),
+    Forbidden(String),
+    Invalid(String),
+}
+
+impl GrantChainValidationError {
+    fn into_message(self) -> String {
+        match self {
+            Self::NotActive(message)
+            | Self::Expired(message)
+            | Self::Forbidden(message)
+            | Self::Invalid(message) => message,
+        }
+    }
+}
+
+fn validate_grant_chain_locked(
+    grants: &mut HashMap<String, ActiveGovernanceGrant>,
+    subject: &GovernanceSubject,
+    grant_id: &str,
+    now_ms: u64,
+) -> Result<GovernanceGrantSnapshot, GrantChainValidationError> {
+    let mut current_id = grant_id.to_string();
+    let mut seen = HashSet::new();
+    let mut leaf_snapshot = None;
+
+    loop {
+        if !seen.insert(current_id.clone()) {
+            grants.remove(grant_id);
+            return Err(GrantChainValidationError::Invalid(format!(
+                "Governance grant '{}' has cyclic delegation ancestry",
+                grant_id
+            )));
+        }
+
+        let Some(snapshot) = grants.get(&current_id).map(|entry| entry.snapshot.clone()) else {
+            if current_id != grant_id {
+                grants.remove(grant_id);
+            }
+            return Err(GrantChainValidationError::NotActive(format!(
+                "Governance grant '{}' is not active",
+                current_id
+            )));
+        };
+
+        if grant_expired(&snapshot, now_ms) {
+            grants.remove(&current_id);
+            if current_id != grant_id {
+                grants.remove(grant_id);
+            }
+            return Err(GrantChainValidationError::Expired(format!(
+                "Governance grant '{}' has expired",
+                current_id
+            )));
+        }
+
+        if let Err(message) = ensure_grant_subject_access(subject, &snapshot) {
+            if current_id != grant_id {
+                grants.remove(grant_id);
+            }
+            return Err(GrantChainValidationError::Forbidden(message));
+        }
+
+        if leaf_snapshot.is_none() {
+            leaf_snapshot = Some(snapshot.clone());
+        }
+
+        match snapshot.issued_from_grant_id {
+            Some(parent_id) => current_id = parent_id,
+            None => return Ok(leaf_snapshot.expect("leaf snapshot set")),
+        }
+    }
 }
 
 fn ensure_grant_subject_access(
@@ -1136,5 +1217,108 @@ mod tests {
         assert!(second_enter.is_ok());
         let third_enter = mgr.enter_grant_for_subject(&subject, &grant.grant_id);
         assert!(third_enter.is_err());
+    }
+
+    #[test]
+    fn delegated_grants_record_parent_and_invalidate_when_parent_is_revoked() {
+        let mgr = GovernanceManager::new(GovernanceConfig {
+            grants: GovernanceGrantsConfig {
+                enabled: true,
+                max_ttl_ms: Some(10_000),
+                require_audit_reason: false,
+            },
+            ..GovernanceConfig::default()
+        });
+        let subject = GovernanceSubject {
+            agent_id: Some("default".into()),
+            ..GovernanceSubject::default()
+        };
+
+        let parent = mgr
+            .issue_grant_for_subject(
+                &subject,
+                BTreeMap::from([("runtime.db.query".into(), true)]),
+                Some(10_000),
+                Some(2),
+                Some("parent".into()),
+            )
+            .unwrap();
+        let delegated_subject = GovernanceSubject {
+            grant_id: Some(parent.grant_id.clone()),
+            ..subject.clone()
+        };
+        let child = mgr
+            .issue_grant_for_subject(
+                &delegated_subject,
+                BTreeMap::from([("runtime.db.query".into(), true)]),
+                Some(10_000),
+                Some(1),
+                Some("child".into()),
+            )
+            .unwrap();
+
+        assert_eq!(
+            child.issued_from_grant_id.as_deref(),
+            Some(parent.grant_id.as_str())
+        );
+        assert!(
+            mgr.grant_snapshot_for_subject(&subject, &child.grant_id)
+                .unwrap()
+                .is_some()
+        );
+
+        mgr.revoke_grant_for_subject(&subject, &parent.grant_id)
+            .unwrap();
+
+        assert!(
+            mgr.grant_snapshot_for_subject(&subject, &child.grant_id)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            mgr.enter_grant_for_subject(&subject, &child.grant_id)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn delegated_grants_cannot_exceed_parent_capability_ceiling() {
+        let mgr = GovernanceManager::new(GovernanceConfig {
+            grants: GovernanceGrantsConfig {
+                enabled: true,
+                max_ttl_ms: Some(10_000),
+                require_audit_reason: false,
+            },
+            ..GovernanceConfig::default()
+        });
+        let subject = GovernanceSubject {
+            agent_id: Some("default".into()),
+            ..GovernanceSubject::default()
+        };
+
+        let parent = mgr
+            .issue_grant_for_subject(
+                &subject,
+                BTreeMap::from([("runtime.db.query".into(), true)]),
+                Some(10_000),
+                Some(2),
+                Some("parent".into()),
+            )
+            .unwrap();
+        let delegated_subject = GovernanceSubject {
+            grant_id: Some(parent.grant_id.clone()),
+            ..subject
+        };
+
+        let err = mgr
+            .issue_grant_for_subject(
+                &delegated_subject,
+                BTreeMap::from([("runtime.policy.set".into(), true)]),
+                Some(10_000),
+                Some(1),
+                Some("child".into()),
+            )
+            .unwrap_err();
+        assert!(err.contains("temporary grant"));
     }
 }

@@ -16,7 +16,7 @@ use turin_channel_core::{
     ChannelConfigTargetKind, ChannelConversationKey, ChannelEnumSetting, ChannelIdentitySelectors,
     ChannelInstallManifest, ChannelKind, ChannelMessageRef, ChannelRuntimeCapabilities,
     ChannelRuntimeManifest, ChannelSecretRequirement, ChannelSessionScope, ChannelSetupManifest,
-    ChannelUser, InboundEvent, MessageBlock, OutboundMessage,
+    ChannelUser, InboundEvent, MessageBlock, OutboundMessage, bound_inbound_text,
 };
 use turin_channel_runner::ChannelDriver;
 
@@ -822,6 +822,7 @@ impl DiscordChannelDriver {
             "channel_runtime_id".to_string(),
             serde_json::Value::String(self.channel_runtime_id.clone()),
         );
+        let text = bound_inbound_text(message.content, &mut metadata);
 
         Some(InboundEvent {
             message: ChannelMessageRef {
@@ -835,7 +836,7 @@ impl DiscordChannelDriver {
                 username: Some(message.author.username),
             },
             session_scope: self.config.session_scope,
-            text: message.content,
+            text,
             attachments,
             metadata,
         })
