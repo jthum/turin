@@ -100,14 +100,28 @@ impl ProviderClient {
         system_prompt: &str,
         messages: &[InferenceMessage],
     ) -> Result<String> {
-        let req = self.build_request(
+        self.completion_with_options(
             model,
             system_prompt,
             messages,
             &[],
             &InferenceOptions::default(),
-        );
-        let result = self.provider.complete(req, None).await?;
+            None,
+        )
+        .await
+    }
+
+    pub async fn completion_with_options(
+        &self,
+        model: &str,
+        system_prompt: &str,
+        messages: &[InferenceMessage],
+        tools: &[serde_json::Value],
+        options: &InferenceOptions,
+        request_options: Option<RequestOptions>,
+    ) -> Result<String> {
+        let req = self.build_request(model, system_prompt, messages, tools, options);
+        let result = self.provider.complete(req, request_options).await?;
         Ok(result
             .content
             .iter()

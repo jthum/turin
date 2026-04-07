@@ -7,7 +7,9 @@ use tracing::{info, warn};
 use crate::kernel::config::StoreTargetConfig;
 use crate::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::ExecutionHost;
-use crate::kernel::session::{PersistedKernelRecord, SessionState, SessionStatus};
+use crate::kernel::session::{
+    ContextCompactionCheckpoint, PersistedKernelRecord, SessionState, SessionStatus,
+};
 use crate::kernel::session_refs::{
     describe_store_selector, format_session_reference, parse_session_reference,
 };
@@ -118,6 +120,7 @@ impl ExecutionHost {
 
         let messages = store.get_messages(row.id).await?;
         let events = store.get_all_events(row.id).await?;
+        let active_events = store.get_events(row.id).await?;
         let (history, turn_index) = rebuild_history(&messages)?;
         let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
             rebuild_session_counters(&events);
@@ -132,6 +135,7 @@ impl ExecutionHost {
         session.default_store_selector =
             session_default_store_selector_from_metadata(row.metadata.as_deref());
         session.inference = inference;
+        session.context_checkpoint = rebuild_context_checkpoint(&active_events);
         session.history = history;
         session.turn_index = turn_index;
         session.total_input_tokens = total_input_tokens;
@@ -161,6 +165,7 @@ impl ExecutionHost {
 
         let messages = store.get_messages(row.id).await?;
         let events = store.get_all_events(row.id).await?;
+        let active_events = store.get_events(row.id).await?;
         let (history, turn_index) = rebuild_history(&messages)?;
         let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
             rebuild_session_counters(&events);
@@ -170,6 +175,7 @@ impl ExecutionHost {
         session
             .identity
             .set_channel_id(session_channel_id_from_metadata(row.metadata.as_deref()));
+        session.context_checkpoint = rebuild_context_checkpoint(&active_events);
         session.history = history;
         session.turn_index = turn_index;
         session.total_input_tokens = total_input_tokens;
@@ -609,6 +615,27 @@ fn rebuild_session_counters(events: &[EventRow]) -> (u32, u32, u64, u64) {
         total_input_tokens,
         total_output_tokens,
     )
+}
+
+fn rebuild_context_checkpoint(events: &[EventRow]) -> Option<ContextCompactionCheckpoint> {
+    let mut checkpoint = None;
+
+    for event in events {
+        if event.event_type != "context_compaction" {
+            continue;
+        }
+
+        let Ok(KernelEvent::Audit(AuditEvent::ContextCompaction {
+            checkpoint: persisted,
+        })) = serde_json::from_str::<KernelEvent>(&event.payload)
+        else {
+            continue;
+        };
+
+        checkpoint = Some(persisted);
+    }
+
+    checkpoint
 }
 
 fn next_numeric_suffix(value: &str, prefix: &str) -> u32 {

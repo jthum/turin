@@ -4,6 +4,7 @@ use crate::kernel::governance::CapabilityDecision;
 use crate::kernel::governance::GovernanceGrantSnapshot;
 use crate::kernel::governance::GovernanceSnapshot;
 use crate::kernel::identity::RuntimeIdentity;
+use crate::kernel::session::ContextCompactionCheckpoint;
 
 /// Terminal status for a task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -153,6 +154,10 @@ pub enum AuditEvent {
     GovernanceGrantUse { grant: GovernanceGrantSnapshot },
     /// Temporary governance grant revoked
     GovernanceGrantRevoke { grant: GovernanceGrantSnapshot },
+    /// Durable semantic context checkpoint generated from older session history
+    ContextCompaction {
+        checkpoint: ContextCompactionCheckpoint,
+    },
 }
 
 /// Every action in Turin produces a typed `KernelEvent`.
@@ -204,6 +209,7 @@ impl KernelEvent {
                 AuditEvent::GovernanceGrantIssue { .. } => "governance_grant_issue",
                 AuditEvent::GovernanceGrantUse { .. } => "governance_grant_use",
                 AuditEvent::GovernanceGrantRevoke { .. } => "governance_grant_revoke",
+                AuditEvent::ContextCompaction { .. } => "context_compaction",
             },
         }
     }

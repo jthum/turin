@@ -9,10 +9,13 @@ use crate::display;
 use crate::harness::context::{ContextWrapper, RequestOptionsOverride};
 use crate::harness::verdict::Verdict;
 use crate::inference::provider;
+use crate::kernel::config::ResolvedInferenceRoute;
+use crate::kernel::event::AuditEvent;
 use crate::kernel::session::SessionState;
 use crate::kernel::turn::context_window::{
-    compact_messages_for_input_budget, effective_input_budget_tokens,
-    estimate_history_input_tokens, resolve_context_window_tokens,
+    build_checkpoint_summary_request, compact_messages_for_input_budget,
+    effective_input_budget_tokens, effective_request_context, estimate_history_input_tokens,
+    estimate_request_input_tokens, resolve_context_window_tokens, target_checkpoint_coverage,
 };
 
 use super::super::event::{KernelEvent, LifecycleEvent};
@@ -254,6 +257,123 @@ impl ExecutionHost {
         ))
     }
 
+    async fn maybe_refresh_context_checkpoint(
+        &mut self,
+        session: &mut SessionState,
+        route: &ResolvedInferenceRoute,
+        system_prompt: &str,
+        tools: &[serde_json::Value],
+    ) -> Result<()> {
+        let Some(candidate) = route.candidates.first() else {
+            return Ok(());
+        };
+        let Some(provider_config) = self.config.providers.get(&candidate.provider_name).cloned()
+        else {
+            return Ok(());
+        };
+
+        let context_window_tokens = resolve_context_window_tokens(Some(&provider_config));
+        let input_budget_tokens = effective_input_budget_tokens(
+            context_window_tokens,
+            candidate.max_tokens,
+            candidate.thinking_budget,
+        );
+        let effective = effective_request_context(
+            system_prompt,
+            &session.history,
+            session.context_checkpoint.as_ref(),
+        );
+        let effective_input_tokens =
+            estimate_request_input_tokens(&effective.system_prompt, &effective.messages, tools);
+        if effective_input_tokens <= input_budget_tokens {
+            return Ok(());
+        }
+
+        let Some(target_covered_message_count) =
+            target_checkpoint_coverage(session.history.len(), session.context_checkpoint.as_ref())
+        else {
+            return Ok(());
+        };
+
+        if self
+            .ensure_turn_provider_client(&candidate.provider_name)
+            .is_err()
+        {
+            return Ok(());
+        }
+        let Some(client) = self.clients.get(&candidate.provider_name).cloned() else {
+            return Ok(());
+        };
+        let request_options = match provider::build_request_options(&provider_config) {
+            Ok(options) => Some(options),
+            Err(err) => {
+                warn!(
+                    provider = %candidate.provider_name,
+                    model = %candidate.model,
+                    error = %err,
+                    "Skipping context auto-compaction because provider request options could not be prepared"
+                );
+                return Ok(());
+            }
+        };
+
+        let (summary_system_prompt, summary_messages, summary_max_tokens) =
+            build_checkpoint_summary_request(
+                &session.history,
+                session.context_checkpoint.as_ref(),
+                target_covered_message_count,
+                context_window_tokens,
+            );
+        if summary_messages.is_empty() {
+            return Ok(());
+        }
+
+        let summary = match client
+            .completion_with_options(
+                &candidate.model,
+                &summary_system_prompt,
+                &summary_messages,
+                &[],
+                &provider::InferenceOptions {
+                    temperature: Some(0.1),
+                    max_tokens: Some(summary_max_tokens),
+                    thinking_budget: None,
+                },
+                request_options,
+            )
+            .await
+        {
+            Ok(summary) => summary,
+            Err(err) => {
+                warn!(
+                    provider = %candidate.provider_name,
+                    model = %candidate.model,
+                    error = %err,
+                    "Context auto-compaction failed; continuing with structural compaction only"
+                );
+                return Ok(());
+            }
+        };
+        let summary = summary.trim().to_string();
+        if summary.is_empty() {
+            return Ok(());
+        }
+
+        let checkpoint = crate::kernel::session::ContextCompactionCheckpoint {
+            summary,
+            covered_message_count: target_covered_message_count,
+            generated_at_turn_index: session.turn_index,
+            provider_name: candidate.provider_name.clone(),
+            model: candidate.model.clone(),
+        };
+        session.context_checkpoint = Some(checkpoint.clone());
+        self.persist_event(
+            session,
+            &KernelEvent::Audit(AuditEvent::ContextCompaction { checkpoint }),
+        );
+        Ok(())
+    }
+
     fn compact_messages_for_candidate(
         &self,
         session: &SessionState,
@@ -262,16 +382,21 @@ impl ExecutionHost {
         provider_config: &crate::kernel::config::ProviderConfig,
         max_output_tokens: Option<u32>,
         thinking_budget: Option<u32>,
-    ) -> Vec<crate::inference::provider::InferenceMessage> {
+    ) -> crate::kernel::turn::context_window::EffectiveRequestContext {
         let context_window_tokens = resolve_context_window_tokens(Some(provider_config));
         let input_budget_tokens = effective_input_budget_tokens(
             context_window_tokens,
             max_output_tokens,
             thinking_budget,
         );
-        let (messages, report) = compact_messages_for_input_budget(
+        let effective = effective_request_context(
             system_prompt,
             &session.history,
+            session.context_checkpoint.as_ref(),
+        );
+        let (messages, report) = compact_messages_for_input_budget(
+            &effective.system_prompt,
+            &effective.messages,
             tools,
             context_window_tokens,
             input_budget_tokens,
@@ -297,12 +422,15 @@ impl ExecutionHost {
             );
         }
 
-        messages
+        crate::kernel::turn::context_window::EffectiveRequestContext {
+            system_prompt: effective.system_prompt,
+            messages,
+        }
     }
 
     async fn build_prepared_turn_stream(
         &mut self,
-        session: &SessionState,
+        session: &mut SessionState,
         turn_ctx: &TurnContext,
         req: TurnRequestState,
     ) -> Result<PreparedTurnStream> {
@@ -322,6 +450,8 @@ impl ExecutionHost {
                 "Inference route warning"
             );
         }
+        self.maybe_refresh_context_checkpoint(session, &route, &req.system_prompt, &tools)
+            .await?;
 
         let mut last_error: Option<anyhow::Error> = None;
         for candidate in route.candidates {
@@ -408,7 +538,7 @@ impl ExecutionHost {
                 temperature: candidate.temperature,
                 thinking_budget: candidate.thinking_budget,
             };
-            let compacted_messages = self.compact_messages_for_candidate(
+            let effective_request = self.compact_messages_for_candidate(
                 session,
                 &req.system_prompt,
                 &tools,
@@ -420,8 +550,8 @@ impl ExecutionHost {
             match client
                 .stream(
                     &candidate.model,
-                    &req.system_prompt,
-                    &compacted_messages,
+                    &effective_request.system_prompt,
+                    &effective_request.messages,
                     &tools,
                     &options,
                     Some(request_options),

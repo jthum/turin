@@ -142,6 +142,85 @@ impl InferenceProvider for CaptureMessagesProvider {
     }
 }
 
+#[derive(Default)]
+struct ContextCheckpointProvider {
+    seen_stream_messages: Arc<Mutex<Vec<turin::inference::provider::InferenceMessage>>>,
+    seen_stream_system: Arc<Mutex<Option<String>>>,
+    complete_calls: Arc<Mutex<usize>>,
+}
+
+#[async_trait]
+impl InferenceProvider for ContextCheckpointProvider {
+    fn complete<'a>(
+        &'a self,
+        request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<turin::inference::provider::InferenceResult, SdkError>> {
+        {
+            let mut calls = self
+                .complete_calls
+                .lock()
+                .expect("context checkpoint complete mutex poisoned");
+            *calls += 1;
+        }
+
+        let _ = request;
+        Box::pin(async move {
+            Ok(turin::inference::provider::InferenceResult {
+                content: vec![turin::inference::provider::InferenceContent::Text {
+                    text: "CHECKPOINT SUMMARY".to_string(),
+                }],
+                model: "checkpoint-model".to_string(),
+                stop_reason: None,
+                usage: turin::inference::provider::Usage {
+                    input_tokens: 32,
+                    output_tokens: 8,
+                },
+            })
+        })
+    }
+
+    fn stream<'a>(
+        &'a self,
+        request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+        {
+            let mut seen_messages = self
+                .seen_stream_messages
+                .lock()
+                .expect("context checkpoint stream messages mutex poisoned");
+            *seen_messages = request.messages.clone();
+        }
+        {
+            let mut seen_system = self
+                .seen_stream_system
+                .lock()
+                .expect("context checkpoint stream system mutex poisoned");
+            *seen_system = request.system.clone();
+        }
+
+        Box::pin(async move {
+            let stream = futures::stream::iter(vec![
+                Ok(InferenceEvent::MessageStart {
+                    role: "assistant".to_string(),
+                    model: "checkpoint-model".to_string(),
+                    provider_id: "checkpoint".to_string(),
+                }),
+                Ok(InferenceEvent::MessageDelta {
+                    content: "CHECKPOINTED".to_string(),
+                }),
+                Ok(InferenceEvent::MessageEnd {
+                    input_tokens: 12,
+                    output_tokens: 6,
+                    stop_reason: None,
+                }),
+            ]);
+            Ok(Box::pin(stream) as InferenceStream)
+        })
+    }
+}
+
 // ─── Session Lifecycle ──────────────────────────────────────────
 
 #[tokio::test]
@@ -389,6 +468,116 @@ async fn test_long_history_is_compacted_before_inference_request() -> Result<()>
     );
 
     kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_auto_compaction_creates_and_restores_context_checkpoint() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut config = make_config(tmp.path());
+    config.agent.provider = "checkpoint".to_string();
+    config.agent.model = "checkpoint-model".to_string();
+    config.agent.system_prompt = "Auto-compact long histories".to_string();
+    config.providers.insert(
+        "checkpoint".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            base_url: None,
+            context_window_tokens: Some(512),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+
+    let seen_stream_messages = Arc::new(Mutex::new(Vec::new()));
+    let seen_stream_system = Arc::new(Mutex::new(None));
+    let complete_calls = Arc::new(Mutex::new(0usize));
+    kernel.add_client(
+        "checkpoint".to_string(),
+        ProviderClient::new(
+            "checkpoint",
+            Arc::new(ContextCheckpointProvider {
+                seen_stream_messages: Arc::clone(&seen_stream_messages),
+                seen_stream_system: Arc::clone(&seen_stream_system),
+                complete_calls: Arc::clone(&complete_calls),
+            }),
+        ),
+    );
+
+    let mut session = kernel.create_session().await;
+    for i in 0..12 {
+        session
+            .history
+            .push(turin::inference::provider::InferenceMessage {
+                role: turin::inference::provider::InferenceRole::User,
+                content: vec![turin::inference::provider::InferenceContent::Text {
+                    text: format!("Historic prompt {i}: {}", "x".repeat(240)),
+                }],
+                tool_call_id: None,
+            });
+    }
+
+    kernel
+        .run(
+            &mut session,
+            Some("Newest prompt after checkpoint".to_string()),
+        )
+        .await?;
+
+    let checkpoint = session
+        .context_checkpoint
+        .clone()
+        .expect("expected context checkpoint to be generated");
+    assert_eq!(checkpoint.summary, "CHECKPOINT SUMMARY");
+    assert!(
+        checkpoint.covered_message_count > 0,
+        "expected checkpoint to cover earlier history"
+    );
+    assert_eq!(
+        *complete_calls
+            .lock()
+            .expect("context checkpoint complete mutex poisoned"),
+        1,
+        "expected exactly one semantic compaction completion call"
+    );
+
+    let stream_system = seen_stream_system
+        .lock()
+        .expect("context checkpoint system mutex poisoned")
+        .clone()
+        .expect("expected system prompt to be sent");
+    assert!(
+        stream_system.contains("CHECKPOINT SUMMARY"),
+        "expected final inference request to include the checkpoint summary in the system prompt"
+    );
+    let seen_messages = seen_stream_messages
+        .lock()
+        .expect("context checkpoint messages mutex poisoned")
+        .clone();
+    let rendered = format!("{seen_messages:?}");
+    assert!(
+        !rendered.contains("Historic prompt 0"),
+        "expected covered history to be omitted from the final request messages"
+    );
+    assert!(
+        rendered.contains("Newest prompt after checkpoint"),
+        "expected the newest prompt to remain in the final request"
+    );
+
+    let session_id = session.identity.session_id().to_string();
+    kernel.end_session(&mut session).await?;
+
+    let resumed = kernel
+        .resume_session_for_agent("default", &session_id)
+        .await?;
+    let resumed_checkpoint = resumed
+        .context_checkpoint
+        .expect("expected context checkpoint to restore from persistence");
+    assert_eq!(resumed_checkpoint.summary, "CHECKPOINT SUMMARY");
+
     Ok(())
 }
 

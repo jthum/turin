@@ -32,6 +32,15 @@ pub struct PersistedKernelEvent {
     pub event: KernelEvent,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ContextCompactionCheckpoint {
+    pub summary: String,
+    pub covered_message_count: usize,
+    pub generated_at_turn_index: u32,
+    pub provider_name: String,
+    pub model: String,
+}
+
 pub enum PersistedKernelRecord {
     Event(Box<PersistedKernelEvent>),
     Barrier(tokio::sync::oneshot::Sender<()>),
@@ -135,6 +144,7 @@ pub struct SessionState {
     pub store_selector: StoreSelector,
     pub default_store_selector: Option<StoreSelector>,
     pub inference: InferenceOverrideConfig,
+    pub context_checkpoint: Option<ContextCompactionCheckpoint>,
     pub history: Vec<InferenceMessage>,
     pub queue: Arc<Mutex<VecDeque<QueuedTask>>>,
     pub plans: HashMap<String, PlanProgress>,
@@ -176,6 +186,7 @@ impl SessionState {
             store_selector: StoreSelector::Alias("state".to_string()),
             default_store_selector: None,
             inference: InferenceOverrideConfig::default(),
+            context_checkpoint: None,
             history: Vec::new(),
             queue: Arc::new(Mutex::new(VecDeque::new())),
             plans: HashMap::new(),

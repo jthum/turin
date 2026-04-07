@@ -1,11 +1,22 @@
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::config::ProviderConfig;
+use crate::kernel::session::ContextCompactionCheckpoint;
 
 pub(crate) const DEFAULT_CONTEXT_WINDOW_TOKENS: u32 = 128_000;
 const DEFAULT_OUTPUT_RESERVE_TOKENS: u32 = 4_096;
 const MIN_OUTPUT_RESERVE_TOKENS: u32 = 1_024;
 const RECENT_MESSAGES_NO_TRUNCATE: usize = 6;
+const SUMMARY_RECENT_MESSAGES: usize = 8;
+const SUMMARY_MAX_OUTPUT_TOKENS: u32 = 512;
 const TRUNCATED_TOOL_RESULT_MARKER: &str = "[tool result omitted to fit context window]";
+const CONTEXT_SUMMARY_OPEN_TAG: &str = "<turin_context_summary>";
+const CONTEXT_SUMMARY_CLOSE_TAG: &str = "</turin_context_summary>";
+
+#[derive(Debug, Clone)]
+pub(crate) struct EffectiveRequestContext {
+    pub system_prompt: String,
+    pub messages: Vec<InferenceMessage>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CompactionReport {
@@ -59,6 +70,119 @@ pub(crate) fn estimate_request_input_tokens(
     tools: &[serde_json::Value],
 ) -> u32 {
     estimate_support_tokens(system_prompt, tools) + estimate_messages_tokens(messages)
+}
+
+pub(crate) fn effective_request_context(
+    system_prompt: &str,
+    messages: &[InferenceMessage],
+    checkpoint: Option<&ContextCompactionCheckpoint>,
+) -> EffectiveRequestContext {
+    let Some(checkpoint) = checkpoint else {
+        return EffectiveRequestContext {
+            system_prompt: system_prompt.to_string(),
+            messages: messages.to_vec(),
+        };
+    };
+
+    let covered_message_count = checkpoint.covered_message_count.min(messages.len());
+    let mut effective_system_prompt = String::with_capacity(
+        system_prompt.len() + checkpoint.summary.len() + CONTEXT_SUMMARY_OPEN_TAG.len() + 64,
+    );
+    effective_system_prompt.push_str(system_prompt);
+    effective_system_prompt.push_str("\n\n");
+    effective_system_prompt.push_str(CONTEXT_SUMMARY_OPEN_TAG);
+    effective_system_prompt.push_str(
+        "\nThis summary replaces older session history that Turin compacted to fit the context window.\n",
+    );
+    effective_system_prompt.push_str(checkpoint.summary.trim());
+    effective_system_prompt.push('\n');
+    effective_system_prompt.push_str(CONTEXT_SUMMARY_CLOSE_TAG);
+
+    EffectiveRequestContext {
+        system_prompt: effective_system_prompt,
+        messages: messages[covered_message_count..].to_vec(),
+    }
+}
+
+pub(crate) fn target_checkpoint_coverage(
+    history_len: usize,
+    checkpoint: Option<&ContextCompactionCheckpoint>,
+) -> Option<usize> {
+    let target_covered_message_count = history_len.saturating_sub(SUMMARY_RECENT_MESSAGES);
+    if target_covered_message_count == 0 {
+        return None;
+    }
+
+    match checkpoint {
+        None => Some(target_covered_message_count),
+        Some(existing)
+            if target_covered_message_count
+                > existing
+                    .covered_message_count
+                    .saturating_add(SUMMARY_RECENT_MESSAGES) =>
+        {
+            Some(target_covered_message_count)
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn build_checkpoint_summary_request(
+    history: &[InferenceMessage],
+    checkpoint: Option<&ContextCompactionCheckpoint>,
+    target_covered_message_count: usize,
+    context_window_tokens: u32,
+) -> (String, Vec<InferenceMessage>, u32) {
+    let summary_system_prompt = [
+        "You are compacting Turin session history for later turns.",
+        "Write a concise durable summary of the covered conversation so future turns retain the important context.",
+        "Keep only durable facts:",
+        "- user goals, preferences, and constraints",
+        "- decisions and commitments",
+        "- important tool outcomes and file changes",
+        "- unresolved questions or next steps",
+        "Do not copy transcript wording or pleasantries.",
+        "Return plain text with short bullet-like lines.",
+    ]
+    .join("\n");
+
+    let start_index = checkpoint
+        .map(|checkpoint| checkpoint.covered_message_count.min(history.len()))
+        .unwrap_or(0);
+    let end_index = target_covered_message_count.min(history.len());
+
+    let mut summary_messages = Vec::new();
+    if let Some(checkpoint) = checkpoint {
+        summary_messages.push(InferenceMessage {
+            role: InferenceRole::User,
+            content: vec![InferenceContent::Text {
+                text: format!(
+                    "Existing compacted context summary to retain and update:\n{}",
+                    checkpoint.summary.trim()
+                ),
+            }],
+            tool_call_id: None,
+        });
+    }
+    if start_index < end_index {
+        summary_messages.extend_from_slice(&history[start_index..end_index]);
+    }
+
+    let summary_input_budget =
+        effective_input_budget_tokens(context_window_tokens, Some(SUMMARY_MAX_OUTPUT_TOKENS), None);
+    let (summary_messages, _) = compact_messages_for_input_budget(
+        &summary_system_prompt,
+        &summary_messages,
+        &[],
+        context_window_tokens,
+        summary_input_budget,
+    );
+
+    (
+        summary_system_prompt,
+        summary_messages,
+        SUMMARY_MAX_OUTPUT_TOKENS,
+    )
 }
 
 pub(crate) fn compact_messages_for_input_budget(
@@ -261,6 +385,7 @@ fn slide_window_to_budget(
 mod tests {
     use super::*;
     use crate::inference::provider::InferenceRole;
+    use crate::kernel::session::ContextCompactionCheckpoint;
 
     fn text_message(role: InferenceRole, text: &str) -> InferenceMessage {
         InferenceMessage {
@@ -336,6 +461,35 @@ mod tests {
         match &last.content[0] {
             InferenceContent::Text { text } => assert_eq!(text, "current prompt"),
             other => panic!("expected trailing text message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn effective_request_context_injects_checkpoint_and_drops_covered_history() {
+        let messages = vec![
+            text_message(InferenceRole::User, "old 1"),
+            text_message(InferenceRole::Assistant, "old 2"),
+            text_message(InferenceRole::User, "recent"),
+        ];
+        let checkpoint = ContextCompactionCheckpoint {
+            summary: "important durable context".to_string(),
+            covered_message_count: 2,
+            generated_at_turn_index: 4,
+            provider_name: "mock".to_string(),
+            model: "mock-model".to_string(),
+        };
+
+        let effective = effective_request_context("base system", &messages, Some(&checkpoint));
+
+        assert!(
+            effective
+                .system_prompt
+                .contains("important durable context")
+        );
+        assert_eq!(effective.messages.len(), 1);
+        match &effective.messages[0].content[0] {
+            InferenceContent::Text { text } => assert_eq!(text, "recent"),
+            other => panic!("expected recent text message, got {other:?}"),
         }
     }
 }
