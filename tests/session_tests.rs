@@ -678,13 +678,13 @@ async fn test_trim_only_compaction_skips_semantic_checkpoint_generation() -> Res
 }
 
 #[tokio::test]
-async fn test_compaction_context_uses_dedicated_inference_context() -> Result<()> {
+async fn test_compaction_inference_uses_dedicated_inference_context() -> Result<()> {
     let tmp = tempdir()?;
     let mut config = make_config(tmp.path());
     config.agent.provider = "main".to_string();
     config.agent.model = "main-model".to_string();
     config.agent.system_prompt = "Dedicated compaction route".to_string();
-    config.inference.compaction.context = Some("summary".to_string());
+    config.inference.compaction.inference = Some("summary".to_string());
     config.inference.contexts.insert(
         "summary".to_string(),
         turin::kernel::config::InferenceContextConfig {

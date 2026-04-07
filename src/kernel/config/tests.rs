@@ -162,7 +162,7 @@ type = "openai"
 
 [inference.compaction]
 mode = "summary_only"
-context = "fast"
+inference = "fast"
 trigger_ratio = 0.8
 
 [inference.contexts.default]
@@ -179,7 +179,10 @@ model = "gpt-4o-mini"
         config.inference.compaction.mode,
         crate::kernel::config::InferenceCompactionMode::SummaryOnly
     );
-    assert_eq!(config.inference.compaction.context.as_deref(), Some("fast"));
+    assert_eq!(
+        config.inference.compaction.inference.as_deref(),
+        Some("fast")
+    );
     assert_eq!(config.inference.compaction.trigger_ratio, 0.8);
 }
 

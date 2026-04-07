@@ -42,7 +42,7 @@ pub struct InferenceCompactionConfig {
     #[serde(default)]
     pub mode: InferenceCompactionMode,
     #[serde(default)]
-    pub context: Option<String>,
+    pub inference: Option<String>,
     #[serde(default = "default_compaction_trigger_ratio")]
     pub trigger_ratio: f32,
 }
@@ -51,7 +51,7 @@ impl Default for InferenceCompactionConfig {
     fn default() -> Self {
         Self {
             mode: InferenceCompactionMode::default(),
-            context: None,
+            inference: None,
             trigger_ratio: default_compaction_trigger_ratio(),
         }
     }
@@ -214,9 +214,9 @@ impl InferenceConfig {
             .unwrap_or(DEFAULT_INFERENCE_CONTEXT_NAME)
     }
 
-    pub fn compaction_context_name(&self) -> Option<&str> {
+    pub fn compaction_inference_name(&self) -> Option<&str> {
         self.compaction
-            .context
+            .inference
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -312,10 +312,10 @@ impl InferenceConfig {
             }
         }
 
-        if let Some(context) = self.compaction.context.as_deref() {
+        if let Some(inference) = self.compaction.inference.as_deref() {
             anyhow::ensure!(
-                !context.trim().is_empty(),
-                "{label}.compaction.context must not be empty when set"
+                !inference.trim().is_empty(),
+                "{label}.compaction.inference must not be empty when set"
             );
         }
         anyhow::ensure!(

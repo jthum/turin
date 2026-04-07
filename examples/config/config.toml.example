@@ -52,7 +52,7 @@ mode = "auto"                        # auto | stateful | stateless
 #
 # [inference.compaction]
 # mode = "hybrid"       # hybrid | trim_only | summary_only
-# context = "fast"      # optional dedicated context for summary generation
+# inference = "fast"    # optional dedicated inference profile for summary generation
 # trigger_ratio = 0.85  # trigger semantic compaction before the window is completely full
 #
 # [inference.contexts.default]

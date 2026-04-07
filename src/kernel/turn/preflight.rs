@@ -272,16 +272,16 @@ impl ExecutionHost {
         }
 
         let compaction_route =
-            if let Some(context_name) = effective_inference.compaction_context_name() {
+            if let Some(inference_name) = effective_inference.compaction_inference_name() {
                 let route = effective_inference.resolve_route(
                     &req.provider_name,
                     &req.model,
                     req.thinking_budget,
-                    Some(context_name),
+                    Some(inference_name),
                 );
                 for warning in &route.warnings {
                     warn!(
-                        requested_context = context_name,
+                        requested_context = inference_name,
                         warning = %warning,
                         "Context compaction route warning"
                     );
