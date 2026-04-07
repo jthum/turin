@@ -44,6 +44,27 @@ mode = "auto"                        # auto | stateful | stateless
 # [agent.tools.web_fetch]
 # user_agent = "Mozilla/5.0 ..."
 
+# Optional named inference contexts selected from harness code via `ctx.inference`.
+# When [inference].default is omitted, Turin assumes "default".
+# Unknown context names fall back to the default context when present, then to [agent].
+# [inference]
+# default = "fast"
+#
+# [inference.contexts.default]
+# provider = "anthropic"
+# model = "claude-sonnet-4-20250514"
+#
+# [inference.contexts.fast]
+# provider = "openai"
+# model = "gpt-4o-mini"
+# temperature = 0.2
+#
+# [inference.contexts.reasoning]
+# provider = "anthropic"
+# model = "claude-opus-4-6"
+# fallback = "default"
+# thinking_budget = 4096
+
 # Optional extended thinking (provider/model dependent)
 # [agent.thinking]
 # enabled = true

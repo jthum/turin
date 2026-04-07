@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::pin::Pin;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use futures::Stream;
 use tracing::{debug, error, warn};
 
@@ -28,6 +28,7 @@ pub(super) struct PreparedTurnStream {
 
 #[derive(Clone)]
 struct TurnRequestState {
+    inference_context: Option<String>,
     model: String,
     provider_name: String,
     system_prompt: String,
@@ -60,6 +61,7 @@ impl ExecutionHost {
     fn default_turn_request_state(&self, session: &SessionState) -> Result<TurnRequestState> {
         let agent = self.agent_config_for_session(session)?;
         Ok(TurnRequestState {
+            inference_context: None,
             model: agent.model.clone(),
             provider_name: agent.provider.clone(),
             system_prompt: agent.system_prompt.clone(),
@@ -177,6 +179,7 @@ impl ExecutionHost {
         let harness = runtime.lock_engine();
         if let Some(ref engine) = *harness {
             let ctx = ContextWrapper::new(
+                req.inference_context.clone(),
                 req.model.clone(),
                 req.provider_name.clone(),
                 req.system_prompt.clone(),
@@ -210,6 +213,7 @@ impl ExecutionHost {
 
             let state = ctx.get_state();
             session.history = state.messages;
+            req.inference_context = state.inference;
             req.system_prompt = state.system_prompt;
             req.model = state.model;
             req.provider_name = state.provider;
@@ -226,57 +230,151 @@ impl ExecutionHost {
         turn_ctx: &TurnContext,
         req: TurnRequestState,
     ) -> Result<PreparedTurnStream> {
-        self.ensure_turn_provider_client(&req.provider_name)?;
-
-        let client = self
-            .clients
-            .get(&req.provider_name)
-            .ok_or_else(|| anyhow::anyhow!("Provider '{}' not initialized", req.provider_name))?
-            .clone();
-        let provider_config = self
-            .config
-            .providers
-            .get(&req.provider_name)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Provider '{}' not found in configuration",
-                    req.provider_name
-                )
-            })?;
-
         let tools = self.tool_definitions_for_session(session, turn_ctx)?;
-        let options = provider::InferenceOptions {
-            max_tokens: None,
-            temperature: None,
-            thinking_budget: Some(req.thinking_budget),
-        };
-        let request_options = merge_request_option_overrides(
-            provider::build_request_options(provider_config)?,
-            &req.request_options_override,
-        )?;
+        let route = self.config.resolve_inference_route(
+            &req.provider_name,
+            &req.model,
+            req.thinking_budget,
+            req.inference_context.as_deref(),
+        );
+        for warning in &route.warnings {
+            warn!(
+                requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),
+                warning = %warning,
+                "Inference route warning"
+            );
+        }
 
-        let stream = client
-            .stream(
-                &req.model,
-                &req.system_prompt,
-                &session.history,
-                &tools,
-                &options,
-                Some(request_options),
-            )
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to start inference stream (provider='{}', model='{}')",
-                    req.provider_name, req.model
+        let mut last_error: Option<anyhow::Error> = None;
+        for candidate in route.candidates {
+            if let Err(err) = self.ensure_turn_provider_client(&candidate.provider_name) {
+                warn!(
+                    requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),
+                    resolved_context = candidate.context_name.as_deref().unwrap_or("<base>"),
+                    provider = %candidate.provider_name,
+                    model = %candidate.model,
+                    error = %err,
+                    "Inference route failed during provider initialization; trying fallback"
+                );
+                last_error = Some(err);
+                continue;
+            }
+
+            let Some(client) = self.clients.get(&candidate.provider_name).cloned() else {
+                let err = anyhow::anyhow!(
+                    "Provider '{}' was initialized but no client is available",
+                    candidate.provider_name
+                );
+                warn!(
+                    requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),
+                    resolved_context = candidate.context_name.as_deref().unwrap_or("<base>"),
+                    provider = %candidate.provider_name,
+                    model = %candidate.model,
+                    error = %err,
+                    "Inference route failed after provider initialization; trying fallback"
+                );
+                last_error = Some(err);
+                continue;
+            };
+            let Some(provider_config) = self.config.providers.get(&candidate.provider_name) else {
+                let err = anyhow::anyhow!(
+                    "Provider '{}' not found in configuration",
+                    candidate.provider_name
+                );
+                warn!(
+                    requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),
+                    resolved_context = candidate.context_name.as_deref().unwrap_or("<base>"),
+                    provider = %candidate.provider_name,
+                    model = %candidate.model,
+                    error = %err,
+                    "Inference route failed because provider config is missing; trying fallback"
+                );
+                last_error = Some(err);
+                continue;
+            };
+
+            let request_options = match provider::build_request_options(provider_config) {
+                Ok(options) => {
+                    match merge_request_option_overrides(options, &req.request_options_override) {
+                        Ok(options) => options,
+                        Err(err) => {
+                            warn!(
+                                requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),
+                                resolved_context = candidate.context_name.as_deref().unwrap_or("<base>"),
+                                provider = %candidate.provider_name,
+                                model = %candidate.model,
+                                error = %err,
+                                "Inference route failed while building request options; trying fallback"
+                            );
+                            last_error = Some(err);
+                            continue;
+                        }
+                    }
+                }
+                Err(err) => {
+                    warn!(
+                        requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),
+                        resolved_context = candidate.context_name.as_deref().unwrap_or("<base>"),
+                        provider = %candidate.provider_name,
+                        model = %candidate.model,
+                        error = %err,
+                        "Inference route failed while preparing provider options; trying fallback"
+                    );
+                    last_error = Some(err);
+                    continue;
+                }
+            };
+
+            let options = provider::InferenceOptions {
+                max_tokens: candidate.max_tokens,
+                temperature: candidate.temperature,
+                thinking_budget: candidate.thinking_budget,
+            };
+
+            match client
+                .stream(
+                    &candidate.model,
+                    &req.system_prompt,
+                    &session.history,
+                    &tools,
+                    &options,
+                    Some(request_options),
                 )
-            })?;
+                .await
+            {
+                Ok(stream) => {
+                    debug!(
+                        requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),
+                        resolved_context = candidate.context_name.as_deref().unwrap_or("<base>"),
+                        provider = %candidate.provider_name,
+                        model = %candidate.model,
+                        "Prepared provider stream"
+                    );
+                    return Ok(PreparedTurnStream {
+                        provider_name: candidate.provider_name,
+                        model: candidate.model,
+                        stream,
+                    });
+                }
+                Err(err) => {
+                    let err = err.context(format!(
+                        "failed to start inference stream (provider='{}', model='{}')",
+                        candidate.provider_name, candidate.model
+                    ));
+                    warn!(
+                        requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),
+                        resolved_context = candidate.context_name.as_deref().unwrap_or("<base>"),
+                        provider = %candidate.provider_name,
+                        model = %candidate.model,
+                        error = %err,
+                        "Inference route failed to start stream; trying fallback"
+                    );
+                    last_error = Some(err);
+                }
+            }
+        }
 
-        Ok(PreparedTurnStream {
-            provider_name: req.provider_name,
-            model: req.model,
-            stream,
-        })
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("No inference route available")))
     }
 
     fn ensure_turn_provider_client(&mut self, provider_name: &str) -> Result<()> {

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 
 use super::*;
 
@@ -235,6 +236,86 @@ impl TurinConfig {
                     "providers.{}.headers contains an empty header name",
                     provider_name
                 );
+            }
+        }
+
+        if let Some(default_context) = self.inference.default.as_deref() {
+            anyhow::ensure!(
+                !default_context.trim().is_empty(),
+                "inference.default must not be empty when set"
+            );
+            anyhow::ensure!(
+                self.inference.contexts.contains_key(default_context),
+                "inference.default '{}' not found in inference.contexts",
+                default_context
+            );
+        }
+
+        for (context_name, context) in &self.inference.contexts {
+            anyhow::ensure!(
+                !context_name.trim().is_empty(),
+                "inference.contexts contains an empty context name"
+            );
+            anyhow::ensure!(
+                !context.provider.trim().is_empty(),
+                "inference.contexts.{}.provider must not be empty",
+                context_name
+            );
+            anyhow::ensure!(
+                !context.model.trim().is_empty(),
+                "inference.contexts.{}.model must not be empty",
+                context_name
+            );
+            anyhow::ensure!(
+                self.providers.contains_key(&context.provider),
+                "inference.contexts.{}.provider '{}' not found in [providers]",
+                context_name,
+                context.provider
+            );
+            if let Some(fallback) = context.fallback.as_deref() {
+                anyhow::ensure!(
+                    !fallback.trim().is_empty(),
+                    "inference.contexts.{}.fallback must not be empty when set",
+                    context_name
+                );
+                anyhow::ensure!(
+                    self.inference.contexts.contains_key(fallback),
+                    "inference.contexts.{}.fallback '{}' not found in inference.contexts",
+                    context_name,
+                    fallback
+                );
+            }
+            if let Some(temperature) = context.temperature {
+                anyhow::ensure!(
+                    temperature.is_finite(),
+                    "inference.contexts.{}.temperature must be finite",
+                    context_name
+                );
+            }
+            if let Some(max_tokens) = context.max_tokens {
+                anyhow::ensure!(
+                    max_tokens > 0,
+                    "inference.contexts.{}.max_tokens must be greater than 0",
+                    context_name
+                );
+            }
+        }
+
+        for context_name in self.inference.contexts.keys() {
+            let mut seen = HashSet::new();
+            let mut current = context_name.as_str();
+            while let Some(next) = self
+                .inference
+                .contexts
+                .get(current)
+                .and_then(|context| context.fallback.as_deref())
+            {
+                anyhow::ensure!(
+                    seen.insert(current.to_string()),
+                    "inference context fallback cycle detected at '{}'",
+                    current
+                );
+                current = next;
             }
         }
 

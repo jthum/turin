@@ -6,8 +6,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use turin::kernel::Kernel;
 use turin::kernel::config::{
-    AgentConfig, EmbeddingConfig, GovernanceConfig, HarnessConfig, KernelConfig, PersistenceConfig,
-    ProviderConfig, TurinConfig,
+    AgentConfig, EmbeddingConfig, GovernanceConfig, HarnessConfig, InferenceConfig, KernelConfig,
+    PersistenceConfig, ProviderConfig, TurinConfig,
 };
 use turin_types::layout::{
     DEFAULT_BOOTSTRAP_CONFIG_PATH, DEFAULT_LAYOUT_AGENTS_DIR, DEFAULT_LAYOUT_CHANNELS_DIR,
@@ -173,6 +173,7 @@ pub fn base_config(
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(
             workspace_root.join("test.db").to_string_lossy().to_string(),
         ),

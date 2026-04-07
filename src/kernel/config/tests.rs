@@ -102,6 +102,129 @@ base_url = "https://my-proxy.example.com/v1"
 }
 
 #[test]
+fn test_parse_inference_contexts_and_defaults() {
+    let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[providers.anthropic]
+type = "anthropic"
+
+[inference.contexts.default]
+provider = "openai"
+model = "gpt-4o-mini"
+temperature = 0.2
+
+[inference.contexts.reasoning]
+provider = "anthropic"
+model = "claude-opus-4-6"
+fallback = "default"
+thinking_budget = 4096
+"#;
+
+    let config = TurinConfig::from_str(toml).unwrap();
+    assert!(config.inference.default.is_none());
+    assert_eq!(config.inference.default_context_name(), "default");
+    assert_eq!(
+        config
+            .inference
+            .contexts
+            .get("default")
+            .unwrap()
+            .temperature,
+        Some(0.2)
+    );
+    assert_eq!(
+        config
+            .inference
+            .contexts
+            .get("reasoning")
+            .unwrap()
+            .fallback
+            .as_deref(),
+        Some("default")
+    );
+}
+
+#[test]
+fn test_resolve_inference_route_uses_requested_context_then_fallback_then_base() {
+    let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[providers.anthropic]
+type = "anthropic"
+
+[inference.contexts.default]
+provider = "openai"
+model = "gpt-4o-mini"
+
+[inference.contexts.reasoning]
+provider = "anthropic"
+model = "claude-opus-4-6"
+fallback = "default"
+temperature = 0.1
+max_tokens = 4096
+"#;
+
+    let config = TurinConfig::from_str(toml).unwrap();
+    let route = config.resolve_inference_route("openai", "gpt-4o", 1024, Some("reasoning"));
+    assert_eq!(route.requested_context.as_deref(), Some("reasoning"));
+    assert_eq!(route.candidates.len(), 3);
+    assert_eq!(
+        route.candidates[0].context_name.as_deref(),
+        Some("reasoning")
+    );
+    assert_eq!(route.candidates[0].provider_name, "anthropic");
+    assert_eq!(route.candidates[0].model, "claude-opus-4-6");
+    assert_eq!(route.candidates[0].temperature, Some(0.1));
+    assert_eq!(route.candidates[0].max_tokens, Some(4096));
+    assert_eq!(route.candidates[0].thinking_budget, Some(1024));
+    assert_eq!(route.candidates[1].context_name.as_deref(), Some("default"));
+    assert_eq!(route.candidates[2].context_name, None);
+    assert_eq!(route.candidates[2].provider_name, "openai");
+    assert_eq!(route.candidates[2].model, "gpt-4o");
+}
+
+#[test]
+fn test_resolve_inference_route_unknown_context_warns_and_falls_back() {
+    let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[inference.contexts.default]
+provider = "openai"
+model = "gpt-4o-mini"
+"#;
+
+    let config = TurinConfig::from_str(toml).unwrap();
+    let route = config.resolve_inference_route("openai", "gpt-4o", 1024, Some("creative"));
+    assert_eq!(route.candidates.len(), 2);
+    assert_eq!(route.candidates[0].context_name.as_deref(), Some("default"));
+    assert_eq!(route.candidates[1].context_name, None);
+    assert!(
+        route
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("creative")),
+        "warnings: {:?}",
+        route.warnings
+    );
+}
+
+#[test]
 fn test_parse_persistence_stores_and_placements() {
     let toml = r#"
 [agent]
@@ -222,6 +345,55 @@ model = ""
 provider = "anthropic"
 "#;
     assert!(TurinConfig::from_str(toml).is_err());
+}
+
+#[test]
+fn test_validate_rejects_missing_explicit_default_inference_context() {
+    let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[inference]
+default = "fast"
+"#;
+
+    let err = TurinConfig::from_str(toml).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("inference.default 'fast' not found in inference.contexts")
+    );
+}
+
+#[test]
+fn test_validate_rejects_inference_fallback_cycles() {
+    let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[inference.contexts.a]
+provider = "openai"
+model = "gpt-4o-mini"
+fallback = "b"
+
+[inference.contexts.b]
+provider = "openai"
+model = "gpt-4o"
+fallback = "a"
+"#;
+
+    let err = TurinConfig::from_str(toml).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("inference context fallback cycle detected")
+    );
 }
 
 #[test]

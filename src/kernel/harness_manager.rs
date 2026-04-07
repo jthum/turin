@@ -194,6 +194,7 @@ mod tests {
                 initial_spawn_depth: 0,
             },
             layout: LayoutConfig::default(),
+            inference: crate::kernel::config::InferenceConfig::default(),
             persistence: PersistenceConfig::with_state_path(
                 tmp.path().join("test.db").to_string_lossy().to_string(),
             ),

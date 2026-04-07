@@ -11,7 +11,8 @@ use turin::inference::provider::{
 };
 use turin::kernel::Kernel;
 use turin::kernel::config::{
-    AgentConfig, EmbeddingConfig, HarnessConfig, PersistenceConfig, ProviderConfig, TurinConfig,
+    AgentConfig, EmbeddingConfig, HarnessConfig, InferenceConfig, PersistenceConfig,
+    ProviderConfig, TurinConfig,
 };
 use turin::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent, StreamEvent};
 
@@ -138,6 +139,7 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -338,6 +340,7 @@ async fn test_harness_observation() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -452,6 +455,7 @@ async fn test_nested_agent_spawning() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -574,6 +578,7 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -666,6 +671,7 @@ async fn test_dynamic_mode_switching_stateless() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),

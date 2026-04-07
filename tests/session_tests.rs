@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use tempfile::tempdir;
 use turin::kernel::Kernel;
 use turin::kernel::config::{
-    AgentConfig, EmbeddingConfig, HarnessConfig, KernelConfig, PersistenceConfig, ProviderConfig,
-    StoreTargetConfig, TurinConfig,
+    AgentConfig, EmbeddingConfig, HarnessConfig, InferenceConfig, KernelConfig, PersistenceConfig,
+    ProviderConfig, StoreTargetConfig, TurinConfig,
 };
 use turin::kernel::policy::PolicyScope;
 use turin::kernel::session::{QueuedTask, SessionStatus};
@@ -54,6 +54,7 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -508,6 +509,7 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: default_harness_dir.to_str().unwrap().to_string(),
@@ -663,6 +665,7 @@ async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: default_harness_dir.to_str().unwrap().to_string(),
@@ -810,6 +813,7 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: default_harness_dir.to_str().unwrap().to_string(),
@@ -1077,6 +1081,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig {
             state: StoreTargetConfig::from_path(""), // Empty — no persistence
             ..PersistenceConfig::default()

@@ -8,6 +8,7 @@ use crate::persistence::manager::StoreSelector;
 pub use turin_types::{AgentMode, ThinkingConfig, ToolSelectionConfig, ToolsConfig};
 
 mod defaults;
+mod inference;
 mod layout;
 mod persistence;
 #[cfg(test)]
@@ -15,6 +16,9 @@ mod tests;
 mod validation;
 
 use defaults::*;
+pub use inference::{
+    InferenceConfig, InferenceContextConfig, ResolvedInferenceCandidate, ResolvedInferenceRoute,
+};
 pub use layout::{LayoutConfig, ResolvedLayout};
 pub use persistence::ResolvedPersistenceConfig;
 
@@ -37,6 +41,8 @@ pub struct TurinConfig {
     pub harness: HarnessConfig,
     #[serde(default)]
     pub harnesses: std::collections::HashMap<String, HarnessConfig>,
+    #[serde(default)]
+    pub inference: InferenceConfig,
     #[serde(default)]
     pub providers: ProvidersConfig,
     #[serde(default)]
@@ -335,6 +341,23 @@ impl PersistenceConfig {
             return Some(StoreSelector::Alias(alias.to_string()));
         }
         self.top_level_store_selector().ok()
+    }
+}
+
+impl TurinConfig {
+    pub fn resolve_inference_route(
+        &self,
+        base_provider_name: &str,
+        base_model: &str,
+        base_thinking_budget: u32,
+        requested_context: Option<&str>,
+    ) -> ResolvedInferenceRoute {
+        self.inference.resolve_route(
+            base_provider_name,
+            base_model,
+            base_thinking_budget,
+            requested_context,
+        )
     }
 }
 

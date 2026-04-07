@@ -18,6 +18,7 @@ pub struct RequestOptionsOverride {
 /// Inner state shareable between Rust and Lua
 #[derive(Clone, Debug)]
 pub struct ContextState {
+    pub inference: Option<String>,
     pub model: String,
     pub provider: String,
     pub system_prompt: String,
@@ -44,6 +45,7 @@ pub struct ContextWrapper {
 impl ContextWrapper {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        inference: Option<String>,
         model: String,
         provider: String,
         system_prompt: String,
@@ -80,6 +82,7 @@ impl ContextWrapper {
 
         Self {
             state: Arc::new(Mutex::new(ContextState {
+                inference,
                 model,
                 provider,
                 system_prompt,
@@ -115,6 +118,15 @@ impl ContextWrapper {
 impl UserData for ContextWrapper {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // Properties
+        methods.add_method("get_inference", |_, this, ()| {
+            Ok(this.lock_state().inference.clone())
+        });
+
+        methods.add_method("set_inference", |_, this, val: Option<String>| {
+            this.lock_state().inference = normalize_inference_context_name(val);
+            Ok(())
+        });
+
         methods.add_method("get_model", |_, this, ()| {
             Ok(this.lock_state().model.clone())
         });
@@ -202,6 +214,15 @@ impl UserData for ContextWrapper {
         methods.add_meta_method(
             MetaMethod::Index,
             |lua, this: &ContextWrapper, key: String| match key.as_str() {
+                "inference" => {
+                    let state = this.lock_state();
+                    state
+                        .inference
+                        .as_deref()
+                        .map(|s| lua.create_string(s).map(Value::String))
+                        .transpose()
+                        .map(|value| value.unwrap_or(Value::Nil))
+                }
                 "model" => {
                     let state = this.lock_state();
                     Ok(Value::String(lua.create_string(&state.model)?))
@@ -277,6 +298,12 @@ impl UserData for ContextWrapper {
             MetaMethod::NewIndex,
             |lua, this: &ContextWrapper, (key, val): (String, Value)| {
                 match key.as_str() {
+                    "inference" => {
+                        let s: Option<String> =
+                            lua.from_value(val).map_err(mlua::Error::external)?;
+                        this.lock_state().inference = normalize_inference_context_name(s);
+                        Ok(())
+                    }
                     "system_prompt" => {
                         let s: String = lua.from_value(val).map_err(mlua::Error::external)?;
                         this.lock_state().system_prompt = s;
@@ -403,4 +430,15 @@ impl UserData for ContextWrapper {
             }
         });
     }
+}
+
+fn normalize_inference_context_name(value: Option<String>) -> Option<String> {
+    value.and_then(|text| {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }

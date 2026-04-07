@@ -11,8 +11,9 @@ use turin::inference::provider::{
 use turin::kernel::Kernel;
 use turin::kernel::config::{
     AgentConfig, AgentMode, ContextPersistenceConfig, EmbeddingConfig, GovernanceConfig,
-    GovernanceGrantsConfig, GovernanceProfile, HarnessConfig, KernelConfig, NamedStoreConfig,
-    PersistenceConfig, ProviderConfig, ScopedStorePlacementConfig, StoreTargetConfig, TurinConfig,
+    GovernanceGrantsConfig, GovernanceProfile, HarnessConfig, InferenceConfig,
+    InferenceContextConfig, KernelConfig, NamedStoreConfig, PersistenceConfig, ProviderConfig,
+    ScopedStorePlacementConfig, StoreTargetConfig, TurinConfig,
 };
 use turin::kernel::policy::PolicyScope;
 use turin::persistence::manager::StoreSelector;
@@ -87,6 +88,36 @@ impl InferenceProvider for HeaderCaptureProvider {
                 Ok(InferenceEvent::MessageDelta {
                     content: "ok".to_string(),
                 }),
+                Ok(InferenceEvent::MessageEnd {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                    stop_reason: None,
+                }),
+            ];
+            Ok(Box::pin(stream::iter(events)) as InferenceStream)
+        })
+    }
+}
+
+struct FixedTextProvider {
+    text: String,
+}
+
+impl InferenceProvider for FixedTextProvider {
+    fn stream<'a>(
+        &'a self,
+        _request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+        let text = self.text.clone();
+        Box::pin(async move {
+            let events = vec![
+                Ok(InferenceEvent::MessageStart {
+                    role: "assistant".to_string(),
+                    model: "mock-model".to_string(),
+                    provider_id: "mock".to_string(),
+                }),
+                Ok(InferenceEvent::MessageDelta { content: text }),
                 Ok(InferenceEvent::MessageEnd {
                     input_tokens: 1,
                     output_tokens: 1,
@@ -225,6 +256,7 @@ async fn test_harness_rejection() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -357,6 +389,7 @@ async fn test_virtual_tool_is_exposed_and_executes_native_call() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -484,6 +517,7 @@ async fn test_virtual_tool_sequence_aggregates_multiple_native_calls() -> Result
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -603,6 +637,7 @@ async fn test_virtual_tool_sequence_callback_shapes_outer_result() -> Result<()>
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -728,6 +763,7 @@ async fn test_virtual_tool_can_call_another_virtual_tool() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -853,6 +889,7 @@ async fn test_virtual_tool_can_forward_reference_later_declaration() -> Result<(
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -975,6 +1012,7 @@ async fn test_virtual_tool_recursion_is_rejected() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -1103,6 +1141,7 @@ tool.declare("tool_9", {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -1228,6 +1267,7 @@ async fn test_virtual_tool_callback_can_return_follow_up_plan() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -1332,6 +1372,7 @@ async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Resul
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -1504,6 +1545,7 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
@@ -1665,6 +1707,7 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
@@ -1821,6 +1864,7 @@ async fn test_agent_complete_applies_delegated_capability_ceiling() -> Result<()
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
@@ -1920,6 +1964,7 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -1952,6 +1997,149 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
     assert!(captured.0, "expected config header to be passed through");
     assert!(captured.1, "expected harness header to be passed through");
     assert_eq!(captured.2, Some(1), "expected harness override for retries");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_harness_can_select_named_inference_context() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_inference_contexts.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    let harness_code = r#"
+        function on_turn_prepare(ctx)
+            ctx.inference = "fast"
+            return ALLOW
+        end
+    "#;
+    std::fs::write(harness_dir.join("routing.lua"), harness_code)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "primary".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+    providers.insert(
+        "secondary".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut inference_contexts = HashMap::new();
+    inference_contexts.insert(
+        "fast".to_string(),
+        InferenceContextConfig {
+            provider: "secondary".to_string(),
+            model: "secondary-model".to_string(),
+            fallback: None,
+            temperature: Some(0.2),
+            max_tokens: Some(256),
+            thinking_budget: None,
+        },
+    );
+
+    let config = TurinConfig {
+        tools: Default::default(),
+        agent: AgentConfig {
+            tools: Default::default(),
+            id: "default".to_string(),
+            model: "primary-model".to_string(),
+            provider: "primary".to_string(),
+            system_prompt: "Inference routing test".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+            persistence: Default::default(),
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 2,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        layout: Default::default(),
+        inference: InferenceConfig {
+            default: None,
+            contexts: inference_contexts,
+        },
+        persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+            memory_limit_mb: 32,
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: None,
+        governance: turin::kernel::config::GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+    kernel.add_client(
+        "primary".to_string(),
+        ProviderClient::new(
+            "primary",
+            Arc::new(FixedTextProvider {
+                text: "PRIMARY".to_string(),
+            }),
+        ),
+    );
+    kernel.add_client(
+        "secondary".to_string(),
+        ProviderClient::new(
+            "secondary",
+            Arc::new(FixedTextProvider {
+                text: "SECONDARY".to_string(),
+            }),
+        ),
+    );
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("route via fast".to_string()))
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    let mut saw_secondary = false;
+    let mut saw_primary = false;
+    for msg in &session.history {
+        for content in &msg.content {
+            if let InferenceContent::Text { text } = content {
+                if text.contains("SECONDARY") {
+                    saw_secondary = true;
+                }
+                if text.contains("PRIMARY") {
+                    saw_primary = true;
+                }
+            }
+        }
+    }
+
+    assert!(
+        saw_secondary,
+        "expected secondary inference provider output"
+    );
+    assert!(
+        !saw_primary,
+        "did not expect primary inference provider output"
+    );
 
     Ok(())
 }
@@ -2130,6 +2318,7 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -2276,6 +2465,7 @@ async fn test_runtime_memory_and_kv_support_explicit_store_targets() -> Result<(
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -2453,6 +2643,7 @@ async fn test_runtime_memory_and_kv_respect_scope_store_placements() -> Result<(
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig {
             state: StoreTargetConfig::from_path(db_path.to_str().unwrap().to_string()),
             stores: HashMap::from([(
@@ -2640,6 +2831,7 @@ async fn test_runtime_memory_search_supports_multi_source_queries() -> Result<()
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig {
             state: StoreTargetConfig::from_path(db_path.to_str().unwrap().to_string()),
             stores: HashMap::from([(
@@ -2752,6 +2944,7 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -2909,6 +3102,7 @@ async fn test_runtime_cache_api_round_trip() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -3285,6 +3479,7 @@ async fn test_agent_persistence_store_overrides_default_scoped_data_store() -> R
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(top_state_db.to_string_lossy().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_string_lossy().to_string(),
@@ -3489,6 +3684,7 @@ async fn test_runtime_code_search_api_round_trip() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -3612,6 +3808,7 @@ async fn test_runtime_code_search_falls_back_without_embedding_provider() -> Res
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -3751,6 +3948,7 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -3906,6 +4104,7 @@ async fn test_import_scoped_tracks_imported_module_subject_and_root() -> Result<
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -4018,6 +4217,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_import() -> Result<()>
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -4142,6 +4342,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_use() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -4247,6 +4448,7 @@ async fn test_use_scoped_root_mismatch_fails_harness_init() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -4363,6 +4565,7 @@ async fn test_root_max_capabilities_applies_to_top_level_hooks() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -4479,6 +4682,7 @@ async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -4661,6 +4865,7 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
@@ -4856,6 +5061,7 @@ async fn test_runtime_governance_temporary_grants_issue_use_revoke() -> Result<(
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -5020,6 +5226,7 @@ async fn test_temporary_grant_ceiling_propagates_to_peer_submit() -> Result<()> 
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
@@ -5174,6 +5381,7 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -5322,6 +5530,7 @@ async fn test_use_scoped_capability_delegation_is_downward_only() -> Result<()> 
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -5470,6 +5679,7 @@ async fn test_nested_import_cannot_widen_import_delegation() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -5590,6 +5800,7 @@ async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> 
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -5729,6 +5940,7 @@ async fn test_runtime_db_api_and_context_glob() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
@@ -5870,6 +6082,7 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
@@ -6054,6 +6267,7 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_string_lossy().to_string()),
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_string_lossy().to_string(),
@@ -6317,6 +6531,7 @@ async fn test_runtime_agent_complete_preserves_nested_grant_context() -> Result<
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_string_lossy().to_string()),
         harness: HarnessConfig {
             directory: orchestrator_harness_dir.to_string_lossy().to_string(),

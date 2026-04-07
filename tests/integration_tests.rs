@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use tempfile::tempdir;
 use turin::kernel::Kernel;
 use turin::kernel::config::{
-    AgentConfig, EmbeddingConfig, HarnessConfig, PersistenceConfig, ProviderConfig, TurinConfig,
+    AgentConfig, EmbeddingConfig, HarnessConfig, InferenceConfig, PersistenceConfig,
+    ProviderConfig, TurinConfig,
 };
 
 #[tokio::test]
@@ -46,6 +47,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
+        inference: InferenceConfig::default(),
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {
             directory: harness_dir.to_str().unwrap().to_string(),
