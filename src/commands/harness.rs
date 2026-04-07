@@ -76,6 +76,7 @@ pub async fn run_harness_test(args: HarnessTestArgs) -> Result<()> {
             max_retries: None,
             request_timeout_secs: None,
             total_timeout_secs: None,
+            context_window_tokens: None,
         },
     );
 

@@ -219,6 +219,14 @@ impl TurinConfig {
                 );
             }
 
+            if let Some(context_window_tokens) = provider.context_window_tokens {
+                anyhow::ensure!(
+                    context_window_tokens > 0,
+                    "providers.{}.context_window_tokens must be greater than 0",
+                    provider_name
+                );
+            }
+
             if let (Some(request_secs), Some(total_secs)) =
                 (provider.request_timeout_secs, provider.total_timeout_secs)
             {

@@ -4,8 +4,15 @@
 //! harness hot-reload, and max_turns enforcement.
 
 use anyhow::Result;
+use async_trait::async_trait;
+use futures::future::BoxFuture;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tempfile::tempdir;
+use turin::inference::provider::{
+    InferenceEvent, InferenceProvider, InferenceRequest, InferenceStream, ProviderClient,
+    RequestOptions, SdkError,
+};
 use turin::kernel::Kernel;
 use turin::kernel::config::{
     AgentConfig, EmbeddingConfig, HarnessConfig, InferenceConfig, KernelConfig, PersistenceConfig,
@@ -92,6 +99,47 @@ fn event_has_task_status(events: &[turin::persistence::schema::EventRow], status
 
 fn count_event_type(events: &[turin::persistence::schema::EventRow], event_type: &str) -> usize {
     events.iter().filter(|e| e.event_type == event_type).count()
+}
+
+#[derive(Default)]
+struct CaptureMessagesProvider {
+    seen_messages: Arc<Mutex<Vec<turin::inference::provider::InferenceMessage>>>,
+}
+
+#[async_trait]
+impl InferenceProvider for CaptureMessagesProvider {
+    fn stream<'a>(
+        &'a self,
+        request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+        {
+            let mut seen = self
+                .seen_messages
+                .lock()
+                .expect("capture messages mutex poisoned");
+            *seen = request.messages.clone();
+        }
+
+        Box::pin(async move {
+            let stream = futures::stream::iter(vec![
+                Ok(InferenceEvent::MessageStart {
+                    role: "assistant".to_string(),
+                    model: "capture-model".to_string(),
+                    provider_id: "capture".to_string(),
+                }),
+                Ok(InferenceEvent::MessageDelta {
+                    content: "CAPTURED".to_string(),
+                }),
+                Ok(InferenceEvent::MessageEnd {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                    stop_reason: None,
+                }),
+            ]);
+            Ok(Box::pin(stream) as InferenceStream)
+        })
+    }
 }
 
 // ─── Session Lifecycle ──────────────────────────────────────────
@@ -207,6 +255,138 @@ async fn test_run_populates_token_counts() -> Result<()> {
     // and accessible without panic (u64 is always >= 0, so we just read them).
     let _input = session.total_input_tokens;
     let _output = session.total_output_tokens;
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_on_turn_prepare_exposes_estimated_tokens_and_context_limit() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir_all(&harness_dir)?;
+    std::fs::write(
+        harness_dir.join("token_probe.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                if ctx.token_count < 1 then
+                    error("expected token_count to be estimated")
+                end
+                if ctx.estimated_input_tokens ~= ctx.token_count then
+                    error("expected estimated_input_tokens alias to match token_count")
+                end
+                if ctx.token_limit ~= 2048 then
+                    error("expected token_limit to come from provider context_window_tokens")
+                end
+                if ctx.max_input_tokens ~= ctx.token_limit then
+                    error("expected max_input_tokens alias to match token_limit")
+                end
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut config = make_config(tmp.path());
+    config.harness.directory = harness_dir.to_string_lossy().to_string();
+    if let Some(provider) = config.providers.get_mut("mock") {
+        provider.context_window_tokens = Some(2048);
+    }
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Probe token estimates".to_string()))
+        .await?;
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_long_history_is_compacted_before_inference_request() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut config = make_config(tmp.path());
+    config.agent.provider = "capture".to_string();
+    config.agent.model = "capture-model".to_string();
+    config.agent.system_prompt = "Compact long histories".to_string();
+    config.providers.insert(
+        "capture".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            base_url: None,
+            context_window_tokens: Some(512),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+
+    let seen_messages = Arc::new(Mutex::new(Vec::new()));
+    kernel.add_client(
+        "capture".to_string(),
+        ProviderClient::new(
+            "capture",
+            Arc::new(CaptureMessagesProvider {
+                seen_messages: Arc::clone(&seen_messages),
+            }),
+        ),
+    );
+
+    let mut session = kernel.create_session().await;
+    session
+        .history
+        .push(turin::inference::provider::InferenceMessage {
+            role: turin::inference::provider::InferenceRole::User,
+            content: vec![turin::inference::provider::InferenceContent::Text {
+                text: "Old prompt".to_string(),
+            }],
+            tool_call_id: None,
+        });
+    session
+        .history
+        .push(turin::inference::provider::InferenceMessage {
+            role: turin::inference::provider::InferenceRole::Tool,
+            content: vec![turin::inference::provider::InferenceContent::ToolResult {
+                tool_use_id: "tool_1".to_string(),
+                content: "x".repeat(4_000),
+                is_error: false,
+            }],
+            tool_call_id: None,
+        });
+    session
+        .history
+        .push(turin::inference::provider::InferenceMessage {
+            role: turin::inference::provider::InferenceRole::Assistant,
+            content: vec![turin::inference::provider::InferenceContent::Text {
+                text: "Recent assistant context".to_string(),
+            }],
+            tool_call_id: None,
+        });
+
+    kernel
+        .run(&mut session, Some("Current compacted prompt".to_string()))
+        .await?;
+
+    let seen = seen_messages
+        .lock()
+        .expect("capture messages mutex poisoned")
+        .clone();
+    let rendered = format!("{seen:?}");
+    assert!(
+        rendered.contains("[tool result omitted to fit context window]")
+            || seen.len() < session.history.len(),
+        "expected preflight compaction to truncate tool results or drop old messages"
+    );
+    assert!(
+        rendered.contains("Current compacted prompt"),
+        "expected latest prompt to remain in the inference request"
+    );
 
     kernel.end_session(&mut session).await?;
     Ok(())

@@ -10,6 +10,10 @@ use crate::harness::context::{ContextWrapper, RequestOptionsOverride};
 use crate::harness::verdict::Verdict;
 use crate::inference::provider;
 use crate::kernel::session::SessionState;
+use crate::kernel::turn::context_window::{
+    compact_messages_for_input_budget, effective_input_budget_tokens,
+    estimate_history_input_tokens, resolve_context_window_tokens,
+};
 
 use super::super::event::{KernelEvent, LifecycleEvent};
 use super::super::execution_host::ExecutionHost;
@@ -48,7 +52,7 @@ impl ExecutionHost {
             return Ok(TurnPreflight::Rejected);
         }
 
-        if self.emit_turn_prepare_and_apply_hook(session, turn_ctx, &mut req) {
+        if self.emit_turn_prepare_and_apply_hook(session, turn_ctx, &mut req)? {
             return Ok(TurnPreflight::Rejected);
         }
 
@@ -163,7 +167,7 @@ impl ExecutionHost {
         session: &mut SessionState,
         turn_ctx: &TurnContext,
         req: &mut TurnRequestState,
-    ) -> bool {
+    ) -> Result<bool> {
         self.persist_event(
             session,
             &KernelEvent::Lifecycle(LifecycleEvent::TurnPrepare {
@@ -174,6 +178,9 @@ impl ExecutionHost {
                 task_turn_index: turn_ctx.task_turn_index,
             }),
         );
+
+        let token_count = estimate_history_input_tokens(&req.system_prompt, &session.history);
+        let token_limit = self.estimate_turn_context_window_tokens(session, req)?;
 
         let runtime = self.runtime_for_session(session);
         let harness = runtime.lock_engine();
@@ -189,8 +196,8 @@ impl ExecutionHost {
                 turn_ctx.task_turn_index == 0,
                 turn_ctx.task_id.clone(),
                 turn_ctx.plan_id.clone(),
-                0,
-                128_000,
+                token_count,
+                token_limit,
                 req.thinking_budget,
                 req.request_options_override.clone(),
                 self.clients.clone(),
@@ -199,11 +206,11 @@ impl ExecutionHost {
             match engine.evaluate_userdata("on_turn_prepare", ctx.clone()) {
                 Ok(Verdict::Reject(reason)) => {
                     warn!(reason = %reason, "Turn rejected by on_turn_prepare");
-                    return true;
+                    return Ok(true);
                 }
                 Ok(Verdict::Escalate(reason)) => {
                     warn!(reason = %reason, "Turn escalated by on_turn_prepare; treating as rejected");
-                    return true;
+                    return Ok(true);
                 }
                 Ok(_) => {}
                 Err(e) => {
@@ -221,7 +228,76 @@ impl ExecutionHost {
             req.request_options_override = state.request_options;
         }
 
-        false
+        Ok(false)
+    }
+
+    fn estimate_turn_context_window_tokens(
+        &self,
+        session: &SessionState,
+        req: &TurnRequestState,
+    ) -> Result<u32> {
+        let route = self.config.resolve_inference_route(
+            session.identity.agent_id(),
+            &req.provider_name,
+            &req.model,
+            req.thinking_budget,
+            req.inference_context.as_deref(),
+            Some(&session.inference),
+        )?;
+        let provider_name = route
+            .candidates
+            .first()
+            .map(|candidate| candidate.provider_name.as_str())
+            .unwrap_or(req.provider_name.as_str());
+        Ok(resolve_context_window_tokens(
+            self.config.providers.get(provider_name),
+        ))
+    }
+
+    fn compact_messages_for_candidate(
+        &self,
+        session: &SessionState,
+        system_prompt: &str,
+        tools: &[serde_json::Value],
+        provider_config: &crate::kernel::config::ProviderConfig,
+        max_output_tokens: Option<u32>,
+        thinking_budget: Option<u32>,
+    ) -> Vec<crate::inference::provider::InferenceMessage> {
+        let context_window_tokens = resolve_context_window_tokens(Some(provider_config));
+        let input_budget_tokens = effective_input_budget_tokens(
+            context_window_tokens,
+            max_output_tokens,
+            thinking_budget,
+        );
+        let (messages, report) = compact_messages_for_input_budget(
+            system_prompt,
+            &session.history,
+            tools,
+            context_window_tokens,
+            input_budget_tokens,
+        );
+
+        if report.applied() {
+            warn!(
+                before_tokens = report.used_tokens_before,
+                after_tokens = report.used_tokens_after,
+                context_window_tokens = report.context_window_tokens,
+                input_budget_tokens = report.input_budget_tokens,
+                truncated_tool_results = report.truncated_tool_results,
+                dropped_messages = report.dropped_messages,
+                "Compacted turn history to fit provider context budget"
+            );
+        }
+        if !report.fits_budget() {
+            warn!(
+                used_tokens = report.used_tokens_after,
+                input_budget_tokens = report.input_budget_tokens,
+                context_window_tokens = report.context_window_tokens,
+                "Turn history still exceeds the estimated provider input budget after compaction"
+            );
+        }
+
+        messages
     }
 
     async fn build_prepared_turn_stream(
@@ -332,12 +408,20 @@ impl ExecutionHost {
                 temperature: candidate.temperature,
                 thinking_budget: candidate.thinking_budget,
             };
+            let compacted_messages = self.compact_messages_for_candidate(
+                session,
+                &req.system_prompt,
+                &tools,
+                provider_config,
+                candidate.max_tokens,
+                candidate.thinking_budget,
+            );
 
             match client
                 .stream(
                     &candidate.model,
                     &req.system_prompt,
-                    &session.history,
+                    &compacted_messages,
                     &tools,
                     &options,
                     Some(request_options),

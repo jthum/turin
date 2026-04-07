@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::harness::globals::block_on_current;
 use crate::inference::provider::{InferenceMessage, ProviderClient};
+use crate::kernel::estimate_history_input_tokens;
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -115,6 +116,10 @@ impl ContextWrapper {
     }
 }
 
+fn recompute_token_count(state: &mut ContextState) {
+    state.token_count = estimate_history_input_tokens(&state.system_prompt, &state.messages);
+}
+
 impl UserData for ContextWrapper {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // Properties
@@ -136,6 +141,10 @@ impl UserData for ContextWrapper {
         });
 
         methods.add_method("get_token_count", |_, this, ()| {
+            Ok(this.lock_state().token_count)
+        });
+
+        methods.add_method("get_estimated_input_tokens", |_, this, ()| {
             Ok(this.lock_state().token_count)
         });
 
@@ -163,12 +172,18 @@ impl UserData for ContextWrapper {
             Ok(this.lock_state().token_limit)
         });
 
+        methods.add_method("get_max_input_tokens", |_, this, ()| {
+            Ok(this.lock_state().token_limit)
+        });
+
         methods.add_method("get_system_prompt", |_, this, ()| {
             Ok(this.lock_state().system_prompt.clone())
         });
 
         methods.add_method("set_system_prompt", |_, this, val: String| {
-            this.lock_state().system_prompt = val;
+            let mut state = this.lock_state();
+            state.system_prompt = val;
+            recompute_token_count(&mut state);
             Ok(())
         });
 
@@ -206,7 +221,9 @@ impl UserData for ContextWrapper {
         methods.add_method("set_messages", |lua, this: &ContextWrapper, val: Value| {
             let messages: Vec<InferenceMessage> =
                 lua.from_value(val).map_err(mlua::Error::external)?;
-            this.lock_state().messages = messages;
+            let mut state = this.lock_state();
+            state.messages = messages;
+            recompute_token_count(&mut state);
             Ok(())
         });
 
@@ -232,6 +249,10 @@ impl UserData for ContextWrapper {
                     Ok(Value::String(lua.create_string(&state.provider)?))
                 }
                 "token_count" => {
+                    let state = this.lock_state();
+                    Ok(Value::Integer(state.token_count as i64))
+                }
+                "estimated_input_tokens" => {
                     let state = this.lock_state();
                     Ok(Value::Integer(state.token_count as i64))
                 }
@@ -261,6 +282,10 @@ impl UserData for ContextWrapper {
                         .map(|value| value.unwrap_or(Value::Nil))
                 }
                 "token_limit" => {
+                    let state = this.lock_state();
+                    Ok(Value::Integer(state.token_limit as i64))
+                }
+                "max_input_tokens" => {
                     let state = this.lock_state();
                     Ok(Value::Integer(state.token_limit as i64))
                 }
@@ -306,7 +331,9 @@ impl UserData for ContextWrapper {
                     }
                     "system_prompt" => {
                         let s: String = lua.from_value(val).map_err(mlua::Error::external)?;
-                        this.lock_state().system_prompt = s;
+                        let mut state = this.lock_state();
+                        state.system_prompt = s;
+                        recompute_token_count(&mut state);
                         Ok(())
                     }
                     "provider" => {
@@ -340,12 +367,15 @@ impl UserData for ContextWrapper {
                                     text: new_text,
                                 }];
                         }
+                        recompute_token_count(&mut state);
                         Ok(())
                     }
                     "messages" => {
                         let msgs: Vec<InferenceMessage> =
                             lua.from_value(val).map_err(mlua::Error::external)?;
-                        this.lock_state().messages = msgs;
+                        let mut state = this.lock_state();
+                        state.messages = msgs;
+                        recompute_token_count(&mut state);
                         Ok(())
                     }
                     _ => Err(mlua::Error::RuntimeError(format!(
@@ -359,7 +389,9 @@ impl UserData for ContextWrapper {
         // Mutation Helpers
         methods.add_method("add_message", |lua, this: &ContextWrapper, val: Value| {
             let msg: InferenceMessage = lua.from_value(val).map_err(mlua::Error::external)?;
-            this.lock_state().messages.push(msg);
+            let mut state = this.lock_state();
+            state.messages.push(msg);
+            recompute_token_count(&mut state);
             Ok(())
         });
 
@@ -368,6 +400,7 @@ impl UserData for ContextWrapper {
             // Lua is 1-indexed, Rust is 0-indexed
             if idx > 0 && idx <= state.messages.len() {
                 state.messages.remove(idx - 1);
+                recompute_token_count(&mut state);
                 Ok(())
             } else {
                 Err(mlua::Error::RuntimeError(format!(
@@ -378,7 +411,9 @@ impl UserData for ContextWrapper {
         });
 
         methods.add_method("clear_messages", |_, this, ()| {
-            this.lock_state().messages.clear();
+            let mut state = this.lock_state();
+            state.messages.clear();
+            recompute_token_count(&mut state);
             Ok(())
         });
 

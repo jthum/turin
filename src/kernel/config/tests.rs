@@ -500,6 +500,20 @@ memory_limit_mb = 0
 }
 
 #[test]
+fn test_validate_zero_provider_context_window_tokens() {
+    let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+context_window_tokens = 0
+"#;
+    assert!(TurinConfig::from_str(toml).is_err());
+}
+
+#[test]
 fn test_parse_provider_transport_tuning() {
     let toml = r#"
 [agent]

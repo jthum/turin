@@ -158,6 +158,7 @@ directory = ".turin/harnesses"
 type = "anthropic"
 api_key_env = "ANTHROPIC_API_KEY"
 # base_url = "https://api.anthropic.com/v1"
+# context_window_tokens = 200000
 # Anthropic-compatible proxies should usually include /v1
 # MiniMax example: "https://api.minimax.io/anthropic/v1"
 # max_retries = 2
@@ -170,6 +171,7 @@ api_key_env = "ANTHROPIC_API_KEY"
 type = "openai"
 api_key_env = "OPENAI_API_KEY"
 # base_url = "https://api.openai.com/v1"
+# context_window_tokens = 128000
 # max_retries = 2
 # request_timeout_secs = 60
 # total_timeout_secs = 120

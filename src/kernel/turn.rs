@@ -4,6 +4,7 @@
 //! stream processing, hook evaluation, parallel tool execution, and side effects.
 
 mod assistant_response;
+pub(crate) mod context_window;
 mod preflight;
 mod streaming;
 mod tool_execution;

@@ -497,6 +497,8 @@ pub struct ProviderConfig {
     pub request_timeout_secs: Option<u64>,
     /// Optional total timeout budget in seconds (across retries).
     pub total_timeout_secs: Option<u64>,
+    /// Optional provider-level context window used for token budgeting and compaction.
+    pub context_window_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq, Default)]

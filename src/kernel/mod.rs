@@ -21,6 +21,8 @@ mod task_lifecycle;
 mod task_planning;
 mod turn;
 
+pub(crate) use turn::context_window::estimate_history_input_tokens;
+
 use crate::inference::provider::ProviderClient;
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::policy::RuntimePolicyManager;
