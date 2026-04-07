@@ -6,8 +6,8 @@ use tempfile::tempdir;
 use turin_code_index::code_index_reader::{
     CodeSearchMode, CodeSearchRequest, CodebaseSelector, search, status,
 };
-use turin_code_index::code_index_writer::{CodeIndexBuildOptions, build_index_with_options};
-use turin_code_index::embeddings::{CODE_INDEX_VECTOR_DIM, CodeEmbeddingProvider};
+use turin_code_index_writer::embeddings::{CODE_INDEX_VECTOR_DIM, CodeEmbeddingProvider};
+use turin_code_index_writer::{CodeIndexBuildOptions, build_index_with_options};
 
 struct KeywordEmbeddingProvider;
 

@@ -7,8 +7,8 @@ use inference_sdk_core::{
 use inference_sdk_registry::{ProviderInit, create_embedding_provider as create_sdk_provider};
 use std::borrow::Cow;
 use std::sync::Arc;
-use turin_code_index::code_index_writer::CodeIndexBuildOptions;
-use turin_code_index::embeddings::{CODE_INDEX_VECTOR_DIM, CodeEmbeddingProvider};
+use turin_code_index_writer::CodeIndexBuildOptions;
+use turin_code_index_writer::embeddings::{CODE_INDEX_VECTOR_DIM, CodeEmbeddingProvider};
 
 use crate::config::{LoadedTurinMapConfig, MapEmbeddingConfig, MapProviderConfig};
 

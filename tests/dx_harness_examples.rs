@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::tempdir;
-use turin::code_index_writer::build_index;
 use turin::kernel::config::{
     AgentConfig, GovernanceConfig, GovernanceGrantsConfig, GovernanceProfile,
 };
+use turin_code_index_writer::build_index;
 
 mod support;
 

@@ -10,4 +10,4 @@ pub(crate) mod test_support;
 pub mod tools;
 pub mod tracing_support;
 
-pub use turin_code_index::{code_index_reader, code_index_writer};
+pub use turin_code_index::code_index_reader;

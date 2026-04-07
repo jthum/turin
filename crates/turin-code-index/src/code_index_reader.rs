@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::metadata::CodeIndexSemanticStatus;
-use crate::shared::{encode_vector_blob, open_index_connection};
+use crate::support::{encode_vector_blob, open_index_connection};
 
 mod query;
 mod resolve;
@@ -450,9 +450,10 @@ fn annotate_request_trace(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::embeddings::CODE_INDEX_VECTOR_DIM;
-    use crate::shared::CODE_INDEX_SCHEMA_REVISION;
     use tempfile::tempdir;
+    use turin_code_index_writer::embeddings::CODE_INDEX_VECTOR_DIM;
+
+    use crate::support::CODE_INDEX_SCHEMA_REVISION;
 
     fn vector_blob(fill: f32) -> Vec<u8> {
         let mut blob = Vec::with_capacity(CODE_INDEX_VECTOR_DIM * std::mem::size_of::<f32>());

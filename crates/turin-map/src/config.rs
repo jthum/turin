@@ -74,7 +74,7 @@ fn default_embedding_model() -> String {
 }
 
 fn default_embedding_dimensions() -> usize {
-    turin_code_index::embeddings::CODE_INDEX_VECTOR_DIM
+    turin_code_index_writer::embeddings::CODE_INDEX_VECTOR_DIM
 }
 
 #[cfg(test)]
@@ -97,7 +97,7 @@ provider = "local_embeddings"
         assert_eq!(embeddings.model, "text-embedding-3-small");
         assert_eq!(
             embeddings.dimensions,
-            turin_code_index::embeddings::CODE_INDEX_VECTOR_DIM
+            turin_code_index_writer::embeddings::CODE_INDEX_VECTOR_DIM
         );
         assert_eq!(
             parsed

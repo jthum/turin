@@ -4,9 +4,7 @@ use std::path::PathBuf;
 use turin_types::layout::DEFAULT_BOOTSTRAP_CONFIG_PATH;
 
 use turin_code_index::code_index_reader::{CodebaseSelector, status as read_status};
-use turin_code_index::code_index_writer::{
-    build_index_with_options, rebuild_index_with_options, remove_file,
-};
+use turin_code_index_writer::{build_index_with_options, rebuild_index_with_options, remove_file};
 
 mod config;
 mod embedding;

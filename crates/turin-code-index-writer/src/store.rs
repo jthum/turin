@@ -2,12 +2,14 @@ use anyhow::{Context, Result};
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
-use crate::metadata::{CodeIndexSemanticStatus, CodeIndexVectorFormat};
-use crate::shared::{encode_vector_blob, open_index_connection};
+use turin_code_index::metadata::{CodeIndexSemanticStatus, CodeIndexVectorFormat};
+use turin_code_index::support::{
+    CODE_INDEX_SCHEMA_REVISION, encode_vector_blob, open_index_connection,
+};
 
 use super::{
-    CODE_INDEX_SCHEMA_REVISION, CodeChunkRecord, CodeIndexSummary, CodeIndexWriteCapabilities,
-    IndexableFileContent, IndexedFileState,
+    CodeChunkRecord, CodeIndexSummary, CodeIndexWriteCapabilities, IndexableFileContent,
+    IndexedFileState,
 };
 
 pub(super) async fn init_schema(conn: &turso::Connection) -> Result<()> {

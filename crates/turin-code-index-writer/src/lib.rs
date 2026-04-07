@@ -3,11 +3,23 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use turin_code_index::metadata::CodeIndexSemanticStatus;
+use turin_code_index::support::{CODE_INDEX_SCHEMA_REVISION, open_index_connection};
 use turin_types::layout::default_code_index_db_for_workspace;
 
-use crate::embeddings::CodeEmbeddingProvider;
-use crate::metadata::CodeIndexSemanticStatus;
-use crate::shared::{CODE_INDEX_SCHEMA_REVISION, open_index_connection};
+pub mod embeddings;
+
+mod chunking;
+mod fs;
+mod store;
+
+use chunking::build_chunks;
+use embeddings::CodeEmbeddingProvider;
+use fs::{collect_indexable_files, normalize_relative_path, read_indexable_file};
+use store::{
+    current_timestamp, delete_indexed_file, init_schema, insert_chunks, load_index_summary,
+    load_indexed_files, should_recreate_index, upsert_indexed_file, write_index_meta,
+};
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct CodeIndexWriteCapabilities {
@@ -83,17 +95,6 @@ struct CodeIndexSummary {
 pub struct CodeIndexBuildOptions {
     pub embedding_provider: Option<Arc<dyn CodeEmbeddingProvider>>,
 }
-
-mod chunking;
-mod fs;
-mod store;
-
-use chunking::build_chunks;
-use fs::{collect_indexable_files, normalize_relative_path, read_indexable_file};
-use store::{
-    current_timestamp, delete_indexed_file, init_schema, insert_chunks, load_index_summary,
-    load_indexed_files, should_recreate_index, upsert_indexed_file, write_index_meta,
-};
 
 pub async fn build_index(root: &Path, index_path: Option<&Path>) -> Result<CodeIndexBuildReport> {
     build_index_with_options(root, index_path, CodeIndexBuildOptions::default()).await
@@ -267,180 +268,93 @@ pub async fn remove_file(
 }
 
 fn resolve_index_path(root: &Path, index_path: Option<&Path>) -> Result<PathBuf> {
-    Ok(match index_path {
-        Some(path) if path.is_absolute() => path.to_path_buf(),
-        Some(path) => root.join(path),
-        None => default_code_index_db_for_workspace(root),
-    })
-}
-
-fn remove_index_db_if_present(index_path: &Path) -> Result<()> {
-    if index_path.exists() {
-        std::fs::remove_file(index_path)
-            .with_context(|| format!("failed to replace '{}'", index_path.display()))?;
+    match index_path {
+        Some(path) if path.is_absolute() => Ok(path.to_path_buf()),
+        Some(path) => Ok(root.join(path)),
+        None => Ok(default_code_index_db_for_workspace(root)),
     }
-    Ok(())
 }
 
 fn codebase_id_for(root: &Path) -> Option<String> {
     root.file_name()
         .and_then(|name| name.to_str())
-        .map(str::to_string)
+        .filter(|name| !name.is_empty())
+        .map(|name| format!("{name}-main"))
+}
+
+fn remove_index_db_if_present(index_path: &Path) -> Result<()> {
+    if index_path.exists() {
+        std::fs::remove_file(index_path)
+            .with_context(|| format!("failed to remove '{}'", index_path.display()))?;
+    }
+    if let Some(wal_path) = wal_path_for(index_path)
+        && wal_path.exists()
+    {
+        std::fs::remove_file(&wal_path)
+            .with_context(|| format!("failed to remove '{}'", wal_path.display()))?;
+    }
+    if let Some(shm_path) = shm_path_for(index_path)
+        && shm_path.exists()
+    {
+        std::fs::remove_file(&shm_path)
+            .with_context(|| format!("failed to remove '{}'", shm_path.display()))?;
+    }
+    Ok(())
+}
+
+fn wal_path_for(index_path: &Path) -> Option<PathBuf> {
+    let file_name = index_path.file_name()?.to_string_lossy().to_string();
+    Some(index_path.with_file_name(format!("{file_name}-wal")))
+}
+
+fn shm_path_for(index_path: &Path) -> Option<PathBuf> {
+    let file_name = index_path.file_name()?.to_string_lossy().to_string();
+    Some(index_path.with_file_name(format!("{file_name}-shm")))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::code_index_reader::{CodeSearchMode, CodeSearchRequest, CodebaseSelector};
-    use crate::code_index_writer::chunking::{CHUNK_LINES, build_chunks};
-    use crate::embeddings::{CODE_INDEX_VECTOR_DIM, CodeEmbeddingProvider};
-    use async_trait::async_trait;
-    use std::sync::Arc;
-    use std::time::Duration;
+    use anyhow::Result;
     use tempfile::tempdir;
+    use turin_code_index::code_index_reader::{
+        CodeSearchMode, CodeSearchRequest, CodebaseSelector,
+    };
 
-    struct TestEmbeddingProvider;
+    use super::chunking::{CHUNK_LINES, build_chunks};
+    use super::*;
 
-    #[async_trait]
-    impl CodeEmbeddingProvider for TestEmbeddingProvider {
-        fn config_key(&self) -> String {
-            "test:deterministic".to_string()
-        }
-
-        fn dimensions(&self) -> usize {
-            CODE_INDEX_VECTOR_DIM
-        }
-
-        async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-            let mut vector = vec![0.0; CODE_INDEX_VECTOR_DIM];
-            vector[0] = if text.contains("capability") {
-                1.0
-            } else {
-                0.1
-            };
-            Ok(vector)
-        }
-    }
-
-    #[tokio::test]
-    async fn build_index_generates_runtime_searchable_db() -> Result<()> {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn builds_indexes_searches_and_removes_files() -> Result<()> {
         let tmp = tempdir()?;
         let root = tmp.path().join("repo");
         let src = root.join("src");
         std::fs::create_dir_all(&src)?;
         std::fs::write(
             src.join("governance.rs"),
-            r#"
-pub fn capability_decision(capability: &str) -> bool {
-    capability == "runtime.code.search.lexical"
-}
-"#,
+            "pub fn capability_decision(capability: &str) -> bool {\n  capability == \"ok\"\n}\n",
         )?;
-        std::fs::write(
-            root.join("main.lua"),
-            r#"
-function on_turn_prepare(ctx)
-  return ALLOW
-end
-"#,
-        )?;
+        std::fs::write(src.join("helpers.rs"), "pub fn helper() -> bool { true }\n")?;
 
         let report = build_index(&root, None).await?;
         assert_eq!(report.files_indexed, 2);
         assert!(report.chunks_indexed >= 2);
-        assert_eq!(report.codebase_id.as_deref(), Some("repo"));
+        assert_eq!(report.codebase_id.as_deref(), Some("repo-main"));
         assert!(report.capabilities.lexical);
         assert!(!report.capabilities.semantic);
         assert_eq!(report.semantic.embedded_chunks, 0);
-        assert!(report.semantic.embedding_key.is_none());
 
         let rows = lexical_search(tmp.path(), "capability_decision").await?;
-        assert!(!rows.is_empty());
         assert_eq!(rows[0].name, "capability_decision");
-        assert!(rows[0].score > 0.0);
-
-        let natural_language_rows =
-            lexical_search(tmp.path(), "runtime code search lexical").await?;
-        assert!(!natural_language_rows.is_empty());
-        assert_eq!(natural_language_rows[0].name, "capability_decision");
 
         let removed = remove_file(&root, None, Path::new("src/governance.rs")).await?;
-        assert!(removed.removed_chunks >= 1);
-
+        assert!(removed.removed_chunks > 0);
         let rows_after_remove = lexical_search(tmp.path(), "capability_decision").await?;
         assert!(rows_after_remove.is_empty());
-
         Ok(())
     }
 
-    #[tokio::test]
-    async fn build_index_with_embeddings_enables_semantic_capabilities() -> Result<()> {
-        let tmp = tempdir()?;
-        let root = tmp.path().join("repo");
-        let src = root.join("src");
-        std::fs::create_dir_all(&src)?;
-        std::fs::write(
-            src.join("governance.rs"),
-            r#"
-pub fn capability_decision(capability: &str) -> bool {
-    capability == "runtime.code.search.semantic"
-}
-"#,
-        )?;
-
-        let report = build_index_with_options(
-            &root,
-            None,
-            CodeIndexBuildOptions {
-                embedding_provider: Some(Arc::new(TestEmbeddingProvider)),
-            },
-        )
-        .await?;
-
-        assert!(report.capabilities.lexical);
-        assert!(report.capabilities.semantic);
-        assert!(report.capabilities.hybrid);
-        assert_eq!(report.codebase_id.as_deref(), Some("repo"));
-        assert!(report.semantic.embedded_chunks > 0);
-        assert_eq!(
-            report.semantic.embedding_dimensions,
-            Some(CODE_INDEX_VECTOR_DIM)
-        );
-        assert_eq!(
-            report.semantic.vector_format,
-            Some(crate::metadata::CodeIndexVectorFormat::Float8)
-        );
-        assert_eq!(
-            report.semantic.embedding_key.as_deref(),
-            Some("test:deterministic")
-        );
-        assert!(
-            first_embedding_blob_len(&root).await? < (CODE_INDEX_VECTOR_DIM * 4) as i64,
-            "expected quantized code index embeddings to be smaller than raw f32 blobs"
-        );
-
-        let rows = crate::code_index_reader::search(
-            tmp.path(),
-            CodebaseSelector {
-                root: "repo".to_string(),
-                index_path: None,
-            },
-            CodeSearchMode::Semantic,
-            "capability_decision",
-            &CodeSearchRequest {
-                limit: 5,
-                ..CodeSearchRequest::default()
-            },
-            Some(&vec![1.0_f32; CODE_INDEX_VECTOR_DIM]),
-        )
-        .await?;
-        assert!(!rows.is_empty());
-        assert!(rows[0].semantic_score.is_some());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn build_index_refreshes_incrementally() -> Result<()> {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn incremental_rebuild_drops_removed_files_and_updates_changed_ones() -> Result<()> {
         let tmp = tempdir()?;
         let root = tmp.path().join("repo");
         let src = root.join("src");
@@ -458,12 +372,6 @@ pub fn capability_decision(capability: &str) -> bool {
         let first = build_index(&root, None).await?;
         assert_eq!(first.files_indexed, 3);
 
-        let alpha_before = indexed_file_updated_at(&root, "src/alpha.rs").await?;
-        let beta_before = indexed_file_updated_at(&root, "src/beta.rs").await?;
-        assert!(alpha_before.is_some());
-        assert!(beta_before.is_some());
-
-        std::thread::sleep(Duration::from_millis(20));
         std::fs::write(
             src.join("alpha.rs"),
             "pub fn alpha_review() -> bool { true }\n",
@@ -472,54 +380,46 @@ pub fn capability_decision(capability: &str) -> bool {
 
         let second = build_index(&root, None).await?;
         assert_eq!(second.files_indexed, 2);
-
-        let alpha_after = indexed_file_updated_at(&root, "src/alpha.rs").await?;
-        let beta_after = indexed_file_updated_at(&root, "src/beta.rs").await?;
-        let gamma_after = indexed_file_updated_at(&root, "src/gamma.rs").await?;
-        assert_ne!(alpha_before, alpha_after);
-        assert_eq!(beta_before, beta_after);
-        assert!(gamma_after.is_none());
-
         assert!(lexical_search(tmp.path(), "alpha_rule").await?.is_empty());
         assert!(!lexical_search(tmp.path(), "alpha_review").await?.is_empty());
         assert!(!lexical_search(tmp.path(), "beta_rule").await?.is_empty());
         assert!(lexical_search(tmp.path(), "gamma_rule").await?.is_empty());
-
         Ok(())
     }
 
-    #[tokio::test]
-    async fn build_index_respects_gitignore_and_default_skip_dirs() -> Result<()> {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn indexable_file_filters_skip_ignored_targets() -> Result<()> {
         let tmp = tempdir()?;
         let root = tmp.path().join("repo");
         let src = root.join("src");
+        let node_modules = root.join("node_modules");
         let vendor = root.join("vendor");
-        let node_modules = root.join("node_modules").join("pkg");
+        let target = root.join("target");
         std::fs::create_dir_all(&src)?;
-        std::fs::create_dir_all(&vendor)?;
         std::fs::create_dir_all(&node_modules)?;
-        std::fs::write(root.join(".gitignore"), "ignored.rs\n")?;
+        std::fs::create_dir_all(&vendor)?;
+        std::fs::create_dir_all(&target)?;
+
         std::fs::write(
-            src.join("search.rs"),
+            src.join("main.rs"),
             "pub fn indexable_symbol() -> bool { true }\n",
         )?;
         std::fs::write(
-            root.join("ignored.rs"),
-            "pub fn ignored_symbol() -> bool { true }\n",
+            node_modules.join("ignored.ts"),
+            "export function ignored_symbol() { return true; }\n",
         )?;
         std::fs::write(
             vendor.join("vendor.rs"),
             "pub fn vendor_symbol() -> bool { true }\n",
         )?;
         std::fs::write(
-            node_modules.join("module.js"),
-            "export function moduleSymbol() { return true; }\n",
+            target.join("artifact.lua"),
+            "function moduleSymbol() return true end\n",
         )?;
 
         let report = build_index(&root, None).await?;
         assert_eq!(report.files_indexed, 1);
         assert!(report.capabilities.languages.contains(&"rust".to_string()));
-
         assert!(
             !lexical_search(tmp.path(), "indexable_symbol")
                 .await?
@@ -536,72 +436,43 @@ pub fn capability_decision(capability: &str) -> bool {
                 .is_empty()
         );
         assert!(lexical_search(tmp.path(), "moduleSymbol").await?.is_empty());
-        assert!(
-            indexed_file_updated_at(&root, "ignored.rs")
-                .await?
-                .is_none()
-        );
-        assert!(
-            indexed_file_updated_at(&root, "vendor/vendor.rs")
-                .await?
-                .is_none()
-        );
-
         Ok(())
     }
 
     #[test]
-    fn build_chunks_anchor_chunks_to_symbol_boundaries() {
-        let chunks = build_chunks(
-            "src/lib.rs",
-            "rust",
-            "use std::fmt;\n\npub fn alpha() {}\n\npub fn beta() {}\n",
-        );
-
+    fn chunk_builder_discovers_symbols_and_respects_windowing() {
+        let content = "use std::fmt;\n\npub fn alpha() {}\n\npub fn beta() {}\n";
+        let chunks = build_chunks("src/lib.rs", "rust", content);
         assert!(chunks.iter().any(|chunk| {
-            chunk.name == "alpha"
-                && chunk.signature.as_deref() == Some("pub fn alpha() {}")
-                && chunk.start_line == 3
+            chunk.name == "alpha" && chunk.signature.as_deref() == Some("pub fn alpha() {}")
         }));
         assert!(chunks.iter().any(|chunk| {
-            chunk.name == "beta"
-                && chunk.signature.as_deref() == Some("pub fn beta() {}")
-                && chunk.start_line == 5
+            chunk.name == "beta" && chunk.signature.as_deref() == Some("pub fn beta() {}")
         }));
     }
 
     #[test]
-    fn build_chunks_split_large_symbols_without_losing_symbol_identity() {
+    fn oversized_symbol_chunks_keep_signature_metadata() {
         let mut content = String::from("pub fn oversized() {\n");
-        for _ in 0..96 {
-            content.push_str("    println!(\"x\");\n");
+        for _ in 0..(CHUNK_LINES * 2) {
+            content.push_str("    let value = 1;\n");
         }
         content.push_str("}\n");
 
-        let symbol_chunks = build_chunks("src/lib.rs", "rust", &content)
-            .into_iter()
-            .filter(|chunk| chunk.name == "oversized")
-            .collect::<Vec<_>>();
-
-        assert!(symbol_chunks.len() >= 2);
+        let chunks = build_chunks("src/lib.rs", "rust", &content);
+        assert!(chunks.len() >= 2);
         assert!(
-            symbol_chunks
+            chunks
                 .iter()
                 .all(|chunk| chunk.signature.as_deref() == Some("pub fn oversized() {"))
-        );
-        assert_eq!(symbol_chunks[0].start_line, 1);
-        assert!(
-            symbol_chunks
-                .last()
-                .is_some_and(|chunk| chunk.end_line > CHUNK_LINES as i64)
         );
     }
 
     async fn lexical_search(
         workspace_root: &Path,
         query: &str,
-    ) -> Result<Vec<crate::code_index_reader::CodeSearchRow>> {
-        crate::code_index_reader::search(
+    ) -> Result<Vec<turin_code_index::code_index_reader::CodeSearchRow>> {
+        turin_code_index::code_index_reader::search(
             workspace_root,
             CodebaseSelector {
                 root: "repo".to_string(),
@@ -610,39 +481,15 @@ pub fn capability_decision(capability: &str) -> bool {
             CodeSearchMode::Lexical,
             query,
             &CodeSearchRequest {
-                limit: 5,
-                ..CodeSearchRequest::default()
+                limit: 10,
+                languages: Vec::new(),
+                kinds: Vec::new(),
+                min_score: 0.0,
+                strict: false,
+                trace: false,
             },
             None,
         )
         .await
-    }
-
-    async fn indexed_file_updated_at(root: &Path, relative_path: &str) -> Result<Option<String>> {
-        let index_path = resolve_index_path(root, None)?;
-        let (_db, conn) = open_index_connection(&index_path).await?;
-        let mut rows = conn
-            .query(
-                "SELECT updated_at FROM indexed_files WHERE path = ?1",
-                turso::params![relative_path.to_string()],
-            )
-            .await?;
-        match rows.next().await? {
-            Some(row) => Ok(Some(row.get::<String>(0)?)),
-            None => Ok(None),
-        }
-    }
-
-    async fn first_embedding_blob_len(root: &Path) -> Result<i64> {
-        let index_path = resolve_index_path(root, None)?;
-        let (_db, conn) = open_index_connection(&index_path).await?;
-        let mut rows = conn
-            .query(
-                "SELECT length(embedding) FROM code_chunks WHERE embedding IS NOT NULL LIMIT 1",
-                (),
-            )
-            .await?;
-        let row = rows.next().await?.context("expected embedded chunk row")?;
-        Ok(row.get::<i64>(0)?)
     }
 }

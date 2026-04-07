@@ -4,7 +4,7 @@ use turin_types::layout::default_code_index_db_for_workspace;
 use turso::Connection;
 
 use crate::metadata::{CodeIndexSemanticStatus, CodeIndexVectorFormat};
-use crate::shared::{CODE_INDEX_SCHEMA_REVISION, open_index_connection};
+use crate::support::{CODE_INDEX_SCHEMA_REVISION, open_index_connection};
 
 use super::{CodeIndexCapabilities, CodebaseSelector};
 
