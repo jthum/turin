@@ -9,7 +9,9 @@ use crate::display;
 use crate::harness::context::{ContextWrapper, RequestOptionsOverride};
 use crate::harness::verdict::Verdict;
 use crate::inference::provider;
-use crate::kernel::config::ResolvedInferenceRoute;
+use crate::kernel::config::{
+    InferenceCompactionMode, InferenceConfig, ResolvedInferenceCandidate, ResolvedInferenceRoute,
+};
 use crate::kernel::event::AuditEvent;
 use crate::kernel::session::SessionState;
 use crate::kernel::turn::context_window::{
@@ -260,11 +262,36 @@ impl ExecutionHost {
     async fn maybe_refresh_context_checkpoint(
         &mut self,
         session: &mut SessionState,
+        effective_inference: &InferenceConfig,
         route: &ResolvedInferenceRoute,
-        system_prompt: &str,
+        req: &TurnRequestState,
         tools: &[serde_json::Value],
     ) -> Result<()> {
-        let Some(candidate) = route.candidates.first() else {
+        if !effective_inference.compaction.mode.uses_summary() {
+            return Ok(());
+        }
+
+        let compaction_route =
+            if let Some(context_name) = effective_inference.compaction_context_name() {
+                let route = effective_inference.resolve_route(
+                    &req.provider_name,
+                    &req.model,
+                    req.thinking_budget,
+                    Some(context_name),
+                );
+                for warning in &route.warnings {
+                    warn!(
+                        requested_context = context_name,
+                        warning = %warning,
+                        "Context compaction route warning"
+                    );
+                }
+                route
+            } else {
+                route.clone()
+            };
+
+        let Some(candidate) = compaction_route.candidates.first() else {
             return Ok(());
         };
         let Some(provider_config) = self.config.providers.get(&candidate.provider_name).cloned()
@@ -279,13 +306,16 @@ impl ExecutionHost {
             candidate.thinking_budget,
         );
         let effective = effective_request_context(
-            system_prompt,
+            &req.system_prompt,
             &session.history,
             session.context_checkpoint.as_ref(),
         );
         let effective_input_tokens =
             estimate_request_input_tokens(&effective.system_prompt, &effective.messages, tools);
-        if effective_input_tokens <= input_budget_tokens {
+        let compaction_trigger_threshold = ((input_budget_tokens as f32)
+            * effective_inference.compaction.trigger_ratio)
+            .floor() as u32;
+        if effective_input_tokens <= compaction_trigger_threshold {
             return Ok(());
         }
 
@@ -335,9 +365,14 @@ impl ExecutionHost {
                 &summary_messages,
                 &[],
                 &provider::InferenceOptions {
-                    temperature: Some(0.1),
-                    max_tokens: Some(summary_max_tokens),
-                    thinking_budget: None,
+                    temperature: candidate.temperature.or(Some(0.1)),
+                    max_tokens: Some(
+                        candidate
+                            .max_tokens
+                            .unwrap_or(summary_max_tokens)
+                            .min(summary_max_tokens),
+                    ),
+                    thinking_budget: candidate.thinking_budget,
                 },
                 request_options,
             )
@@ -379,21 +414,43 @@ impl ExecutionHost {
         session: &SessionState,
         system_prompt: &str,
         tools: &[serde_json::Value],
+        candidate: &ResolvedInferenceCandidate,
         provider_config: &crate::kernel::config::ProviderConfig,
-        max_output_tokens: Option<u32>,
-        thinking_budget: Option<u32>,
+        compaction_mode: &InferenceCompactionMode,
     ) -> crate::kernel::turn::context_window::EffectiveRequestContext {
+        let effective = if compaction_mode.uses_summary() {
+            effective_request_context(
+                system_prompt,
+                &session.history,
+                session.context_checkpoint.as_ref(),
+            )
+        } else {
+            crate::kernel::turn::context_window::EffectiveRequestContext {
+                system_prompt: system_prompt.to_string(),
+                messages: session.history.clone(),
+            }
+        };
+
         let context_window_tokens = resolve_context_window_tokens(Some(provider_config));
         let input_budget_tokens = effective_input_budget_tokens(
             context_window_tokens,
-            max_output_tokens,
-            thinking_budget,
+            candidate.max_tokens,
+            candidate.thinking_budget,
         );
-        let effective = effective_request_context(
-            system_prompt,
-            &session.history,
-            session.context_checkpoint.as_ref(),
-        );
+        if !compaction_mode.uses_structural_trim() {
+            let used_tokens =
+                estimate_request_input_tokens(&effective.system_prompt, &effective.messages, tools);
+            if used_tokens > input_budget_tokens {
+                warn!(
+                    used_tokens,
+                    input_budget_tokens,
+                    context_window_tokens,
+                    "Turn history still exceeds the estimated provider input budget in summary_only mode"
+                );
+            }
+            return effective;
+        }
+
         let (messages, report) = compact_messages_for_input_budget(
             &effective.system_prompt,
             &effective.messages,
@@ -435,14 +492,16 @@ impl ExecutionHost {
         req: TurnRequestState,
     ) -> Result<PreparedTurnStream> {
         let tools = self.tool_definitions_for_session(session, turn_ctx)?;
-        let route = self.config.resolve_inference_route(
+        let effective_inference = self.config.effective_inference_config_for_agent(
             session.identity.agent_id(),
+            Some(&session.inference),
+        )?;
+        let route = effective_inference.resolve_route(
             &req.provider_name,
             &req.model,
             req.thinking_budget,
             req.inference_context.as_deref(),
-            Some(&session.inference),
-        )?;
+        );
         for warning in &route.warnings {
             warn!(
                 requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),
@@ -450,7 +509,7 @@ impl ExecutionHost {
                 "Inference route warning"
             );
         }
-        self.maybe_refresh_context_checkpoint(session, &route, &req.system_prompt, &tools)
+        self.maybe_refresh_context_checkpoint(session, &effective_inference, &route, &req, &tools)
             .await?;
 
         let mut last_error: Option<anyhow::Error> = None;
@@ -542,9 +601,9 @@ impl ExecutionHost {
                 session,
                 &req.system_prompt,
                 &tools,
+                &candidate,
                 provider_config,
-                candidate.max_tokens,
-                candidate.thinking_budget,
+                &effective_inference.compaction.mode,
             );
 
             match client

@@ -2093,6 +2093,7 @@ async fn test_harness_can_select_named_inference_context() -> Result<()> {
         inference: InferenceConfig {
             default: None,
             contexts: inference_contexts,
+            ..InferenceConfig::default()
         },
         persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
         harness: HarnessConfig {

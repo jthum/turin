@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::ProvidersConfig;
 
 const DEFAULT_INFERENCE_CONTEXT_NAME: &str = "default";
+const DEFAULT_COMPACTION_TRIGGER_RATIO: f32 = 1.0;
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 pub struct InferenceConfig {
@@ -13,6 +14,51 @@ pub struct InferenceConfig {
     pub default: Option<String>,
     #[serde(default)]
     pub contexts: HashMap<String, InferenceContextConfig>,
+    #[serde(default)]
+    pub compaction: InferenceCompactionConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum InferenceCompactionMode {
+    #[default]
+    Hybrid,
+    TrimOnly,
+    SummaryOnly,
+}
+
+impl InferenceCompactionMode {
+    pub fn uses_summary(&self) -> bool {
+        !matches!(self, Self::TrimOnly)
+    }
+
+    pub fn uses_structural_trim(&self) -> bool {
+        !matches!(self, Self::SummaryOnly)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct InferenceCompactionConfig {
+    #[serde(default)]
+    pub mode: InferenceCompactionMode,
+    #[serde(default)]
+    pub context: Option<String>,
+    #[serde(default = "default_compaction_trigger_ratio")]
+    pub trigger_ratio: f32,
+}
+
+impl Default for InferenceCompactionConfig {
+    fn default() -> Self {
+        Self {
+            mode: InferenceCompactionMode::default(),
+            context: None,
+            trigger_ratio: default_compaction_trigger_ratio(),
+        }
+    }
+}
+
+fn default_compaction_trigger_ratio() -> f32 {
+    DEFAULT_COMPACTION_TRIGGER_RATIO
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
@@ -168,6 +214,14 @@ impl InferenceConfig {
             .unwrap_or(DEFAULT_INFERENCE_CONTEXT_NAME)
     }
 
+    pub fn compaction_context_name(&self) -> Option<&str> {
+        self.compaction
+            .context
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
     pub fn merged_with(&self, override_cfg: &InferenceOverrideConfig) -> Self {
         let mut merged = self.clone();
 
@@ -257,6 +311,19 @@ impl InferenceConfig {
                 );
             }
         }
+
+        if let Some(context) = self.compaction.context.as_deref() {
+            anyhow::ensure!(
+                !context.trim().is_empty(),
+                "{label}.compaction.context must not be empty when set"
+            );
+        }
+        anyhow::ensure!(
+            self.compaction.trigger_ratio.is_finite()
+                && self.compaction.trigger_ratio > 0.0
+                && self.compaction.trigger_ratio <= 1.0,
+            "{label}.compaction.trigger_ratio must be > 0 and <= 1"
+        );
 
         for context_name in self.contexts.keys() {
             let mut seen = HashSet::new();

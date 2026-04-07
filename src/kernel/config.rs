@@ -17,8 +17,9 @@ mod validation;
 
 use defaults::*;
 pub use inference::{
-    InferenceConfig, InferenceContextConfig, InferenceContextOverrideConfig,
-    InferenceOverrideConfig, ResolvedInferenceCandidate, ResolvedInferenceRoute,
+    InferenceCompactionConfig, InferenceCompactionMode, InferenceConfig, InferenceContextConfig,
+    InferenceContextOverrideConfig, InferenceOverrideConfig, ResolvedInferenceCandidate,
+    ResolvedInferenceRoute,
 };
 pub use layout::{LayoutConfig, ResolvedLayout};
 pub use persistence::ResolvedPersistenceConfig;

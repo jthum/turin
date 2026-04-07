@@ -151,6 +151,56 @@ thinking_budget = 4096
 }
 
 #[test]
+fn test_parse_inference_compaction_policy() {
+    let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[inference.compaction]
+mode = "summary_only"
+context = "fast"
+trigger_ratio = 0.8
+
+[inference.contexts.default]
+provider = "openai"
+model = "gpt-4o"
+
+[inference.contexts.fast]
+provider = "openai"
+model = "gpt-4o-mini"
+"#;
+
+    let config = TurinConfig::from_str(toml).unwrap();
+    assert_eq!(
+        config.inference.compaction.mode,
+        crate::kernel::config::InferenceCompactionMode::SummaryOnly
+    );
+    assert_eq!(config.inference.compaction.context.as_deref(), Some("fast"));
+    assert_eq!(config.inference.compaction.trigger_ratio, 0.8);
+}
+
+#[test]
+fn test_validate_invalid_inference_compaction_trigger_ratio() {
+    let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[inference.compaction]
+trigger_ratio = 1.5
+"#;
+
+    assert!(TurinConfig::from_str(toml).is_err());
+}
+
+#[test]
 fn test_resolve_inference_route_uses_requested_context_then_fallback_then_base() {
     let toml = r#"
 [agent]

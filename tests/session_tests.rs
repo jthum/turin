@@ -581,6 +581,228 @@ async fn test_auto_compaction_creates_and_restores_context_checkpoint() -> Resul
     Ok(())
 }
 
+#[tokio::test]
+async fn test_trim_only_compaction_skips_semantic_checkpoint_generation() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut config = make_config(tmp.path());
+    config.agent.provider = "checkpoint".to_string();
+    config.agent.model = "checkpoint-model".to_string();
+    config.agent.system_prompt = "Trim-only history compaction".to_string();
+    config.inference.compaction.mode = turin::kernel::config::InferenceCompactionMode::TrimOnly;
+    config.providers.insert(
+        "checkpoint".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            base_url: None,
+            context_window_tokens: Some(512),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+
+    let seen_stream_messages = Arc::new(Mutex::new(Vec::new()));
+    let seen_stream_system = Arc::new(Mutex::new(None));
+    let complete_calls = Arc::new(Mutex::new(0usize));
+    kernel.add_client(
+        "checkpoint".to_string(),
+        ProviderClient::new(
+            "checkpoint",
+            Arc::new(ContextCheckpointProvider {
+                seen_stream_messages: Arc::clone(&seen_stream_messages),
+                seen_stream_system: Arc::clone(&seen_stream_system),
+                complete_calls: Arc::clone(&complete_calls),
+            }),
+        ),
+    );
+
+    let mut session = kernel.create_session().await;
+    for i in 0..12 {
+        session
+            .history
+            .push(turin::inference::provider::InferenceMessage {
+                role: turin::inference::provider::InferenceRole::User,
+                content: vec![turin::inference::provider::InferenceContent::Text {
+                    text: format!("Trim-only history {i}: {}", "x".repeat(240)),
+                }],
+                tool_call_id: None,
+            });
+    }
+
+    kernel
+        .run(
+            &mut session,
+            Some("Newest prompt in trim-only mode".to_string()),
+        )
+        .await?;
+
+    assert!(
+        session.context_checkpoint.is_none(),
+        "trim_only should not create semantic checkpoints"
+    );
+    assert_eq!(
+        *complete_calls
+            .lock()
+            .expect("trim-only complete mutex poisoned"),
+        0,
+        "trim_only should not call provider completion for summarization"
+    );
+
+    let stream_system = seen_stream_system
+        .lock()
+        .expect("trim-only system mutex poisoned")
+        .clone()
+        .expect("expected system prompt to be sent");
+    assert!(
+        !stream_system.contains("CHECKPOINT SUMMARY"),
+        "trim_only should not inject semantic summary text"
+    );
+
+    let seen_messages = seen_stream_messages
+        .lock()
+        .expect("trim-only messages mutex poisoned")
+        .clone();
+    let rendered = format!("{seen_messages:?}");
+    assert!(
+        !rendered.contains("Trim-only history 0"),
+        "expected structural trimming to drop older history"
+    );
+    assert!(
+        rendered.contains("Newest prompt in trim-only mode"),
+        "expected newest prompt to remain after trimming"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_compaction_context_uses_dedicated_inference_context() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut config = make_config(tmp.path());
+    config.agent.provider = "main".to_string();
+    config.agent.model = "main-model".to_string();
+    config.agent.system_prompt = "Dedicated compaction route".to_string();
+    config.inference.compaction.context = Some("summary".to_string());
+    config.inference.contexts.insert(
+        "summary".to_string(),
+        turin::kernel::config::InferenceContextConfig {
+            provider: "summary".to_string(),
+            model: "summary-model".to_string(),
+            fallback: None,
+            temperature: Some(0.1),
+            max_tokens: Some(256),
+            thinking_budget: None,
+        },
+    );
+    config.providers.insert(
+        "main".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            base_url: None,
+            context_window_tokens: Some(512),
+            ..ProviderConfig::default()
+        },
+    );
+    config.providers.insert(
+        "summary".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            base_url: None,
+            context_window_tokens: Some(512),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+
+    let main_seen_stream_messages = Arc::new(Mutex::new(Vec::new()));
+    let main_seen_stream_system = Arc::new(Mutex::new(None));
+    let main_complete_calls = Arc::new(Mutex::new(0usize));
+    let summary_seen_stream_messages = Arc::new(Mutex::new(Vec::new()));
+    let summary_seen_stream_system = Arc::new(Mutex::new(None));
+    let summary_complete_calls = Arc::new(Mutex::new(0usize));
+
+    kernel.add_client(
+        "main".to_string(),
+        ProviderClient::new(
+            "main",
+            Arc::new(ContextCheckpointProvider {
+                seen_stream_messages: Arc::clone(&main_seen_stream_messages),
+                seen_stream_system: Arc::clone(&main_seen_stream_system),
+                complete_calls: Arc::clone(&main_complete_calls),
+            }),
+        ),
+    );
+    kernel.add_client(
+        "summary".to_string(),
+        ProviderClient::new(
+            "summary",
+            Arc::new(ContextCheckpointProvider {
+                seen_stream_messages: Arc::clone(&summary_seen_stream_messages),
+                seen_stream_system: Arc::clone(&summary_seen_stream_system),
+                complete_calls: Arc::clone(&summary_complete_calls),
+            }),
+        ),
+    );
+
+    let mut session = kernel.create_session().await;
+    for i in 0..12 {
+        session
+            .history
+            .push(turin::inference::provider::InferenceMessage {
+                role: turin::inference::provider::InferenceRole::User,
+                content: vec![turin::inference::provider::InferenceContent::Text {
+                    text: format!("Compaction-route history {i}: {}", "x".repeat(240)),
+                }],
+                tool_call_id: None,
+            });
+    }
+
+    kernel
+        .run(
+            &mut session,
+            Some("Newest prompt with dedicated compaction route".to_string()),
+        )
+        .await?;
+
+    let checkpoint = session
+        .context_checkpoint
+        .clone()
+        .expect("expected context checkpoint");
+    assert_eq!(checkpoint.provider_name, "summary");
+    assert_eq!(checkpoint.model, "summary-model");
+    assert_eq!(
+        *summary_complete_calls
+            .lock()
+            .expect("summary complete mutex poisoned"),
+        1,
+        "expected compaction summary to use the dedicated summary context"
+    );
+    assert_eq!(
+        *main_complete_calls
+            .lock()
+            .expect("main complete mutex poisoned"),
+        0,
+        "main inference provider should not be used for semantic compaction when a dedicated context is configured"
+    );
+
+    let main_stream_system = main_seen_stream_system
+        .lock()
+        .expect("main stream system mutex poisoned")
+        .clone()
+        .expect("expected main stream system prompt");
+    assert!(
+        main_stream_system.contains("CHECKPOINT SUMMARY"),
+        "expected main inference request to consume the semantic checkpoint"
+    );
+
+    Ok(())
+}
+
 // ─── Harness Hot Reload ─────────────────────────────────────────
 
 #[tokio::test]
