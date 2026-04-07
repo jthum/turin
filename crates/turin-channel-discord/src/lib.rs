@@ -16,7 +16,8 @@ use turin_channel_core::{
     ChannelConfigTargetKind, ChannelConversationKey, ChannelEnumSetting, ChannelIdentitySelectors,
     ChannelInstallManifest, ChannelKind, ChannelMessageRef, ChannelRuntimeCapabilities,
     ChannelRuntimeManifest, ChannelSecretRequirement, ChannelSessionScope, ChannelSetupManifest,
-    ChannelUser, InboundEvent, MessageBlock, OutboundMessage, bound_inbound_text,
+    ChannelUser, DEFAULT_MAX_INBOUND_TEXT_CHARS, InboundEvent, MessageBlock, OutboundMessage,
+    bound_inbound_text,
 };
 use turin_channel_runner::ChannelDriver;
 
@@ -46,6 +47,7 @@ pub struct DiscordChannelDriverConfig {
     pub token: String,
     pub poll_interval: Duration,
     pub max_messages_per_poll: u16,
+    pub max_inbound_text_chars: usize,
     pub start_from_latest: bool,
     pub ignore_bot_messages: bool,
     pub session_scope: ChannelSessionScope,
@@ -153,6 +155,22 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     }),
                     ..ChannelConfigField::default()
                 },
+                ChannelConfigField {
+                    key: "max_inbound_text_chars".to_string(),
+                    label: Some("Max Inbound Text Chars".to_string()),
+                    field_type: "number".to_string(),
+                    help: Some(
+                        "Safety cap for inbound text retained from Discord before Turin truncates it."
+                            .to_string(),
+                    ),
+                    default: Some(serde_json::json!(DEFAULT_MAX_INBOUND_TEXT_CHARS)),
+                    advanced: true,
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "max_inbound_text_chars".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
             ],
             auth_flows: vec![],
         }),
@@ -184,6 +202,7 @@ impl DiscordChannelDriverConfig {
             token,
             poll_interval: Duration::from_millis(settings.poll_interval_ms),
             max_messages_per_poll: settings.max_messages_per_poll,
+            max_inbound_text_chars: settings.max_inbound_text_chars,
             start_from_latest: settings.start_from_latest,
             ignore_bot_messages: settings.ignore_bot_messages,
             session_scope: settings.session_scope,
@@ -203,6 +222,7 @@ struct DiscordChannelSettings {
     channel_id: String,
     poll_interval_ms: u64,
     max_messages_per_poll: u16,
+    max_inbound_text_chars: usize,
     start_from_latest: bool,
     ignore_bot_messages: bool,
     session_scope: ChannelSessionScope,
@@ -262,6 +282,28 @@ fn parse_settings(settings: &serde_json::Value) -> Result<DiscordChannelSettings
         }
     };
 
+    let max_inbound_text_chars = match settings.get("max_inbound_text_chars") {
+        None => DEFAULT_MAX_INBOUND_TEXT_CHARS,
+        Some(value) => {
+            let max = value.as_u64().ok_or_else(|| {
+                anyhow!(
+                    "[discord_config_invalid_max_inbound_text_chars] Discord channel setting 'max_inbound_text_chars' must be a positive integer"
+                )
+            })?;
+            let max = usize::try_from(max).map_err(|_| {
+                anyhow!(
+                    "[discord_config_invalid_max_inbound_text_chars] Discord channel setting 'max_inbound_text_chars' is too large"
+                )
+            })?;
+            if max == 0 {
+                anyhow::bail!(
+                    "[discord_config_invalid_max_inbound_text_chars] Discord channel setting 'max_inbound_text_chars' must be > 0"
+                );
+            }
+            max
+        }
+    };
+
     let gateway_intents = match settings.get("gateway_intents") {
         None => DEFAULT_GATEWAY_INTENTS,
         Some(value) => {
@@ -305,6 +347,7 @@ fn parse_settings(settings: &serde_json::Value) -> Result<DiscordChannelSettings
         channel_id,
         poll_interval_ms,
         max_messages_per_poll,
+        max_inbound_text_chars,
         start_from_latest: read_optional_bool(settings, "start_from_latest", true)?,
         ignore_bot_messages: read_optional_bool(settings, "ignore_bot_messages", true)?,
         session_scope: read_discord_session_scope(settings.get("session_scope"))?,
@@ -822,7 +865,11 @@ impl DiscordChannelDriver {
             "channel_runtime_id".to_string(),
             serde_json::Value::String(self.channel_runtime_id.clone()),
         );
-        let text = bound_inbound_text(message.content, &mut metadata);
+        let text = bound_inbound_text(
+            message.content,
+            &mut metadata,
+            self.config.max_inbound_text_chars,
+        );
 
         Some(InboundEvent {
             message: ChannelMessageRef {
@@ -1623,6 +1670,7 @@ mod tests {
             token: "token".to_string(),
             poll_interval: Duration::from_millis(250),
             max_messages_per_poll: 10,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
             start_from_latest: true,
             ignore_bot_messages: true,
             session_scope: ChannelSessionScope::User,
@@ -1673,6 +1721,7 @@ mod tests {
             token: "token".to_string(),
             poll_interval: Duration::from_millis(250),
             max_messages_per_poll: 10,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
             start_from_latest: true,
             ignore_bot_messages: false,
             session_scope: ChannelSessionScope::User,
@@ -1725,6 +1774,7 @@ mod tests {
             token: "token".to_string(),
             poll_interval: Duration::from_millis(250),
             max_messages_per_poll: 10,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
             start_from_latest: true,
             ignore_bot_messages: false,
             session_scope: ChannelSessionScope::Thread,
@@ -1778,5 +1828,16 @@ mod tests {
                 .options,
             vec!["user", "thread"]
         );
+    }
+
+    #[test]
+    fn parse_settings_accepts_custom_max_inbound_text_chars() {
+        let parsed = parse_settings(&serde_json::json!({
+            "token_env": "DISCORD_BOT_TOKEN",
+            "channel_id": "123",
+            "max_inbound_text_chars": 2048
+        }))
+        .expect("settings parse");
+        assert_eq!(parsed.max_inbound_text_chars, 2048);
     }
 }

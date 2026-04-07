@@ -14,7 +14,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, timeout};
 use turin_channel_core::{
     ChannelConversationKey, ChannelKind, ChannelMessageRef, ChannelSessionScope, ChannelUser,
-    InboundEvent,
+    DEFAULT_MAX_INBOUND_TEXT_CHARS, InboundEvent,
 };
 use turin_channel_runner::{ChannelDriver, ChannelProgressUpdate};
 use turin_channel_runner::{ChannelRunner, RunnerConfig};
@@ -572,6 +572,7 @@ async fn telegram_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
             poll_timeout_secs: 0,
             poll_interval: Duration::from_millis(25),
             max_updates_per_poll: 10,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
             start_from_latest: false,
             ignore_bot_messages: true,
             respond_mode: turin_channel_telegram::TelegramRespondMode::All,
@@ -664,6 +665,7 @@ async fn telegram_channel_driver_retries_transient_poll_and_send_failures() -> R
             poll_timeout_secs: 0,
             poll_interval: Duration::from_millis(25),
             max_updates_per_poll: 10,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
             start_from_latest: false,
             ignore_bot_messages: true,
             respond_mode: turin_channel_telegram::TelegramRespondMode::All,
@@ -729,6 +731,7 @@ async fn telegram_channel_driver_streams_progress_before_final_message() -> Resu
             poll_timeout_secs: 0,
             poll_interval: Duration::from_millis(25),
             max_updates_per_poll: 10,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
             start_from_latest: false,
             ignore_bot_messages: true,
             respond_mode: turin_channel_telegram::TelegramRespondMode::All,
@@ -815,6 +818,7 @@ async fn telegram_progress_preview_can_include_thinking_text() -> Result<()> {
             poll_timeout_secs: 0,
             poll_interval: Duration::from_millis(25),
             max_updates_per_poll: 10,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
             start_from_latest: false,
             ignore_bot_messages: true,
             respond_mode: turin_channel_telegram::TelegramRespondMode::All,
@@ -895,6 +899,7 @@ async fn telegram_block_stream_finalization_ignores_not_modified_edit_errors() -
             poll_timeout_secs: 0,
             poll_interval: Duration::from_millis(25),
             max_updates_per_poll: 10,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
             start_from_latest: false,
             ignore_bot_messages: true,
             respond_mode: turin_channel_telegram::TelegramRespondMode::All,

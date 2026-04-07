@@ -19,8 +19,8 @@ use turin_channel_core::{
     ChannelConfigField, ChannelConfigFieldOption, ChannelConfigTarget, ChannelConfigTargetKind,
     ChannelConversationKey, ChannelFieldVisibilityRule, ChannelIdentitySelectors,
     ChannelInstallManifest, ChannelKind, ChannelMessageRef, ChannelRuntimeCapabilities,
-    ChannelRuntimeManifest, ChannelSessionScope, ChannelSetupManifest, ChannelUser, InboundEvent,
-    OutboundMessage, bound_inbound_text,
+    ChannelRuntimeManifest, ChannelSessionScope, ChannelSetupManifest, ChannelUser,
+    DEFAULT_MAX_INBOUND_TEXT_CHARS, InboundEvent, OutboundMessage, bound_inbound_text,
 };
 use turin_channel_runner::ChannelDriver;
 use uuid::Uuid;
@@ -55,6 +55,7 @@ pub struct WhatsAppChannelDriverConfig {
     account_mode: WhatsAppAccountMode,
     pub session_scope: ChannelSessionScope,
     pub session_store_path: PathBuf,
+    max_inbound_text_chars: usize,
     trigger_prefix: Option<String>,
     allowed_chats: Vec<String>,
     banned_chats: Vec<String>,
@@ -291,6 +292,22 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     visible_if: Some(ChannelFieldVisibilityRule {
                         key: "account_mode".to_string(),
                         equals: json!("personal"),
+                    }),
+                    ..ChannelConfigField::default()
+                },
+                ChannelConfigField {
+                    key: "max_inbound_text_chars".to_string(),
+                    label: Some("Max Inbound Text Chars".to_string()),
+                    field_type: "number".to_string(),
+                    help: Some(
+                        "Safety cap for inbound WhatsApp text retained before Turin truncates it."
+                            .to_string(),
+                    ),
+                    default: Some(json!(DEFAULT_MAX_INBOUND_TEXT_CHARS)),
+                    advanced: true,
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "max_inbound_text_chars".to_string(),
                     }),
                     ..ChannelConfigField::default()
                 },
@@ -714,7 +731,7 @@ impl WhatsAppChannelDriver {
         metadata.insert("chat_jid".to_string(), Value::String(chat_id.clone()));
         metadata.insert("sender_jid".to_string(), Value::String(sender_id.clone()));
         metadata.insert("is_group".to_string(), Value::Bool(info.source.is_group));
-        let text = bound_inbound_text(text, &mut metadata);
+        let text = bound_inbound_text(text, &mut metadata, self.config.max_inbound_text_chars);
 
         Some(InboundEvent {
             message: ChannelMessageRef {
@@ -867,11 +884,34 @@ fn parse_settings(
             }),
     };
 
+    let max_inbound_text_chars = match map.get("max_inbound_text_chars") {
+        None => DEFAULT_MAX_INBOUND_TEXT_CHARS,
+        Some(value) => {
+            let max = value.as_u64().ok_or_else(|| {
+                anyhow!(
+                    "[whatsapp_config_invalid_max_inbound_text_chars] WhatsApp channel setting 'max_inbound_text_chars' must be a positive integer"
+                )
+            })?;
+            let max = usize::try_from(max).map_err(|_| {
+                anyhow!(
+                    "[whatsapp_config_invalid_max_inbound_text_chars] WhatsApp channel setting 'max_inbound_text_chars' is too large"
+                )
+            })?;
+            if max == 0 {
+                bail!(
+                    "[whatsapp_config_invalid_max_inbound_text_chars] WhatsApp channel setting 'max_inbound_text_chars' must be > 0"
+                );
+            }
+            max
+        }
+    };
+
     Ok(WhatsAppChannelDriverConfig {
         workspace_id,
         account_mode,
         session_scope,
         session_store_path,
+        max_inbound_text_chars,
         trigger_prefix,
         allowed_chats,
         banned_chats,
@@ -1330,6 +1370,10 @@ mod tests {
         assert_eq!(
             config.trigger_prefix.as_deref(),
             Some(DEFAULT_PERSONAL_TRIGGER_PREFIX)
+        );
+        assert_eq!(
+            config.max_inbound_text_chars,
+            DEFAULT_MAX_INBOUND_TEXT_CHARS
         );
     }
 

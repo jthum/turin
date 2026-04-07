@@ -19,7 +19,8 @@ use turin_channel_core::{
     ChannelConfigTargetKind, ChannelConversationKey, ChannelEnumSetting, ChannelIdentitySelectors,
     ChannelInstallManifest, ChannelKind, ChannelMessageRef, ChannelRuntimeCapabilities,
     ChannelRuntimeManifest, ChannelSecretRequirement, ChannelSessionScope, ChannelSetupManifest,
-    ChannelUser, InboundEvent, MessageBlock, OutboundMessage, bound_inbound_text,
+    ChannelUser, DEFAULT_MAX_INBOUND_TEXT_CHARS, InboundEvent, MessageBlock, OutboundMessage,
+    bound_inbound_text,
 };
 use turin_channel_runner::{ChannelDriver, ChannelProgressUpdate, ChannelStreamMode};
 
@@ -82,6 +83,7 @@ pub struct RocketChatChannelDriverConfig {
     pub token: String,
     pub poll_interval: Duration,
     pub max_messages_per_poll: u16,
+    pub max_inbound_text_chars: usize,
     pub start_from_latest: bool,
     pub ignore_bot_messages: bool,
     pub respond_mode: RocketChatRespondMode,
@@ -107,6 +109,7 @@ struct RocketChatChannelSettings {
     user_id: String,
     poll_interval_ms: u64,
     max_messages_per_poll: u16,
+    max_inbound_text_chars: usize,
     start_from_latest: bool,
     ignore_bot_messages: bool,
     respond_mode: RocketChatRespondMode,
@@ -648,6 +651,22 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     }),
                     ..ChannelConfigField::default()
                 },
+                ChannelConfigField {
+                    key: "max_inbound_text_chars".to_string(),
+                    label: Some("Max Inbound Text Chars".to_string()),
+                    field_type: "number".to_string(),
+                    help: Some(
+                        "Safety cap for inbound Rocket.Chat text retained before Turin truncates it."
+                            .to_string(),
+                    ),
+                    default: Some(serde_json::json!(DEFAULT_MAX_INBOUND_TEXT_CHARS)),
+                    advanced: true,
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "max_inbound_text_chars".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
             ],
             auth_flows: vec![],
         }),
@@ -682,6 +701,7 @@ impl RocketChatChannelDriverConfig {
             token,
             poll_interval: Duration::from_millis(settings.poll_interval_ms),
             max_messages_per_poll: settings.max_messages_per_poll,
+            max_inbound_text_chars: settings.max_inbound_text_chars,
             start_from_latest: settings.start_from_latest,
             ignore_bot_messages: settings.ignore_bot_messages,
             respond_mode: settings.respond_mode,
@@ -1015,7 +1035,7 @@ impl RocketChatChannelDriver {
         if let Some(tmid) = message.thread_root_id {
             metadata.insert("rocketchat_thread_id".to_string(), serde_json::json!(tmid));
         }
-        text = bound_inbound_text(text, &mut metadata);
+        text = bound_inbound_text(text, &mut metadata, self.config.max_inbound_text_chars);
 
         Ok(Some(InboundEvent {
             message: ChannelMessageRef {
@@ -2558,6 +2578,18 @@ fn parse_settings(
         );
     }
 
+    let max_inbound_text_chars = read_u64_with_min(
+        settings.get("max_inbound_text_chars"),
+        DEFAULT_MAX_INBOUND_TEXT_CHARS as u64,
+        1,
+        "[rocketchat_config_invalid_max_inbound_text_chars] Rocket.Chat channel setting 'max_inbound_text_chars' must be a positive integer",
+    )?;
+    let max_inbound_text_chars = usize::try_from(max_inbound_text_chars).map_err(|_| {
+        anyhow!(
+            "[rocketchat_config_invalid_max_inbound_text_chars] Rocket.Chat channel setting 'max_inbound_text_chars' is too large"
+        )
+    })?;
+
     Ok(RocketChatChannelSettings {
         token_env,
         base_url,
@@ -2576,6 +2608,7 @@ fn parse_settings(
         user_id,
         poll_interval_ms,
         max_messages_per_poll: max_messages_per_poll as u16,
+        max_inbound_text_chars,
         start_from_latest: read_bool(settings.get("start_from_latest"), true, "start_from_latest")?,
         ignore_bot_messages: read_bool(
             settings.get("ignore_bot_messages"),
@@ -3139,6 +3172,10 @@ mod tests {
         assert_eq!(parsed.workspace_id, "rocketchat");
         assert!(!parsed.accept_all_rooms);
         assert_eq!(parsed.max_messages_per_poll, DEFAULT_MAX_MESSAGES_PER_POLL);
+        assert_eq!(
+            parsed.max_inbound_text_chars,
+            DEFAULT_MAX_INBOUND_TEXT_CHARS
+        );
         assert_eq!(parsed.respond_mode, RocketChatRespondMode::Mentions);
         assert_eq!(parsed.session_scope, ChannelSessionScope::Thread);
         assert_eq!(parsed.session_scope_dm, None);
@@ -3200,6 +3237,7 @@ mod tests {
             token: "token".to_string(),
             poll_interval: Duration::from_millis(DEFAULT_POLL_INTERVAL_MS),
             max_messages_per_poll: DEFAULT_MAX_MESSAGES_PER_POLL,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
             start_from_latest: true,
             ignore_bot_messages: true,
             respond_mode: RocketChatRespondMode::Mentions,
@@ -3285,6 +3323,7 @@ mod tests {
             token: "token".to_string(),
             poll_interval: Duration::from_millis(DEFAULT_POLL_INTERVAL_MS),
             max_messages_per_poll: DEFAULT_MAX_MESSAGES_PER_POLL,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
             start_from_latest: true,
             ignore_bot_messages: true,
             respond_mode: RocketChatRespondMode::Mentions,
@@ -3342,6 +3381,7 @@ mod tests {
             token: "token".to_string(),
             poll_interval: Duration::from_millis(DEFAULT_POLL_INTERVAL_MS),
             max_messages_per_poll: DEFAULT_MAX_MESSAGES_PER_POLL,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
             start_from_latest: true,
             ignore_bot_messages: true,
             respond_mode: RocketChatRespondMode::Mentions,
@@ -3423,6 +3463,7 @@ mod tests {
             token: "token".to_string(),
             poll_interval: Duration::from_millis(DEFAULT_POLL_INTERVAL_MS),
             max_messages_per_poll: DEFAULT_MAX_MESSAGES_PER_POLL,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
             start_from_latest: true,
             ignore_bot_messages: true,
             respond_mode: RocketChatRespondMode::Mentions,
@@ -3507,6 +3548,7 @@ mod tests {
             token: "token".to_string(),
             poll_interval: Duration::from_millis(DEFAULT_POLL_INTERVAL_MS),
             max_messages_per_poll: DEFAULT_MAX_MESSAGES_PER_POLL,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
             start_from_latest: true,
             ignore_bot_messages: true,
             respond_mode: RocketChatRespondMode::Mentions,
@@ -3692,6 +3734,7 @@ mod tests {
             token: "token".to_string(),
             poll_interval: Duration::from_millis(DEFAULT_POLL_INTERVAL_MS),
             max_messages_per_poll: DEFAULT_MAX_MESSAGES_PER_POLL,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
             start_from_latest: true,
             ignore_bot_messages: true,
             respond_mode: RocketChatRespondMode::Mentions,

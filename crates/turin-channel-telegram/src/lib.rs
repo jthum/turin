@@ -15,8 +15,8 @@ use turin_channel_core::{
     ChannelConfigTargetKind, ChannelConversationKey, ChannelEnumSetting, ChannelIdentitySelectors,
     ChannelInstallManifest, ChannelKind, ChannelMessageRef, ChannelRuntimeCapabilities,
     ChannelRuntimeManifest, ChannelSecretRequirement, ChannelSessionScope, ChannelSetupManifest,
-    ChannelUser, ChannelValidationCheck, InboundEvent, MessageBlock, OutboundMessage,
-    bound_inbound_text,
+    ChannelUser, ChannelValidationCheck, DEFAULT_MAX_INBOUND_TEXT_CHARS, InboundEvent,
+    MessageBlock, OutboundMessage, bound_inbound_text,
 };
 use turin_channel_runner::{ChannelDriver, ChannelProgressUpdate, ChannelStreamMode};
 
@@ -35,6 +35,7 @@ pub struct TelegramChannelDriverConfig {
     pub poll_timeout_secs: u64,
     pub poll_interval: Duration,
     pub max_updates_per_poll: u8,
+    pub max_inbound_text_chars: usize,
     pub start_from_latest: bool,
     pub ignore_bot_messages: bool,
     pub respond_mode: TelegramRespondMode,
@@ -353,6 +354,22 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     }),
                     ..ChannelConfigField::default()
                 },
+                ChannelConfigField {
+                    key: "max_inbound_text_chars".to_string(),
+                    label: Some("Max Inbound Text Chars".to_string()),
+                    field_type: "number".to_string(),
+                    help: Some(
+                        "Safety cap for inbound Telegram text retained before Turin truncates it."
+                            .to_string(),
+                    ),
+                    default: Some(serde_json::json!(DEFAULT_MAX_INBOUND_TEXT_CHARS)),
+                    advanced: true,
+                    target: Some(ChannelConfigTarget {
+                        kind: ChannelConfigTargetKind::ChannelSetting,
+                        name: "max_inbound_text_chars".to_string(),
+                    }),
+                    ..ChannelConfigField::default()
+                },
             ],
             auth_flows: vec![],
         }),
@@ -385,6 +402,7 @@ impl TelegramChannelDriverConfig {
             poll_timeout_secs: settings.poll_timeout_secs,
             poll_interval: Duration::from_millis(settings.poll_interval_ms),
             max_updates_per_poll: settings.max_updates_per_poll,
+            max_inbound_text_chars: settings.max_inbound_text_chars,
             start_from_latest: settings.start_from_latest,
             ignore_bot_messages: settings.ignore_bot_messages,
             respond_mode: settings.respond_mode,
@@ -419,6 +437,7 @@ struct TelegramChannelSettings {
     poll_timeout_secs: u64,
     poll_interval_ms: u64,
     max_updates_per_poll: u8,
+    max_inbound_text_chars: usize,
     start_from_latest: bool,
     ignore_bot_messages: bool,
     respond_mode: TelegramRespondMode,
@@ -511,6 +530,28 @@ fn parse_settings(
         }
     };
 
+    let max_inbound_text_chars = match settings.get("max_inbound_text_chars") {
+        None => DEFAULT_MAX_INBOUND_TEXT_CHARS,
+        Some(value) => {
+            let max = value.as_u64().ok_or_else(|| {
+                anyhow!(
+                    "[telegram_config_invalid_max_inbound_text_chars] Telegram channel setting 'max_inbound_text_chars' must be a positive integer"
+                )
+            })?;
+            let max = usize::try_from(max).map_err(|_| {
+                anyhow!(
+                    "[telegram_config_invalid_max_inbound_text_chars] Telegram channel setting 'max_inbound_text_chars' is too large"
+                )
+            })?;
+            if max == 0 {
+                anyhow::bail!(
+                    "[telegram_config_invalid_max_inbound_text_chars] Telegram channel setting 'max_inbound_text_chars' must be > 0"
+                );
+            }
+            max
+        }
+    };
+
     Ok(TelegramChannelSettings {
         token_env,
         base_url: settings
@@ -547,6 +588,7 @@ fn parse_settings(
         poll_timeout_secs,
         poll_interval_ms,
         max_updates_per_poll,
+        max_inbound_text_chars,
         start_from_latest: settings
             .get("start_from_latest")
             .map(|value| {
@@ -1029,7 +1071,7 @@ impl TelegramChannelDriver {
             "telegram_chat_type".to_string(),
             serde_json::json!(message.chat.chat_type),
         );
-        let text = bound_inbound_text(text, &mut metadata);
+        let text = bound_inbound_text(text, &mut metadata, self.config.max_inbound_text_chars);
 
         let session_scope = effective_telegram_session_scope(&self.config, &message.chat);
         let conversation = ChannelConversationKey {
@@ -2852,6 +2894,7 @@ mod tests {
             poll_timeout_secs: 30,
             poll_interval: Duration::from_millis(250),
             max_updates_per_poll: 25,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
             start_from_latest: false,
             ignore_bot_messages: true,
             respond_mode: TelegramRespondMode::All,
@@ -3552,6 +3595,10 @@ mod tests {
         assert_eq!(config.session_scope_dm, None);
         assert_eq!(config.session_scope_group, None);
         assert_eq!(config.session_scope_channel, None);
+        assert_eq!(
+            config.max_inbound_text_chars,
+            DEFAULT_MAX_INBOUND_TEXT_CHARS
+        );
         assert!(config.stream_thinking);
         assert!(config.persist_thinking);
     }
@@ -3567,6 +3614,7 @@ mod tests {
             poll_timeout_secs: 30,
             poll_interval: Duration::from_millis(250),
             max_updates_per_poll: 25,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
             start_from_latest: true,
             ignore_bot_messages: true,
             respond_mode: TelegramRespondMode::MentionsOrReplies,

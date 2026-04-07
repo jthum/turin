@@ -2,7 +2,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::time::{Duration, SystemTime};
 
 pub const CHANNEL_ADAPTER_PROTOCOL_VERSION: u32 = 2;
-pub const MAX_INBOUND_TEXT_CHARS: usize = 16_000;
+pub const DEFAULT_MAX_INBOUND_TEXT_CHARS: usize = 16_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
@@ -180,9 +180,10 @@ impl InboundEvent {
 pub fn bound_inbound_text(
     text: String,
     metadata: &mut serde_json::Map<String, serde_json::Value>,
+    max_chars: usize,
 ) -> String {
     let original_chars = text.chars().count();
-    if original_chars <= MAX_INBOUND_TEXT_CHARS {
+    if original_chars <= max_chars {
         return text;
     }
 
@@ -196,9 +197,9 @@ pub fn bound_inbound_text(
     );
     metadata.insert(
         "turin_text_char_limit".to_string(),
-        serde_json::Value::Number(MAX_INBOUND_TEXT_CHARS.into()),
+        serde_json::Value::Number(max_chars.into()),
     );
-    text.chars().take(MAX_INBOUND_TEXT_CHARS).collect()
+    text.chars().take(max_chars).collect()
 }
 
 impl ChannelUser {
@@ -746,7 +747,11 @@ mod tests {
     #[test]
     fn bound_inbound_text_leaves_short_messages_unchanged() {
         let mut metadata = serde_json::Map::new();
-        let text = bound_inbound_text("hello".into(), &mut metadata);
+        let text = bound_inbound_text(
+            "hello".into(),
+            &mut metadata,
+            DEFAULT_MAX_INBOUND_TEXT_CHARS,
+        );
         assert_eq!(text, "hello");
         assert!(metadata.is_empty());
     }
@@ -754,9 +759,9 @@ mod tests {
     #[test]
     fn bound_inbound_text_truncates_and_marks_metadata() {
         let mut metadata = serde_json::Map::new();
-        let input = "a".repeat(MAX_INBOUND_TEXT_CHARS + 5);
-        let text = bound_inbound_text(input, &mut metadata);
-        assert_eq!(text.chars().count(), MAX_INBOUND_TEXT_CHARS);
+        let input = "a".repeat(DEFAULT_MAX_INBOUND_TEXT_CHARS + 5);
+        let text = bound_inbound_text(input, &mut metadata, DEFAULT_MAX_INBOUND_TEXT_CHARS);
+        assert_eq!(text.chars().count(), DEFAULT_MAX_INBOUND_TEXT_CHARS);
         assert_eq!(
             metadata.get("turin_text_truncated"),
             Some(&serde_json::Value::Bool(true))
@@ -764,8 +769,19 @@ mod tests {
         assert_eq!(
             metadata.get("turin_original_text_chars"),
             Some(&serde_json::Value::Number(
-                (MAX_INBOUND_TEXT_CHARS + 5).into()
+                (DEFAULT_MAX_INBOUND_TEXT_CHARS + 5).into()
             ))
+        );
+    }
+
+    #[test]
+    fn bound_inbound_text_uses_custom_limit() {
+        let mut metadata = serde_json::Map::new();
+        let text = bound_inbound_text("abcdef".into(), &mut metadata, 3);
+        assert_eq!(text, "abc");
+        assert_eq!(
+            metadata.get("turin_text_char_limit"),
+            Some(&serde_json::Value::Number(3usize.into()))
         );
     }
 
