@@ -2,11 +2,11 @@ mod plan_submission;
 mod result_hooks;
 
 use anyhow::Result;
-use futures::future::join_all;
+use futures::stream::{self, StreamExt};
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
 use std::pin::Pin;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use crate::display;
@@ -25,6 +25,9 @@ use super::super::event::{AuditEvent, KernelEvent};
 use super::TurnOutcome;
 
 const MAX_VIRTUAL_TOOL_DEPTH: usize = 8;
+const MAX_TOOL_CALLS_PER_WINDOW: usize = 32;
+const TOOL_CALL_WINDOW: Duration = Duration::from_secs(10);
+const MAX_PARALLEL_TOOL_CALLS: usize = 8;
 
 #[derive(Debug, Clone)]
 struct FinalToolRecord {
@@ -58,6 +61,8 @@ impl ExecutionHost {
 
         let (immediate_records, validated_calls) =
             self.evaluate_pending_tool_calls(session, &pending_tool_calls);
+        let (immediate_records, validated_calls) =
+            self.apply_tool_rate_limit(session, immediate_records, validated_calls);
         let final_by_id = self
             .execute_validated_tool_calls(
                 session,
@@ -90,6 +95,8 @@ impl ExecutionHost {
 
             let (immediate_records, validated_calls) =
                 self.evaluate_pending_tool_calls(session, &pending_tool_calls);
+            let (immediate_records, validated_calls) =
+                self.apply_tool_rate_limit(session, immediate_records, validated_calls);
             let final_by_id = self
                 .execute_validated_tool_calls(
                     session,
@@ -174,6 +181,64 @@ impl ExecutionHost {
         }
 
         (immediate_records, validated_calls)
+    }
+
+    fn apply_tool_rate_limit(
+        &self,
+        session: &mut SessionState,
+        mut immediate_records: Vec<FinalToolRecord>,
+        validated_calls: Vec<(PendingToolCall, Verdict)>,
+    ) -> (Vec<FinalToolRecord>, Vec<(PendingToolCall, Verdict)>) {
+        if validated_calls.is_empty() {
+            return (immediate_records, validated_calls);
+        }
+
+        let allowed = session.reserve_tool_calls(
+            validated_calls.len(),
+            MAX_TOOL_CALLS_PER_WINDOW,
+            TOOL_CALL_WINDOW,
+        );
+        if allowed >= validated_calls.len() {
+            return (immediate_records, validated_calls);
+        }
+
+        let blocked = validated_calls.len() - allowed;
+        warn!(
+            session_id = %session.identity.session_id(),
+            allowed,
+            blocked,
+            limit = MAX_TOOL_CALLS_PER_WINDOW,
+            window_secs = TOOL_CALL_WINDOW.as_secs(),
+            "Tool rate limit exceeded; blocking excess tool calls",
+        );
+
+        let mut permitted = Vec::with_capacity(allowed);
+        for (index, (tc, verdict)) in validated_calls.into_iter().enumerate() {
+            if index < allowed {
+                permitted.push((tc, verdict));
+                continue;
+            }
+
+            let msg = format!(
+                "[RATE LIMITED] Tool '{}' blocked: exceeded built-in safety limit of {} tool calls per {}s session window",
+                tc.name,
+                MAX_TOOL_CALLS_PER_WINDOW,
+                TOOL_CALL_WINDOW.as_secs()
+            );
+            immediate_records.push(FinalToolRecord {
+                id: tc.id,
+                name: tc.name,
+                args: tc.args,
+                verdict: "rate_limited".to_string(),
+                duration_ms: 0,
+                content: msg,
+                is_error: true,
+                emit_exec_start: true,
+                governance_denial: None,
+            });
+        }
+
+        (immediate_records, permitted)
     }
 
     async fn execute_validated_tool_calls(
@@ -292,10 +357,14 @@ impl ExecutionHost {
             _ = session.cancel_token.cancelled() => {
                 return final_by_id;
             }
-            results = join_all(futures) => results,
+            results = stream::iter(futures)
+                .buffer_unordered(MAX_PARALLEL_TOOL_CALLS)
+                .collect::<Vec<_>>() => results,
         };
 
-        for (tc, final_args, verdict_str, duration_ms, effect, mut is_error, governance_denial) in execution_results {
+        for (tc, final_args, verdict_str, duration_ms, effect, mut is_error, governance_denial) in
+            execution_results
+        {
             let content;
             match effect {
                 ExecutionArtifact::Native(effect) => match effect {

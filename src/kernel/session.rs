@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -98,6 +99,34 @@ pub enum SessionStatus {
     Active,
 }
 
+#[derive(Debug, Clone)]
+pub struct ToolRateLimitState {
+    window_started_at: Instant,
+    call_count_in_window: usize,
+}
+
+impl ToolRateLimitState {
+    fn new() -> Self {
+        Self {
+            window_started_at: Instant::now(),
+            call_count_in_window: 0,
+        }
+    }
+
+    fn reserve(&mut self, requested: usize, max_calls: usize, window: Duration) -> usize {
+        if self.window_started_at.elapsed() >= window {
+            self.window_started_at = Instant::now();
+            self.call_count_in_window = 0;
+        }
+
+        let granted = max_calls
+            .saturating_sub(self.call_count_in_window)
+            .min(requested);
+        self.call_count_in_window += granted;
+        granted
+    }
+}
+
 /// Holds the state of an active agent session.
 pub struct SessionState {
     pub identity: RuntimeIdentity,
@@ -126,6 +155,7 @@ pub struct SessionState {
     pub mode: crate::kernel::config::AgentMode,
     pub stop_requested: bool,
     pub restored_from_persistence: bool,
+    pub tool_rate_limit: ToolRateLimitState,
 }
 
 impl Default for SessionState {
@@ -160,10 +190,47 @@ impl SessionState {
             mode: crate::kernel::config::AgentMode::Auto,
             stop_requested: false,
             restored_from_persistence: false,
+            tool_rate_limit: ToolRateLimitState::new(),
         }
+    }
+
+    pub fn reserve_tool_calls(
+        &mut self,
+        requested: usize,
+        max_calls: usize,
+        window: Duration,
+    ) -> usize {
+        self.tool_rate_limit.reserve(requested, max_calls, window)
     }
 }
 
 fn new_trace_id() -> String {
     format!("tr_{}", uuid::Uuid::now_v7().simple())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_rate_limit_caps_reserved_calls_within_window() {
+        let mut session = SessionState::new();
+        assert_eq!(session.reserve_tool_calls(3, 4, Duration::from_secs(60)), 3);
+        assert_eq!(session.reserve_tool_calls(3, 4, Duration::from_secs(60)), 1);
+        assert_eq!(session.reserve_tool_calls(1, 4, Duration::from_secs(60)), 0);
+    }
+
+    #[test]
+    fn tool_rate_limit_resets_after_window_elapses() {
+        let mut session = SessionState::new();
+        assert_eq!(
+            session.reserve_tool_calls(2, 2, Duration::from_millis(1)),
+            2
+        );
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(
+            session.reserve_tool_calls(2, 2, Duration::from_millis(1)),
+            2
+        );
+    }
 }
