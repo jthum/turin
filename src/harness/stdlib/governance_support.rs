@@ -1,8 +1,8 @@
 use crate::harness::globals::HarnessAppData;
 use crate::kernel::event::{AuditEvent, KernelEvent};
 use crate::kernel::governance::{CapabilityDecision, GovernanceSubject};
-use crate::kernel::session_refs::format_session_reference;
 use crate::kernel::session::{PersistedKernelEvent, PersistedKernelRecord};
+use crate::kernel::session_refs::format_session_reference;
 use mlua::{Result as LuaResult, Table, Value};
 use std::collections::BTreeMap;
 
@@ -135,13 +135,12 @@ pub(crate) fn current_subject(app_data: &HarnessAppData) -> GovernanceSubject {
         .lock()
         .ok()
         .map(|lock| {
-            let session_reference = lock
-                .session_id
-                .as_deref()
-                .map(|session_id| match lock.session_store_selector.as_ref() {
+            let session_reference = lock.session_id.as_deref().map(|session_id| {
+                match lock.session_store_selector.as_ref() {
                     Some(store_selector) => format_session_reference(session_id, store_selector),
                     None => session_id.to_string(),
-                });
+                }
+            });
             (
                 session_reference,
                 lock.harness_module.clone(),

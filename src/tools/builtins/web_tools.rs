@@ -1,10 +1,12 @@
 use std::env;
+use std::net::{IpAddr, Ipv6Addr};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use reqwest::header::{
-    ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, AUTHORIZATION, CONTENT_TYPE, HeaderValue, USER_AGENT,
+    ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, AUTHORIZATION, CONTENT_TYPE, HeaderValue, LOCATION,
+    USER_AGENT,
 };
 use reqwest::redirect::Policy;
 use reqwest::{Client, RequestBuilder};
@@ -27,6 +29,7 @@ const DEFAULT_BROWSER_ACCEPT_ENCODING: &str = "gzip, deflate, br";
 const DEFAULT_BRAVE_SEARCH_URL: &str = "https://api.search.brave.com/res/v1/web/search";
 const DEFAULT_TAVILY_SEARCH_URL: &str = "https://api.tavily.com/search";
 const DEFAULT_DUCKDUCKGO_SEARCH_URL: &str = "https://lite.duckduckgo.com/lite/";
+const MAX_WEB_FETCH_REDIRECTS: usize = 10;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WebSearchHit {
@@ -265,6 +268,14 @@ fn build_http_client(timeout_secs: u64) -> Result<Client, ToolError> {
         .map_err(|e| ToolError::ExecutionError(format!("Failed to build HTTP client: {e}")))
 }
 
+fn build_fetch_http_client(timeout_secs: u64) -> Result<Client, ToolError> {
+    Client::builder()
+        .redirect(Policy::none())
+        .timeout(Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| ToolError::ExecutionError(format!("Failed to build HTTP client: {e}")))
+}
+
 fn validate_web_url(value: &str) -> Result<Url, ToolError> {
     let url =
         Url::parse(value).map_err(|e| ToolError::InvalidParams(format!("Invalid URL: {e}")))?;
@@ -274,6 +285,144 @@ fn validate_web_url(value: &str) -> Result<Url, ToolError> {
             "Unsupported URL scheme '{other}'; expected http or https"
         ))),
     }
+}
+
+fn resolve_web_redirect_url(current_url: &Url, location: &str) -> Result<Url, ToolError> {
+    let next_url = current_url.join(location).map_err(|e| {
+        ToolError::ExecutionError(format!("web_fetch redirect target is invalid: {e}"))
+    })?;
+    validate_web_url(next_url.as_str())
+}
+
+fn is_forbidden_fetch_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            let octets = ip.octets();
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_broadcast()
+                || ip.is_documentation()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || (octets[0] == 100 && (octets[1] & 0b1100_0000) == 0b0100_0000)
+                || (octets[0] == 198 && matches!(octets[1], 18 | 19))
+                || octets[0] >= 240
+        }
+        IpAddr::V6(ip) => {
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || matches!(ip.segments()[0] & 0xfe00, 0xfc00)
+                || matches!(ip.segments()[0] & 0xffc0, 0xfe80)
+                || (ip.segments()[0] == 0x2001 && ip.segments()[1] == 0x0db8)
+                || matches!(ip, Ipv6Addr::LOCALHOST)
+        }
+    }
+}
+
+async fn ensure_web_fetch_target_safe(url: &Url) -> Result<(), ToolError> {
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(ToolError::PermissionDenied(
+            "web_fetch does not allow URLs with embedded credentials".to_string(),
+        ));
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| ToolError::InvalidParams("web_fetch URL must include a host".to_string()))?;
+    let normalized_host = host.trim().to_ascii_lowercase();
+    if normalized_host == "localhost" || normalized_host.ends_with(".localhost") {
+        return Err(ToolError::PermissionDenied(format!(
+            "web_fetch target '{}' is not allowed",
+            host
+        )));
+    }
+
+    if let Ok(ip) = normalized_host.parse::<IpAddr>() {
+        if is_forbidden_fetch_ip(ip) {
+            return Err(ToolError::PermissionDenied(format!(
+                "web_fetch target '{}' resolves to a non-public address",
+                host
+            )));
+        }
+        return Ok(());
+    }
+
+    let port = url.port_or_known_default().unwrap_or(80);
+    let addrs = tokio::net::lookup_host((host, port)).await.map_err(|e| {
+        ToolError::ExecutionError(format!(
+            "web_fetch DNS resolution failed for '{}': {e}",
+            host
+        ))
+    })?;
+
+    let mut resolved_any = false;
+    for addr in addrs {
+        resolved_any = true;
+        if is_forbidden_fetch_ip(addr.ip()) {
+            return Err(ToolError::PermissionDenied(format!(
+                "web_fetch target '{}' resolves to a non-public address",
+                host
+            )));
+        }
+    }
+
+    if !resolved_any {
+        return Err(ToolError::ExecutionError(format!(
+            "web_fetch DNS resolution returned no addresses for '{}'",
+            host
+        )));
+    }
+
+    Ok(())
+}
+
+async fn send_web_fetch_request(
+    client: &Client,
+    initial_url: Url,
+    settings: &WebFetchToolSettings,
+) -> Result<reqwest::Response, ToolError> {
+    let mut current_url = initial_url;
+
+    for redirect_count in 0..=MAX_WEB_FETCH_REDIRECTS {
+        ensure_web_fetch_target_safe(&current_url).await?;
+        let request = apply_fetch_headers(client.get(current_url.clone()), settings)?;
+        let response = request
+            .send()
+            .await
+            .map_err(|e| ToolError::ExecutionError(format!("web_fetch request failed: {e}")))?;
+        if !response.status().is_redirection() {
+            return Ok(response);
+        }
+
+        if redirect_count == MAX_WEB_FETCH_REDIRECTS {
+            return Err(ToolError::ExecutionError(format!(
+                "web_fetch exceeded redirect limit of {}",
+                MAX_WEB_FETCH_REDIRECTS
+            )));
+        }
+
+        let location = response
+            .headers()
+            .get(LOCATION)
+            .ok_or_else(|| {
+                ToolError::ExecutionError(
+                    "web_fetch redirect response missing Location header".to_string(),
+                )
+            })?
+            .to_str()
+            .map_err(|e| {
+                ToolError::ExecutionError(format!(
+                    "web_fetch redirect Location header is invalid: {e}"
+                ))
+            })?;
+        current_url = resolve_web_redirect_url(response.url(), location)?;
+    }
+
+    Err(ToolError::ExecutionError(
+        "web_fetch redirect handling failed unexpectedly".to_string(),
+    ))
 }
 
 fn collapse_whitespace(text: &str) -> String {
@@ -707,12 +856,8 @@ impl Tool for WebFetchTool {
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolEffect, ToolError> {
         let args: WebFetchArgs = parse_args(params)?;
         let url = validate_web_url(&args.url)?;
-        let client = build_http_client(args.timeout_secs)?;
-        let request = apply_fetch_headers(client.get(url.clone()), &ctx.tools.web_fetch)?;
-        let response = request
-            .send()
-            .await
-            .map_err(|e| ToolError::ExecutionError(format!("web_fetch request failed: {e}")))?;
+        let client = build_fetch_http_client(args.timeout_secs)?;
+        let response = send_web_fetch_request(&client, url.clone(), &ctx.tools.web_fetch).await?;
         let status = response.status();
         let final_url = response.url().to_string();
         let content_type = response
@@ -993,5 +1138,38 @@ mod tests {
             err.to_string()
                 .contains("tools.web_search.tavily.api_key_env")
         );
+    }
+
+    #[tokio::test]
+    async fn web_fetch_rejects_localhost_targets() {
+        let err = ensure_web_fetch_target_safe(&validate_web_url("http://localhost:8080").unwrap())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not allowed"));
+    }
+
+    #[tokio::test]
+    async fn web_fetch_rejects_private_ip_targets() {
+        let err = ensure_web_fetch_target_safe(&validate_web_url("http://192.168.1.5").unwrap())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("non-public"));
+    }
+
+    #[tokio::test]
+    async fn web_fetch_rejects_metadata_service_ip() {
+        let err = ensure_web_fetch_target_safe(
+            &validate_web_url("http://169.254.169.254/latest").unwrap(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("non-public"));
+    }
+
+    #[test]
+    fn web_fetch_redirect_resolution_rejects_non_http_schemes() {
+        let current = Url::parse("https://example.com/path").unwrap();
+        let err = resolve_web_redirect_url(&current, "file:///etc/passwd").unwrap_err();
+        assert!(err.to_string().contains("Unsupported URL scheme"));
     }
 }

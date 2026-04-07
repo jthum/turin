@@ -1349,9 +1349,7 @@ mod tests {
         });
         let issuing_subject = GovernanceSubject {
             agent_id: Some("default".into()),
-            session_reference: Some(
-                "018f1f4f1f4f4f4f8f8f8f8f8f8f8f8f@telegram".into(),
-            ),
+            session_reference: Some("018f1f4f1f4f4f4f8f8f8f8f8f8f8f8f@telegram".into()),
             ..GovernanceSubject::default()
         };
 
@@ -1373,10 +1371,11 @@ mod tests {
             session_reference: issuing_subject.session_reference.clone(),
             ..issuing_subject.clone()
         };
-        assert!(mgr
-            .grant_snapshot_for_subject(&same_session, &grant.grant_id)
-            .unwrap()
-            .is_some());
+        assert!(
+            mgr.grant_snapshot_for_subject(&same_session, &grant.grant_id)
+                .unwrap()
+                .is_some()
+        );
 
         let different_session = GovernanceSubject {
             session_reference: Some("018f1f4f1f4f4f4f8f8f8f8f8f8f8f8f@rocketchat".into()),
