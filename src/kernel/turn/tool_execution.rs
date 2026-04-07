@@ -16,7 +16,7 @@ use crate::harness::virtual_tools::{
 };
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::execution_host::ExecutionHost;
-use crate::kernel::governance::{GovernanceSubject, tool_capability_name};
+use crate::kernel::governance::{CapabilityDecision, GovernanceSubject, tool_capability_name};
 use crate::kernel::session::SessionState;
 use crate::tools::{ToolContext, ToolEffect, ToolError, ToolOutput};
 
@@ -36,6 +36,7 @@ struct FinalToolRecord {
     content: String,
     is_error: bool,
     emit_exec_start: bool,
+    governance_denial: Option<CapabilityDecision>,
 }
 
 enum ExecutionArtifact {
@@ -137,6 +138,7 @@ impl ExecutionHost {
                         content: msg,
                         is_error: true,
                         emit_exec_start: true,
+                        governance_denial: None,
                     });
                 }
                 Verdict::Escalate(reason) => {
@@ -156,6 +158,7 @@ impl ExecutionHost {
                             content: msg,
                             is_error: true,
                             emit_exec_start: true,
+                            governance_denial: None,
                         });
                     } else {
                         if !self.json {
@@ -209,19 +212,25 @@ impl ExecutionHost {
                 };
 
                 let start = Instant::now();
+                let mut governance_denial = None;
                 let effect_res = if kernel.tool_registry.get(&tc.name).is_some() {
                     if let Some(capability) = tool_capability_name(&tc.name) {
                         let subject = GovernanceSubject::for_agent(active_agent_id.as_str());
-                        match kernel
+                        let decision = kernel
                             .governance_manager
-                            .require_capability_for_subject(&subject, capability)
-                        {
-                            Ok(()) => kernel
+                            .capability_decision_for_subject(&subject, capability);
+                        match decision.allowed {
+                            true => kernel
                                 .tool_registry
                                 .execute(&tc.name, final_args.clone(), &tool_ctx)
                                 .await
                                 .map(ExecutionArtifact::Native),
-                            Err(err) => Err(ToolError::PermissionDenied(err)),
+                            false => {
+                                governance_denial = Some(decision.clone());
+                                Err(ToolError::PermissionDenied(decision.reason.unwrap_or_else(
+                                    || format!("Governance denial for capability '{}'", capability),
+                                )))
+                            }
                         }
                     } else {
                         kernel
@@ -262,7 +271,15 @@ impl ExecutionHost {
                     }))
                 });
 
-                (tc, final_args, verdict_str, duration_ms, effect, is_error)
+                (
+                    tc,
+                    final_args,
+                    verdict_str,
+                    duration_ms,
+                    effect,
+                    is_error,
+                    governance_denial,
+                )
             }
         });
 
@@ -278,7 +295,7 @@ impl ExecutionHost {
             results = join_all(futures) => results,
         };
 
-        for (tc, final_args, verdict_str, duration_ms, effect, mut is_error) in execution_results {
+        for (tc, final_args, verdict_str, duration_ms, effect, mut is_error, governance_denial) in execution_results {
             let content;
             match effect {
                 ExecutionArtifact::Native(effect) => match effect {
@@ -414,6 +431,7 @@ impl ExecutionHost {
                     content,
                     is_error,
                     emit_exec_start: false,
+                    governance_denial,
                 },
             );
         }
@@ -645,6 +663,13 @@ impl ExecutionHost {
                         id: record.id.clone(),
                         name: record.name.clone(),
                     }),
+                );
+            }
+
+            if let Some(decision) = record.governance_denial.take() {
+                self.persist_event(
+                    session,
+                    &KernelEvent::Audit(AuditEvent::GovernanceDenial { decision }),
                 );
             }
 

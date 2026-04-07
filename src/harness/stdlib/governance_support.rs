@@ -23,10 +23,20 @@ pub(crate) fn require_capability(
     app_data: &HarnessAppData,
     capability: &str,
 ) -> Result<(), String> {
-    let subject = current_subject(app_data);
-    app_data
-        .governance_manager
-        .require_capability_for_subject(&subject, capability)
+    let decision = capability_decision(app_data, capability);
+    if decision.allowed {
+        return Ok(());
+    }
+
+    emit_governance_audit_event(
+        app_data,
+        AuditEvent::GovernanceDenial {
+            decision: decision.clone(),
+        },
+    );
+    Err(decision
+        .reason
+        .unwrap_or_else(|| format!("Governance denial for capability '{capability}'")))
 }
 
 pub(crate) fn require_child_agent(
@@ -54,7 +64,6 @@ pub(crate) fn parse_delegated_capabilities(
         Value::Nil => Ok(None),
         Value::Table(t) => {
             let mut caps = BTreeMap::new();
-            let subject = current_subject(app_data);
             for pair in t.pairs::<String, Value>() {
                 let (key, value) = pair?;
                 let allowed = match value {
@@ -67,10 +76,7 @@ pub(crate) fn parse_delegated_capabilities(
                     }
                 };
                 if allowed {
-                    app_data
-                        .governance_manager
-                        .require_capability_for_subject(&subject, &key)
-                        .map_err(mlua::Error::runtime)?;
+                    require_capability(app_data, &key).map_err(mlua::Error::runtime)?;
                 }
                 caps.insert(key, allowed);
             }

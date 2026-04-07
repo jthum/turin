@@ -258,6 +258,7 @@ mod tests {
         let tools = resolve_root_tool_selection(&ToolSelectionConfig::default()).unwrap();
         assert!(tools.contains("read_file"));
         assert!(tools.contains("web_fetch"));
+        assert!(!tools.contains("bridge_mcp"));
     }
 
     #[test]

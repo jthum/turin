@@ -55,7 +55,6 @@ pub const DEFAULT_EXPOSED_TOOL_NAMES: &[&str] = &[
     "remember",
     "recall",
     "submit_plan",
-    "bridge_mcp",
 ];
 
 pub fn expand_builtin_group(name: &str) -> Option<&'static [&'static str]> {

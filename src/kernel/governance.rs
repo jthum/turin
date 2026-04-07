@@ -435,7 +435,7 @@ impl GovernanceManager {
 
         let issued_at_ms = now_unix_ms()?;
         let expires_at_ms = ttl_ms.map(|ttl| issued_at_ms.saturating_add(ttl));
-        let grant_id = format!("g_{}", uuid::Uuid::now_v7().simple());
+        let grant_id = format!("g_{}", uuid::Uuid::new_v4().simple());
         let snapshot = GovernanceGrantSnapshot {
             grant_id: grant_id.clone(),
             issuer_agent_id: subject.agent_id.clone(),
@@ -853,6 +853,7 @@ pub(crate) fn tool_capability_name(tool_name: &str) -> Option<&'static str> {
         "read_file" => Some("fs.read"),
         "write_file" | "edit_file" | "apply_patch" => Some("fs.write"),
         "shell_exec" => Some("shell.exec"),
+        "bridge_mcp" => Some("integration.mcp.bridge"),
         _ => None,
     }
 }
@@ -962,6 +963,10 @@ mod tests {
         assert_eq!(tool_capability_name("edit_file"), Some("fs.write"));
         assert_eq!(tool_capability_name("apply_patch"), Some("fs.write"));
         assert_eq!(tool_capability_name("shell_exec"), Some("shell.exec"));
+        assert_eq!(
+            tool_capability_name("bridge_mcp"),
+            Some("integration.mcp.bridge")
+        );
         assert_eq!(tool_capability_name("submit_plan"), None);
     }
 

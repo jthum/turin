@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::kernel::governance::CapabilityDecision;
 use crate::kernel::governance::GovernanceGrantSnapshot;
 use crate::kernel::governance::GovernanceSnapshot;
 use crate::kernel::identity::RuntimeIdentity;
@@ -144,6 +145,8 @@ pub enum AuditEvent {
     },
     /// Governance/capability snapshot emitted for observability (G1)
     GovernanceSnapshot { snapshot: GovernanceSnapshot },
+    /// Governance/capability use denied
+    GovernanceDenial { decision: CapabilityDecision },
     /// Temporary governance grant issued
     GovernanceGrantIssue { grant: GovernanceGrantSnapshot },
     /// Temporary governance grant used (entered)
@@ -197,6 +200,7 @@ impl KernelEvent {
                 AuditEvent::TokenUsage { .. } => "token_usage",
                 AuditEvent::HarnessRejection { .. } => "harness_rejection",
                 AuditEvent::GovernanceSnapshot { .. } => "governance_snapshot",
+                AuditEvent::GovernanceDenial { .. } => "governance_denial",
                 AuditEvent::GovernanceGrantIssue { .. } => "governance_grant_issue",
                 AuditEvent::GovernanceGrantUse { .. } => "governance_grant_use",
                 AuditEvent::GovernanceGrantRevoke { .. } => "governance_grant_revoke",
@@ -264,6 +268,26 @@ mod tests {
             })
             .event_type(),
             "governance_snapshot"
+        );
+        assert_eq!(
+            KernelEvent::Audit(AuditEvent::GovernanceDenial {
+                decision: CapabilityDecision {
+                    capability: "fs.write".into(),
+                    subject_agent_id: Some("default".into()),
+                    subject_module_name: None,
+                    subject_root_name: None,
+                    subject_grant_id: None,
+                    profile: crate::kernel::config::GovernanceProfile::Balanced,
+                    enforcement_enabled: true,
+                    matched_rule: Some("fs.*".into()),
+                    matched_via_wildcard: true,
+                    baseline_allowed: false,
+                    allowed: false,
+                    reason: Some("denied".into()),
+                }
+            })
+            .event_type(),
+            "governance_denial"
         );
     }
 

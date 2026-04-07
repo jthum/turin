@@ -118,6 +118,7 @@ fn event_is_branch_scoped(event: &KernelEvent) -> bool {
                 | crate::kernel::event::AuditEvent::ToolExecStart { .. }
                 | crate::kernel::event::AuditEvent::ToolExecEnd { .. }
                 | crate::kernel::event::AuditEvent::TokenUsage { .. }
+                | crate::kernel::event::AuditEvent::GovernanceDenial { .. }
                 | crate::kernel::event::AuditEvent::HarnessRejection { .. }
         ),
     }
