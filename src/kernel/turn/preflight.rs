@@ -232,11 +232,13 @@ impl ExecutionHost {
     ) -> Result<PreparedTurnStream> {
         let tools = self.tool_definitions_for_session(session, turn_ctx)?;
         let route = self.config.resolve_inference_route(
+            session.identity.agent_id(),
             &req.provider_name,
             &req.model,
             req.thinking_budget,
             req.inference_context.as_deref(),
-        );
+            Some(&session.inference),
+        )?;
         for warning in &route.warnings {
             warn!(
                 requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),

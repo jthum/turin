@@ -9,7 +9,8 @@ use turin_types::ToolsConfig;
 
 use crate::kernel::agent_manager::AgentManager;
 use crate::kernel::config::{
-    AgentConfig, AgentMode, ContextPersistenceConfig, HarnessConfig, ThinkingConfig, TurinConfig,
+    AgentConfig, AgentMode, ContextPersistenceConfig, HarnessConfig, InferenceOverrideConfig,
+    ThinkingConfig, TurinConfig,
 };
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_runtime::{HarnessRuntime, HarnessRuntimeInitContext};
@@ -93,6 +94,7 @@ pub struct DiscoveredChannel {
     pub agent_id: String,
     pub idle_ttl_secs: Option<u64>,
     pub persistence: ContextPersistenceConfig,
+    pub inference: InferenceOverrideConfig,
     pub extra: toml::Table,
 }
 
@@ -128,6 +130,8 @@ pub(crate) struct AgentFileConfig {
     #[serde(default)]
     pub tools: ToolsConfig,
     #[serde(default)]
+    pub inference: InferenceOverrideConfig,
+    #[serde(default)]
     pub persistence: ContextPersistenceConfig,
 }
 
@@ -143,6 +147,8 @@ pub(crate) struct ChannelFileConfig {
     pub idle_ttl_secs: Option<u64>,
     #[serde(default)]
     pub persistence: ContextPersistenceConfig,
+    #[serde(default)]
+    pub inference: InferenceOverrideConfig,
     #[serde(flatten)]
     pub extra: toml::Table,
 }
@@ -448,6 +454,7 @@ fn scan_agent_dir(
         harness: Some(harness_id.clone()),
         idle_grace_secs: parsed.idle_grace_secs,
         tools: parsed.tools,
+        inference: parsed.inference,
         persistence: parsed.persistence,
     };
 
@@ -499,6 +506,10 @@ fn scan_channel_dir(
         "channel references unknown agent '{}'",
         parsed.agent_id
     );
+    parsed.inference.validate_shallow(
+        &bootstrap.providers,
+        &format!("channel '{}'.inference", channel_id),
+    )?;
     if parsed.persistence.state.is_some() {
         bootstrap
             .persistence
@@ -511,6 +522,26 @@ fn scan_channel_dir(
             .resolve_context_store_selector(Some(&parsed.persistence))
             .context("invalid channel persistence.store")?;
     }
+    if !parsed.inference.is_empty() {
+        let agent_inference = if parsed.agent_id == bootstrap.agent.id {
+            &bootstrap.agent.inference
+        } else {
+            &agents
+                .iter()
+                .find(|agent| agent.id == parsed.agent_id)
+                .expect("known agent already checked")
+                .agent_config
+                .inference
+        };
+        let effective = bootstrap
+            .inference
+            .merged_with(agent_inference)
+            .merged_with(&parsed.inference);
+        effective.validate_complete(
+            &bootstrap.providers,
+            &format!("channel '{}'.inference", channel_id),
+        )?;
+    }
 
     Ok(Some(DiscoveredChannel {
         id: channel_id,
@@ -520,6 +551,7 @@ fn scan_channel_dir(
         agent_id: parsed.agent_id,
         idle_ttl_secs: parsed.idle_ttl_secs,
         persistence: parsed.persistence,
+        inference: parsed.inference,
         extra: parsed.extra,
     }))
 }

@@ -6,9 +6,10 @@ use anyhow::Result;
 use tokio::sync::Notify;
 use tracing::{debug, error, info};
 
-use super::peer_runtime::PeerRuntime;
+use super::peer_runtime::{PeerRuntime, SessionBootstrap};
 use super::{
     AgentManager, AgentRuntimeHandle, PeerAgentTaskEnvelope, RuntimeControl, RuntimeSlotKey,
+    SessionContextOverrides,
 };
 use crate::persistence::manager::StoreSelector;
 
@@ -25,8 +26,13 @@ impl AgentManager {
         self: &Arc<Self>,
         runtime_key: RuntimeSlotKey,
     ) -> Result<Arc<AgentRuntimeHandle>> {
-        self.ensure_runtime_slot_in_store(runtime_key, None, None)
-            .await
+        self.ensure_runtime_slot_in_store(
+            runtime_key,
+            None,
+            None,
+            SessionContextOverrides::default(),
+        )
+        .await
     }
 
     pub(super) async fn ensure_runtime_slot_in_store(
@@ -34,6 +40,7 @@ impl AgentManager {
         runtime_key: RuntimeSlotKey,
         initial_state_selector: Option<StoreSelector>,
         initial_default_store_selector: Option<StoreSelector>,
+        session_context: SessionContextOverrides,
     ) -> Result<Arc<AgentRuntimeHandle>> {
         {
             let runtimes = self.runtimes.read().await;
@@ -48,6 +55,7 @@ impl AgentManager {
             runtime_key,
             initial_state_selector,
             initial_default_store_selector,
+            session_context,
         )
         .await
     }
@@ -56,20 +64,27 @@ impl AgentManager {
         self: &Arc<Self>,
         runtime_key: RuntimeSlotKey,
         session_id: String,
+        session_context: SessionContextOverrides,
     ) -> Result<Arc<AgentRuntimeHandle>> {
         {
             let runtimes = self.runtimes.read().await;
             if let Some(handle) = runtimes.get(&runtime_key)
                 && handle.is_running()
             {
-                handle.control.request_session_resume(session_id);
+                handle
+                    .control
+                    .request_session_resume(session_id, session_context.clone());
                 handle.notify.notify_one();
                 return Ok(Arc::clone(handle));
             }
         }
 
-        self.ensure_runtime_with_write_lock_and_resume(runtime_key, Some(session_id))
-            .await
+        self.ensure_runtime_with_write_lock_and_resume(
+            runtime_key,
+            Some(session_id),
+            session_context,
+        )
+        .await
     }
 
     /// Internal method to boot a background peer runtime for a specific agent profile.
@@ -79,6 +94,7 @@ impl AgentManager {
         initial_session_id: Option<&str>,
         initial_state_selector: Option<StoreSelector>,
         initial_default_store_selector: Option<StoreSelector>,
+        session_context: SessionContextOverrides,
     ) -> Result<AgentRuntimeHandle> {
         let agent_id = runtime_key.agent_id.as_str();
         info!(
@@ -122,9 +138,12 @@ impl AgentManager {
                 &agent_id_clone,
                 &slot_id_clone,
                 control_bg,
-                initial_session_id.as_deref(),
-                initial_state_selector,
-                initial_default_store_selector,
+                SessionBootstrap {
+                    initial_session_id: initial_session_id.clone(),
+                    initial_state_selector,
+                    initial_default_store_selector,
+                    context: session_context,
+                },
             )
             .await
             {
@@ -206,6 +225,7 @@ impl AgentManager {
         runtime_key: RuntimeSlotKey,
         initial_state_selector: Option<StoreSelector>,
         initial_default_store_selector: Option<StoreSelector>,
+        session_context: SessionContextOverrides,
     ) -> Result<Arc<AgentRuntimeHandle>> {
         let mut runtimes = self.runtimes.write().await;
         if let Some(handle) = runtimes.get(&runtime_key)
@@ -220,6 +240,7 @@ impl AgentManager {
                 None,
                 initial_state_selector,
                 initial_default_store_selector,
+                session_context,
             )
             .await?,
         );
@@ -231,21 +252,30 @@ impl AgentManager {
         self: &Arc<Self>,
         runtime_key: RuntimeSlotKey,
         initial_session_id: Option<String>,
+        session_context: SessionContextOverrides,
     ) -> Result<Arc<AgentRuntimeHandle>> {
         let mut runtimes = self.runtimes.write().await;
         if let Some(handle) = runtimes.get(&runtime_key)
             && handle.is_running()
         {
             if let Some(session_id) = initial_session_id {
-                handle.control.request_session_resume(session_id);
+                handle
+                    .control
+                    .request_session_resume(session_id, session_context.clone());
                 handle.notify.notify_one();
             }
             return Ok(Arc::clone(handle));
         }
 
         let handle = Arc::new(
-            self.start_agent(&runtime_key, initial_session_id.as_deref(), None, None)
-                .await?,
+            self.start_agent(
+                &runtime_key,
+                initial_session_id.as_deref(),
+                None,
+                None,
+                session_context,
+            )
+            .await?,
         );
         runtimes.insert(runtime_key, Arc::clone(&handle));
         Ok(handle)

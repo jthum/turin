@@ -37,6 +37,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
             mode: turin::kernel::config::AgentMode::Auto,
             harness: None,
             idle_grace_secs: None,
+            inference: Default::default(),
             persistence: Default::default(),
         },
         agents: std::collections::HashMap::new(),

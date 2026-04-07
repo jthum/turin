@@ -12,7 +12,10 @@ use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreSelector;
 
-use super::{AgentManager, PeerAgentTaskEnvelope, PeerAgentTaskResult, RuntimeControl};
+use super::{
+    AgentManager, PeerAgentTaskEnvelope, PeerAgentTaskResult, RuntimeControl,
+    SessionContextOverrides,
+};
 
 pub(super) struct PeerRuntime {
     manager: Arc<AgentManager>,
@@ -21,6 +24,14 @@ pub(super) struct PeerRuntime {
     session: crate::kernel::session::SessionState,
     agent_id: String,
     slot_id: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(super) struct SessionBootstrap {
+    pub(super) initial_session_id: Option<String>,
+    pub(super) initial_state_selector: Option<StoreSelector>,
+    pub(super) initial_default_store_selector: Option<StoreSelector>,
+    pub(super) context: SessionContextOverrides,
 }
 
 #[derive(Debug)]
@@ -37,22 +48,28 @@ impl PeerRuntime {
         agent_id: &str,
         slot_id: &str,
         control: Arc<RuntimeControl>,
-        initial_session_id: Option<&str>,
-        initial_state_selector: Option<StoreSelector>,
-        initial_default_store_selector: Option<StoreSelector>,
+        bootstrap: SessionBootstrap,
     ) -> Result<Self> {
         let mut host = fork_peer_kernel(&manager);
         if host.clients.is_empty() {
             host.init_clients()?;
         }
 
-        let mut session = if let Some(session_id) = initial_session_id {
-            host.resume_session_for_agent(agent_id, session_id).await?
-        } else {
-            host.create_session_for_agent_in_store(
+        let mut session = if let Some(session_id) = bootstrap.initial_session_id.as_deref() {
+            host.resume_session_for_agent_with_context(
                 agent_id,
-                initial_state_selector,
-                initial_default_store_selector,
+                session_id,
+                bootstrap.context.channel_id.clone(),
+                bootstrap.context.inference.clone(),
+            )
+            .await?
+        } else {
+            host.create_session_for_agent_with_context(
+                agent_id,
+                bootstrap.initial_state_selector,
+                bootstrap.initial_default_store_selector,
+                bootstrap.context.channel_id.clone(),
+                bootstrap.context.inference.clone(),
             )
             .await
         };
@@ -60,6 +77,7 @@ impl PeerRuntime {
         control.set_current_session(
             Some(host.session_reference(&session)),
             Some(session.event_tx.clone()),
+            session_context_from_session(&session),
         );
 
         Ok(Self {
@@ -125,7 +143,8 @@ impl PeerRuntime {
             warn!(agent_id = %self.agent_id, error = %e, "Peer agent session end error");
         }
         self.control.clear_active_task();
-        self.control.set_current_session(None, None);
+        self.control
+            .set_current_session(None, None, SessionContextOverrides::default());
         self.host.shutdown_mcp_clients().await;
         info!(agent_id = %self.agent_id, "Peer runtime shut down");
     }
@@ -349,39 +368,87 @@ impl PeerRuntime {
         };
 
         match request {
-            super::SessionResetRequest::Fresh => self.reset_session().await?,
-            super::SessionResetRequest::Resume(session_id) => {
-                self.restore_session(&session_id).await?
-            }
+            super::SessionResetRequest::Fresh(context) => self.reset_session(context).await?,
+            super::SessionResetRequest::Resume {
+                session_id,
+                context,
+            } => self.restore_session(&session_id, context).await?,
         }
         Ok(true)
     }
 
-    async fn reset_session(&mut self) -> Result<()> {
+    async fn reset_session(&mut self, context: SessionContextOverrides) -> Result<()> {
         self.host.end_session(&mut self.session).await?;
-        let mut session = self.host.create_session_for_agent(&self.agent_id).await;
+        let context = effective_session_context(&self.session, context);
+        let mut session = self
+            .host
+            .create_session_for_agent_with_context(
+                &self.agent_id,
+                Some(self.session.store_selector.clone()),
+                self.session.default_store_selector.clone(),
+                context.channel_id.clone(),
+                context.inference.clone(),
+            )
+            .await;
         self.host.start_session(&mut session).await?;
         self.control.set_current_session(
             Some(self.host.session_reference(&session)),
             Some(session.event_tx.clone()),
+            session_context_from_session(&session),
         );
         self.session = session;
         Ok(())
     }
 
-    async fn restore_session(&mut self, session_id: &str) -> Result<()> {
+    async fn restore_session(
+        &mut self,
+        session_id: &str,
+        context: SessionContextOverrides,
+    ) -> Result<()> {
         self.host.end_session(&mut self.session).await?;
+        let context = effective_session_context(&self.session, context);
         let mut session = self
             .host
-            .resume_session_for_agent(&self.agent_id, session_id)
+            .resume_session_for_agent_with_context(
+                &self.agent_id,
+                session_id,
+                context.channel_id.clone(),
+                context.inference.clone(),
+            )
             .await?;
         self.host.start_session(&mut session).await?;
         self.control.set_current_session(
             Some(self.host.session_reference(&session)),
             Some(session.event_tx.clone()),
+            session_context_from_session(&session),
         );
         self.session = session;
         Ok(())
+    }
+}
+
+fn session_context_from_session(
+    session: &crate::kernel::session::SessionState,
+) -> SessionContextOverrides {
+    SessionContextOverrides {
+        channel_id: session.identity.channel_id().map(ToOwned::to_owned),
+        inference: session.inference.clone(),
+    }
+}
+
+fn effective_session_context(
+    session: &crate::kernel::session::SessionState,
+    requested: SessionContextOverrides,
+) -> SessionContextOverrides {
+    SessionContextOverrides {
+        channel_id: requested
+            .channel_id
+            .or_else(|| session.identity.channel_id().map(ToOwned::to_owned)),
+        inference: if requested.inference.is_empty() {
+            session.inference.clone()
+        } else {
+            requested.inference
+        },
     }
 }
 

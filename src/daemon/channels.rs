@@ -966,6 +966,7 @@ mod tests {
                     agent_id: "default".to_string(),
                     idle_ttl_secs: Some(60),
                     persistence: Default::default(),
+                    inference: Default::default(),
                     extra: toml::Table::new(),
                 }],
             )
@@ -1036,6 +1037,7 @@ mod tests {
                     agent_id: "default".to_string(),
                     idle_ttl_secs: Some(60),
                     persistence: Default::default(),
+                    inference: Default::default(),
                     extra: toml::Table::new(),
                 }],
             )
@@ -1114,6 +1116,7 @@ mod tests {
                     agent_id: "default".to_string(),
                     idle_ttl_secs: Some(60),
                     persistence: Default::default(),
+                    inference: Default::default(),
                     extra: toml::Table::new(),
                 }],
             )

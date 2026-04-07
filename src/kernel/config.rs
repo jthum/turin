@@ -17,7 +17,8 @@ mod validation;
 
 use defaults::*;
 pub use inference::{
-    InferenceConfig, InferenceContextConfig, ResolvedInferenceCandidate, ResolvedInferenceRoute,
+    InferenceConfig, InferenceContextConfig, InferenceContextOverrideConfig,
+    InferenceOverrideConfig, ResolvedInferenceCandidate, ResolvedInferenceRoute,
 };
 pub use layout::{LayoutConfig, ResolvedLayout};
 pub use persistence::ResolvedPersistenceConfig;
@@ -100,6 +101,8 @@ pub struct AgentConfig {
     pub idle_grace_secs: Option<u64>,
     #[serde(default)]
     pub tools: ToolsConfig,
+    #[serde(default)]
+    pub inference: InferenceOverrideConfig,
     #[serde(default)]
     pub persistence: ContextPersistenceConfig,
 }
@@ -345,7 +348,50 @@ impl PersistenceConfig {
 }
 
 impl TurinConfig {
+    pub fn effective_inference_config_for_agent(
+        &self,
+        agent_id: &str,
+        session_override: Option<&InferenceOverrideConfig>,
+    ) -> Result<InferenceConfig> {
+        let agent = if agent_id == self.agent.id {
+            &self.agent
+        } else {
+            self.agents
+                .get(agent_id)
+                .ok_or_else(|| anyhow::anyhow!("Unknown agent profile: {}", agent_id))?
+        };
+
+        let mut effective = self.inference.clone();
+        if !agent.inference.is_empty() {
+            effective = effective.merged_with(&agent.inference);
+        }
+        if let Some(override_cfg) = session_override
+            && !override_cfg.is_empty()
+        {
+            effective = effective.merged_with(override_cfg);
+        }
+        Ok(effective)
+    }
+
     pub fn resolve_inference_route(
+        &self,
+        agent_id: &str,
+        base_provider_name: &str,
+        base_model: &str,
+        base_thinking_budget: u32,
+        requested_context: Option<&str>,
+        session_override: Option<&InferenceOverrideConfig>,
+    ) -> Result<ResolvedInferenceRoute> {
+        let effective = self.effective_inference_config_for_agent(agent_id, session_override)?;
+        Ok(effective.resolve_route(
+            base_provider_name,
+            base_model,
+            base_thinking_budget,
+            requested_context,
+        ))
+    }
+
+    pub fn resolve_root_inference_route(
         &self,
         base_provider_name: &str,
         base_model: &str,
@@ -827,6 +873,7 @@ impl Default for AgentConfig {
             harness: None,
             idle_grace_secs: None,
             tools: ToolsConfig::default(),
+            inference: InferenceOverrideConfig::default(),
             persistence: ContextPersistenceConfig::default(),
         }
     }

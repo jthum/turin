@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock as StdRwLock};
 
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
+use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::config::TurinConfig;
 use crate::kernel::event::{KernelEvent, TaskTerminalStatus};
 use crate::kernel::governance::GovernanceManager;
@@ -112,6 +113,7 @@ struct PendingTaskRecord {
 pub(crate) struct RuntimeControl {
     current_session_id: StdRwLock<Option<String>>,
     current_session_events: StdRwLock<Option<SessionEventSender>>,
+    current_session_context: StdRwLock<SessionContextOverrides>,
     current_request_id: StdRwLock<Option<String>>,
     current_runtime_task_id: StdRwLock<Option<String>>,
     current_cancel_token: Mutex<Option<CancellationToken>>,
@@ -119,10 +121,19 @@ pub(crate) struct RuntimeControl {
     session_generation: AtomicU64,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SessionContextOverrides {
+    pub(crate) channel_id: Option<String>,
+    pub(crate) inference: InferenceOverrideConfig,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum SessionResetRequest {
-    Fresh,
-    Resume(String),
+    Fresh(SessionContextOverrides),
+    Resume {
+        session_id: String,
+        context: SessionContextOverrides,
+    },
 }
 
 impl RuntimeControl {
@@ -130,6 +141,7 @@ impl RuntimeControl {
         &self,
         session_id: Option<String>,
         event_tx: Option<SessionEventSender>,
+        context: SessionContextOverrides,
     ) {
         *self
             .current_session_id
@@ -139,13 +151,17 @@ impl RuntimeControl {
             .current_session_events
             .write()
             .expect("runtime control session events lock poisoned") = event_tx;
+        *self
+            .current_session_context
+            .write()
+            .expect("runtime control session context lock poisoned") = context;
         self.session_generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     #[cfg(test)]
     fn set_current_session_id(&self, session_id: Option<String>) {
-        self.set_current_session(session_id, None);
+        self.set_current_session(session_id, None, SessionContextOverrides::default());
     }
 
     fn current_session_id(&self) -> Option<String> {
@@ -158,6 +174,13 @@ impl RuntimeControl {
     fn session_generation(&self) -> u64 {
         self.session_generation
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn current_session_context(&self) -> SessionContextOverrides {
+        self.current_session_context
+            .read()
+            .expect("runtime control session context lock poisoned")
+            .clone()
     }
 
     fn subscribe_current_session_events(&self) -> Option<SessionEventReceiver> {
@@ -236,16 +259,19 @@ impl RuntimeControl {
             .session_reset_request
             .lock()
             .expect("runtime control session reset lock poisoned") =
-            Some(SessionResetRequest::Fresh);
+            Some(SessionResetRequest::Fresh(self.current_session_context()));
         self.request_task_cancel()
     }
 
-    fn request_session_resume(&self, session_id: String) {
+    fn request_session_resume(&self, session_id: String, context: SessionContextOverrides) {
         *self
             .session_reset_request
             .lock()
             .expect("runtime control session reset lock poisoned") =
-            Some(SessionResetRequest::Resume(session_id));
+            Some(SessionResetRequest::Resume {
+                session_id,
+                context,
+            });
     }
 
     fn take_session_reset_request(&self) -> Option<SessionResetRequest> {

@@ -39,6 +39,16 @@ trigger_prefix = "/turin"
 # Leave unset to let the pairing flow generate and write it automatically.
 # session_store_path = ".turin/data/whatsapp/session.db"
 
+# Optional channel-local inference overrides. These overlay the root config and
+# let the same harness semantic names map to different providers/models here.
+# [inference.contexts.default]
+# provider = "minimax"
+# model = "MiniMax-M1"
+#
+# [inference.contexts.fast]
+# provider = "openai"
+# model = "gpt-4o-mini"
+
 # Headless pairing-code flow:
 # pair_code_phone_number = "15551234567"
 # pair_code_custom_code = "ABCD1234"

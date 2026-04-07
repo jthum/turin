@@ -60,6 +60,7 @@ impl DaemonState {
             harness: input.harness,
             idle_grace_secs: input.idle_grace_secs,
             tools: input.tools,
+            inference: Default::default(),
             persistence: ContextPersistenceConfig::default(),
         };
         write_agent_file(&agent_dir, &file)?;
@@ -474,6 +475,7 @@ impl DaemonState {
             agent_id: input.agent_id,
             idle_ttl_secs: input.idle_ttl_secs,
             persistence: ContextPersistenceConfig::default(),
+            inference: Default::default(),
             extra: super::helpers::json_object_to_toml_table(input.settings)?,
         };
 

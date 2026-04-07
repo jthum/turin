@@ -1,10 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
-use serde::Deserialize;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+
+use super::ProvidersConfig;
 
 const DEFAULT_INFERENCE_CONTEXT_NAME: &str = "default";
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 pub struct InferenceConfig {
     #[serde(default)]
     pub default: Option<String>,
@@ -12,10 +15,34 @@ pub struct InferenceConfig {
     pub contexts: HashMap<String, InferenceContextConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 pub struct InferenceContextConfig {
     pub provider: String,
     pub model: String,
+    #[serde(default)]
+    pub fallback: Option<String>,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    #[serde(default)]
+    pub thinking_budget: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
+pub struct InferenceOverrideConfig {
+    #[serde(default)]
+    pub default: Option<String>,
+    #[serde(default)]
+    pub contexts: HashMap<String, InferenceContextOverrideConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
+pub struct InferenceContextOverrideConfig {
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
     #[serde(default)]
     pub fallback: Option<String>,
     #[serde(default)]
@@ -43,6 +70,87 @@ pub struct ResolvedInferenceRoute {
     pub warnings: Vec<String>,
 }
 
+impl InferenceContextConfig {
+    fn apply_override(&self, override_cfg: &InferenceContextOverrideConfig) -> Self {
+        Self {
+            provider: override_cfg
+                .provider
+                .clone()
+                .unwrap_or_else(|| self.provider.clone()),
+            model: override_cfg
+                .model
+                .clone()
+                .unwrap_or_else(|| self.model.clone()),
+            fallback: override_cfg
+                .fallback
+                .clone()
+                .or_else(|| self.fallback.clone()),
+            temperature: override_cfg.temperature.or(self.temperature),
+            max_tokens: override_cfg.max_tokens.or(self.max_tokens),
+            thinking_budget: override_cfg.thinking_budget.or(self.thinking_budget),
+        }
+    }
+}
+
+impl InferenceOverrideConfig {
+    pub fn is_empty(&self) -> bool {
+        self.default.is_none() && self.contexts.is_empty()
+    }
+
+    pub fn validate_shallow(&self, providers: &ProvidersConfig, label: &str) -> Result<()> {
+        if let Some(default_context) = self.default.as_deref() {
+            anyhow::ensure!(
+                !default_context.trim().is_empty(),
+                "{label}.default must not be empty when set"
+            );
+        }
+
+        for (context_name, context) in &self.contexts {
+            anyhow::ensure!(
+                !context_name.trim().is_empty(),
+                "{label}.contexts contains an empty context name"
+            );
+            if let Some(provider) = context.provider.as_deref() {
+                anyhow::ensure!(
+                    !provider.trim().is_empty(),
+                    "{label}.contexts.{context_name}.provider must not be empty when set"
+                );
+                anyhow::ensure!(
+                    providers.contains_key(provider),
+                    "{label}.contexts.{context_name}.provider '{}' not found in [providers]",
+                    provider
+                );
+            }
+            if let Some(model) = context.model.as_deref() {
+                anyhow::ensure!(
+                    !model.trim().is_empty(),
+                    "{label}.contexts.{context_name}.model must not be empty when set"
+                );
+            }
+            if let Some(fallback) = context.fallback.as_deref() {
+                anyhow::ensure!(
+                    !fallback.trim().is_empty(),
+                    "{label}.contexts.{context_name}.fallback must not be empty when set"
+                );
+            }
+            if let Some(temperature) = context.temperature {
+                anyhow::ensure!(
+                    temperature.is_finite(),
+                    "{label}.contexts.{context_name}.temperature must be finite"
+                );
+            }
+            if let Some(max_tokens) = context.max_tokens {
+                anyhow::ensure!(
+                    max_tokens > 0,
+                    "{label}.contexts.{context_name}.max_tokens must be greater than 0"
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl ResolvedInferenceCandidate {
     fn same_effective_target(&self, other: &Self) -> bool {
         self.provider_name == other.provider_name
@@ -58,6 +166,116 @@ impl InferenceConfig {
         self.default
             .as_deref()
             .unwrap_or(DEFAULT_INFERENCE_CONTEXT_NAME)
+    }
+
+    pub fn merged_with(&self, override_cfg: &InferenceOverrideConfig) -> Self {
+        let mut merged = self.clone();
+
+        if let Some(default_context) = override_cfg.default.as_ref() {
+            merged.default = Some(default_context.clone());
+        }
+
+        for (context_name, context_override) in &override_cfg.contexts {
+            match merged.contexts.get(context_name) {
+                Some(existing) => {
+                    merged.contexts.insert(
+                        context_name.clone(),
+                        existing.apply_override(context_override),
+                    );
+                }
+                None => {
+                    merged.contexts.insert(
+                        context_name.clone(),
+                        InferenceContextConfig {
+                            provider: context_override.provider.clone().unwrap_or_default(),
+                            model: context_override.model.clone().unwrap_or_default(),
+                            fallback: context_override.fallback.clone(),
+                            temperature: context_override.temperature,
+                            max_tokens: context_override.max_tokens,
+                            thinking_budget: context_override.thinking_budget,
+                        },
+                    );
+                }
+            }
+        }
+
+        merged
+    }
+
+    pub fn validate_complete(&self, providers: &ProvidersConfig, label: &str) -> Result<()> {
+        if let Some(default_context) = self.default.as_deref() {
+            anyhow::ensure!(
+                !default_context.trim().is_empty(),
+                "{label}.default must not be empty when set"
+            );
+            anyhow::ensure!(
+                self.contexts.contains_key(default_context),
+                "{label}.default '{}' not found in {label}.contexts",
+                default_context
+            );
+        }
+
+        for (context_name, context) in &self.contexts {
+            anyhow::ensure!(
+                !context_name.trim().is_empty(),
+                "{label}.contexts contains an empty context name"
+            );
+            anyhow::ensure!(
+                !context.provider.trim().is_empty(),
+                "{label}.contexts.{context_name}.provider must not be empty"
+            );
+            anyhow::ensure!(
+                !context.model.trim().is_empty(),
+                "{label}.contexts.{context_name}.model must not be empty"
+            );
+            anyhow::ensure!(
+                providers.contains_key(&context.provider),
+                "{label}.contexts.{context_name}.provider '{}' not found in [providers]",
+                context.provider
+            );
+            if let Some(fallback) = context.fallback.as_deref() {
+                anyhow::ensure!(
+                    !fallback.trim().is_empty(),
+                    "{label}.contexts.{context_name}.fallback must not be empty when set"
+                );
+                anyhow::ensure!(
+                    self.contexts.contains_key(fallback),
+                    "{label}.contexts.{context_name}.fallback '{}' not found in {label}.contexts",
+                    fallback
+                );
+            }
+            if let Some(temperature) = context.temperature {
+                anyhow::ensure!(
+                    temperature.is_finite(),
+                    "{label}.contexts.{context_name}.temperature must be finite"
+                );
+            }
+            if let Some(max_tokens) = context.max_tokens {
+                anyhow::ensure!(
+                    max_tokens > 0,
+                    "{label}.contexts.{context_name}.max_tokens must be greater than 0"
+                );
+            }
+        }
+
+        for context_name in self.contexts.keys() {
+            let mut seen = HashSet::new();
+            let mut current = context_name.as_str();
+            while let Some(next) = self
+                .contexts
+                .get(current)
+                .and_then(|context| context.fallback.as_deref())
+            {
+                anyhow::ensure!(
+                    seen.insert(current.to_string()),
+                    "{label} context fallback cycle detected at '{}'",
+                    current
+                );
+                current = next;
+            }
+        }
+
+        Ok(())
     }
 
     pub fn resolve_route(

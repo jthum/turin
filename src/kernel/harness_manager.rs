@@ -153,6 +153,7 @@ mod tests {
                 mode: AgentMode::Auto,
                 harness: None,
                 idle_grace_secs: None,
+                inference: Default::default(),
                 persistence: Default::default(),
             },
             agents: HashMap::from([
@@ -168,6 +169,7 @@ mod tests {
                         mode: AgentMode::Auto,
                         harness: Some("shared".to_string()),
                         idle_grace_secs: None,
+                        inference: Default::default(),
                         persistence: Default::default(),
                     },
                 ),
@@ -183,6 +185,7 @@ mod tests {
                         mode: AgentMode::Auto,
                         harness: Some("shared".to_string()),
                         idle_grace_secs: None,
+                        inference: Default::default(),
                         persistence: Default::default(),
                     },
                 ),

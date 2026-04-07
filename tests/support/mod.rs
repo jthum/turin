@@ -163,6 +163,7 @@ pub fn base_config(
             mode: turin::kernel::config::AgentMode::Auto,
             harness: None,
             idle_grace_secs: None,
+            inference: Default::default(),
             persistence: Default::default(),
         },
         agents: HashMap::new(),

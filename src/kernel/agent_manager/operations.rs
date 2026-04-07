@@ -5,6 +5,7 @@ use std::sync::atomic::Ordering;
 use anyhow::{Context, Result};
 use tokio::sync::oneshot;
 
+use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::KernelEvent;
 use crate::kernel::session::QueuedTask;
 use crate::kernel::session_refs::parse_session_reference;
@@ -78,6 +79,8 @@ impl AgentManager {
         slot_id: Option<&str>,
         initial_state_selector: Option<StoreSelector>,
         initial_default_store_selector: Option<StoreSelector>,
+        channel_id: Option<String>,
+        initial_inference: InferenceOverrideConfig,
     ) -> Result<LiveSessionSnapshot> {
         let runtime_key = RuntimeSlotKey {
             agent_id: agent_id.to_string(),
@@ -90,6 +93,10 @@ impl AgentManager {
                 runtime_key.clone(),
                 initial_state_selector,
                 initial_default_store_selector,
+                super::SessionContextOverrides {
+                    channel_id,
+                    inference: initial_inference,
+                },
             )
             .await?;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
@@ -121,6 +128,8 @@ impl AgentManager {
         self: &Arc<Self>,
         session_id: &str,
         slot_id: Option<&str>,
+        channel_id: Option<String>,
+        initial_inference: InferenceOverrideConfig,
     ) -> Result<LiveSessionSnapshot> {
         if let Some((runtime_key, handle)) = self.find_runtime_by_session(session_id).await {
             return Ok(LiveSessionSnapshot {
@@ -176,14 +185,25 @@ impl AgentManager {
                     runtime_key.agent_id
                 );
             }
-            handle
-                .control
-                .request_session_resume(session_id.to_string());
+            handle.control.request_session_resume(
+                session_id.to_string(),
+                super::SessionContextOverrides {
+                    channel_id,
+                    inference: initial_inference,
+                },
+            );
             handle.notify.notify_one();
             handle
         } else {
-            self.ensure_runtime_slot_resumed(runtime_key.clone(), session_id.to_string())
-                .await?
+            self.ensure_runtime_slot_resumed(
+                runtime_key.clone(),
+                session_id.to_string(),
+                super::SessionContextOverrides {
+                    channel_id,
+                    inference: initial_inference,
+                },
+            )
+            .await?
         };
 
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
@@ -238,9 +258,10 @@ impl AgentManager {
             .map(|session_ref| session_ref.public_id)
             .unwrap_or_else(|_| session_id.to_string());
         let generation = handle.control.session_generation();
+        let context = handle.control.current_session_context();
         handle
             .control
-            .request_session_resume(session_id.to_string());
+            .request_session_resume(session_id.to_string(), context);
         handle.notify.notify_one();
 
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);

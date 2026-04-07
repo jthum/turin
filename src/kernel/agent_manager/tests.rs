@@ -64,6 +64,7 @@ fn test_config(workspace_root: &std::path::Path, harness_dir: &std::path::Path) 
             mode: crate::kernel::config::AgentMode::Auto,
             harness: None,
             idle_grace_secs: None,
+            inference: Default::default(),
             persistence: Default::default(),
         },
         agents: HashMap::new(),
@@ -293,7 +294,7 @@ async fn cancel_session_cancels_queued_work_and_requests_reset() -> anyhow::Resu
     assert_eq!(returned_session_id, session_id);
     assert!(matches!(
         control.take_session_reset_request(),
-        Some(SessionResetRequest::Fresh)
+        Some(SessionResetRequest::Fresh(_))
     ));
 
     let completed = manager

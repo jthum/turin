@@ -64,6 +64,14 @@ mode = "auto"                        # auto | stateful | stateless
 # model = "claude-opus-4-6"
 # fallback = "default"
 # thinking_budget = 4096
+#
+# Agent and channel config files can override the same shape locally:
+#   .turin/runtime/agents/<id>/config.toml
+#   .turin/runtime/channels/<id>/config.toml
+# Example:
+#   [inference.contexts.fast]
+#   provider = "openai"
+#   model = "gpt-4o-mini"
 
 # Optional extended thinking (provider/model dependent)
 # [agent.thinking]

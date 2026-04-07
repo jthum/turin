@@ -2,9 +2,11 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
+use uuid::Uuid;
 
 use super::DaemonState;
 use crate::kernel::agent_manager::{AgentStatusSnapshot, TaskStatusSnapshot};
+use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::KernelEvent;
 use crate::kernel::session::QueuedTask;
 use crate::kernel::session_refs::parse_session_reference;
@@ -137,6 +139,8 @@ impl DaemonState {
                 slot_id,
                 initial_state_selector,
                 initial_default_store_selector,
+                channel_id.map(str::to_string),
+                self.resolve_channel_inference_override(channel_id),
             )
             .await
     }
@@ -146,9 +150,15 @@ impl DaemonState {
         session_id: &str,
         slot_id: Option<&str>,
     ) -> Result<crate::kernel::agent_manager::LiveSessionSnapshot> {
+        let channel_id = self.resolve_session_channel_id(session_id).await?;
         self.kernel
             .agent_manager()
-            .resume_session(session_id, slot_id)
+            .resume_session(
+                session_id,
+                slot_id,
+                channel_id.clone(),
+                self.resolve_channel_inference_override(channel_id.as_deref()),
+            )
             .await
     }
 
@@ -277,6 +287,39 @@ impl DaemonState {
             .map(Some)
     }
 
+    fn resolve_channel_inference_override(
+        &self,
+        channel_id: Option<&str>,
+    ) -> InferenceOverrideConfig {
+        channel_id
+            .and_then(|channel_id| {
+                self.registry_load
+                    .channels
+                    .iter()
+                    .find(|channel| channel.id == channel_id)
+            })
+            .map(|channel| channel.inference.clone())
+            .unwrap_or_default()
+    }
+
+    async fn resolve_session_channel_id(&self, session_id: &str) -> Result<Option<String>> {
+        let session_ref = parse_session_reference(session_id)?;
+        let public_id = Uuid::parse_str(&session_ref.public_id)
+            .map_err(|_| anyhow!("Invalid session id '{}'", session_ref.public_id))?;
+        let store_selector = session_ref
+            .store_selector
+            .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+        let store = self.kernel.store_manager().open(&store_selector).await?;
+        let Some(row) = store.get_session_row_by_public_id(public_id).await? else {
+            return Ok(None);
+        };
+
+        Ok(row
+            .metadata
+            .as_deref()
+            .and_then(session_channel_id_from_metadata))
+    }
+
     pub(super) async fn live_session_snapshot(
         &self,
         public_id: &[u8],
@@ -293,4 +336,13 @@ impl DaemonState {
                     .unwrap_or_else(|_| snapshot.session_id == wanted)
             })
     }
+}
+
+fn session_channel_id_from_metadata(metadata: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(metadata)
+        .ok()?
+        .get("_turin")?
+        .get("channel_id")?
+        .as_str()
+        .map(ToOwned::to_owned)
 }

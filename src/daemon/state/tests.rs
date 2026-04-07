@@ -327,6 +327,170 @@ async fn session_list_and_search_can_target_an_explicit_state_store() -> Result<
 }
 
 #[tokio::test]
+async fn channel_inference_override_applies_on_open_and_resume() -> Result<()> {
+    let temp = tempdir()?;
+    let harness_dir = temp.path().join("default-harness");
+    std::fs::create_dir_all(&harness_dir)?;
+    std::fs::write(
+        harness_dir.join("main.lua"),
+        r#"
+function on_turn_prepare(ctx)
+  ctx.inference = "fast"
+  return ALLOW
+end
+"#,
+    )?;
+
+    let channel_dir = temp
+        .path()
+        .join(".turin")
+        .join("runtime")
+        .join("channels")
+        .join("telegram-ops");
+    std::fs::create_dir_all(&channel_dir)?;
+    std::fs::write(
+        channel_dir.join("config.toml"),
+        r#"
+id = "telegram-ops"
+kind = "telegram"
+agent_id = "default"
+
+[inference.contexts.fast]
+provider = "channel_fast"
+model = "channel-fast-model"
+"#,
+    )?;
+
+    let config_path = temp.path().join(".turin").join("config.toml");
+    std::fs::create_dir_all(config_path.parent().expect("config parent"))?;
+    std::fs::write(
+        &config_path,
+        r#"[agent]
+id = "default"
+system_prompt = "bootstrap"
+model = "primary-model"
+provider = "primary"
+
+[kernel]
+workspace_root = "."
+
+[persistence.state]
+path = "state.db"
+
+[harness]
+directory = "default-harness"
+fs_root = "."
+
+[providers.primary]
+type = "mock"
+base_url = "PRIMARY"
+
+[providers.root_fast]
+type = "mock"
+base_url = "ROOT_FAST"
+
+[providers.channel_fast]
+type = "mock"
+base_url = "CHANNEL_FAST"
+
+[inference.contexts.fast]
+provider = "root_fast"
+model = "root-fast-model"
+
+[embeddings]
+provider = "noop"
+"#,
+    )?;
+
+    let state = DaemonState::load(&config_path).await?;
+
+    let live = state
+        .open_session("default", None, Some("telegram-ops"))
+        .await?;
+    let original_public_id = parse_session_reference(&live.session_id)?.public_id;
+
+    let first = state
+        .submit_task(
+            None,
+            Some(&live.session_id),
+            "route via channel override".to_string(),
+            Default::default(),
+        )
+        .await?;
+    assert_eq!(
+        state
+            .wait_for_task(&first.request_id, Some(2_000))
+            .await?
+            .state,
+        "completed"
+    );
+
+    let first_detail = state
+        .get_session(&live.session_id)
+        .await?
+        .expect("session detail visible");
+    let first_assistant_text = first_detail
+        .messages
+        .iter()
+        .filter(|message| message.role == "assistant")
+        .flat_map(|message| message.content.as_array().into_iter().flatten())
+        .filter_map(|part| part.get("text").and_then(|value| value.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        first_assistant_text.contains("CHANNEL_FAST"),
+        "expected channel override provider output, got: {first_assistant_text}"
+    );
+    assert!(!first_assistant_text.contains("ROOT_FAST"));
+    assert!(!first_assistant_text.contains("PRIMARY"));
+
+    state.kill_session(&live.session_id).await?;
+
+    let resumed = state.resume_session(&live.session_id, None).await?;
+    assert_eq!(
+        parse_session_reference(&resumed.session_id)?.public_id,
+        original_public_id
+    );
+
+    let second = state
+        .submit_task(
+            None,
+            Some(&resumed.session_id),
+            "route via resumed channel override".to_string(),
+            Default::default(),
+        )
+        .await?;
+    assert_eq!(
+        state
+            .wait_for_task(&second.request_id, Some(2_000))
+            .await?
+            .state,
+        "completed"
+    );
+
+    let second_detail = state
+        .get_session(&resumed.session_id)
+        .await?
+        .expect("resumed session detail visible");
+    let second_assistant_text = second_detail
+        .messages
+        .iter()
+        .filter(|message| message.role == "assistant")
+        .flat_map(|message| message.content.as_array().into_iter().flatten())
+        .filter_map(|part| part.get("text").and_then(|value| value.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        second_assistant_text.contains("CHANNEL_FAST"),
+        "expected resumed session to keep channel override, got: {second_assistant_text}"
+    );
+    assert!(!second_assistant_text.contains("ROOT_FAST"));
+    assert!(!second_assistant_text.contains("PRIMARY"));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn session_branches_can_be_created_listed_and_checked_out() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;

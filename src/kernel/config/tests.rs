@@ -176,7 +176,7 @@ max_tokens = 4096
 "#;
 
     let config = TurinConfig::from_str(toml).unwrap();
-    let route = config.resolve_inference_route("openai", "gpt-4o", 1024, Some("reasoning"));
+    let route = config.resolve_root_inference_route("openai", "gpt-4o", 1024, Some("reasoning"));
     assert_eq!(route.requested_context.as_deref(), Some("reasoning"));
     assert_eq!(route.candidates.len(), 3);
     assert_eq!(
@@ -210,7 +210,7 @@ model = "gpt-4o-mini"
 "#;
 
     let config = TurinConfig::from_str(toml).unwrap();
-    let route = config.resolve_inference_route("openai", "gpt-4o", 1024, Some("creative"));
+    let route = config.resolve_root_inference_route("openai", "gpt-4o", 1024, Some("creative"));
     assert_eq!(route.candidates.len(), 2);
     assert_eq!(route.candidates[0].context_name.as_deref(), Some("default"));
     assert_eq!(route.candidates[1].context_name, None);
@@ -222,6 +222,69 @@ model = "gpt-4o-mini"
         "warnings: {:?}",
         route.warnings
     );
+}
+
+#[test]
+fn test_effective_inference_config_merges_agent_and_session_overrides() {
+    let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[providers.anthropic]
+type = "anthropic"
+
+[inference.contexts.default]
+provider = "openai"
+model = "gpt-4o"
+temperature = 0.2
+
+[inference.contexts.fast]
+provider = "openai"
+model = "gpt-4o-mini"
+temperature = 0.1
+
+[agents.reviewer]
+model = "claude-sonnet-4"
+provider = "anthropic"
+harness = "review"
+
+[agents.reviewer.inference]
+default = "default"
+
+[agents.reviewer.inference.contexts.fast]
+provider = "anthropic"
+model = "claude-haiku-4"
+
+[harnesses.review]
+directory = "review"
+fs_root = "."
+"#;
+
+    let config = TurinConfig::from_str(toml).unwrap();
+
+    let session_override = InferenceOverrideConfig {
+        default: None,
+        contexts: std::iter::once((
+            "fast".to_string(),
+            InferenceContextOverrideConfig {
+                temperature: Some(0.4),
+                ..InferenceContextOverrideConfig::default()
+            },
+        ))
+        .collect(),
+    };
+
+    let effective = config
+        .effective_inference_config_for_agent("reviewer", Some(&session_override))
+        .unwrap();
+    let fast = effective.contexts.get("fast").unwrap();
+    assert_eq!(fast.provider, "anthropic");
+    assert_eq!(fast.model, "claude-haiku-4");
+    assert_eq!(fast.temperature, Some(0.4));
 }
 
 #[test]

@@ -6,6 +6,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::inference::provider::InferenceMessage;
+use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::KernelEvent;
 use crate::kernel::identity::RuntimeIdentity;
 use crate::persistence::manager::StoreSelector;
@@ -133,6 +134,7 @@ pub struct SessionState {
     pub internal_id: Option<i64>,
     pub store_selector: StoreSelector,
     pub default_store_selector: Option<StoreSelector>,
+    pub inference: InferenceOverrideConfig,
     pub history: Vec<InferenceMessage>,
     pub queue: Arc<Mutex<VecDeque<QueuedTask>>>,
     pub plans: HashMap<String, PlanProgress>,
@@ -173,6 +175,7 @@ impl SessionState {
             internal_id: None,
             store_selector: StoreSelector::Alias("state".to_string()),
             default_store_selector: None,
+            inference: InferenceOverrideConfig::default(),
             history: Vec::new(),
             queue: Arc::new(Mutex::new(VecDeque::new())),
             plans: HashMap::new(),

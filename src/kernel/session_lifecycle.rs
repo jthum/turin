@@ -36,12 +36,32 @@ impl ExecutionHost {
         state_selector: Option<StoreSelector>,
         default_store_selector: Option<StoreSelector>,
     ) -> SessionState {
+        self.create_session_for_agent_with_context(
+            agent_id,
+            state_selector,
+            default_store_selector,
+            None,
+            crate::kernel::config::InferenceOverrideConfig::default(),
+        )
+        .await
+    }
+
+    pub async fn create_session_for_agent_with_context(
+        &self,
+        agent_id: &str,
+        state_selector: Option<StoreSelector>,
+        default_store_selector: Option<StoreSelector>,
+        channel_id: Option<String>,
+        inference: crate::kernel::config::InferenceOverrideConfig,
+    ) -> SessionState {
         let mut session = SessionState::new();
         session.identity.set_agent_id(agent_id.to_string());
+        session.identity.set_channel_id(channel_id);
         session.store_selector =
             state_selector.unwrap_or_else(|| self.resolve_agent_state_selector(agent_id));
         session.default_store_selector =
             default_store_selector.or_else(|| self.resolve_agent_default_store_selector(agent_id));
+        session.inference = inference;
         self.attach_session_persistence(&mut session, true).await;
         session
     }
@@ -55,6 +75,22 @@ impl ExecutionHost {
         &self,
         agent_id: &str,
         session_id: &str,
+    ) -> Result<SessionState> {
+        self.resume_session_for_agent_with_context(
+            agent_id,
+            session_id,
+            None,
+            crate::kernel::config::InferenceOverrideConfig::default(),
+        )
+        .await
+    }
+
+    pub async fn resume_session_for_agent_with_context(
+        &self,
+        agent_id: &str,
+        session_id: &str,
+        channel_id: Option<String>,
+        inference: crate::kernel::config::InferenceOverrideConfig,
     ) -> Result<SessionState> {
         let session_ref = parse_session_reference(session_id)?;
         let public_id = uuid::Uuid::parse_str(&session_ref.public_id)
@@ -88,10 +124,14 @@ impl ExecutionHost {
 
         let mut session = SessionState::new();
         session.identity = RuntimeIdentity::new(session_ref.public_id, agent_id);
+        session.identity.set_channel_id(
+            channel_id.or_else(|| session_channel_id_from_metadata(row.metadata.as_deref())),
+        );
         session.internal_id = Some(row.id);
         session.store_selector = store_selector;
         session.default_store_selector =
             session_default_store_selector_from_metadata(row.metadata.as_deref());
+        session.inference = inference;
         session.history = history;
         session.turn_index = turn_index;
         session.total_input_tokens = total_input_tokens;
@@ -127,6 +167,9 @@ impl ExecutionHost {
 
         session.default_store_selector =
             session_default_store_selector_from_metadata(row.metadata.as_deref());
+        session
+            .identity
+            .set_channel_id(session_channel_id_from_metadata(row.metadata.as_deref()));
         session.history = history;
         session.turn_index = turn_index;
         session.total_input_tokens = total_input_tokens;
@@ -362,12 +405,26 @@ impl ExecutionHost {
 }
 
 fn session_create_metadata(session: &SessionState) -> Option<String> {
-    let default_store = store_target_from_selector(session.default_store_selector.as_ref()?)?;
+    let mut turin_meta = serde_json::Map::new();
+    if let Some(default_store) = session
+        .default_store_selector
+        .as_ref()
+        .and_then(store_target_from_selector)
+    {
+        turin_meta.insert(
+            "default_store".to_string(),
+            serde_json::json!(default_store),
+        );
+    }
+    if let Some(channel_id) = session.identity.channel_id() {
+        turin_meta.insert("channel_id".to_string(), serde_json::json!(channel_id));
+    }
+    if turin_meta.is_empty() {
+        return None;
+    }
     Some(
         serde_json::json!({
-            "_turin": {
-                "default_store": default_store,
-            }
+            "_turin": turin_meta,
         })
         .to_string(),
     )
@@ -381,6 +438,14 @@ fn session_default_store_selector_from_metadata(metadata: Option<&str>) -> Optio
         .and_then(|value| serde_json::from_value::<StoreTargetConfig>(value).ok());
 
     parsed.and_then(store_selector_from_target)
+}
+
+fn session_channel_id_from_metadata(metadata: Option<&str>) -> Option<String> {
+    metadata
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .and_then(|value| value.get("_turin").cloned())
+        .and_then(|value| value.get("channel_id").cloned())
+        .and_then(|value| value.as_str().map(ToString::to_string))
 }
 
 fn store_target_from_selector(selector: &StoreSelector) -> Option<StoreTargetConfig> {
