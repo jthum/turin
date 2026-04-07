@@ -445,6 +445,7 @@ Notes:
 - `storage="embedded"` requires an embedding provider
 - `correct(...)` supersedes the referenced memory and stores a replacement row
 - `purge(...)` defaults to `dry_run = true`
+- use memory for searchable facts, notes, and learned context; see `docs/concepts/memory-vs-kv.md`
 - when `store`/`path` is omitted, Turin resolves scoped state by:
   1. explicit per-call target
   2. matching `[persistence.placements]` rule
@@ -471,6 +472,12 @@ Canonical KV API with explicit selector.
 `opts` for KV:
 
 - `{ store = "alias"|selector_table, path = "relative/or/absolute.db" }`
+
+Notes:
+
+- use KV for exact key-addressed state, flags, counters, mappings, and workflow state
+- prefer key prefixes like `adrs/...` or `users/...` for KV-side grouping
+- see `docs/concepts/memory-vs-kv.md` for the recommended convention
 
 ## `runtime.cache`
 

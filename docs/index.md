@@ -7,6 +7,7 @@ This is the documentation landing page for Turin.
 - `README.md` — quickstart, feature overview, canonical API summary, live smoke commands
 - `docs/getting-started/index.md` — first steps, quick paths, and entry points
 - `docs/concepts/turin.md` — Turin philosophy and design framing (kernel vs harness vs inference)
+- `docs/concepts/memory-vs-kv.md` — convention for choosing between searchable memory and exact KV state
 - `docs/operations/daemon.md` — daemon mode, filesystem-backed dynamic state, and control API surface
 - `docs/operations/remote.md` — authenticated HTTP/SSE/WebSocket bridge for remote daemon access
 - `docs/operations/ui-clients.md` — local/remote operator shells for the Turin daemon control plane
@@ -31,6 +32,7 @@ This is the documentation landing page for Turin.
 4. `docs/getting-started/harness-cookbook.md`
 5. `docs/reference/hooks.md`
 6. `docs/reference/primitives.md`
+7. `docs/concepts/memory-vs-kv.md`
 
 ### For contributors
 

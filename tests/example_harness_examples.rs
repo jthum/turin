@@ -860,7 +860,9 @@ async fn test_governed_peer_review_example() -> Result<()> {
     assert!(
         wait_for_persisted_session_events(
             &kernel,
-            session.internal_id.expect("main session should have internal id"),
+            session
+                .internal_id
+                .expect("main session should have internal id"),
             &[
                 "governance_grant_issue",
                 "governance_grant_use",
