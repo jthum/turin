@@ -1,6 +1,7 @@
 use crate::harness::globals::HarnessAppData;
 use crate::kernel::event::{AuditEvent, KernelEvent};
 use crate::kernel::governance::{CapabilityDecision, GovernanceSubject};
+use crate::kernel::session_refs::format_session_reference;
 use crate::kernel::session::{PersistedKernelEvent, PersistedKernelRecord};
 use mlua::{Result as LuaResult, Table, Value};
 use std::collections::BTreeMap;
@@ -129,21 +130,30 @@ pub(crate) fn apply_active_grant_ceiling_to_peer_delegation(
 }
 
 pub(crate) fn current_subject(app_data: &HarnessAppData) -> GovernanceSubject {
-    let (module_name, root_name, import_capabilities, grant_id) = app_data
+    let (session_reference, module_name, root_name, import_capabilities, grant_id) = app_data
         .execution_ctx
         .lock()
         .ok()
         .map(|lock| {
+            let session_reference = lock
+                .session_id
+                .as_deref()
+                .map(|session_id| match lock.session_store_selector.as_ref() {
+                    Some(store_selector) => format_session_reference(session_id, store_selector),
+                    None => session_id.to_string(),
+                });
             (
+                session_reference,
                 lock.harness_module.clone(),
                 lock.harness_root.clone(),
                 lock.import_capabilities.clone(),
                 lock.governance_grant.clone(),
             )
         })
-        .unwrap_or((None, None, None, None));
+        .unwrap_or((None, None, None, None, None));
     GovernanceSubject {
         agent_id: Some(current_agent_id(app_data).to_string()),
+        session_reference,
         module_name,
         root_name,
         grant_id,

@@ -74,6 +74,8 @@ pub struct GovernanceSubject {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_reference: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub module_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root_name: Option<String>,
@@ -97,6 +99,8 @@ pub struct GovernanceGrantSnapshot {
     pub grant_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub issued_from_grant_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issuer_session_reference: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub issuer_agent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -467,6 +471,7 @@ impl GovernanceManager {
         let snapshot = GovernanceGrantSnapshot {
             grant_id: grant_id.clone(),
             issued_from_grant_id,
+            issuer_session_reference: subject.session_reference.clone(),
             issuer_agent_id: subject.agent_id.clone(),
             issuer_module_name: subject.module_name.clone(),
             issuer_root_name: subject.root_name.clone(),
@@ -688,6 +693,15 @@ fn ensure_grant_subject_access(
             return Err(format!(
                 "grant '{}' was issued for agent '{}' and cannot be used by agent '{}'",
                 grant.grant_id, grant_agent_id, subject_agent_id
+            ));
+        }
+    }
+    if let Some(grant_session_reference) = grant.issuer_session_reference.as_deref() {
+        let subject_session_reference = subject.session_reference.as_deref().unwrap_or("<unknown>");
+        if subject_session_reference != grant_session_reference {
+            return Err(format!(
+                "grant '{}' was issued for session '{}' and cannot be used by session '{}'",
+                grant.grant_id, grant_session_reference, subject_session_reference
             ));
         }
     }
@@ -1060,6 +1074,7 @@ mod tests {
         });
         let subject = GovernanceSubject {
             agent_id: Some("default".into()),
+            session_reference: None,
             module_name: Some("planner".into()),
             root_name: None,
             grant_id: None,
@@ -1320,5 +1335,56 @@ mod tests {
             )
             .unwrap_err();
         assert!(err.contains("temporary grant"));
+    }
+
+    #[test]
+    fn grants_bound_to_store_qualified_session_reference() {
+        let mgr = GovernanceManager::new(GovernanceConfig {
+            grants: GovernanceGrantsConfig {
+                enabled: true,
+                max_ttl_ms: Some(10_000),
+                require_audit_reason: false,
+            },
+            ..GovernanceConfig::default()
+        });
+        let issuing_subject = GovernanceSubject {
+            agent_id: Some("default".into()),
+            session_reference: Some(
+                "018f1f4f1f4f4f4f8f8f8f8f8f8f8f8f@telegram".into(),
+            ),
+            ..GovernanceSubject::default()
+        };
+
+        let grant = mgr
+            .issue_grant_for_subject(
+                &issuing_subject,
+                BTreeMap::from([("runtime.db.query".into(), true)]),
+                Some(10_000),
+                Some(1),
+                Some("bound".into()),
+            )
+            .unwrap();
+        assert_eq!(
+            grant.issuer_session_reference.as_deref(),
+            issuing_subject.session_reference.as_deref()
+        );
+
+        let same_session = GovernanceSubject {
+            session_reference: issuing_subject.session_reference.clone(),
+            ..issuing_subject.clone()
+        };
+        assert!(mgr
+            .grant_snapshot_for_subject(&same_session, &grant.grant_id)
+            .unwrap()
+            .is_some());
+
+        let different_session = GovernanceSubject {
+            session_reference: Some("018f1f4f1f4f4f4f8f8f8f8f8f8f8f8f@rocketchat".into()),
+            ..issuing_subject
+        };
+        let err = mgr
+            .grant_snapshot_for_subject(&different_session, &grant.grant_id)
+            .unwrap_err();
+        assert!(err.contains("issued for session"));
     }
 }
