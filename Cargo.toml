@@ -67,9 +67,9 @@ turin-channel-fs = { path = "crates/turin-channel-fs" }
 turin-code-index = { path = "crates/turin-code-index" }
 
 # Inference SDK family (unified provider layer)
-inference-sdk-core = { git = "https://github.com/jthum/inference-sdk-rust", rev = "445b269d797aadb16d69a1caf6d4841bec36b415" }
-inference-sdk-registry = { git = "https://github.com/jthum/inference-sdk-rust", rev = "445b269d797aadb16d69a1caf6d4841bec36b415" }
-openai-sdk = { git = "https://github.com/jthum/inference-sdk-rust", rev = "445b269d797aadb16d69a1caf6d4841bec36b415" }
+inference-sdk-core = { git = "https://github.com/jthum/inference-sdk-rust", rev = "473b26f1c9b9e0c1eaa84d15ca728ea987e647fa" }
+inference-sdk-registry = { git = "https://github.com/jthum/inference-sdk-rust", rev = "473b26f1c9b9e0c1eaa84d15ca728ea987e647fa" }
+openai-sdk = { git = "https://github.com/jthum/inference-sdk-rust", rev = "473b26f1c9b9e0c1eaa84d15ca728ea987e647fa" }
 
 # MCP SDK
 mcp-sdk = { git = "https://github.com/jthum/mcp-sdk-rust", rev = "3c5e0d3078f68d020d1617f3bac2b447bb9df478" }
@@ -140,9 +140,3 @@ lto = true          # Enable Link Time Optimization
 codegen-units = 1   # Reduce parallel codegen to improve optimization
 panic = "abort"     # Remove panic unwinding to save space
 strip = true        # Automatically strip symbols from binary
-
-[patch."https://github.com/jthum/inference-sdk-rust"]
-inference-sdk-core = { path = "vendor/inference-sdk-rust/core" }
-inference-sdk-registry = { path = "vendor/inference-sdk-rust/registry" }
-openai-sdk = { path = "vendor/inference-sdk-rust/openai" }
-anthropic-sdk = { path = "vendor/inference-sdk-rust/anthropic" }
