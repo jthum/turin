@@ -15,7 +15,8 @@ Current scope:
 - WhatsApp linked-device login through QR pairing
 - headless pairing-code login when a phone number is provided
 - inbound text messages
-- outbound text replies
+- inbound media downloads into Turin-managed local storage
+- outbound text replies and local file uploads
 - direct messages and group chats
 - `user` and `room` session scopes
 - personal-account safety defaults
@@ -23,7 +24,6 @@ Current scope:
 Current non-goals:
 
 - WhatsApp Cloud API
-- media and attachments
 - threads
 - streaming previews
 
@@ -199,7 +199,8 @@ You normally do not need to set that path yourself unless you want to pin it som
 
 ## 7. Operational Notes
 
-- The adapter is text-only right now.
+- Inbound media is downloaded into Turin-managed local storage and forwarded as attachment refs.
+- Outbound media currently requires `local_path`; plain remote URLs are not uploaded directly.
 - Self-originated messages are ignored to avoid obvious self-reply loops.
 - Personal mode is intentionally conservative; if you remove the trigger prefix, Turin becomes much easier to trigger accidentally.
 - If you want the cleanest experience, use a dedicated number. If you want the most convenient personal setup, use a private group with the default `/turin` prefix.

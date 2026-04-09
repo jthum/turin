@@ -10,7 +10,7 @@ Current scope:
 - generic file references
 - durable local storage for inbound media
 - session-history persistence and restore for those refs
-- channel ingress on adapters that already expose attachments
+- channel ingress and outbound delivery on adapters that implement attachments
 
 Not in scope yet:
 
@@ -65,17 +65,26 @@ That means images are first-class in supported providers now, while generic file
 
 End-to-end attachment support currently depends on the adapter:
 
-- Discord: inbound attachments are forwarded into Turin task content, and outbound local file attachments are supported through the structured outbound envelope
+- Discord: inbound attachments are forwarded into Turin task content, and outbound local file attachments are supported
 - FS channel: inbound and outbound attachment refs are supported
 - Rocket.Chat: inbound attachment refs exist, but outbound file upload is not implemented yet
-- Telegram: text-only at runtime today
-- WhatsApp: text-only at runtime today
+- Telegram: inbound image/document/video/audio/voice attachments are downloaded into managed local storage, and outbound image/document attachments are uploaded through the Telegram Bot API
+- WhatsApp: inbound media attachments are downloaded into managed local storage, and outbound local file attachments are uploaded through the linked-device session
 
-So for Phase 1, the supported attachment channels are Discord and FS.
+Current limitations:
+
+- Telegram outbound uploads currently map images to `sendPhoto` and everything else to `sendDocument`
+- WhatsApp outbound uploads currently require `local_path`; plain remote URLs are not uploaded directly
+- Rocket.Chat still has no outbound file-upload path
 
 ## Outbound Attachments
 
-Outbound channel payloads still use the structured envelope:
+Outbound channel attachments can come from either:
+
+- the explicit structured envelope
+- assistant content parts (`text`, `image`, `file`) returned by Turin itself
+
+The structured envelope still takes precedence when you need channel-specific control:
 
 ```json
 {
@@ -91,6 +100,6 @@ Outbound channel payloads still use the structured envelope:
 }
 ```
 
-Turin passes those attachments through only on adapters that implement outbound file delivery.
+If no structured envelope is present, the channel runner now automatically maps assistant content parts into outbound blocks and attachments on adapters that implement outbound file delivery.
 
-This is distinct from provider-side multimodal input. Phase 1 lets channels send attachments into Turin task content on supported adapters, but outbound channel media still uses the explicit structured envelope instead of automatically converting arbitrary assistant content parts into channel uploads.
+This is distinct from provider-side multimodal input. Phase 1 lets channels send attachments into Turin task content on supported adapters and can also map assistant attachment parts back into channel uploads where the adapter supports them.

@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Cursor;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -13,20 +14,21 @@ use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, watch};
 use tracing::{info, warn};
 use turin_channel_core::{
-    ChannelAdapterManifest, ChannelAuthFlow, ChannelAuthFlowDisplay, ChannelAuthFlowKind,
-    ChannelAuthFlowPollRequest, ChannelAuthFlowPollResponse, ChannelAuthFlowResolvedValue,
-    ChannelAuthFlowStartRequest, ChannelAuthFlowStartResponse, ChannelCapabilities,
-    ChannelConfigField, ChannelConfigFieldOption, ChannelConfigTarget, ChannelConfigTargetKind,
-    ChannelConversationKey, ChannelFieldVisibilityRule, ChannelIdentitySelectors,
-    ChannelInstallManifest, ChannelKind, ChannelMessageRef, ChannelRuntimeCapabilities,
-    ChannelRuntimeManifest, ChannelSessionScope, ChannelSetupManifest, ChannelUser,
-    DEFAULT_MAX_INBOUND_TEXT_CHARS, InboundEvent, OutboundMessage, bound_inbound_text,
+    ChannelAdapterManifest, ChannelAttachment, ChannelAuthFlow, ChannelAuthFlowDisplay,
+    ChannelAuthFlowKind, ChannelAuthFlowPollRequest, ChannelAuthFlowPollResponse,
+    ChannelAuthFlowResolvedValue, ChannelAuthFlowStartRequest, ChannelAuthFlowStartResponse,
+    ChannelCapabilities, ChannelConfigField, ChannelConfigFieldOption, ChannelConfigTarget,
+    ChannelConfigTargetKind, ChannelConversationKey, ChannelFieldVisibilityRule,
+    ChannelIdentitySelectors, ChannelInstallManifest, ChannelKind, ChannelMessageRef,
+    ChannelRuntimeCapabilities, ChannelRuntimeManifest, ChannelSessionScope, ChannelSetupManifest,
+    ChannelUser, DEFAULT_MAX_INBOUND_TEXT_CHARS, InboundEvent, OutboundMessage, bound_inbound_text,
 };
 use turin_channel_runner::ChannelDriver;
 use uuid::Uuid;
 use whatsapp_rust::Jid;
 use whatsapp_rust::TokioRuntime;
 use whatsapp_rust::bot::{Bot, BotHandle};
+use whatsapp_rust::download::{Downloadable, MediaType};
 use whatsapp_rust::pair_code::PairCodeOptions;
 use whatsapp_rust::proto_helpers::MessageExt;
 use whatsapp_rust::store::SqliteStore;
@@ -55,6 +57,7 @@ pub struct WhatsAppChannelDriverConfig {
     account_mode: WhatsAppAccountMode,
     pub session_scope: ChannelSessionScope,
     pub session_store_path: PathBuf,
+    media_dir: PathBuf,
     max_inbound_text_chars: usize,
     trigger_prefix: Option<String>,
     allowed_chats: Vec<String>,
@@ -152,7 +155,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                 dm: true,
                 groups: true,
                 threads: false,
-                attachments: false,
+                attachments: true,
                 streaming: false,
             },
             identity_selectors: ChannelIdentitySelectors {
@@ -686,13 +689,13 @@ impl WhatsAppChannelDriver {
         })
     }
 
-    fn message_to_event(
+    async fn message_to_event(
         &self,
         message: Box<wa::Message>,
         info: MessageInfo,
-    ) -> Option<InboundEvent> {
+    ) -> Result<Option<InboundEvent>> {
         if info.source.is_from_me || info.source.chat.to_string() == "status@broadcast" {
-            return None;
+            return Ok(None);
         }
 
         let chat_id = info.source.chat.to_string();
@@ -701,14 +704,31 @@ impl WhatsAppChannelDriver {
             &self.config.allowed_chats,
             &self.config.banned_chats,
         ) {
-            return None;
+            return Ok(None);
         }
 
-        let text = inbound_text(
-            message.text_content()?,
-            self.config.account_mode,
-            self.config.trigger_prefix.as_deref(),
-        )?;
+        let base_message = message.get_base_message();
+        let attachments: Vec<ChannelAttachment> = self
+            .collect_inbound_attachments(base_message, &info.id)
+            .await?;
+        let raw_text = message.text_content().or_else(|| message.get_caption());
+        let text = match raw_text {
+            Some(text) => match inbound_text(
+                text,
+                self.config.account_mode,
+                self.config.trigger_prefix.as_deref(),
+            ) {
+                Some(value) => value,
+                None => return Ok(None),
+            },
+            None if attachments.is_empty() => return Ok(None),
+            None if matches!(self.config.account_mode, WhatsAppAccountMode::Personal)
+                && self.config.trigger_prefix.is_some() =>
+            {
+                return Ok(None);
+            }
+            None => String::new(),
+        };
         let sender_id = info.source.sender.to_string();
         let thread_id = match self.config.session_scope {
             ChannelSessionScope::User if info.source.is_group => {
@@ -733,7 +753,7 @@ impl WhatsAppChannelDriver {
         metadata.insert("is_group".to_string(), Value::Bool(info.source.is_group));
         let text = bound_inbound_text(text, &mut metadata, self.config.max_inbound_text_chars);
 
-        Some(InboundEvent {
+        Ok(Some(InboundEvent {
             message: ChannelMessageRef {
                 conversation: conversation.clone(),
                 message_id: info.id,
@@ -746,9 +766,167 @@ impl WhatsAppChannelDriver {
             },
             session_scope: self.config.session_scope,
             text,
-            attachments: vec![],
+            attachments,
             metadata,
+        }))
+    }
+
+    async fn collect_inbound_attachments(
+        &self,
+        message: &wa::Message,
+        message_id: &str,
+    ) -> Result<Vec<ChannelAttachment>> {
+        fs::create_dir_all(&self.config.media_dir).with_context(|| {
+            format!(
+                "Failed to create WhatsApp media directory '{}'",
+                self.config.media_dir.display()
+            )
+        })?;
+
+        let mut attachments = Vec::new();
+        if let Some(image) = &message.image_message {
+            attachments.push(
+                self.download_whatsapp_attachment(
+                    &**image,
+                    message_id,
+                    image.mimetype.clone(),
+                    image_name(image, message_id),
+                )
+                .await?,
+            );
+        }
+        if let Some(document) = &message.document_message {
+            attachments.push(
+                self.download_whatsapp_attachment(
+                    &**document,
+                    message_id,
+                    document.mimetype.clone(),
+                    document_name(document, message_id),
+                )
+                .await?,
+            );
+        }
+        if let Some(video) = &message.video_message {
+            attachments.push(
+                self.download_whatsapp_attachment(
+                    &**video,
+                    message_id,
+                    video.mimetype.clone(),
+                    format!("video-{message_id}.mp4"),
+                )
+                .await?,
+            );
+        }
+        if let Some(audio) = &message.audio_message {
+            attachments.push(
+                self.download_whatsapp_attachment(
+                    &**audio,
+                    message_id,
+                    audio.mimetype.clone(),
+                    format!("audio-{message_id}.ogg"),
+                )
+                .await?,
+            );
+        }
+        Ok(attachments)
+    }
+
+    async fn download_whatsapp_attachment<D: Downloadable>(
+        &self,
+        media: &D,
+        message_id: &str,
+        content_type: Option<String>,
+        suggested_name: String,
+    ) -> Result<ChannelAttachment> {
+        let mut data = Cursor::new(Vec::new());
+        self.client
+            .download_to_file(media, &mut data)
+            .await
+            .context("Failed to download WhatsApp media attachment")?;
+        let target_path = self.config.media_dir.join(format!(
+            "{}-{}",
+            Uuid::new_v4(),
+            sanitize_component(&suggested_name)
+        ));
+        fs::write(&target_path, data.into_inner()).with_context(|| {
+            format!(
+                "Failed to write WhatsApp media attachment '{}'",
+                target_path.display()
+            )
+        })?;
+        let final_name = if Path::new(&suggested_name).extension().is_some() {
+            suggested_name
+        } else {
+            infer_media_name(message_id, content_type.as_deref(), &suggested_name)
+        };
+        Ok(ChannelAttachment {
+            name: final_name,
+            content_type,
+            url: None,
+            local_path: Some(target_path.display().to_string()),
         })
+    }
+}
+
+impl WhatsAppChannelDriver {
+    async fn send_attachment(
+        &self,
+        chat: Jid,
+        attachment: &turin_channel_core::ChannelAttachment,
+    ) -> Result<()> {
+        let local_path = attachment.local_path.as_deref().ok_or_else(|| {
+            anyhow!(
+                "[whatsapp_send_missing_attachment_source] attachment '{}' is missing local_path",
+                attachment.name
+            )
+        })?;
+        let bytes = fs::read(local_path)
+            .with_context(|| format!("Failed to read WhatsApp attachment '{}'", local_path))?;
+        let media_type = whatsapp_media_type(attachment.content_type.as_deref());
+        let upload = self
+            .client
+            .upload(bytes, media_type)
+            .await
+            .context("Failed to upload WhatsApp attachment")?;
+        let mime_type = attachment
+            .content_type
+            .clone()
+            .or_else(|| whatsapp_default_mime_type(media_type).map(str::to_string));
+        let message = match media_type {
+            MediaType::Image => wa::Message {
+                image_message: Some(Box::new(wa::message::ImageMessage {
+                    mimetype: mime_type,
+                    url: Some(upload.url),
+                    direct_path: Some(upload.direct_path),
+                    media_key: Some(upload.media_key),
+                    file_enc_sha256: Some(upload.file_enc_sha256),
+                    file_sha256: Some(upload.file_sha256),
+                    file_length: Some(upload.file_length),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+            _ => wa::Message {
+                document_message: Some(Box::new(wa::message::DocumentMessage {
+                    mimetype: mime_type,
+                    title: Some(attachment.name.clone()),
+                    file_name: Some(attachment.name.clone()),
+                    url: Some(upload.url),
+                    direct_path: Some(upload.direct_path),
+                    media_key: Some(upload.media_key),
+                    file_enc_sha256: Some(upload.file_enc_sha256),
+                    file_sha256: Some(upload.file_sha256),
+                    file_length: Some(upload.file_length),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+        };
+        self.client
+            .send_message(chat, message)
+            .await
+            .context("Failed to send WhatsApp attachment")?;
+        Ok(())
     }
 }
 
@@ -779,7 +957,7 @@ impl ChannelDriver for WhatsAppChannelDriver {
         ChannelCapabilities {
             rich_formatting: false,
             threads: false,
-            attachments: false,
+            attachments: true,
             ephemeral_messages: false,
         }
     }
@@ -795,7 +973,7 @@ impl ChannelDriver for WhatsAppChannelDriver {
                 maybe_event = self.event_rx.recv() => {
                     match maybe_event {
                         Some(DriverEvent::Message(message, info)) => {
-                            if let Some(event) = self.message_to_event(message, *info) {
+                            if let Some(event) = self.message_to_event(message, *info).await? {
                                 return Ok(Some(event));
                             }
                         }
@@ -825,19 +1003,21 @@ impl ChannelDriver for WhatsAppChannelDriver {
             .parse()
             .with_context(|| format!("Invalid WhatsApp chat JID '{room_id}'"))?;
         let rendered = render_whatsapp_message(&message);
-        if rendered.trim().is_empty() {
-            return Ok(());
+        if !rendered.trim().is_empty() {
+            self.client
+                .send_message(
+                    chat.clone(),
+                    wa::Message {
+                        conversation: Some(rendered),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .context("Failed to send WhatsApp message")?;
         }
-        self.client
-            .send_message(
-                chat,
-                wa::Message {
-                    conversation: Some(rendered),
-                    ..Default::default()
-                },
-            )
-            .await
-            .context("Failed to send WhatsApp message")?;
+        for attachment in &message.attachments {
+            self.send_attachment(chat.clone(), attachment).await?;
+        }
         Ok(())
     }
 
@@ -907,10 +1087,18 @@ fn parse_settings(
     };
 
     Ok(WhatsAppChannelDriverConfig {
-        workspace_id,
+        workspace_id: workspace_id.clone(),
         account_mode,
         session_scope,
         session_store_path,
+        media_dir: runtime_dir.map(|dir| dir.join("media")).unwrap_or_else(|| {
+            std::env::temp_dir()
+                .join("turin")
+                .join("channels")
+                .join("whatsapp")
+                .join(sanitize_component(&workspace_id))
+                .join("media")
+        }),
         max_inbound_text_chars,
         trigger_prefix,
         allowed_chats,
@@ -1125,6 +1313,62 @@ fn render_whatsapp_message(message: &OutboundMessage) -> String {
         }
     }
     parts.join("\n\n")
+}
+
+fn image_name(message: &wa::message::ImageMessage, message_id: &str) -> String {
+    let extension = content_type_extension(message.mimetype.as_deref()).unwrap_or("jpg");
+    format!("image-{message_id}.{extension}")
+}
+
+fn document_name(message: &wa::message::DocumentMessage, message_id: &str) -> String {
+    message
+        .file_name
+        .clone()
+        .or_else(|| message.title.clone())
+        .unwrap_or_else(|| {
+            let extension = content_type_extension(message.mimetype.as_deref()).unwrap_or("bin");
+            format!("document-{message_id}.{extension}")
+        })
+}
+
+fn infer_media_name(message_id: &str, content_type: Option<&str>, fallback_stem: &str) -> String {
+    if let Some(extension) = content_type_extension(content_type) {
+        format!("{fallback_stem}.{extension}")
+    } else {
+        format!("{fallback_stem}-{message_id}")
+    }
+}
+
+fn content_type_extension(content_type: Option<&str>) -> Option<&'static str> {
+    match content_type.unwrap_or_default() {
+        "image/jpeg" => Some("jpg"),
+        "image/png" => Some("png"),
+        "image/webp" => Some("webp"),
+        "application/pdf" => Some("pdf"),
+        "video/mp4" => Some("mp4"),
+        "audio/mpeg" => Some("mp3"),
+        "audio/ogg" => Some("ogg"),
+        _ => None,
+    }
+}
+
+fn whatsapp_media_type(content_type: Option<&str>) -> MediaType {
+    match content_type.unwrap_or_default() {
+        value if value.starts_with("image/") => MediaType::Image,
+        value if value.starts_with("audio/") => MediaType::Audio,
+        value if value.starts_with("video/") => MediaType::Video,
+        _ => MediaType::Document,
+    }
+}
+
+fn whatsapp_default_mime_type(media_type: MediaType) -> Option<&'static str> {
+    match media_type {
+        MediaType::Image => Some("image/jpeg"),
+        MediaType::Video => Some("video/mp4"),
+        MediaType::Audio => Some("audio/ogg"),
+        MediaType::Document => Some("application/octet-stream"),
+        _ => None,
+    }
 }
 
 fn inbound_text(
@@ -1346,6 +1590,7 @@ mod tests {
     fn adapter_manifest_is_valid() {
         let manifest = adapter_manifest();
         assert_eq!(manifest.kind, "whatsapp");
+        assert!(manifest.runtime.capabilities.attachments);
         manifest.validate().expect("valid manifest");
         let setup = manifest.setup.expect("setup manifest");
         assert_eq!(setup.auth_flows.len(), 1);
@@ -1375,6 +1620,7 @@ mod tests {
             config.max_inbound_text_chars,
             DEFAULT_MAX_INBOUND_TEXT_CHARS
         );
+        assert_eq!(config.media_dir, temp.path().join("media"));
     }
 
     #[test]

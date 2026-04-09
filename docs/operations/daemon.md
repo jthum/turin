@@ -464,7 +464,7 @@ turin daemon channel update telegram-ops \
 
 - uses a WhatsApp linked-device session for inbound and outbound traffic
 - supports QR pairing by default and pairing-code auth for headless servers
-- accepts inbound text messages and sends outbound text replies
+- accepts inbound text and media messages and sends outbound text replies plus local file uploads
 - supports direct messages and group chats
 - common settings:
   - `account_mode` (`personal` default, or `dedicated`)
@@ -481,7 +481,9 @@ turin daemon channel update telegram-ops \
   - self-originated messages are ignored
   - personal mode defaults `trigger_prefix` to `/turin` when unset
   - dedicated mode does not force a prefix
-  - text only; attachments and streaming are not implemented yet
+  - inbound media is downloaded into managed local storage and forwarded as attachment refs
+  - outbound media currently requires `local_path`; remote URLs are not uploaded directly
+  - streaming previews are not implemented yet
 
 When a channel is `enabled`, the daemon owns the runtime lifecycle:
 - `channel.status <id>` reports live runtime status (`starting`, `running`, `stopped`, `failed`, `unsupported`)
@@ -532,6 +534,8 @@ Telegram runtime behavior notes:
 - `stream_mode = block` streams less frequently than `draft`, using chunkier preview updates.
 - `stream_thinking = true` lets `draft`/`block` previews include streamed model thinking when the provider emits thinking deltas.
 - `persist_thinking = true` includes captured thinking in the final Telegram reply as a separate preformatted block.
+- inbound Telegram media is downloaded into managed local storage and forwarded as attachment refs
+- outbound image/document attachments are uploaded through `sendPhoto` / `sendDocument`
 
 Telegram outbound metadata keys:
 
@@ -558,6 +562,10 @@ To emit rich outbound payloads from task output, return a JSON envelope with
   ]
 }
 ```
+
+If no structured envelope is present, the channel runner also maps assistant content parts
+(`text`, `image`, `file`) into outbound channel payloads automatically on adapters that
+implement attachment delivery.
 
 For Phase 1 multimodal task input, attachment persistence, and the current provider/channel support matrix, see `docs/guides/multimodal.md`.
 
