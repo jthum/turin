@@ -153,6 +153,11 @@ struct StructuredOutputProvider {
     seen_response_format: Arc<Mutex<Option<InferenceResponseFormat>>>,
 }
 
+struct PromptStructuredFallbackProvider {
+    seen_system_prompt: Arc<Mutex<Option<String>>>,
+    seen_response_format: Arc<Mutex<Option<InferenceResponseFormat>>>,
+}
+
 #[async_trait]
 impl InferenceProvider for StructuredOutputProvider {
     fn supports_response_format(&self, response_format: &InferenceResponseFormat) -> bool {
@@ -198,6 +203,69 @@ impl InferenceProvider for StructuredOutputProvider {
                     role: "assistant".to_string(),
                     model: "structured-model".to_string(),
                     provider_id: "structured".to_string(),
+                }),
+                Ok(InferenceEvent::MessageDelta {
+                    content: "MAIN TURN".to_string(),
+                }),
+                Ok(InferenceEvent::MessageEnd {
+                    input_tokens: 4,
+                    output_tokens: 2,
+                    stop_reason: None,
+                }),
+            ]);
+            Ok(Box::pin(stream) as InferenceStream)
+        })
+    }
+}
+
+#[async_trait]
+impl InferenceProvider for PromptStructuredFallbackProvider {
+    fn complete<'a>(
+        &'a self,
+        request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceResult, SdkError>> {
+        {
+            let mut seen_system = self
+                .seen_system_prompt
+                .lock()
+                .expect("structured fallback system mutex poisoned");
+            *seen_system = request.system.clone();
+        }
+        {
+            let mut seen_response_format = self
+                .seen_response_format
+                .lock()
+                .expect("structured fallback response format mutex poisoned");
+            *seen_response_format = request.response_format.clone();
+        }
+
+        Box::pin(async move {
+            Ok(InferenceResult {
+                content: vec![turin::inference::provider::InferenceContent::Text {
+                    text: r#"{"decision":"fallback","confidence":0.8}"#.to_string(),
+                }],
+                model: "fallback-model".to_string(),
+                stop_reason: None,
+                usage: Usage {
+                    input_tokens: 10,
+                    output_tokens: 4,
+                },
+            })
+        })
+    }
+
+    fn stream<'a>(
+        &'a self,
+        _request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+        Box::pin(async move {
+            let stream = futures::stream::iter(vec![
+                Ok(InferenceEvent::MessageStart {
+                    role: "assistant".to_string(),
+                    model: "fallback-model".to_string(),
+                    provider_id: "fallback".to_string(),
                 }),
                 Ok(InferenceEvent::MessageDelta {
                     content: "MAIN TURN".to_string(),
@@ -524,6 +592,90 @@ async fn test_on_turn_prepare_structured_output_uses_native_response_format() ->
         }
         other => panic!("expected json_schema response format, got {other:?}"),
     }
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_on_turn_prepare_structured_output_falls_back_to_prompt_and_validate() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir_all(&harness_dir)?;
+    std::fs::write(
+        harness_dir.join("structured_fallback.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local result = ctx:structured({
+                    prompt = "Classify this",
+                    name = "classification_result",
+                    description = "Classify the request for routing",
+                    schema = {
+                        type = "object",
+                        properties = {
+                            decision = { type = "string", enum = { "fallback", "ignore" } },
+                            confidence = { type = "number" },
+                        },
+                        required = { "decision", "confidence" },
+                        additionalProperties = false,
+                    },
+                })
+
+                if result.decision ~= "fallback" then
+                    error("expected fallback decision from structured result")
+                end
+
+                if result.confidence ~= 0.8 then
+                    error("expected structured confidence to round-trip")
+                end
+
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut config = make_config(tmp.path());
+    config.harness.directory = harness_dir.to_string_lossy().to_string();
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let seen_system_prompt = Arc::new(Mutex::new(None));
+    let seen_response_format = Arc::new(Mutex::new(None));
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(
+            "mock",
+            Arc::new(PromptStructuredFallbackProvider {
+                seen_system_prompt: Arc::clone(&seen_system_prompt),
+                seen_response_format: Arc::clone(&seen_response_format),
+            }),
+        ),
+    );
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Use structured output".to_string()))
+        .await?;
+
+    let seen_system = seen_system_prompt
+        .lock()
+        .expect("structured fallback system mutex poisoned")
+        .clone()
+        .expect("fallback system prompt should have been recorded");
+    assert!(seen_system.contains("Return a single valid JSON value"));
+    assert!(seen_system.contains("Schema name: classification_result"));
+    assert!(seen_system.contains("Classify the request for routing"));
+
+    let seen_response_format = seen_response_format
+        .lock()
+        .expect("structured fallback response format mutex poisoned")
+        .clone();
+    assert!(
+        seen_response_format.is_none(),
+        "fallback path should not send a native response format"
+    );
 
     kernel.end_session(&mut session).await?;
     Ok(())
