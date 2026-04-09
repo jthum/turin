@@ -334,7 +334,8 @@ fn estimate_attachment_reference_tokens(
     url: Option<&str>,
     local_path: Option<&str>,
 ) -> u32 {
-    name.map(estimate_text_tokens).unwrap_or(0)
+    name.map(estimate_text_tokens)
+        .unwrap_or(0)
         .saturating_add(content_type.map(estimate_text_tokens).unwrap_or(0))
         .saturating_add(url.map(estimate_text_tokens).unwrap_or(0))
         .saturating_add(local_path.map(estimate_text_tokens).unwrap_or(0))

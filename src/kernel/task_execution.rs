@@ -13,6 +13,7 @@ use crate::kernel::harness_hooks::TokenUsageHookAction;
 use crate::kernel::session::{QueuedTask, SessionState};
 use crate::kernel::turn;
 use crate::tools::ToolContext;
+use turin_types::layout::{DEFAULT_LAYOUT_ROOT, resolve_relative_to};
 
 impl ExecutionHost {
     /// Execute a single task (one specific prompt) within the persistent session.
@@ -83,7 +84,21 @@ impl ExecutionHost {
     }
 
     fn managed_media_dir(&self) -> PathBuf {
-        PathBuf::from(&self.config.layout.data_dir).join("media")
+        let data_dir = PathBuf::from(&self.config.layout.data_dir);
+        if data_dir.is_absolute() {
+            return data_dir.join("media");
+        }
+
+        let workspace_root = PathBuf::from(&self.config.kernel.workspace_root);
+        let layout_root = self
+            .config
+            .layout
+            .root
+            .as_deref()
+            .map(std::path::Path::new)
+            .map(|root| resolve_relative_to(&workspace_root, root))
+            .unwrap_or_else(|| workspace_root.join(DEFAULT_LAYOUT_ROOT));
+        layout_root.join(data_dir).join("media")
     }
 
     fn append_task_user_message(&self, session: &mut SessionState, content: &[InferenceContent]) {
@@ -94,7 +109,11 @@ impl ExecutionHost {
         });
     }
 
-    async fn persist_task_user_message(&self, session: &SessionState, content: &[InferenceContent]) {
+    async fn persist_task_user_message(
+        &self,
+        session: &SessionState,
+        content: &[InferenceContent],
+    ) {
         if let Ok(store) = self.store_manager.open(&session.store_selector).await {
             if let Some(iid) = session.internal_id {
                 let _guard = session.persistence_lock.lock().await;

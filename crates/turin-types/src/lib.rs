@@ -1,8 +1,8 @@
 pub mod content;
 pub mod layout;
 
-use serde::{Deserialize, Serialize};
 pub use content::TaskInputContent;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]

@@ -171,13 +171,15 @@ async fn materialize_attachment(
     let target_path = media_root.join(target_name);
 
     if let Some(source_path) = local_path {
-        tokio::fs::copy(source_path, &target_path).await.with_context(|| {
-            format!(
-                "Failed to copy attachment '{}' to '{}'",
-                source_path,
-                target_path.display()
-            )
-        })?;
+        tokio::fs::copy(source_path, &target_path)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to copy attachment '{}' to '{}'",
+                    source_path,
+                    target_path.display()
+                )
+            })?;
         return Ok(MaterializedAttachment {
             local_path: target_path.display().to_string(),
             content_type: content_type.clone(),
@@ -199,9 +201,9 @@ async fn materialize_attachment(
             .bytes()
             .await
             .with_context(|| format!("Failed to read attachment body '{}'", url))?;
-        tokio::fs::write(&target_path, &bytes).await.with_context(|| {
-            format!("Failed to write attachment '{}'", target_path.display())
-        })?;
+        tokio::fs::write(&target_path, &bytes)
+            .await
+            .with_context(|| format!("Failed to write attachment '{}'", target_path.display()))?;
         return Ok(MaterializedAttachment {
             local_path: target_path.display().to_string(),
             content_type: fetched_content_type.or_else(|| content_type.clone()),

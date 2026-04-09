@@ -961,7 +961,15 @@ async fn test_multimodal_task_content_persists_and_restores() -> Result<()> {
         other => panic!("expected image content, got {other:?}"),
     };
     assert!(std::path::Path::new(&captured_image_path).exists());
-    assert!(captured_image_path.contains("/media/"));
+    assert!(
+        captured_image_path.starts_with(
+            tmp.path()
+                .join(".turin/data/media")
+                .to_string_lossy()
+                .as_ref()
+        ),
+        "captured image should be stored under the workspace media dir: {captured_image_path}"
+    );
 
     let captured_file_path = match &user_message.content[2] {
         turin::inference::provider::InferenceContent::File { local_path, .. } => {
@@ -970,6 +978,15 @@ async fn test_multimodal_task_content_persists_and_restores() -> Result<()> {
         other => panic!("expected file content, got {other:?}"),
     };
     assert!(std::path::Path::new(&captured_file_path).exists());
+    assert!(
+        captured_file_path.starts_with(
+            tmp.path()
+                .join(".turin/data/media")
+                .to_string_lossy()
+                .as_ref()
+        ),
+        "captured file should be stored under the workspace media dir: {captured_file_path}"
+    );
 
     kernel.end_session(&mut session).await?;
 
@@ -998,6 +1015,82 @@ async fn test_multimodal_task_content_persists_and_restores() -> Result<()> {
             ..
         } if name == "spec.pdf" && path == &captured_file_path
     ));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_multimodal_task_content_respects_relative_layout_root() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut config = make_config(tmp.path());
+    config.layout.root = Some("runtime-data".to_string());
+    config.agent.provider = "capture".to_string();
+    config.agent.model = "capture-model".to_string();
+    config.providers.insert(
+        "capture".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+
+    let seen_messages = Arc::new(Mutex::new(Vec::new()));
+    kernel.add_client(
+        "capture".to_string(),
+        ProviderClient::new(
+            "capture",
+            Arc::new(CaptureMessagesProvider {
+                seen_messages: Arc::clone(&seen_messages),
+            }),
+        ),
+    );
+
+    let source_image = tmp.path().join("diagram.png");
+    std::fs::write(&source_image, [1_u8, 2, 3, 4])?;
+
+    let mut session = kernel.create_session().await;
+    let mut task = QueuedTask::ad_hoc("[attachments]");
+    task.content = Some(vec![TaskInputContent::Image {
+        name: Some("diagram.png".to_string()),
+        content_type: Some("image/png".to_string()),
+        url: None,
+        local_path: Some(source_image.display().to_string()),
+        detail: None,
+    }]);
+    session.queue.lock().await.push_back(task);
+
+    kernel.run(&mut session, None).await?;
+
+    let seen = seen_messages
+        .lock()
+        .expect("capture messages mutex poisoned")
+        .clone();
+    let user_message = seen
+        .iter()
+        .rev()
+        .find(|message| message.role == turin::inference::provider::InferenceRole::User)
+        .expect("captured user message");
+
+    let captured_image_path = match &user_message.content[0] {
+        turin::inference::provider::InferenceContent::Image { local_path, .. } => {
+            local_path.clone().expect("captured image local_path")
+        }
+        other => panic!("expected image content, got {other:?}"),
+    };
+    assert!(
+        captured_image_path.starts_with(
+            tmp.path()
+                .join("runtime-data/data/media")
+                .to_string_lossy()
+                .as_ref()
+        ),
+        "captured image should respect the relative layout root: {captured_image_path}"
+    );
 
     Ok(())
 }

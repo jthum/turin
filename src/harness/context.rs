@@ -4,9 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use crate::harness::globals::block_on_current;
-use crate::inference::content::{
-    infer_prompt_from_messages, replace_user_text_content,
-};
+use crate::inference::content::{infer_prompt_from_messages, replace_user_text_content};
 use crate::inference::provider::{InferenceMessage, ProviderClient};
 use crate::inference::structured::{
     fallback_system_prompt, parse_and_validate_json_response, response_format_for_schema,
