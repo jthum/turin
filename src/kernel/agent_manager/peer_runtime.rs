@@ -5,7 +5,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::harness::verdict::Verdict;
-use crate::inference::content::summarize_content_for_display;
+use crate::inference::content::{
+    summarize_content_for_display, task_output_content_from_inference,
+};
 use crate::inference::provider::InferenceRole;
 use crate::kernel::TaskExecutionResult;
 use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
@@ -41,6 +43,7 @@ pub(super) struct PeerRunOutcome {
     pub(super) status: TaskTerminalStatus,
     pub(super) task_turn_count: u32,
     pub(super) output: Option<String>,
+    pub(super) assistant_content: Option<Vec<turin_types::TaskInputContent>>,
 }
 
 impl PeerRuntime {
@@ -114,6 +117,7 @@ impl PeerRuntime {
                     status: ok.status,
                     task_turn_count: ok.task_turn_count,
                     output: ok.output,
+                    assistant_content: ok.assistant_content,
                     error: None,
                 },
                 Err(e) => PeerAgentTaskResult {
@@ -125,6 +129,7 @@ impl PeerRuntime {
                     status: TaskTerminalStatus::Error,
                     task_turn_count: 0,
                     output: None,
+                    assistant_content: None,
                     error: Some(e.to_string()),
                 },
             };
@@ -230,6 +235,7 @@ impl PeerRuntime {
                         status: TaskTerminalStatus::Rejected,
                         task_turn_count: 0,
                         output: None,
+                        assistant_content: None,
                     });
                 }
                 Verdict::Modify(val) => {
@@ -263,6 +269,7 @@ impl PeerRuntime {
                         status: TaskTerminalStatus::Rejected,
                         task_turn_count: 0,
                         output: None,
+                        assistant_content: None,
                     });
                 }
                 Verdict::Allow => {}
@@ -301,12 +308,13 @@ impl PeerRuntime {
                             )
                             .await?;
                         if recovered {
-                            return Ok(PeerRunOutcome {
-                                runtime_task_id: task.task_id,
-                                status: TaskTerminalStatus::Error,
-                                task_turn_count: 0,
-                                output: None,
-                            });
+                        return Ok(PeerRunOutcome {
+                            runtime_task_id: task.task_id,
+                            status: TaskTerminalStatus::Error,
+                            task_turn_count: 0,
+                            output: None,
+                            assistant_content: None,
+                        });
                         }
                         return Err(e);
                     }
@@ -319,6 +327,7 @@ impl PeerRuntime {
                 status: run_result.status,
                 task_turn_count: run_result.task_turn_count,
                 output,
+                assistant_content: self.last_assistant_content(),
             })
         }
         .await;
@@ -336,6 +345,20 @@ impl PeerRuntime {
                 None
             } else {
                 Some(summary)
+            }
+        })
+    }
+
+    fn last_assistant_content(&self) -> Option<Vec<turin_types::TaskInputContent>> {
+        self.session.history.iter().rev().find_map(|msg| {
+            if msg.role != InferenceRole::Assistant {
+                return None;
+            }
+            let content = task_output_content_from_inference(&msg.content);
+            if content.is_empty() {
+                None
+            } else {
+                Some(content)
             }
         })
     }

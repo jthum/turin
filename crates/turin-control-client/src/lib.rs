@@ -265,6 +265,8 @@ pub struct TaskStatus {
     pub status: Option<String>,
     pub task_turn_count: Option<u32>,
     pub output: Option<String>,
+    #[serde(default)]
+    pub assistant_content: Option<Vec<turin_types::TaskInputContent>>,
     pub error: Option<String>,
 }
 

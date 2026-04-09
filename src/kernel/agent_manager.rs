@@ -23,6 +23,7 @@ use crate::tools::registry::ToolRegistry;
 use tokio::sync::{Notify, RwLock, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use turin_types::TaskInputContent;
 
 pub(crate) type SessionEventRecord = (Option<i64>, KernelEvent);
 pub(crate) type SessionEventSender = tokio::sync::broadcast::Sender<SessionEventRecord>;
@@ -38,6 +39,7 @@ pub struct PeerAgentTaskResult {
     pub status: TaskTerminalStatus,
     pub task_turn_count: u32,
     pub output: Option<String>,
+    pub assistant_content: Option<Vec<TaskInputContent>>,
     pub error: Option<String>,
 }
 
@@ -63,6 +65,7 @@ pub struct TaskStatusSnapshot {
     pub status: Option<TaskTerminalStatus>,
     pub task_turn_count: Option<u32>,
     pub output: Option<String>,
+    pub assistant_content: Option<Vec<TaskInputContent>>,
     pub error: Option<String>,
 }
 

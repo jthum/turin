@@ -101,6 +101,7 @@ impl AgentManager {
             status: TaskTerminalStatus::Cancelled,
             task_turn_count: 0,
             output: None,
+            assistant_content: None,
             error: Some("Task cancelled before execution".to_string()),
         };
 
@@ -120,6 +121,7 @@ impl AgentManager {
             status: Some(completed.status),
             task_turn_count: Some(completed.task_turn_count),
             output: completed.output,
+            assistant_content: completed.assistant_content,
             error: completed.error,
         })
     }
@@ -204,6 +206,7 @@ impl AgentManager {
                 status: TaskTerminalStatus::Cancelled,
                 task_turn_count: 0,
                 output: None,
+                assistant_content: None,
                 error: Some(reason.to_string()),
             };
             if let Some(tx_result) = envelope.result_tx {
@@ -241,6 +244,7 @@ impl AgentManager {
                 status: TaskTerminalStatus::Killed,
                 task_turn_count: 0,
                 output: None,
+                assistant_content: None,
                 error: Some(reason.to_string()),
             };
             if let Some(tx_result) = envelope.result_tx {
@@ -266,6 +270,7 @@ impl AgentManager {
                 status: TaskTerminalStatus::Killed,
                 task_turn_count: 0,
                 output: None,
+                assistant_content: None,
                 error: Some(reason.to_string()),
             };
             self.record_completed_result(completed).await;

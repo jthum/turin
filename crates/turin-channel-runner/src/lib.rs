@@ -9,8 +9,9 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::{Instant, MissedTickBehavior};
 use turin_channel_core::{
-    ChannelAdapterManifest, ChannelCapabilities, ChannelConversationKey, ChannelKind, ChannelUser,
-    ConversationBinding, InboundEvent, OutboundMessage, RoutingDecision, decide_routing,
+    ChannelAdapterManifest, ChannelAttachment, ChannelCapabilities, ChannelConversationKey,
+    ChannelKind, ChannelUser, ConversationBinding, InboundEvent, MessageBlock, OutboundMessage,
+    RoutingDecision, decide_routing,
 };
 use turin_daemon_client::DaemonClient;
 use turin_daemon_protocol::{
@@ -285,6 +286,8 @@ pub struct TaskSnapshot {
     pub status: Option<String>,
     pub task_turn_count: Option<u32>,
     pub output: Option<String>,
+    #[serde(default)]
+    pub assistant_content: Option<Vec<TaskInputContent>>,
     pub error: Option<String>,
 }
 
@@ -1411,14 +1414,67 @@ fn task_to_outbound(task: &TaskSnapshot) -> OutboundMessage {
     if let Some(output) = task.output.as_ref() {
         if let Some(structured) = try_parse_structured_outbound(output) {
             structured
+        } else if let Some(content) = task.assistant_content.as_deref() {
+            let mapped = outbound_from_task_content(content);
+            if !mapped.blocks.is_empty() || !mapped.attachments.is_empty() {
+                mapped
+            } else {
+                OutboundMessage::text(output.clone())
+            }
         } else {
             OutboundMessage::text(output.clone())
+        }
+    } else if let Some(content) = task.assistant_content.as_deref() {
+        let mapped = outbound_from_task_content(content);
+        if !mapped.blocks.is_empty() || !mapped.attachments.is_empty() {
+            mapped
+        } else {
+            OutboundMessage::text(format!("Task {} finished without output", task.request_id))
         }
     } else if let Some(error) = task.error.as_ref() {
         OutboundMessage::text(format!("Turin error: {}", error))
     } else {
         OutboundMessage::text(format!("Task {} finished without output", task.request_id))
     }
+}
+
+fn outbound_from_task_content(content: &[TaskInputContent]) -> OutboundMessage {
+    let mut outbound = OutboundMessage::default();
+    for part in content {
+        match part {
+            TaskInputContent::Text { text } => {
+                if !text.trim().is_empty() {
+                    outbound
+                        .blocks
+                        .push(MessageBlock::Text { text: text.clone() });
+                }
+            }
+            TaskInputContent::Image {
+                name,
+                content_type,
+                url,
+                local_path,
+                ..
+            } => outbound.attachments.push(ChannelAttachment {
+                name: name.clone().unwrap_or_else(|| "image".to_string()),
+                content_type: content_type.clone(),
+                url: url.clone(),
+                local_path: local_path.clone(),
+            }),
+            TaskInputContent::File {
+                name,
+                content_type,
+                url,
+                local_path,
+            } => outbound.attachments.push(ChannelAttachment {
+                name: name.clone().unwrap_or_else(|| "file".to_string()),
+                content_type: content_type.clone(),
+                url: url.clone(),
+                local_path: local_path.clone(),
+            }),
+        }
+    }
+    outbound
 }
 
 async fn next_managed_event(
@@ -2147,6 +2203,7 @@ mod tests {
             status: Some("completed".into()),
             task_turn_count: Some(1),
             output: Some("hello".into()),
+            assistant_content: None,
             error: Some("bad".into()),
         });
         assert_eq!(
@@ -2178,12 +2235,53 @@ mod tests {
                 })
                 .to_string(),
             ),
+            assistant_content: None,
             error: None,
         });
         assert_eq!(outbound.blocks.len(), 1);
         assert_eq!(outbound.embeds.len(), 1);
         assert_eq!(outbound.components.len(), 1);
         assert_eq!(outbound.metadata["priority"], "high");
+    }
+
+    #[test]
+    fn task_to_outbound_maps_assistant_content_when_no_structured_payload() {
+        let outbound = task_to_outbound(&TaskSnapshot {
+            request_id: "req-2".into(),
+            agent_id: "writer".into(),
+            slot_id: "slot-1".into(),
+            trace_id: "trace-2".into(),
+            state: "completed".into(),
+            runtime_task_id: None,
+            status: Some("completed".into()),
+            task_turn_count: Some(1),
+            output: Some("[Image: chart.png]".into()),
+            assistant_content: Some(vec![
+                TaskInputContent::Text {
+                    text: "Here is the chart".into(),
+                },
+                TaskInputContent::Image {
+                    name: Some("chart.png".into()),
+                    content_type: Some("image/png".into()),
+                    url: None,
+                    local_path: Some("/tmp/chart.png".into()),
+                    detail: None,
+                },
+            ]),
+            error: None,
+        });
+        assert_eq!(
+            outbound.blocks,
+            vec![MessageBlock::Text {
+                text: "Here is the chart".into(),
+            }]
+        );
+        assert_eq!(outbound.attachments.len(), 1);
+        assert_eq!(outbound.attachments[0].name, "chart.png");
+        assert_eq!(
+            outbound.attachments[0].local_path.as_deref(),
+            Some("/tmp/chart.png")
+        );
     }
 
     #[test]

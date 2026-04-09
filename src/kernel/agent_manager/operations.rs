@@ -538,6 +538,7 @@ impl AgentManager {
                 status: None,
                 task_turn_count: None,
                 output: None,
+                assistant_content: None,
                 error: None,
             })
             .collect();
@@ -559,6 +560,7 @@ impl AgentManager {
                     status: Some(result.status),
                     task_turn_count: Some(result.task_turn_count),
                     output: result.output,
+                    assistant_content: result.assistant_content,
                     error: result.error,
                 }),
         );

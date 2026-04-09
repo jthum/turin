@@ -268,6 +268,40 @@ pub fn task_content_from_parts(content: &[TaskInputContent]) -> Vec<InferenceCon
         .collect()
 }
 
+pub fn task_output_content_from_inference(content: &[InferenceContent]) -> Vec<TaskInputContent> {
+    content
+        .iter()
+        .filter_map(|part| match part {
+            InferenceContent::Text { text } => Some(TaskInputContent::Text { text: text.clone() }),
+            InferenceContent::Image {
+                name,
+                content_type,
+                url,
+                local_path,
+                detail,
+            } => Some(TaskInputContent::Image {
+                name: name.clone(),
+                content_type: content_type.clone(),
+                url: url.clone(),
+                local_path: local_path.clone(),
+                detail: detail.clone(),
+            }),
+            InferenceContent::File {
+                name,
+                content_type,
+                url,
+                local_path,
+            } => Some(TaskInputContent::File {
+                name: name.clone(),
+                content_type: content_type.clone(),
+                url: url.clone(),
+                local_path: local_path.clone(),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,6 +387,42 @@ mod tests {
         assert!(matches!(
             &decoded[1],
             InferenceContent::File { name: Some(name), .. } if name == "spec.pdf"
+        ));
+    }
+
+    #[test]
+    fn task_output_content_from_inference_filters_non_display_parts() {
+        let content = vec![
+            InferenceContent::Thinking {
+                content: "internal".to_string(),
+                signature: None,
+            },
+            InferenceContent::Text {
+                text: "done".to_string(),
+            },
+            InferenceContent::Image {
+                name: Some("diagram.png".to_string()),
+                content_type: Some("image/png".to_string()),
+                url: None,
+                local_path: Some("/tmp/diagram.png".to_string()),
+                detail: Some("high".to_string()),
+            },
+            InferenceContent::ToolUse {
+                id: "call-1".to_string(),
+                name: "shell_exec".to_string(),
+                input: serde_json::json!({}),
+            },
+        ];
+
+        let output = task_output_content_from_inference(&content);
+        assert_eq!(output.len(), 2);
+        assert!(matches!(
+            &output[0],
+            TaskInputContent::Text { text } if text == "done"
+        ));
+        assert!(matches!(
+            &output[1],
+            TaskInputContent::Image { name: Some(name), .. } if name == "diagram.png"
         ));
     }
 
