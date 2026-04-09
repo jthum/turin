@@ -9,6 +9,7 @@ This is the documentation landing page for Turin.
 - `docs/concepts/turin.md` — Turin philosophy and design framing (kernel vs harness vs inference)
 - `docs/concepts/memory-vs-kv.md` — convention for choosing between searchable memory and exact KV state
 - `docs/guides/inference-routing.md` — named inference profiles, context-window management, and compaction policy
+- `docs/guides/multimodal.md` — multimodal Phase 1 input, attachment persistence, and current channel/provider support
 - `docs/operations/daemon.md` — daemon mode, filesystem-backed dynamic state, and control API surface
 - `docs/operations/remote.md` — authenticated HTTP/SSE/WebSocket bridge for remote daemon access
 - `docs/operations/ui-clients.md` — local/remote operator shells for the Turin daemon control plane
@@ -35,6 +36,7 @@ This is the documentation landing page for Turin.
 6. `docs/reference/primitives.md`
 7. `docs/concepts/memory-vs-kv.md`
 8. `docs/guides/inference-routing.md`
+9. `docs/guides/multimodal.md`
 
 ### For contributors
 
@@ -44,6 +46,7 @@ This is the documentation landing page for Turin.
 4. `docs/reference/hooks.md`
 5. `docs/reference/primitives.md`
 6. `docs/guides/inference-routing.md`
+7. `docs/guides/multimodal.md`
 
 ### For governance-heavy deployments
 

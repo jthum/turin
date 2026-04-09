@@ -559,6 +559,8 @@ To emit rich outbound payloads from task output, return a JSON envelope with
 }
 ```
 
+For Phase 1 multimodal task input, attachment persistence, and the current provider/channel support matrix, see `docs/guides/multimodal.md`.
+
 ### Sessions
 
 ```bash

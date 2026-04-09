@@ -522,6 +522,8 @@ end
 
 Note: `ctx.inference`, `ctx.provider`, and other mutable fields are part of the `ContextWrapper` contract. `ctx.model` is currently readable but not writable. `ctx:structured(...)` is opt-in and does not change normal plain-text turn behavior unless you call it. See `docs/reference/hooks.md` for exact semantics.
 
+If the latest user message includes attachments, inspect `ctx.messages` directly. `ctx.prompt` remains text-only and preserves image/file parts when you rewrite it.
+
 ## 4. Plan Review (`on_plan_submit`)
 
 ```lua

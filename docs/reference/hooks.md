@@ -142,7 +142,7 @@ Last mutable checkpoint before Turin calls the provider.
 - `ctx.provider`
 - `ctx.system_prompt`
 - `ctx.messages`
-- `ctx.prompt` (derived from latest user message when available)
+- `ctx.prompt` (derived from text parts of the latest user message when available)
 - `ctx.turn_index`
 - `ctx.task_turn_index`
 - `ctx.is_first_turn_in_task`
@@ -161,9 +161,23 @@ Last mutable checkpoint before Turin calls the provider.
 - `ctx.provider`
 - `ctx.system_prompt`
 - `ctx.messages`
-- `ctx.prompt` (updates latest user message text when possible)
+- `ctx.prompt` (updates only the latest user message text parts and preserves image/file parts)
 - `ctx.thinking_budget`
 - `ctx.request_options`
+
+`ctx.messages` content parts may include:
+
+```lua
+{ type = "text", text = "Inspect this" }
+{ type = "image", name = "diagram.png", content_type = "image/png", url = "...", local_path = "...", detail = "high" }
+{ type = "file", name = "spec.pdf", content_type = "application/pdf", url = "...", local_path = "..." }
+```
+
+Notes:
+
+- `ctx.prompt` is text-only and ignores image/file parts when deriving the latest prompt.
+- If the latest user message has only attachments, `ctx.prompt` is `nil`.
+- Assigning `ctx.prompt` rewrites the text portion of the latest user message and leaves non-text attachments intact.
 
 ### Methods
 
