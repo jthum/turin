@@ -11,7 +11,7 @@ use crate::kernel::event::KernelEvent;
 use crate::kernel::session::QueuedTask;
 use crate::kernel::session_refs::parse_session_reference;
 use crate::persistence::manager::StoreSelector;
-use turin_types::ToolsConfig;
+use turin_types::{TaskInputContent, ToolsConfig};
 
 impl DaemonState {
     pub async fn agent_runtime_status(
@@ -30,9 +30,11 @@ impl DaemonState {
         agent_id: Option<&str>,
         session_id: Option<&str>,
         prompt: String,
+        content: Option<Vec<TaskInputContent>>,
         tools: Option<ToolsConfig>,
     ) -> Result<TaskStatusSnapshot> {
         let mut task = QueuedTask::ad_hoc(prompt);
+        task.content = content;
         if let Some(tools) = tools
             && !tools.is_empty()
         {

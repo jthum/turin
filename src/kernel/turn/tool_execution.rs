@@ -14,6 +14,7 @@ use crate::harness::verdict::Verdict;
 use crate::harness::virtual_tools::{
     VirtualToolNestedResult, VirtualToolPlan, VirtualToolResultOutput, VirtualToolResultResolution,
 };
+use crate::inference::content::encode_content_json;
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::governance::{CapabilityDecision, GovernanceSubject, tool_capability_name};
@@ -814,24 +815,6 @@ impl ExecutionHost {
             });
 
             if let Ok(store) = self.store_manager.open(&session.store_selector).await {
-                let result_content: Vec<serde_json::Value> = tool_results
-                    .iter()
-                    .map(|r| match r {
-                        InferenceContent::ToolResult {
-                            tool_use_id,
-                            content,
-                            is_error,
-                        } => {
-                            serde_json::json!({
-                                "type": "tool_result",
-                                "tool_use_id": tool_use_id,
-                                "content": content,
-                                "is_error": is_error
-                            })
-                        }
-                        _ => serde_json::json!({}),
-                    })
-                    .collect();
                 if let Some(iid) = session.internal_id {
                     let _guard = session.persistence_lock.lock().await;
                     let _ = store
@@ -839,7 +822,7 @@ impl ExecutionHost {
                             iid,
                             session.turn_index,
                             "tool_result",
-                            &serde_json::Value::Array(result_content),
+                            &encode_content_json(&tool_results),
                             None,
                         )
                         .await;

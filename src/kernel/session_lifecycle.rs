@@ -4,6 +4,7 @@ use anyhow::{Context, Result, anyhow};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{info, warn};
 
+use crate::inference::content::decode_content_json;
 use crate::kernel::config::StoreTargetConfig;
 use crate::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::ExecutionHost;
@@ -16,7 +17,7 @@ use crate::kernel::session_refs::{
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{EventRow, MessageRow};
 use crate::{
-    inference::provider::{InferenceContent, InferenceMessage, InferenceRole},
+    inference::provider::{InferenceMessage, InferenceRole},
     kernel::identity::RuntimeIdentity,
 };
 
@@ -479,7 +480,7 @@ fn rebuild_history(messages: &[MessageRow]) -> Result<(Vec<InferenceMessage>, u3
             Some(max_turn_index.map_or(message.turn_index, |max: u32| max.max(message.turn_index)));
         let content_json: serde_json::Value = serde_json::from_str(&message.content)
             .with_context(|| format!("Failed to parse persisted message {}", message.id))?;
-        let content = decode_persisted_content(&message.role, content_json)
+        let content = decode_content_json(content_json)
             .with_context(|| format!("Failed to rebuild persisted message {}", message.id))?;
         history.push(InferenceMessage {
             role: decode_role(&message.role)?,
@@ -498,74 +499,6 @@ fn decode_role(role: &str) -> Result<InferenceRole> {
         "tool_result" => Ok(InferenceRole::Tool),
         other => anyhow::bail!("Unsupported persisted role '{}'", other),
     }
-}
-
-fn decode_persisted_content(role: &str, value: serde_json::Value) -> Result<Vec<InferenceContent>> {
-    let parts = value
-        .as_array()
-        .ok_or_else(|| anyhow!("Persisted message content for '{}' is not an array", role))?;
-    let mut content = Vec::with_capacity(parts.len());
-    for part in parts {
-        let part_type = part
-            .get("type")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| anyhow!("Persisted message content missing type"))?;
-        let item = match part_type {
-            "text" => InferenceContent::Text {
-                text: part
-                    .get("text")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-            },
-            "tool_use" => InferenceContent::ToolUse {
-                id: part
-                    .get("id")
-                    .and_then(|value| value.as_str())
-                    .ok_or_else(|| anyhow!("tool_use content missing id"))?
-                    .to_string(),
-                name: part
-                    .get("name")
-                    .and_then(|value| value.as_str())
-                    .ok_or_else(|| anyhow!("tool_use content missing name"))?
-                    .to_string(),
-                input: part
-                    .get("input")
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::json!({})),
-            },
-            "tool_result" => InferenceContent::ToolResult {
-                tool_use_id: part
-                    .get("tool_use_id")
-                    .and_then(|value| value.as_str())
-                    .ok_or_else(|| anyhow!("tool_result content missing tool_use_id"))?
-                    .to_string(),
-                content: part
-                    .get("content")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-                is_error: part
-                    .get("is_error")
-                    .and_then(|value| value.as_bool())
-                    .unwrap_or(false),
-            },
-            "thinking" => InferenceContent::Thinking {
-                content: part
-                    .get("content")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-                signature: part
-                    .get("signature")
-                    .and_then(|value| value.as_str())
-                    .map(str::to_string),
-            },
-            other => anyhow::bail!("Unsupported persisted content type '{}'", other),
-        };
-        content.push(item);
-    }
-    Ok(content)
 }
 
 fn rebuild_session_counters(events: &[EventRow]) -> (u32, u32, u64, u64) {

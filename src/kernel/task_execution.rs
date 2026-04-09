@@ -1,7 +1,9 @@
 use anyhow::Result;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, instrument, warn};
 
+use crate::inference::content::{encode_content_json, materialize_task_input_content};
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::TaskExecutionResult;
 use crate::kernel::config::AgentMode;
@@ -22,6 +24,14 @@ impl ExecutionHost {
     ) -> Result<TaskExecutionResult> {
         let session_id = self.session_reference(session);
         let prompt = task.prompt.as_str();
+        let user_content = if let Some(content) = task.content.as_ref() {
+            let media_dir = self.managed_media_dir();
+            materialize_task_input_content(content, &media_dir).await?
+        } else {
+            vec![InferenceContent::Text {
+                text: prompt.to_string(),
+            }]
+        };
 
         if session.cancel_token.is_cancelled() {
             return Ok(TaskExecutionResult {
@@ -30,7 +40,7 @@ impl ExecutionHost {
             });
         }
 
-        self.append_task_user_message(session, prompt);
+        self.append_task_user_message(session, &user_content);
 
         let effective_tools = crate::tools::policy::resolve_effective_tools_config(
             &self.config,
@@ -58,7 +68,7 @@ impl ExecutionHost {
             tools: Arc::new(effective_tools),
         };
 
-        self.persist_task_user_message(session, prompt).await;
+        self.persist_task_user_message(session, &user_content).await;
         self.set_task_active_session(session, task);
 
         let task_status_result = self.run_task_turn_loop(session, task, &tool_ctx).await;
@@ -72,17 +82,19 @@ impl ExecutionHost {
         })
     }
 
-    fn append_task_user_message(&self, session: &mut SessionState, prompt: &str) {
+    fn managed_media_dir(&self) -> PathBuf {
+        PathBuf::from(&self.config.layout.data_dir).join("media")
+    }
+
+    fn append_task_user_message(&self, session: &mut SessionState, content: &[InferenceContent]) {
         session.history.push(InferenceMessage {
             role: InferenceRole::User,
-            content: vec![InferenceContent::Text {
-                text: prompt.to_string(),
-            }],
+            content: content.to_vec(),
             tool_call_id: None,
         });
     }
 
-    async fn persist_task_user_message(&self, session: &SessionState, prompt: &str) {
+    async fn persist_task_user_message(&self, session: &SessionState, content: &[InferenceContent]) {
         if let Ok(store) = self.store_manager.open(&session.store_selector).await {
             if let Some(iid) = session.internal_id {
                 let _guard = session.persistence_lock.lock().await;
@@ -91,7 +103,7 @@ impl ExecutionHost {
                         iid,
                         session.turn_index,
                         "user",
-                        &serde_json::json!([{"type": "text", "text": prompt}]),
+                        &encode_content_json(content),
                         None,
                     )
                     .await;

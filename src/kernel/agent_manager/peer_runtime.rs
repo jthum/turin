@@ -5,7 +5,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::harness::verdict::Verdict;
-use crate::inference::provider::{InferenceContent, InferenceRole};
+use crate::inference::content::summarize_content_for_display;
+use crate::inference::provider::InferenceRole;
 use crate::kernel::TaskExecutionResult;
 use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
 use crate::kernel::execution_host::ExecutionHost;
@@ -330,10 +331,12 @@ impl PeerRuntime {
             if msg.role != InferenceRole::Assistant {
                 return None;
             }
-            msg.content.iter().find_map(|c| match c {
-                InferenceContent::Text { text } => Some(text.clone()),
-                _ => None,
-            })
+            let summary = summarize_content_for_display(&msg.content);
+            if summary.is_empty() {
+                None
+            } else {
+                Some(summary)
+            }
         })
     }
 

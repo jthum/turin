@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
 use turin_channel_core::ChannelAdapterManifest;
-use turin_types::{AgentMode, ThinkingConfig, ToolsConfig};
+use turin_types::{AgentMode, TaskInputContent, ThinkingConfig, ToolsConfig};
 
 pub const DAEMON_PROTOCOL_VERSION: u32 = 1;
 pub const DAEMON_TRANSPORT_UNIX: &str = "unix";
@@ -154,6 +154,9 @@ pub struct SubmitTaskParams {
     #[serde(default)]
     pub session_id: Option<String>,
     pub prompt: String,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<Vec<TaskInputContent>>,
     #[serde(default)]
     pub tools: Option<ToolsConfig>,
 }
@@ -521,6 +524,7 @@ mod tests {
                 agent_id: Some("writer".to_string()),
                 session_id: None,
                 prompt: "review this".to_string(),
+                content: None,
                 tools: Default::default(),
             }),
         );

@@ -4,6 +4,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use crate::harness::globals::block_on_current;
+use crate::inference::content::{
+    infer_prompt_from_messages, replace_user_text_content,
+};
 use crate::inference::provider::{InferenceMessage, ProviderClient};
 use crate::inference::structured::{
     fallback_system_prompt, parse_and_validate_json_response, response_format_for_schema,
@@ -100,24 +103,7 @@ impl ContextWrapper {
         agent_id: String,
         session_inference: InferenceOverrideConfig,
     ) -> Self {
-        let prompt = messages.iter().last().and_then(|m| {
-            if m.role == crate::inference::provider::InferenceRole::User {
-                Some(
-                    m.content
-                        .iter()
-                        .filter_map(|c| match c {
-                            crate::inference::provider::InferenceContent::Text { text } => {
-                                Some(text.clone())
-                            }
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                )
-            } else {
-                None
-            }
-        });
+        let prompt = infer_prompt_from_messages(&messages);
 
         Self {
             state: Arc::new(Mutex::new(ContextState {
@@ -263,6 +249,7 @@ impl UserData for ContextWrapper {
             let messages: Vec<InferenceMessage> =
                 lua.from_value(val).map_err(mlua::Error::external)?;
             let mut state = this.lock_state();
+            state.prompt = infer_prompt_from_messages(&messages);
             state.messages = messages;
             recompute_token_count(&mut state);
             Ok(())
@@ -401,12 +388,8 @@ impl UserData for ContextWrapper {
                         // Sync back to messages if it's the last message
                         if let Some(msg) = state.messages.last_mut()
                             && msg.role == crate::inference::provider::InferenceRole::User
-                            && let Some(new_text) = s
                         {
-                            msg.content =
-                                vec![crate::inference::provider::InferenceContent::Text {
-                                    text: new_text,
-                                }];
+                            msg.content = replace_user_text_content(&msg.content, s.as_deref());
                         }
                         recompute_token_count(&mut state);
                         Ok(())
@@ -415,6 +398,7 @@ impl UserData for ContextWrapper {
                         let msgs: Vec<InferenceMessage> =
                             lua.from_value(val).map_err(mlua::Error::external)?;
                         let mut state = this.lock_state();
+                        state.prompt = infer_prompt_from_messages(&msgs);
                         state.messages = msgs;
                         recompute_token_count(&mut state);
                         Ok(())
@@ -432,6 +416,7 @@ impl UserData for ContextWrapper {
             let msg: InferenceMessage = lua.from_value(val).map_err(mlua::Error::external)?;
             let mut state = this.lock_state();
             state.messages.push(msg);
+            state.prompt = infer_prompt_from_messages(&state.messages);
             recompute_token_count(&mut state);
             Ok(())
         });
@@ -441,6 +426,7 @@ impl UserData for ContextWrapper {
             // Lua is 1-indexed, Rust is 0-indexed
             if idx > 0 && idx <= state.messages.len() {
                 state.messages.remove(idx - 1);
+                state.prompt = infer_prompt_from_messages(&state.messages);
                 recompute_token_count(&mut state);
                 Ok(())
             } else {
@@ -454,6 +440,7 @@ impl UserData for ContextWrapper {
         methods.add_method("clear_messages", |_, this, ()| {
             let mut state = this.lock_state();
             state.messages.clear();
+            state.prompt = None;
             recompute_token_count(&mut state);
             Ok(())
         });

@@ -1,5 +1,6 @@
 use tracing::warn;
 
+use crate::inference::content::encode_content_json;
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::SessionState;
@@ -55,18 +56,19 @@ impl ExecutionHost {
         }
 
         if let Ok(store) = self.store_manager.open(&session.store_selector).await {
-            let content: Vec<serde_json::Value> = {
-                let mut parts = Vec::new();
-                if !response_text.is_empty() {
-                    parts.push(serde_json::json!({"type": "text", "text": response_text}));
-                }
-                for tc in pending_tool_calls {
-                    parts.push(serde_json::json!({
-                        "type": "tool_use", "id": tc.id, "name": tc.name, "input": tc.args,
-                    }));
-                }
-                parts
-            };
+            let mut persisted_content: Vec<InferenceContent> = Vec::new();
+            if !response_text.is_empty() {
+                persisted_content.push(InferenceContent::Text {
+                    text: response_text.to_string(),
+                });
+            }
+            for tc in pending_tool_calls {
+                persisted_content.push(InferenceContent::ToolUse {
+                    id: tc.id.clone(),
+                    name: tc.name.clone(),
+                    input: tc.args.clone(),
+                });
+            }
             if let Some(iid) = session.internal_id {
                 let _guard = session.persistence_lock.lock().await;
                 let _ = store
@@ -74,7 +76,7 @@ impl ExecutionHost {
                         iid,
                         session.turn_index,
                         "assistant",
-                        &serde_json::Value::Array(content),
+                        &encode_content_json(&persisted_content),
                         None,
                     )
                     .await;

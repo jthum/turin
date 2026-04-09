@@ -398,6 +398,7 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
                     agent_id: None,
                     session_id: Some(live_session_id.clone()),
                     prompt: "Say pong".to_string(),
+                    content: None,
                     tools: Default::default(),
                 },
             ))
@@ -485,6 +486,7 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
                     agent_id: None,
                     session_id: Some(session_id.clone()),
                     prompt: "resume me".to_string(),
+                    content: None,
                     tools: Default::default(),
                 },
             ))
@@ -528,6 +530,7 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
                     agent_id: None,
                     session_id: Some(session_id.clone()),
                     prompt: "resume me again".to_string(),
+                    content: None,
                     tools: Default::default(),
                 },
             ))
@@ -863,6 +866,7 @@ async fn daemon_session_subscription_receives_kernel_stream_events() -> Result<(
                     agent_id: None,
                     session_id: Some(session_id.clone()),
                     prompt: "Say pong".to_string(),
+                    content: None,
                     tools: Default::default(),
                 },
             ))

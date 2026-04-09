@@ -729,6 +729,7 @@ impl ControlClient {
                 agent_id,
                 session_id,
                 prompt,
+                content: None,
                 tools: None,
             }),
         )

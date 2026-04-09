@@ -280,6 +280,32 @@ fn estimate_message_tokens(message: &InferenceMessage) -> u32 {
 fn estimate_content_tokens(content: &InferenceContent) -> u32 {
     match content {
         InferenceContent::Text { text } => estimate_text_tokens(text).saturating_add(4),
+        InferenceContent::Image {
+            name,
+            content_type,
+            url,
+            local_path,
+            detail,
+        } => estimate_attachment_reference_tokens(
+            name.as_deref(),
+            content_type.as_deref(),
+            url.as_deref(),
+            local_path.as_deref(),
+        )
+        .saturating_add(detail.as_deref().map(estimate_text_tokens).unwrap_or(0))
+        .saturating_add(24),
+        InferenceContent::File {
+            name,
+            content_type,
+            url,
+            local_path,
+        } => estimate_attachment_reference_tokens(
+            name.as_deref(),
+            content_type.as_deref(),
+            url.as_deref(),
+            local_path.as_deref(),
+        )
+        .saturating_add(18),
         InferenceContent::ToolUse { id, name, input } => estimate_text_tokens(id)
             .saturating_add(estimate_text_tokens(name))
             .saturating_add(estimate_json_tokens(input))
@@ -300,6 +326,18 @@ fn estimate_content_tokens(content: &InferenceContent) -> u32 {
 
 fn estimate_json_tokens(value: &serde_json::Value) -> u32 {
     estimate_text_tokens(&serde_json::to_string(value).unwrap_or_default())
+}
+
+fn estimate_attachment_reference_tokens(
+    name: Option<&str>,
+    content_type: Option<&str>,
+    url: Option<&str>,
+    local_path: Option<&str>,
+) -> u32 {
+    name.map(estimate_text_tokens).unwrap_or(0)
+        .saturating_add(content_type.map(estimate_text_tokens).unwrap_or(0))
+        .saturating_add(url.map(estimate_text_tokens).unwrap_or(0))
+        .saturating_add(local_path.map(estimate_text_tokens).unwrap_or(0))
 }
 
 fn estimate_text_tokens(text: &str) -> u32 {

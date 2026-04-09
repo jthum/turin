@@ -10,7 +10,7 @@ use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::KernelEvent;
 use crate::kernel::identity::RuntimeIdentity;
 use crate::persistence::manager::StoreSelector;
-use turin_types::ToolsConfig;
+use turin_types::{TaskInputContent, ToolsConfig};
 
 /// One queued unit of work to be executed by the kernel.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -19,6 +19,8 @@ pub struct QueuedTask {
     pub plan_id: Option<String>,
     pub title: Option<String>,
     pub prompt: String,
+    #[serde(default)]
+    pub content: Option<Vec<TaskInputContent>>,
     #[serde(default)]
     pub tools: Option<ToolsConfig>,
     #[serde(default = "new_trace_id")]
@@ -53,6 +55,7 @@ impl QueuedTask {
             plan_id: None,
             title: None,
             prompt: prompt.into(),
+            content: None,
             tools: None,
             trace_id: new_trace_id(),
         }
@@ -68,6 +71,7 @@ impl QueuedTask {
             plan_id: Some(plan_id.into()),
             title,
             prompt: prompt.into(),
+            content: None,
             tools: None,
             trace_id: new_trace_id(),
         }

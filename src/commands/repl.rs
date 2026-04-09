@@ -3,7 +3,8 @@ use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
 
 use turin::display;
-use turin::inference::provider::{InferenceContent, InferenceRole};
+use turin::inference::content::summarize_content_for_display;
+use turin::inference::provider::InferenceRole;
 use turin::kernel::Kernel;
 use turin::kernel::config::TurinConfig;
 use turin::kernel::session::SessionState;
@@ -163,21 +164,7 @@ async fn handle_slash_command(
                     InferenceRole::Tool => display::paint(&format!("{:10}", role_name), "33", ansi),
                 };
 
-                let mut content_summary = String::new();
-                for content in &msg.content {
-                    match content {
-                        InferenceContent::Text { text } => content_summary.push_str(text.as_str()),
-                        InferenceContent::ToolUse { name, .. } => {
-                            content_summary.push_str(&format!("[Tool Call: {}] ", name));
-                        }
-                        InferenceContent::ToolResult { .. } => {
-                            content_summary.push_str("[Tool Result] ");
-                        }
-                        InferenceContent::Thinking { .. } => {
-                            content_summary.push_str("[Thinking] ");
-                        }
-                    }
-                }
+                let mut content_summary = summarize_content_for_display(&msg.content);
 
                 if content_summary.len() > 80 {
                     content_summary = format!("{}...", &content_summary[..77]);

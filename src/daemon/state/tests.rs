@@ -154,6 +154,7 @@ async fn submit_task_exposes_completed_result_and_blocks_rescan_while_active() -
             Some("default"),
             None,
             "Hello daemon".to_string(),
+            None,
             Default::default(),
         )
         .await?;
@@ -196,6 +197,7 @@ async fn wait_for_task_returns_terminal_result() -> Result<()> {
             Some("default"),
             None,
             "Hello wait".to_string(),
+            None,
             Default::default(),
         )
         .await?;
@@ -218,6 +220,7 @@ async fn session_list_and_get_expose_persisted_session_details() -> Result<()> {
             Some("default"),
             None,
             "Hello session".to_string(),
+            None,
             Default::default(),
         )
         .await?;
@@ -266,6 +269,7 @@ async fn session_list_and_search_can_target_an_explicit_state_store() -> Result<
             None,
             Some(&live.session_id),
             "alternate store session body".to_string(),
+            None,
             Default::default(),
         )
         .await?;
@@ -414,6 +418,7 @@ provider = "noop"
             None,
             Some(&live.session_id),
             "route via channel override".to_string(),
+            None,
             Default::default(),
         )
         .await?;
@@ -457,6 +462,7 @@ provider = "noop"
             None,
             Some(&resumed.session_id),
             "route via resumed channel override".to_string(),
+            None,
             Default::default(),
         )
         .await?;
@@ -504,6 +510,7 @@ async fn session_branches_can_be_created_listed_and_checked_out() -> Result<()> 
             None,
             Some(&session_id),
             "first branch turn".to_string(),
+            None,
             Default::default(),
         )
         .await?;
@@ -519,6 +526,7 @@ async fn session_branches_can_be_created_listed_and_checked_out() -> Result<()> 
             None,
             Some(&session_id),
             "second branch turn".to_string(),
+            None,
             Default::default(),
         )
         .await?;
@@ -565,6 +573,7 @@ async fn session_branches_can_be_created_listed_and_checked_out() -> Result<()> 
             None,
             Some(&session_id),
             "third branch turn".to_string(),
+            None,
             Default::default(),
         )
         .await?;
@@ -1278,6 +1287,7 @@ async fn agent_runtime_status_reflects_live_runtime_state() -> Result<()> {
             Some("default"),
             None,
             "Hello status".to_string(),
+            None,
             Default::default(),
         )
         .await?;

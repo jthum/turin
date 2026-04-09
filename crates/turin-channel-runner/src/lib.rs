@@ -17,7 +17,7 @@ use turin_daemon_protocol::{
     ChannelRunnerHeartbeatParams, ChannelRunnerHelloParams, OpenSessionParams, ResumeSessionParams,
     RuntimeEventsSubscribeParams, SubmitTaskParams, WaitTaskParams,
 };
-use turin_types::ToolsConfig;
+use turin_types::{TaskInputContent, ToolsConfig};
 
 const RUNNER_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 
@@ -656,13 +656,15 @@ impl ChannelRunner {
         binding: &ConversationBinding,
         event: &InboundEvent,
     ) -> Result<TaskSnapshot> {
+        let content = task_input_content_from_event(event);
         self.daemon
             .request_ok(
                 None,
                 turin_daemon_protocol::DaemonRequest::TaskSubmit(SubmitTaskParams {
                     agent_id: None,
                     session_id: Some(binding.session_id.clone()),
-                    prompt: event.prompt_text(),
+                    prompt: task_prompt_for_submission(event),
+                    content: (!content.is_empty()).then_some(content),
                     tools: (!self.tools.is_empty()).then_some(self.tools.clone()),
                 }),
             )
@@ -1534,6 +1536,73 @@ fn try_parse_structured_outbound(raw: &str) -> Option<OutboundMessage> {
     })
 }
 
+fn task_prompt_for_submission(event: &InboundEvent) -> String {
+    let prompt = event.prompt_text();
+    if !prompt.trim().is_empty() {
+        return prompt;
+    }
+    if event.attachments.is_empty() {
+        return String::new();
+    }
+
+    let image_count = event
+        .attachments
+        .iter()
+        .filter(|attachment| {
+            attachment
+                .content_type
+                .as_deref()
+                .is_some_and(|content_type| content_type.starts_with("image/"))
+        })
+        .count();
+    let file_count = event.attachments.len().saturating_sub(image_count);
+
+    match (image_count, file_count) {
+        (1, 0) => "[image attachment]".to_string(),
+        (count, 0) => format!("[{count} image attachments]"),
+        (0, 1) => "[file attachment]".to_string(),
+        (0, count) => format!("[{count} file attachments]"),
+        (images, files) => format!("[{images} image attachment(s), {files} file attachment(s)]"),
+    }
+}
+
+fn task_input_content_from_event(event: &InboundEvent) -> Vec<TaskInputContent> {
+    if event.attachments.is_empty() {
+        return Vec::new();
+    }
+
+    let mut content = Vec::with_capacity(event.attachments.len() + 1);
+    let prompt = event.prompt_text();
+    if !prompt.trim().is_empty() {
+        content.push(TaskInputContent::Text { text: prompt });
+    }
+
+    for attachment in &event.attachments {
+        let is_image = attachment
+            .content_type
+            .as_deref()
+            .is_some_and(|content_type| content_type.starts_with("image/"));
+        if is_image {
+            content.push(TaskInputContent::Image {
+                name: Some(attachment.name.clone()),
+                content_type: attachment.content_type.clone(),
+                url: attachment.url.clone(),
+                local_path: attachment.local_path.clone(),
+                detail: None,
+            });
+        } else {
+            content.push(TaskInputContent::File {
+                name: Some(attachment.name.clone()),
+                content_type: attachment.content_type.clone(),
+                url: attachment.url.clone(),
+                local_path: attachment.local_path.clone(),
+            });
+        }
+    }
+
+    content
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2115,5 +2184,88 @@ mod tests {
         assert_eq!(outbound.embeds.len(), 1);
         assert_eq!(outbound.components.len(), 1);
         assert_eq!(outbound.metadata["priority"], "high");
+    }
+
+    #[test]
+    fn task_input_content_from_event_maps_text_and_attachments() {
+        let event = InboundEvent {
+            conversation: sample_key(),
+            message: ChannelMessageRef {
+                conversation: sample_key(),
+                message_id: "m1".into(),
+            },
+            user: ChannelUser {
+                id: "u1".into(),
+                display_name: Some("User".into()),
+                username: Some("user".into()),
+            },
+            session_scope: ChannelSessionScope::Thread,
+            text: "review this".into(),
+            attachments: vec![
+                turin_channel_core::ChannelAttachment {
+                    name: "diagram.png".into(),
+                    content_type: Some("image/png".into()),
+                    url: Some("https://cdn.test/diagram.png".into()),
+                    local_path: None,
+                },
+                turin_channel_core::ChannelAttachment {
+                    name: "spec.pdf".into(),
+                    content_type: Some("application/pdf".into()),
+                    url: Some("https://cdn.test/spec.pdf".into()),
+                    local_path: None,
+                },
+            ],
+            metadata: Default::default(),
+        };
+
+        let content = task_input_content_from_event(&event);
+        assert_eq!(content.len(), 3);
+        assert!(matches!(
+            &content[0],
+            TaskInputContent::Text { text } if text.contains("review this")
+        ));
+        assert!(matches!(
+            &content[1],
+            TaskInputContent::Image {
+                name: Some(name),
+                content_type: Some(content_type),
+                ..
+            } if name == "diagram.png" && content_type == "image/png"
+        ));
+        assert!(matches!(
+            &content[2],
+            TaskInputContent::File {
+                name: Some(name),
+                content_type: Some(content_type),
+                ..
+            } if name == "spec.pdf" && content_type == "application/pdf"
+        ));
+    }
+
+    #[test]
+    fn task_prompt_for_submission_falls_back_to_attachment_summary() {
+        let event = InboundEvent {
+            conversation: sample_key(),
+            message: ChannelMessageRef {
+                conversation: sample_key(),
+                message_id: "m1".into(),
+            },
+            user: ChannelUser {
+                id: "u1".into(),
+                display_name: Some("User".into()),
+                username: Some("user".into()),
+            },
+            session_scope: ChannelSessionScope::User,
+            text: String::new(),
+            attachments: vec![turin_channel_core::ChannelAttachment {
+                name: "diagram.png".into(),
+                content_type: Some("image/png".into()),
+                url: Some("https://cdn.test/diagram.png".into()),
+                local_path: None,
+            }],
+            metadata: Default::default(),
+        };
+
+        assert_eq!(task_prompt_for_submission(&event), "[image attachment]");
     }
 }

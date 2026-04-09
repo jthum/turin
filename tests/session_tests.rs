@@ -20,6 +20,7 @@ use turin::kernel::config::{
 };
 use turin::kernel::policy::PolicyScope;
 use turin::kernel::session::{QueuedTask, SessionStatus};
+use turin_types::TaskInputContent;
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -873,6 +874,130 @@ async fn test_auto_compaction_creates_and_restores_context_checkpoint() -> Resul
         .context_checkpoint
         .expect("expected context checkpoint to restore from persistence");
     assert_eq!(resumed_checkpoint.summary, "CHECKPOINT SUMMARY");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_multimodal_task_content_persists_and_restores() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut config = make_config(tmp.path());
+    config.agent.provider = "capture".to_string();
+    config.agent.model = "capture-model".to_string();
+    config.providers.insert(
+        "capture".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+
+    let seen_messages = Arc::new(Mutex::new(Vec::new()));
+    kernel.add_client(
+        "capture".to_string(),
+        ProviderClient::new(
+            "capture",
+            Arc::new(CaptureMessagesProvider {
+                seen_messages: Arc::clone(&seen_messages),
+            }),
+        ),
+    );
+
+    let source_image = tmp.path().join("diagram.png");
+    let source_file = tmp.path().join("spec.pdf");
+    std::fs::write(&source_image, [1_u8, 2, 3, 4])?;
+    std::fs::write(&source_file, b"spec body")?;
+
+    let mut session = kernel.create_session().await;
+    let session_id = session.identity.session_id().to_string();
+
+    let mut task = QueuedTask::ad_hoc("[attachments]");
+    task.content = Some(vec![
+        TaskInputContent::Text {
+            text: "Inspect the attached files".to_string(),
+        },
+        TaskInputContent::Image {
+            name: Some("diagram.png".to_string()),
+            content_type: Some("image/png".to_string()),
+            url: None,
+            local_path: Some(source_image.display().to_string()),
+            detail: Some("high".to_string()),
+        },
+        TaskInputContent::File {
+            name: Some("spec.pdf".to_string()),
+            content_type: Some("application/pdf".to_string()),
+            url: None,
+            local_path: Some(source_file.display().to_string()),
+        },
+    ]);
+    session.queue.lock().await.push_back(task);
+
+    kernel.run(&mut session, None).await?;
+
+    let seen = seen_messages
+        .lock()
+        .expect("capture messages mutex poisoned")
+        .clone();
+    let user_message = seen
+        .iter()
+        .rev()
+        .find(|message| message.role == turin::inference::provider::InferenceRole::User)
+        .expect("captured user message");
+    assert!(matches!(
+        &user_message.content[0],
+        turin::inference::provider::InferenceContent::Text { text }
+        if text == "Inspect the attached files"
+    ));
+
+    let captured_image_path = match &user_message.content[1] {
+        turin::inference::provider::InferenceContent::Image { local_path, .. } => {
+            local_path.clone().expect("captured image local_path")
+        }
+        other => panic!("expected image content, got {other:?}"),
+    };
+    assert!(std::path::Path::new(&captured_image_path).exists());
+    assert!(captured_image_path.contains("/media/"));
+
+    let captured_file_path = match &user_message.content[2] {
+        turin::inference::provider::InferenceContent::File { local_path, .. } => {
+            local_path.clone().expect("captured file local_path")
+        }
+        other => panic!("expected file content, got {other:?}"),
+    };
+    assert!(std::path::Path::new(&captured_file_path).exists());
+
+    kernel.end_session(&mut session).await?;
+
+    let resumed = kernel
+        .resume_session_for_agent("default", &session_id)
+        .await?;
+    let resumed_user_message = resumed
+        .history
+        .iter()
+        .find(|message| message.role == turin::inference::provider::InferenceRole::User)
+        .expect("resumed user message");
+
+    assert!(matches!(
+        &resumed_user_message.content[1],
+        turin::inference::provider::InferenceContent::Image {
+            name: Some(name),
+            local_path: Some(path),
+            ..
+        } if name == "diagram.png" && path == &captured_image_path
+    ));
+    assert!(matches!(
+        &resumed_user_message.content[2],
+        turin::inference::provider::InferenceContent::File {
+            name: Some(name),
+            local_path: Some(path),
+            ..
+        } if name == "spec.pdf" && path == &captured_file_path
+    ));
 
     Ok(())
 }
