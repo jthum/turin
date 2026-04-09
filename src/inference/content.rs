@@ -59,8 +59,8 @@ pub fn summarize_content_for_display(content: &[InferenceContent]) -> String {
             } => {
                 let label = name
                     .as_deref()
-                    .or_else(|| url.as_deref())
-                    .or_else(|| local_path.as_deref())
+                    .or(url.as_deref())
+                    .or(local_path.as_deref())
                     .unwrap_or("image");
                 summary.push_str(&format!("[Image: {label}] "));
             }
@@ -72,8 +72,8 @@ pub fn summarize_content_for_display(content: &[InferenceContent]) -> String {
             } => {
                 let label = name
                     .as_deref()
-                    .or_else(|| url.as_deref())
-                    .or_else(|| local_path.as_deref())
+                    .or(url.as_deref())
+                    .or(local_path.as_deref())
                     .unwrap_or("file");
                 summary.push_str(&format!("[File: {label}] "));
             }

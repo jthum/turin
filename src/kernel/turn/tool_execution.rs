@@ -814,19 +814,19 @@ impl ExecutionHost {
                 tool_call_id: None,
             });
 
-            if let Ok(store) = self.store_manager.open(&session.store_selector).await {
-                if let Some(iid) = session.internal_id {
-                    let _guard = session.persistence_lock.lock().await;
-                    let _ = store
-                        .insert_message(
-                            iid,
-                            session.turn_index,
-                            "tool_result",
-                            &encode_content_json(&tool_results),
-                            None,
-                        )
-                        .await;
-                }
+            if let Ok(store) = self.store_manager.open(&session.store_selector).await
+                && let Some(iid) = session.internal_id
+            {
+                let _guard = session.persistence_lock.lock().await;
+                let _ = store
+                    .insert_message(
+                        iid,
+                        session.turn_index,
+                        "tool_result",
+                        &encode_content_json(&tool_results),
+                        None,
+                    )
+                    .await;
             }
         }
 

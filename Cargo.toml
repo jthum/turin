@@ -67,9 +67,9 @@ turin-channel-fs = { path = "crates/turin-channel-fs" }
 turin-code-index = { path = "crates/turin-code-index" }
 
 # Inference SDK family (unified provider layer)
-inference-sdk-core = { git = "https://github.com/jthum/inference-sdk-rust", rev = "473b26f1c9b9e0c1eaa84d15ca728ea987e647fa" }
-inference-sdk-registry = { git = "https://github.com/jthum/inference-sdk-rust", rev = "473b26f1c9b9e0c1eaa84d15ca728ea987e647fa" }
-openai-sdk = { git = "https://github.com/jthum/inference-sdk-rust", rev = "473b26f1c9b9e0c1eaa84d15ca728ea987e647fa" }
+inference-sdk-core = { git = "https://github.com/jthum/inference-sdk-rust", rev = "5a41e0bddfa732350eebe51bf901d46d9201e37d" }
+inference-sdk-registry = { git = "https://github.com/jthum/inference-sdk-rust", rev = "5a41e0bddfa732350eebe51bf901d46d9201e37d" }
+openai-sdk = { git = "https://github.com/jthum/inference-sdk-rust", rev = "5a41e0bddfa732350eebe51bf901d46d9201e37d" }
 
 # MCP SDK
 mcp-sdk = { git = "https://github.com/jthum/mcp-sdk-rust", rev = "3c5e0d3078f68d020d1617f3bac2b447bb9df478" }
