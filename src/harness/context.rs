@@ -1,9 +1,14 @@
 use mlua::{LuaSerdeExt, MetaMethod, UserData, UserDataMethods, Value};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use crate::harness::globals::block_on_current;
 use crate::inference::provider::{InferenceMessage, ProviderClient};
+use crate::inference::structured::{
+    fallback_system_prompt, parse_and_validate_json_response, response_format_for_schema,
+};
+use crate::kernel::config::{InferenceOverrideConfig, TurinConfig};
 use crate::kernel::estimate_history_input_tokens;
 use std::collections::HashMap;
 
@@ -41,6 +46,36 @@ pub struct ContextState {
 pub struct ContextWrapper {
     pub state: Arc<Mutex<ContextState>>,
     pub clients: HashMap<String, ProviderClient>,
+    pub config: Arc<TurinConfig>,
+    pub agent_id: String,
+    pub session_inference: InferenceOverrideConfig,
+}
+
+#[derive(Debug, Deserialize)]
+struct StructuredCallArgs {
+    #[serde(default)]
+    prompt: Option<String>,
+    #[serde(default)]
+    messages: Option<Vec<InferenceMessage>>,
+    #[serde(default)]
+    system: Option<String>,
+    schema: serde_json::Value,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    strict: Option<bool>,
+    #[serde(default)]
+    inference: Option<String>,
+    #[serde(default)]
+    temperature: Option<f32>,
+    #[serde(default)]
+    max_tokens: Option<u32>,
+    #[serde(default)]
+    thinking_budget: Option<u32>,
+    #[serde(default)]
+    request_options: Option<RequestOptionsOverride>,
 }
 
 impl ContextWrapper {
@@ -61,6 +96,9 @@ impl ContextWrapper {
         thinking_budget: u32,
         request_options: RequestOptionsOverride,
         clients: HashMap<String, ProviderClient>,
+        config: Arc<TurinConfig>,
+        agent_id: String,
+        session_inference: InferenceOverrideConfig,
     ) -> Self {
         let prompt = messages.iter().last().and_then(|m| {
             if m.role == crate::inference::provider::InferenceRole::User {
@@ -100,6 +138,9 @@ impl ContextWrapper {
                 request_options,
             })),
             clients,
+            config,
+            agent_id,
+            session_inference,
         }
     }
 
@@ -464,6 +505,163 @@ impl UserData for ContextWrapper {
                 ))),
             }
         });
+
+        methods.add_method("structured", |lua, this: &ContextWrapper, args: Value| {
+            let parsed: StructuredCallArgs = lua.from_value(args).map_err(mlua::Error::external)?;
+            let clients = this.clients.clone();
+            let config = Arc::clone(&this.config);
+            let agent_id = this.agent_id.clone();
+            let session_inference = this.session_inference.clone();
+            let state_arc = Arc::clone(&this.state);
+
+            let structured = block_on_current(async move {
+                let (
+                    current_inference,
+                    current_provider,
+                    current_model,
+                    current_system_prompt,
+                    current_messages,
+                    current_thinking_budget,
+                    current_request_options,
+                ) = {
+                    let state = state_arc.lock().expect("context state mutex poisoned");
+                    (
+                        state.inference.clone(),
+                        state.provider.clone(),
+                        state.model.clone(),
+                        state.system_prompt.clone(),
+                        state.messages.clone(),
+                        state.thinking_budget,
+                        state.request_options.clone(),
+                    )
+                };
+
+                let requested_inference =
+                    normalize_inference_context_name(parsed.inference.or(current_inference));
+                let message_set = structured_messages(
+                    parsed.prompt.clone(),
+                    parsed.messages.clone(),
+                    current_messages,
+                )?;
+                let system_prompt = parsed.system.unwrap_or(current_system_prompt);
+                let strict = parsed.strict.unwrap_or(true);
+
+                let route = config
+                    .resolve_inference_route(
+                        &agent_id,
+                        &current_provider,
+                        &current_model,
+                        current_thinking_budget,
+                        requested_inference.as_deref(),
+                        Some(&session_inference),
+                    )
+                    .map_err(|err| err.to_string())?;
+
+                let response_format = response_format_for_schema(
+                    parsed.name.as_deref(),
+                    parsed.description.as_deref(),
+                    &parsed.schema,
+                    strict,
+                );
+
+                let fallback_system_prompt = fallback_system_prompt(
+                    &system_prompt,
+                    parsed.name.as_deref(),
+                    parsed.description.as_deref(),
+                    &parsed.schema,
+                );
+
+                let mut last_error = None::<String>;
+                for candidate in &route.candidates {
+                    let client = match clients.get(&candidate.provider_name).cloned() {
+                        Some(client) => client,
+                        None => {
+                            last_error = Some(format!(
+                                "Provider '{}' not initialized",
+                                candidate.provider_name
+                            ));
+                            continue;
+                        }
+                    };
+
+                    let provider_config = match config.providers.get(&candidate.provider_name) {
+                        Some(provider) => provider,
+                        None => {
+                            last_error = Some(format!(
+                                "Provider '{}' not found in config",
+                                candidate.provider_name
+                            ));
+                            continue;
+                        }
+                    };
+
+                    let request_options = merge_request_options(
+                        provider_config,
+                        &current_request_options,
+                        parsed.request_options.as_ref(),
+                    )
+                    .map_err(|err| err.to_string())?;
+
+                    let options = crate::inference::provider::InferenceOptions {
+                        temperature: parsed.temperature.or(candidate.temperature),
+                        max_tokens: parsed.max_tokens.or(candidate.max_tokens),
+                        thinking_budget: Some(
+                            parsed
+                                .thinking_budget
+                                .or(candidate.thinking_budget)
+                                .unwrap_or(current_thinking_budget),
+                        ),
+                    };
+
+                    let raw = if client.supports_response_format(&response_format) {
+                        client
+                            .completion_with_response_format(
+                                &candidate.model,
+                                &system_prompt,
+                                &message_set,
+                                &[],
+                                &options,
+                                response_format.clone(),
+                                Some(request_options.clone()),
+                            )
+                            .await
+                            .map_err(|err| err.to_string())
+                    } else {
+                        client
+                            .completion_with_options(
+                                &candidate.model,
+                                &fallback_system_prompt,
+                                &message_set,
+                                &[],
+                                &options,
+                                Some(request_options.clone()),
+                            )
+                            .await
+                            .map_err(|err| err.to_string())
+                    };
+
+                    match raw.and_then(|text| {
+                        parse_and_validate_json_response(&text, &parsed.schema)
+                            .map_err(|err| err.to_string())
+                    }) {
+                        Ok(json) => return Ok(json),
+                        Err(err) => last_error = Some(err),
+                    }
+                }
+
+                Err(last_error.unwrap_or_else(|| {
+                    "No inference route available for structured output".to_string()
+                }))
+            });
+
+            match structured {
+                Ok(value) => lua.to_value(&value).map_err(mlua::Error::external),
+                Err(err) => Err(mlua::Error::RuntimeError(format!(
+                    "Structured inference failed: {}",
+                    err
+                ))),
+            }
+        });
     }
 }
 
@@ -476,4 +674,65 @@ fn normalize_inference_context_name(value: Option<String>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+fn structured_messages(
+    prompt: Option<String>,
+    messages: Option<Vec<InferenceMessage>>,
+    current_messages: Vec<InferenceMessage>,
+) -> Result<Vec<InferenceMessage>, String> {
+    if prompt.is_some() && messages.is_some() {
+        return Err("structured opts may define prompt or messages, not both".to_string());
+    }
+
+    if let Some(prompt) = prompt {
+        return Ok(vec![InferenceMessage {
+            role: crate::inference::provider::InferenceRole::User,
+            content: vec![crate::inference::provider::InferenceContent::Text { text: prompt }],
+            tool_call_id: None,
+        }]);
+    }
+
+    Ok(messages.unwrap_or(current_messages))
+}
+
+fn merge_request_options(
+    provider_config: &crate::kernel::config::ProviderConfig,
+    current: &RequestOptionsOverride,
+    override_opts: Option<&RequestOptionsOverride>,
+) -> anyhow::Result<crate::inference::provider::RequestOptions> {
+    let mut options = crate::inference::provider::build_request_options(provider_config)?;
+    options = merge_request_option_override(options, current)?;
+    if let Some(override_opts) = override_opts {
+        options = merge_request_option_override(options, override_opts)?;
+    }
+    Ok(options)
+}
+
+fn merge_request_option_override(
+    mut options: crate::inference::provider::RequestOptions,
+    overrides: &RequestOptionsOverride,
+) -> anyhow::Result<crate::inference::provider::RequestOptions> {
+    for (header_name, header_value) in &overrides.headers {
+        options = options
+            .with_header(header_name, header_value)
+            .map_err(|err| anyhow::anyhow!("invalid request header '{}': {}", header_name, err))?;
+    }
+
+    if let Some(max_retries) = overrides.max_retries {
+        options = options.with_max_retries(max_retries);
+    }
+
+    if overrides.request_timeout_secs.is_some() || overrides.total_timeout_secs.is_some() {
+        let mut timeout_policy = options.timeout_policy.clone().unwrap_or_default();
+        if let Some(request_timeout_secs) = overrides.request_timeout_secs {
+            timeout_policy.request_timeout = Some(Duration::from_secs(request_timeout_secs));
+        }
+        if let Some(total_timeout_secs) = overrides.total_timeout_secs {
+            timeout_policy.total_timeout = Some(Duration::from_secs(total_timeout_secs));
+        }
+        options = options.with_timeout_policy(timeout_policy);
+    }
+
+    Ok(options)
 }

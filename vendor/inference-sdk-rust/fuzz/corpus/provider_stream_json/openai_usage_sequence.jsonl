@@ -1,0 +1,3 @@
+{"id":"chk_1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello","tool_calls":null},"finish_reason":null,"logprobs":null}],"system_fingerprint":null,"usage":null}
+{"id":"chk_2","object":"chat.completion.chunk","created":2,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":null,"content":null,"tool_calls":null},"finish_reason":"stop","logprobs":null}],"system_fingerprint":null,"usage":null}
+{"id":"chk_3","object":"chat.completion.chunk","created":3,"model":"gpt-4o","choices":[],"system_fingerprint":null,"usage":{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}}

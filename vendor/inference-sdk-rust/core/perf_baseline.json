@@ -1,0 +1,8 @@
+{
+  "max_regression_pct": 60.0,
+  "metrics_ns": {
+    "validate_event_sequence_large_message_ns": 59769593,
+    "from_stream_text_assembly_ns": 62281664,
+    "from_stream_tool_delta_assembly_ns": 23070664
+  }
+}

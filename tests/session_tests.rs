@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tempfile::tempdir;
 use turin::inference::provider::{
-    InferenceEvent, InferenceProvider, InferenceRequest, InferenceStream, ProviderClient,
-    RequestOptions, SdkError,
+    InferenceEvent, InferenceProvider, InferenceRequest, InferenceResponseFormat, InferenceResult,
+    InferenceStream, ProviderClient, RequestOptions, SdkError, Usage,
 };
 use turin::kernel::Kernel;
 use turin::kernel::config::{
@@ -147,6 +147,70 @@ struct ContextCheckpointProvider {
     seen_stream_messages: Arc<Mutex<Vec<turin::inference::provider::InferenceMessage>>>,
     seen_stream_system: Arc<Mutex<Option<String>>>,
     complete_calls: Arc<Mutex<usize>>,
+}
+
+struct StructuredOutputProvider {
+    seen_response_format: Arc<Mutex<Option<InferenceResponseFormat>>>,
+}
+
+#[async_trait]
+impl InferenceProvider for StructuredOutputProvider {
+    fn supports_response_format(&self, response_format: &InferenceResponseFormat) -> bool {
+        matches!(response_format, InferenceResponseFormat::JsonSchema { .. })
+    }
+
+    fn complete<'a>(
+        &'a self,
+        request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceResult, SdkError>> {
+        {
+            let mut seen = self
+                .seen_response_format
+                .lock()
+                .expect("structured provider mutex poisoned");
+            *seen = request.response_format.clone();
+        }
+
+        Box::pin(async move {
+            Ok(InferenceResult {
+                content: vec![turin::inference::provider::InferenceContent::Text {
+                    text: r#"{"approved":true,"summary":"structured ok"}"#.to_string(),
+                }],
+                model: "structured-model".to_string(),
+                stop_reason: None,
+                usage: Usage {
+                    input_tokens: 12,
+                    output_tokens: 6,
+                },
+            })
+        })
+    }
+
+    fn stream<'a>(
+        &'a self,
+        _request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+        Box::pin(async move {
+            let stream = futures::stream::iter(vec![
+                Ok(InferenceEvent::MessageStart {
+                    role: "assistant".to_string(),
+                    model: "structured-model".to_string(),
+                    provider_id: "structured".to_string(),
+                }),
+                Ok(InferenceEvent::MessageDelta {
+                    content: "MAIN TURN".to_string(),
+                }),
+                Ok(InferenceEvent::MessageEnd {
+                    input_tokens: 4,
+                    output_tokens: 2,
+                    stop_reason: None,
+                }),
+            ]);
+            Ok(Box::pin(stream) as InferenceStream)
+        })
+    }
 }
 
 #[async_trait]
@@ -380,6 +444,86 @@ async fn test_on_turn_prepare_exposes_estimated_tokens_and_context_limit() -> Re
     kernel
         .run(&mut session, Some("Probe token estimates".to_string()))
         .await?;
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_on_turn_prepare_structured_output_uses_native_response_format() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir_all(&harness_dir)?;
+    std::fs::write(
+        harness_dir.join("structured.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local result = ctx:structured({
+                    prompt = "Review this change",
+                    name = "review_result",
+                    schema = {
+                        type = "object",
+                        properties = {
+                            approved = { type = "boolean" },
+                            summary = { type = "string" },
+                        },
+                        required = { "approved", "summary" },
+                        additionalProperties = false,
+                    },
+                })
+
+                if result.approved ~= true then
+                    error("expected approved=true from structured result")
+                end
+
+                if result.summary ~= "structured ok" then
+                    error("expected structured summary to round-trip")
+                end
+
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut config = make_config(tmp.path());
+    config.harness.directory = harness_dir.to_string_lossy().to_string();
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let seen_response_format = Arc::new(Mutex::new(None));
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(
+            "mock",
+            Arc::new(StructuredOutputProvider {
+                seen_response_format: Arc::clone(&seen_response_format),
+            }),
+        ),
+    );
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Use structured output".to_string()))
+        .await?;
+
+    let seen = seen_response_format
+        .lock()
+        .expect("structured provider mutex poisoned")
+        .clone()
+        .expect("structured response format should have been recorded");
+
+    match seen {
+        InferenceResponseFormat::JsonSchema { json_schema } => {
+            assert_eq!(json_schema.name, "review_result");
+            assert_eq!(
+                json_schema.schema["required"],
+                serde_json::json!(["approved", "summary"])
+            );
+        }
+        other => panic!("expected json_schema response format, got {other:?}"),
+    }
 
     kernel.end_session(&mut session).await?;
     Ok(())

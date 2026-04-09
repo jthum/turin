@@ -206,6 +206,9 @@ impl ExecutionHost {
                 req.thinking_budget,
                 req.request_options_override.clone(),
                 self.clients.clone(),
+                self.config.clone(),
+                session.identity.agent_id().to_string(),
+                session.inference.clone(),
             );
 
             match engine.evaluate_userdata("on_turn_prepare", ctx.clone()) {

@@ -10,9 +10,9 @@ use crate::kernel::event::{KernelEvent, StreamEvent};
 // Use standardized types from SDK
 use futures::future::BoxFuture;
 pub use inference_sdk_core::{
-    InferenceContent, InferenceEvent, InferenceMessage, InferenceProvider, InferenceRequest,
-    InferenceResult, InferenceRole, InferenceStream, RequestOptions, SdkError, TimeoutPolicy, Tool,
-    Usage,
+    InferenceContent, InferenceEvent, InferenceJsonSchemaConfig, InferenceMessage,
+    InferenceProvider, InferenceRequest, InferenceResponseFormat, InferenceResult, InferenceRole,
+    InferenceStream, RequestOptions, SdkError, TimeoutPolicy, Tool, Usage,
 };
 use inference_sdk_registry::{ProviderInit, ProviderRegistry};
 
@@ -120,8 +120,77 @@ impl ProviderClient {
         options: &InferenceOptions,
         request_options: Option<RequestOptions>,
     ) -> Result<String> {
-        let req = self.build_request(model, system_prompt, messages, tools, options);
-        let result = self.provider.complete(req, request_options).await?;
+        let result = self
+            .completion_result_with_options(
+                model,
+                system_prompt,
+                messages,
+                tools,
+                options,
+                None,
+                request_options,
+            )
+            .await?;
+        Ok(result
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                InferenceContent::Text { text } => Some(text.as_str()),
+                // We could include thinking here if desired, but typically completion() returns just the answer.
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(""))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn completion_result_with_options(
+        &self,
+        model: &str,
+        system_prompt: &str,
+        messages: &[InferenceMessage],
+        tools: &[serde_json::Value],
+        options: &InferenceOptions,
+        response_format: Option<InferenceResponseFormat>,
+        request_options: Option<RequestOptions>,
+    ) -> std::result::Result<InferenceResult, SdkError> {
+        let req = self.build_request(
+            model,
+            system_prompt,
+            messages,
+            tools,
+            options,
+            response_format,
+        );
+        self.provider.complete(req, request_options).await
+    }
+
+    pub fn supports_response_format(&self, response_format: &InferenceResponseFormat) -> bool {
+        self.provider.supports_response_format(response_format)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn completion_with_response_format(
+        &self,
+        model: &str,
+        system_prompt: &str,
+        messages: &[InferenceMessage],
+        tools: &[serde_json::Value],
+        options: &InferenceOptions,
+        response_format: InferenceResponseFormat,
+        request_options: Option<RequestOptions>,
+    ) -> std::result::Result<String, SdkError> {
+        let result = self
+            .completion_result_with_options(
+                model,
+                system_prompt,
+                messages,
+                tools,
+                options,
+                Some(response_format),
+                request_options,
+            )
+            .await?;
         Ok(result
             .content
             .iter()
@@ -144,7 +213,7 @@ impl ProviderClient {
         options: &InferenceOptions,
         request_options: Option<RequestOptions>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<KernelEvent>> + Send>>> {
-        let req = self.build_request(model, system_prompt, messages, tools, options);
+        let req = self.build_request(model, system_prompt, messages, tools, options, None);
         let sdk_stream = self.provider.stream(req, request_options).await?;
         let mut pending_tool = PendingToolCallEvent::default();
 
@@ -167,6 +236,7 @@ impl ProviderClient {
         messages: &[InferenceMessage],
         tools: &[serde_json::Value],
         options: &InferenceOptions,
+        response_format: Option<InferenceResponseFormat>,
     ) -> InferenceRequest {
         let sdk_tools: Vec<Tool> = tools
             .iter()
@@ -198,6 +268,7 @@ impl ProviderClient {
             .maybe_temperature(options.temperature)
             .maybe_max_tokens(options.max_tokens)
             .maybe_thinking_budget(options.thinking_budget)
+            .maybe_response_format(response_format)
             .build()
     }
 }

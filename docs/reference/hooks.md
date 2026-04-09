@@ -137,6 +137,7 @@ Last mutable checkpoint before Turin calls the provider.
 
 ### Readable fields
 
+- `ctx.inference`
 - `ctx.model`
 - `ctx.provider`
 - `ctx.system_prompt`
@@ -148,18 +149,65 @@ Last mutable checkpoint before Turin calls the provider.
 - `ctx.task_id`
 - `ctx.plan_id`
 - `ctx.token_count`
+- `ctx.estimated_input_tokens`
 - `ctx.token_limit`
+- `ctx.max_input_tokens`
 - `ctx.thinking_budget`
 - `ctx.request_options`
 
 ### Mutable fields
 
+- `ctx.inference`
 - `ctx.provider`
 - `ctx.system_prompt`
 - `ctx.messages`
 - `ctx.prompt` (updates latest user message text when possible)
 - `ctx.thinking_budget`
 - `ctx.request_options`
+
+### Methods
+
+- `ctx:summarize([messages])`
+  - Runs a concise provider-side summary over the supplied messages, or `ctx.messages` when omitted.
+- `ctx:structured(opts)`
+  - Runs an opt-in structured inference sub-call and returns a Lua table converted from validated JSON.
+  - Turin uses provider-native schema output when the provider supports it, otherwise it falls back to a JSON-only prompt contract and validates locally.
+
+`ctx:structured(opts)` shape:
+
+```lua
+{
+  prompt = "Classify this request", -- optional, mutually exclusive with messages
+  messages = { ... },               -- optional, defaults to ctx.messages
+  system = "You are a classifier",  -- optional, defaults to ctx.system_prompt
+  inference = "fast",               -- optional named inference context
+  name = "classification",          -- optional schema name
+  description = "Short classifier output", -- optional
+  strict = true,                    -- optional, defaults to true
+  temperature = 0.1,                -- optional
+  max_tokens = 256,                 -- optional
+  thinking_budget = 0,              -- optional
+  request_options = { ... },        -- optional request override
+  schema = {
+    type = "object",
+    properties = {
+      label = { type = "string" },
+      confidence = { type = "number" },
+    },
+    required = { "label", "confidence" },
+    additionalProperties = false,
+  },
+}
+```
+
+Supported schema subset:
+
+- `type`
+- `properties`
+- `required`
+- `items`
+- `enum`
+- `additionalProperties`
 
 `ctx.request_options` shape:
 
@@ -178,6 +226,24 @@ Example:
 function on_turn_prepare(ctx)
   if ctx.is_first_turn_in_task then
     ctx.system_prompt = ctx.system_prompt .. "\n\nBe concise and explicit about file edits."
+  end
+
+  local triage = ctx:structured({
+    prompt = ctx.prompt or "",
+    inference = "fast",
+    name = "triage_result",
+    schema = {
+      type = "object",
+      properties = {
+        priority = { type = "string", enum = { "low", "normal", "high" } },
+      },
+      required = { "priority" },
+      additionalProperties = false,
+    },
+  })
+
+  if triage.priority == "high" then
+    ctx.inference = "reasoning"
   end
 
   if ctx.task_turn_index > 2 then

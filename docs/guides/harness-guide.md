@@ -490,9 +490,23 @@ function on_turn_prepare(ctx)
     ctx.system_prompt = ctx.system_prompt .. "\n\nAlways explain your plan before editing files."
   end
 
-  -- Dynamic provider routing (example)
-  if ctx.prompt and ctx.prompt:find("fast") then
-    ctx.provider = "openai_fast"
+  -- Structured preflight classification
+  local route = ctx:structured({
+    prompt = ctx.prompt or "",
+    inference = "fast",
+    name = "routing_decision",
+    schema = {
+      type = "object",
+      properties = {
+        inference = { type = "string", enum = { "default", "fast", "reasoning" } },
+      },
+      required = { "inference" },
+      additionalProperties = false,
+    },
+  })
+
+  if route.inference ~= "default" then
+    ctx.inference = route.inference
   end
 
   -- Request transport tuning for this turn
@@ -506,7 +520,7 @@ function on_turn_prepare(ctx)
 end
 ```
 
-Note: `ctx.provider` and other mutable fields are part of the `ContextWrapper` contract. `ctx.model` is currently readable but not writable. See `docs/reference/hooks.md` for exact semantics.
+Note: `ctx.inference`, `ctx.provider`, and other mutable fields are part of the `ContextWrapper` contract. `ctx.model` is currently readable but not writable. `ctx:structured(...)` is opt-in and does not change normal plain-text turn behavior unless you call it. See `docs/reference/hooks.md` for exact semantics.
 
 ## 4. Plan Review (`on_plan_submit`)
 

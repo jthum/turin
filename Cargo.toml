@@ -140,3 +140,9 @@ lto = true          # Enable Link Time Optimization
 codegen-units = 1   # Reduce parallel codegen to improve optimization
 panic = "abort"     # Remove panic unwinding to save space
 strip = true        # Automatically strip symbols from binary
+
+[patch."https://github.com/jthum/inference-sdk-rust"]
+inference-sdk-core = { path = "vendor/inference-sdk-rust/core" }
+inference-sdk-registry = { path = "vendor/inference-sdk-rust/registry" }
+openai-sdk = { path = "vendor/inference-sdk-rust/openai" }
+anthropic-sdk = { path = "vendor/inference-sdk-rust/anthropic" }

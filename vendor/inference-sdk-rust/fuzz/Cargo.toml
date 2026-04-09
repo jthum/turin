@@ -1,0 +1,38 @@
+[package]
+name = "inference-sdk-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+tokio = { version = "1", default-features = false, features = ["rt", "time"] }
+serde_json = "1"
+
+[dependencies.inference-sdk-core]
+path = "../core"
+
+[dependencies.openai-sdk]
+path = "../openai"
+
+[dependencies.anthropic-sdk]
+path = "../anthropic"
+
+[[bin]]
+name = "provider_stream_json"
+path = "fuzz_targets/provider_stream_json.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "core_event_stream"
+path = "fuzz_targets/core_event_stream.rs"
+test = false
+doc = false
+
+[workspace]
+members = ["."]
