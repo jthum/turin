@@ -88,6 +88,11 @@ async fn run(args: RunArgs) -> Result<()> {
     });
 
     let daemon = DaemonClient::new(args.daemon_endpoint);
+    let runtime_dir = args
+        .bindings_path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
     let runner = ChannelRunner::new(
         daemon.clone(),
         RunnerConfig {
@@ -100,9 +105,10 @@ async fn run(args: RunArgs) -> Result<()> {
         },
     );
 
-    let mut driver = TelegramChannelDriver::from_settings(
+    let mut driver = TelegramChannelDriver::from_settings_with_media_dir(
         &args.channel_id,
         &settings,
+        Some(runtime_dir.join("media")),
         shutdown_rx,
         allow_unconfigured_chats,
     )

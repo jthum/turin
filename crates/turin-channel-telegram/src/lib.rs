@@ -4,6 +4,7 @@ use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tokio::time::sleep;
@@ -105,7 +106,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                 dm: true,
                 groups: true,
                 threads: true,
-                attachments: false,
+                attachments: true,
                 streaming: true,
             },
             identity_selectors: ChannelIdentitySelectors {
@@ -655,6 +656,7 @@ fn parse_settings(
 pub struct TelegramChannelDriver {
     channel_runtime_id: String,
     config: TelegramChannelDriverConfig,
+    media_dir: PathBuf,
     client: reqwest::Client,
     shutdown_rx: watch::Receiver<bool>,
     backlog: VecDeque<InboundEvent>,
@@ -674,9 +676,26 @@ impl TelegramChannelDriver {
         shutdown_rx: watch::Receiver<bool>,
         allow_unconfigured_chats: bool,
     ) -> Result<Self> {
+        Self::from_settings_with_media_dir(
+            channel_runtime_id,
+            settings,
+            None,
+            shutdown_rx,
+            allow_unconfigured_chats,
+        )
+        .await
+    }
+
+    pub async fn from_settings_with_media_dir(
+        channel_runtime_id: impl Into<String>,
+        settings: &serde_json::Value,
+        media_dir: Option<PathBuf>,
+        shutdown_rx: watch::Receiver<bool>,
+        allow_unconfigured_chats: bool,
+    ) -> Result<Self> {
         let config =
             TelegramChannelDriverConfig::from_settings(settings, allow_unconfigured_chats)?;
-        Self::from_config(channel_runtime_id, config, shutdown_rx)
+        Self::from_config_with_media_dir(channel_runtime_id, config, media_dir, shutdown_rx)
     }
 
     pub fn from_config(
@@ -684,6 +703,16 @@ impl TelegramChannelDriver {
         config: TelegramChannelDriverConfig,
         shutdown_rx: watch::Receiver<bool>,
     ) -> Result<Self> {
+        Self::from_config_with_media_dir(channel_runtime_id, config, None, shutdown_rx)
+    }
+
+    pub fn from_config_with_media_dir(
+        channel_runtime_id: impl Into<String>,
+        config: TelegramChannelDriverConfig,
+        media_dir: Option<PathBuf>,
+        shutdown_rx: watch::Receiver<bool>,
+    ) -> Result<Self> {
+        let channel_runtime_id = channel_runtime_id.into();
         let timeout = Duration::from_secs(config.poll_timeout_secs.saturating_add(10).max(10));
         let client = reqwest::Client::builder()
             .user_agent("turin-channel-telegram/0.24.0")
@@ -692,10 +721,13 @@ impl TelegramChannelDriver {
             .context(
                 "[telegram_http_client_init_failed] Failed to build Telegram adapter HTTP client",
             )?;
+        let media_dir =
+            media_dir.unwrap_or_else(|| default_media_dir_for_runtime(&channel_runtime_id));
 
         Ok(Self {
-            channel_runtime_id: channel_runtime_id.into(),
+            channel_runtime_id,
             config,
+            media_dir,
             client,
             shutdown_rx,
             backlog: VecDeque::new(),
@@ -737,7 +769,28 @@ impl TelegramChannelDriver {
 
         self.advance_offset(&updates);
         for update in updates {
-            if let Some(event) = self.normalize_update(update) {
+            let update_id = update.update_id;
+            let Some(message) = update.message.or(update.channel_post) else {
+                continue;
+            };
+            if let Some(mut event) = self.normalize_message(update_id, message.clone()) {
+                match self.collect_inbound_attachments(&message).await {
+                    Ok(attachments) => {
+                        event.attachments = attachments;
+                    }
+                    Err(error) => {
+                        warn!(
+                            channel_runtime_id = %self.channel_runtime_id,
+                            update_id,
+                            message_id = message.message_id,
+                            error = %error,
+                            "Telegram attachment collection failed; continuing without attachments"
+                        );
+                    }
+                }
+                if event.text.trim().is_empty() && event.attachments.is_empty() {
+                    continue;
+                }
                 self.backlog.push_back(event);
             }
         }
@@ -760,6 +813,105 @@ impl TelegramChannelDriver {
         self.request_with_retry("getUpdates", &payload).await
     }
 
+    async fn collect_inbound_attachments(
+        &self,
+        message: &TelegramMessage,
+    ) -> Result<Vec<ChannelAttachment>> {
+        let refs = message.attachment_refs();
+        if refs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        tokio::fs::create_dir_all(&self.media_dir)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create Telegram media directory '{}'",
+                    self.media_dir.display()
+                )
+            })?;
+
+        let mut attachments = Vec::with_capacity(refs.len());
+        for attachment in refs {
+            attachments.push(self.download_inbound_attachment(&attachment).await?);
+        }
+        Ok(attachments)
+    }
+
+    async fn download_inbound_attachment(
+        &self,
+        attachment: &TelegramAttachmentRef,
+    ) -> Result<ChannelAttachment> {
+        let file: TelegramFile = self
+            .request_with_retry(
+                "getFile",
+                &serde_json::json!({ "file_id": attachment.file_id }),
+            )
+            .await
+            .map_err(TelegramApiError::into_anyhow)?;
+        let file_path = file.file_path.context(format!(
+            "Telegram getFile response missing file_path for '{}'",
+            attachment.file_id
+        ))?;
+        let download_url = self.telegram_file_url(&file_path);
+        let response = self
+            .client
+            .get(&download_url)
+            .send()
+            .await
+            .with_context(|| format!("Telegram file download failed for '{}'", attachment.name))?
+            .error_for_status()
+            .with_context(|| {
+                format!(
+                    "Telegram file download returned error status for '{}'",
+                    attachment.name
+                )
+            })?;
+        let fetched_content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.split(';').next().unwrap_or(value).trim().to_string());
+        let bytes = response
+            .bytes()
+            .await
+            .with_context(|| format!("Failed to read Telegram file '{}'", attachment.name))?;
+        let target_path = self.media_dir.join(unique_media_name(
+            &attachment.name,
+            Some(file_path.as_str()),
+        ));
+        tokio::fs::write(&target_path, bytes)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to write Telegram media attachment '{}'",
+                    target_path.display()
+                )
+            })?;
+        Ok(ChannelAttachment {
+            name: attachment.name.clone(),
+            content_type: attachment
+                .content_type
+                .clone()
+                .or(fetched_content_type)
+                .or_else(|| match attachment.kind {
+                    TelegramAttachmentKind::Image => Some("image/jpeg".to_string()),
+                    TelegramAttachmentKind::File => None,
+                }),
+            url: None,
+            local_path: Some(target_path.display().to_string()),
+        })
+    }
+
+    fn telegram_file_url(&self, file_path: &str) -> String {
+        format!(
+            "{}/file/bot{}/{}",
+            self.config.base_url,
+            self.config.token,
+            file_path.trim_start_matches('/')
+        )
+    }
+
     async fn send_batches(
         &self,
         conversation: &ChannelConversationKey,
@@ -767,13 +919,133 @@ impl TelegramChannelDriver {
     ) -> Result<()> {
         let chat_id = conversation_chat_id(self.config.primary_chat_id(), conversation);
         let message_thread_id = resolve_message_thread_id(conversation)?;
+        let reply_to_message_id = metadata_i64(&message.metadata, "telegram_reply_to_message_id")?;
         let payloads = telegram_batches_from_message(&chat_id, message_thread_id, message)?;
+        let reply_for_attachments = if payloads.is_empty() {
+            reply_to_message_id
+        } else {
+            None
+        };
         for payload in payloads {
             let _: TelegramSentMessage = self
                 .request_with_retry("sendMessage", &payload)
                 .await
                 .map_err(TelegramApiError::into_anyhow)?;
         }
+        self.send_attachment_messages(
+            &chat_id,
+            message_thread_id,
+            &message.attachments,
+            reply_for_attachments,
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn send_attachment_messages(
+        &self,
+        chat_id: &str,
+        message_thread_id: Option<i64>,
+        attachments: &[ChannelAttachment],
+        mut reply_to_message_id: Option<i64>,
+    ) -> Result<()> {
+        for attachment in attachments {
+            self.send_attachment_message(
+                chat_id,
+                message_thread_id,
+                attachment,
+                reply_to_message_id.take(),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn send_attachment_message(
+        &self,
+        chat_id: &str,
+        message_thread_id: Option<i64>,
+        attachment: &ChannelAttachment,
+        reply_to_message_id: Option<i64>,
+    ) -> Result<()> {
+        let method = if attachment
+            .content_type
+            .as_deref()
+            .is_some_and(|content_type| content_type.starts_with("image/"))
+        {
+            "sendPhoto"
+        } else {
+            "sendDocument"
+        };
+        let field_name = if method == "sendPhoto" {
+            "photo"
+        } else {
+            "document"
+        };
+
+        if let Some(local_path) = attachment.local_path.as_deref() {
+            let attachment_name = attachment.name.clone();
+            let content_type = attachment.content_type.clone();
+            let local_path = PathBuf::from(local_path);
+            let chat_id = chat_id.to_string();
+            let _: TelegramSentMessage = self
+                .multipart_request_with_retry(method, || {
+                    let bytes = std::fs::read(&local_path).with_context(|| {
+                        format!(
+                            "Failed to read Telegram attachment '{}'",
+                            local_path.display()
+                        )
+                    })?;
+                    let mut form = reqwest::multipart::Form::new().text("chat_id", chat_id.clone());
+                    if let Some(message_thread_id) = message_thread_id {
+                        form = form.text("message_thread_id", message_thread_id.to_string());
+                    }
+                    if let Some(reply_to_message_id) = reply_to_message_id {
+                        form = form.text("reply_to_message_id", reply_to_message_id.to_string());
+                    }
+
+                    let mut part =
+                        reqwest::multipart::Part::bytes(bytes).file_name(attachment_name.clone());
+                    if let Some(content_type) = &content_type {
+                        part = part.mime_str(content_type).with_context(|| {
+                            format!(
+                                "Invalid Telegram attachment content type '{}'",
+                                content_type
+                            )
+                        })?;
+                    }
+                    Ok(form.part(field_name.to_string(), part))
+                })
+                .await
+                .map_err(TelegramApiError::into_anyhow)?;
+            return Ok(());
+        }
+
+        let remote = attachment.url.as_deref().ok_or_else(|| {
+            anyhow!(
+                "[telegram_send_missing_attachment_source] attachment '{}' is missing local_path and url",
+                attachment.name
+            )
+        })?;
+        let mut payload = serde_json::Map::new();
+        payload.insert("chat_id".to_string(), serde_json::json!(chat_id));
+        payload.insert(field_name.to_string(), serde_json::json!(remote));
+        if let Some(message_thread_id) = message_thread_id {
+            payload.insert(
+                "message_thread_id".to_string(),
+                serde_json::json!(message_thread_id),
+            );
+        }
+        if let Some(reply_to_message_id) = reply_to_message_id {
+            payload.insert(
+                "reply_to_message_id".to_string(),
+                serde_json::json!(reply_to_message_id),
+            );
+        }
+        let _: TelegramSentMessage = self
+            .request_with_retry(method, &serde_json::Value::Object(payload))
+            .await
+            .map_err(TelegramApiError::into_anyhow)?;
         Ok(())
     }
 
@@ -957,9 +1229,16 @@ impl TelegramChannelDriver {
     ) -> Result<()> {
         let key = progress_key(conversation)?;
         let progress_state = self.progress_states.remove(&key);
+        let attachment_placeholder_id = match progress_state.as_ref() {
+            Some(TelegramProgressState {
+                sink: TelegramProgressSink::Placeholder { message_id },
+            }) => Some(*message_id),
+            _ => None,
+        };
         let chat_id = conversation_chat_id(self.config.primary_chat_id(), conversation);
         let message_thread_id = resolve_message_thread_id(conversation)?;
         let payloads = telegram_batches_from_message(&chat_id, message_thread_id, message)?;
+        let reply_to_message_id = metadata_i64(&message.metadata, "telegram_reply_to_message_id")?;
 
         if let Some(TelegramProgressState {
             sink: TelegramProgressSink::Placeholder { message_id },
@@ -984,6 +1263,13 @@ impl TelegramChannelDriver {
                             .await
                             .map_err(TelegramApiError::into_anyhow)?;
                     }
+                    self.send_attachment_messages(
+                        &chat_id,
+                        message_thread_id,
+                        &message.attachments,
+                        None,
+                    )
+                    .await?;
                     return Ok(());
                 }
                 Err(error) if error.is_message_not_modified() => {
@@ -993,6 +1279,13 @@ impl TelegramChannelDriver {
                             .await
                             .map_err(TelegramApiError::into_anyhow)?;
                     }
+                    self.send_attachment_messages(
+                        &chat_id,
+                        message_thread_id,
+                        &message.attachments,
+                        None,
+                    )
+                    .await?;
                     return Ok(());
                 }
                 Err(error) => {
@@ -1003,6 +1296,24 @@ impl TelegramChannelDriver {
                     );
                 }
             }
+        }
+
+        if payloads.is_empty() && !message.attachments.is_empty() {
+            if let Some(message_id) = attachment_placeholder_id {
+                let summary = attachment_preview_text(&message.attachments);
+                let payload = telegram_edit_payload(&chat_id, message_id, summary, None, true);
+                let _ = self
+                    .request_with_retry::<TelegramSentMessage>("editMessageText", &payload)
+                    .await;
+            }
+            self.send_attachment_messages(
+                &chat_id,
+                message_thread_id,
+                &message.attachments,
+                reply_to_message_id,
+            )
+            .await?;
+            return Ok(());
         }
 
         self.send_batches(conversation, message).await
@@ -1020,8 +1331,14 @@ impl TelegramChannelDriver {
         }
     }
 
+    #[cfg(test)]
     fn normalize_update(&self, update: TelegramUpdate) -> Option<InboundEvent> {
+        let update_id = update.update_id;
         let message = update.message.or(update.channel_post)?;
+        self.normalize_message(update_id, message)
+    }
+
+    fn normalize_message(&self, update_id: i64, message: TelegramMessage) -> Option<InboundEvent> {
         let chat_id = message.chat.id.to_string();
         if !self.config.accept_all_chats && !self.config.allows_chat_id(&chat_id) {
             return None;
@@ -1040,7 +1357,7 @@ impl TelegramChannelDriver {
         let text = message
             .body_text()
             .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())?;
+            .unwrap_or_default();
 
         let user = message.channel_user()?;
         let scoped_thread_id = message
@@ -1051,7 +1368,7 @@ impl TelegramChannelDriver {
         let mut metadata = serde_json::Map::new();
         metadata.insert(
             "telegram_update_id".to_string(),
-            serde_json::json!(update.update_id),
+            serde_json::json!(update_id),
         );
         metadata.insert(
             "telegram_message_id".to_string(),
@@ -1228,6 +1545,39 @@ impl TelegramChannelDriver {
                 retry_after: None,
             })?;
 
+        self.decode_api_response(method, response).await
+    }
+
+    async fn api_multipart_request_once<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        form: reqwest::multipart::Form,
+    ) -> std::result::Result<T, TelegramApiError> {
+        let url = format!(
+            "{}/bot{}/{}",
+            self.config.base_url, self.config.token, method
+        );
+        let response = self
+            .client
+            .post(&url)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|error| TelegramApiError {
+                code: "telegram_http_request_failed".to_string(),
+                message: format!("Telegram {} multipart request failed: {}", method, error),
+                retriable: true,
+                retry_after: None,
+            })?;
+
+        self.decode_api_response(method, response).await
+    }
+
+    async fn decode_api_response<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        response: reqwest::Response,
+    ) -> std::result::Result<T, TelegramApiError> {
         let status = response.status();
         let body = response
             .text()
@@ -1322,6 +1672,48 @@ impl TelegramChannelDriver {
         }
     }
 
+    async fn multipart_request_with_retry<T, F>(
+        &self,
+        method: &str,
+        form_builder: F,
+    ) -> std::result::Result<T, TelegramApiError>
+    where
+        T: DeserializeOwned,
+        F: Fn() -> Result<reqwest::multipart::Form>,
+    {
+        let mut attempts: u32 = 0;
+        loop {
+            attempts = attempts.saturating_add(1);
+            let form = form_builder().map_err(|error| TelegramApiError {
+                code: "telegram_multipart_build_failed".to_string(),
+                message: error.to_string(),
+                retriable: false,
+                retry_after: None,
+            })?;
+
+            match self.api_multipart_request_once(method, form).await {
+                Ok(result) => return Ok(result),
+                Err(error) => {
+                    if !error.retriable || attempts >= MAX_API_REQUEST_ATTEMPTS {
+                        return Err(error);
+                    }
+
+                    let delay = error.retry_after.unwrap_or_else(|| retry_backoff(attempts));
+                    warn!(
+                        channel_runtime_id = %self.channel_runtime_id,
+                        method,
+                        attempt = attempts,
+                        delay_ms = delay.as_millis() as u64,
+                        error_code = %error.code,
+                        error = %error.message,
+                        "Retrying Telegram multipart request after transient failure"
+                    );
+                    sleep(delay).await;
+                }
+            }
+        }
+    }
+
     async fn sleep_or_shutdown(&self, duration: Duration) -> bool {
         let mut shutdown_rx = self.shutdown_rx.clone();
         tokio::select! {
@@ -1385,7 +1777,7 @@ impl ChannelDriver for TelegramChannelDriver {
         ChannelCapabilities {
             rich_formatting: true,
             threads: true,
-            attachments: false,
+            attachments: true,
             ephemeral_messages: false,
         }
     }
@@ -1562,7 +1954,7 @@ impl TelegramApiError {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 struct TelegramUpdate {
     update_id: i64,
     #[serde(default)]
@@ -1571,7 +1963,7 @@ struct TelegramUpdate {
     channel_post: Option<TelegramMessage>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 struct TelegramMessage {
     message_id: i64,
     chat: TelegramChat,
@@ -1587,6 +1979,16 @@ struct TelegramMessage {
     entities: Vec<TelegramMessageEntity>,
     #[serde(default)]
     caption_entities: Vec<TelegramMessageEntity>,
+    #[serde(default)]
+    photo: Vec<TelegramPhotoSize>,
+    #[serde(default)]
+    document: Option<TelegramDocument>,
+    #[serde(default)]
+    video: Option<TelegramVideo>,
+    #[serde(default)]
+    audio: Option<TelegramAudio>,
+    #[serde(default)]
+    voice: Option<TelegramVoice>,
     #[serde(default)]
     message_thread_id: Option<i64>,
     #[serde(default)]
@@ -1632,9 +2034,77 @@ impl TelegramMessage {
             &self.caption_entities
         }
     }
+
+    fn attachment_refs(&self) -> Vec<TelegramAttachmentRef> {
+        let mut attachments = Vec::new();
+        if let Some(photo) = self.photo.iter().max_by_key(|photo| {
+            (
+                u64::from(photo.width) * u64::from(photo.height),
+                photo.file_size.unwrap_or_default(),
+            )
+        }) {
+            attachments.push(TelegramAttachmentRef {
+                file_id: photo.file_id.clone(),
+                name: photo
+                    .file_unique_id
+                    .as_deref()
+                    .map(|id| format!("{id}.jpg"))
+                    .unwrap_or_else(|| format!("photo-{}.jpg", self.message_id)),
+                content_type: Some("image/jpeg".to_string()),
+                kind: TelegramAttachmentKind::Image,
+            });
+        }
+        if let Some(document) = &self.document {
+            attachments.push(TelegramAttachmentRef {
+                file_id: document.file_id.clone(),
+                name: document
+                    .file_name
+                    .clone()
+                    .unwrap_or_else(|| format!("document-{}", self.message_id)),
+                content_type: document.mime_type.clone(),
+                kind: attachment_kind_from_content_type(document.mime_type.as_deref()),
+            });
+        }
+        if let Some(video) = &self.video {
+            attachments.push(TelegramAttachmentRef {
+                file_id: video.file_id.clone(),
+                name: video
+                    .file_name
+                    .clone()
+                    .unwrap_or_else(|| format!("video-{}.mp4", self.message_id)),
+                content_type: video
+                    .mime_type
+                    .clone()
+                    .or_else(|| Some("video/mp4".to_string())),
+                kind: TelegramAttachmentKind::File,
+            });
+        }
+        if let Some(audio) = &self.audio {
+            attachments.push(TelegramAttachmentRef {
+                file_id: audio.file_id.clone(),
+                name: audio.file_name.clone().unwrap_or_else(|| {
+                    infer_audio_name(audio).unwrap_or_else(|| format!("audio-{}", self.message_id))
+                }),
+                content_type: audio.mime_type.clone(),
+                kind: TelegramAttachmentKind::File,
+            });
+        }
+        if let Some(voice) = &self.voice {
+            attachments.push(TelegramAttachmentRef {
+                file_id: voice.file_id.clone(),
+                name: format!("voice-{}.ogg", self.message_id),
+                content_type: voice
+                    .mime_type
+                    .clone()
+                    .or_else(|| Some("audio/ogg".to_string())),
+                kind: TelegramAttachmentKind::File,
+            });
+        }
+        attachments
+    }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 struct TelegramUser {
     id: i64,
     #[serde(default)]
@@ -1647,7 +2117,76 @@ struct TelegramUser {
     username: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
+struct TelegramPhotoSize {
+    file_id: String,
+    #[serde(default)]
+    file_unique_id: Option<String>,
+    width: u32,
+    height: u32,
+    #[serde(default)]
+    file_size: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct TelegramDocument {
+    file_id: String,
+    #[serde(default)]
+    file_name: Option<String>,
+    #[serde(default)]
+    mime_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct TelegramVideo {
+    file_id: String,
+    #[serde(default)]
+    file_name: Option<String>,
+    #[serde(default)]
+    mime_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct TelegramAudio {
+    file_id: String,
+    #[serde(default)]
+    file_name: Option<String>,
+    #[serde(default)]
+    mime_type: Option<String>,
+    #[serde(default)]
+    performer: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct TelegramVoice {
+    file_id: String,
+    #[serde(default)]
+    mime_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct TelegramFile {
+    #[serde(default)]
+    file_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TelegramAttachmentKind {
+    Image,
+    File,
+}
+
+#[derive(Debug, Clone)]
+struct TelegramAttachmentRef {
+    file_id: String,
+    name: String,
+    content_type: Option<String>,
+    kind: TelegramAttachmentKind,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
 struct TelegramMessageEntity {
     #[serde(rename = "type")]
     kind: String,
@@ -1657,7 +2196,7 @@ struct TelegramMessageEntity {
     user: Option<TelegramUser>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 struct TelegramChat {
     id: i64,
     #[serde(rename = "type")]
@@ -2090,17 +2629,12 @@ fn render_telegram_message(message: &OutboundMessage) -> Result<TelegramRendered
             if let Some(thinking) = final_thinking {
                 rendered = prepend_final_thinking_text(&rendered, thinking);
             }
-            let mut chunks = split_for_telegram_message(rendered);
-            let attachment_lines = render_attachment_lines(&message.attachments);
-            if !attachment_lines.is_empty() {
-                chunks.extend(split_for_telegram_message(attachment_lines));
-            }
-            chunks
+            split_for_telegram_message(rendered)
         }
         TelegramRenderMode::Html => render_html_chunks(message, final_thinking),
     };
 
-    if chunks.is_empty() {
+    if chunks.is_empty() && message.attachments.is_empty() {
         chunks.push("(no output)".to_string());
     }
 
@@ -2148,23 +2682,6 @@ fn render_text_blocks(blocks: &[MessageBlock]) -> String {
     chunks.join("\n\n")
 }
 
-fn render_attachment_lines(attachments: &[ChannelAttachment]) -> String {
-    let mut lines = Vec::new();
-    for attachment in attachments {
-        let location = attachment
-            .url
-            .as_deref()
-            .or(attachment.local_path.as_deref())
-            .unwrap_or("");
-        if location.is_empty() {
-            lines.push(format!("Attachment: {}", attachment.name));
-        } else {
-            lines.push(format!("Attachment: {} ({})", attachment.name, location));
-        }
-    }
-    lines.join("\n")
-}
-
 fn render_html_chunks(message: &OutboundMessage, final_thinking: Option<&str>) -> Vec<String> {
     let mut segments = Vec::new();
     if let Some(thinking) = final_thinking {
@@ -2174,29 +2691,6 @@ fn render_html_chunks(message: &OutboundMessage, final_thinking: Option<&str>) -
     }
     for block in &message.blocks {
         segments.extend(render_html_segments_for_block(block));
-    }
-
-    if !message.attachments.is_empty() {
-        let attachment_lines: Vec<String> = message
-            .attachments
-            .iter()
-            .map(|attachment| {
-                let location = attachment
-                    .url
-                    .as_deref()
-                    .or(attachment.local_path.as_deref())
-                    .unwrap_or("");
-                if location.is_empty() {
-                    format!("Attachment: {}", attachment.name)
-                } else {
-                    format!("Attachment: {} ({})", attachment.name, location)
-                }
-            })
-            .collect();
-        let attachment_text = attachment_lines.join("\n");
-        if !attachment_text.trim().is_empty() {
-            segments.extend(split_plain_segment(&escape_html(&attachment_text)));
-        }
     }
 
     pack_segments(segments)
@@ -2216,6 +2710,83 @@ fn render_html_segments_for_block(block: &MessageBlock) -> Vec<String> {
         MessageBlock::Text { text } => render_markdown_segments(text),
         MessageBlock::CodeBlock { code, .. } => split_wrapped_segment(code, "<pre>", "</pre>"),
     }
+}
+
+fn attachment_preview_text(attachments: &[ChannelAttachment]) -> String {
+    match attachments.len() {
+        0 => "(no output)".to_string(),
+        1 => format!("Sent attachment: {}", attachments[0].name),
+        count => format!("Sent {count} attachments"),
+    }
+}
+
+fn attachment_kind_from_content_type(content_type: Option<&str>) -> TelegramAttachmentKind {
+    if content_type.is_some_and(|value| value.starts_with("image/")) {
+        TelegramAttachmentKind::Image
+    } else {
+        TelegramAttachmentKind::File
+    }
+}
+
+fn infer_audio_name(audio: &TelegramAudio) -> Option<String> {
+    match (audio.performer.as_deref(), audio.title.as_deref()) {
+        (Some(performer), Some(title))
+            if !performer.trim().is_empty() && !title.trim().is_empty() =>
+        {
+            Some(format!("{performer} - {title}.mp3"))
+        }
+        (_, Some(title)) if !title.trim().is_empty() => Some(format!("{title}.mp3")),
+        _ => None,
+    }
+}
+
+fn default_media_dir_for_runtime(channel_runtime_id: &str) -> PathBuf {
+    std::env::temp_dir()
+        .join("turin")
+        .join("channels")
+        .join("telegram")
+        .join(sanitize_runtime_component(channel_runtime_id))
+        .join("media")
+}
+
+fn sanitize_runtime_component(raw: &str) -> String {
+    let mut out = String::new();
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push('-');
+        }
+    }
+    let trimmed = out.trim_matches('-');
+    if trimmed.is_empty() {
+        "default".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn unique_media_name(name: &str, fallback_path: Option<&str>) -> String {
+    let extension = media_extension(name, fallback_path)
+        .map(|value| format!(".{value}"))
+        .unwrap_or_default();
+    format!("{}{}", uuid::Uuid::now_v7().simple(), extension)
+}
+
+fn media_extension(name: &str, fallback_path: Option<&str>) -> Option<String> {
+    std::path::Path::new(name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::trim)
+        .filter(|ext| !ext.is_empty())
+        .map(str::to_ascii_lowercase)
+        .or_else(|| {
+            fallback_path
+                .and_then(|path| Path::new(path).extension().and_then(|ext| ext.to_str()))
+                .map(str::trim)
+                .filter(|ext| !ext.is_empty())
+                .map(str::to_ascii_lowercase)
+        })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2972,6 +3543,7 @@ mod tests {
                 caption_entities: Vec::new(),
                 message_thread_id: None,
                 reply_to_message: None,
+                ..Default::default()
             }),
             channel_post: None,
         };
@@ -3011,6 +3583,7 @@ mod tests {
                 caption_entities: Vec::new(),
                 message_thread_id: Some(444),
                 reply_to_message: None,
+                ..Default::default()
             }),
             channel_post: None,
         };
@@ -3051,6 +3624,7 @@ mod tests {
                 caption_entities: Vec::new(),
                 message_thread_id: Some(444),
                 reply_to_message: None,
+                ..Default::default()
             }),
             channel_post: None,
         };
@@ -3092,6 +3666,7 @@ mod tests {
                 caption_entities: Vec::new(),
                 message_thread_id: Some(444),
                 reply_to_message: None,
+                ..Default::default()
             }),
             channel_post: None,
         };
@@ -3130,6 +3705,7 @@ mod tests {
                 caption_entities: Vec::new(),
                 message_thread_id: None,
                 reply_to_message: None,
+                ..Default::default()
             }),
             channel_post: None,
         };
@@ -3168,6 +3744,7 @@ mod tests {
                 caption_entities: Vec::new(),
                 message_thread_id: None,
                 reply_to_message: None,
+                ..Default::default()
             }),
             channel_post: None,
         };
@@ -3214,6 +3791,7 @@ mod tests {
                 caption_entities: Vec::new(),
                 message_thread_id: None,
                 reply_to_message: None,
+                ..Default::default()
             }),
             channel_post: None,
         };
@@ -3249,6 +3827,7 @@ mod tests {
                 caption_entities: Vec::new(),
                 message_thread_id: None,
                 reply_to_message: None,
+                ..Default::default()
             }),
             channel_post: None,
         };
@@ -3314,7 +3893,9 @@ mod tests {
                     caption_entities: Vec::new(),
                     message_thread_id: None,
                     reply_to_message: None,
+                    ..Default::default()
                 })),
+                ..Default::default()
             }),
             channel_post: None,
         };
@@ -3364,6 +3945,7 @@ mod tests {
                 caption_entities: Vec::new(),
                 message_thread_id: None,
                 reply_to_message: None,
+                ..Default::default()
             }),
             channel_post: None,
         };

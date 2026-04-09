@@ -31,6 +31,7 @@ struct TelegramMockServer {
     base_url: String,
     sent_messages: Arc<Mutex<Vec<serde_json::Value>>>,
     requests: Arc<Mutex<Vec<TelegramRequestRecord>>>,
+    state: Arc<Mutex<TelegramMockState>>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     join: JoinHandle<Result<()>>,
 }
@@ -41,10 +42,23 @@ struct TelegramRequestRecord {
     body: serde_json::Value,
 }
 
+struct TelegramHttpRequest {
+    path: String,
+    headers: std::collections::HashMap<String, String>,
+    body: Vec<u8>,
+}
+
+enum TelegramMockResponse {
+    Json(serde_json::Value),
+    Binary { content_type: String, body: Vec<u8> },
+}
+
 struct TelegramMockState {
     get_updates_responses: VecDeque<serde_json::Value>,
     send_message_responses: VecDeque<serde_json::Value>,
+    get_file_responses: VecDeque<serde_json::Value>,
     edit_message_responses: VecDeque<serde_json::Value>,
+    file_downloads: std::collections::HashMap<String, Vec<u8>>,
     sent_messages: Vec<serde_json::Value>,
     requests: Vec<TelegramRequestRecord>,
 }
@@ -141,7 +155,9 @@ impl TelegramMockServer {
         let state = Arc::new(Mutex::new(TelegramMockState {
             get_updates_responses: get_updates_responses.into(),
             send_message_responses: send_message_responses.into(),
+            get_file_responses: VecDeque::new(),
             edit_message_responses: edit_message_responses.into(),
+            file_downloads: std::collections::HashMap::new(),
             sent_messages: Vec::new(),
             requests: Vec::new(),
         }));
@@ -160,8 +176,8 @@ impl TelegramMockServer {
                     }
                     accepted = listener.accept() => {
                         let (mut stream, _) = accepted?;
-                        let (path, body) = read_http_request(&mut stream).await?;
-                        let response = handle_telegram_request(&path, body, &state_for_task, &sent_messages_for_task, &requests_for_task)?;
+                        let request = read_http_request(&mut stream).await?;
+                        let response = handle_telegram_request(request, &state_for_task, &sent_messages_for_task, &requests_for_task)?;
                         write_http_response(&mut stream, &response).await?;
                     }
                 }
@@ -173,9 +189,26 @@ impl TelegramMockServer {
             base_url,
             sent_messages,
             requests,
+            state,
             shutdown_tx,
             join,
         })
+    }
+
+    fn enqueue_get_file_response(&self, response: serde_json::Value) {
+        self.state
+            .lock()
+            .expect("telegram mock state lock poisoned")
+            .get_file_responses
+            .push_back(response);
+    }
+
+    fn set_file_download(&self, file_path: impl Into<String>, bytes: Vec<u8>) {
+        self.state
+            .lock()
+            .expect("telegram mock state lock poisoned")
+            .file_downloads
+            .insert(file_path.into(), bytes);
     }
 
     async fn stop(self) -> Result<()> {
@@ -299,13 +332,34 @@ async fn wait_for_telegram_requests(
 }
 
 fn handle_telegram_request(
-    path: &str,
-    body: serde_json::Value,
+    request: TelegramHttpRequest,
     state: &Arc<Mutex<TelegramMockState>>,
     sent_messages: &Arc<Mutex<Vec<serde_json::Value>>>,
     requests: &Arc<Mutex<Vec<TelegramRequestRecord>>>,
-) -> Result<serde_json::Value> {
-    let method = path.rsplit('/').next().unwrap_or_default();
+) -> Result<TelegramMockResponse> {
+    if request.path.contains("/file/bot") {
+        let file_path = request
+            .path
+            .split("/file/bot")
+            .nth(1)
+            .and_then(|rest| rest.split_once('/'))
+            .map(|(_, file_path)| file_path.to_string())
+            .context("telegram mock file path missing")?;
+        let body = state
+            .lock()
+            .expect("telegram mock state lock poisoned")
+            .file_downloads
+            .get(&file_path)
+            .cloned()
+            .unwrap_or_else(|| vec![1_u8, 2, 3, 4]);
+        return Ok(TelegramMockResponse::Binary {
+            content_type: "application/octet-stream".to_string(),
+            body,
+        });
+    }
+
+    let body = decode_telegram_request_body(request.headers.get("content-type"), &request.body)?;
+    let method = request.path.rsplit('/').next().unwrap_or_default();
     let record = TelegramRequestRecord {
         method: method.to_string(),
         body: body.clone(),
@@ -326,7 +380,23 @@ fn handle_telegram_request(
                 .get_updates_responses
                 .pop_front()
                 .unwrap_or_else(|| json!({ "ok": true, "result": [] }));
-            Ok(response)
+            Ok(TelegramMockResponse::Json(response))
+        }
+        "getFile" => {
+            let response = state
+                .lock()
+                .expect("telegram mock state lock poisoned")
+                .get_file_responses
+                .pop_front()
+                .unwrap_or_else(|| {
+                    json!({
+                        "ok": true,
+                        "result": {
+                            "file_path": "downloads/file.bin"
+                        }
+                    })
+                });
+            Ok(TelegramMockResponse::Json(response))
         }
         "sendMessage" => {
             let response = {
@@ -345,12 +415,24 @@ fn handle_telegram_request(
                 .lock()
                 .expect("telegram mock sent_messages lock poisoned")
                 .push(body.clone());
-            Ok(response)
+            Ok(TelegramMockResponse::Json(response))
         }
-        "sendMessageDraft" => Ok(json!({
+        "sendPhoto" | "sendDocument" => {
+            sent_messages
+                .lock()
+                .expect("telegram mock sent_messages lock poisoned")
+                .push(body.clone());
+            Ok(TelegramMockResponse::Json(json!({
+                "ok": true,
+                "result": {
+                    "message_id": 1
+                }
+            })))
+        }
+        "sendMessageDraft" => Ok(TelegramMockResponse::Json(json!({
             "ok": true,
             "result": true
-        })),
+        }))),
         "editMessageText" => {
             let response = state
                 .lock()
@@ -365,23 +447,21 @@ fn handle_telegram_request(
                         }
                     })
                 });
-            Ok(response)
+            Ok(TelegramMockResponse::Json(response))
         }
-        "sendChatAction" => Ok(json!({
+        "sendChatAction" => Ok(TelegramMockResponse::Json(json!({
             "ok": true,
             "result": true
-        })),
-        _ => Ok(json!({
+        }))),
+        _ => Ok(TelegramMockResponse::Json(json!({
             "ok": false,
             "error_code": 404,
-            "description": format!("unknown Telegram method for path '{}'", path)
-        })),
+            "description": format!("unknown Telegram method for path '{}'", request.path)
+        }))),
     }
 }
 
-async fn read_http_request(
-    stream: &mut tokio::net::TcpStream,
-) -> Result<(String, serde_json::Value)> {
+async fn read_http_request(stream: &mut tokio::net::TcpStream) -> Result<TelegramHttpRequest> {
     let mut buffer = Vec::new();
     let mut chunk = [0_u8; 2048];
     let header_end = loop {
@@ -420,34 +500,141 @@ async fn read_http_request(
         .lines()
         .next()
         .context("telegram mock server missing request line")?;
-    let path = request_line
-        .split_whitespace()
-        .nth(1)
+    let mut request_line_parts = request_line.split_whitespace();
+    request_line_parts
+        .next()
+        .context("telegram mock server missing request method")?;
+    let path = request_line_parts
+        .next()
         .context("telegram mock server missing request path")?
         .to_string();
-
+    let headers = parse_headers(&header);
     let body_start = header_end + 4;
     let body = if content_length == 0 {
-        serde_json::json!({})
+        Vec::new()
     } else {
-        serde_json::from_slice(&buffer[body_start..body_start + content_length])
-            .context("telegram mock server body must be json")?
+        buffer[body_start..body_start + content_length].to_vec()
     };
 
-    Ok((path, body))
+    Ok(TelegramHttpRequest {
+        path,
+        headers,
+        body,
+    })
 }
 
 fn find_header_end(buffer: &[u8]) -> Option<usize> {
     buffer.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
+fn parse_headers(header: &str) -> std::collections::HashMap<String, String> {
+    header
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            Some((name.trim().to_ascii_lowercase(), value.trim().to_string()))
+        })
+        .collect()
+}
+
+fn decode_telegram_request_body(
+    content_type: Option<&String>,
+    body: &[u8],
+) -> Result<serde_json::Value> {
+    if body.is_empty() {
+        return Ok(json!({}));
+    }
+    let Some(content_type) = content_type.map(String::as_str) else {
+        return serde_json::from_slice(body).context("telegram mock server body must be json");
+    };
+    if content_type.starts_with("application/json") {
+        return serde_json::from_slice(body).context("telegram mock server body must be json");
+    }
+    if content_type.starts_with("multipart/form-data") {
+        return parse_multipart_body(content_type, body);
+    }
+    serde_json::from_slice(body).context("telegram mock server body must be json")
+}
+
+fn parse_multipart_body(content_type: &str, body: &[u8]) -> Result<serde_json::Value> {
+    let boundary = content_type
+        .split("boundary=")
+        .nth(1)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .context("telegram mock multipart boundary missing")?;
+    let marker = format!("--{boundary}");
+    let payload = String::from_utf8_lossy(body);
+    let mut fields = serde_json::Map::new();
+    let mut files = Vec::new();
+
+    for raw_part in payload.split(&marker).skip(1) {
+        let part = raw_part.trim();
+        if part.is_empty() || part == "--" {
+            continue;
+        }
+        let Some((raw_headers, raw_value)) = part.split_once("\r\n\r\n") else {
+            continue;
+        };
+        let value = raw_value
+            .trim_end_matches("\r\n")
+            .trim_end_matches("--")
+            .to_string();
+        let mut field_name = None;
+        let mut file_name = None;
+        let mut file_content_type = None;
+        for header in raw_headers.lines() {
+            let lower = header.to_ascii_lowercase();
+            if lower.starts_with("content-disposition:") {
+                field_name = extract_disposition_value(header, "name");
+                file_name = extract_disposition_value(header, "filename");
+            } else if lower.starts_with("content-type:") {
+                file_content_type = header
+                    .split_once(':')
+                    .map(|(_, rest)| rest.trim().to_string());
+            }
+        }
+        let Some(field_name) = field_name else {
+            continue;
+        };
+        if let Some(file_name) = file_name {
+            files.push(json!({
+                "field": field_name,
+                "filename": file_name,
+                "content_type": file_content_type,
+                "size": value.len(),
+            }));
+        } else {
+            fields.insert(field_name, serde_json::Value::String(value));
+        }
+    }
+
+    fields.insert("_multipart".to_string(), serde_json::Value::Bool(true));
+    fields.insert("files".to_string(), serde_json::Value::Array(files));
+    Ok(serde_json::Value::Object(fields))
+}
+
+fn extract_disposition_value(header: &str, key: &str) -> Option<String> {
+    let needle = format!("{key}=\"");
+    let start = header.find(&needle)? + needle.len();
+    let end = header[start..].find('"')?;
+    Some(header[start..start + end].to_string())
+}
+
 async fn write_http_response(
     stream: &mut tokio::net::TcpStream,
-    body: &serde_json::Value,
+    response: &TelegramMockResponse,
 ) -> Result<()> {
-    let body = serde_json::to_vec(body)?;
+    let (content_type, body) = match response {
+        TelegramMockResponse::Json(body) => {
+            ("application/json".to_string(), serde_json::to_vec(body)?)
+        }
+        TelegramMockResponse::Binary { content_type, body } => (content_type.clone(), body.clone()),
+    };
     let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        content_type,
         body.len()
     );
     stream.write_all(response.as_bytes()).await?;
@@ -473,6 +660,43 @@ fn sample_update(chat_id: i64, message_thread_id: Option<i64>, text: &str) -> se
                 "username": "nina"
             },
             "text": text
+        }
+    })
+}
+
+fn sample_photo_update(chat_id: i64, caption: Option<&str>) -> serde_json::Value {
+    json!({
+        "update_id": 2,
+        "message": {
+            "message_id": 42,
+            "chat": {
+                "id": chat_id,
+                "first_name": "Jayadeep",
+                "type": if chat_id < 0 { "supergroup" } else { "private" }
+            },
+            "from": {
+                "id": 7,
+                "is_bot": false,
+                "first_name": "Nina",
+                "username": "nina"
+            },
+            "caption": caption,
+            "photo": [
+                {
+                    "file_id": "small-photo",
+                    "file_unique_id": "small",
+                    "width": 64,
+                    "height": 64,
+                    "file_size": 1234
+                },
+                {
+                    "file_id": "large-photo",
+                    "file_unique_id": "large",
+                    "width": 1024,
+                    "height": 768,
+                    "file_size": 43210
+                }
+            ]
         }
     })
 }
@@ -621,6 +845,162 @@ async fn telegram_channel_driver_round_trip_with_daemon_runner() -> Result<()> {
 
     server.stop().await?;
     daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn telegram_channel_driver_downloads_photo_attachments() -> Result<()> {
+    let server = TelegramMockServer::start_with_responses(
+        vec![json!({
+            "ok": true,
+            "result": [sample_photo_update(498502840, None)]
+        })],
+        vec![],
+        vec![],
+    )
+    .await?;
+    server.enqueue_get_file_response(json!({
+        "ok": true,
+        "result": {
+            "file_path": "photos/large-photo.jpg"
+        }
+    }));
+    server.set_file_download("photos/large-photo.jpg", vec![9_u8, 8, 7, 6]);
+
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let mut driver = TelegramChannelDriver::from_config(
+        "telegram-test",
+        TelegramChannelDriverConfig {
+            base_url: server.base_url.clone(),
+            workspace_id: "telegram".to_string(),
+            chat_ids: vec!["498502840".to_string()],
+            accept_all_chats: false,
+            token: "test-token".to_string(),
+            poll_timeout_secs: 0,
+            poll_interval: Duration::from_millis(25),
+            max_updates_per_poll: 10,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
+            start_from_latest: false,
+            ignore_bot_messages: true,
+            respond_mode: turin_channel_telegram::TelegramRespondMode::All,
+            session_scope: ChannelSessionScope::User,
+            session_scope_dm: None,
+            session_scope_group: None,
+            session_scope_channel: None,
+            stream_mode: turin_channel_runner::ChannelStreamMode::Off,
+            stream_thinking: false,
+            persist_thinking: false,
+        },
+        shutdown_rx,
+    )?;
+
+    let event = driver
+        .next_event()
+        .await?
+        .context("expected telegram inbound event")?;
+    assert_eq!(event.text, "");
+    assert_eq!(event.attachments.len(), 1);
+    assert_eq!(event.attachments[0].name, "large.jpg");
+    let attachment_path = event.attachments[0]
+        .local_path
+        .as_ref()
+        .context("expected downloaded local_path")?;
+    assert_eq!(std::fs::read(attachment_path)?, vec![9_u8, 8, 7, 6]);
+
+    server.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn telegram_channel_driver_sends_real_media_uploads() -> Result<()> {
+    let server = TelegramMockServer::start_with_responses(vec![], vec![], vec![]).await?;
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let mut driver = TelegramChannelDriver::from_config(
+        "telegram-test",
+        TelegramChannelDriverConfig {
+            base_url: server.base_url.clone(),
+            workspace_id: "telegram".to_string(),
+            chat_ids: vec!["498502840".to_string()],
+            accept_all_chats: false,
+            token: "test-token".to_string(),
+            poll_timeout_secs: 0,
+            poll_interval: Duration::from_millis(25),
+            max_updates_per_poll: 10,
+            max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
+            start_from_latest: false,
+            ignore_bot_messages: true,
+            respond_mode: turin_channel_telegram::TelegramRespondMode::All,
+            session_scope: ChannelSessionScope::User,
+            session_scope_dm: None,
+            session_scope_group: None,
+            session_scope_channel: None,
+            stream_mode: turin_channel_runner::ChannelStreamMode::Off,
+            stream_thinking: false,
+            persist_thinking: false,
+        },
+        shutdown_rx,
+    )?;
+
+    let tempdir = tempfile::tempdir()?;
+    let image_path = tempdir.path().join("diagram.png");
+    let pdf_path = tempdir.path().join("spec.pdf");
+    std::fs::write(&image_path, [1_u8, 2, 3, 4])?;
+    std::fs::write(&pdf_path, [5_u8, 6, 7, 8])?;
+
+    driver
+        .send(
+            &sample_inbound_event(498502840, "Say pong").conversation,
+            turin_channel_core::OutboundMessage {
+                blocks: vec![turin_channel_core::MessageBlock::Text {
+                    text: "PONG".to_string(),
+                }],
+                attachments: vec![
+                    turin_channel_core::ChannelAttachment {
+                        name: "diagram.png".to_string(),
+                        content_type: Some("image/png".to_string()),
+                        url: None,
+                        local_path: Some(image_path.display().to_string()),
+                    },
+                    turin_channel_core::ChannelAttachment {
+                        name: "spec.pdf".to_string(),
+                        content_type: Some("application/pdf".to_string()),
+                        url: None,
+                        local_path: Some(pdf_path.display().to_string()),
+                    },
+                ],
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    let requests = server
+        .requests
+        .lock()
+        .expect("telegram mock requests lock poisoned")
+        .clone();
+    let methods = requests
+        .iter()
+        .map(|request| request.method.as_str())
+        .collect::<Vec<_>>();
+    assert!(methods.contains(&"sendMessage"), "request log: {methods:?}");
+    assert!(methods.contains(&"sendPhoto"), "request log: {methods:?}");
+    assert!(
+        methods.contains(&"sendDocument"),
+        "request log: {methods:?}"
+    );
+
+    let send_photo = requests
+        .iter()
+        .find(|request| request.method == "sendPhoto")
+        .context("expected sendPhoto request")?;
+    assert_eq!(send_photo.body["chat_id"], "498502840");
+    assert_eq!(send_photo.body["files"][0]["filename"], "diagram.png");
+
+    let send_document = requests
+        .iter()
+        .find(|request| request.method == "sendDocument")
+        .context("expected sendDocument request")?;
+    assert_eq!(send_document.body["files"][0]["filename"], "spec.pdf");
+
+    server.stop().await
 }
 
 #[tokio::test(flavor = "multi_thread")]

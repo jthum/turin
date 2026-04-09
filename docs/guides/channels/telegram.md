@@ -14,7 +14,9 @@ Current Phase 8 scope:
 
 - Telegram Bot API via long polling
 - inbound text messages
+- inbound media downloads for image/document/video/audio/voice attachments
 - outbound replies with automatic reply threading to the source message
+- outbound image/document uploads
 - Telegram HTML rendering for code blocks
 - deterministic routing by Telegram chat and forum topic
 - one Turin Telegram channel can watch one or many Telegram chats
@@ -27,8 +29,14 @@ Current Phase 8 scope:
 Current non-goals:
 
 - webhooks
-- rich media
 - inline keyboards and advanced Telegram UI
+
+Current media limits:
+
+- inbound attachments are downloaded into Turin-managed local storage and forwarded as attachment refs
+- outbound images use `sendPhoto`
+- outbound non-image attachments use `sendDocument`
+- Telegram-specific rich UI around media is still out of scope
 
 ## 1. Create a Bot
 
