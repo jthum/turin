@@ -125,6 +125,7 @@ pub async fn run_session_branch_create(
     config_path: &std::path::Path,
     session_id: &str,
     name: &str,
+    slot_id: Option<&str>,
     from_turn: Option<u32>,
     activate: bool,
     json_output: bool,
@@ -135,6 +136,7 @@ pub async fn run_session_branch_create(
         json!({
             "session_id": session_id,
             "name": name,
+            "slot_id": slot_id,
             "from_turn_index": from_turn,
             "activate": activate,
         }),
@@ -153,12 +155,13 @@ pub async fn run_session_branch_checkout(
     config_path: &std::path::Path,
     session_id: &str,
     branch: &str,
+    slot_id: Option<&str>,
     json_output: bool,
 ) -> Result<()> {
     let response = send_request(
         config_path,
         "session.branch_checkout",
-        json!({ "session_id": session_id, "branch": branch }),
+        json!({ "session_id": session_id, "branch": branch, "slot_id": slot_id }),
     )
     .await?;
     if json_output {

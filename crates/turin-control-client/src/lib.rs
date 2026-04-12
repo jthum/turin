@@ -626,11 +626,24 @@ impl ControlClient {
         from_turn_index: Option<u32>,
         activate: bool,
     ) -> Result<SessionBranchDetail> {
+        self.create_session_branch_in_slot(session_id, None, name, from_turn_index, activate)
+            .await
+    }
+
+    pub async fn create_session_branch_in_slot(
+        &self,
+        session_id: &str,
+        slot_id: Option<String>,
+        name: &str,
+        from_turn_index: Option<u32>,
+        activate: bool,
+    ) -> Result<SessionBranchDetail> {
         self.request_ok(
             None,
             DaemonRequest::SessionBranchCreate(SessionBranchCreateParams {
                 session_id: session_id.to_string(),
                 name: name.to_string(),
+                slot_id,
                 from_turn_index,
                 activate,
             }),
@@ -643,11 +656,22 @@ impl ControlClient {
         session_id: &str,
         branch: &str,
     ) -> Result<SessionBranchDetail> {
+        self.checkout_session_branch_in_slot(session_id, None, branch)
+            .await
+    }
+
+    pub async fn checkout_session_branch_in_slot(
+        &self,
+        session_id: &str,
+        slot_id: Option<String>,
+        branch: &str,
+    ) -> Result<SessionBranchDetail> {
         self.request_ok(
             None,
             DaemonRequest::SessionBranchCheckout(SessionBranchCheckoutParams {
                 session_id: session_id.to_string(),
                 branch: branch.to_string(),
+                slot_id,
             }),
         )
         .await

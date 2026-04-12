@@ -255,7 +255,15 @@ impl AgentManager {
     }
 
     pub async fn reload_session(self: &Arc<Self>, session_id: &str) -> Result<LiveSessionSnapshot> {
-        let (runtime_key, handle) = self.unique_runtime_by_session(session_id).await?;
+        self.reload_session_in_slot(session_id, None).await
+    }
+
+    pub async fn reload_session_in_slot(
+        self: &Arc<Self>,
+        session_id: &str,
+        slot_id: Option<&str>,
+    ) -> Result<LiveSessionSnapshot> {
+        let (runtime_key, handle) = self.runtime_by_session_target(session_id, slot_id).await?;
 
         if handle.active_tasks.load(Ordering::Relaxed) > 0
             || handle.queued_tasks.load(Ordering::Relaxed) > 0
@@ -318,7 +326,28 @@ impl AgentManager {
     }
 
     pub async fn reload_session_if_live(self: &Arc<Self>, session_id: &str) -> Result<bool> {
-        if self.find_runtimes_by_session(session_id).await.is_empty() {
+        self.reload_session_if_live_in_slot(session_id, None).await
+    }
+
+    pub async fn reload_session_if_live_in_slot(
+        self: &Arc<Self>,
+        session_id: &str,
+        slot_id: Option<&str>,
+    ) -> Result<bool> {
+        let live_matches = self.find_runtimes_by_session(session_id).await;
+        if let Some(slot_id) = slot_id {
+            if !live_matches
+                .iter()
+                .any(|(runtime_key, _)| runtime_key.slot_id == slot_id)
+            {
+                return Ok(false);
+            }
+            self.reload_session_in_slot(session_id, Some(slot_id))
+                .await?;
+            return Ok(true);
+        }
+
+        if live_matches.is_empty() {
             return Ok(false);
         }
         self.reload_session(session_id).await?;
@@ -668,13 +697,6 @@ impl AgentManager {
                 .then_with(|| left.slot_id.cmp(&right.slot_id))
         });
         matches
-    }
-
-    pub(super) async fn unique_runtime_by_session(
-        &self,
-        session_id: &str,
-    ) -> Result<(RuntimeSlotKey, Arc<AgentRuntimeHandle>)> {
-        self.runtime_by_session_target(session_id, None).await
     }
 
     pub(super) async fn runtime_by_session_target(

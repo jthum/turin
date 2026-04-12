@@ -48,6 +48,7 @@ pub struct HarnessExecutionContext {
     pub execution_durability: Option<ExecutionDurability>,
     pub execution_write_policy: Option<ExecutionWritePolicy>,
     pub session_id: Option<String>,
+    pub runtime_slot_id: Option<String>,
     pub session_store_selector: Option<StoreSelector>,
     pub default_store_selector: Option<StoreSelector>,
     pub pending_branch_checkout: Option<String>,

@@ -210,6 +210,14 @@ impl HarnessEngine {
         }
     }
 
+    pub fn set_active_runtime_slot_id(&self, slot_id: Option<&str>) {
+        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
+            && let Ok(mut lock) = app_data.execution_ctx.lock()
+        {
+            lock.runtime_slot_id = slot_id.map(|s| s.to_string());
+        }
+    }
+
     pub fn set_active_execution_metadata(
         &self,
         execution_id: Option<&str>,

@@ -118,22 +118,32 @@ fn resolve_session_reference(
 fn current_session_matches(
     execution_ctx: &ActiveHarnessExecutionContext,
     target: &SessionReference,
+    target_slot_id: Option<&str>,
 ) -> Result<bool, String> {
-    let current = execution_ctx
-        .lock()
-        .map_err(|_| "execution context mutex poisoned".to_string())?
-        .session_id
-        .clone();
+    let (current, current_slot_id) = {
+        let lock = execution_ctx
+            .lock()
+            .map_err(|_| "execution context mutex poisoned".to_string())?;
+        (lock.session_id.clone(), lock.runtime_slot_id.clone())
+    };
     let Some(current) = current else {
         return Ok(false);
     };
     let current_ref = resolve_session_reference(execution_ctx, Some(current))?;
     Ok(current_ref.public_id == target.public_id
-        && current_ref.store_selector == target.store_selector)
+        && current_ref.store_selector == target.store_selector
+        && match target_slot_id {
+            Some(slot_id) => current_slot_id.as_deref() == Some(slot_id),
+            None => true,
+        })
 }
 
 fn opt_session_id(opts: Option<&Table>) -> Option<String> {
     opts.and_then(|table| table.get::<String>("session_id").ok())
+}
+
+fn opt_slot_id(opts: Option<&Table>) -> Option<String> {
+    opts.and_then(|table| table.get::<String>("slot_id").ok())
 }
 
 fn opt_from_turn_index(opts: Option<&Table>) -> Option<u32> {
@@ -489,11 +499,16 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 let agent_manager = agent_manager.clone();
                 let execution_ctx = execution_ctx.clone();
                 let requested_session = opt_session_id(opts.as_ref());
+                let requested_slot = opt_slot_id(opts.as_ref());
                 let from_turn_index = opt_from_turn_index(opts.as_ref());
                 let activate = opt_activate(opts.as_ref(), false);
                 let result = bridge_async_result(async move {
                     let session_ref = resolve_session_reference(&execution_ctx, requested_session)?;
-                    let is_current_session = current_session_matches(&execution_ctx, &session_ref)?;
+                    let is_current_session = current_session_matches(
+                        &execution_ctx,
+                        &session_ref,
+                        requested_slot.as_deref(),
+                    )?;
                     let selector = session_ref.store_selector.clone().ok_or_else(|| {
                         "Session reference store could not be resolved".to_string()
                     })?;
@@ -522,7 +537,10 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                         let session_ref_str =
                             format_session_reference(&session_ref.public_id, &selector);
                         let _ = agent_manager
-                            .reload_session_if_live(&session_ref_str)
+                            .reload_session_if_live_in_slot(
+                                &session_ref_str,
+                                requested_slot.as_deref(),
+                            )
                             .await
                             .map_err(|e| e.to_string())?;
                     }
@@ -550,9 +568,14 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 let agent_manager = agent_manager.clone();
                 let execution_ctx = execution_ctx.clone();
                 let requested_session = opt_session_id(opts.as_ref());
+                let requested_slot = opt_slot_id(opts.as_ref());
                 let result = bridge_async_result(async move {
                     let session_ref = resolve_session_reference(&execution_ctx, requested_session)?;
-                    let is_current_session = current_session_matches(&execution_ctx, &session_ref)?;
+                    let is_current_session = current_session_matches(
+                        &execution_ctx,
+                        &session_ref,
+                        requested_slot.as_deref(),
+                    )?;
                     let selector = session_ref.store_selector.clone().ok_or_else(|| {
                         "Session reference store could not be resolved".to_string()
                     })?;
@@ -586,7 +609,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     let session_ref_str =
                         format_session_reference(&session_ref.public_id, &selector);
                     let _ = agent_manager
-                        .reload_session_if_live(&session_ref_str)
+                        .reload_session_if_live_in_slot(&session_ref_str, requested_slot.as_deref())
                         .await
                         .map_err(|e| e.to_string())?;
                     Ok::<_, String>((branch_row, false))

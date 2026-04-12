@@ -263,6 +263,8 @@ pub struct SessionBranchCreateParams {
     pub session_id: String,
     pub name: String,
     #[serde(default)]
+    pub slot_id: Option<String>,
+    #[serde(default)]
     pub from_turn_index: Option<u32>,
     #[serde(default)]
     pub activate: bool,
@@ -272,6 +274,8 @@ pub struct SessionBranchCreateParams {
 pub struct SessionBranchCheckoutParams {
     pub session_id: String,
     pub branch: String,
+    #[serde(default)]
+    pub slot_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

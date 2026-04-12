@@ -191,6 +191,7 @@ pub(super) async fn branch_create(
         .create_session_branch(
             &params.session_id,
             &params.name,
+            params.slot_id.as_deref(),
             params.from_turn_index,
             params.activate,
         )
@@ -219,7 +220,11 @@ pub(super) async fn branch_checkout(
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
     match guard
-        .checkout_session_branch(&params.session_id, &params.branch)
+        .checkout_session_branch(
+            &params.session_id,
+            &params.branch,
+            params.slot_id.as_deref(),
+        )
         .await
     {
         Ok(Some(branch)) => serialize_response_with_event(

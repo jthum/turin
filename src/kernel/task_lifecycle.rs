@@ -172,6 +172,7 @@ impl ExecutionHost {
                     Some(session.execution.durability),
                     Some(session.execution.write_policy),
                 );
+                engine.set_active_runtime_slot_id(session.runtime_slot_id.as_deref());
                 engine.set_active_trace_id(Some(&task.trace_id));
                 engine.set_active_event_context(Some(
                     crate::harness::globals::HarnessEventContext {
@@ -197,6 +198,7 @@ impl ExecutionHost {
                 );
                 engine.set_active_session(None, None, None, None);
                 engine.set_active_execution_metadata(None, None, None, None, None);
+                engine.set_active_runtime_slot_id(None);
                 engine.set_active_trace_id(None);
                 engine.set_active_event_context(None);
                 Some(result)

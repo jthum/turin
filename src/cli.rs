@@ -715,6 +715,9 @@ pub(crate) enum DaemonSessionCommands {
         session_id: String,
         /// Branch name
         name: String,
+        /// Optional runtime slot ID when activating against a live session with multiple slots
+        #[arg(long)]
+        slot_id: Option<String>,
         /// Optional turn index to branch from; defaults to current active head
         #[arg(long)]
         from_turn: Option<u32>,
@@ -730,6 +733,9 @@ pub(crate) enum DaemonSessionCommands {
         session_id: String,
         /// Branch name or branch ID
         branch: String,
+        /// Optional runtime slot ID when checking out against a live session with multiple slots
+        #[arg(long)]
+        slot_id: Option<String>,
         #[command(flatten)]
         args: DaemonOutputArgs,
     },

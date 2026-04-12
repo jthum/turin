@@ -212,64 +212,70 @@ impl DaemonState {
 
     #[instrument(
         skip(self),
-        fields(session_id = %session_id, branch = %name, from_turn_index = ?from_turn_index, activate = activate)
+        fields(
+            session_id = %session_id,
+            branch = %name,
+            slot_id = ?slot_id,
+            from_turn_index = ?from_turn_index,
+            activate = activate
+        )
     )]
     pub async fn create_session_branch(
         &self,
         session_id: &str,
         name: &str,
+        slot_id: Option<&str>,
         from_turn_index: Option<u32>,
         activate: bool,
     ) -> Result<Option<SessionBranchDetail>> {
         let Some((store_selector, row)) = self.resolve_persisted_session(session_id).await? else {
             return Ok(None);
         };
+        let live_snapshot = if activate {
+            self.resolve_live_branch_target(session_id, &row.public_id, slot_id, "activate branch")
+                .await?
+        } else {
+            None
+        };
         debug!(
             store = %describe_store_selector(&store_selector),
+            live_session = live_snapshot.is_some(),
             "Creating session branch"
         );
         let store = self.kernel.store_manager().open(&store_selector).await?;
         let branch = store
             .create_branch_head_from_turn_index(row.id, name, from_turn_index, activate)
             .await?;
+        if activate && let Some(live_snapshot) = live_snapshot.as_ref() {
+            self.kernel
+                .agent_manager()
+                .reload_session_in_slot(session_id, Some(&live_snapshot.slot_id))
+                .await?;
+        }
         info!(
             session_id = %session_id,
             store = %describe_store_selector(&store_selector),
             branch = %branch.name,
             activate = activate,
+            reloaded_live_session = live_snapshot.is_some(),
             "Created session branch"
         );
         Ok(Some(branch_detail_from_row(branch)))
     }
 
-    #[instrument(skip(self), fields(session_id = %session_id, branch = %branch))]
+    #[instrument(skip(self), fields(session_id = %session_id, branch = %branch, slot_id = ?slot_id))]
     pub async fn checkout_session_branch(
         &self,
         session_id: &str,
         branch: &str,
+        slot_id: Option<&str>,
     ) -> Result<Option<SessionBranchDetail>> {
         let Some((store_selector, row)) = self.resolve_persisted_session(session_id).await? else {
             return Ok(None);
         };
-        let live = self.live_session_snapshots(&row.public_id).await;
-        let live_snapshot = match live.as_slice() {
-            [] => None,
-            [snapshot] => {
-                if snapshot.active_tasks > 0 || snapshot.queued_tasks > 0 {
-                    anyhow::bail!(
-                        "Cannot check out branch for busy live session '{}'",
-                        session_id
-                    );
-                }
-                Some(snapshot)
-            }
-            _ => {
-                anyhow::bail!(
-                    "Cannot check out branch for session '{}' while multiple runtime slots are attached",
-                    session_id
-                );
-            }
-        };
+        let live_snapshot = self
+            .resolve_live_branch_target(session_id, &row.public_id, slot_id, "check out branch")
+            .await?;
         debug!(
             store = %describe_store_selector(&store_selector),
             live_session = live_snapshot.is_some(),
@@ -283,10 +289,12 @@ impl DaemonState {
         } else {
             store.checkout_branch_head_by_name(row.id, branch).await?
         };
-        if branch.is_some() && live_snapshot.is_some() {
+        if branch.is_some()
+            && let Some(live_snapshot) = live_snapshot.as_ref()
+        {
             self.kernel
                 .agent_manager()
-                .reload_session(session_id)
+                .reload_session_in_slot(session_id, Some(&live_snapshot.slot_id))
                 .await?;
         }
         if let Some(branch) = &branch {
@@ -314,6 +322,54 @@ impl DaemonState {
         let store = self.kernel.store_manager().open(&store_selector).await?;
         let row = store.get_session_row_by_public_id(public_id).await?;
         Ok(row.map(|row| (store_selector, row)))
+    }
+
+    async fn resolve_live_branch_target(
+        &self,
+        session_id: &str,
+        public_id: &[u8],
+        slot_id: Option<&str>,
+        action: &str,
+    ) -> Result<Option<crate::kernel::agent_manager::LiveSessionSnapshot>> {
+        let live = self.live_session_snapshots(public_id).await;
+        if let Some(slot_id) = slot_id {
+            let Some(snapshot) = live
+                .into_iter()
+                .find(|snapshot| snapshot.slot_id == slot_id)
+            else {
+                anyhow::bail!(
+                    "Session '{}' is not live in runtime slot '{}'",
+                    session_id,
+                    slot_id
+                );
+            };
+            if snapshot.active_tasks > 0 || snapshot.queued_tasks > 0 {
+                anyhow::bail!(
+                    "Cannot {} for busy live session '{}' in slot '{}'",
+                    action,
+                    session_id,
+                    slot_id
+                );
+            }
+            return Ok(Some(snapshot));
+        }
+
+        match live.as_slice() {
+            [] => Ok(None),
+            [snapshot] => {
+                if snapshot.active_tasks > 0 || snapshot.queued_tasks > 0 {
+                    anyhow::bail!("Cannot {} for busy live session '{}'", action, session_id);
+                }
+                Ok(Some(snapshot.clone()))
+            }
+            _ => {
+                anyhow::bail!(
+                    "Cannot {} for session '{}' while multiple runtime slots are attached; specify slot_id",
+                    action,
+                    session_id
+                );
+            }
+        }
     }
 }
 

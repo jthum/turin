@@ -228,6 +228,7 @@ impl ToolRateLimitState {
 pub struct SessionState {
     pub identity: RuntimeIdentity,
     pub internal_id: Option<i64>,
+    pub runtime_slot_id: Option<String>,
     pub store_selector: StoreSelector,
     pub default_store_selector: Option<StoreSelector>,
     pub inference: InferenceOverrideConfig,
@@ -273,6 +274,7 @@ impl SessionState {
         Self {
             identity: RuntimeIdentity::new(session_id, "default"),
             internal_id: None,
+            runtime_slot_id: None,
             store_selector: StoreSelector::Alias("state".to_string()),
             default_store_selector: None,
             inference: InferenceOverrideConfig::default(),

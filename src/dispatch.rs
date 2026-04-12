@@ -584,6 +584,7 @@ async fn handle_daemon_session_command(command: DaemonSessionCommands) -> Result
         DaemonSessionCommands::BranchCreate {
             session_id,
             name,
+            slot_id,
             from_turn,
             activate,
             args,
@@ -592,6 +593,7 @@ async fn handle_daemon_session_command(command: DaemonSessionCommands) -> Result
                 &args.config.config,
                 &session_id,
                 &name,
+                slot_id.as_deref(),
                 from_turn,
                 activate,
                 args.json,
@@ -601,12 +603,14 @@ async fn handle_daemon_session_command(command: DaemonSessionCommands) -> Result
         DaemonSessionCommands::BranchCheckout {
             session_id,
             branch,
+            slot_id,
             args,
         } => {
             commands::daemon::run_session_branch_checkout(
                 &args.config.config,
                 &session_id,
                 &branch,
+                slot_id.as_deref(),
                 args.json,
             )
             .await

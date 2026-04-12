@@ -547,7 +547,7 @@ async fn session_branches_can_be_created_listed_and_checked_out() -> Result<()> 
     assert!(initial[0].active);
 
     let created = state
-        .create_session_branch(&session_id, "alt", Some(0), false)
+        .create_session_branch(&session_id, "alt", None, Some(0), false)
         .await?
         .expect("branch created");
     assert_eq!(created.name, "alt");
@@ -562,7 +562,7 @@ async fn session_branches_can_be_created_listed_and_checked_out() -> Result<()> 
     assert!(listed.iter().any(|branch| branch.name == "alt"));
 
     let checked_out = state
-        .checkout_session_branch(&session_id, "alt")
+        .checkout_session_branch(&session_id, "alt", None)
         .await?
         .expect("branch checkout succeeds");
     assert_eq!(checked_out.name, "alt");
@@ -681,6 +681,154 @@ async fn live_session_control_can_target_a_specific_runtime_slot() -> Result<()>
 
     let final_kill = state.kill_session(&slot_a.session_id).await?;
     assert_eq!(final_kill["slot_id"], "slot-a");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn live_branch_control_can_target_a_specific_runtime_slot() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+
+    let slot_a = state.open_session("default", Some("slot-a"), None).await?;
+    let seed = state
+        .submit_task(
+            None,
+            Some(&slot_a.session_id),
+            "seed main branch".to_string(),
+            None,
+            Default::default(),
+        )
+        .await?;
+    assert_eq!(
+        state
+            .wait_for_task(&seed.request_id, Some(2_000))
+            .await?
+            .state,
+        "completed"
+    );
+
+    let slot_b = state
+        .resume_session(&slot_a.session_id, Some("slot-b"))
+        .await?;
+    assert_eq!(slot_b.slot_id, "slot-b");
+
+    let ambiguous_activate = state
+        .create_session_branch(&slot_a.session_id, "alt", None, Some(0), true)
+        .await
+        .expect_err("slot-agnostic live branch activation should reject ambiguity");
+    assert!(
+        ambiguous_activate
+            .to_string()
+            .contains("multiple runtime slots")
+    );
+
+    let activated = state
+        .create_session_branch(&slot_a.session_id, "alt", Some("slot-b"), Some(0), true)
+        .await?
+        .expect("targeted branch activation succeeds");
+    assert_eq!(activated.name, "alt");
+    assert!(activated.active);
+
+    let main_followup = state
+        .submit_task_in_slot(
+            None,
+            Some(&slot_a.session_id),
+            Some("slot-a"),
+            "main branch followup".to_string(),
+            None,
+            Default::default(),
+        )
+        .await?;
+    assert_eq!(
+        state
+            .wait_for_task(&main_followup.request_id, Some(2_000))
+            .await?
+            .state,
+        "completed"
+    );
+
+    let alt_followup = state
+        .submit_task_in_slot(
+            None,
+            Some(&slot_a.session_id),
+            Some("slot-b"),
+            "alt branch followup".to_string(),
+            None,
+            Default::default(),
+        )
+        .await?;
+    assert_eq!(
+        state
+            .wait_for_task(&alt_followup.request_id, Some(2_000))
+            .await?
+            .state,
+        "completed"
+    );
+
+    let branches = state
+        .list_session_branches(&slot_a.session_id)
+        .await?
+        .expect("session exists");
+    assert!(branches.iter().any(|branch| branch.name == "main"
+        && !branch.active
+        && branch.head_turn_index == Some(1)));
+    assert!(
+        branches.iter().any(|branch| branch.name == "alt"
+            && branch.active
+            && branch.head_turn_index == Some(1))
+    );
+
+    let ambiguous_checkout = state
+        .checkout_session_branch(&slot_a.session_id, "main", None)
+        .await
+        .expect_err("slot-agnostic live branch checkout should reject ambiguity");
+    assert!(
+        ambiguous_checkout
+            .to_string()
+            .contains("multiple runtime slots")
+    );
+
+    let checked_out = state
+        .checkout_session_branch(&slot_a.session_id, "main", Some("slot-b"))
+        .await?
+        .expect("targeted branch checkout succeeds");
+    assert_eq!(checked_out.name, "main");
+    assert!(checked_out.active);
+
+    let main_again = state
+        .submit_task_in_slot(
+            None,
+            Some(&slot_a.session_id),
+            Some("slot-b"),
+            "main branch resumed".to_string(),
+            None,
+            Default::default(),
+        )
+        .await?;
+    assert_eq!(
+        state
+            .wait_for_task(&main_again.request_id, Some(2_000))
+            .await?
+            .state,
+        "completed"
+    );
+
+    let branches = state
+        .list_session_branches(&slot_a.session_id)
+        .await?
+        .expect("session exists");
+    assert!(
+        branches.iter().any(|branch| branch.name == "main"
+            && branch.active
+            && branch.head_turn_index == Some(2))
+    );
+    assert!(
+        branches.iter().any(|branch| branch.name == "alt"
+            && !branch.active
+            && branch.head_turn_index == Some(1))
+    );
 
     Ok(())
 }

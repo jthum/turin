@@ -77,6 +77,7 @@ impl PeerRuntime {
             )
             .await
         };
+        session.runtime_slot_id = Some(slot_id.to_string());
         host.start_session(&mut session).await?;
         control.set_current_session(
             Some(host.session_reference(&session)),
@@ -413,6 +414,7 @@ impl PeerRuntime {
                 context.inference.clone(),
             )
             .await;
+        session.runtime_slot_id = Some(self.slot_id.clone());
         self.host.start_session(&mut session).await?;
         self.control.set_current_session(
             Some(self.host.session_reference(&session)),
@@ -439,6 +441,7 @@ impl PeerRuntime {
                 context.inference.clone(),
             )
             .await?;
+        session.runtime_slot_id = Some(self.slot_id.clone());
         self.host.start_session(&mut session).await?;
         self.control.set_current_session(
             Some(self.host.session_reference(&session)),
