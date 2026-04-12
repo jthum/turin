@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::inference::embeddings::EmbeddingProvider;
@@ -10,8 +11,44 @@ use crate::kernel::harness_manager::HarnessManager;
 use crate::kernel::mcp_runtime::McpClientEntry;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::kernel::session::{SessionHarnessEngine, SessionState};
-use crate::persistence::manager::StoreManager;
+use crate::persistence::manager::{StoreManager, StorePathScope};
 use crate::tools::registry::ToolRegistry;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct PersistedSessionLockKey {
+    store_path: PathBuf,
+    session_id: i64,
+}
+
+#[derive(Default)]
+pub(crate) struct SessionPersistenceCoordinator {
+    locks:
+        std::sync::Mutex<HashMap<PersistedSessionLockKey, std::sync::Weak<tokio::sync::Mutex<()>>>>,
+}
+
+impl SessionPersistenceCoordinator {
+    pub(crate) fn lock_for(
+        &self,
+        store_path: PathBuf,
+        session_id: i64,
+    ) -> Arc<tokio::sync::Mutex<()>> {
+        let key = PersistedSessionLockKey {
+            store_path,
+            session_id,
+        };
+        let mut locks = self
+            .locks
+            .lock()
+            .expect("session persistence coordinator mutex poisoned");
+        if let Some(existing) = locks.get(&key).and_then(std::sync::Weak::upgrade) {
+            return existing;
+        }
+
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        lock
+    }
+}
 
 /// Shared runtime execution state used by both the top-level kernel and peer runtimes.
 pub struct ExecutionHost {
@@ -23,6 +60,7 @@ pub struct ExecutionHost {
     pub(crate) policy_manager: Arc<RuntimePolicyManager>,
     pub(crate) governance_manager: Arc<GovernanceManager>,
     pub(crate) harness_manager: Arc<HarnessManager>,
+    pub(crate) persistence_locks: Arc<SessionPersistenceCoordinator>,
     pub(crate) clients: HashMap<String, ProviderClient>,
     pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     pub(crate) mcp_clients: Vec<McpClientEntry>,
@@ -70,6 +108,21 @@ impl ExecutionHost {
     pub(crate) fn clear_session_harness_engine(&self, session: &mut SessionState) {
         session.harness_engine = None;
         session.harness_generation = 0;
+    }
+
+    pub(crate) async fn bind_session_persistence_lock(
+        &self,
+        session: &mut SessionState,
+    ) -> anyhow::Result<()> {
+        let Some(internal_id) = session.internal_id else {
+            return Ok(());
+        };
+        let store_path = self
+            .store_manager
+            .resolve_path_for_selector(&session.store_selector, StorePathScope::AllowAny)
+            .await?;
+        session.persistence_lock = self.persistence_locks.lock_for(store_path, internal_id);
+        Ok(())
     }
 
     pub(crate) fn agent_config_for(

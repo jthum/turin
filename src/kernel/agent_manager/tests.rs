@@ -110,6 +110,10 @@ async fn build_shared_peer_kernel_reuses_configured_tool_registry() -> anyhow::R
 
     assert_eq!(peer_kernel.tool_registry.len(), registry.len());
     assert!(peer_kernel.tool_registry.get("test_tool").is_some());
+    assert!(Arc::ptr_eq(
+        &kernel.persistence_locks,
+        &peer_kernel.persistence_locks
+    ));
 
     Ok(())
 }

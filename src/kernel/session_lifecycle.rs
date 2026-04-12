@@ -253,9 +253,23 @@ impl ExecutionHost {
                                 warn!(error = %e, "Failed to load initial branch head for session");
                             }
                         }
+                        if let Err(e) = self.bind_session_persistence_lock(session).await {
+                            warn!(error = %e, "Failed to bind shared persistence lock for session");
+                        }
                     }
                     Err(e) => warn!(error = %e, "Failed to create session row in DB"),
                 }
+            }
+
+            if create_row
+                && session.internal_id.is_none()
+                && let Err(e) = self.bind_session_persistence_lock(session).await
+            {
+                warn!(error = %e, "Failed to bind shared persistence lock for session");
+            }
+
+            if !create_row && let Err(e) = self.bind_session_persistence_lock(session).await {
+                warn!(error = %e, "Failed to bind shared persistence lock for resumed session");
             }
 
             let (durability_tx, mut durability_rx) =

@@ -494,6 +494,7 @@ pub(super) fn fork_peer_kernel(manager: &Arc<AgentManager>) -> ExecutionHost {
         policy_manager: Arc::clone(&shared.policy_manager),
         governance_manager: Arc::clone(&shared.governance_manager),
         harness_manager: Arc::clone(&shared.harness_manager),
+        persistence_locks: Arc::clone(&shared.persistence_locks),
         clients: inference.clients,
         embedding_provider: inference.embedding_provider,
         mcp_clients: Vec::new(),

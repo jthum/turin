@@ -619,6 +619,25 @@ async fn test_local_branch_selection_does_not_mutate_persisted_active_head() -> 
 }
 
 #[tokio::test]
+async fn test_resumed_live_sessions_share_persistence_lock() -> Result<()> {
+    let tmp = tempdir()?;
+    let kernel = make_kernel(tmp.path()).await?;
+
+    let session = kernel.create_session().await;
+    let session_id = session.identity.session_id().to_string();
+    let resumed = kernel
+        .resume_session_for_agent("default", &session_id)
+        .await?;
+
+    assert!(std::sync::Arc::ptr_eq(
+        &session.persistence_lock,
+        &resumed.persistence_lock
+    ));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_on_turn_prepare_exposes_estimated_tokens_and_context_limit() -> Result<()> {
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harnesses");

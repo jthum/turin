@@ -14,6 +14,7 @@ use crate::inference::provider::ProviderClient;
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::config::TurinConfig;
 use crate::kernel::event::{KernelEvent, TaskTerminalStatus};
+use crate::kernel::execution_host::SessionPersistenceCoordinator;
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_manager::HarnessManager;
 use crate::kernel::policy::RuntimePolicyManager;
@@ -324,6 +325,7 @@ pub(crate) struct SharedPeerRuntimeContext {
     pub(crate) policy_manager: Arc<RuntimePolicyManager>,
     pub(crate) governance_manager: Arc<GovernanceManager>,
     pub(crate) harness_manager: Arc<HarnessManager>,
+    pub(crate) persistence_locks: Arc<SessionPersistenceCoordinator>,
 }
 
 #[derive(Clone, Default)]
