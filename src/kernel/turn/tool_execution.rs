@@ -772,8 +772,9 @@ impl ExecutionHost {
             {
                 let _guard = session.persistence_lock.lock().await;
                 let _ = store
-                    .insert_tool_execution(
+                    .insert_tool_execution_for_branch_head(
                         iid,
+                        session.selected_branch_head_id,
                         session.turn_index,
                         &record.id,
                         &record.name,
@@ -816,8 +817,9 @@ impl ExecutionHost {
             {
                 let _guard = session.persistence_lock.lock().await;
                 let _ = store
-                    .insert_message(
+                    .insert_message_for_branch_head(
                         iid,
+                        session.selected_branch_head_id,
                         session.turn_index,
                         "tool_result",
                         &encode_content_json(&tool_results),

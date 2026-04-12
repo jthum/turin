@@ -200,6 +200,7 @@ pub(crate) fn emit_governance_audit_event(app_data: &HarnessAppData, audit_event
         let _ = durability_tx.send(PersistedKernelRecord::Event(Box::new(
             PersistedKernelEvent {
                 internal_id: ctx.internal_id,
+                branch_head_id: ctx.branch_head_id,
                 turn_index: None,
                 event,
             },

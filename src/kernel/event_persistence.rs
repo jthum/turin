@@ -83,6 +83,7 @@ impl ExecutionHost {
                 .send(PersistedKernelRecord::Event(Box::new(
                     PersistedKernelEvent {
                         internal_id: session.internal_id,
+                        branch_head_id: session.selected_branch_head_id,
                         turn_index: persisted_turn_index_for_event(session, event),
                         event: event.clone(),
                     },

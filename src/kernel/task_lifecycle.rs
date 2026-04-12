@@ -170,6 +170,7 @@ impl ExecutionHost {
                     crate::harness::globals::HarnessEventContext {
                         json: self.json,
                         internal_id: session.internal_id,
+                        branch_head_id: session.selected_branch_head_id,
                         event_tx: session.event_tx.clone(),
                         durability_tx: session.durability_tx.clone(),
                     },

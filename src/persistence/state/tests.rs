@@ -724,6 +724,65 @@ async fn test_get_messages_follows_active_branch_path() {
 }
 
 #[tokio::test]
+async fn test_explicit_branch_head_reads_and_writes_ignore_active_branch() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    store
+        .insert_message(
+            session,
+            0,
+            "user",
+            &json!([{"type": "text", "text": "root"}]),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let alt = store
+        .create_branch_head_from_turn_index(session, "alt", Some(0), false)
+        .await
+        .unwrap();
+    let active = store
+        .get_active_branch_head(session)
+        .await
+        .unwrap()
+        .expect("active branch");
+    assert_eq!(active.name, "main");
+
+    store
+        .insert_message_for_branch_head(
+            session,
+            Some(alt.id),
+            1,
+            "assistant",
+            &json!([{"type": "text", "text": "alternate"}]),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let main_messages = store.get_messages(session).await.unwrap();
+    assert_eq!(main_messages.len(), 1);
+    assert!(main_messages[0].content.contains("root"));
+
+    let alt_messages = store
+        .get_messages_for_branch_head(session, Some(alt.id))
+        .await
+        .unwrap();
+    assert_eq!(alt_messages.len(), 2);
+    assert!(alt_messages.iter().any(|row| row.content.contains("root")));
+    assert!(
+        alt_messages
+            .iter()
+            .any(|row| row.content.contains("alternate"))
+    );
+}
+
+#[tokio::test]
 async fn test_hybrid_search() {
     let store = StateStore::open_memory()
         .await

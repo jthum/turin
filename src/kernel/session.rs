@@ -33,6 +33,7 @@ pub struct QueuedTask {
 #[derive(Debug, Clone)]
 pub struct PersistedKernelEvent {
     pub internal_id: Option<i64>,
+    pub branch_head_id: Option<i64>,
     pub turn_index: Option<u32>,
     pub event: KernelEvent,
 }
@@ -153,6 +154,7 @@ pub struct SessionState {
     pub inference: InferenceOverrideConfig,
     pub context_checkpoint: Option<ContextCompactionCheckpoint>,
     pub history: Vec<InferenceMessage>,
+    pub selected_branch_head_id: Option<i64>,
     pub harness_engine: Option<SessionHarnessEngine>,
     pub harness_generation: u64,
     pub queue: Arc<Mutex<VecDeque<QueuedTask>>>,
@@ -197,6 +199,7 @@ impl SessionState {
             inference: InferenceOverrideConfig::default(),
             context_checkpoint: None,
             history: Vec::new(),
+            selected_branch_head_id: None,
             harness_engine: None,
             harness_generation: 0,
             queue: Arc::new(Mutex::new(VecDeque::new())),

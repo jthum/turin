@@ -11,8 +11,10 @@ impl StateStore {
         event_type: &str,
         payload: &serde_json::Value,
     ) -> Result<()> {
-        self.insert_event_with_turn_index(session_id, None, event_type, payload)
-            .await
+        self.insert_event_with_turn_index_for_branch_head(
+            session_id, None, None, event_type, payload,
+        )
+        .await
     }
 
     pub async fn insert_event_with_turn_index(
@@ -22,11 +24,25 @@ impl StateStore {
         event_type: &str,
         payload: &serde_json::Value,
     ) -> Result<()> {
+        self.insert_event_with_turn_index_for_branch_head(
+            session_id, None, turn_index, event_type, payload,
+        )
+        .await
+    }
+
+    pub async fn insert_event_with_turn_index_for_branch_head(
+        &self,
+        session_id: i64,
+        branch_head_id: Option<i64>,
+        turn_index: Option<u32>,
+        event_type: &str,
+        payload: &serde_json::Value,
+    ) -> Result<()> {
         let conn = self.connect().await?;
         let payload_str = serde_json::to_string(payload)?;
         let turn_id = match turn_index {
             Some(turn_index) => self
-                .ensure_turn_for_active_branch(session_id, turn_index)
+                .ensure_turn_for_branch_head(session_id, branch_head_id, turn_index)
                 .await?
                 .map(|turn| turn.id),
             None => None,
@@ -46,7 +62,17 @@ impl StateStore {
 
     pub async fn get_events(&self, session_id: i64) -> Result<Vec<EventRow>> {
         let events = self.query_events(session_id).await?;
-        self.filter_events_for_active_branch(session_id, events)
+        self.filter_events_for_branch_head(session_id, None, events)
+            .await
+    }
+
+    pub async fn get_events_for_branch_head(
+        &self,
+        session_id: i64,
+        branch_head_id: Option<i64>,
+    ) -> Result<Vec<EventRow>> {
+        let events = self.query_events(session_id).await?;
+        self.filter_events_for_branch_head(session_id, branch_head_id, events)
             .await
     }
 
@@ -102,13 +128,14 @@ impl StateStore {
         Ok(events)
     }
 
-    async fn filter_events_for_active_branch(
+    async fn filter_events_for_branch_head(
         &self,
         session_id: i64,
+        branch_head_id: Option<i64>,
         events: Vec<EventRow>,
     ) -> Result<Vec<EventRow>> {
         let active_turn_ids = self
-            .active_branch_path_turns(session_id)
+            .branch_path_turns(session_id, branch_head_id)
             .await?
             .into_iter()
             .map(|turn| turn.id)

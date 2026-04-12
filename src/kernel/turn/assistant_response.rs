@@ -69,8 +69,9 @@ impl ExecutionHost {
             if let Some(iid) = session.internal_id {
                 let _guard = session.persistence_lock.lock().await;
                 let _ = store
-                    .insert_message(
+                    .insert_message_for_branch_head(
                         iid,
+                        session.selected_branch_head_id,
                         session.turn_index,
                         "assistant",
                         &encode_content_json(&persisted_content),

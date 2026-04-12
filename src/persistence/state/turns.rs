@@ -57,6 +57,40 @@ impl StateStore {
         }
     }
 
+    pub async fn get_branch_head(
+        &self,
+        session_id: i64,
+        branch_id: i64,
+    ) -> Result<Option<BranchHeadRow>> {
+        let conn = self.connect().await?;
+        let mut rows = conn
+            .query(
+                r#"
+                SELECT bh.id,
+                       bh.public_id,
+                       bh.session_id,
+                       bh.name,
+                       bh.head_turn_id,
+                       t.branch_depth,
+                       bh.created_from_turn_id,
+                       bh.created_at,
+                       CASE WHEN s.active_branch_head_id = bh.id THEN 1 ELSE 0 END AS is_active
+                FROM branch_heads bh
+                JOIN sessions s ON s.id = bh.session_id
+                LEFT JOIN turns t ON t.id = bh.head_turn_id
+                WHERE bh.session_id = ?1 AND bh.id = ?2
+                "#,
+                turso::params![session_id, branch_id],
+            )
+            .await?;
+
+        if let Some(row) = rows.next().await? {
+            Ok(Some(branch_head_from_row(&row)?))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub async fn list_branch_heads(&self, session_id: i64) -> Result<Vec<BranchHeadRow>> {
         let conn = self.connect().await?;
         let mut rows = conn
@@ -184,52 +218,31 @@ impl StateStore {
     }
 
     pub async fn active_branch_turn_count(&self, session_id: i64) -> Result<u32> {
-        Ok(self.active_branch_path_turns(session_id).await?.len() as u32)
+        Ok(self.branch_path_turns(session_id, None).await?.len() as u32)
     }
 
-    pub(crate) async fn ensure_turn_for_active_branch(
+    pub(crate) async fn ensure_turn_for_branch_head(
         &self,
         session_id: i64,
+        branch_head_id: Option<i64>,
         turn_index: u32,
     ) -> Result<Option<TurnRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT bh.id,
-                       bh.head_turn_id,
-                       t.public_id,
-                       t.parent_turn_id,
-                       t.branch_depth,
-                       t.created_at
-                FROM sessions s
-                JOIN branch_heads bh ON bh.id = s.active_branch_head_id
-                LEFT JOIN turns t ON t.id = bh.head_turn_id
-                WHERE s.id = ?1
-                "#,
-                [session_id],
-            )
-            .await?;
-
-        let Some(row) = rows.next().await? else {
+        let Some(branch) = self.resolve_branch_head(session_id, branch_head_id).await? else {
             return Ok(None);
         };
 
-        let branch_id = row.get::<i64>(0)?;
-        let head_turn_id = row.get::<Option<i64>>(1)?;
-        let head_turn = head_turn_id.map(|id| TurnRow {
-            id,
-            public_id: row.get::<Vec<u8>>(2).unwrap_or_default(),
-            session_id,
-            parent_turn_id: row.get::<Option<i64>>(3).ok().flatten(),
-            branch_depth: row
-                .get::<Option<i64>>(4)
-                .ok()
-                .flatten()
-                .map(|value| value as u32)
-                .unwrap_or(0),
-            created_at: row.get::<String>(5).unwrap_or_default(),
-        });
+        let branch_id = branch.id;
+        let head_turn = match branch.head_turn_id {
+            Some(turn_id) => Some(self.get_turn_row(turn_id).await?.ok_or_else(|| {
+                anyhow!(
+                    "Turn {} on branch {} could not be loaded",
+                    turn_id,
+                    branch_id
+                )
+            })?),
+            None => None,
+        };
 
         if let Some(existing) = head_turn {
             if existing.branch_depth == turn_index {
@@ -261,22 +274,18 @@ impl StateStore {
     }
 
     pub(crate) async fn active_branch_path_turns(&self, session_id: i64) -> Result<Vec<TurnRow>> {
-        let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT bh.head_turn_id
-                FROM sessions s
-                JOIN branch_heads bh ON bh.id = s.active_branch_head_id
-                WHERE s.id = ?1
-                "#,
-                [session_id],
-            )
-            .await?;
-        let Some(row) = rows.next().await? else {
+        self.branch_path_turns(session_id, None).await
+    }
+
+    pub(crate) async fn branch_path_turns(
+        &self,
+        session_id: i64,
+        branch_head_id: Option<i64>,
+    ) -> Result<Vec<TurnRow>> {
+        let Some(branch) = self.resolve_branch_head(session_id, branch_head_id).await? else {
             return Ok(Vec::new());
         };
-        let mut current_turn_id = row.get::<Option<i64>>(0)?;
+        let mut current_turn_id = branch.head_turn_id;
         let mut turns = Vec::new();
         while let Some(turn_id) = current_turn_id {
             let Some(turn) = self.get_turn_row(turn_id).await? else {
@@ -389,6 +398,17 @@ impl StateStore {
                 .into_iter()
                 .find(|turn| turn.branch_depth == branch_depth)
                 .map(|turn| turn.id)),
+        }
+    }
+
+    async fn resolve_branch_head(
+        &self,
+        session_id: i64,
+        branch_head_id: Option<i64>,
+    ) -> Result<Option<BranchHeadRow>> {
+        match branch_head_id {
+            Some(branch_id) => self.get_branch_head(session_id, branch_id).await,
+            None => self.get_active_branch_head(session_id).await,
         }
     }
 }

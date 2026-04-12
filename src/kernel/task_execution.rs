@@ -119,8 +119,9 @@ impl ExecutionHost {
             if let Some(iid) = session.internal_id {
                 let _guard = session.persistence_lock.lock().await;
                 let _ = store
-                    .insert_message(
+                    .insert_message_for_branch_head(
                         iid,
+                        session.selected_branch_head_id,
                         session.turn_index,
                         "user",
                         &encode_content_json(content),
@@ -147,6 +148,7 @@ impl ExecutionHost {
             engine.set_active_event_context(Some(crate::harness::globals::HarnessEventContext {
                 json: self.json,
                 internal_id: session.internal_id,
+                branch_head_id: session.selected_branch_head_id,
                 event_tx: session.event_tx.clone(),
                 durability_tx: session.durability_tx.clone(),
             }));

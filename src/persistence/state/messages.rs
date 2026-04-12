@@ -41,10 +41,30 @@ impl StateStore {
         content: &serde_json::Value,
         token_count: Option<u64>,
     ) -> Result<()> {
+        self.insert_message_for_branch_head(
+            session_id,
+            None,
+            turn_index,
+            role,
+            content,
+            token_count,
+        )
+        .await
+    }
+
+    pub async fn insert_message_for_branch_head(
+        &self,
+        session_id: i64,
+        branch_head_id: Option<i64>,
+        turn_index: u32,
+        role: &str,
+        content: &serde_json::Value,
+        token_count: Option<u64>,
+    ) -> Result<()> {
         let conn = self.connect().await?;
         let content_str = serde_json::to_string(content)?;
         let turn = self
-            .ensure_turn_for_active_branch(session_id, turn_index)
+            .ensure_turn_for_branch_head(session_id, branch_head_id, turn_index)
             .await?
             .ok_or_else(|| {
                 anyhow::anyhow!("No active branch head available for session {}", session_id)
@@ -76,9 +96,17 @@ impl StateStore {
     }
 
     pub async fn get_messages(&self, session_id: i64) -> Result<Vec<MessageRow>> {
+        self.get_messages_for_branch_head(session_id, None).await
+    }
+
+    pub async fn get_messages_for_branch_head(
+        &self,
+        session_id: i64,
+        branch_head_id: Option<i64>,
+    ) -> Result<Vec<MessageRow>> {
         let conn = self.connect().await?;
         let mut messages = Vec::new();
-        for turn in self.active_branch_path_turns(session_id).await? {
+        for turn in self.branch_path_turns(session_id, branch_head_id).await? {
             let mut rows = conn
                 .query(
                     "SELECT id, role, content, token_count, created_at FROM turn_messages WHERE turn_id = ?1 ORDER BY id",

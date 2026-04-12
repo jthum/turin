@@ -127,7 +127,8 @@ impl ExecutionHost {
             .checkout_branch_head_by_name(internal_id, &branch_name)
             .await
         {
-            Ok(Some(_)) => {
+            Ok(Some(branch)) => {
+                session.selected_branch_head_id = Some(branch.id);
                 info!(
                     session_id = %self.session_reference(session),
                     store = %describe_store_selector(&session.store_selector),

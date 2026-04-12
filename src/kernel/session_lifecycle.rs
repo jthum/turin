@@ -119,9 +119,14 @@ impl ExecutionHost {
             );
         }
 
-        let messages = store.get_messages(row.id).await?;
+        let selected_branch_head_id = row.active_branch_head_id;
+        let messages = store
+            .get_messages_for_branch_head(row.id, selected_branch_head_id)
+            .await?;
         let events = store.get_all_events(row.id).await?;
-        let active_events = store.get_events(row.id).await?;
+        let active_events = store
+            .get_events_for_branch_head(row.id, selected_branch_head_id)
+            .await?;
         let (history, turn_index) = rebuild_history(&messages)?;
         let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
             rebuild_session_counters(&events);
@@ -138,6 +143,7 @@ impl ExecutionHost {
         session.inference = inference;
         session.context_checkpoint = rebuild_context_checkpoint(&active_events);
         session.history = history;
+        session.selected_branch_head_id = selected_branch_head_id;
         session.turn_index = turn_index;
         session.total_input_tokens = total_input_tokens;
         session.total_output_tokens = total_output_tokens;
@@ -164,9 +170,16 @@ impl ExecutionHost {
             )
         })?;
 
-        let messages = store.get_messages(row.id).await?;
+        let selected_branch_head_id = session
+            .selected_branch_head_id
+            .or(row.active_branch_head_id);
+        let messages = store
+            .get_messages_for_branch_head(row.id, selected_branch_head_id)
+            .await?;
         let events = store.get_all_events(row.id).await?;
-        let active_events = store.get_events(row.id).await?;
+        let active_events = store
+            .get_events_for_branch_head(row.id, selected_branch_head_id)
+            .await?;
         let (history, turn_index) = rebuild_history(&messages)?;
         let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
             rebuild_session_counters(&events);
@@ -178,6 +191,7 @@ impl ExecutionHost {
             .set_channel_id(session_channel_id_from_metadata(row.metadata.as_deref()));
         session.context_checkpoint = rebuild_context_checkpoint(&active_events);
         session.history = history;
+        session.selected_branch_head_id = selected_branch_head_id;
         session.turn_index = turn_index;
         session.total_input_tokens = total_input_tokens;
         session.total_output_tokens = total_output_tokens;
@@ -197,7 +211,20 @@ impl ExecutionHost {
                     .create_session(public_id, session.identity.agent_id(), metadata.as_deref())
                     .await
                 {
-                    Ok(id) => session.internal_id = Some(id),
+                    Ok(id) => {
+                        session.internal_id = Some(id);
+                        match store.get_active_branch_head(id).await {
+                            Ok(Some(branch)) => {
+                                session.selected_branch_head_id = Some(branch.id);
+                            }
+                            Ok(None) => {
+                                warn!("Created session is missing an active branch head");
+                            }
+                            Err(e) => {
+                                warn!(error = %e, "Failed to load initial branch head for session");
+                            }
+                        }
+                    }
                     Err(e) => warn!(error = %e, "Failed to create session row in DB"),
                 }
             }
@@ -217,8 +244,9 @@ impl ExecutionHost {
                             if let Some(iid) = record.internal_id {
                                 let _guard = persistence_lock.lock().await;
                                 if let Err(e) = store_clone
-                                    .insert_event_with_turn_index(
+                                    .insert_event_with_turn_index_for_branch_head(
                                         iid,
+                                        record.branch_head_id,
                                         record.turn_index,
                                         &event_type,
                                         &payload,
