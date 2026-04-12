@@ -37,6 +37,8 @@ pub struct RuntimeEventsSubscribeParams {
     pub agent_id: Option<String>,
     #[serde(default)]
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub slot_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -153,6 +155,8 @@ pub struct SubmitTaskParams {
     pub agent_id: Option<String>,
     #[serde(default)]
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub slot_id: Option<String>,
     pub prompt: String,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -192,6 +196,13 @@ pub struct WaitTaskParams {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SessionIdParams {
     pub session_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LiveSessionTargetParams {
+    pub session_id: String,
+    #[serde(default)]
+    pub slot_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -335,9 +346,9 @@ pub enum DaemonRequest {
     #[serde(rename = "session.branch_checkout")]
     SessionBranchCheckout(SessionBranchCheckoutParams),
     #[serde(rename = "session.cancel")]
-    SessionCancel(SessionIdParams),
+    SessionCancel(LiveSessionTargetParams),
     #[serde(rename = "session.kill")]
-    SessionKill(SessionIdParams),
+    SessionKill(LiveSessionTargetParams),
     #[serde(rename = "harness.list")]
     HarnessList(NoParams),
     #[serde(rename = "harness.create")]
@@ -523,6 +534,7 @@ mod tests {
             DaemonRequest::TaskSubmit(SubmitTaskParams {
                 agent_id: Some("writer".to_string()),
                 session_id: None,
+                slot_id: None,
                 prompt: "review this".to_string(),
                 content: None,
                 tools: Default::default(),

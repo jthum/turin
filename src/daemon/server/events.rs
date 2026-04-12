@@ -23,9 +23,10 @@ use super::dispatch::{build_runtime_snapshot, classify_registry_issue, emit_even
 struct EventFilter {
     agent_id: Option<String>,
     session_id: Option<String>,
+    slot_id: Option<String>,
 }
 
-type ScopedSessionEventStream = (String, String, SessionEventReceiver);
+type ScopedSessionEventStream = (String, String, String, SessionEventReceiver);
 
 pub(super) async fn stream_events(
     request: RequestEnvelope,
@@ -39,9 +40,11 @@ pub(super) async fn stream_events(
     let mut session_event_rx = if let Some(session_id) = filter.session_id.as_deref() {
         let guard = state.read().await;
         guard
-            .subscribe_live_session_events(session_id)
+            .subscribe_live_session_events_in_slot(session_id, filter.slot_id.as_deref())
             .await
-            .map(|(agent_id, receiver)| (agent_id, session_id.to_string(), receiver))
+            .map(|(agent_id, slot_id, receiver)| {
+                (agent_id, session_id.to_string(), slot_id, receiver)
+            })
     } else {
         None
     };
@@ -145,9 +148,11 @@ impl EventFilter {
             DaemonRequest::RuntimeEventsSubscribe(RuntimeEventsSubscribeParams {
                 agent_id,
                 session_id,
+                slot_id,
             }) => Self {
                 agent_id: agent_id.clone(),
                 session_id: session_id.clone(),
+                slot_id: slot_id.clone(),
             },
             _ => Self::default(),
         }
@@ -157,7 +162,7 @@ impl EventFilter {
         if self.should_always_deliver(&event.event) {
             return true;
         }
-        self.matches_agent(event) && self.matches_session(event)
+        self.matches_agent(event) && self.matches_session(event) && self.matches_slot(event)
     }
 
     fn should_always_deliver(&self, event_name: &str) -> bool {
@@ -165,7 +170,7 @@ impl EventFilter {
     }
 
     fn has_scope(&self) -> bool {
-        self.agent_id.is_some() || self.session_id.is_some()
+        self.agent_id.is_some() || self.session_id.is_some() || self.slot_id.is_some()
     }
 
     fn matches_agent(&self, event: &EventEnvelope) -> bool {
@@ -191,6 +196,14 @@ impl EventFilter {
             .get("session_id")
             .and_then(|value| value.as_str())
             == Some(expected)
+    }
+
+    fn matches_slot(&self, event: &EventEnvelope) -> bool {
+        let Some(expected) = self.slot_id.as_deref() else {
+            return true;
+        };
+
+        event.data.get("slot_id").and_then(|value| value.as_str()) == Some(expected)
     }
 }
 
@@ -222,19 +235,25 @@ async fn write_event(writer: &mut LocalIpcWriteHalf, event: &EventEnvelope) -> R
 async fn next_session_kernel_event(
     session_event_rx: &mut Option<ScopedSessionEventStream>,
 ) -> Option<std::result::Result<EventEnvelope, broadcast::error::RecvError>> {
-    let (agent_id, session_id, rx) = session_event_rx.as_mut()?;
+    let (agent_id, session_id, slot_id, rx) = session_event_rx.as_mut()?;
     Some(
         rx.recv()
             .await
-            .map(|(_, event)| kernel_event_envelope(agent_id, session_id, &event)),
+            .map(|(_, event)| kernel_event_envelope(agent_id, session_id, slot_id, &event)),
     )
 }
 
-fn kernel_event_envelope(agent_id: &str, session_id: &str, event: &KernelEvent) -> EventEnvelope {
+fn kernel_event_envelope(
+    agent_id: &str,
+    session_id: &str,
+    slot_id: &str,
+    event: &KernelEvent,
+) -> EventEnvelope {
     let mut data = serde_json::to_value(event).unwrap_or_else(|_| json!({}));
     if let serde_json::Value::Object(ref mut map) = data {
         map.insert("agent_id".to_string(), json!(agent_id));
         map.insert("session_id".to_string(), json!(session_id));
+        map.insert("slot_id".to_string(), json!(slot_id));
     }
     EventEnvelope::new(event.event_type(), data)
 }
@@ -243,7 +262,7 @@ fn scope_runtime_snapshot(
     mut snapshot: DaemonRuntimeSnapshot,
     filter: &EventFilter,
 ) -> DaemonRuntimeSnapshot {
-    if filter.agent_id.is_none() && filter.session_id.is_none() {
+    if filter.agent_id.is_none() && filter.session_id.is_none() && filter.slot_id.is_none() {
         return snapshot;
     }
 
@@ -528,6 +547,7 @@ mod tests {
                 DaemonRequest::RuntimeEventsSubscribe(RuntimeEventsSubscribeParams {
                     agent_id: Some("writer".into()),
                     session_id: None,
+                    slot_id: None,
                 }),
             )),
         );

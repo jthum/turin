@@ -607,8 +607,9 @@ impl ChannelRunner {
                         .request_ok::<serde_json::Value>(
                             None,
                             turin_daemon_protocol::DaemonRequest::SessionKill(
-                                turin_daemon_protocol::SessionIdParams {
+                                turin_daemon_protocol::LiveSessionTargetParams {
                                     session_id: binding.session_id.clone(),
+                                    slot_id: Some(binding.slot_id.clone()),
                                 },
                             ),
                         )
@@ -666,6 +667,7 @@ impl ChannelRunner {
                 turin_daemon_protocol::DaemonRequest::TaskSubmit(SubmitTaskParams {
                     agent_id: None,
                     session_id: Some(binding.session_id.clone()),
+                    slot_id: Some(binding.slot_id.clone()),
                     prompt: task_prompt_for_submission(event),
                     content: (!content.is_empty()).then_some(content),
                     tools: (!self.tools.is_empty()).then_some(self.tools.clone()),
@@ -1050,6 +1052,7 @@ impl ChannelRunner {
                 .subscribe_managed(RuntimeEventsSubscribeParams {
                     agent_id: None,
                     session_id: Some(binding.session_id.clone()),
+                    slot_id: Some(binding.slot_id.clone()),
                 })
                 .await
                 .ok()

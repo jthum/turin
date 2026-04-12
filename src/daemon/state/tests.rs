@@ -613,6 +613,79 @@ async fn session_branches_can_be_created_listed_and_checked_out() -> Result<()> 
 }
 
 #[tokio::test]
+async fn live_session_control_can_target_a_specific_runtime_slot() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+
+    let slot_a = state.open_session("default", Some("slot-a"), None).await?;
+    let slot_b = state
+        .resume_session(&slot_a.session_id, Some("slot-b"))
+        .await?;
+    assert_eq!(slot_b.slot_id, "slot-b");
+
+    let ambiguous_submit = state
+        .submit_task(
+            None,
+            Some(&slot_a.session_id),
+            "ambiguous".to_string(),
+            None,
+            Default::default(),
+        )
+        .await
+        .expect_err("slot-agnostic submit should reject ambiguity");
+    assert!(
+        ambiguous_submit
+            .to_string()
+            .contains("multiple runtime slots")
+    );
+
+    let targeted = state
+        .submit_task_in_slot(
+            None,
+            Some(&slot_a.session_id),
+            Some("slot-b"),
+            "targeted slot".to_string(),
+            None,
+            Default::default(),
+        )
+        .await?;
+    assert_eq!(targeted.slot_id, "slot-b");
+    assert_eq!(
+        state
+            .wait_for_task(&targeted.request_id, Some(2_000))
+            .await?
+            .state,
+        "completed"
+    );
+
+    let ambiguous_kill = state
+        .kill_session(&slot_a.session_id)
+        .await
+        .expect_err("slot-agnostic kill should reject ambiguity");
+    assert!(
+        ambiguous_kill
+            .to_string()
+            .contains("multiple runtime slots")
+    );
+
+    let targeted_kill = state
+        .kill_session_in_slot(&slot_a.session_id, Some("slot-b"))
+        .await?;
+    assert_eq!(targeted_kill["slot_id"], "slot-b");
+    assert_eq!(targeted_kill["session_id"], slot_a.session_id);
+
+    let live = state.list_live_sessions().await;
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].slot_id, "slot-a");
+
+    let final_kill = state.kill_session(&slot_a.session_id).await?;
+    assert_eq!(final_kill["slot_id"], "slot-a");
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn harness_reload_and_validate_are_targeted() -> Result<()> {
     let temp = tempdir()?;
     let shared_harness = temp.path().join(".turin").join("harnesses").join("shared");

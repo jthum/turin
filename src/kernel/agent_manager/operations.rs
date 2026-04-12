@@ -57,10 +57,11 @@ impl AgentManager {
     pub async fn submit_to_session(
         self: &Arc<Self>,
         session_id: &str,
+        slot_id: Option<&str>,
         task: QueuedTask,
         delegated_capabilities: Option<BTreeMap<String, bool>>,
     ) -> Result<String> {
-        let (runtime_key, _) = self.unique_runtime_by_session(session_id).await?;
+        let (runtime_key, _) = self.runtime_by_session_target(session_id, slot_id).await?;
         self.submit_to_runtime(runtime_key, task, delegated_capabilities)
             .await
     }
@@ -327,15 +328,17 @@ impl AgentManager {
     pub async fn subscribe_session_events(
         &self,
         session_id: &str,
+        slot_id: Option<&str>,
     ) -> Option<(
+        String,
         String,
         tokio::sync::broadcast::Receiver<(Option<i64>, KernelEvent)>,
     )> {
-        match self.unique_runtime_by_session(session_id).await {
+        match self.runtime_by_session_target(session_id, slot_id).await {
             Ok((runtime_key, handle)) => handle
                 .control
                 .subscribe_current_session_events()
-                .map(|receiver| (runtime_key.agent_id, receiver)),
+                .map(|receiver| (runtime_key.agent_id, runtime_key.slot_id, receiver)),
             Err(_) => None,
         }
     }
@@ -671,7 +674,27 @@ impl AgentManager {
         &self,
         session_id: &str,
     ) -> Result<(RuntimeSlotKey, Arc<AgentRuntimeHandle>)> {
+        self.runtime_by_session_target(session_id, None).await
+    }
+
+    pub(super) async fn runtime_by_session_target(
+        &self,
+        session_id: &str,
+        slot_id: Option<&str>,
+    ) -> Result<(RuntimeSlotKey, Arc<AgentRuntimeHandle>)> {
         let matches = self.find_runtimes_by_session(session_id).await;
+        if let Some(slot_id) = slot_id {
+            return matches
+                .into_iter()
+                .find(|(runtime_key, _)| runtime_key.slot_id == slot_id)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Session '{}' is not active in runtime slot '{}'",
+                        session_id,
+                        slot_id
+                    )
+                });
+        }
         match matches.len() {
             0 => anyhow::bail!(
                 "Session '{}' is not an active managed runtime session",

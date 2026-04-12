@@ -7,11 +7,11 @@ use turin_channel_core::ChannelAdapterManifest;
 use turin_daemon_client::DaemonClient;
 use turin_daemon_protocol::{
     ChannelAccessParams, ChannelAccessRoomParams, DaemonHandshake, DaemonRequest, EntityIdParams,
-    EventEnvelope, NoParams, OpenSessionParams, RequestEnvelope, ResponseEnvelope,
-    ResumeSessionParams, RuntimeEventsSubscribeParams, SessionBranchCheckoutParams,
-    SessionBranchCreateParams, SessionIdParams, SessionListParams, SessionSearchHitKind,
-    SessionSearchParams, SessionSearchScope, SessionTitleParams, SubmitTaskParams, TaskIdParams,
-    UpdateChannelParams, WaitTaskParams,
+    EventEnvelope, LiveSessionTargetParams, NoParams, OpenSessionParams, RequestEnvelope,
+    ResponseEnvelope, ResumeSessionParams, RuntimeEventsSubscribeParams,
+    SessionBranchCheckoutParams, SessionBranchCreateParams, SessionIdParams, SessionListParams,
+    SessionSearchHitKind, SessionSearchParams, SessionSearchScope, SessionTitleParams,
+    SubmitTaskParams, TaskIdParams, UpdateChannelParams, WaitTaskParams,
 };
 use turin_remote_client::RemoteClient;
 
@@ -367,6 +367,8 @@ struct SessionBranchList {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionActionResult {
     pub agent_id: String,
+    #[serde(default)]
+    pub slot_id: Option<String>,
     pub session_id: String,
     pub action: String,
 }
@@ -682,24 +684,42 @@ impl ControlClient {
         .await
     }
 
-    pub async fn cancel_session(&self, session_id: &str) -> Result<SessionActionResult> {
+    pub async fn cancel_live_session(
+        &self,
+        session_id: &str,
+        slot_id: Option<String>,
+    ) -> Result<SessionActionResult> {
         self.request_ok(
             None,
-            DaemonRequest::SessionCancel(SessionIdParams {
+            DaemonRequest::SessionCancel(LiveSessionTargetParams {
                 session_id: session_id.to_string(),
+                slot_id,
+            }),
+        )
+        .await
+    }
+
+    pub async fn cancel_session(&self, session_id: &str) -> Result<SessionActionResult> {
+        self.cancel_live_session(session_id, None).await
+    }
+
+    pub async fn kill_live_session(
+        &self,
+        session_id: &str,
+        slot_id: Option<String>,
+    ) -> Result<SessionActionResult> {
+        self.request_ok(
+            None,
+            DaemonRequest::SessionKill(LiveSessionTargetParams {
+                session_id: session_id.to_string(),
+                slot_id,
             }),
         )
         .await
     }
 
     pub async fn kill_session(&self, session_id: &str) -> Result<SessionActionResult> {
-        self.request_ok(
-            None,
-            DaemonRequest::SessionKill(SessionIdParams {
-                session_id: session_id.to_string(),
-            }),
-        )
-        .await
+        self.kill_live_session(session_id, None).await
     }
 
     pub async fn list_tasks(&self) -> Result<Vec<TaskStatus>> {
@@ -719,10 +739,11 @@ impl ControlClient {
         .await
     }
 
-    pub async fn submit_task(
+    pub async fn submit_task_in_slot(
         &self,
         agent_id: Option<String>,
         session_id: Option<String>,
+        slot_id: Option<String>,
         prompt: String,
     ) -> Result<TaskStatus> {
         self.request_ok(
@@ -730,12 +751,23 @@ impl ControlClient {
             DaemonRequest::TaskSubmit(SubmitTaskParams {
                 agent_id,
                 session_id,
+                slot_id,
                 prompt,
                 content: None,
                 tools: None,
             }),
         )
         .await
+    }
+
+    pub async fn submit_task(
+        &self,
+        agent_id: Option<String>,
+        session_id: Option<String>,
+        prompt: String,
+    ) -> Result<TaskStatus> {
+        self.submit_task_in_slot(agent_id, session_id, None, prompt)
+            .await
     }
 
     pub async fn wait_task(&self, request_id: &str, timeout_ms: Option<u64>) -> Result<TaskStatus> {

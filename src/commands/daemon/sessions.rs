@@ -173,12 +173,13 @@ pub async fn run_session_branch_checkout(
 pub async fn run_session_cancel(
     config_path: &std::path::Path,
     session_id: &str,
+    slot_id: Option<&str>,
     json_output: bool,
 ) -> Result<()> {
     let response = send_request(
         config_path,
         "session.cancel",
-        json!({ "session_id": session_id }),
+        json!({ "session_id": session_id, "slot_id": slot_id }),
     )
     .await?;
     print_response(response, json_output)
@@ -187,12 +188,13 @@ pub async fn run_session_cancel(
 pub async fn run_session_kill(
     config_path: &std::path::Path,
     session_id: &str,
+    slot_id: Option<&str>,
     json_output: bool,
 ) -> Result<()> {
     let response = send_request(
         config_path,
         "session.kill",
-        json!({ "session_id": session_id }),
+        json!({ "session_id": session_id, "slot_id": slot_id }),
     )
     .await?;
     print_response(response, json_output)

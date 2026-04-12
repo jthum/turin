@@ -1422,6 +1422,7 @@ fn spawn_focused_session_event_task(
                 .subscribe_managed(RuntimeEventsSubscribeParams {
                     agent_id: None,
                     session_id: Some(session_id.clone()),
+                    slot_id: None,
                 })
                 .await
             {

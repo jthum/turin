@@ -33,6 +33,22 @@ impl DaemonState {
         content: Option<Vec<TaskInputContent>>,
         tools: Option<ToolsConfig>,
     ) -> Result<TaskStatusSnapshot> {
+        self.submit_task_in_slot(agent_id, session_id, None, prompt, content, tools)
+            .await
+    }
+
+    pub async fn submit_task_in_slot(
+        &self,
+        agent_id: Option<&str>,
+        session_id: Option<&str>,
+        slot_id: Option<&str>,
+        prompt: String,
+        content: Option<Vec<TaskInputContent>>,
+        tools: Option<ToolsConfig>,
+    ) -> Result<TaskStatusSnapshot> {
+        if session_id.is_none() && slot_id.is_some() {
+            anyhow::bail!("task.submit slot_id requires session_id");
+        }
         let mut task = QueuedTask::ad_hoc(prompt);
         task.content = content;
         if let Some(tools) = tools
@@ -43,7 +59,7 @@ impl DaemonState {
         let request_id = if let Some(session_id) = session_id {
             self.kernel
                 .agent_manager()
-                .submit_to_session(session_id, task, None)
+                .submit_to_session(session_id, slot_id, task, None)
                 .await?
         } else {
             let agent_id =
@@ -116,11 +132,25 @@ impl DaemonState {
         session_id: &str,
     ) -> Option<(
         String,
+        String,
+        tokio::sync::broadcast::Receiver<(Option<i64>, KernelEvent)>,
+    )> {
+        self.subscribe_live_session_events_in_slot(session_id, None)
+            .await
+    }
+
+    pub async fn subscribe_live_session_events_in_slot(
+        &self,
+        session_id: &str,
+        slot_id: Option<&str>,
+    ) -> Option<(
+        String,
+        String,
         tokio::sync::broadcast::Receiver<(Option<i64>, KernelEvent)>,
     )> {
         self.kernel
             .agent_manager()
-            .subscribe_session_events(session_id)
+            .subscribe_session_events(session_id, slot_id)
             .await
     }
 
@@ -165,22 +195,44 @@ impl DaemonState {
     }
 
     pub async fn cancel_session(&self, session_id: &str) -> Result<serde_json::Value> {
-        let (agent_id, session_id) = self
+        self.cancel_session_in_slot(session_id, None).await
+    }
+
+    pub async fn cancel_session_in_slot(
+        &self,
+        session_id: &str,
+        slot_id: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        let (agent_id, slot_id, session_id) = self
             .kernel
             .agent_manager()
-            .cancel_session(session_id)
+            .cancel_session(session_id, slot_id)
             .await?;
         Ok(serde_json::json!({
             "agent_id": agent_id,
+            "slot_id": slot_id,
             "session_id": session_id,
             "action": "cancel_requested",
         }))
     }
 
     pub async fn kill_session(&self, session_id: &str) -> Result<serde_json::Value> {
-        let (agent_id, session_id) = self.kernel.agent_manager().kill_session(session_id).await?;
+        self.kill_session_in_slot(session_id, None).await
+    }
+
+    pub async fn kill_session_in_slot(
+        &self,
+        session_id: &str,
+        slot_id: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        let (agent_id, slot_id, session_id) = self
+            .kernel
+            .agent_manager()
+            .kill_session(session_id, slot_id)
+            .await?;
         Ok(serde_json::json!({
             "agent_id": agent_id,
+            "slot_id": slot_id,
             "session_id": session_id,
             "action": "killed",
         }))

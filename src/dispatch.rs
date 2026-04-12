@@ -328,6 +328,7 @@ async fn handle_daemon_task_command(command: DaemonTaskCommands) -> Result<()> {
         DaemonTaskCommands::Submit {
             agent_id,
             session_id,
+            slot_id,
             prompt,
             wait,
             timeout_ms,
@@ -337,6 +338,7 @@ async fn handle_daemon_task_command(command: DaemonTaskCommands) -> Result<()> {
                 &args.config.config,
                 agent_id.as_deref(),
                 session_id.as_deref(),
+                slot_id.as_deref(),
                 &prompt,
                 wait,
                 timeout_ms,
@@ -609,11 +611,31 @@ async fn handle_daemon_session_command(command: DaemonSessionCommands) -> Result
             )
             .await
         }
-        DaemonSessionCommands::Cancel { session_id, args } => {
-            commands::daemon::run_session_cancel(&args.config.config, &session_id, args.json).await
+        DaemonSessionCommands::Cancel {
+            session_id,
+            slot_id,
+            args,
+        } => {
+            commands::daemon::run_session_cancel(
+                &args.config.config,
+                &session_id,
+                slot_id.as_deref(),
+                args.json,
+            )
+            .await
         }
-        DaemonSessionCommands::Kill { session_id, args } => {
-            commands::daemon::run_session_kill(&args.config.config, &session_id, args.json).await
+        DaemonSessionCommands::Kill {
+            session_id,
+            slot_id,
+            args,
+        } => {
+            commands::daemon::run_session_kill(
+                &args.config.config,
+                &session_id,
+                slot_id.as_deref(),
+                args.json,
+            )
+            .await
         }
     }
 }

@@ -4,6 +4,7 @@ pub async fn run_task_submit(
     config_path: &std::path::Path,
     agent_id: Option<&str>,
     session_id: Option<&str>,
+    slot_id: Option<&str>,
     prompt: &str,
     wait: bool,
     timeout_ms: Option<u64>,
@@ -12,7 +13,12 @@ pub async fn run_task_submit(
     let response = send_request(
         config_path,
         "task.submit",
-        json!({ "agent_id": agent_id, "session_id": session_id, "prompt": prompt }),
+        json!({
+            "agent_id": agent_id,
+            "session_id": session_id,
+            "slot_id": slot_id,
+            "prompt": prompt
+        }),
     )
     .await?;
     if !wait {

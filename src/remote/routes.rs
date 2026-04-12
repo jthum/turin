@@ -488,6 +488,11 @@ fn parse_event_filter(
                         filter.session_id = Some(value.into_owned());
                     }
                 }
+                "slot_id" => {
+                    if !value.is_empty() {
+                        filter.slot_id = Some(value.into_owned());
+                    }
+                }
                 other => {
                     return Err(RemoteError::new(
                         StatusCode::BAD_REQUEST,

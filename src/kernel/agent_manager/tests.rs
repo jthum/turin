@@ -309,8 +309,10 @@ async fn cancel_session_cancels_queued_work_and_requests_reset() -> anyhow::Resu
         }),
     );
 
-    let (agent_id, returned_session_id) = manager.cancel_session(session_id).await?;
+    let (agent_id, returned_slot_id, returned_session_id) =
+        manager.cancel_session(session_id, None).await?;
     assert_eq!(agent_id, "default");
+    assert_eq!(returned_slot_id, RuntimeSlotKey::DEFAULT_SLOT_ID);
     assert_eq!(returned_session_id, session_id);
     assert!(matches!(
         control.take_session_reset_request(),
@@ -396,8 +398,10 @@ async fn kill_session_marks_running_and_queued_work_killed() -> anyhow::Result<(
         }),
     );
 
-    let (agent_id, returned_session_id) = manager.kill_session(session_id).await?;
+    let (agent_id, returned_slot_id, returned_session_id) =
+        manager.kill_session(session_id, None).await?;
     assert_eq!(agent_id, "default");
+    assert_eq!(returned_slot_id, RuntimeSlotKey::DEFAULT_SLOT_ID);
     assert_eq!(returned_session_id, session_id);
     assert!(
         manager
@@ -477,6 +481,7 @@ async fn explicit_runtime_slots_allow_multiple_live_runtimes_for_one_session() -
     let submit_err = manager
         .submit_to_session(
             &slot_a.session_id,
+            None,
             QueuedTask::ad_hoc("ambiguous".to_string()),
             None,
         )
@@ -502,23 +507,54 @@ async fn explicit_runtime_slots_allow_multiple_live_runtimes_for_one_session() -
 
     assert!(
         manager
-            .subscribe_session_events(&slot_a.session_id)
+            .subscribe_session_events(&slot_a.session_id, None)
             .await
             .is_none(),
         "slot-agnostic event subscription should reject ambiguity"
     );
 
+    let targeted = manager
+        .submit_to_session(
+            &slot_a.session_id,
+            Some("slot-b"),
+            QueuedTask::ad_hoc("targeted".to_string()),
+            None,
+        )
+        .await?;
+    let targeted_task = manager
+        .get_task(&targeted)
+        .await
+        .expect("targeted task should be visible");
+    assert_eq!(targeted_task.slot_id, "slot-b");
+
+    let (_, subscribed_slot_id, _receiver) = manager
+        .subscribe_session_events(&slot_a.session_id, Some("slot-b"))
+        .await
+        .expect("slot-targeted event subscription should resolve");
+    assert_eq!(subscribed_slot_id, "slot-b");
+
     let cancel_err = manager
-        .cancel_session(&slot_a.session_id)
+        .cancel_session(&slot_a.session_id, None)
         .await
         .expect_err("slot-agnostic cancel should reject ambiguity");
     assert!(cancel_err.to_string().contains("multiple runtime slots"));
 
-    let kill_err = manager
-        .kill_session(&slot_a.session_id)
-        .await
-        .expect_err("slot-agnostic kill should reject ambiguity");
-    assert!(kill_err.to_string().contains("multiple runtime slots"));
+    let (killed_agent_id, killed_slot_id, killed_session_id) = manager
+        .kill_session(&slot_a.session_id, Some("slot-b"))
+        .await?;
+    assert_eq!(killed_agent_id, "default");
+    assert_eq!(killed_slot_id, "slot-b");
+    assert_eq!(killed_session_id, slot_a.session_id);
+
+    let live_after_targeted_kill = manager.list_live_sessions(None).await;
+    assert_eq!(live_after_targeted_kill.len(), 1);
+    assert_eq!(live_after_targeted_kill[0].slot_id, "slot-a");
+
+    let (final_killed_agent_id, final_killed_slot_id, final_killed_session_id) =
+        manager.kill_session(&slot_a.session_id, None).await?;
+    assert_eq!(final_killed_agent_id, "default");
+    assert_eq!(final_killed_slot_id, "slot-a");
+    assert_eq!(final_killed_session_id, slot_a.session_id);
 
     abort_all_runtime_slots(&manager).await;
     Ok(())

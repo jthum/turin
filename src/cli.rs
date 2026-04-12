@@ -412,6 +412,9 @@ pub(crate) enum DaemonTaskCommands {
         /// Existing live session ID to submit into
         #[arg(long)]
         session_id: Option<String>,
+        /// Optional runtime slot ID when the session is live in multiple slots
+        #[arg(long)]
+        slot_id: Option<String>,
         /// Prompt to submit
         prompt: String,
         /// Wait for the task to complete and print the terminal result
@@ -734,6 +737,9 @@ pub(crate) enum DaemonSessionCommands {
     Cancel {
         /// Session ID
         session_id: String,
+        /// Optional runtime slot ID when the session is live in multiple slots
+        #[arg(long)]
+        slot_id: Option<String>,
         #[command(flatten)]
         args: DaemonOutputArgs,
     },
@@ -741,6 +747,9 @@ pub(crate) enum DaemonSessionCommands {
     Kill {
         /// Session ID
         session_id: String,
+        /// Optional runtime slot ID when the session is live in multiple slots
+        #[arg(long)]
+        slot_id: Option<String>,
         #[command(flatten)]
         args: DaemonOutputArgs,
     },

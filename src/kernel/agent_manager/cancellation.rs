@@ -126,8 +126,12 @@ impl AgentManager {
         })
     }
 
-    pub async fn cancel_session(&self, session_id: &str) -> Result<(String, String)> {
-        let (runtime_key, handle) = self.unique_runtime_by_session(session_id).await?;
+    pub async fn cancel_session(
+        &self,
+        session_id: &str,
+        slot_id: Option<&str>,
+    ) -> Result<(String, String, String)> {
+        let (runtime_key, handle) = self.runtime_by_session_target(session_id, slot_id).await?;
 
         self.cancel_queued_requests_for_runtime(&runtime_key, "Session cancelled before execution")
             .await;
@@ -142,11 +146,19 @@ impl AgentManager {
             );
         }
 
-        Ok((runtime_key.agent_id, session_id.to_string()))
+        Ok((
+            runtime_key.agent_id,
+            runtime_key.slot_id,
+            session_id.to_string(),
+        ))
     }
 
-    pub async fn kill_session(&self, session_id: &str) -> Result<(String, String)> {
-        let (runtime_key, handle) = self.unique_runtime_by_session(session_id).await?;
+    pub async fn kill_session(
+        &self,
+        session_id: &str,
+        slot_id: Option<&str>,
+    ) -> Result<(String, String, String)> {
+        let (runtime_key, handle) = self.runtime_by_session_target(session_id, slot_id).await?;
 
         self.kill_runtime_requests(&runtime_key, &handle, "Session killed")
             .await;
@@ -157,7 +169,11 @@ impl AgentManager {
 
         self.runtimes.write().await.remove(&runtime_key);
 
-        Ok((runtime_key.agent_id, session_id.to_string()))
+        Ok((
+            runtime_key.agent_id,
+            runtime_key.slot_id,
+            session_id.to_string(),
+        ))
     }
 
     async fn cancel_queued_requests_for_runtime(&self, runtime_key: &RuntimeSlotKey, reason: &str) {

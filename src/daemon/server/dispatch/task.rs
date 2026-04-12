@@ -15,9 +15,10 @@ pub(super) async fn submit(
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
     match guard
-        .submit_task(
+        .submit_task_in_slot(
             params.agent_id.as_deref(),
             params.session_id.as_deref(),
+            params.slot_id.as_deref(),
             params.prompt,
             params.content,
             params.tools,
