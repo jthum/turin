@@ -322,21 +322,22 @@ impl DaemonState {
             .and_then(session_channel_id_from_metadata))
     }
 
-    pub(super) async fn live_session_snapshot(
+    pub(super) async fn live_session_snapshots(
         &self,
         public_id: &[u8],
-    ) -> Option<crate::kernel::agent_manager::LiveSessionSnapshot> {
+    ) -> Vec<crate::kernel::agent_manager::LiveSessionSnapshot> {
         let wanted = super::helpers::format_uuid_bytes_simple(public_id);
         self.kernel
             .agent_manager()
             .list_live_sessions(None)
             .await
             .into_iter()
-            .find(|snapshot| {
+            .filter(|snapshot| {
                 parse_session_reference(&snapshot.session_id)
                     .map(|session_ref| session_ref.public_id == wanted)
                     .unwrap_or_else(|_| snapshot.session_id == wanted)
             })
+            .collect()
     }
 }
 

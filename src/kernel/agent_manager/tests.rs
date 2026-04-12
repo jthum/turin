@@ -93,6 +93,22 @@ fn test_config(workspace_root: &std::path::Path, harness_dir: &std::path::Path) 
     }
 }
 
+async fn abort_all_runtime_slots(manager: &Arc<AgentManager>) {
+    let handles: Vec<_> = manager
+        .runtimes
+        .write()
+        .await
+        .drain()
+        .map(|(_, handle)| handle)
+        .collect();
+    for handle in handles {
+        if let Some(task) = handle.task.as_ref() {
+            task.abort();
+        }
+    }
+    tokio::task::yield_now().await;
+}
+
 #[tokio::test]
 async fn build_shared_peer_kernel_reuses_configured_tool_registry() -> anyhow::Result<()> {
     let tmp = tempdir()?;
@@ -405,5 +421,105 @@ async fn kill_session_marks_running_and_queued_work_killed() -> anyhow::Result<(
     assert_eq!(queued.status, Some(TaskTerminalStatus::Killed));
     assert_eq!(queued.error.as_deref(), Some("Session killed"));
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn explicit_runtime_slots_allow_multiple_live_runtimes_for_one_session() -> anyhow::Result<()>
+{
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+
+    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let manager = kernel.agent_manager();
+
+    let slot_a = manager
+        .open_session(
+            "default",
+            Some("slot-a"),
+            None,
+            None,
+            None,
+            InferenceOverrideConfig::default(),
+        )
+        .await?;
+    let slot_b = manager
+        .resume_session(
+            &slot_a.session_id,
+            Some("slot-b"),
+            None,
+            InferenceOverrideConfig::default(),
+        )
+        .await?;
+
+    let live = manager.list_live_sessions(None).await;
+    let matching: Vec<_> = live
+        .into_iter()
+        .filter(|snapshot| snapshot.session_id == slot_a.session_id)
+        .collect();
+    assert_eq!(matching.len(), 2);
+    assert!(matching.iter().any(|snapshot| snapshot.slot_id == "slot-a"));
+    assert!(matching.iter().any(|snapshot| snapshot.slot_id == "slot-b"));
+    assert_eq!(slot_b.slot_id, "slot-b");
+
+    let resume_err = manager
+        .resume_session(
+            &slot_a.session_id,
+            None,
+            None,
+            InferenceOverrideConfig::default(),
+        )
+        .await
+        .expect_err("slot-agnostic resume should reject ambiguity");
+    assert!(resume_err.to_string().contains("multiple runtime slots"));
+
+    let submit_err = manager
+        .submit_to_session(
+            &slot_a.session_id,
+            QueuedTask::ad_hoc("ambiguous".to_string()),
+            None,
+        )
+        .await
+        .expect_err("slot-agnostic submit should reject ambiguity");
+    assert!(submit_err.to_string().contains("multiple runtime slots"));
+
+    let reload_err = manager
+        .reload_session(&slot_a.session_id)
+        .await
+        .expect_err("slot-agnostic reload should reject ambiguity");
+    assert!(reload_err.to_string().contains("multiple runtime slots"));
+
+    let reload_if_live_err = manager
+        .reload_session_if_live(&slot_a.session_id)
+        .await
+        .expect_err("slot-agnostic conditional reload should reject ambiguity");
+    assert!(
+        reload_if_live_err
+            .to_string()
+            .contains("multiple runtime slots")
+    );
+
+    assert!(
+        manager
+            .subscribe_session_events(&slot_a.session_id)
+            .await
+            .is_none(),
+        "slot-agnostic event subscription should reject ambiguity"
+    );
+
+    let cancel_err = manager
+        .cancel_session(&slot_a.session_id)
+        .await
+        .expect_err("slot-agnostic cancel should reject ambiguity");
+    assert!(cancel_err.to_string().contains("multiple runtime slots"));
+
+    let kill_err = manager
+        .kill_session(&slot_a.session_id)
+        .await
+        .expect_err("slot-agnostic kill should reject ambiguity");
+    assert!(kill_err.to_string().contains("multiple runtime slots"));
+
+    abort_all_runtime_slots(&manager).await;
     Ok(())
 }

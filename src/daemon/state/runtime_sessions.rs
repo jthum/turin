@@ -251,18 +251,28 @@ impl DaemonState {
         let Some((store_selector, row)) = self.resolve_persisted_session(session_id).await? else {
             return Ok(None);
         };
-        let live = self.live_session_snapshot(&row.public_id).await;
-        if let Some(snapshot) = &live
-            && (snapshot.active_tasks > 0 || snapshot.queued_tasks > 0)
-        {
-            anyhow::bail!(
-                "Cannot check out branch for busy live session '{}'",
-                session_id
-            );
-        }
+        let live = self.live_session_snapshots(&row.public_id).await;
+        let live_snapshot = match live.as_slice() {
+            [] => None,
+            [snapshot] => {
+                if snapshot.active_tasks > 0 || snapshot.queued_tasks > 0 {
+                    anyhow::bail!(
+                        "Cannot check out branch for busy live session '{}'",
+                        session_id
+                    );
+                }
+                Some(snapshot)
+            }
+            _ => {
+                anyhow::bail!(
+                    "Cannot check out branch for session '{}' while multiple runtime slots are attached",
+                    session_id
+                );
+            }
+        };
         debug!(
             store = %describe_store_selector(&store_selector),
-            live_session = live.is_some(),
+            live_session = live_snapshot.is_some(),
             "Checking out session branch"
         );
         let store = self.kernel.store_manager().open(&store_selector).await?;
@@ -273,7 +283,7 @@ impl DaemonState {
         } else {
             store.checkout_branch_head_by_name(row.id, branch).await?
         };
-        if branch.is_some() && live.is_some() {
+        if branch.is_some() && live_snapshot.is_some() {
             self.kernel
                 .agent_manager()
                 .reload_session(session_id)
@@ -284,7 +294,7 @@ impl DaemonState {
                 session_id = %session_id,
                 store = %describe_store_selector(&store_selector),
                 branch = %branch.name,
-                reloaded_live_session = live.is_some(),
+                reloaded_live_session = live_snapshot.is_some(),
                 "Checked out session branch"
             );
         }

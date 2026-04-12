@@ -60,15 +60,7 @@ impl AgentManager {
         task: QueuedTask,
         delegated_capabilities: Option<BTreeMap<String, bool>>,
     ) -> Result<String> {
-        let (runtime_key, _) = self
-            .find_runtime_by_session(session_id)
-            .await
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Session '{}' is not an active managed runtime session",
-                    session_id
-                )
-            })?;
+        let (runtime_key, _) = self.unique_runtime_by_session(session_id).await?;
         self.submit_to_runtime(runtime_key, task, delegated_capabilities)
             .await
     }
@@ -131,16 +123,44 @@ impl AgentManager {
         channel_id: Option<String>,
         initial_inference: InferenceOverrideConfig,
     ) -> Result<LiveSessionSnapshot> {
-        if let Some((runtime_key, handle)) = self.find_runtime_by_session(session_id).await {
-            return Ok(LiveSessionSnapshot {
-                agent_id: runtime_key.agent_id,
-                slot_id: runtime_key.slot_id,
-                session_id: session_id.to_string(),
-                running: handle.is_running(),
-                active_tasks: handle.active_tasks.load(Ordering::Relaxed),
-                queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
-                current_request_id: handle.control.current_request_id(),
-            });
+        let live_matches = self.find_runtimes_by_session(session_id).await;
+        if let Some(requested_slot_id) = slot_id {
+            if let Some((runtime_key, handle)) = live_matches
+                .iter()
+                .find(|(runtime_key, _)| runtime_key.slot_id == requested_slot_id)
+                .cloned()
+            {
+                return Ok(LiveSessionSnapshot {
+                    agent_id: runtime_key.agent_id,
+                    slot_id: runtime_key.slot_id,
+                    session_id: session_id.to_string(),
+                    running: handle.is_running(),
+                    active_tasks: handle.active_tasks.load(Ordering::Relaxed),
+                    queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
+                    current_request_id: handle.control.current_request_id(),
+                });
+            }
+        } else {
+            match live_matches.as_slice() {
+                [] => {}
+                [(runtime_key, handle)] => {
+                    return Ok(LiveSessionSnapshot {
+                        agent_id: runtime_key.agent_id.clone(),
+                        slot_id: runtime_key.slot_id.clone(),
+                        session_id: session_id.to_string(),
+                        running: handle.is_running(),
+                        active_tasks: handle.active_tasks.load(Ordering::Relaxed),
+                        queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
+                        current_request_id: handle.control.current_request_id(),
+                    });
+                }
+                _ => {
+                    anyhow::bail!(
+                        "Session '{}' is active in multiple runtime slots; specify slot_id",
+                        session_id
+                    );
+                }
+            }
         }
 
         let session_ref = parse_session_reference(session_id)?;
@@ -234,15 +254,7 @@ impl AgentManager {
     }
 
     pub async fn reload_session(self: &Arc<Self>, session_id: &str) -> Result<LiveSessionSnapshot> {
-        let (runtime_key, handle) =
-            self.find_runtime_by_session(session_id)
-                .await
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Session '{}' is not an active managed runtime session",
-                        session_id
-                    )
-                })?;
+        let (runtime_key, handle) = self.unique_runtime_by_session(session_id).await?;
 
         if handle.active_tasks.load(Ordering::Relaxed) > 0
             || handle.queued_tasks.load(Ordering::Relaxed) > 0
@@ -305,7 +317,7 @@ impl AgentManager {
     }
 
     pub async fn reload_session_if_live(self: &Arc<Self>, session_id: &str) -> Result<bool> {
-        if self.find_runtime_by_session(session_id).await.is_none() {
+        if self.find_runtimes_by_session(session_id).await.is_empty() {
             return Ok(false);
         }
         self.reload_session(session_id).await?;
@@ -319,14 +331,13 @@ impl AgentManager {
         String,
         tokio::sync::broadcast::Receiver<(Option<i64>, KernelEvent)>,
     )> {
-        self.find_runtime_by_session(session_id)
-            .await
-            .and_then(|(runtime_key, handle)| {
-                handle
-                    .control
-                    .subscribe_current_session_events()
-                    .map(|receiver| (runtime_key.agent_id, receiver))
-            })
+        match self.unique_runtime_by_session(session_id).await {
+            Ok((runtime_key, handle)) => handle
+                .control
+                .subscribe_current_session_events()
+                .map(|receiver| (runtime_key.agent_id, receiver)),
+            Err(_) => None,
+        }
     }
 
     async fn submit_to_runtime(
@@ -626,24 +637,54 @@ impl AgentManager {
         }
     }
 
-    pub(super) async fn find_runtime_by_session(
+    pub(super) async fn find_runtimes_by_session(
         &self,
         session_id: &str,
-    ) -> Option<(RuntimeSlotKey, Arc<AgentRuntimeHandle>)> {
+    ) -> Vec<(RuntimeSlotKey, Arc<AgentRuntimeHandle>)> {
         let wanted = parse_session_reference(session_id)
             .map(|session_ref| session_ref.public_id)
             .ok();
         let runtimes = self.runtimes.read().await;
-        runtimes.iter().find_map(|(runtime_key, handle)| {
-            let current = handle.control.current_session_id()?;
-            let current_public_id = parse_session_reference(&current)
-                .map(|session_ref| session_ref.public_id)
-                .ok();
-            if current == session_id || (wanted.is_some() && wanted == current_public_id) {
-                Some((runtime_key.clone(), Arc::clone(handle)))
-            } else {
-                None
-            }
-        })
+        let mut matches: Vec<_> = runtimes
+            .iter()
+            .filter_map(|(runtime_key, handle)| {
+                let current = handle.control.current_session_id()?;
+                let current_public_id = parse_session_reference(&current)
+                    .map(|session_ref| session_ref.public_id)
+                    .ok();
+                if current == session_id || (wanted.is_some() && wanted == current_public_id) {
+                    Some((runtime_key.clone(), Arc::clone(handle)))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        matches.sort_by(|(left, _), (right, _)| {
+            left.agent_id
+                .cmp(&right.agent_id)
+                .then_with(|| left.slot_id.cmp(&right.slot_id))
+        });
+        matches
+    }
+
+    pub(super) async fn unique_runtime_by_session(
+        &self,
+        session_id: &str,
+    ) -> Result<(RuntimeSlotKey, Arc<AgentRuntimeHandle>)> {
+        let matches = self.find_runtimes_by_session(session_id).await;
+        match matches.len() {
+            0 => anyhow::bail!(
+                "Session '{}' is not an active managed runtime session",
+                session_id
+            ),
+            1 => Ok(matches
+                .into_iter()
+                .next()
+                .expect("single runtime match should exist")),
+            _ => anyhow::bail!(
+                "Session '{}' is active in multiple runtime slots; specify slot_id",
+                session_id
+            ),
+        }
     }
 }

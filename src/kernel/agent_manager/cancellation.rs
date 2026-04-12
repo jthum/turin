@@ -127,15 +127,7 @@ impl AgentManager {
     }
 
     pub async fn cancel_session(&self, session_id: &str) -> Result<(String, String)> {
-        let (runtime_key, handle) =
-            self.find_runtime_by_session(session_id)
-                .await
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Session '{}' is not an active managed runtime session",
-                        session_id
-                    )
-                })?;
+        let (runtime_key, handle) = self.unique_runtime_by_session(session_id).await?;
 
         self.cancel_queued_requests_for_runtime(&runtime_key, "Session cancelled before execution")
             .await;
@@ -154,15 +146,7 @@ impl AgentManager {
     }
 
     pub async fn kill_session(&self, session_id: &str) -> Result<(String, String)> {
-        let (runtime_key, handle) =
-            self.find_runtime_by_session(session_id)
-                .await
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Session '{}' is not an active managed runtime session",
-                        session_id
-                    )
-                })?;
+        let (runtime_key, handle) = self.unique_runtime_by_session(session_id).await?;
 
         self.kill_runtime_requests(&runtime_key, &handle, "Session killed")
             .await;
