@@ -121,7 +121,7 @@ impl ExecutionHost {
                 let _ = store
                     .insert_message_for_branch_head(
                         iid,
-                        session.selected_branch_head_id,
+                        session.selected_branch_head_id(),
                         session.turn_index,
                         "user",
                         &encode_content_json(content),
@@ -144,11 +144,18 @@ impl ExecutionHost {
                 session.default_store_selector.clone(),
                 Some(session.mode.clone()),
             );
+            engine.set_active_execution_metadata(
+                Some(session.execution_id()),
+                Some(session.execution.visibility),
+                Some(session.execution.durability),
+                Some(session.execution.write_policy),
+            );
             engine.set_active_trace_id(Some(&task.trace_id));
             engine.set_active_event_context(Some(crate::harness::globals::HarnessEventContext {
                 json: self.json,
                 internal_id: session.internal_id,
-                branch_head_id: session.selected_branch_head_id,
+                branch_head_id: session.selected_branch_head_id(),
+                execution_id: session.execution_id().to_string(),
                 event_tx: session.event_tx.clone(),
                 durability_tx: session.durability_tx.clone(),
             }));
@@ -159,6 +166,7 @@ impl ExecutionHost {
         if let Some(harness) = self.session_harness_engine(session) {
             let engine = harness.lock().expect("session harness mutex poisoned");
             engine.set_active_session(None, None, None, None);
+            engine.set_active_execution_metadata(None, None, None, None);
             engine.set_active_trace_id(None);
             engine.set_active_event_context(None);
         }

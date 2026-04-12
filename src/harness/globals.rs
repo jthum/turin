@@ -13,7 +13,10 @@ use crate::harness::stdlib::{
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
 use crate::kernel::event::KernelEvent;
-use crate::kernel::session::{PersistedKernelRecord, QueuedTask};
+use crate::kernel::session::{
+    ExecutionDurability, ExecutionVisibility, ExecutionWritePolicy, PersistedKernelRecord,
+    QueuedTask,
+};
 use crate::persistence::manager::StoreManager;
 use crate::persistence::manager::StoreSelector;
 
@@ -32,12 +35,17 @@ pub struct HarnessEventContext {
     pub json: bool,
     pub internal_id: Option<i64>,
     pub branch_head_id: Option<i64>,
+    pub execution_id: String,
     pub event_tx: tokio::sync::broadcast::Sender<(Option<i64>, KernelEvent)>,
     pub durability_tx: Option<tokio::sync::mpsc::UnboundedSender<PersistedKernelRecord>>,
 }
 
 #[derive(Clone, Default)]
 pub struct HarnessExecutionContext {
+    pub execution_id: Option<String>,
+    pub execution_visibility: Option<ExecutionVisibility>,
+    pub execution_durability: Option<ExecutionDurability>,
+    pub execution_write_policy: Option<ExecutionWritePolicy>,
     pub session_id: Option<String>,
     pub session_store_selector: Option<StoreSelector>,
     pub default_store_selector: Option<StoreSelector>,

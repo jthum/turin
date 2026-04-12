@@ -585,11 +585,12 @@ async fn test_local_branch_selection_does_not_mutate_persisted_active_head() -> 
         )
         .await?;
 
+    let execution_id = session.execution_id().to_string();
     let switched = kernel
         .select_session_branch_by_name_local(&mut session, "alt")
         .await?;
     assert!(switched, "expected local branch selection to succeed");
-    assert_eq!(session.selected_branch_head_id, Some(alt_head.id));
+    assert_eq!(session.selected_branch_head_id(), Some(alt_head.id));
 
     let has_alt_message = session.history.iter().any(|message| {
         message.content.iter().any(|content| {
@@ -613,6 +614,11 @@ async fn test_local_branch_selection_does_not_mutate_persisted_active_head() -> 
         persisted_active.id, main_head.id,
         "local branch selection should not mutate the persisted active head"
     );
+    assert_eq!(
+        session.execution_id(),
+        execution_id,
+        "local branch selection should not create a new execution context"
+    );
 
     kernel.end_session(&mut session).await?;
     Ok(())
@@ -633,6 +639,23 @@ async fn test_resumed_live_sessions_share_persistence_lock() -> Result<()> {
         &session.persistence_lock,
         &resumed.persistence_lock
     ));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_resumed_live_session_gets_distinct_execution_id() -> Result<()> {
+    let tmp = tempdir()?;
+    let kernel = make_kernel(tmp.path()).await?;
+
+    let session = kernel.create_session().await;
+    let session_id = session.identity.session_id().to_string();
+    let resumed = kernel
+        .resume_session_for_agent("default", &session_id)
+        .await?;
+
+    assert_eq!(session.identity.session_id(), resumed.identity.session_id());
+    assert_ne!(session.execution_id(), resumed.execution_id());
 
     Ok(())
 }

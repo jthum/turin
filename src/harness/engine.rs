@@ -210,6 +210,23 @@ impl HarnessEngine {
         }
     }
 
+    pub fn set_active_execution_metadata(
+        &self,
+        execution_id: Option<&str>,
+        visibility: Option<crate::kernel::session::ExecutionVisibility>,
+        durability: Option<crate::kernel::session::ExecutionDurability>,
+        write_policy: Option<crate::kernel::session::ExecutionWritePolicy>,
+    ) {
+        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
+            && let Ok(mut lock) = app_data.execution_ctx.lock()
+        {
+            lock.execution_id = execution_id.map(|s| s.to_string());
+            lock.execution_visibility = visibility;
+            lock.execution_durability = durability;
+            lock.execution_write_policy = write_policy;
+        }
+    }
+
     pub fn get_active_trace_id(&self) -> Option<String> {
         self.lua
             .app_data_ref::<HarnessAppData>()

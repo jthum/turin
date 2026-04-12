@@ -15,6 +15,54 @@ use turin_types::{TaskInputContent, ToolsConfig};
 
 pub type SessionHarnessEngine = Arc<std::sync::Mutex<HarnessEngine>>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionVisibility {
+    Visible,
+    Hidden,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionDurability {
+    Durable,
+    Ephemeral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionWritePolicy {
+    AdvanceBranchHead,
+    Detached,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExecutionContext {
+    pub execution_id: String,
+    pub selected_branch_head_id: Option<i64>,
+    pub visibility: ExecutionVisibility,
+    pub durability: ExecutionDurability,
+    pub write_policy: ExecutionWritePolicy,
+}
+
+impl Default for ExecutionContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ExecutionContext {
+    pub fn new() -> Self {
+        Self {
+            execution_id: new_execution_id(),
+            selected_branch_head_id: None,
+            visibility: ExecutionVisibility::Visible,
+            durability: ExecutionDurability::Durable,
+            write_policy: ExecutionWritePolicy::AdvanceBranchHead,
+        }
+    }
+}
+
 /// One queued unit of work to be executed by the kernel.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QueuedTask {
@@ -154,7 +202,7 @@ pub struct SessionState {
     pub inference: InferenceOverrideConfig,
     pub context_checkpoint: Option<ContextCompactionCheckpoint>,
     pub history: Vec<InferenceMessage>,
-    pub selected_branch_head_id: Option<i64>,
+    pub execution: ExecutionContext,
     pub harness_engine: Option<SessionHarnessEngine>,
     pub harness_generation: u64,
     pub queue: Arc<Mutex<VecDeque<QueuedTask>>>,
@@ -199,7 +247,7 @@ impl SessionState {
             inference: InferenceOverrideConfig::default(),
             context_checkpoint: None,
             history: Vec::new(),
-            selected_branch_head_id: None,
+            execution: ExecutionContext::new(),
             harness_engine: None,
             harness_generation: 0,
             queue: Arc::new(Mutex::new(VecDeque::new())),
@@ -230,10 +278,26 @@ impl SessionState {
     ) -> usize {
         self.tool_rate_limit.reserve(requested, max_calls, window)
     }
+
+    pub fn execution_id(&self) -> &str {
+        &self.execution.execution_id
+    }
+
+    pub fn selected_branch_head_id(&self) -> Option<i64> {
+        self.execution.selected_branch_head_id
+    }
+
+    pub fn set_selected_branch_head_id(&mut self, branch_head_id: Option<i64>) {
+        self.execution.selected_branch_head_id = branch_head_id;
+    }
 }
 
 fn new_trace_id() -> String {
     format!("tr_{}", uuid::Uuid::now_v7().simple())
+}
+
+fn new_execution_id() -> String {
+    format!("ex_{}", uuid::Uuid::now_v7().simple())
 }
 
 #[cfg(test)]
@@ -259,6 +323,19 @@ mod tests {
         assert_eq!(
             session.reserve_tool_calls(2, 2, Duration::from_millis(1)),
             2
+        );
+    }
+
+    #[test]
+    fn session_defaults_to_visible_durable_execution_context() {
+        let session = SessionState::new();
+        assert!(session.execution_id().starts_with("ex_"));
+        assert_eq!(session.selected_branch_head_id(), None);
+        assert_eq!(session.execution.visibility, ExecutionVisibility::Visible);
+        assert_eq!(session.execution.durability, ExecutionDurability::Durable);
+        assert_eq!(
+            session.execution.write_policy,
+            ExecutionWritePolicy::AdvanceBranchHead
         );
     }
 }

@@ -143,7 +143,7 @@ impl ExecutionHost {
         session.inference = inference;
         session.context_checkpoint = rebuild_context_checkpoint(&active_events);
         session.history = history;
-        session.selected_branch_head_id = selected_branch_head_id;
+        session.set_selected_branch_head_id(selected_branch_head_id);
         session.turn_index = turn_index;
         session.total_input_tokens = total_input_tokens;
         session.total_output_tokens = total_output_tokens;
@@ -171,7 +171,7 @@ impl ExecutionHost {
         })?;
 
         let selected_branch_head_id = session
-            .selected_branch_head_id
+            .selected_branch_head_id()
             .or(row.active_branch_head_id);
         let messages = store
             .get_messages_for_branch_head(row.id, selected_branch_head_id)
@@ -191,7 +191,7 @@ impl ExecutionHost {
             .set_channel_id(session_channel_id_from_metadata(row.metadata.as_deref()));
         session.context_checkpoint = rebuild_context_checkpoint(&active_events);
         session.history = history;
-        session.selected_branch_head_id = selected_branch_head_id;
+        session.set_selected_branch_head_id(selected_branch_head_id);
         session.turn_index = turn_index;
         session.total_input_tokens = total_input_tokens;
         session.total_output_tokens = total_output_tokens;
@@ -225,7 +225,7 @@ impl ExecutionHost {
             anyhow::bail!("Cannot switch local session branch while tasks are queued");
         }
 
-        session.selected_branch_head_id = Some(branch.id);
+        session.set_selected_branch_head_id(Some(branch.id));
         self.refresh_session_from_persistence(session).await?;
         Ok(true)
     }
@@ -244,7 +244,7 @@ impl ExecutionHost {
                         session.internal_id = Some(id);
                         match store.get_active_branch_head(id).await {
                             Ok(Some(branch)) => {
-                                session.selected_branch_head_id = Some(branch.id);
+                                session.set_selected_branch_head_id(Some(branch.id));
                             }
                             Ok(None) => {
                                 warn!("Created session is missing an active branch head");

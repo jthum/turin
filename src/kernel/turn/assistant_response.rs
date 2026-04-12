@@ -71,7 +71,7 @@ impl ExecutionHost {
                 let _ = store
                     .insert_message_for_branch_head(
                         iid,
-                        session.selected_branch_head_id,
+                        session.selected_branch_head_id(),
                         session.turn_index,
                         "assistant",
                         &encode_content_json(&persisted_content),
