@@ -76,6 +76,36 @@ impl StateStore {
             .await
     }
 
+    pub async fn get_events_for_turn_id(
+        &self,
+        session_id: i64,
+        turn_id: i64,
+    ) -> Result<Vec<EventRow>> {
+        let events = self.query_events(session_id).await?;
+        let turn_ids = self
+            .turn_path_to_turn_id(session_id, turn_id)
+            .await?
+            .into_iter()
+            .map(|turn| turn.id)
+            .collect::<HashSet<_>>();
+        Ok(self.filter_events_for_turn_ids(events, &turn_ids))
+    }
+
+    pub async fn get_events_for_selected_path(
+        &self,
+        session_id: i64,
+        turn_ids: &[i64],
+    ) -> Result<Vec<EventRow>> {
+        let events = self.query_events(session_id).await?;
+        let turn_ids = self
+            .turn_rows_for_selected_path(session_id, turn_ids)
+            .await?
+            .into_iter()
+            .map(|turn| turn.id)
+            .collect::<HashSet<_>>();
+        Ok(self.filter_events_for_turn_ids(events, &turn_ids))
+    }
+
     pub async fn list_sessions(&self, limit: usize, offset: usize) -> Result<Vec<i64>> {
         let conn = self.connect().await?;
         let mut rows = conn
@@ -140,13 +170,21 @@ impl StateStore {
             .into_iter()
             .map(|turn| turn.id)
             .collect::<HashSet<_>>();
-        Ok(events
+        Ok(self.filter_events_for_turn_ids(events, &active_turn_ids))
+    }
+
+    fn filter_events_for_turn_ids(
+        &self,
+        events: Vec<EventRow>,
+        turn_ids: &HashSet<i64>,
+    ) -> Vec<EventRow> {
+        events
             .into_iter()
             .filter(|event| {
                 event
                     .turn_id
-                    .is_none_or(|turn_id| active_turn_ids.contains(&turn_id))
+                    .is_none_or(|turn_id| turn_ids.contains(&turn_id))
             })
-            .collect())
+            .collect()
     }
 }

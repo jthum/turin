@@ -146,6 +146,7 @@ impl ExecutionHost {
             );
             engine.set_active_execution_metadata(
                 Some(session.execution_id()),
+                Some(session.context_target().clone()),
                 Some(session.execution.visibility),
                 Some(session.execution.durability),
                 Some(session.execution.write_policy),
@@ -166,7 +167,7 @@ impl ExecutionHost {
         if let Some(harness) = self.session_harness_engine(session) {
             let engine = harness.lock().expect("session harness mutex poisoned");
             engine.set_active_session(None, None, None, None);
-            engine.set_active_execution_metadata(None, None, None, None);
+            engine.set_active_execution_metadata(None, None, None, None, None);
             engine.set_active_trace_id(None);
             engine.set_active_event_context(None);
         }

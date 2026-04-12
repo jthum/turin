@@ -625,6 +625,79 @@ async fn test_local_branch_selection_does_not_mutate_persisted_active_head() -> 
 }
 
 #[tokio::test]
+async fn test_local_turn_selection_materializes_prefix_without_new_execution() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut kernel = make_kernel(tmp.path()).await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Turn zero".to_string()))
+        .await?;
+    kernel
+        .run(&mut session, Some("Turn one".to_string()))
+        .await?;
+
+    let store = kernel.store_manager().open(&session.store_selector).await?;
+    let session_id = session.internal_id.expect("session internal id");
+    let active_head = store
+        .get_active_branch_head(session_id)
+        .await?
+        .expect("active head");
+    let first_turn_branch = store
+        .create_branch_head_from_turn_index(session_id, "checkpoint", Some(0), false)
+        .await?;
+    let first_turn_id = first_turn_branch
+        .created_from_turn_id
+        .expect("checkpoint source turn id");
+
+    let execution_id = session.execution_id().to_string();
+    let switched = kernel
+        .select_session_turn_local(&mut session, first_turn_id)
+        .await?;
+    assert!(switched, "expected local turn selection to succeed");
+    assert_eq!(session.selected_turn_id(), Some(first_turn_id));
+    assert_eq!(session.selected_branch_head_id(), None);
+    assert_eq!(session.execution_id(), execution_id);
+    assert_eq!(session.turn_index, 1);
+
+    let seen_turn_zero = session.history.iter().any(|message| {
+        message.content.iter().any(|content| {
+            matches!(
+                content,
+                turin::inference::provider::InferenceContent::Text { text }
+                if text == "Turn zero"
+            )
+        })
+    });
+    let seen_turn_one = session.history.iter().any(|message| {
+        message.content.iter().any(|content| {
+            matches!(
+                content,
+                turin::inference::provider::InferenceContent::Text { text }
+                if text == "Turn one"
+            )
+        })
+    });
+    assert!(
+        seen_turn_zero,
+        "turn-target materialization should retain earlier context"
+    );
+    assert!(
+        !seen_turn_one,
+        "turn-target materialization should stop before later turns"
+    );
+
+    let persisted_active = store
+        .get_active_branch_head(session_id)
+        .await?
+        .expect("persisted active head");
+    assert_eq!(persisted_active.id, active_head.id);
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_resumed_live_sessions_share_persistence_lock() -> Result<()> {
     let tmp = tempdir()?;
     let kernel = make_kernel(tmp.path()).await?;

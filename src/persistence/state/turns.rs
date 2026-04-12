@@ -332,6 +332,49 @@ impl StateStore {
         Ok(turns)
     }
 
+    pub(crate) async fn turn_path_to_turn_id(
+        &self,
+        session_id: i64,
+        turn_id: i64,
+    ) -> Result<Vec<TurnRow>> {
+        let mut current_turn_id = Some(turn_id);
+        let mut turns = Vec::new();
+        while let Some(turn_id) = current_turn_id {
+            let Some(turn) = self.get_turn_row(turn_id).await? else {
+                anyhow::bail!("Turn {} could not be loaded", turn_id);
+            };
+            if turn.session_id != session_id {
+                anyhow::bail!("Turn {} does not belong to session {}", turn_id, session_id);
+            }
+            current_turn_id = turn.parent_turn_id;
+            turns.push(turn);
+        }
+        turns.reverse();
+        Ok(turns)
+    }
+
+    pub(crate) async fn turn_rows_for_selected_path(
+        &self,
+        session_id: i64,
+        turn_ids: &[i64],
+    ) -> Result<Vec<TurnRow>> {
+        let mut turns = Vec::with_capacity(turn_ids.len());
+        for turn_id in turn_ids {
+            let Some(turn) = self.get_turn_row(*turn_id).await? else {
+                anyhow::bail!("Turn {} on selected path could not be loaded", turn_id);
+            };
+            if turn.session_id != session_id {
+                anyhow::bail!(
+                    "Turn {} on selected path does not belong to session {}",
+                    turn_id,
+                    session_id
+                );
+            }
+            turns.push(turn);
+        }
+        Ok(turns)
+    }
+
     pub(crate) async fn get_turn_row(&self, turn_id: i64) -> Result<Option<TurnRow>> {
         let conn = self.connect().await?;
         let mut rows = conn

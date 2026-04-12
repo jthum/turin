@@ -9,13 +9,15 @@ use crate::kernel::config::StoreTargetConfig;
 use crate::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::{
-    ContextCompactionCheckpoint, PersistedKernelRecord, SessionState, SessionStatus,
+    ContextCompactionCheckpoint, ExecutionContextTarget, PersistedKernelRecord, SessionState,
+    SessionStatus,
 };
 use crate::kernel::session_refs::{
     describe_store_selector, format_session_reference, parse_session_reference,
 };
 use crate::persistence::manager::StoreSelector;
-use crate::persistence::schema::{EventRow, MessageRow};
+use crate::persistence::schema::{EventRow, MessageRow, SessionRow};
+use crate::persistence::state::StateStore;
 use crate::{
     inference::provider::{InferenceMessage, InferenceRole},
     kernel::identity::RuntimeIdentity,
@@ -119,14 +121,12 @@ impl ExecutionHost {
             );
         }
 
-        let selected_branch_head_id = row.active_branch_head_id;
-        let messages = store
-            .get_messages_for_branch_head(row.id, selected_branch_head_id)
-            .await?;
+        let context_target = ExecutionContextTarget::BranchHead {
+            branch_head_id: row.active_branch_head_id,
+        };
+        let (messages, active_events) =
+            materialize_execution_target(&store, &row, &context_target).await?;
         let events = store.get_all_events(row.id).await?;
-        let active_events = store
-            .get_events_for_branch_head(row.id, selected_branch_head_id)
-            .await?;
         let (history, turn_index) = rebuild_history(&messages)?;
         let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
             rebuild_session_counters(&events);
@@ -143,7 +143,7 @@ impl ExecutionHost {
         session.inference = inference;
         session.context_checkpoint = rebuild_context_checkpoint(&active_events);
         session.history = history;
-        session.set_selected_branch_head_id(selected_branch_head_id);
+        session.set_context_target(context_target);
         session.turn_index = turn_index;
         session.total_input_tokens = total_input_tokens;
         session.total_output_tokens = total_output_tokens;
@@ -170,16 +170,10 @@ impl ExecutionHost {
             )
         })?;
 
-        let selected_branch_head_id = session
-            .selected_branch_head_id()
-            .or(row.active_branch_head_id);
-        let messages = store
-            .get_messages_for_branch_head(row.id, selected_branch_head_id)
-            .await?;
+        let context_target = resolved_execution_context_target(session.context_target(), &row);
+        let (messages, active_events) =
+            materialize_execution_target(&store, &row, &context_target).await?;
         let events = store.get_all_events(row.id).await?;
-        let active_events = store
-            .get_events_for_branch_head(row.id, selected_branch_head_id)
-            .await?;
         let (history, turn_index) = rebuild_history(&messages)?;
         let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
             rebuild_session_counters(&events);
@@ -191,7 +185,7 @@ impl ExecutionHost {
             .set_channel_id(session_channel_id_from_metadata(row.metadata.as_deref()));
         session.context_checkpoint = rebuild_context_checkpoint(&active_events);
         session.history = history;
-        session.set_selected_branch_head_id(selected_branch_head_id);
+        session.set_context_target(context_target);
         session.turn_index = turn_index;
         session.total_input_tokens = total_input_tokens;
         session.total_output_tokens = total_output_tokens;
@@ -226,6 +220,35 @@ impl ExecutionHost {
         }
 
         session.set_selected_branch_head_id(Some(branch.id));
+        self.refresh_session_from_persistence(session).await?;
+        Ok(true)
+    }
+
+    pub async fn select_session_turn_local(
+        &self,
+        session: &mut SessionState,
+        turn_id: i64,
+    ) -> Result<bool> {
+        let internal_id = session
+            .internal_id
+            .ok_or_else(|| anyhow!("Session has no internal persistence id"))?;
+        let store = self
+            .store_manager
+            .open(&session.store_selector)
+            .await
+            .context("Local turn selection requires a configured persistent state store")?;
+        let Some(turn) = store.get_turn_row(turn_id).await? else {
+            return Ok(false);
+        };
+        if turn.session_id != internal_id {
+            return Ok(false);
+        }
+
+        if !session.queue.lock().await.is_empty() {
+            anyhow::bail!("Cannot switch local session target while tasks are queued");
+        }
+
+        session.set_selected_turn_id(turn_id);
         self.refresh_session_from_persistence(session).await?;
         Ok(true)
     }
@@ -512,6 +535,62 @@ fn session_default_store_selector_from_metadata(metadata: Option<&str>) -> Optio
         .and_then(|value| serde_json::from_value::<StoreTargetConfig>(value).ok());
 
     parsed.and_then(store_selector_from_target)
+}
+
+fn resolved_execution_context_target(
+    current: &ExecutionContextTarget,
+    row: &SessionRow,
+) -> ExecutionContextTarget {
+    match current {
+        ExecutionContextTarget::BranchHead {
+            branch_head_id: None,
+        } => ExecutionContextTarget::BranchHead {
+            branch_head_id: row.active_branch_head_id,
+        },
+        _ => current.clone(),
+    }
+}
+
+async fn materialize_execution_target(
+    store: &StateStore,
+    row: &SessionRow,
+    target: &ExecutionContextTarget,
+) -> Result<(Vec<MessageRow>, Vec<EventRow>)> {
+    match target {
+        ExecutionContextTarget::BranchHead { branch_head_id } => {
+            let branch_head_id = branch_head_id.or(row.active_branch_head_id);
+            Ok((
+                store
+                    .get_messages_for_branch_head(row.id, branch_head_id)
+                    .await?,
+                store
+                    .get_events_for_branch_head(row.id, branch_head_id)
+                    .await?,
+            ))
+        }
+        ExecutionContextTarget::TurnId { turn_id } => Ok((
+            store.get_messages_for_turn_id(row.id, *turn_id).await?,
+            store.get_events_for_turn_id(row.id, *turn_id).await?,
+        )),
+        ExecutionContextTarget::SelectedPath { turn_ids } => Ok((
+            store
+                .get_messages_for_selected_path(row.id, turn_ids)
+                .await?,
+            store.get_events_for_selected_path(row.id, turn_ids).await?,
+        )),
+        ExecutionContextTarget::SummarySource { source_turn_id } => Ok((
+            store
+                .get_messages_for_turn_id(row.id, *source_turn_id)
+                .await?,
+            store
+                .get_events_for_turn_id(row.id, *source_turn_id)
+                .await?,
+        )),
+        ExecutionContextTarget::ExternalReference { reference } => anyhow::bail!(
+            "Execution context target '{}' is not materializable in live sessions yet",
+            reference
+        ),
+    }
 }
 
 fn session_channel_id_from_metadata(metadata: Option<&str>) -> Option<String> {

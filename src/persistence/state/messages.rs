@@ -104,9 +104,47 @@ impl StateStore {
         session_id: i64,
         branch_head_id: Option<i64>,
     ) -> Result<Vec<MessageRow>> {
+        self.messages_for_turns(
+            session_id,
+            &self.branch_path_turns(session_id, branch_head_id).await?,
+        )
+        .await
+    }
+
+    pub async fn get_messages_for_turn_id(
+        &self,
+        session_id: i64,
+        turn_id: i64,
+    ) -> Result<Vec<MessageRow>> {
+        self.messages_for_turns(
+            session_id,
+            &self.turn_path_to_turn_id(session_id, turn_id).await?,
+        )
+        .await
+    }
+
+    pub async fn get_messages_for_selected_path(
+        &self,
+        session_id: i64,
+        turn_ids: &[i64],
+    ) -> Result<Vec<MessageRow>> {
+        self.messages_for_turns(
+            session_id,
+            &self
+                .turn_rows_for_selected_path(session_id, turn_ids)
+                .await?,
+        )
+        .await
+    }
+
+    async fn messages_for_turns(
+        &self,
+        session_id: i64,
+        turns: &[super::TurnRow],
+    ) -> Result<Vec<MessageRow>> {
         let conn = self.connect().await?;
         let mut messages = Vec::new();
-        for turn in self.branch_path_turns(session_id, branch_head_id).await? {
+        for turn in turns {
             let mut rows = conn
                 .query(
                     "SELECT id, role, content, token_count, created_at FROM turn_messages WHERE turn_id = ?1 ORDER BY id",

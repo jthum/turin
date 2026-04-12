@@ -36,10 +36,39 @@ pub enum ExecutionWritePolicy {
     Detached,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExecutionContextTarget {
+    BranchHead { branch_head_id: Option<i64> },
+    TurnId { turn_id: i64 },
+    SelectedPath { turn_ids: Vec<i64> },
+    ExternalReference { reference: String },
+    SummarySource { source_turn_id: i64 },
+}
+
+impl ExecutionContextTarget {
+    pub fn branch_head_id(&self) -> Option<i64> {
+        match self {
+            Self::BranchHead { branch_head_id } => *branch_head_id,
+            _ => None,
+        }
+    }
+
+    pub fn turn_id(&self) -> Option<i64> {
+        match self {
+            Self::TurnId { turn_id }
+            | Self::SummarySource {
+                source_turn_id: turn_id,
+            } => Some(*turn_id),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionContext {
     pub execution_id: String,
-    pub selected_branch_head_id: Option<i64>,
+    pub context_target: ExecutionContextTarget,
     pub visibility: ExecutionVisibility,
     pub durability: ExecutionDurability,
     pub write_policy: ExecutionWritePolicy,
@@ -55,7 +84,9 @@ impl ExecutionContext {
     pub fn new() -> Self {
         Self {
             execution_id: new_execution_id(),
-            selected_branch_head_id: None,
+            context_target: ExecutionContextTarget::BranchHead {
+                branch_head_id: None,
+            },
             visibility: ExecutionVisibility::Visible,
             durability: ExecutionDurability::Durable,
             write_policy: ExecutionWritePolicy::AdvanceBranchHead,
@@ -283,12 +314,28 @@ impl SessionState {
         &self.execution.execution_id
     }
 
+    pub fn context_target(&self) -> &ExecutionContextTarget {
+        &self.execution.context_target
+    }
+
+    pub fn set_context_target(&mut self, context_target: ExecutionContextTarget) {
+        self.execution.context_target = context_target;
+    }
+
     pub fn selected_branch_head_id(&self) -> Option<i64> {
-        self.execution.selected_branch_head_id
+        self.execution.context_target.branch_head_id()
     }
 
     pub fn set_selected_branch_head_id(&mut self, branch_head_id: Option<i64>) {
-        self.execution.selected_branch_head_id = branch_head_id;
+        self.set_context_target(ExecutionContextTarget::BranchHead { branch_head_id });
+    }
+
+    pub fn selected_turn_id(&self) -> Option<i64> {
+        self.execution.context_target.turn_id()
+    }
+
+    pub fn set_selected_turn_id(&mut self, turn_id: i64) {
+        self.set_context_target(ExecutionContextTarget::TurnId { turn_id });
     }
 }
 
@@ -331,6 +378,12 @@ mod tests {
         let session = SessionState::new();
         assert!(session.execution_id().starts_with("ex_"));
         assert_eq!(session.selected_branch_head_id(), None);
+        assert_eq!(
+            session.context_target(),
+            &ExecutionContextTarget::BranchHead {
+                branch_head_id: None
+            }
+        );
         assert_eq!(session.execution.visibility, ExecutionVisibility::Visible);
         assert_eq!(session.execution.durability, ExecutionDurability::Durable);
         assert_eq!(
