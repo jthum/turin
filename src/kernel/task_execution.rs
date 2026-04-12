@@ -23,6 +23,7 @@ impl ExecutionHost {
         session: &mut SessionState,
         task: &QueuedTask,
     ) -> Result<TaskExecutionResult> {
+        self.ensure_session_harness_engine(session)?;
         let session_id = self.session_reference(session);
         let prompt = task.prompt.as_str();
         let user_content = if let Some(content) = task.content.as_ref() {
@@ -133,9 +134,8 @@ impl ExecutionHost {
     }
 
     fn set_task_active_session(&self, session: &SessionState, task: &QueuedTask) {
-        let runtime = self.runtime_for_session(session);
-        let harness = runtime.lock_engine();
-        if let Some(ref engine) = *harness {
+        if let Some(harness) = self.session_harness_engine(session) {
+            let engine = harness.lock().expect("session harness mutex poisoned");
             let session_id = self.session_reference(session);
             engine.set_active_session(
                 Some(&session_id),
@@ -154,9 +154,8 @@ impl ExecutionHost {
     }
 
     fn clear_task_active_session(&self, session: &SessionState) {
-        let runtime = self.runtime_for_session(session);
-        let harness = runtime.lock_engine();
-        if let Some(ref engine) = *harness {
+        if let Some(harness) = self.session_harness_engine(session) {
+            let engine = harness.lock().expect("session harness mutex poisoned");
             engine.set_active_session(None, None, None, None);
             engine.set_active_trace_id(None);
             engine.set_active_event_context(None);
@@ -258,9 +257,8 @@ impl ExecutionHost {
     }
 
     fn refresh_task_session_mode(&self, session: &mut SessionState) {
-        let runtime = self.runtime_for_session(session);
-        let harness = runtime.lock_engine();
-        if let Some(ref engine) = *harness
+        if let Some(harness) = self.session_harness_engine(session)
+            && let Ok(engine) = harness.lock()
             && let Some(m) = engine.get_active_session_mode()
         {
             session.mode = m;

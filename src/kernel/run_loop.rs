@@ -98,11 +98,10 @@ impl ExecutionHost {
 
     async fn apply_pending_branch_checkout(&mut self, session: &mut SessionState) -> Result<()> {
         let branch_name = {
-            let runtime = self.runtime_for_session(session);
-            let harness = runtime.lock_engine();
-            let Some(ref engine) = *harness else {
+            let Some(harness) = self.session_harness_engine(session) else {
                 return Ok(());
             };
+            let engine = harness.lock().expect("session harness mutex poisoned");
             engine.take_pending_session_branch_checkout()
         };
         let Some(branch_name) = branch_name else {
@@ -222,9 +221,11 @@ impl ExecutionHost {
         );
 
         let verdict = {
-            let runtime = self.runtime_for_session(session);
-            let harness = runtime.lock_engine();
-            if let Some(ref engine) = *harness {
+            if let Err(error) = self.ensure_session_harness_engine(session) {
+                warn!(error = %error, "Failed to refresh session harness before on_all_tasks_complete");
+                None
+            } else if let Some(harness) = self.session_harness_engine(session) {
+                let engine = harness.lock().expect("session harness mutex poisoned");
                 match engine.evaluate(
                     "on_all_tasks_complete",
                     serde_json::json!({
@@ -264,6 +265,7 @@ impl ExecutionHost {
         task: &mut QueuedTask,
         queue_depth_after_pop: usize,
     ) -> Result<bool> {
+        self.ensure_session_harness_engine(session)?;
         self.persist_event(
             session,
             &KernelEvent::Lifecycle(LifecycleEvent::TaskStart {
@@ -321,9 +323,8 @@ impl ExecutionHost {
         task: &QueuedTask,
         queue_depth_after_pop: usize,
     ) -> Verdict {
-        let runtime = self.runtime_for_session(session);
-        let harness = runtime.lock_engine();
-        if let Some(ref engine) = *harness {
+        if let Some(harness) = self.session_harness_engine(session) {
+            let engine = harness.lock().expect("session harness mutex poisoned");
             match engine.evaluate(
                 "on_task_start",
                 serde_json::json!({

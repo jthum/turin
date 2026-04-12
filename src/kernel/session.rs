@@ -5,12 +5,15 @@ use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use crate::harness::engine::HarnessEngine;
 use crate::inference::provider::InferenceMessage;
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::KernelEvent;
 use crate::kernel::identity::RuntimeIdentity;
 use crate::persistence::manager::StoreSelector;
 use turin_types::{TaskInputContent, ToolsConfig};
+
+pub type SessionHarnessEngine = Arc<std::sync::Mutex<HarnessEngine>>;
 
 /// One queued unit of work to be executed by the kernel.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -150,6 +153,8 @@ pub struct SessionState {
     pub inference: InferenceOverrideConfig,
     pub context_checkpoint: Option<ContextCompactionCheckpoint>,
     pub history: Vec<InferenceMessage>,
+    pub harness_engine: Option<SessionHarnessEngine>,
+    pub harness_generation: u64,
     pub queue: Arc<Mutex<VecDeque<QueuedTask>>>,
     pub plans: HashMap<String, PlanProgress>,
     pub turn_index: u32,
@@ -192,6 +197,8 @@ impl SessionState {
             inference: InferenceOverrideConfig::default(),
             context_checkpoint: None,
             history: Vec::new(),
+            harness_engine: None,
+            harness_generation: 0,
             queue: Arc::new(Mutex::new(VecDeque::new())),
             plans: HashMap::new(),
             turn_index: 0,

@@ -17,9 +17,8 @@ impl ExecutionHost {
         let mut should_clear_existing = clear_existing;
 
         let verdict_result = {
-            let runtime = self.runtime_for_session(session);
-            let harness = runtime.lock_engine();
-            (*harness).as_ref().map(|engine| {
+            self.session_harness_engine(session).map(|harness| {
+                let engine = harness.lock().expect("session harness mutex poisoned");
                 engine.evaluate(
                     "on_plan_submit",
                     serde_json::json!({

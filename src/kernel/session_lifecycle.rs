@@ -308,6 +308,8 @@ impl ExecutionHost {
             "Starting new session"
         );
 
+        self.ensure_session_harness_engine(session)?;
+
         self.persist_event(
             session,
             &KernelEvent::Lifecycle(if session.restored_from_persistence {
@@ -330,21 +332,17 @@ impl ExecutionHost {
             }),
         );
 
-        {
-            let runtime = self.runtime_for_session(session);
-            let harness = runtime.lock_engine();
-            if let Some(ref engine) = *harness {
-                engine.set_active_queue(Some(session.queue.clone()));
-                if let Err(e) = engine.evaluate(
-                    "on_session_start",
-                    serde_json::json!({
-                        "identity": session.identity.clone(),
-                        "session_id": session_id,
-                        "governance": governance_snapshot,
-                    }),
-                ) {
-                    warn!(error = %e, "Harness on_session_start failed");
-                }
+        if let Some(harness) = self.session_harness_engine(session) {
+            let engine = harness.lock().expect("session harness mutex poisoned");
+            if let Err(e) = engine.evaluate(
+                "on_session_start",
+                serde_json::json!({
+                    "identity": session.identity.clone(),
+                    "session_id": session_id,
+                    "governance": governance_snapshot,
+                }),
+            ) {
+                warn!(error = %e, "Harness on_session_start failed");
             }
         }
 
@@ -376,24 +374,21 @@ impl ExecutionHost {
             }),
         );
 
-        {
-            let runtime = self.runtime_for_session(session);
-            let harness = runtime.lock_engine();
-            if let Some(ref engine) = *harness {
-                if let Err(e) = engine.evaluate(
-                    "on_session_end",
-                    serde_json::json!({
-                        "identity": session.identity.clone(),
-                        "session_id": self.session_reference(session),
-                        "turn_count": session.turn_index,
-                        "total_input_tokens": session.total_input_tokens,
-                        "total_output_tokens": session.total_output_tokens,
-                    }),
-                ) {
-                    warn!(error = %e, "Harness on_session_end failed");
-                }
-                engine.set_active_queue(None);
+        if let Some(harness) = self.session_harness_engine(session) {
+            let engine = harness.lock().expect("session harness mutex poisoned");
+            if let Err(e) = engine.evaluate(
+                "on_session_end",
+                serde_json::json!({
+                    "identity": session.identity.clone(),
+                    "session_id": self.session_reference(session),
+                    "turn_count": session.turn_index,
+                    "total_input_tokens": session.total_input_tokens,
+                    "total_output_tokens": session.total_output_tokens,
+                }),
+            ) {
+                warn!(error = %e, "Harness on_session_end failed");
             }
+            engine.set_active_queue(None);
         }
 
         // Close durability lane and await background persistence flush.
@@ -407,6 +402,7 @@ impl ExecutionHost {
         session.cancel_token.cancel();
 
         session.status = SessionStatus::Inactive;
+        self.clear_session_harness_engine(session);
         Ok(())
     }
 }

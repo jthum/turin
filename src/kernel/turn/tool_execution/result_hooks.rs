@@ -34,11 +34,10 @@ impl ExecutionHost {
         content: String,
         is_error: bool,
     ) -> (String, bool) {
-        let runtime = self.runtime_for_session(session);
-        let harness = runtime.lock_engine();
-        let Some(engine) = &*harness else {
+        let Some(harness) = self.session_harness_engine(session) else {
             return (content, is_error);
         };
+        let engine = harness.lock().expect("session harness mutex poisoned");
 
         let payload = serde_json::json!({
             "id": id,

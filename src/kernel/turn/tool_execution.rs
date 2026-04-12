@@ -262,11 +262,11 @@ impl ExecutionHost {
 
         let kernel = &*self;
         let active_agent_id = session.identity.agent_id().to_string();
-        let runtime = self.runtime_for_session(session);
+        let harness_engine = self.session_harness_engine(session);
         let futures = validated_calls.into_iter().map(|(tc, verdict)| {
             let tool_ctx = tool_ctx.clone();
             let active_agent_id = active_agent_id.clone();
-            let runtime = runtime.clone();
+            let harness_engine = harness_engine.clone();
             async move {
                 let verdict_str = verdict.to_string();
                 let final_args = match verdict {
@@ -307,8 +307,8 @@ impl ExecutionHost {
                     }
                 } else {
                     let plan_res = {
-                        let harness = runtime.lock_engine();
-                        if let Some(ref engine) = *harness {
+                        if let Some(harness) = &harness_engine {
+                            let engine = harness.lock().expect("session harness mutex poisoned");
                             engine.invoke_virtual_tool(&tc.name, final_args.clone())
                         } else {
                             Ok(None)
@@ -517,9 +517,8 @@ impl ExecutionHost {
         current_virtual_stack: &[String],
     ) -> Result<Vec<PendingToolCall>> {
         let declared_tool_names: BTreeSet<String> = {
-            let runtime = self.runtime_for_session(session);
-            let harness = runtime.lock_engine();
-            if let Some(ref engine) = *harness {
+            if let Some(harness) = self.session_harness_engine(session) {
+                let engine = harness.lock().expect("session harness mutex poisoned");
                 engine
                     .declared_virtual_tools()?
                     .into_iter()
@@ -620,9 +619,8 @@ impl ExecutionHost {
         } else {
             serde_json::to_value(nested_results)?
         };
-        let runtime = self.runtime_for_session(session);
-        let harness = runtime.lock_engine();
-        if let Some(ref engine) = *harness {
+        if let Some(harness) = self.session_harness_engine(session) {
+            let engine = harness.lock().expect("session harness mutex poisoned");
             engine.invoke_virtual_tool_result_handler(key, payload, nested_error)
         } else {
             anyhow::bail!(
@@ -703,9 +701,8 @@ impl ExecutionHost {
     }
 
     fn discard_virtual_result_handler(&self, session: &SessionState, key: &str) {
-        let runtime = self.runtime_for_session(session);
-        let harness = runtime.lock_engine();
-        if let Some(ref engine) = *harness {
+        if let Some(harness) = self.session_harness_engine(session) {
+            let engine = harness.lock().expect("session harness mutex poisoned");
             let _ = engine.discard_virtual_tool_result_handler(key);
         }
     }

@@ -33,26 +33,23 @@ impl ExecutionHost {
             }),
         );
 
+        if let Some(harness) = self.session_harness_engine(session)
+            && let Ok(engine) = harness.lock()
+            && let Err(e) = engine.evaluate(
+                "on_turn_end",
+                serde_json::json!({
+                    "identity": session.identity.clone(),
+                    "session_id": self.session_reference(session),
+                    "task_id": turn_ctx.task_id.clone(),
+                    "trace_id": turn_ctx.trace_id.clone(),
+                    "plan_id": turn_ctx.plan_id.clone(),
+                    "turn_index": session.turn_index,
+                    "task_turn_index": turn_ctx.task_turn_index,
+                    "has_tool_calls": has_tool_calls,
+                }),
+            )
         {
-            let runtime = self.runtime_for_session(session);
-            let harness = runtime.lock_engine();
-            if let Some(ref engine) = *harness
-                && let Err(e) = engine.evaluate(
-                    "on_turn_end",
-                    serde_json::json!({
-                        "identity": session.identity.clone(),
-                        "session_id": self.session_reference(session),
-                        "task_id": turn_ctx.task_id.clone(),
-                        "trace_id": turn_ctx.trace_id.clone(),
-                        "plan_id": turn_ctx.plan_id.clone(),
-                        "turn_index": session.turn_index,
-                        "task_turn_index": turn_ctx.task_turn_index,
-                        "has_tool_calls": has_tool_calls,
-                    }),
-                )
-            {
-                warn!(error = %e, "Harness on_turn_end error");
-            }
+            warn!(error = %e, "Harness on_turn_end error");
         }
 
         if let Ok(store) = self.store_manager.open(&session.store_selector).await {

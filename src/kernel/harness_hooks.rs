@@ -30,9 +30,8 @@ impl ExecutionHost {
         id: &str,
         args: &serde_json::Value,
     ) -> Verdict {
-        let runtime = self.runtime_for_session(session);
-        let harness = runtime.lock_engine();
-        if let Some(ref engine) = *harness {
+        if let Some(harness) = self.session_harness_engine(session) {
+            let engine = harness.lock().expect("session harness mutex poisoned");
             let payload = serde_json::json!({
                 "name": name,
                 "id": id,
@@ -68,9 +67,8 @@ impl ExecutionHost {
         session: &SessionState,
     ) -> TokenUsageHookAction {
         let verdict_result = {
-            let runtime = self.runtime_for_session(session);
-            let harness = runtime.lock_engine();
-            if let Some(ref engine) = *harness {
+            if let Some(harness) = self.session_harness_engine(session) {
+                let engine = harness.lock().expect("session harness mutex poisoned");
                 let payload = serde_json::json!({
                     "input_tokens": session.total_input_tokens,
                     "output_tokens": session.total_output_tokens,

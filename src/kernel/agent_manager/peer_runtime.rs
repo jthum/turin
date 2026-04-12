@@ -186,9 +186,8 @@ impl PeerRuntime {
             );
 
             let task_start_verdict = {
-                let runtime = self.host.runtime_for_session(&self.session);
-                let harness = runtime.lock_engine();
-                if let Some(ref engine) = *harness {
+                if let Some(harness) = self.host.session_harness_engine(&self.session) {
+                    let engine = harness.lock().expect("session harness mutex poisoned");
                     match engine.evaluate(
                         "on_task_start",
                         serde_json::json!({
@@ -364,17 +363,15 @@ impl PeerRuntime {
     }
 
     fn set_capability_ceiling(&self, caps: Option<BTreeMap<String, bool>>) {
-        let runtime = self.host.runtime_for_session(&self.session);
-        let harness = runtime.lock_engine();
-        if let Some(ref engine) = *harness {
+        if let Some(harness) = self.host.session_harness_engine(&self.session) {
+            let engine = harness.lock().expect("session harness mutex poisoned");
             engine.set_active_capability_delegation(caps);
         }
     }
 
     fn clear_capability_ceiling(&self) {
-        let runtime = self.host.runtime_for_session(&self.session);
-        let harness = runtime.lock_engine();
-        if let Some(ref engine) = *harness {
+        if let Some(harness) = self.host.session_harness_engine(&self.session) {
+            let engine = harness.lock().expect("session harness mutex poisoned");
             engine.set_active_capability_delegation(None);
         }
     }

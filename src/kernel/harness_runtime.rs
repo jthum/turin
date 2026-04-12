@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
@@ -39,6 +40,7 @@ pub(crate) struct HarnessRuntime {
     workspace_root: PathBuf,
     spawn_depth: u32,
     engine: std::sync::Mutex<Option<HarnessEngine>>,
+    generation: AtomicU64,
 }
 
 impl HarnessRuntime {
@@ -56,6 +58,7 @@ impl HarnessRuntime {
             workspace_root: workspace_root.into(),
             spawn_depth,
             engine: std::sync::Mutex::new(None),
+            generation: AtomicU64::new(0),
         }
     }
 
@@ -77,6 +80,10 @@ impl HarnessRuntime {
 
     pub(crate) fn lock_engine(&self) -> std::sync::MutexGuard<'_, Option<HarnessEngine>> {
         self.engine.lock().expect("harness mutex poisoned")
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
     }
 
     pub(crate) fn directory(&self) -> &Path {
@@ -166,6 +173,7 @@ impl HarnessRuntime {
 
         let mut current = self.lock_engine();
         *current = Some(engine);
+        self.generation.fetch_add(1, Ordering::Relaxed);
         Ok(script_count)
     }
 
@@ -176,6 +184,10 @@ impl HarnessRuntime {
     pub(crate) fn validate(&self, ctx: HarnessRuntimeInitContext) -> Result<usize> {
         let engine = self.build_engine(ctx)?;
         Ok(engine.loaded_scripts().len())
+    }
+
+    pub(crate) fn create_engine(&self, ctx: HarnessRuntimeInitContext) -> Result<HarnessEngine> {
+        self.build_engine(ctx)
     }
 
     fn build_app_data(&self, ctx: HarnessRuntimeInitContext) -> HarnessAppData {

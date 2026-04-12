@@ -97,9 +97,8 @@ impl ExecutionHost {
             .map(ToOwned::to_owned)
             .collect();
 
-        let runtime = self.runtime_for_session(session);
-        let harness = runtime.lock_engine();
-        if let Some(ref engine) = *harness {
+        if let Some(harness) = self.session_harness_engine(session) {
+            let engine = harness.lock().expect("session harness mutex poisoned");
             for tool in engine.declared_virtual_tools()? {
                 if !seen_names.insert(tool.name.clone()) {
                     warn!(
@@ -134,9 +133,8 @@ impl ExecutionHost {
             }),
         );
 
-        let runtime = self.runtime_for_session(session);
-        let harness = runtime.lock_engine();
-        if let Some(ref engine) = *harness {
+        if let Some(harness) = self.session_harness_engine(session) {
+            let engine = harness.lock().expect("session harness mutex poisoned");
             match engine.evaluate(
                 "on_turn_start",
                 serde_json::json!({
@@ -187,9 +185,8 @@ impl ExecutionHost {
         let token_count = estimate_history_input_tokens(&req.system_prompt, &session.history);
         let token_limit = self.estimate_turn_context_window_tokens(session, req)?;
 
-        let runtime = self.runtime_for_session(session);
-        let harness = runtime.lock_engine();
-        if let Some(ref engine) = *harness {
+        if let Some(harness) = self.session_harness_engine(session) {
+            let engine = harness.lock().expect("session harness mutex poisoned");
             let ctx = ContextWrapper::new(
                 req.inference_context.clone(),
                 req.model.clone(),

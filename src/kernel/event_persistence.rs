@@ -33,9 +33,8 @@ impl ExecutionHost {
 
         // Allow harness to observe/intercept any event.
         {
-            let runtime = self.runtime_for_session(session);
-            let harness_guard = runtime.lock_engine();
-            if let Some(engine) = &*harness_guard {
+            if let Some(harness) = self.session_harness_engine(session) {
+                let engine = harness.lock().expect("session harness mutex poisoned");
                 let payload = serde_json::to_value(event).unwrap_or_default();
                 if let Ok(verdict) = engine.evaluate("on_kernel_event", payload)
                     && verdict.is_rejected()

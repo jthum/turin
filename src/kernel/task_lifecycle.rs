@@ -30,9 +30,9 @@ impl ExecutionHost {
         );
 
         let verdict_result = {
-            let runtime = self.runtime_for_session(session);
-            let harness = runtime.lock_engine();
-            if let Some(ref engine) = *harness {
+            self.ensure_session_harness_engine(session)?;
+            if let Some(harness) = self.session_harness_engine(session) {
+                let engine = harness.lock().expect("session harness mutex poisoned");
                 Some(engine.evaluate(
                     "on_task_complete",
                     serde_json::json!({
@@ -103,9 +103,8 @@ impl ExecutionHost {
                 );
 
                 {
-                    let runtime = self.runtime_for_session(session);
-                    let harness = runtime.lock_engine();
-                    if let Some(ref engine) = *harness
+                    if let Some(harness) = self.session_harness_engine(session)
+                        && let Ok(engine) = harness.lock()
                         && let Err(e) = engine.evaluate(
                             "on_plan_complete",
                             serde_json::json!({
@@ -157,9 +156,9 @@ impl ExecutionHost {
         error: &str,
     ) -> Result<bool> {
         let verdict_result = {
-            let runtime = self.runtime_for_session(session);
-            let harness = runtime.lock_engine();
-            if let Some(ref engine) = *harness {
+            self.ensure_session_harness_engine(session)?;
+            if let Some(harness) = self.session_harness_engine(session) {
+                let engine = harness.lock().expect("session harness mutex poisoned");
                 engine.set_active_session(
                     Some(&self.session_reference(session)),
                     Some(session.store_selector.clone()),

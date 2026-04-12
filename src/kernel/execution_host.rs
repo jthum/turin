@@ -9,7 +9,7 @@ use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_manager::HarnessManager;
 use crate::kernel::mcp_runtime::McpClientEntry;
 use crate::kernel::policy::RuntimePolicyManager;
-use crate::kernel::session::SessionState;
+use crate::kernel::session::{SessionHarnessEngine, SessionState};
 use crate::persistence::manager::StoreManager;
 use crate::tools::registry::ToolRegistry;
 
@@ -41,6 +41,35 @@ impl ExecutionHost {
         session: &SessionState,
     ) -> Arc<crate::kernel::harness_runtime::HarnessRuntime> {
         self.runtime_for_agent(session.identity.agent_id())
+    }
+
+    pub(crate) fn session_harness_engine(
+        &self,
+        session: &SessionState,
+    ) -> Option<SessionHarnessEngine> {
+        session.harness_engine.clone()
+    }
+
+    pub(crate) fn ensure_session_harness_engine(
+        &self,
+        session: &mut SessionState,
+    ) -> anyhow::Result<()> {
+        let runtime = self.runtime_for_session(session);
+        let generation = runtime.generation();
+        if session.harness_engine.is_some() && session.harness_generation == generation {
+            return Ok(());
+        }
+
+        let engine = runtime.create_engine(self.harness_init_context())?;
+        engine.set_active_queue(Some(session.queue.clone()));
+        session.harness_engine = Some(Arc::new(std::sync::Mutex::new(engine)));
+        session.harness_generation = generation;
+        Ok(())
+    }
+
+    pub(crate) fn clear_session_harness_engine(&self, session: &mut SessionState) {
+        session.harness_engine = None;
+        session.harness_generation = 0;
     }
 
     pub(crate) fn agent_config_for(

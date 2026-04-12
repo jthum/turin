@@ -17,7 +17,7 @@ use super::harness_runtime::{HarnessRuntime, HarnessRuntimeInitContext};
 use crate::inference::provider::{self, ProviderClient};
 
 impl ExecutionHost {
-    fn harness_init_context(&self) -> HarnessRuntimeInitContext {
+    pub(crate) fn harness_init_context(&self) -> HarnessRuntimeInitContext {
         HarnessRuntimeInitContext {
             config: self.config.clone(),
             clients: self.clients.clone(),

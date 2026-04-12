@@ -473,6 +473,89 @@ async fn test_run_populates_token_counts() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_harness_module_locals_are_isolated_per_live_session() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir_all(&harness_dir)?;
+    std::fs::write(
+        harness_dir.join("session_counter.lua"),
+        r#"
+            local task_counter = 0
+
+            function on_task_start(event)
+                task_counter = task_counter + 1
+                return MODIFY, {
+                    prompt = event.prompt .. " [session_counter=" .. tostring(task_counter) .. "]"
+                }
+            end
+        "#,
+    )?;
+
+    let mut config = make_config(tmp.path());
+    config.harness.directory = harness_dir.to_string_lossy().to_string();
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let seen_messages = Arc::new(Mutex::new(Vec::new()));
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(
+            "mock",
+            Arc::new(CaptureMessagesProvider {
+                seen_messages: Arc::clone(&seen_messages),
+            }),
+        ),
+    );
+
+    let mut session1 = kernel.create_session().await;
+    kernel
+        .run(&mut session1, Some("Investigate alpha".to_string()))
+        .await?;
+
+    let first_seen = seen_messages
+        .lock()
+        .expect("capture messages mutex poisoned")
+        .clone();
+    let first_user_message = first_seen
+        .iter()
+        .rev()
+        .find(|message| message.role == turin::inference::provider::InferenceRole::User)
+        .expect("captured first session user message");
+    assert!(matches!(
+        &first_user_message.content[0],
+        turin::inference::provider::InferenceContent::Text { text }
+        if text == "Investigate alpha [session_counter=1]"
+    ));
+
+    let mut session2 = kernel.create_session().await;
+    kernel
+        .run(&mut session2, Some("Investigate beta".to_string()))
+        .await?;
+
+    let second_seen = seen_messages
+        .lock()
+        .expect("capture messages mutex poisoned")
+        .clone();
+    let second_user_message = second_seen
+        .iter()
+        .rev()
+        .find(|message| message.role == turin::inference::provider::InferenceRole::User)
+        .expect("captured second session user message");
+    assert!(matches!(
+        &second_user_message.content[0],
+        turin::inference::provider::InferenceContent::Text { text }
+        if text == "Investigate beta [session_counter=1]"
+    ));
+
+    kernel.end_session(&mut session1).await?;
+    kernel.end_session(&mut session2).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_on_turn_prepare_exposes_estimated_tokens_and_context_limit() -> Result<()> {
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harnesses");
