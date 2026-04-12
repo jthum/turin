@@ -556,6 +556,69 @@ async fn test_harness_module_locals_are_isolated_per_live_session() -> Result<()
 }
 
 #[tokio::test]
+async fn test_local_branch_selection_does_not_mutate_persisted_active_head() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut kernel = make_kernel(tmp.path()).await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Investigate main line".to_string()))
+        .await?;
+
+    let store = kernel.store_manager().open(&session.store_selector).await?;
+    let session_id = session.internal_id.expect("session internal id");
+    let main_head = store
+        .get_active_branch_head(session_id)
+        .await?
+        .expect("main head");
+    let alt_head = store
+        .create_branch_head_from_turn_index(session_id, "alt", Some(0), false)
+        .await?;
+    store
+        .insert_message_for_branch_head(
+            session_id,
+            Some(alt_head.id),
+            1,
+            "assistant",
+            &serde_json::json!([{"type": "text", "text": "ALT PATH ONLY"}]),
+            None,
+        )
+        .await?;
+
+    let switched = kernel
+        .select_session_branch_by_name_local(&mut session, "alt")
+        .await?;
+    assert!(switched, "expected local branch selection to succeed");
+    assert_eq!(session.selected_branch_head_id, Some(alt_head.id));
+
+    let has_alt_message = session.history.iter().any(|message| {
+        message.content.iter().any(|content| {
+            matches!(
+                content,
+                turin::inference::provider::InferenceContent::Text { text }
+                if text == "ALT PATH ONLY"
+            )
+        })
+    });
+    assert!(
+        has_alt_message,
+        "local branch selection should materialize the alternate branch history"
+    );
+
+    let persisted_active = store
+        .get_active_branch_head(session_id)
+        .await?
+        .expect("persisted active head");
+    assert_eq!(
+        persisted_active.id, main_head.id,
+        "local branch selection should not mutate the persisted active head"
+    );
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_on_turn_prepare_exposes_estimated_tokens_and_context_limit() -> Result<()> {
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harnesses");

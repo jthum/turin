@@ -91,6 +91,40 @@ impl StateStore {
         }
     }
 
+    pub async fn get_branch_head_by_name(
+        &self,
+        session_id: i64,
+        name: &str,
+    ) -> Result<Option<BranchHeadRow>> {
+        let conn = self.connect().await?;
+        let mut rows = conn
+            .query(
+                r#"
+                SELECT bh.id,
+                       bh.public_id,
+                       bh.session_id,
+                       bh.name,
+                       bh.head_turn_id,
+                       t.branch_depth,
+                       bh.created_from_turn_id,
+                       bh.created_at,
+                       CASE WHEN s.active_branch_head_id = bh.id THEN 1 ELSE 0 END AS is_active
+                FROM branch_heads bh
+                JOIN sessions s ON s.id = bh.session_id
+                LEFT JOIN turns t ON t.id = bh.head_turn_id
+                WHERE bh.session_id = ?1 AND bh.name = ?2
+                "#,
+                turso::params![session_id, name],
+            )
+            .await?;
+
+        if let Some(row) = rows.next().await? {
+            Ok(Some(branch_head_from_row(&row)?))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub async fn list_branch_heads(&self, session_id: i64) -> Result<Vec<BranchHeadRow>> {
         let conn = self.connect().await?;
         let mut rows = conn

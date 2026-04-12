@@ -201,6 +201,35 @@ impl ExecutionHost {
         Ok(())
     }
 
+    pub async fn select_session_branch_by_name_local(
+        &self,
+        session: &mut SessionState,
+        branch_name: &str,
+    ) -> Result<bool> {
+        let internal_id = session
+            .internal_id
+            .ok_or_else(|| anyhow!("Session has no internal persistence id"))?;
+        let store = self
+            .store_manager
+            .open(&session.store_selector)
+            .await
+            .context("Local branch selection requires a configured persistent state store")?;
+        let Some(branch) = store
+            .get_branch_head_by_name(internal_id, branch_name)
+            .await?
+        else {
+            return Ok(false);
+        };
+
+        if !session.queue.lock().await.is_empty() {
+            anyhow::bail!("Cannot switch local session branch while tasks are queued");
+        }
+
+        session.selected_branch_head_id = Some(branch.id);
+        self.refresh_session_from_persistence(session).await?;
+        Ok(true)
+    }
+
     async fn attach_session_persistence(&self, session: &mut SessionState, create_row: bool) {
         if let Ok(store) = self.store_manager.open(&session.store_selector).await {
             if create_row
