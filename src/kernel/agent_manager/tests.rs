@@ -561,6 +561,6 @@ async fn explicit_runtime_slots_allow_multiple_live_runtimes_for_one_session() -
     assert_eq!(final_killed_slot_id, "slot-a");
     assert_eq!(final_killed_session_id, slot_a.session_id);
 
-    abort_all_runtime_slots(&manager).await;
+    abort_all_runtime_slots(manager).await;
     Ok(())
 }
