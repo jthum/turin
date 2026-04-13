@@ -273,6 +273,49 @@ async fn wait_for_channel_state(
     }
 }
 
+async fn wait_for_channel_runtime_in_daemon_status(
+    daemon: &DaemonHarness,
+    channel_id: &str,
+    expected: &str,
+    timeout_secs: u64,
+) -> Result<Value> {
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    loop {
+        let daemon_status = result_value(
+            daemon
+                .request(DaemonRequest::DaemonStatus(
+                    turin::daemon::protocol::NoParams::default(),
+                ))
+                .await?,
+        );
+        let runtime_list = daemon_status["channel_runtimes"]
+            .as_array()
+            .context("daemon.status channel_runtimes should be an array")?;
+        if let Some(entry) = runtime_list
+            .iter()
+            .find(|entry| entry["id"] == channel_id && entry["state"] == expected)
+        {
+            return Ok(entry.clone());
+        }
+
+        let last_states = runtime_list
+            .iter()
+            .filter(|entry| entry["id"] == channel_id)
+            .map(|entry| entry["state"].as_str().unwrap_or("unknown").to_string())
+            .collect::<Vec<_>>();
+
+        if Instant::now() >= deadline {
+            return Err(anyhow!(
+                "Timed out waiting for daemon.status to report channel '{}' as '{}' (last states: {:?})",
+                channel_id,
+                expected,
+                last_states
+            ));
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn daemon_agent_crud_round_trip_over_endpoint() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
@@ -1469,6 +1512,10 @@ async fn daemon_discord_channel_reports_failed_runtime_when_token_is_missing() -
         error
     );
 
+    let failed_runtime =
+        wait_for_channel_runtime_in_daemon_status(&daemon, "discord-local", "failed", 10).await?;
+    assert_eq!(failed_runtime["id"], "discord-local");
+
     let daemon_status = result_value(
         daemon
             .request(DaemonRequest::DaemonStatus(
@@ -1481,14 +1528,6 @@ async fn daemon_discord_channel_reports_failed_runtime_when_token_is_missing() -
             .as_str()
             .is_some_and(|endpoint| !endpoint.is_empty()),
         "daemon.status should expose a non-empty endpoint"
-    );
-    let runtime_list = daemon_status["channel_runtimes"]
-        .as_array()
-        .context("daemon.status channel_runtimes should be an array")?;
-    assert!(
-        runtime_list
-            .iter()
-            .any(|entry| entry["id"] == "discord-local" && entry["state"] == "failed")
     );
 
     daemon.stop().await
@@ -1764,21 +1803,10 @@ async fn daemon_telegram_channel_reports_failed_runtime_when_token_is_missing() 
         error
     );
 
-    let daemon_status = result_value(
-        daemon
-            .request(DaemonRequest::DaemonStatus(
-                turin::daemon::protocol::NoParams::default(),
-            ))
-            .await?,
-    );
-    let runtime_list = daemon_status["channel_runtimes"]
-        .as_array()
-        .context("daemon.status channel_runtimes should be an array")?;
-    assert!(
-        runtime_list
-            .iter()
-            .any(|entry| entry["id"] == "telegram-runtime" && entry["state"] == "failed")
-    );
+    let failed_runtime =
+        wait_for_channel_runtime_in_daemon_status(&daemon, "telegram-runtime", "failed", 10)
+            .await?;
+    assert_eq!(failed_runtime["id"], "telegram-runtime");
 
     daemon.stop().await
 }
