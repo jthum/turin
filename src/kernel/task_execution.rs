@@ -12,7 +12,6 @@ use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::harness_hooks::TokenUsageHookAction;
 use crate::kernel::session::{QueuedTask, SessionState};
 use crate::kernel::turn;
-use crate::persistence::state::TurnWriteTarget;
 use crate::tools::ToolContext;
 use turin_types::layout::{DEFAULT_LAYOUT_ROOT, resolve_relative_to};
 
@@ -117,21 +116,12 @@ impl ExecutionHost {
         content: &[InferenceContent],
     ) {
         if let Ok(store) = self.store_manager.open(&session.store_selector).await {
-            if let Some(iid) = session.internal_id {
+            if let (Some(iid), Some(target)) = (session.internal_id, session.turn_write_target()) {
                 let _guard = session.persistence_lock.lock().await;
                 let _ = store
-                    .insert_message(
-                        iid,
-                        TurnWriteTarget::branch_head(
-                            session.selected_branch_head_id(),
-                            session.turn_index,
-                        ),
-                        "user",
-                        &encode_content_json(content),
-                        None,
-                    )
+                    .insert_message(iid, target, "user", &encode_content_json(content), None)
                     .await;
-            } else {
+            } else if session.internal_id.is_none() {
                 warn!("Session missing internal_id, skipping message persistence");
             }
         }

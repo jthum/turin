@@ -19,7 +19,6 @@ use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRo
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::governance::{CapabilityDecision, GovernanceSubject, tool_capability_name};
 use crate::kernel::session::SessionState;
-use crate::persistence::state::TurnWriteTarget;
 use crate::tools::{ToolContext, ToolEffect, ToolError, ToolOutput};
 
 use super::super::PendingToolCall;
@@ -769,16 +768,14 @@ impl ExecutionHost {
             );
 
             if let Ok(store) = self.store_manager.open(&session.store_selector).await
-                && let Some(iid) = session.internal_id
+                && let (Some(iid), Some(target)) =
+                    (session.internal_id, session.turn_write_target())
             {
                 let _guard = session.persistence_lock.lock().await;
                 let _ = store
                     .insert_tool_execution(
                         iid,
-                        TurnWriteTarget::branch_head(
-                            session.selected_branch_head_id(),
-                            session.turn_index,
-                        ),
+                        target,
                         &record.id,
                         &record.name,
                         &record.args,
@@ -816,16 +813,14 @@ impl ExecutionHost {
             });
 
             if let Ok(store) = self.store_manager.open(&session.store_selector).await
-                && let Some(iid) = session.internal_id
+                && let (Some(iid), Some(target)) =
+                    (session.internal_id, session.turn_write_target())
             {
                 let _guard = session.persistence_lock.lock().await;
                 let _ = store
                     .insert_message(
                         iid,
-                        TurnWriteTarget::branch_head(
-                            session.selected_branch_head_id(),
-                            session.turn_index,
-                        ),
+                        target,
                         "tool_result",
                         &encode_content_json(&tool_results),
                         None,

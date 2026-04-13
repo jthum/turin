@@ -11,6 +11,7 @@ use crate::kernel::event::KernelEvent;
 use crate::kernel::harness_runtime::HarnessInstance;
 use crate::kernel::identity::RuntimeIdentity;
 use crate::persistence::manager::StoreSelector;
+use crate::persistence::state::TurnWriteTarget;
 use turin_types::{TaskInputContent, ToolsConfig};
 
 pub type SessionHarnessEngine = Arc<std::sync::Mutex<HarnessInstance>>;
@@ -47,6 +48,16 @@ pub enum ExecutionContextTarget {
 }
 
 impl ExecutionContextTarget {
+    pub fn default_write_policy(&self) -> ExecutionWritePolicy {
+        match self {
+            Self::BranchHead { .. } => ExecutionWritePolicy::AdvanceBranchHead,
+            Self::TurnId { .. }
+            | Self::SelectedPath { .. }
+            | Self::ExternalReference { .. }
+            | Self::SummarySource { .. } => ExecutionWritePolicy::Detached,
+        }
+    }
+
     pub fn branch_head_id(&self) -> Option<i64> {
         match self {
             Self::BranchHead { branch_head_id } => *branch_head_id,
@@ -321,6 +332,7 @@ impl SessionState {
     }
 
     pub fn set_context_target(&mut self, context_target: ExecutionContextTarget) {
+        self.execution.write_policy = context_target.default_write_policy();
         self.execution.context_target = context_target;
     }
 
@@ -338,6 +350,16 @@ impl SessionState {
 
     pub fn set_selected_turn_id(&mut self, turn_id: i64) {
         self.set_context_target(ExecutionContextTarget::TurnId { turn_id });
+    }
+
+    pub fn turn_write_target(&self) -> Option<TurnWriteTarget> {
+        match self.execution.write_policy {
+            ExecutionWritePolicy::AdvanceBranchHead => Some(TurnWriteTarget::branch_head(
+                self.selected_branch_head_id(),
+                self.turn_index,
+            )),
+            ExecutionWritePolicy::Detached => None,
+        }
     }
 }
 
@@ -391,6 +413,36 @@ mod tests {
         assert_eq!(
             session.execution.write_policy,
             ExecutionWritePolicy::AdvanceBranchHead
+        );
+    }
+
+    #[test]
+    fn non_branch_targets_default_to_detached_write_policy() {
+        let mut session = SessionState::new();
+        session.set_selected_turn_id(7);
+        assert_eq!(
+            session.execution.write_policy,
+            ExecutionWritePolicy::Detached
+        );
+        assert_eq!(session.turn_write_target(), None);
+
+        session.set_context_target(ExecutionContextTarget::ExternalReference {
+            reference: "0123456789abcdef0123456789abcdef".to_string(),
+        });
+        assert_eq!(
+            session.execution.write_policy,
+            ExecutionWritePolicy::Detached
+        );
+        assert_eq!(session.turn_write_target(), None);
+
+        session.set_selected_branch_head_id(Some(11));
+        assert_eq!(
+            session.execution.write_policy,
+            ExecutionWritePolicy::AdvanceBranchHead
+        );
+        assert_eq!(
+            session.turn_write_target(),
+            Some(TurnWriteTarget::branch_head(Some(11), 0))
         );
     }
 }

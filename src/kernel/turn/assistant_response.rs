@@ -4,7 +4,6 @@ use crate::inference::content::encode_content_json;
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::SessionState;
-use crate::persistence::state::TurnWriteTarget;
 
 use super::super::PendingToolCall;
 use super::super::event::{KernelEvent, LifecycleEvent};
@@ -67,15 +66,12 @@ impl ExecutionHost {
                     input: tc.args.clone(),
                 });
             }
-            if let Some(iid) = session.internal_id {
+            if let (Some(iid), Some(target)) = (session.internal_id, session.turn_write_target()) {
                 let _guard = session.persistence_lock.lock().await;
                 let _ = store
                     .insert_message(
                         iid,
-                        TurnWriteTarget::branch_head(
-                            session.selected_branch_head_id(),
-                            session.turn_index,
-                        ),
+                        target,
                         "assistant",
                         &encode_content_json(&persisted_content),
                         None,

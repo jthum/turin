@@ -125,7 +125,8 @@ impl ExecutionHost {
             branch_head_id: row.active_branch_head_id,
         };
         let (messages, active_events) =
-            materialize_execution_target(&store, &row, &context_target).await?;
+            materialize_execution_target(self, &store, &store_selector, &row, &context_target)
+                .await?;
         let events = store.get_all_events(row.id).await?;
         let (history, turn_index) = rebuild_history(&messages)?;
         let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
@@ -171,8 +172,14 @@ impl ExecutionHost {
         })?;
 
         let context_target = resolved_execution_context_target(session.context_target(), &row);
-        let (messages, active_events) =
-            materialize_execution_target(&store, &row, &context_target).await?;
+        let (messages, active_events) = materialize_execution_target(
+            self,
+            &store,
+            &session.store_selector,
+            &row,
+            &context_target,
+        )
+        .await?;
         let events = store.get_all_events(row.id).await?;
         let (history, turn_index) = rebuild_history(&messages)?;
         let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
@@ -249,6 +256,37 @@ impl ExecutionHost {
         }
 
         session.set_selected_turn_id(turn_id);
+        self.refresh_session_from_persistence(session).await?;
+        Ok(true)
+    }
+
+    pub async fn select_session_external_reference_local(
+        &self,
+        session: &mut SessionState,
+        reference: &str,
+    ) -> Result<bool> {
+        let session_ref = parse_session_reference(reference)?;
+        let store_selector = session_ref
+            .store_selector
+            .clone()
+            .unwrap_or_else(|| session.store_selector.clone());
+        let public_id = uuid::Uuid::parse_str(&session_ref.public_id)
+            .with_context(|| format!("Invalid session id '{}'", session_ref.public_id))?;
+        let store =
+            self.store_manager.open(&store_selector).await.context(
+                "External reference selection requires a configured persistent state store",
+            )?;
+        let Some(_) = store.get_session_row_by_public_id(public_id).await? else {
+            return Ok(false);
+        };
+
+        if !session.queue.lock().await.is_empty() {
+            anyhow::bail!("Cannot switch local session target while tasks are queued");
+        }
+
+        session.set_context_target(ExecutionContextTarget::ExternalReference {
+            reference: format_session_reference(&session_ref.public_id, &store_selector),
+        });
         self.refresh_session_from_persistence(session).await?;
         Ok(true)
     }
@@ -556,7 +594,9 @@ fn resolved_execution_context_target(
 }
 
 async fn materialize_execution_target(
+    host: &ExecutionHost,
     store: &StateStore,
+    current_store_selector: &StoreSelector,
     row: &SessionRow,
     target: &ExecutionContextTarget,
 ) -> Result<(Vec<MessageRow>, Vec<EventRow>)> {
@@ -590,10 +630,36 @@ async fn materialize_execution_target(
                 store.get_events(row.id, &target).await?,
             ))
         }
-        ExecutionContextTarget::ExternalReference { reference } => anyhow::bail!(
-            "Execution context target '{}' is not materializable in live sessions yet",
-            reference
-        ),
+        ExecutionContextTarget::ExternalReference { reference } => {
+            let session_ref = parse_session_reference(reference)?;
+            let target_selector = session_ref
+                .store_selector
+                .clone()
+                .unwrap_or_else(|| current_store_selector.clone());
+            let target_store = host
+                .store_manager
+                .open(&target_selector)
+                .await
+                .with_context(|| {
+                    format!(
+                        "Execution context target '{}' requires a configured persistent state store",
+                        reference
+                    )
+                })?;
+            let public_id = uuid::Uuid::parse_str(&session_ref.public_id)
+                .with_context(|| format!("Invalid session id '{}'", session_ref.public_id))?;
+            let referenced_row = target_store
+                .get_session_row_by_public_id(public_id)
+                .await?
+                .ok_or_else(|| anyhow!("Execution context target '{}' was not found", reference))?;
+            let target = SessionReadTarget::branch_head(referenced_row.active_branch_head_id);
+            Ok((
+                target_store
+                    .get_messages(referenced_row.id, &target)
+                    .await?,
+                target_store.get_events(referenced_row.id, &target).await?,
+            ))
+        }
     }
 }
 

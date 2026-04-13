@@ -78,16 +78,12 @@ impl ExecutionHost {
         if tx.send((session.internal_id, event.clone())).is_err() {
             debug!("Event broadcast skipped — no active receivers");
         }
+        let Some(record) = persisted_event_record(session, event) else {
+            return;
+        };
         if let Some(durability_tx) = durability_tx
             && durability_tx
-                .send(PersistedKernelRecord::Event(Box::new(
-                    PersistedKernelEvent {
-                        internal_id: session.internal_id,
-                        branch_head_id: session.selected_branch_head_id(),
-                        turn_index: persisted_turn_index_for_event(session, event),
-                        event: event.clone(),
-                    },
-                )))
+                .send(PersistedKernelRecord::Event(Box::new(record)))
                 .is_err()
         {
             warn!("Event durability send failed — persistence task unavailable");
@@ -95,9 +91,37 @@ impl ExecutionHost {
     }
 }
 
-fn persisted_turn_index_for_event(session: &SessionState, event: &KernelEvent) -> Option<u32> {
+fn persisted_event_record(
+    session: &SessionState,
+    event: &KernelEvent,
+) -> Option<PersistedKernelEvent> {
+    if let Some(target) = branch_scoped_persistence_target(session, event) {
+        return Some(PersistedKernelEvent {
+            internal_id: session.internal_id,
+            branch_head_id: target.branch_head_id,
+            turn_index: Some(target.turn_index),
+            event: event.clone(),
+        });
+    }
+
     if event_is_branch_scoped(event) {
-        Some(session.turn_index)
+        return None;
+    }
+
+    Some(PersistedKernelEvent {
+        internal_id: session.internal_id,
+        branch_head_id: None,
+        turn_index: None,
+        event: event.clone(),
+    })
+}
+
+fn branch_scoped_persistence_target(
+    session: &SessionState,
+    event: &KernelEvent,
+) -> Option<crate::persistence::state::TurnWriteTarget> {
+    if event_is_branch_scoped(event) {
+        session.turn_write_target()
     } else {
         None
     }

@@ -19,7 +19,8 @@ use turin::kernel::config::{
     ProviderConfig, StoreTargetConfig, TurinConfig,
 };
 use turin::kernel::policy::PolicyScope;
-use turin::kernel::session::{QueuedTask, SessionStatus};
+use turin::kernel::session::{ExecutionWritePolicy, QueuedTask, SessionStatus};
+use turin::kernel::session_refs::parse_session_reference;
 use turin::persistence::state::{SessionReadTarget, TurnWriteTarget};
 use turin_types::TaskInputContent;
 
@@ -591,6 +592,10 @@ async fn test_local_branch_selection_does_not_mutate_persisted_active_head() -> 
         .await?;
     assert!(switched, "expected local branch selection to succeed");
     assert_eq!(session.selected_branch_head_id(), Some(alt_head.id));
+    assert_eq!(
+        session.execution.write_policy,
+        ExecutionWritePolicy::AdvanceBranchHead
+    );
 
     let has_alt_message = session.history.iter().any(|message| {
         message.content.iter().any(|content| {
@@ -659,6 +664,10 @@ async fn test_local_turn_selection_materializes_prefix_without_new_execution() -
     assert_eq!(session.selected_branch_head_id(), None);
     assert_eq!(session.execution_id(), execution_id);
     assert_eq!(session.turn_index, 1);
+    assert_eq!(
+        session.execution.write_policy,
+        ExecutionWritePolicy::Detached
+    );
 
     let seen_turn_zero = session.history.iter().any(|message| {
         message.content.iter().any(|content| {
@@ -694,6 +703,92 @@ async fn test_local_turn_selection_materializes_prefix_without_new_execution() -
     assert_eq!(persisted_active.id, active_head.id);
 
     kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_local_external_reference_selection_materializes_remote_context_detached() -> Result<()>
+{
+    let tmp = tempdir()?;
+    let mut kernel = make_kernel(tmp.path()).await?;
+
+    let mut source = kernel.create_session().await;
+    kernel
+        .run(&mut source, Some("Remote context".to_string()))
+        .await?;
+
+    let mut session = kernel.create_session().await;
+    let execution_id = session.execution_id().to_string();
+    let source_reference = source.identity.session_id().to_string();
+
+    let switched = kernel
+        .select_session_external_reference_local(&mut session, &source_reference)
+        .await?;
+    assert!(
+        switched,
+        "expected local external reference selection to succeed"
+    );
+    assert_eq!(session.execution_id(), execution_id);
+    assert_eq!(session.selected_branch_head_id(), None);
+    assert_eq!(
+        session.execution.write_policy,
+        ExecutionWritePolicy::Detached
+    );
+    let turin::kernel::session::ExecutionContextTarget::ExternalReference { reference } =
+        session.context_target()
+    else {
+        panic!("expected external reference context target");
+    };
+    let parsed_reference = parse_session_reference(reference)?;
+    assert_eq!(parsed_reference.public_id, source_reference);
+    assert!(
+        session
+            .history
+            .iter()
+            .any(|message| message.content.iter().any(|content| {
+                matches!(
+                    content,
+                    turin::inference::provider::InferenceContent::Text { text }
+                    if text == "Remote context"
+                )
+            })),
+        "external reference selection should materialize the referenced session history"
+    );
+
+    kernel
+        .run(&mut session, Some("Detached follow-up".to_string()))
+        .await?;
+
+    let store = kernel.store_manager().open(&session.store_selector).await?;
+    let persisted_messages = store
+        .get_messages(
+            session.internal_id.expect("session internal id"),
+            &SessionReadTarget::ActiveBranch,
+        )
+        .await?;
+    assert!(
+        persisted_messages.is_empty(),
+        "detached external-reference execution should not mutate the local transcript"
+    );
+
+    let persisted_events = store
+        .get_events(
+            session.internal_id.expect("session internal id"),
+            &SessionReadTarget::ActiveBranch,
+        )
+        .await?;
+    assert!(
+        event_has_task_status(&persisted_events, "success"),
+        "detached external-reference execution should still persist task completion"
+    );
+    assert_eq!(
+        count_event_type(&persisted_events, "turn_start"),
+        0,
+        "branch-scoped turn events should not persist for detached executions"
+    );
+
+    kernel.end_session(&mut session).await?;
+    kernel.end_session(&mut source).await?;
     Ok(())
 }
 
