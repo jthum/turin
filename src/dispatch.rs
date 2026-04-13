@@ -334,16 +334,16 @@ async fn handle_daemon_task_command(command: DaemonTaskCommands) -> Result<()> {
             timeout_ms,
             args,
         } => {
-            commands::daemon::run_task_submit(
-                &args.config.config,
-                agent_id.as_deref(),
-                session_id.as_deref(),
-                slot_id.as_deref(),
-                &prompt,
+            commands::daemon::run_task_submit(commands::daemon::TaskSubmitCommand {
+                config_path: &args.config.config,
+                agent_id: agent_id.as_deref(),
+                session_id: session_id.as_deref(),
+                slot_id: slot_id.as_deref(),
+                prompt: &prompt,
                 wait,
                 timeout_ms,
-                args.json,
-            )
+                json_output: args.json,
+            })
             .await
         }
         DaemonTaskCommands::Get { request_id, args } => {

@@ -1,28 +1,30 @@
 use super::*;
 
-pub async fn run_task_submit(
-    config_path: &std::path::Path,
-    agent_id: Option<&str>,
-    session_id: Option<&str>,
-    slot_id: Option<&str>,
-    prompt: &str,
-    wait: bool,
-    timeout_ms: Option<u64>,
-    json_output: bool,
-) -> Result<()> {
+pub struct TaskSubmitCommand<'a> {
+    pub config_path: &'a std::path::Path,
+    pub agent_id: Option<&'a str>,
+    pub session_id: Option<&'a str>,
+    pub slot_id: Option<&'a str>,
+    pub prompt: &'a str,
+    pub wait: bool,
+    pub timeout_ms: Option<u64>,
+    pub json_output: bool,
+}
+
+pub async fn run_task_submit(command: TaskSubmitCommand<'_>) -> Result<()> {
     let response = send_request(
-        config_path,
+        command.config_path,
         "task.submit",
         json!({
-            "agent_id": agent_id,
-            "session_id": session_id,
-            "slot_id": slot_id,
-            "prompt": prompt
+            "agent_id": command.agent_id,
+            "session_id": command.session_id,
+            "slot_id": command.slot_id,
+            "prompt": command.prompt
         }),
     )
     .await?;
-    if !wait {
-        if json_output {
+    if !command.wait {
+        if command.json_output {
             return print_response(response, true);
         }
         let task: TaskStatusView = decode_result(response)?;
@@ -31,7 +33,7 @@ pub async fn run_task_submit(
     }
 
     if !response.ok {
-        return print_response(response, json_output);
+        return print_response(response, command.json_output);
     }
 
     let request_id = response
@@ -41,7 +43,13 @@ pub async fn run_task_submit(
         .and_then(|value| value.as_str())
         .ok_or_else(|| anyhow::anyhow!("Daemon task.submit response did not include request_id"))?;
 
-    run_task_wait(config_path, request_id, timeout_ms, json_output).await
+    run_task_wait(
+        command.config_path,
+        request_id,
+        command.timeout_ms,
+        command.json_output,
+    )
+    .await
 }
 
 pub async fn run_task_get(
