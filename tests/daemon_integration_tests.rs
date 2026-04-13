@@ -397,6 +397,7 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
                 turin::daemon::protocol::SubmitTaskParams {
                     agent_id: None,
                     session_id: Some(live_session_id.clone()),
+                    slot_id: None,
                     prompt: "Say pong".to_string(),
                     content: None,
                     tools: Default::default(),
@@ -485,6 +486,7 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
                 turin::daemon::protocol::SubmitTaskParams {
                     agent_id: None,
                     session_id: Some(session_id.clone()),
+                    slot_id: None,
                     prompt: "resume me".to_string(),
                     content: None,
                     tools: Default::default(),
@@ -529,6 +531,7 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
                 turin::daemon::protocol::SubmitTaskParams {
                     agent_id: None,
                     session_id: Some(session_id.clone()),
+                    slot_id: None,
                     prompt: "resume me again".to_string(),
                     content: None,
                     tools: Default::default(),
@@ -744,6 +747,7 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
         .subscribe(turin::daemon::protocol::RuntimeEventsSubscribeParams {
             agent_id: Some("writer".to_string()),
             session_id: None,
+            slot_id: None,
         })
         .await?;
 
@@ -804,6 +808,7 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
         .subscribe(turin::daemon::protocol::RuntimeEventsSubscribeParams {
             agent_id: None,
             session_id: Some(session_id.clone()),
+            slot_id: None,
         })
         .await?;
 
@@ -856,6 +861,7 @@ async fn daemon_session_subscription_receives_kernel_stream_events() -> Result<(
         .subscribe(turin::daemon::protocol::RuntimeEventsSubscribeParams {
             agent_id: None,
             session_id: Some(session_id.clone()),
+            slot_id: None,
         })
         .await?;
 
@@ -865,6 +871,7 @@ async fn daemon_session_subscription_receives_kernel_stream_events() -> Result<(
                 turin::daemon::protocol::SubmitTaskParams {
                     agent_id: None,
                     session_id: Some(session_id.clone()),
+                    slot_id: None,
                     prompt: "Say pong".to_string(),
                     content: None,
                     tools: Default::default(),
@@ -946,6 +953,7 @@ async fn daemon_event_subscription_scopes_initial_snapshot_and_includes_channel_
         .subscribe(turin::daemon::protocol::RuntimeEventsSubscribeParams {
             agent_id: Some("writer".to_string()),
             session_id: None,
+            slot_id: None,
         })
         .await?;
 

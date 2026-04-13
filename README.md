@@ -616,6 +616,24 @@ The library is exercised by `cargo test --test example_harness_examples`, so it 
 - `docs/operations/testing.md` — local validation, test suite, and smoke workflows
 - `docs/operations/live-provider-testing.md` — live endpoint testing procedures
 
+## A note on how Turin is built
+
+Turin is developed with AI agents as collaborators, not just tools. I don't write Rust myself — the implementation is carried out by agents working under my direction. That's a conscious choice.
+
+This is not a "one-shot" project. The architecture behind Turin is the product of hundreds of hours of deliberation—debating API shapes, stress-testing implementation plans, and iterating through many rejected proposals before landing on what exists today. Every significant decision has been argued, not just generated.
+
+The ideas are mine. The code is theirs. And quality is something I take seriously — agents are directed to cross-review code, flag issues, and fix problems as they surface. But I won't pretend I can audit every line of Rust myself. If you find something wrong, please open an issue. I can direct an agent to investigate and fix it even if I can't read the stack trace myself.
+
+Turin is, in a small way, a proof of its own concept — an agentic workflow where the human defines what gets built, and agents figure out how to build it.
+
+## Standing on the Shoulders of Giants
+
+The agentic space is moving very quickly. Every day brings new ideas, experiments, and breakthroughs from a community that is collectively defining the future of autonomy. Turin does not exist in a vacuum; it stands on the shoulders of giants. I want to express my deep gratitude to the researchers, developers, and experimenters who share their work openly. We are all learning from each other, iterating on each other's failures, and taking the industry forward together.
+
+This project is rooted in a belief I've held since the late nineties, when I first started building for the web — that open sharing drives whole industries forward faster than any one company ever could. That the person who builds on your idea and takes it somewhere you never imagined is not a threat, but the whole point.
+
+Turin is my contribution to that shared evolution. By keeping the runtime sovereign, the state durable, and the harness logic open, I hope to give the next builder a foundation worth building on — rather than a black box they have to work around.
+
 ## Thanks to the Turso Team
 
 Turin's persistence layer is built on Turso — a native-Rust SQLite engine that happens to be exactly what an agent runtime needs: embedded, fast, no separate process, and vector search built in. We could have made SQLite work, but Turso's direction — AgentFS, agentic workflow primitives, a genuine focus on what AI systems need from a database — made it feel less like a dependency and more like a collaborator. If you're building anything in this space, it's worth paying attention to what they're doing.
