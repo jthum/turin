@@ -98,9 +98,9 @@ impl ExecutionHost {
             return Ok(());
         }
 
-        let engine = runtime.create_engine(self.harness_init_context())?;
-        engine.set_active_queue(Some(session.queue.clone()));
-        session.harness_engine = Some(Arc::new(std::sync::Mutex::new(engine)));
+        let instance = runtime.create_instance(self.harness_init_context())?;
+        instance.set_active_queue(Some(session.queue.clone()));
+        session.harness_engine = Some(Arc::new(std::sync::Mutex::new(instance)));
         session.harness_generation = generation;
         Ok(())
     }

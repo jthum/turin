@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -33,13 +34,57 @@ pub(crate) struct HarnessRuntimeInitContext {
     pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
 }
 
+pub struct HarnessInstance {
+    engine: HarnessEngine,
+}
+
+impl HarnessInstance {
+    fn new(engine: HarnessEngine) -> Self {
+        Self { engine }
+    }
+
+    pub(crate) fn loaded_scripts(&self) -> Vec<String> {
+        self.engine.loaded_scripts()
+    }
+
+    pub(crate) fn explicit_watch_roots(&self) -> Vec<PathBuf> {
+        self.engine.explicit_watch_roots()
+    }
+
+    pub(crate) fn load_script_str(&mut self, script: &str) -> Result<()> {
+        self.engine.load_script_str(script)
+    }
+}
+
+impl Deref for HarnessInstance {
+    type Target = HarnessEngine;
+
+    fn deref(&self) -> &Self::Target {
+        &self.engine
+    }
+}
+
+impl DerefMut for HarnessInstance {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.engine
+    }
+}
+
+#[derive(Clone, Default)]
+struct HarnessLoadedState {
+    loaded_scripts: Vec<String>,
+    explicit_watch_roots: Vec<PathBuf>,
+}
+
+// Despite the legacy name, this is the shared harness definition and metadata cache.
+// Live executions use fresh `HarnessInstance` values built from this definition.
 pub(crate) struct HarnessRuntime {
     harness_id: String,
     directory: PathBuf,
     fs_root: PathBuf,
     workspace_root: PathBuf,
     spawn_depth: u32,
-    engine: std::sync::Mutex<Option<HarnessEngine>>,
+    loaded_state: std::sync::Mutex<HarnessLoadedState>,
     generation: AtomicU64,
 }
 
@@ -57,7 +102,7 @@ impl HarnessRuntime {
             fs_root: fs_root.into(),
             workspace_root: workspace_root.into(),
             spawn_depth,
-            engine: std::sync::Mutex::new(None),
+            loaded_state: std::sync::Mutex::new(HarnessLoadedState::default()),
             generation: AtomicU64::new(0),
         }
     }
@@ -78,10 +123,6 @@ impl HarnessRuntime {
         )
     }
 
-    pub(crate) fn lock_engine(&self) -> std::sync::MutexGuard<'_, Option<HarnessEngine>> {
-        self.engine.lock().expect("harness mutex poisoned")
-    }
-
     pub(crate) fn generation(&self) -> u64 {
         self.generation.load(Ordering::Relaxed)
     }
@@ -95,11 +136,11 @@ impl HarnessRuntime {
     }
 
     pub(crate) fn explicit_watch_roots(&self) -> Vec<PathBuf> {
-        let engine = self.lock_engine();
-        engine
-            .as_ref()
-            .map(HarnessEngine::explicit_watch_roots)
-            .unwrap_or_default()
+        self.loaded_state
+            .lock()
+            .expect("harness loaded-state mutex poisoned")
+            .explicit_watch_roots
+            .clone()
     }
 
     pub(crate) fn watch_roots(&self) -> Vec<HarnessWatchRoot> {
@@ -133,26 +174,18 @@ impl HarnessRuntime {
     }
 
     pub(crate) fn loaded_scripts(&self) -> Vec<String> {
-        let engine = self.lock_engine();
-        engine
-            .as_ref()
-            .map(HarnessEngine::loaded_scripts)
-            .unwrap_or_default()
-    }
-
-    pub(crate) fn load_script_str(&self, script: &str) -> Result<()> {
-        let mut engine = self.lock_engine();
-        if let Some(ref mut harness) = *engine {
-            harness.load_script_str(script)?;
-            Ok(())
-        } else {
-            anyhow::bail!("Harness not initialized");
-        }
+        self.loaded_state
+            .lock()
+            .expect("harness loaded-state mutex poisoned")
+            .loaded_scripts
+            .clone()
     }
 
     pub(crate) fn init(&self, ctx: HarnessRuntimeInitContext) -> Result<usize> {
-        let engine = self.build_engine(ctx)?;
-        let script_count = engine.loaded_scripts().len();
+        let instance = self.create_instance(ctx)?;
+        let loaded_scripts = instance.loaded_scripts();
+        let explicit_watch_roots = instance.explicit_watch_roots();
+        let script_count = loaded_scripts.len();
         if script_count > 0 {
             info!(
                 harness_id = %self.harness_id,
@@ -160,7 +193,7 @@ impl HarnessRuntime {
                 directory = %self.directory.display(),
                 "Harness scripts loaded"
             );
-            for name in engine.loaded_scripts() {
+            for name in &loaded_scripts {
                 debug!(harness_id = %self.harness_id, script = %name, "Loaded harness script");
             }
         } else {
@@ -171,8 +204,12 @@ impl HarnessRuntime {
             );
         }
 
-        let mut current = self.lock_engine();
-        *current = Some(engine);
+        let mut state = self
+            .loaded_state
+            .lock()
+            .expect("harness loaded-state mutex poisoned");
+        state.loaded_scripts = loaded_scripts;
+        state.explicit_watch_roots = explicit_watch_roots;
         self.generation.fetch_add(1, Ordering::Relaxed);
         Ok(script_count)
     }
@@ -182,12 +219,15 @@ impl HarnessRuntime {
     }
 
     pub(crate) fn validate(&self, ctx: HarnessRuntimeInitContext) -> Result<usize> {
-        let engine = self.build_engine(ctx)?;
-        Ok(engine.loaded_scripts().len())
+        let instance = self.create_instance(ctx)?;
+        Ok(instance.loaded_scripts().len())
     }
 
-    pub(crate) fn create_engine(&self, ctx: HarnessRuntimeInitContext) -> Result<HarnessEngine> {
-        self.build_engine(ctx)
+    pub(crate) fn create_instance(
+        &self,
+        ctx: HarnessRuntimeInitContext,
+    ) -> Result<HarnessInstance> {
+        self.build_instance(ctx)
     }
 
     fn build_app_data(&self, ctx: HarnessRuntimeInitContext) -> HarnessAppData {
@@ -210,7 +250,7 @@ impl HarnessRuntime {
         }
     }
 
-    fn build_engine(&self, ctx: HarnessRuntimeInitContext) -> Result<HarnessEngine> {
+    fn build_instance(&self, ctx: HarnessRuntimeInitContext) -> Result<HarnessInstance> {
         let mut engine = HarnessEngine::new(self.build_app_data(ctx))
             .context("Failed to create harness engine")?;
         engine.load_dir(&self.directory).with_context(|| {
@@ -220,7 +260,7 @@ impl HarnessRuntime {
             )
         })?;
         engine.set_loading_phase(false);
-        Ok(engine)
+        Ok(HarnessInstance::new(engine))
     }
 }
 

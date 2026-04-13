@@ -5,15 +5,15 @@ use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::harness::engine::HarnessEngine;
 use crate::inference::provider::InferenceMessage;
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::KernelEvent;
+use crate::kernel::harness_runtime::HarnessInstance;
 use crate::kernel::identity::RuntimeIdentity;
 use crate::persistence::manager::StoreSelector;
 use turin_types::{TaskInputContent, ToolsConfig};
 
-pub type SessionHarnessEngine = Arc<std::sync::Mutex<HarnessEngine>>;
+pub type SessionHarnessEngine = Arc<std::sync::Mutex<HarnessInstance>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
