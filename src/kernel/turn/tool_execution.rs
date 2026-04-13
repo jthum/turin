@@ -19,6 +19,7 @@ use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRo
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::governance::{CapabilityDecision, GovernanceSubject, tool_capability_name};
 use crate::kernel::session::SessionState;
+use crate::persistence::state::TurnWriteTarget;
 use crate::tools::{ToolContext, ToolEffect, ToolError, ToolOutput};
 
 use super::super::PendingToolCall;
@@ -772,10 +773,12 @@ impl ExecutionHost {
             {
                 let _guard = session.persistence_lock.lock().await;
                 let _ = store
-                    .insert_tool_execution_for_branch_head(
+                    .insert_tool_execution(
                         iid,
-                        session.selected_branch_head_id(),
-                        session.turn_index,
+                        TurnWriteTarget::branch_head(
+                            session.selected_branch_head_id(),
+                            session.turn_index,
+                        ),
                         &record.id,
                         &record.name,
                         &record.args,
@@ -817,10 +820,12 @@ impl ExecutionHost {
             {
                 let _guard = session.persistence_lock.lock().await;
                 let _ = store
-                    .insert_message_for_branch_head(
+                    .insert_message(
                         iid,
-                        session.selected_branch_head_id(),
-                        session.turn_index,
+                        TurnWriteTarget::branch_head(
+                            session.selected_branch_head_id(),
+                            session.turn_index,
+                        ),
                         "tool_result",
                         &encode_content_json(&tool_results),
                         None,

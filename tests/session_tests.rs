@@ -20,6 +20,7 @@ use turin::kernel::config::{
 };
 use turin::kernel::policy::PolicyScope;
 use turin::kernel::session::{QueuedTask, SessionStatus};
+use turin::persistence::state::{SessionReadTarget, TurnWriteTarget};
 use turin_types::TaskInputContent;
 
 // ─── Helpers ────────────────────────────────────────────────────
@@ -575,10 +576,9 @@ async fn test_local_branch_selection_does_not_mutate_persisted_active_head() -> 
         .create_branch_head_from_turn_index(session_id, "alt", Some(0), false)
         .await?;
     store
-        .insert_message_for_branch_head(
+        .insert_message(
             session_id,
-            Some(alt_head.id),
-            1,
+            TurnWriteTarget::branch_head(Some(alt_head.id), 1),
             "assistant",
             &serde_json::json!([{"type": "text", "text": "ALT PATH ONLY"}]),
             None,
@@ -2277,7 +2277,12 @@ async fn test_events_persisted_to_state_store() -> Result<()> {
 
     // Query events from state store
     if let Ok(store) = kernel.store_manager().get_default().await {
-        let events = store.get_events(session.internal_id.unwrap()).await?;
+        let events = store
+            .get_events(
+                session.internal_id.unwrap(),
+                &SessionReadTarget::ActiveBranch,
+            )
+            .await?;
         assert!(!events.is_empty(), "Events should be persisted");
         assert!(
             events.iter().any(|e| e.event_type == "governance_snapshot"),
@@ -2323,7 +2328,12 @@ async fn test_immutable_audit_persists_rejected_audit_events() -> Result<()> {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     if let Ok(store) = kernel.store_manager().get_default().await {
-        let events = store.get_events(session.internal_id.unwrap()).await?;
+        let events = store
+            .get_events(
+                session.internal_id.unwrap(),
+                &SessionReadTarget::ActiveBranch,
+            )
+            .await?;
         assert!(
             events.iter().any(|e| e.event_type == "governance_snapshot"),
             "immutable audit mode should persist governance_snapshot even if on_kernel_event rejects it"
@@ -2390,7 +2400,12 @@ async fn test_governance_grant_audit_events_persisted() -> Result<()> {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     if let Ok(store) = kernel.store_manager().get_default().await {
-        let events = store.get_events(session.internal_id.unwrap()).await?;
+        let events = store
+            .get_events(
+                session.internal_id.unwrap(),
+                &SessionReadTarget::ActiveBranch,
+            )
+            .await?;
         assert!(
             events
                 .iter()
@@ -2542,7 +2557,12 @@ async fn test_token_usage_reject_is_informational_by_default() -> Result<()> {
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     if let Ok(store) = kernel.store_manager().get_default().await {
-        let events = store.get_events(session.internal_id.unwrap()).await?;
+        let events = store
+            .get_events(
+                session.internal_id.unwrap(),
+                &SessionReadTarget::ActiveBranch,
+            )
+            .await?;
         assert!(
             event_has_task_status(&events, "success"),
             "default token-usage reject mode should be informational"
@@ -2590,7 +2610,12 @@ async fn test_token_usage_reject_can_enforce_task() -> Result<()> {
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     if let Ok(store) = kernel.store_manager().get_default().await {
-        let events = store.get_events(session.internal_id.unwrap()).await?;
+        let events = store
+            .get_events(
+                session.internal_id.unwrap(),
+                &SessionReadTarget::ActiveBranch,
+            )
+            .await?;
         assert!(
             event_has_task_status(&events, "rejected"),
             "task should be rejected when hook.token_usage.reject_mode=enforce_task"
@@ -2644,7 +2669,12 @@ async fn test_token_usage_reject_can_enforce_session() -> Result<()> {
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     if let Ok(store) = kernel.store_manager().get_default().await {
-        let events = store.get_events(session.internal_id.unwrap()).await?;
+        let events = store
+            .get_events(
+                session.internal_id.unwrap(),
+                &SessionReadTarget::ActiveBranch,
+            )
+            .await?;
         assert_eq!(
             count_event_type(&events, "task_start"),
             1,

@@ -2,47 +2,21 @@ use std::collections::HashSet;
 
 use anyhow::{Context, Result};
 
-use super::{EventRow, StateStore};
+use super::{EventRow, SessionReadTarget, StateStore, TurnWriteTarget};
 
 impl StateStore {
     pub async fn insert_event(
         &self,
         session_id: i64,
-        event_type: &str,
-        payload: &serde_json::Value,
-    ) -> Result<()> {
-        self.insert_event_with_turn_index_for_branch_head(
-            session_id, None, None, event_type, payload,
-        )
-        .await
-    }
-
-    pub async fn insert_event_with_turn_index(
-        &self,
-        session_id: i64,
-        turn_index: Option<u32>,
-        event_type: &str,
-        payload: &serde_json::Value,
-    ) -> Result<()> {
-        self.insert_event_with_turn_index_for_branch_head(
-            session_id, None, turn_index, event_type, payload,
-        )
-        .await
-    }
-
-    pub async fn insert_event_with_turn_index_for_branch_head(
-        &self,
-        session_id: i64,
-        branch_head_id: Option<i64>,
-        turn_index: Option<u32>,
+        target: Option<TurnWriteTarget>,
         event_type: &str,
         payload: &serde_json::Value,
     ) -> Result<()> {
         let conn = self.connect().await?;
         let payload_str = serde_json::to_string(payload)?;
-        let turn_id = match turn_index {
-            Some(turn_index) => self
-                .ensure_turn_for_branch_head(session_id, branch_head_id, turn_index)
+        let turn_id = match target {
+            Some(target) => self
+                .ensure_turn_for_branch_head(session_id, target.branch_head_id, target.turn_index)
                 .await?
                 .map(|turn| turn.id),
             None => None,
@@ -60,50 +34,40 @@ impl StateStore {
         self.query_events(session_id).await
     }
 
-    pub async fn get_events(&self, session_id: i64) -> Result<Vec<EventRow>> {
-        let events = self.query_events(session_id).await?;
-        self.filter_events_for_branch_head(session_id, None, events)
-            .await
-    }
-
-    pub async fn get_events_for_branch_head(
+    pub async fn get_events(
         &self,
         session_id: i64,
-        branch_head_id: Option<i64>,
+        target: &SessionReadTarget,
     ) -> Result<Vec<EventRow>> {
         let events = self.query_events(session_id).await?;
-        self.filter_events_for_branch_head(session_id, branch_head_id, events)
-            .await
-    }
-
-    pub async fn get_events_for_turn_id(
-        &self,
-        session_id: i64,
-        turn_id: i64,
-    ) -> Result<Vec<EventRow>> {
-        let events = self.query_events(session_id).await?;
-        let turn_ids = self
-            .turn_path_to_turn_id(session_id, turn_id)
-            .await?
-            .into_iter()
-            .map(|turn| turn.id)
-            .collect::<HashSet<_>>();
-        Ok(self.filter_events_for_turn_ids(events, &turn_ids))
-    }
-
-    pub async fn get_events_for_selected_path(
-        &self,
-        session_id: i64,
-        turn_ids: &[i64],
-    ) -> Result<Vec<EventRow>> {
-        let events = self.query_events(session_id).await?;
-        let turn_ids = self
-            .turn_rows_for_selected_path(session_id, turn_ids)
-            .await?
-            .into_iter()
-            .map(|turn| turn.id)
-            .collect::<HashSet<_>>();
-        Ok(self.filter_events_for_turn_ids(events, &turn_ids))
+        match target {
+            SessionReadTarget::ActiveBranch => {
+                self.filter_events_for_branch_head(session_id, None, events)
+                    .await
+            }
+            SessionReadTarget::BranchHead(branch_head_id) => {
+                self.filter_events_for_branch_head(session_id, Some(*branch_head_id), events)
+                    .await
+            }
+            SessionReadTarget::TurnId(turn_id) => {
+                let turn_ids = self
+                    .turn_path_to_turn_id(session_id, *turn_id)
+                    .await?
+                    .into_iter()
+                    .map(|turn| turn.id)
+                    .collect::<HashSet<_>>();
+                Ok(self.filter_events_for_turn_ids(events, &turn_ids))
+            }
+            SessionReadTarget::SelectedPath(turn_ids) => {
+                let turn_ids = self
+                    .turn_rows_for_selected_path(session_id, turn_ids)
+                    .await?
+                    .into_iter()
+                    .map(|turn| turn.id)
+                    .collect::<HashSet<_>>();
+                Ok(self.filter_events_for_turn_ids(events, &turn_ids))
+            }
+        }
     }
 
     pub async fn list_sessions(&self, limit: usize, offset: usize) -> Result<Vec<i64>> {

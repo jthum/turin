@@ -17,6 +17,7 @@ use turin::kernel::config::{
 };
 use turin::kernel::policy::PolicyScope;
 use turin::persistence::manager::StoreSelector;
+use turin::persistence::state::SessionReadTarget;
 
 struct ToolMockProvider {
     tool_name: String,
@@ -6181,7 +6182,10 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
 
     let store = kernel.store_manager().get_default().await?;
     let events = store
-        .get_events(session.internal_id.expect("session internal id"))
+        .get_events(
+            session.internal_id.expect("session internal id"),
+            &SessionReadTarget::ActiveBranch,
+        )
         .await?;
     let root_trace_id = events
         .iter()

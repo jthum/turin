@@ -1,42 +1,13 @@
 use anyhow::{Context, Result};
 
-use super::{StateStore, ToolExecutionRow};
+use super::{SessionReadTarget, StateStore, ToolExecutionRow, TurnWriteTarget};
 
 impl StateStore {
     #[allow(clippy::too_many_arguments)]
     pub async fn insert_tool_execution(
         &self,
         session_id: i64,
-        turn_index: u32,
-        tool_call_id: &str,
-        tool_name: &str,
-        args: &serde_json::Value,
-        output: Option<&str>,
-        is_error: bool,
-        duration_ms: Option<u64>,
-        verdict: &str,
-    ) -> Result<()> {
-        self.insert_tool_execution_for_branch_head(
-            session_id,
-            None,
-            turn_index,
-            tool_call_id,
-            tool_name,
-            args,
-            output,
-            is_error,
-            duration_ms,
-            verdict,
-        )
-        .await
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub async fn insert_tool_execution_for_branch_head(
-        &self,
-        session_id: i64,
-        branch_head_id: Option<i64>,
-        turn_index: u32,
+        target: TurnWriteTarget,
         tool_call_id: &str,
         tool_name: &str,
         args: &serde_json::Value,
@@ -48,7 +19,7 @@ impl StateStore {
         let conn = self.connect().await?;
         let args_str = serde_json::to_string(args)?;
         let turn = self
-            .ensure_turn_for_branch_head(session_id, branch_head_id, turn_index)
+            .ensure_turn_for_branch_head(session_id, target.branch_head_id, target.turn_index)
             .await?
             .ok_or_else(|| {
                 anyhow::anyhow!("No active branch head available for session {}", session_id)
@@ -57,7 +28,7 @@ impl StateStore {
             "INSERT INTO tool_executions (session_id, turn_index, tool_call_id, tool_name, args, output, is_error, duration_ms, verdict) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             turso::params![
                 session_id,
-                turn_index as i64,
+                target.turn_index as i64,
                 tool_call_id,
                 tool_name,
                 args_str.clone(),
@@ -87,19 +58,28 @@ impl StateStore {
         Ok(())
     }
 
-    pub async fn get_tool_executions(&self, session_id: i64) -> Result<Vec<ToolExecutionRow>> {
-        self.get_tool_executions_for_branch_head(session_id, None)
-            .await
-    }
-
-    pub async fn get_tool_executions_for_branch_head(
+    pub async fn get_tool_executions(
         &self,
         session_id: i64,
-        branch_head_id: Option<i64>,
+        target: &SessionReadTarget,
     ) -> Result<Vec<ToolExecutionRow>> {
         let conn = self.connect().await?;
         let mut execs = Vec::new();
-        for turn in self.branch_path_turns(session_id, branch_head_id).await? {
+        let turns = match target {
+            SessionReadTarget::ActiveBranch => self.branch_path_turns(session_id, None).await?,
+            SessionReadTarget::BranchHead(branch_head_id) => {
+                self.branch_path_turns(session_id, Some(*branch_head_id))
+                    .await?
+            }
+            SessionReadTarget::TurnId(turn_id) => {
+                self.turn_path_to_turn_id(session_id, *turn_id).await?
+            }
+            SessionReadTarget::SelectedPath(turn_ids) => {
+                self.turn_rows_for_selected_path(session_id, turn_ids)
+                    .await?
+            }
+        };
+        for turn in turns {
             let mut rows = conn
                 .query(
                     "SELECT id, tool_call_id, tool_name, args, output, is_error, duration_ms, verdict, created_at FROM turn_tool_executions WHERE turn_id = ?1 ORDER BY id",

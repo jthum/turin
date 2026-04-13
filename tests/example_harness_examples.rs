@@ -9,6 +9,7 @@ use turin::kernel::Kernel;
 use turin::kernel::config::{
     AgentConfig, GovernanceConfig, GovernanceGrantsConfig, GovernanceProfile,
 };
+use turin::persistence::state::SessionReadTarget;
 
 mod support;
 
@@ -69,7 +70,9 @@ async fn wait_for_persisted_session_events(
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let store = kernel.store_manager().get_default().await?;
-        let events = store.get_events(session_internal_id).await?;
+        let events = store
+            .get_events(session_internal_id, &SessionReadTarget::ActiveBranch)
+            .await?;
         if expected_event_types
             .iter()
             .all(|expected| events.iter().any(|event| event.event_type == *expected))

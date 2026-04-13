@@ -12,6 +12,7 @@ use crate::kernel::session_refs::{
 };
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{BranchHeadRow, SessionRow};
+use crate::persistence::state::SessionReadTarget;
 
 impl DaemonState {
     #[instrument(skip(self), fields(store = %store_selector_label_opt(store_selector.as_ref())))]
@@ -99,9 +100,10 @@ impl DaemonState {
             "Resolved persisted session detail target"
         );
         let store = self.kernel.store_manager().open(&store_selector).await?;
+        let active_branch = SessionReadTarget::ActiveBranch;
 
         let events = store
-            .get_events(row.id)
+            .get_events(row.id, &active_branch)
             .await?
             .into_iter()
             .map(|event| SessionEventDetail {
@@ -113,7 +115,7 @@ impl DaemonState {
             .collect();
 
         let messages = store
-            .get_messages(row.id)
+            .get_messages(row.id, &active_branch)
             .await?
             .into_iter()
             .map(|message| SessionMessageDetail {
@@ -127,7 +129,7 @@ impl DaemonState {
             .collect();
 
         let tool_executions = store
-            .get_tool_executions(row.id)
+            .get_tool_executions(row.id, &active_branch)
             .await?
             .into_iter()
             .map(|execution| SessionToolExecutionDetail {

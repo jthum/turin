@@ -12,6 +12,7 @@ use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::harness_hooks::TokenUsageHookAction;
 use crate::kernel::session::{QueuedTask, SessionState};
 use crate::kernel::turn;
+use crate::persistence::state::TurnWriteTarget;
 use crate::tools::ToolContext;
 use turin_types::layout::{DEFAULT_LAYOUT_ROOT, resolve_relative_to};
 
@@ -119,10 +120,12 @@ impl ExecutionHost {
             if let Some(iid) = session.internal_id {
                 let _guard = session.persistence_lock.lock().await;
                 let _ = store
-                    .insert_message_for_branch_head(
+                    .insert_message(
                         iid,
-                        session.selected_branch_head_id(),
-                        session.turn_index,
+                        TurnWriteTarget::branch_head(
+                            session.selected_branch_head_id(),
+                            session.turn_index,
+                        ),
                         "user",
                         &encode_content_json(content),
                         None,

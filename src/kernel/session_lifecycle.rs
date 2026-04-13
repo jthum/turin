@@ -17,7 +17,7 @@ use crate::kernel::session_refs::{
 };
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{EventRow, MessageRow, SessionRow};
-use crate::persistence::state::StateStore;
+use crate::persistence::state::{SessionReadTarget, StateStore, TurnWriteTarget};
 use crate::{
     inference::provider::{InferenceMessage, InferenceRole},
     kernel::identity::RuntimeIdentity,
@@ -310,10 +310,14 @@ impl ExecutionHost {
                             if let Some(iid) = record.internal_id {
                                 let _guard = persistence_lock.lock().await;
                                 if let Err(e) = store_clone
-                                    .insert_event_with_turn_index_for_branch_head(
+                                    .insert_event(
                                         iid,
-                                        record.branch_head_id,
-                                        record.turn_index,
+                                        record.turn_index.map(|turn_index| {
+                                            TurnWriteTarget::branch_head(
+                                                record.branch_head_id,
+                                                turn_index,
+                                            )
+                                        }),
                                         &event_type,
                                         &payload,
                                     )
@@ -559,33 +563,33 @@ async fn materialize_execution_target(
     match target {
         ExecutionContextTarget::BranchHead { branch_head_id } => {
             let branch_head_id = branch_head_id.or(row.active_branch_head_id);
+            let target = SessionReadTarget::branch_head(branch_head_id);
             Ok((
-                store
-                    .get_messages_for_branch_head(row.id, branch_head_id)
-                    .await?,
-                store
-                    .get_events_for_branch_head(row.id, branch_head_id)
-                    .await?,
+                store.get_messages(row.id, &target).await?,
+                store.get_events(row.id, &target).await?,
             ))
         }
-        ExecutionContextTarget::TurnId { turn_id } => Ok((
-            store.get_messages_for_turn_id(row.id, *turn_id).await?,
-            store.get_events_for_turn_id(row.id, *turn_id).await?,
-        )),
-        ExecutionContextTarget::SelectedPath { turn_ids } => Ok((
-            store
-                .get_messages_for_selected_path(row.id, turn_ids)
-                .await?,
-            store.get_events_for_selected_path(row.id, turn_ids).await?,
-        )),
-        ExecutionContextTarget::SummarySource { source_turn_id } => Ok((
-            store
-                .get_messages_for_turn_id(row.id, *source_turn_id)
-                .await?,
-            store
-                .get_events_for_turn_id(row.id, *source_turn_id)
-                .await?,
-        )),
+        ExecutionContextTarget::TurnId { turn_id } => {
+            let target = SessionReadTarget::TurnId(*turn_id);
+            Ok((
+                store.get_messages(row.id, &target).await?,
+                store.get_events(row.id, &target).await?,
+            ))
+        }
+        ExecutionContextTarget::SelectedPath { turn_ids } => {
+            let target = SessionReadTarget::SelectedPath(turn_ids.clone());
+            Ok((
+                store.get_messages(row.id, &target).await?,
+                store.get_events(row.id, &target).await?,
+            ))
+        }
+        ExecutionContextTarget::SummarySource { source_turn_id } => {
+            let target = SessionReadTarget::TurnId(*source_turn_id);
+            Ok((
+                store.get_messages(row.id, &target).await?,
+                store.get_events(row.id, &target).await?,
+            ))
+        }
         ExecutionContextTarget::ExternalReference { reference } => anyhow::bail!(
             "Execution context target '{}' is not materializable in live sessions yet",
             reference

@@ -34,6 +34,45 @@ pub struct StateStore {
     pub(crate) db: Arc<Database>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionReadTarget {
+    ActiveBranch,
+    BranchHead(i64),
+    TurnId(i64),
+    SelectedPath(Vec<i64>),
+}
+
+impl SessionReadTarget {
+    pub fn branch_head(branch_head_id: Option<i64>) -> Self {
+        match branch_head_id {
+            Some(branch_head_id) => Self::BranchHead(branch_head_id),
+            None => Self::ActiveBranch,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurnWriteTarget {
+    pub branch_head_id: Option<i64>,
+    pub turn_index: u32,
+}
+
+impl TurnWriteTarget {
+    pub const fn active_branch(turn_index: u32) -> Self {
+        Self {
+            branch_head_id: None,
+            turn_index,
+        }
+    }
+
+    pub const fn branch_head(branch_head_id: Option<i64>, turn_index: u32) -> Self {
+        Self {
+            branch_head_id,
+            turn_index,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionSearchRow {
     pub kind: SessionSearchHitKind,

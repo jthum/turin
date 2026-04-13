@@ -3,6 +3,18 @@ use turin_daemon_protocol::{SessionSearchHitKind, SessionSearchScope};
 
 use super::*;
 
+fn active_branch() -> SessionReadTarget {
+    SessionReadTarget::ActiveBranch
+}
+
+fn turn(turn_index: u32) -> TurnWriteTarget {
+    TurnWriteTarget::active_branch(turn_index)
+}
+
+fn branch_turn(branch_head_id: Option<i64>, turn_index: u32) -> TurnWriteTarget {
+    TurnWriteTarget::branch_head(branch_head_id, turn_index)
+}
+
 #[tokio::test]
 async fn test_schema_initialization() {
     let store = StateStore::open_memory().await.unwrap();
@@ -26,15 +38,20 @@ async fn test_insert_and_get_events() {
         .unwrap();
 
     store
-        .insert_event(session, "session_start", &json!({"session_id": session}))
+        .insert_event(
+            session,
+            None,
+            "session_start",
+            &json!({"session_id": session}),
+        )
         .await
         .unwrap();
     store
-        .insert_event(session, "turn_start", &json!({"turn_index": 0}))
+        .insert_event(session, None, "turn_start", &json!({"turn_index": 0}))
         .await
         .unwrap();
 
-    let events = store.get_events(session).await.unwrap();
+    let events = store.get_events(session, &active_branch()).await.unwrap();
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].event_type, "session_start");
     assert_eq!(events[1].event_type, "turn_start");
@@ -53,16 +70,16 @@ async fn test_events_isolated_by_session() {
         .unwrap();
 
     store
-        .insert_event(session_a, "session_start", &json!({}))
+        .insert_event(session_a, None, "session_start", &json!({}))
         .await
         .unwrap();
     store
-        .insert_event(session_b, "session_start", &json!({}))
+        .insert_event(session_b, None, "session_start", &json!({}))
         .await
         .unwrap();
 
-    let events_a = store.get_events(session_a).await.unwrap();
-    let events_b = store.get_events(session_b).await.unwrap();
+    let events_a = store.get_events(session_a, &active_branch()).await.unwrap();
+    let events_b = store.get_events(session_b, &active_branch()).await.unwrap();
     assert_eq!(events_a.len(), 1);
     assert_eq!(events_b.len(), 1);
 }
@@ -78,7 +95,7 @@ async fn test_insert_and_get_messages() {
     store
         .insert_message(
             session,
-            0,
+            turn(0),
             "user",
             &json!([{"type": "text", "text": "hello"}]),
             None,
@@ -88,7 +105,7 @@ async fn test_insert_and_get_messages() {
     store
         .insert_message(
             session,
-            0,
+            turn(0),
             "assistant",
             &json!([{"type": "text", "text": "hi!"}]),
             Some(10),
@@ -96,7 +113,7 @@ async fn test_insert_and_get_messages() {
         .await
         .unwrap();
 
-    let msgs = store.get_messages(session).await.unwrap();
+    let msgs = store.get_messages(session, &active_branch()).await.unwrap();
     assert_eq!(msgs.len(), 2);
     assert_eq!(msgs[0].role, "user");
     assert_eq!(msgs[1].role, "assistant");
@@ -114,7 +131,7 @@ async fn test_insert_and_get_tool_executions() {
     store
         .insert_tool_execution(
             session,
-            0,
+            turn(0),
             "call_1",
             "read_file",
             &json!({"path": "main.rs"}),
@@ -126,7 +143,10 @@ async fn test_insert_and_get_tool_executions() {
         .await
         .unwrap();
 
-    let execs = store.get_tool_executions(session).await.unwrap();
+    let execs = store
+        .get_tool_executions(session, &active_branch())
+        .await
+        .unwrap();
     assert_eq!(execs.len(), 1);
     assert_eq!(execs[0].tool_name, "read_file");
     assert_eq!(execs[0].output, Some("fn main() {}".to_string()));
@@ -146,7 +166,7 @@ async fn test_tool_execution_with_error() {
     store
         .insert_tool_execution(
             session,
-            0,
+            turn(0),
             "call_2",
             "shell_exec",
             &json!({"command": "rm -rf /"}),
@@ -158,7 +178,10 @@ async fn test_tool_execution_with_error() {
         .await
         .unwrap();
 
-    let execs = store.get_tool_executions(session).await.unwrap();
+    let execs = store
+        .get_tool_executions(session, &active_branch())
+        .await
+        .unwrap();
     assert_eq!(execs.len(), 1);
     assert!(execs[0].is_error);
     assert_eq!(execs[0].verdict, "reject");
@@ -222,7 +245,7 @@ async fn test_search_session_history_queries_messages_tools_events_and_titles() 
     store
         .insert_message(
             session_id,
-            0,
+            turn(0),
             "user",
             &json!([{"type": "text", "text": "Investigate the compiler panic in src/main.rs"}]),
             None,
@@ -232,7 +255,7 @@ async fn test_search_session_history_queries_messages_tools_events_and_titles() 
     store
         .insert_tool_execution(
             session_id,
-            0,
+            turn(0),
             "call_1",
             "read_file",
             &json!({"path": "src/main.rs"}),
@@ -246,6 +269,7 @@ async fn test_search_session_history_queries_messages_tools_events_and_titles() 
     store
         .insert_event(
             session_id,
+            None,
             "tool_call",
             &json!({"tool_name": "read_file", "path": "src/main.rs"}),
         )
@@ -313,7 +337,7 @@ async fn test_search_session_history_follows_active_branch_path_for_messages_and
     store
         .insert_message(
             session_id,
-            0,
+            turn(0),
             "user",
             &json!([{"type": "text", "text": "shared root"}]),
             None,
@@ -323,7 +347,7 @@ async fn test_search_session_history_follows_active_branch_path_for_messages_and
     store
         .insert_message(
             session_id,
-            1,
+            turn(1),
             "assistant",
             &json!([{"type": "text", "text": "main branch only message"}]),
             None,
@@ -333,7 +357,7 @@ async fn test_search_session_history_follows_active_branch_path_for_messages_and
     store
         .insert_tool_execution(
             session_id,
-            1,
+            turn(1),
             "call_main",
             "main_branch_tool",
             &json!({"path": "main.rs"}),
@@ -352,7 +376,7 @@ async fn test_search_session_history_follows_active_branch_path_for_messages_and
     store
         .insert_message(
             session_id,
-            1,
+            turn(1),
             "assistant",
             &json!([{"type": "text", "text": "alt branch only message"}]),
             None,
@@ -362,7 +386,7 @@ async fn test_search_session_history_follows_active_branch_path_for_messages_and
     store
         .insert_tool_execution(
             session_id,
-            1,
+            turn(1),
             "call_alt",
             "alt_branch_tool",
             &json!({"path": "alt.rs"}),
@@ -419,7 +443,7 @@ async fn test_get_events_uses_hybrid_branch_filtering() {
     store
         .insert_message(
             session,
-            0,
+            turn(0),
             "user",
             &json!([{"type": "text", "text": "root"}]),
             None,
@@ -427,13 +451,13 @@ async fn test_get_events_uses_hybrid_branch_filtering() {
         .await
         .unwrap();
     store
-        .insert_event(session, "session_start", &json!({"scope": "session"}))
+        .insert_event(session, None, "session_start", &json!({"scope": "session"}))
         .await
         .unwrap();
     store
-        .insert_event_with_turn_index(
+        .insert_event(
             session,
-            Some(1),
+            Some(turn(1)),
             "turn_end",
             &json!({"scope": "main-branch"}),
         )
@@ -445,20 +469,25 @@ async fn test_get_events_uses_hybrid_branch_filtering() {
         .await
         .unwrap();
     store
-        .insert_event_with_turn_index(
+        .insert_event(
             session,
-            Some(1),
+            Some(turn(1)),
             "turn_end",
             &json!({"scope": "alt-branch"}),
         )
         .await
         .unwrap();
     store
-        .insert_event(session, "all_tasks_complete", &json!({"scope": "session"}))
+        .insert_event(
+            session,
+            None,
+            "all_tasks_complete",
+            &json!({"scope": "session"}),
+        )
         .await
         .unwrap();
 
-    let events = store.get_events(session).await.unwrap();
+    let events = store.get_events(session, &active_branch()).await.unwrap();
     assert_eq!(events.len(), 3);
     assert_eq!(events[0].event_type, "session_start");
     assert!(events[0].turn_id.is_none());
@@ -483,7 +512,7 @@ async fn test_search_session_history_follows_active_branch_path_for_events() {
     store
         .insert_message(
             session,
-            0,
+            turn(0),
             "user",
             &json!([{"type": "text", "text": "root"}]),
             None,
@@ -493,15 +522,16 @@ async fn test_search_session_history_follows_active_branch_path_for_events() {
     store
         .insert_event(
             session,
+            None,
             "all_tasks_complete",
             &json!({"marker": "shared session event"}),
         )
         .await
         .unwrap();
     store
-        .insert_event_with_turn_index(
+        .insert_event(
             session,
-            Some(1),
+            Some(turn(1)),
             "turn_end",
             &json!({"marker": "main branch event"}),
         )
@@ -513,9 +543,9 @@ async fn test_search_session_history_follows_active_branch_path_for_events() {
         .await
         .unwrap();
     store
-        .insert_event_with_turn_index(
+        .insert_event(
             session,
-            Some(1),
+            Some(turn(1)),
             "turn_end",
             &json!({"marker": "alt branch event"}),
         )
@@ -605,7 +635,7 @@ async fn test_file_based_store() {
             .await
             .unwrap();
         store
-            .insert_event(session, "session_start", &json!({}))
+            .insert_event(session, None, "session_start", &json!({}))
             .await
             .unwrap();
         store
@@ -618,7 +648,7 @@ async fn test_file_based_store() {
         let store = StateStore::open(db_path_str).await.unwrap();
         let sessions = store.list_session_rows(4, 0).await.unwrap();
         let session = sessions.first().expect("persisted session").id;
-        let events = store.get_events(session).await.unwrap();
+        let events = store.get_events(session, &active_branch()).await.unwrap();
         assert_eq!(events.len(), 1);
 
         let val = store
@@ -658,7 +688,7 @@ async fn test_get_messages_follows_active_branch_path() {
     store
         .insert_message(
             session,
-            0,
+            turn(0),
             "user",
             &json!([{"type": "text", "text": "root"}]),
             None,
@@ -668,7 +698,7 @@ async fn test_get_messages_follows_active_branch_path() {
     store
         .insert_message(
             session,
-            1,
+            turn(1),
             "assistant",
             &json!([{"type": "text", "text": "main"}]),
             None,
@@ -686,7 +716,7 @@ async fn test_get_messages_follows_active_branch_path() {
     store
         .insert_message(
             session,
-            1,
+            turn(1),
             "assistant",
             &json!([{"type": "text", "text": "alternate"}]),
             None,
@@ -694,7 +724,7 @@ async fn test_get_messages_follows_active_branch_path() {
         .await
         .unwrap();
 
-    let alt_messages = store.get_messages(session).await.unwrap();
+    let alt_messages = store.get_messages(session, &active_branch()).await.unwrap();
     let texts = alt_messages
         .iter()
         .map(|row| row.content.clone())
@@ -712,7 +742,7 @@ async fn test_get_messages_follows_active_branch_path() {
     assert_eq!(main_head.name, "main");
     assert!(main_head.is_active);
 
-    let main_messages = store.get_messages(session).await.unwrap();
+    let main_messages = store.get_messages(session, &active_branch()).await.unwrap();
     let texts = main_messages
         .iter()
         .map(|row| row.content.clone())
@@ -734,7 +764,7 @@ async fn test_explicit_branch_head_reads_and_writes_ignore_active_branch() {
     store
         .insert_message(
             session,
-            0,
+            turn(0),
             "user",
             &json!([{"type": "text", "text": "root"}]),
             None,
@@ -754,10 +784,9 @@ async fn test_explicit_branch_head_reads_and_writes_ignore_active_branch() {
     assert_eq!(active.name, "main");
 
     store
-        .insert_message_for_branch_head(
+        .insert_message(
             session,
-            Some(alt.id),
-            1,
+            branch_turn(Some(alt.id), 1),
             "assistant",
             &json!([{"type": "text", "text": "alternate"}]),
             None,
@@ -765,12 +794,12 @@ async fn test_explicit_branch_head_reads_and_writes_ignore_active_branch() {
         .await
         .unwrap();
 
-    let main_messages = store.get_messages(session).await.unwrap();
+    let main_messages = store.get_messages(session, &active_branch()).await.unwrap();
     assert_eq!(main_messages.len(), 1);
     assert!(main_messages[0].content.contains("root"));
 
     let alt_messages = store
-        .get_messages_for_branch_head(session, Some(alt.id))
+        .get_messages(session, &SessionReadTarget::BranchHead(alt.id))
         .await
         .unwrap();
     assert_eq!(alt_messages.len(), 2);
