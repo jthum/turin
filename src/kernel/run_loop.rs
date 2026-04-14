@@ -7,6 +7,7 @@ use crate::kernel::event::{KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::{PlanProgress, QueuedTask, SessionState};
 use crate::kernel::session_refs::describe_store_selector;
+use crate::persistence::state::is_turn_write_conflict;
 
 impl ExecutionHost {
     /// Run the agent loop with the given prompt.
@@ -54,6 +55,21 @@ impl ExecutionHost {
                 Err(e) => {
                     error!(task_id = %task.task_id, trace_id = %task.trace_id, error = %e, "Task failed with runtime error");
                     let error_message = e.to_string();
+                    if is_turn_write_conflict(&e) {
+                        self.complete_task(
+                            session,
+                            &task,
+                            TaskTerminalStatus::Conflict,
+                            0,
+                            Some(error_message),
+                        )
+                        .await?;
+                        self.apply_pending_branch_checkout(session).await?;
+                        if session.stop_requested {
+                            break;
+                        }
+                        continue;
+                    }
                     let recovered = self
                         .handle_inference_error(session, &task, &error_message)
                         .await?;

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 
-use super::{BranchHeadRow, StateStore, TurnRow, TurnWriteTarget};
+use super::{BranchHeadRow, StateStore, TurnRow, TurnWriteError, TurnWriteTarget};
 
 impl StateStore {
     pub async fn initialize_main_branch(&self, session_id: i64) -> Result<BranchHeadRow> {
@@ -355,11 +355,11 @@ impl StateStore {
                     return Ok(None);
                 };
                 if branch.head_turn_id != Some(expected_head_turn_id) {
-                    anyhow::bail!(
-                        "Branch head changed while preparing turn write target: expected {:?}, found {:?}",
-                        Some(expected_head_turn_id),
-                        branch.head_turn_id
-                    );
+                    return Err(TurnWriteError::BranchHeadChanged {
+                        expected_head_turn_id,
+                        found_head_turn_id: branch.head_turn_id,
+                    }
+                    .into());
                 }
                 let expected_parent =
                     self.get_turn_row(expected_head_turn_id)

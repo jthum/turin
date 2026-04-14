@@ -34,6 +34,21 @@ pub struct StateStore {
     pub(crate) db: Arc<Database>,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum TurnWriteError {
+    #[error(
+        "Branch head changed while preparing turn write target: expected {expected_head_turn_id:?}, found {found_head_turn_id:?}"
+    )]
+    BranchHeadChanged {
+        expected_head_turn_id: i64,
+        found_head_turn_id: Option<i64>,
+    },
+}
+
+pub fn is_turn_write_conflict(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<TurnWriteError>().is_some()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionReadTarget {
     ActiveBranch,

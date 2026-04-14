@@ -628,6 +628,167 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_stale_branch_conflict_does_not_trigger_inference_recovery() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_branch_conflict.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    let harness_code = r#"
+        function on_inference_error(event)
+            local k = kv.as(runtime.context("project", "state"))
+            k.set("last_inference_error", tostring(event.error))
+            return MODIFY, { "retry with fallback task" }
+        end
+    "#;
+    std::fs::write(harness_dir.join("recover.lua"), harness_code)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        tools: Default::default(),
+        agent: AgentConfig {
+            tools: Default::default(),
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Conflict classification".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+            inference: Default::default(),
+            persistence: Default::default(),
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 3,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        layout: Default::default(),
+        inference: InferenceConfig::default(),
+        persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+            memory_limit_mb: 32,
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: Some(EmbeddingConfig::noop()),
+        governance: turin::kernel::config::GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(
+            "mock",
+            Arc::new(SequenceMockProvider {
+                responses: Arc::new(std::sync::Mutex::new(Vec::new())),
+            }),
+        ),
+    );
+
+    let mut session = kernel.create_session().await;
+    let store = kernel.store_manager().open(&session.store_selector).await?;
+    let internal_id = session.internal_id.expect("session should be persisted");
+
+    let first_turn = store
+        .prepare_turn_write_target(
+            internal_id,
+            turin::persistence::state::TurnWriteTarget::branch_head_with_expectation(
+                session.selected_branch_head_id(),
+                session.selected_branch_head_turn_id(),
+                0,
+            ),
+        )
+        .await?
+        .expect("first turn should be created");
+    let first_turn_id = match first_turn {
+        turin::persistence::state::TurnWriteTarget::ExistingTurn { turn_id, .. } => turn_id,
+        _ => unreachable!("prepared turn targets should resolve to an existing turn"),
+    };
+
+    let second_turn = store
+        .prepare_turn_write_target(
+            internal_id,
+            turin::persistence::state::TurnWriteTarget::branch_head_with_expectation(
+                session.selected_branch_head_id(),
+                Some(first_turn_id),
+                1,
+            ),
+        )
+        .await?
+        .expect("second turn should be created");
+    let second_turn_id = match second_turn {
+        turin::persistence::state::TurnWriteTarget::ExistingTurn { turn_id, .. } => turn_id,
+        _ => unreachable!("prepared turn targets should resolve to an existing turn"),
+    };
+    let existing_message = serde_json::json!([
+        {
+            "type": "text",
+            "text": "existing"
+        }
+    ]);
+
+    store
+        .insert_message(
+            internal_id,
+            second_turn,
+            "assistant",
+            &existing_message,
+            None,
+        )
+        .await?;
+
+    session.set_selected_branch_head_turn_id(Some(first_turn_id));
+    session.set_selected_branch_head_turn_index(Some(0));
+
+    kernel
+        .run(&mut session, Some("trigger".to_string()))
+        .await?;
+
+    let conflict_event = store
+        .get_all_events(internal_id)
+        .await?
+        .into_iter()
+        .filter(|event| event.event_type == "task_complete")
+        .find_map(|event| serde_json::from_str::<serde_json::Value>(&event.payload).ok())
+        .and_then(|payload| {
+            payload
+                .get("status")
+                .and_then(|value| value.as_str().map(str::to_string))
+        });
+    assert_eq!(conflict_event.as_deref(), Some("conflict"));
+
+    let recovery: Option<String> = store
+        .kv_get("project", "state", "last_inference_error")
+        .await?;
+    assert_eq!(recovery, None);
+
+    session.set_selected_branch_head_turn_id(Some(second_turn_id));
+    session.set_selected_branch_head_turn_index(Some(1));
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_dynamic_mode_switching_stateless() -> Result<()> {
     let tmp = tempdir()?;

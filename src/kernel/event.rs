@@ -12,6 +12,7 @@ use crate::kernel::session::ContextCompactionCheckpoint;
 pub enum TaskTerminalStatus {
     Success,
     Rejected,
+    Conflict,
     MaxTurns,
     Error,
     Cancelled,

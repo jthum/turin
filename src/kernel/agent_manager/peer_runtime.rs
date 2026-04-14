@@ -14,6 +14,7 @@ use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreSelector;
+use crate::persistence::state::is_turn_write_conflict;
 
 use super::{
     AgentManager, PeerAgentTaskEnvelope, PeerAgentTaskResult, RuntimeControl,
@@ -294,6 +295,24 @@ impl PeerRuntime {
                     Err(e) => {
                         error!(task_id = %task.task_id, trace_id = %task.trace_id, error = %e, "Peer task failed with runtime error");
                         let error_message = e.to_string();
+                        if is_turn_write_conflict(&e) {
+                            self.host
+                                .complete_task(
+                                    &mut self.session,
+                                    &task,
+                                    TaskTerminalStatus::Conflict,
+                                    0,
+                                    Some(error_message),
+                                )
+                                .await?;
+                            return Ok(PeerRunOutcome {
+                                runtime_task_id: task.task_id,
+                                status: TaskTerminalStatus::Conflict,
+                                task_turn_count: 0,
+                                output: None,
+                                assistant_content: None,
+                            });
+                        }
                         let recovered = self
                             .host
                             .handle_inference_error(&mut self.session, &task, &error_message)
