@@ -19,7 +19,7 @@ impl StateStore {
         let conn = self.connect().await?;
         let args_str = serde_json::to_string(args)?;
         let turn = self
-            .ensure_turn_for_branch_head(session_id, target.branch_head_id, target.turn_index)
+            .resolve_turn_for_write_target(session_id, target)
             .await?
             .ok_or_else(|| {
                 anyhow::anyhow!("No active branch head available for session {}", session_id)
@@ -28,7 +28,7 @@ impl StateStore {
             "INSERT INTO tool_executions (session_id, turn_index, tool_call_id, tool_name, args, output, is_error, duration_ms, verdict) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             turso::params![
                 session_id,
-                target.turn_index as i64,
+                target.turn_index() as i64,
                 tool_call_id,
                 tool_name,
                 args_str.clone(),

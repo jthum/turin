@@ -16,7 +16,7 @@ impl StateStore {
         let payload_str = serde_json::to_string(payload)?;
         let turn_id = match target {
             Some(target) => self
-                .ensure_turn_for_branch_head(session_id, target.branch_head_id, target.turn_index)
+                .resolve_turn_for_write_target(session_id, target)
                 .await?
                 .map(|turn| turn.id),
             None => None,

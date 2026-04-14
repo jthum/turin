@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, instrument, warn};
@@ -42,6 +42,7 @@ impl ExecutionHost {
             });
         }
 
+        self.begin_turn_persistence(session).await?;
         self.append_task_user_message(session, &user_content);
 
         let effective_tools = crate::tools::policy::resolve_effective_tools_config(
@@ -116,7 +117,9 @@ impl ExecutionHost {
         content: &[InferenceContent],
     ) {
         if let Ok(store) = self.store_manager.open(&session.store_selector).await {
-            if let (Some(iid), Some(target)) = (session.internal_id, session.turn_write_target()) {
+            if let (Some(iid), Some(target)) =
+                (session.internal_id, session.active_turn_write_target())
+            {
                 let _guard = session.persistence_lock.lock().await;
                 let _ = store
                     .insert_message(iid, target, "user", &encode_content_json(content), None)
@@ -189,6 +192,8 @@ impl ExecutionHost {
                 break Ok(TaskTerminalStatus::MaxTurns);
             }
 
+            self.begin_turn_persistence(session).await?;
+
             let turn_ctx = turn::TurnContext {
                 task_id: task.task_id.clone(),
                 trace_id: task.trace_id.clone(),
@@ -197,8 +202,14 @@ impl ExecutionHost {
                 allowed_native_tools: Arc::clone(&tool_ctx.allowed_native_tools),
             };
             let completed_turn = match self.execute_turn(session, tool_ctx, &turn_ctx).await {
-                Ok(outcome) => outcome,
-                Err(err) => break Err(err),
+                Ok(outcome) => {
+                    self.clear_turn_persistence(session);
+                    outcome
+                }
+                Err(err) => {
+                    self.clear_turn_persistence(session);
+                    break Err(err);
+                }
             };
 
             let token_usage_action = self.evaluate_token_usage(session).await;
@@ -269,5 +280,48 @@ impl ExecutionHost {
         {
             session.mode = m;
         }
+    }
+
+    async fn begin_turn_persistence(&self, session: &mut SessionState) -> Result<()> {
+        if session.active_turn_write_target().is_some() {
+            return Ok(());
+        }
+        let Some(request) = session.next_turn_write_target_request() else {
+            return Ok(());
+        };
+        let Some(internal_id) = session.internal_id else {
+            warn!("Session missing internal_id, skipping turn target preparation");
+            return Ok(());
+        };
+        let Ok(store) = self.store_manager.open(&session.store_selector).await else {
+            return Ok(());
+        };
+
+        let resolved = {
+            let _guard = session.persistence_lock.lock().await;
+            store
+                .prepare_turn_write_target(internal_id, request)
+                .await?
+                .ok_or_else(|| {
+                    anyhow!(
+                        "No active branch head available for session {}",
+                        internal_id
+                    )
+                })?
+        };
+        if let crate::persistence::state::TurnWriteTarget::ExistingTurn {
+            turn_id,
+            turn_index,
+        } = resolved
+        {
+            session.set_selected_branch_head_turn_id(Some(turn_id));
+            session.set_selected_branch_head_turn_index(Some(turn_index));
+        }
+        session.set_active_turn_write_target(Some(resolved));
+        Ok(())
+    }
+
+    fn clear_turn_persistence(&self, session: &mut SessionState) {
+        session.set_active_turn_write_target(None);
     }
 }

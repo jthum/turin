@@ -66,7 +66,9 @@ impl ExecutionHost {
                     input: tc.args.clone(),
                 });
             }
-            if let (Some(iid), Some(target)) = (session.internal_id, session.turn_write_target()) {
+            if let (Some(iid), Some(target)) =
+                (session.internal_id, session.active_turn_write_target())
+            {
                 let _guard = session.persistence_lock.lock().await;
                 let _ = store
                     .insert_message(

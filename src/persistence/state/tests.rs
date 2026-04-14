@@ -812,6 +812,79 @@ async fn test_explicit_branch_head_reads_and_writes_ignore_active_branch() {
 }
 
 #[tokio::test]
+async fn test_prepare_turn_write_target_rejects_stale_branch_head_and_reuses_resolved_turn() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    store
+        .insert_message(
+            session,
+            turn(0),
+            "user",
+            &json!([{"type": "text", "text": "root"}]),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let main = store
+        .get_active_branch_head(session)
+        .await
+        .unwrap()
+        .expect("active branch");
+    let request =
+        TurnWriteTarget::branch_head_with_expectation(Some(main.id), main.head_turn_id, 1);
+    let resolved = store
+        .prepare_turn_write_target(session, request)
+        .await
+        .unwrap()
+        .expect("resolved turn target");
+
+    store
+        .insert_message(
+            session,
+            resolved,
+            "assistant",
+            &json!([{"type": "text", "text": "first write on resolved turn"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .insert_message(
+            session,
+            resolved,
+            "assistant",
+            &json!([{"type": "text", "text": "second write on resolved turn"}]),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let err = store
+        .prepare_turn_write_target(session, request)
+        .await
+        .expect_err("stale branch advance target should be rejected");
+    assert!(
+        err.to_string()
+            .contains("Branch head changed while preparing turn write target"),
+        "unexpected stale target error: {err}"
+    );
+
+    let messages = store.get_messages(session, &active_branch()).await.unwrap();
+    assert_eq!(messages.len(), 3);
+    assert!(messages[1].content.contains("first write on resolved turn"));
+    assert!(
+        messages[2]
+            .content
+            .contains("second write on resolved turn")
+    );
+}
+
+#[tokio::test]
 async fn test_hybrid_search() {
     let store = StateStore::open_memory()
         .await

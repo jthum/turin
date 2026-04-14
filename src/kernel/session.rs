@@ -123,8 +123,7 @@ pub struct QueuedTask {
 #[derive(Debug, Clone)]
 pub struct PersistedKernelEvent {
     pub internal_id: Option<i64>,
-    pub branch_head_id: Option<i64>,
-    pub turn_index: Option<u32>,
+    pub turn_target: Option<TurnWriteTarget>,
     pub event: KernelEvent,
 }
 
@@ -246,6 +245,9 @@ pub struct SessionState {
     pub context_checkpoint: Option<ContextCompactionCheckpoint>,
     pub history: Vec<InferenceMessage>,
     pub execution: ExecutionContext,
+    pub selected_branch_head_turn_id: Option<i64>,
+    pub selected_branch_head_turn_index: Option<u32>,
+    pub active_turn_target: Option<TurnWriteTarget>,
     pub harness_engine: Option<SessionHarnessEngine>,
     pub harness_generation: u64,
     pub queue: Arc<Mutex<VecDeque<QueuedTask>>>,
@@ -292,6 +294,9 @@ impl SessionState {
             context_checkpoint: None,
             history: Vec::new(),
             execution: ExecutionContext::new(),
+            selected_branch_head_turn_id: None,
+            selected_branch_head_turn_index: None,
+            active_turn_target: None,
             harness_engine: None,
             harness_generation: 0,
             queue: Arc::new(Mutex::new(VecDeque::new())),
@@ -334,6 +339,11 @@ impl SessionState {
     pub fn set_context_target(&mut self, context_target: ExecutionContextTarget) {
         self.execution.write_policy = context_target.default_write_policy();
         self.execution.context_target = context_target;
+        if self.execution.write_policy != ExecutionWritePolicy::AdvanceBranchHead {
+            self.selected_branch_head_turn_id = None;
+            self.selected_branch_head_turn_index = None;
+        }
+        self.active_turn_target = None;
     }
 
     pub fn selected_branch_head_id(&self) -> Option<i64> {
@@ -344,6 +354,22 @@ impl SessionState {
         self.set_context_target(ExecutionContextTarget::BranchHead { branch_head_id });
     }
 
+    pub fn selected_branch_head_turn_id(&self) -> Option<i64> {
+        self.selected_branch_head_turn_id
+    }
+
+    pub fn set_selected_branch_head_turn_id(&mut self, turn_id: Option<i64>) {
+        self.selected_branch_head_turn_id = turn_id;
+    }
+
+    pub fn selected_branch_head_turn_index(&self) -> Option<u32> {
+        self.selected_branch_head_turn_index
+    }
+
+    pub fn set_selected_branch_head_turn_index(&mut self, turn_index: Option<u32>) {
+        self.selected_branch_head_turn_index = turn_index;
+    }
+
     pub fn selected_turn_id(&self) -> Option<i64> {
         self.execution.context_target.turn_id()
     }
@@ -352,14 +378,28 @@ impl SessionState {
         self.set_context_target(ExecutionContextTarget::TurnId { turn_id });
     }
 
-    pub fn turn_write_target(&self) -> Option<TurnWriteTarget> {
+    pub fn next_turn_write_target_request(&self) -> Option<TurnWriteTarget> {
         match self.execution.write_policy {
-            ExecutionWritePolicy::AdvanceBranchHead => Some(TurnWriteTarget::branch_head(
-                self.selected_branch_head_id(),
-                self.turn_index,
-            )),
+            ExecutionWritePolicy::AdvanceBranchHead => {
+                let next_turn_index = self
+                    .selected_branch_head_turn_index
+                    .map_or(0, |turn_index| turn_index + 1);
+                Some(TurnWriteTarget::branch_head_with_expectation(
+                    self.selected_branch_head_id(),
+                    self.selected_branch_head_turn_id,
+                    next_turn_index,
+                ))
+            }
             ExecutionWritePolicy::Detached => None,
         }
+    }
+
+    pub fn active_turn_write_target(&self) -> Option<TurnWriteTarget> {
+        self.active_turn_target
+    }
+
+    pub fn set_active_turn_write_target(&mut self, target: Option<TurnWriteTarget>) {
+        self.active_turn_target = target;
     }
 }
 
@@ -424,7 +464,8 @@ mod tests {
             session.execution.write_policy,
             ExecutionWritePolicy::Detached
         );
-        assert_eq!(session.turn_write_target(), None);
+        assert_eq!(session.next_turn_write_target_request(), None);
+        assert_eq!(session.active_turn_write_target(), None);
 
         session.set_context_target(ExecutionContextTarget::ExternalReference {
             reference: "0123456789abcdef0123456789abcdef".to_string(),
@@ -433,16 +474,46 @@ mod tests {
             session.execution.write_policy,
             ExecutionWritePolicy::Detached
         );
-        assert_eq!(session.turn_write_target(), None);
+        assert_eq!(session.next_turn_write_target_request(), None);
+        assert_eq!(session.active_turn_write_target(), None);
 
         session.set_selected_branch_head_id(Some(11));
+        session.set_selected_branch_head_turn_id(Some(5));
+        session.set_selected_branch_head_turn_index(Some(0));
         assert_eq!(
             session.execution.write_policy,
             ExecutionWritePolicy::AdvanceBranchHead
         );
         assert_eq!(
-            session.turn_write_target(),
-            Some(TurnWriteTarget::branch_head(Some(11), 0))
+            session.next_turn_write_target_request(),
+            Some(TurnWriteTarget::branch_head_with_expectation(
+                Some(11),
+                Some(5),
+                1
+            ))
+        );
+        session.set_active_turn_write_target(Some(TurnWriteTarget::existing_turn(9, 0)));
+        assert_eq!(
+            session.active_turn_write_target(),
+            Some(TurnWriteTarget::existing_turn(9, 0))
+        );
+    }
+
+    #[test]
+    fn branch_write_progression_uses_persisted_head_depth() {
+        let mut session = SessionState::new();
+        session.set_selected_branch_head_id(Some(11));
+        session.set_selected_branch_head_turn_id(Some(5));
+        session.set_selected_branch_head_turn_index(Some(3));
+        session.turn_index = 0;
+
+        assert_eq!(
+            session.next_turn_write_target_request(),
+            Some(TurnWriteTarget::branch_head_with_expectation(
+                Some(11),
+                Some(5),
+                4
+            ))
         );
     }
 }

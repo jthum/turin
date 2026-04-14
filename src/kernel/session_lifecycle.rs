@@ -17,7 +17,7 @@ use crate::kernel::session_refs::{
 };
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{EventRow, MessageRow, SessionRow};
-use crate::persistence::state::{SessionReadTarget, StateStore, TurnWriteTarget};
+use crate::persistence::state::{SessionReadTarget, StateStore};
 use crate::{
     inference::provider::{InferenceMessage, InferenceRole},
     kernel::identity::RuntimeIdentity,
@@ -124,11 +124,11 @@ impl ExecutionHost {
         let context_target = ExecutionContextTarget::BranchHead {
             branch_head_id: row.active_branch_head_id,
         };
-        let (messages, active_events) =
+        let materialized =
             materialize_execution_target(self, &store, &store_selector, &row, &context_target)
                 .await?;
         let events = store.get_all_events(row.id).await?;
-        let (history, turn_index) = rebuild_history(&messages)?;
+        let (history, turn_index) = rebuild_history(&materialized.messages)?;
         let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
             rebuild_session_counters(&events);
 
@@ -142,9 +142,11 @@ impl ExecutionHost {
         session.default_store_selector =
             session_default_store_selector_from_metadata(row.metadata.as_deref());
         session.inference = inference;
-        session.context_checkpoint = rebuild_context_checkpoint(&active_events);
+        session.context_checkpoint = rebuild_context_checkpoint(&materialized.active_events);
         session.history = history;
         session.set_context_target(context_target);
+        session.set_selected_branch_head_turn_id(materialized.branch_head_turn_id);
+        session.set_selected_branch_head_turn_index(materialized.branch_head_turn_index);
         session.turn_index = turn_index;
         session.total_input_tokens = total_input_tokens;
         session.total_output_tokens = total_output_tokens;
@@ -172,7 +174,7 @@ impl ExecutionHost {
         })?;
 
         let context_target = resolved_execution_context_target(session.context_target(), &row);
-        let (messages, active_events) = materialize_execution_target(
+        let materialized = materialize_execution_target(
             self,
             &store,
             &session.store_selector,
@@ -181,7 +183,7 @@ impl ExecutionHost {
         )
         .await?;
         let events = store.get_all_events(row.id).await?;
-        let (history, turn_index) = rebuild_history(&messages)?;
+        let (history, turn_index) = rebuild_history(&materialized.messages)?;
         let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
             rebuild_session_counters(&events);
 
@@ -190,9 +192,11 @@ impl ExecutionHost {
         session
             .identity
             .set_channel_id(session_channel_id_from_metadata(row.metadata.as_deref()));
-        session.context_checkpoint = rebuild_context_checkpoint(&active_events);
+        session.context_checkpoint = rebuild_context_checkpoint(&materialized.active_events);
         session.history = history;
         session.set_context_target(context_target);
+        session.set_selected_branch_head_turn_id(materialized.branch_head_turn_id);
+        session.set_selected_branch_head_turn_index(materialized.branch_head_turn_index);
         session.turn_index = turn_index;
         session.total_input_tokens = total_input_tokens;
         session.total_output_tokens = total_output_tokens;
@@ -306,6 +310,23 @@ impl ExecutionHost {
                         match store.get_active_branch_head(id).await {
                             Ok(Some(branch)) => {
                                 session.set_selected_branch_head_id(Some(branch.id));
+                                session.set_selected_branch_head_turn_id(branch.head_turn_id);
+                                let head_turn_index = match branch.head_turn_id {
+                                    Some(turn_id) => match store.get_turn_row(turn_id).await {
+                                        Ok(Some(turn)) => Some(turn.branch_depth),
+                                        Ok(None) => None,
+                                        Err(e) => {
+                                            warn!(
+                                                error = %e,
+                                                turn_id,
+                                                "Failed to load initial branch head turn depth"
+                                            );
+                                            None
+                                        }
+                                    },
+                                    None => None,
+                                };
+                                session.set_selected_branch_head_turn_index(head_turn_index);
                             }
                             Ok(None) => {
                                 warn!("Created session is missing an active branch head");
@@ -348,17 +369,7 @@ impl ExecutionHost {
                             if let Some(iid) = record.internal_id {
                                 let _guard = persistence_lock.lock().await;
                                 if let Err(e) = store_clone
-                                    .insert_event(
-                                        iid,
-                                        record.turn_index.map(|turn_index| {
-                                            TurnWriteTarget::branch_head(
-                                                record.branch_head_id,
-                                                turn_index,
-                                            )
-                                        }),
-                                        &event_type,
-                                        &payload,
-                                    )
+                                    .insert_event(iid, record.turn_target, &event_type, &payload)
                                     .await
                                 {
                                     warn!(error = %e, "Background persistence error");
@@ -593,42 +604,73 @@ fn resolved_execution_context_target(
     }
 }
 
+struct MaterializedExecutionTarget {
+    messages: Vec<MessageRow>,
+    active_events: Vec<EventRow>,
+    branch_head_turn_id: Option<i64>,
+    branch_head_turn_index: Option<u32>,
+}
+
 async fn materialize_execution_target(
     host: &ExecutionHost,
     store: &StateStore,
     current_store_selector: &StoreSelector,
     row: &SessionRow,
     target: &ExecutionContextTarget,
-) -> Result<(Vec<MessageRow>, Vec<EventRow>)> {
+) -> Result<MaterializedExecutionTarget> {
     match target {
         ExecutionContextTarget::BranchHead { branch_head_id } => {
             let branch_head_id = branch_head_id.or(row.active_branch_head_id);
             let target = SessionReadTarget::branch_head(branch_head_id);
-            Ok((
-                store.get_messages(row.id, &target).await?,
-                store.get_events(row.id, &target).await?,
-            ))
+            let branch_head_turn_id = match branch_head_id {
+                Some(branch_head_id) => store
+                    .get_branch_head(row.id, branch_head_id)
+                    .await?
+                    .and_then(|branch| branch.head_turn_id),
+                None => store
+                    .get_active_branch_head(row.id)
+                    .await?
+                    .and_then(|branch| branch.head_turn_id),
+            };
+            Ok(MaterializedExecutionTarget {
+                messages: store.get_messages(row.id, &target).await?,
+                active_events: store.get_events(row.id, &target).await?,
+                branch_head_turn_id,
+                branch_head_turn_index: match branch_head_turn_id {
+                    Some(turn_id) => store
+                        .get_turn_row(turn_id)
+                        .await?
+                        .map(|turn| turn.branch_depth),
+                    None => None,
+                },
+            })
         }
         ExecutionContextTarget::TurnId { turn_id } => {
             let target = SessionReadTarget::TurnId(*turn_id);
-            Ok((
-                store.get_messages(row.id, &target).await?,
-                store.get_events(row.id, &target).await?,
-            ))
+            Ok(MaterializedExecutionTarget {
+                messages: store.get_messages(row.id, &target).await?,
+                active_events: store.get_events(row.id, &target).await?,
+                branch_head_turn_id: None,
+                branch_head_turn_index: None,
+            })
         }
         ExecutionContextTarget::SelectedPath { turn_ids } => {
             let target = SessionReadTarget::SelectedPath(turn_ids.clone());
-            Ok((
-                store.get_messages(row.id, &target).await?,
-                store.get_events(row.id, &target).await?,
-            ))
+            Ok(MaterializedExecutionTarget {
+                messages: store.get_messages(row.id, &target).await?,
+                active_events: store.get_events(row.id, &target).await?,
+                branch_head_turn_id: None,
+                branch_head_turn_index: None,
+            })
         }
         ExecutionContextTarget::SummarySource { source_turn_id } => {
             let target = SessionReadTarget::TurnId(*source_turn_id);
-            Ok((
-                store.get_messages(row.id, &target).await?,
-                store.get_events(row.id, &target).await?,
-            ))
+            Ok(MaterializedExecutionTarget {
+                messages: store.get_messages(row.id, &target).await?,
+                active_events: store.get_events(row.id, &target).await?,
+                branch_head_turn_id: None,
+                branch_head_turn_index: None,
+            })
         }
         ExecutionContextTarget::ExternalReference { reference } => {
             let session_ref = parse_session_reference(reference)?;
@@ -653,12 +695,14 @@ async fn materialize_execution_target(
                 .await?
                 .ok_or_else(|| anyhow!("Execution context target '{}' was not found", reference))?;
             let target = SessionReadTarget::branch_head(referenced_row.active_branch_head_id);
-            Ok((
-                target_store
+            Ok(MaterializedExecutionTarget {
+                messages: target_store
                     .get_messages(referenced_row.id, &target)
                     .await?,
-                target_store.get_events(referenced_row.id, &target).await?,
-            ))
+                active_events: target_store.get_events(referenced_row.id, &target).await?,
+                branch_head_turn_id: None,
+                branch_head_turn_index: None,
+            })
         }
     }
 }

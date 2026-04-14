@@ -44,7 +44,7 @@ impl StateStore {
         let conn = self.connect().await?;
         let content_str = serde_json::to_string(content)?;
         let turn = self
-            .ensure_turn_for_branch_head(session_id, target.branch_head_id, target.turn_index)
+            .resolve_turn_for_write_target(session_id, target)
             .await?
             .ok_or_else(|| {
                 anyhow::anyhow!("No active branch head available for session {}", session_id)
@@ -53,7 +53,7 @@ impl StateStore {
             "INSERT INTO messages (session_id, turn_index, role, content, token_count) VALUES (?1, ?2, ?3, ?4, ?5)",
             turso::params![
                 session_id,
-                target.turn_index as i64,
+                target.turn_index() as i64,
                 role,
                 content_str.clone(),
                 token_count.map(|t| t as i64),

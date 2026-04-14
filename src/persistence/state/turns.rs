@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 
-use super::{BranchHeadRow, StateStore, TurnRow};
+use super::{BranchHeadRow, StateStore, TurnRow, TurnWriteTarget};
 
 impl StateStore {
     pub async fn initialize_main_branch(&self, session_id: i64) -> Result<BranchHeadRow> {
@@ -255,6 +255,17 @@ impl StateStore {
         Ok(self.branch_path_turns(session_id, None).await?.len() as u32)
     }
 
+    pub async fn prepare_turn_write_target(
+        &self,
+        session_id: i64,
+        target: TurnWriteTarget,
+    ) -> Result<Option<TurnWriteTarget>> {
+        let turn = self
+            .resolve_turn_for_write_target(session_id, target)
+            .await?;
+        Ok(turn.map(|turn| TurnWriteTarget::existing_turn(turn.id, turn.branch_depth)))
+    }
+
     pub(crate) async fn ensure_turn_for_branch_head(
         &self,
         session_id: i64,
@@ -305,6 +316,111 @@ impl StateStore {
         self.create_turn_for_branch(&conn, session_id, branch_id, None, 0)
             .await
             .map(Some)
+    }
+
+    pub(crate) async fn resolve_turn_for_write_target(
+        &self,
+        session_id: i64,
+        target: TurnWriteTarget,
+    ) -> Result<Option<TurnRow>> {
+        match target {
+            TurnWriteTarget::ExistingTurn {
+                turn_id,
+                turn_index,
+            } => {
+                let Some(turn) = self.get_turn_row(turn_id).await? else {
+                    anyhow::bail!("Turn {} could not be loaded", turn_id);
+                };
+                if turn.session_id != session_id {
+                    anyhow::bail!("Turn {} does not belong to session {}", turn_id, session_id);
+                }
+                if turn.branch_depth != turn_index {
+                    anyhow::bail!(
+                        "Turn {} depth mismatch: expected {}, found {}",
+                        turn_id,
+                        turn_index,
+                        turn.branch_depth
+                    );
+                }
+                Ok(Some(turn))
+            }
+            TurnWriteTarget::BranchAdvance {
+                branch_head_id,
+                expected_head_turn_id: Some(expected_head_turn_id),
+                turn_index,
+            } => {
+                let conn = self.connect().await?;
+                let Some(branch) = self.resolve_branch_head(session_id, branch_head_id).await?
+                else {
+                    return Ok(None);
+                };
+                if branch.head_turn_id != Some(expected_head_turn_id) {
+                    anyhow::bail!(
+                        "Branch head changed while preparing turn write target: expected {:?}, found {:?}",
+                        Some(expected_head_turn_id),
+                        branch.head_turn_id
+                    );
+                }
+                let expected_parent =
+                    self.get_turn_row(expected_head_turn_id)
+                        .await?
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "Turn {} on branch {} could not be loaded",
+                                expected_head_turn_id,
+                                branch.id
+                            )
+                        })?;
+                if expected_parent.session_id != session_id {
+                    anyhow::bail!(
+                        "Turn {} does not belong to session {}",
+                        expected_head_turn_id,
+                        session_id
+                    );
+                }
+                if expected_parent.branch_depth + 1 != turn_index {
+                    anyhow::bail!(
+                        "Invalid branch advance progression: parent depth {}, requested {}",
+                        expected_parent.branch_depth,
+                        turn_index
+                    );
+                }
+                self.create_turn_for_branch(
+                    &conn,
+                    session_id,
+                    branch.id,
+                    Some(expected_parent.id),
+                    turn_index,
+                )
+                .await
+                .map(Some)
+            }
+            TurnWriteTarget::BranchAdvance {
+                branch_head_id,
+                expected_head_turn_id: None,
+                turn_index,
+            } => {
+                let conn = self.connect().await?;
+                let Some(branch) = self.resolve_branch_head(session_id, branch_head_id).await?
+                else {
+                    return Ok(None);
+                };
+                if branch.head_turn_id.is_some() {
+                    return self
+                        .ensure_turn_for_branch_head(session_id, branch_head_id, turn_index)
+                        .await;
+                }
+                if turn_index != 0 {
+                    anyhow::bail!(
+                        "Invalid branch advance progression: empty branch requested turn {}",
+                        turn_index
+                    );
+                }
+                self.create_turn_for_branch(&conn, session_id, branch.id, None, 0)
+                    .await
+                    .map(Some)
+            }
+        }
     }
 
     pub(crate) async fn active_branch_path_turns(&self, session_id: i64) -> Result<Vec<TurnRow>> {

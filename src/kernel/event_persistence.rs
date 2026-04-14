@@ -98,8 +98,7 @@ fn persisted_event_record(
     if let Some(target) = branch_scoped_persistence_target(session, event) {
         return Some(PersistedKernelEvent {
             internal_id: session.internal_id,
-            branch_head_id: target.branch_head_id,
-            turn_index: Some(target.turn_index),
+            turn_target: Some(target),
             event: event.clone(),
         });
     }
@@ -110,8 +109,7 @@ fn persisted_event_record(
 
     Some(PersistedKernelEvent {
         internal_id: session.internal_id,
-        branch_head_id: None,
-        turn_index: None,
+        turn_target: None,
         event: event.clone(),
     })
 }
@@ -121,7 +119,7 @@ fn branch_scoped_persistence_target(
     event: &KernelEvent,
 ) -> Option<crate::persistence::state::TurnWriteTarget> {
     if event_is_branch_scoped(event) {
-        session.turn_write_target()
+        session.active_turn_write_target()
     } else {
         None
     }

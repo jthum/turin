@@ -769,7 +769,7 @@ impl ExecutionHost {
 
             if let Ok(store) = self.store_manager.open(&session.store_selector).await
                 && let (Some(iid), Some(target)) =
-                    (session.internal_id, session.turn_write_target())
+                    (session.internal_id, session.active_turn_write_target())
             {
                 let _guard = session.persistence_lock.lock().await;
                 let _ = store
@@ -814,7 +814,7 @@ impl ExecutionHost {
 
             if let Ok(store) = self.store_manager.open(&session.store_selector).await
                 && let (Some(iid), Some(target)) =
-                    (session.internal_id, session.turn_write_target())
+                    (session.internal_id, session.active_turn_write_target())
             {
                 let _guard = session.persistence_lock.lock().await;
                 let _ = store

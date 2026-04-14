@@ -52,23 +52,59 @@ impl SessionReadTarget {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TurnWriteTarget {
-    pub branch_head_id: Option<i64>,
-    pub turn_index: u32,
+pub enum TurnWriteTarget {
+    BranchAdvance {
+        branch_head_id: Option<i64>,
+        expected_head_turn_id: Option<i64>,
+        turn_index: u32,
+    },
+    ExistingTurn {
+        turn_id: i64,
+        turn_index: u32,
+    },
 }
 
 impl TurnWriteTarget {
     pub const fn active_branch(turn_index: u32) -> Self {
-        Self {
+        Self::BranchAdvance {
             branch_head_id: None,
+            expected_head_turn_id: None,
             turn_index,
         }
     }
 
     pub const fn branch_head(branch_head_id: Option<i64>, turn_index: u32) -> Self {
-        Self {
+        Self::BranchAdvance {
             branch_head_id,
+            expected_head_turn_id: None,
             turn_index,
+        }
+    }
+
+    pub const fn branch_head_with_expectation(
+        branch_head_id: Option<i64>,
+        expected_head_turn_id: Option<i64>,
+        turn_index: u32,
+    ) -> Self {
+        Self::BranchAdvance {
+            branch_head_id,
+            expected_head_turn_id,
+            turn_index,
+        }
+    }
+
+    pub const fn existing_turn(turn_id: i64, turn_index: u32) -> Self {
+        Self::ExistingTurn {
+            turn_id,
+            turn_index,
+        }
+    }
+
+    pub const fn turn_index(self) -> u32 {
+        match self {
+            Self::BranchAdvance { turn_index, .. } | Self::ExistingTurn { turn_index, .. } => {
+                turn_index
+            }
         }
     }
 }
