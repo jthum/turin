@@ -43,6 +43,7 @@ pub struct DaemonStatus {
     pub registry: RegistrySnapshot,
     pub harnesses: Vec<crate::kernel::HarnessRuntimeSnapshot>,
     pub agent_runtimes: Vec<crate::kernel::agent_manager::AgentStatusSnapshot>,
+    pub live_sessions: Vec<crate::kernel::agent_manager::LiveSessionSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -53,6 +54,7 @@ pub struct DaemonRuntimeSnapshot {
     pub registry: RegistrySnapshot,
     pub harnesses: Vec<crate::kernel::HarnessRuntimeSnapshot>,
     pub agent_runtimes: Vec<crate::kernel::agent_manager::AgentStatusSnapshot>,
+    pub live_sessions: Vec<crate::kernel::agent_manager::LiveSessionSnapshot>,
     pub channel_runtimes: Vec<ChannelRuntimeSnapshot>,
 }
 
@@ -152,6 +154,7 @@ impl DaemonState {
             registry: snapshot(&self.registry_load),
             harnesses: self.kernel.harness_snapshots(),
             agent_runtimes: self.list_agent_runtime_statuses().await,
+            live_sessions: self.list_live_sessions().await,
         }
     }
 
@@ -225,6 +228,7 @@ impl DaemonRuntimeSnapshot {
             registry: status.registry,
             harnesses: status.harnesses,
             agent_runtimes: status.agent_runtimes,
+            live_sessions: status.live_sessions,
             channel_runtimes,
         }
     }

@@ -434,6 +434,23 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
             .any(|session| session["session_id"] == live_session_id)
     );
 
+    let daemon_status = result_value(
+        daemon
+            .request(DaemonRequest::DaemonStatus(
+                turin::daemon::protocol::NoParams::default(),
+            ))
+            .await?,
+    );
+    let snapshot_live_sessions = daemon_status["live_sessions"]
+        .as_array()
+        .context("daemon.status live_sessions should be an array")?;
+    let snapshot_live = snapshot_live_sessions
+        .iter()
+        .find(|session| session["session_id"] == live_session_id)
+        .context("opened session should appear in daemon.status live_sessions")?;
+    assert_eq!(snapshot_live["slot_id"], "chat-thread-1");
+    assert_eq!(snapshot_live["conflict_policy"], "reject");
+
     let submitted = result_value(
         daemon
             .request(DaemonRequest::TaskSubmit(

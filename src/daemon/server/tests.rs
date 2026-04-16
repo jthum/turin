@@ -80,6 +80,7 @@ fn classify_registry_issue_recognizes_agent_and_harness_paths() {
         },
         harnesses: Vec::new(),
         agent_runtimes: Vec::new(),
+        live_sessions: Vec::new(),
     };
 
     let agent_issue = RegistryIssue {

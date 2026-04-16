@@ -292,6 +292,17 @@ fn scope_runtime_snapshot(
                 .as_deref()
                 .is_none_or(|session_id| runtime.current_session_id.as_deref() == Some(session_id))
     });
+    snapshot.live_sessions.retain(|session| {
+        visible_agents.contains(&session.agent_id)
+            && filter
+                .session_id
+                .as_deref()
+                .is_none_or(|session_id| session.session_id == session_id)
+            && filter
+                .slot_id
+                .as_deref()
+                .is_none_or(|slot_id| session.slot_id == slot_id)
+    });
     snapshot.harnesses.retain(|harness| {
         harness
             .bound_agents
@@ -350,6 +361,7 @@ fn scoped_snapshot_is_empty(snapshot: &DaemonRuntimeSnapshot) -> bool {
         && snapshot.registry.issues.is_empty()
         && snapshot.harnesses.is_empty()
         && snapshot.agent_runtimes.is_empty()
+        && snapshot.live_sessions.is_empty()
         && snapshot.channel_runtimes.is_empty()
 }
 
@@ -391,7 +403,8 @@ mod tests {
         AgentSummary, ChannelSummary, RegistryIssue, RegistrySnapshot, SharedHarnessSummary,
     };
     use crate::kernel::HarnessRuntimeSnapshot;
-    use crate::kernel::agent_manager::AgentStatusSnapshot;
+    use crate::kernel::agent_manager::{AgentStatusSnapshot, LiveSessionSnapshot};
+    use crate::kernel::session::ExecutionConflictPolicy;
 
     #[test]
     fn scoped_snapshot_filters_agent_related_state() {
@@ -504,6 +517,28 @@ mod tests {
                     current_request_id: Some("req-writer".into()),
                 },
             ],
+            live_sessions: vec![
+                LiveSessionSnapshot {
+                    agent_id: "default".into(),
+                    slot_id: "default".into(),
+                    session_id: "sess-default".into(),
+                    running: true,
+                    active_tasks: 0,
+                    queued_tasks: 0,
+                    current_request_id: None,
+                    conflict_policy: ExecutionConflictPolicy::Reject,
+                },
+                LiveSessionSnapshot {
+                    agent_id: "writer".into(),
+                    slot_id: "writer-slot".into(),
+                    session_id: "sess-writer".into(),
+                    running: true,
+                    active_tasks: 1,
+                    queued_tasks: 0,
+                    current_request_id: Some("req-writer".into()),
+                    conflict_policy: ExecutionConflictPolicy::Detached,
+                },
+            ],
             channel_runtimes: vec![
                 ChannelRuntimeSnapshot {
                     id: "default-fs".into(),
@@ -564,6 +599,12 @@ mod tests {
         assert_eq!(scoped.channel_runtimes[0].id, "writer-fs");
         assert_eq!(scoped.agent_runtimes.len(), 1);
         assert_eq!(scoped.agent_runtimes[0].agent_id, "writer");
+        assert_eq!(scoped.live_sessions.len(), 1);
+        assert_eq!(scoped.live_sessions[0].agent_id, "writer");
+        assert_eq!(
+            scoped.live_sessions[0].conflict_policy,
+            ExecutionConflictPolicy::Detached
+        );
         assert_eq!(scoped.registry.issues.len(), 2);
         assert!(
             scoped

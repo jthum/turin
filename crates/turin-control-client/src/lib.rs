@@ -94,6 +94,8 @@ pub struct DaemonStatus {
     #[serde(default)]
     pub agent_runtimes: Vec<AgentRuntime>,
     #[serde(default)]
+    pub live_sessions: Vec<LiveSession>,
+    #[serde(default)]
     pub channel_runtimes: Vec<ChannelRuntime>,
 }
 
