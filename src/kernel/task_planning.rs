@@ -92,8 +92,15 @@ impl ExecutionHost {
 
         let cancelled = drained_tasks.len();
         for queued in drained_tasks {
-            self.complete_task(session, &queued, TaskTerminalStatus::Cancelled, 0, None)
-                .await?;
+            self.complete_task(
+                session,
+                &queued,
+                TaskTerminalStatus::Cancelled,
+                0,
+                None,
+                None,
+            )
+            .await?;
         }
         Ok(cancelled)
     }

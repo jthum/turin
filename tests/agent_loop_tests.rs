@@ -1102,6 +1102,23 @@ async fn test_stale_branch_conflict_can_fork_sibling_durably() -> Result<()> {
     assert!(statuses.contains(&"success".to_string()));
     assert!(!statuses.contains(&"conflict".to_string()));
 
+    let task_complete_payload = store
+        .get_all_events(internal_id)
+        .await?
+        .into_iter()
+        .filter(|event| event.event_type == "task_complete")
+        .filter_map(|event| serde_json::from_str::<serde_json::Value>(&event.payload).ok())
+        .find(|payload| payload["status"] == "success")
+        .expect("successful task_complete payload should be persisted");
+    assert_eq!(
+        task_complete_payload["branch_outcome"]["kind"],
+        "fork_sibling"
+    );
+    assert_eq!(
+        task_complete_payload["branch_outcome"]["persisted_active_head_unchanged"],
+        true
+    );
+
     let active_messages = store
         .get_messages(
             internal_id,

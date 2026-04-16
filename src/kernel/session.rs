@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 use crate::inference::provider::InferenceMessage;
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::KernelEvent;
+use crate::kernel::event::TaskBranchOutcome;
 use crate::kernel::harness_runtime::HarnessInstance;
 use crate::kernel::identity::RuntimeIdentity;
 use crate::persistence::manager::StoreSelector;
@@ -293,6 +294,7 @@ pub struct SessionState {
     pub history: Vec<InferenceMessage>,
     pub execution: ExecutionContext,
     pub active_task_conflict_policy: Option<ExecutionConflictPolicy>,
+    pub current_task_branch_outcome: Option<TaskBranchOutcome>,
     pub selected_branch_head_turn_id: Option<i64>,
     pub selected_branch_head_turn_index: Option<u32>,
     pub conflict_detached_active: bool,
@@ -344,6 +346,7 @@ impl SessionState {
             history: Vec::new(),
             execution: ExecutionContext::new(),
             active_task_conflict_policy: None,
+            current_task_branch_outcome: None,
             selected_branch_head_turn_id: None,
             selected_branch_head_turn_index: None,
             conflict_detached_active: false,
@@ -474,6 +477,10 @@ impl SessionState {
         self.active_task_conflict_policy = conflict_policy;
     }
 
+    pub fn set_current_task_branch_outcome(&mut self, outcome: Option<TaskBranchOutcome>) {
+        self.current_task_branch_outcome = outcome;
+    }
+
     pub fn begin_conflict_detached_task(&mut self) {
         self.conflict_detached_active = true;
         self.active_turn_target = None;
@@ -483,6 +490,7 @@ impl SessionState {
         self.conflict_detached_active = false;
         self.active_turn_target = None;
         self.active_task_conflict_policy = None;
+        self.current_task_branch_outcome = None;
     }
 }
 

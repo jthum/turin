@@ -6,6 +6,18 @@ use crate::kernel::governance::GovernanceSnapshot;
 use crate::kernel::identity::RuntimeIdentity;
 use crate::kernel::session::ContextCompactionCheckpoint;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TaskBranchOutcome {
+    ForkSibling {
+        branch_id: i64,
+        branch_public_id: String,
+        branch_name: String,
+        source_turn_id: Option<i64>,
+        persisted_active_head_unchanged: bool,
+    },
+}
+
 /// Terminal status for a task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -52,6 +64,8 @@ pub enum LifecycleEvent {
         plan_id: Option<String>,
         status: TaskTerminalStatus,
         task_turn_count: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        branch_outcome: Option<TaskBranchOutcome>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },

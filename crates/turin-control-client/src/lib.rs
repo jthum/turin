@@ -266,6 +266,7 @@ pub struct TaskStatus {
     pub runtime_task_id: Option<String>,
     pub status: Option<String>,
     pub task_turn_count: Option<u32>,
+    pub branch_outcome: Option<serde_json::Value>,
     pub output: Option<String>,
     #[serde(default)]
     pub assistant_content: Option<Vec<turin_types::TaskInputContent>>,

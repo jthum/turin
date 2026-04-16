@@ -7,7 +7,7 @@ use crate::inference::content::{encode_content_json, materialize_task_input_cont
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::TaskExecutionResult;
 use crate::kernel::config::AgentMode;
-use crate::kernel::event::TaskTerminalStatus;
+use crate::kernel::event::{TaskBranchOutcome, TaskTerminalStatus};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::harness_hooks::TokenUsageHookAction;
 use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask, SessionState};
@@ -39,6 +39,7 @@ impl ExecutionHost {
             return Ok(TaskExecutionResult {
                 status: TaskTerminalStatus::Cancelled,
                 task_turn_count: 0,
+                branch_outcome: None,
             });
         }
 
@@ -82,6 +83,7 @@ impl ExecutionHost {
         Ok(TaskExecutionResult {
             status,
             task_turn_count,
+            branch_outcome: session.current_task_branch_outcome.clone(),
         })
     }
 
@@ -405,9 +407,19 @@ impl ExecutionHost {
             (branch, resolved)
         };
 
+        let branch_public_id = uuid::Uuid::from_slice(&branch.public_id)
+            .map(|value| value.to_string())
+            .context("Forked sibling branch public id was invalid")?;
         session.set_selected_branch_head_id(Some(branch.id));
         session.set_selected_branch_head_turn_id(branch.head_turn_id);
         session.set_selected_branch_head_turn_index(source_turn_index);
+        session.set_current_task_branch_outcome(Some(TaskBranchOutcome::ForkSibling {
+            branch_id: branch.id,
+            branch_public_id,
+            branch_name: branch.name.clone(),
+            source_turn_id: branch.created_from_turn_id,
+            persisted_active_head_unchanged: !branch.is_active,
+        }));
 
         Ok(resolved)
     }

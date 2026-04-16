@@ -13,7 +13,7 @@ use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::config::TurinConfig;
-use crate::kernel::event::{KernelEvent, TaskTerminalStatus};
+use crate::kernel::event::{KernelEvent, TaskBranchOutcome, TaskTerminalStatus};
 use crate::kernel::execution_host::SessionPersistenceCoordinator;
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_manager::HarnessManager;
@@ -39,6 +39,7 @@ pub struct PeerAgentTaskResult {
     pub runtime_task_id: String,
     pub status: TaskTerminalStatus,
     pub task_turn_count: u32,
+    pub branch_outcome: Option<TaskBranchOutcome>,
     pub output: Option<String>,
     pub assistant_content: Option<Vec<TaskInputContent>>,
     pub error: Option<String>,
@@ -65,6 +66,7 @@ pub struct TaskStatusSnapshot {
     pub runtime_task_id: Option<String>,
     pub status: Option<TaskTerminalStatus>,
     pub task_turn_count: Option<u32>,
+    pub branch_outcome: Option<TaskBranchOutcome>,
     pub output: Option<String>,
     pub assistant_content: Option<Vec<TaskInputContent>>,
     pub error: Option<String>,

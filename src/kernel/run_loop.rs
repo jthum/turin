@@ -30,7 +30,7 @@ impl ExecutionHost {
         while let Some((mut task, queue_depth_after_pop)) = self.dequeue_next_task(session).await {
             session.set_active_task_conflict_policy(task.conflict_policy);
             if session.cancel_token.is_cancelled() {
-                self.complete_task(session, &task, TaskTerminalStatus::Cancelled, 0, None)
+                self.complete_task(session, &task, TaskTerminalStatus::Cancelled, 0, None, None)
                     .await?;
                 if session.stop_requested {
                     break;
@@ -65,6 +65,7 @@ impl ExecutionHost {
                                     &task,
                                     TaskTerminalStatus::Conflict,
                                     0,
+                                    None,
                                     Some(error_message),
                                 )
                                 .await?;
@@ -87,6 +88,7 @@ impl ExecutionHost {
                                             &task,
                                             task_result.status,
                                             task_result.task_turn_count,
+                                            task_result.branch_outcome.clone(),
                                             None,
                                         )
                                         .await?;
@@ -118,6 +120,7 @@ impl ExecutionHost {
                                             &task,
                                             TaskTerminalStatus::Error,
                                             0,
+                                            None,
                                             Some(detached_error_message),
                                         )
                                         .await?;
@@ -135,6 +138,7 @@ impl ExecutionHost {
                                     &task,
                                     TaskTerminalStatus::Conflict,
                                     0,
+                                    None,
                                     Some(error_message),
                                 )
                                 .await?;
@@ -154,6 +158,7 @@ impl ExecutionHost {
                         &task,
                         TaskTerminalStatus::Error,
                         0,
+                        None,
                         Some(error_message),
                     )
                     .await?;
@@ -170,6 +175,7 @@ impl ExecutionHost {
                 &task,
                 task_result.status,
                 task_result.task_turn_count,
+                task_result.branch_outcome,
                 None,
             )
             .await?;
@@ -380,7 +386,7 @@ impl ExecutionHost {
                     reason = %reason,
                     "Task rejected by on_task_start"
                 );
-                self.complete_task(session, task, TaskTerminalStatus::Rejected, 0, None)
+                self.complete_task(session, task, TaskTerminalStatus::Rejected, 0, None, None)
                     .await?;
                 Ok(false)
             }
@@ -402,7 +408,7 @@ impl ExecutionHost {
                     reason = %reason,
                     "Task escalated at on_task_start; treating as rejected"
                 );
-                self.complete_task(session, task, TaskTerminalStatus::Rejected, 0, None)
+                self.complete_task(session, task, TaskTerminalStatus::Rejected, 0, None, None)
                     .await?;
                 Ok(false)
             }

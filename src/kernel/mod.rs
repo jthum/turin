@@ -30,6 +30,7 @@ use crate::persistence::manager::StoreManager;
 use anyhow::Result;
 use builder::RuntimeBuilder;
 use config::TurinConfig;
+use event::TaskBranchOutcome;
 use event::TaskTerminalStatus;
 use execution_host::ExecutionHost;
 use std::collections::HashMap;
@@ -73,10 +74,11 @@ pub(crate) struct PendingToolCall {
     pub args: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct TaskExecutionResult {
     pub status: TaskTerminalStatus,
     pub task_turn_count: u32,
+    pub branch_outcome: Option<TaskBranchOutcome>,
 }
 
 impl Kernel {

@@ -3,7 +3,7 @@ use tokio::sync::oneshot;
 use tracing::{info, warn};
 
 use crate::harness::verdict::Verdict;
-use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
+use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskBranchOutcome, TaskTerminalStatus};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::{PersistedKernelRecord, QueuedTask, SessionState};
 
@@ -14,6 +14,7 @@ impl ExecutionHost {
         task: &QueuedTask,
         status: TaskTerminalStatus,
         task_turn_count: u32,
+        branch_outcome: Option<TaskBranchOutcome>,
         error_message: Option<String>,
     ) -> Result<()> {
         self.persist_event(
@@ -25,6 +26,7 @@ impl ExecutionHost {
                 plan_id: task.plan_id.clone(),
                 status,
                 task_turn_count,
+                branch_outcome: branch_outcome.clone(),
                 error: error_message.clone(),
             }),
         );
@@ -44,6 +46,7 @@ impl ExecutionHost {
                         "status": status,
                         "task_turn_count": task_turn_count,
                         "turn_count": session.turn_index,
+                        "branch_outcome": branch_outcome,
                         "error": error_message,
                     }),
                 ))

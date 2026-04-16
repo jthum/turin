@@ -44,6 +44,7 @@ pub(super) struct PeerRunOutcome {
     pub(super) runtime_task_id: String,
     pub(super) status: TaskTerminalStatus,
     pub(super) task_turn_count: u32,
+    pub(super) branch_outcome: Option<crate::kernel::event::TaskBranchOutcome>,
     pub(super) output: Option<String>,
     pub(super) assistant_content: Option<Vec<turin_types::TaskInputContent>>,
 }
@@ -120,6 +121,7 @@ impl PeerRuntime {
                     runtime_task_id: ok.runtime_task_id,
                     status: ok.status,
                     task_turn_count: ok.task_turn_count,
+                    branch_outcome: ok.branch_outcome,
                     output: ok.output,
                     assistant_content: ok.assistant_content,
                     error: None,
@@ -132,6 +134,7 @@ impl PeerRuntime {
                     runtime_task_id: String::new(),
                     status: TaskTerminalStatus::Error,
                     task_turn_count: 0,
+                    branch_outcome: None,
                     output: None,
                     assistant_content: None,
                     error: Some(e.to_string()),
@@ -241,12 +244,14 @@ impl PeerRuntime {
                             TaskTerminalStatus::Rejected,
                             0,
                             None,
+                            None,
                         )
                         .await?;
                     return Ok(PeerRunOutcome {
                         runtime_task_id: task.task_id,
                         status: TaskTerminalStatus::Rejected,
                         task_turn_count: 0,
+                        branch_outcome: None,
                         output: None,
                         assistant_content: None,
                     });
@@ -275,12 +280,14 @@ impl PeerRuntime {
                             TaskTerminalStatus::Rejected,
                             0,
                             None,
+                            None,
                         )
                         .await?;
                     return Ok(PeerRunOutcome {
                         runtime_task_id: task.task_id,
                         status: TaskTerminalStatus::Rejected,
                         task_turn_count: 0,
+                        branch_outcome: None,
                         output: None,
                         assistant_content: None,
                     });
@@ -299,6 +306,7 @@ impl PeerRuntime {
                                 &task,
                                 result.status,
                                 result.task_turn_count,
+                                result.branch_outcome.clone(),
                                 None,
                             )
                             .await?;
@@ -316,6 +324,7 @@ impl PeerRuntime {
                                             &task,
                                             TaskTerminalStatus::Conflict,
                                             0,
+                                            None,
                                             Some(error_message),
                                         )
                                         .await?;
@@ -323,6 +332,7 @@ impl PeerRuntime {
                                         runtime_task_id: task.task_id,
                                         status: TaskTerminalStatus::Conflict,
                                         task_turn_count: 0,
+                                        branch_outcome: None,
                                         output: None,
                                         assistant_content: None,
                                     });
@@ -341,6 +351,7 @@ impl PeerRuntime {
                                                     &task,
                                                     result.status,
                                                     result.task_turn_count,
+                                                    result.branch_outcome.clone(),
                                                     None,
                                                 )
                                                 .await?;
@@ -348,6 +359,7 @@ impl PeerRuntime {
                                                 runtime_task_id: task.task_id,
                                                 status: result.status,
                                                 task_turn_count: result.task_turn_count,
+                                                branch_outcome: result.branch_outcome,
                                                 output: self.last_assistant_text(),
                                                 assistant_content: self.last_assistant_content(),
                                             });
@@ -374,6 +386,7 @@ impl PeerRuntime {
                                                     &task,
                                                     TaskTerminalStatus::Error,
                                                     0,
+                                                    None,
                                                     Some(detached_error_message),
                                                 )
                                                 .await?;
@@ -382,6 +395,7 @@ impl PeerRuntime {
                                                     runtime_task_id: task.task_id,
                                                     status: TaskTerminalStatus::Error,
                                                     task_turn_count: 0,
+                                                    branch_outcome: None,
                                                     output: None,
                                                     assistant_content: None,
                                                 });
@@ -397,6 +411,7 @@ impl PeerRuntime {
                                             &task,
                                             TaskTerminalStatus::Conflict,
                                             0,
+                                            None,
                                             Some(error_message),
                                         )
                                         .await?;
@@ -404,6 +419,7 @@ impl PeerRuntime {
                                         runtime_task_id: task.task_id,
                                         status: TaskTerminalStatus::Conflict,
                                         task_turn_count: 0,
+                                        branch_outcome: None,
                                         output: None,
                                         assistant_content: None,
                                     });
@@ -420,6 +436,7 @@ impl PeerRuntime {
                                 &task,
                                 TaskTerminalStatus::Error,
                                 0,
+                                None,
                                 Some(error_message),
                             )
                             .await?;
@@ -428,6 +445,7 @@ impl PeerRuntime {
                             runtime_task_id: task.task_id,
                             status: TaskTerminalStatus::Error,
                             task_turn_count: 0,
+                            branch_outcome: None,
                             output: None,
                             assistant_content: None,
                         });
@@ -442,6 +460,7 @@ impl PeerRuntime {
                 runtime_task_id: task.task_id,
                 status: run_result.status,
                 task_turn_count: run_result.task_turn_count,
+                branch_outcome: run_result.branch_outcome,
                 output,
                 assistant_content: self.last_assistant_content(),
             })
