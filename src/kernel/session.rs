@@ -37,6 +37,13 @@ pub enum ExecutionWritePolicy {
     Detached,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionConflictPolicy {
+    Reject,
+    Detached,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExecutionContextTarget {
@@ -83,6 +90,7 @@ pub struct ExecutionContext {
     pub visibility: ExecutionVisibility,
     pub durability: ExecutionDurability,
     pub write_policy: ExecutionWritePolicy,
+    pub conflict_policy: ExecutionConflictPolicy,
 }
 
 impl Default for ExecutionContext {
@@ -101,6 +109,7 @@ impl ExecutionContext {
             visibility: ExecutionVisibility::Visible,
             durability: ExecutionDurability::Durable,
             write_policy: ExecutionWritePolicy::AdvanceBranchHead,
+            conflict_policy: ExecutionConflictPolicy::Reject,
         }
     }
 }
@@ -247,6 +256,7 @@ pub struct SessionState {
     pub execution: ExecutionContext,
     pub selected_branch_head_turn_id: Option<i64>,
     pub selected_branch_head_turn_index: Option<u32>,
+    pub conflict_detached_active: bool,
     pub active_turn_target: Option<TurnWriteTarget>,
     pub harness_engine: Option<SessionHarnessEngine>,
     pub harness_generation: u64,
@@ -296,6 +306,7 @@ impl SessionState {
             execution: ExecutionContext::new(),
             selected_branch_head_turn_id: None,
             selected_branch_head_turn_index: None,
+            conflict_detached_active: false,
             active_turn_target: None,
             harness_engine: None,
             harness_generation: 0,
@@ -343,6 +354,7 @@ impl SessionState {
             self.selected_branch_head_turn_id = None;
             self.selected_branch_head_turn_index = None;
         }
+        self.conflict_detached_active = false;
         self.active_turn_target = None;
     }
 
@@ -379,7 +391,7 @@ impl SessionState {
     }
 
     pub fn next_turn_write_target_request(&self) -> Option<TurnWriteTarget> {
-        match self.execution.write_policy {
+        match self.effective_write_policy() {
             ExecutionWritePolicy::AdvanceBranchHead => {
                 let next_turn_index = self
                     .selected_branch_head_turn_index
@@ -400,6 +412,24 @@ impl SessionState {
 
     pub fn set_active_turn_write_target(&mut self, target: Option<TurnWriteTarget>) {
         self.active_turn_target = target;
+    }
+
+    pub fn effective_write_policy(&self) -> ExecutionWritePolicy {
+        if self.conflict_detached_active {
+            ExecutionWritePolicy::Detached
+        } else {
+            self.execution.write_policy
+        }
+    }
+
+    pub fn begin_conflict_detached_task(&mut self) {
+        self.conflict_detached_active = true;
+        self.active_turn_target = None;
+    }
+
+    pub fn clear_conflict_detached_task(&mut self) {
+        self.conflict_detached_active = false;
+        self.active_turn_target = None;
     }
 }
 
@@ -453,6 +483,10 @@ mod tests {
         assert_eq!(
             session.execution.write_policy,
             ExecutionWritePolicy::AdvanceBranchHead
+        );
+        assert_eq!(
+            session.execution.conflict_policy,
+            ExecutionConflictPolicy::Reject
         );
     }
 
@@ -514,6 +548,25 @@ mod tests {
                 Some(5),
                 4
             ))
+        );
+    }
+
+    #[test]
+    fn conflict_detached_task_overrides_write_policy_temporarily() {
+        let mut session = SessionState::new();
+        session.execution.write_policy = ExecutionWritePolicy::AdvanceBranchHead;
+        session.begin_conflict_detached_task();
+
+        assert_eq!(
+            session.effective_write_policy(),
+            ExecutionWritePolicy::Detached
+        );
+        assert_eq!(session.next_turn_write_target_request(), None);
+
+        session.clear_conflict_detached_task();
+        assert_eq!(
+            session.effective_write_policy(),
+            ExecutionWritePolicy::AdvanceBranchHead
         );
     }
 }

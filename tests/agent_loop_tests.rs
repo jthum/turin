@@ -15,6 +15,7 @@ use turin::kernel::config::{
     ProviderConfig, TurinConfig,
 };
 use turin::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent, StreamEvent};
+use turin::kernel::session::ExecutionConflictPolicy;
 
 /// A mock provider that returns a text response followed by a tool call in the next turn.
 struct SequenceMockProvider {
@@ -785,6 +786,168 @@ async fn test_stale_branch_conflict_does_not_trigger_inference_recovery() -> Res
 
     session.set_selected_branch_head_turn_id(Some(second_turn_id));
     session.set_selected_branch_head_turn_index(Some(1));
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_stale_branch_conflict_can_continue_detached() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_branch_conflict_detached.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        tools: Default::default(),
+        agent: AgentConfig {
+            tools: Default::default(),
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Conflict detaches".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+            inference: Default::default(),
+            persistence: Default::default(),
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 3,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        layout: Default::default(),
+        inference: InferenceConfig::default(),
+        persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+            memory_limit_mb: 32,
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: Some(EmbeddingConfig::noop()),
+        governance: turin::kernel::config::GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(
+            "mock",
+            Arc::new(SequenceMockProvider {
+                responses: Arc::new(std::sync::Mutex::new(Vec::new())),
+            }),
+        ),
+    );
+
+    let mut session = kernel.create_session().await;
+    session.execution.conflict_policy = ExecutionConflictPolicy::Detached;
+
+    let store = kernel.store_manager().open(&session.store_selector).await?;
+    let internal_id = session.internal_id.expect("session should be persisted");
+
+    let first_turn = store
+        .prepare_turn_write_target(
+            internal_id,
+            turin::persistence::state::TurnWriteTarget::branch_head_with_expectation(
+                session.selected_branch_head_id(),
+                session.selected_branch_head_turn_id(),
+                0,
+            ),
+        )
+        .await?
+        .expect("first turn should be created");
+    let first_turn_id = match first_turn {
+        turin::persistence::state::TurnWriteTarget::ExistingTurn { turn_id, .. } => turn_id,
+        _ => unreachable!("prepared turn targets should resolve to an existing turn"),
+    };
+
+    let second_turn = store
+        .prepare_turn_write_target(
+            internal_id,
+            turin::persistence::state::TurnWriteTarget::branch_head_with_expectation(
+                session.selected_branch_head_id(),
+                Some(first_turn_id),
+                1,
+            ),
+        )
+        .await?
+        .expect("second turn should be created");
+    let existing_message = serde_json::json!([
+        {
+            "type": "text",
+            "text": "existing"
+        }
+    ]);
+    store
+        .insert_message(
+            internal_id,
+            second_turn,
+            "assistant",
+            &existing_message,
+            None,
+        )
+        .await?;
+
+    session.set_selected_branch_head_turn_id(Some(first_turn_id));
+    session.set_selected_branch_head_turn_index(Some(0));
+
+    kernel
+        .run(&mut session, Some("trigger".to_string()))
+        .await?;
+
+    let statuses = store
+        .get_all_events(internal_id)
+        .await?
+        .into_iter()
+        .filter(|event| event.event_type == "task_complete")
+        .filter_map(|event| serde_json::from_str::<serde_json::Value>(&event.payload).ok())
+        .filter_map(|payload| {
+            payload
+                .get("status")
+                .and_then(|value| value.as_str().map(str::to_string))
+        })
+        .collect::<Vec<_>>();
+    assert!(statuses.contains(&"success".to_string()));
+    assert!(!statuses.contains(&"conflict".to_string()));
+
+    let messages = store
+        .get_messages(
+            internal_id,
+            &turin::persistence::state::SessionReadTarget::branch_head(
+                session.selected_branch_head_id(),
+            ),
+        )
+        .await?;
+    assert_eq!(messages.len(), 1);
+    assert!(session.history.iter().any(|msg| {
+        msg.content.iter().any(|content| {
+            matches!(
+                content,
+                turin::inference::provider::InferenceContent::Text { text } if text.contains("Finishing.")
+            )
+        })
+    }));
+
     kernel.end_session(&mut session).await?;
     Ok(())
 }

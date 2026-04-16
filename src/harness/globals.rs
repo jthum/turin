@@ -14,8 +14,8 @@ use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
 use crate::kernel::event::KernelEvent;
 use crate::kernel::session::{
-    ExecutionContextTarget, ExecutionDurability, ExecutionVisibility, ExecutionWritePolicy,
-    PersistedKernelRecord, QueuedTask,
+    ExecutionConflictPolicy, ExecutionContextTarget, ExecutionDurability, ExecutionVisibility,
+    ExecutionWritePolicy, PersistedKernelRecord, QueuedTask,
 };
 use crate::persistence::manager::StoreManager;
 use crate::persistence::manager::StoreSelector;
@@ -47,6 +47,7 @@ pub struct HarnessExecutionContext {
     pub execution_visibility: Option<ExecutionVisibility>,
     pub execution_durability: Option<ExecutionDurability>,
     pub execution_write_policy: Option<ExecutionWritePolicy>,
+    pub execution_conflict_policy: Option<ExecutionConflictPolicy>,
     pub session_id: Option<String>,
     pub runtime_slot_id: Option<String>,
     pub session_store_selector: Option<StoreSelector>,

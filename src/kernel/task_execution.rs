@@ -145,7 +145,8 @@ impl ExecutionHost {
                 Some(session.context_target().clone()),
                 Some(session.execution.visibility),
                 Some(session.execution.durability),
-                Some(session.execution.write_policy),
+                Some(session.effective_write_policy()),
+                Some(session.execution.conflict_policy),
             );
             engine.set_active_runtime_slot_id(session.runtime_slot_id.as_deref());
             engine.set_active_trace_id(Some(&task.trace_id));
@@ -164,7 +165,7 @@ impl ExecutionHost {
         if let Some(harness) = self.session_harness_engine(session) {
             let engine = harness.lock().expect("session harness mutex poisoned");
             engine.set_active_session(None, None, None, None);
-            engine.set_active_execution_metadata(None, None, None, None, None);
+            engine.set_active_execution_metadata(None, None, None, None, None, None);
             engine.set_active_runtime_slot_id(None);
             engine.set_active_trace_id(None);
             engine.set_active_event_context(None);
@@ -297,17 +298,31 @@ impl ExecutionHost {
             return Ok(());
         };
 
-        let resolved = {
+        let prepare_result = {
             let _guard = session.persistence_lock.lock().await;
-            store
-                .prepare_turn_write_target(internal_id, request)
-                .await?
-                .ok_or_else(|| {
-                    anyhow!(
-                        "No active branch head available for session {}",
-                        internal_id
-                    )
-                })?
+            store.prepare_turn_write_target(internal_id, request).await
+        };
+        let resolved = match prepare_result {
+            Ok(Some(resolved)) => resolved,
+            Ok(None) => {
+                return Err(anyhow!(
+                    "No active branch head available for session {}",
+                    internal_id
+                ));
+            }
+            Err(error)
+                if crate::persistence::state::is_turn_write_conflict(&error)
+                    && session.execution.conflict_policy
+                        == crate::kernel::session::ExecutionConflictPolicy::Detached =>
+            {
+                warn!(
+                    execution_id = %session.execution_id(),
+                    "Turn write target became stale; continuing with detached task execution"
+                );
+                session.begin_conflict_detached_task();
+                return Ok(());
+            }
+            Err(error) => return Err(error),
         };
         if let crate::persistence::state::TurnWriteTarget::ExistingTurn {
             turn_id,

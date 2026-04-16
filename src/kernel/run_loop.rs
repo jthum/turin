@@ -5,6 +5,7 @@ use crate::harness::verdict::Verdict;
 use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::event::{KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::ExecutionHost;
+use crate::kernel::session::ExecutionConflictPolicy;
 use crate::kernel::session::{PlanProgress, QueuedTask, SessionState};
 use crate::kernel::session_refs::describe_store_selector;
 use crate::persistence::state::is_turn_write_conflict;
@@ -56,19 +57,78 @@ impl ExecutionHost {
                     error!(task_id = %task.task_id, trace_id = %task.trace_id, error = %e, "Task failed with runtime error");
                     let error_message = e.to_string();
                     if is_turn_write_conflict(&e) {
-                        self.complete_task(
-                            session,
-                            &task,
-                            TaskTerminalStatus::Conflict,
-                            0,
-                            Some(error_message),
-                        )
-                        .await?;
-                        self.apply_pending_branch_checkout(session).await?;
-                        if session.stop_requested {
-                            break;
+                        match session.execution.conflict_policy {
+                            ExecutionConflictPolicy::Reject => {
+                                self.complete_task(
+                                    session,
+                                    &task,
+                                    TaskTerminalStatus::Conflict,
+                                    0,
+                                    Some(error_message),
+                                )
+                                .await?;
+                                self.apply_pending_branch_checkout(session).await?;
+                                if session.stop_requested {
+                                    break;
+                                }
+                                continue;
+                            }
+                            ExecutionConflictPolicy::Detached => {
+                                warn!(
+                                    task_id = %task.task_id,
+                                    trace_id = %task.trace_id,
+                                    "Task write conflict downgraded to detached execution"
+                                );
+                                match self.run_task(session, &task).await {
+                                    Ok(task_result) => {
+                                        self.complete_task(
+                                            session,
+                                            &task,
+                                            task_result.status,
+                                            task_result.task_turn_count,
+                                            None,
+                                        )
+                                        .await?;
+                                        self.apply_pending_branch_checkout(session).await?;
+                                        if session.stop_requested
+                                            || task_result.status == TaskTerminalStatus::Cancelled
+                                        {
+                                            break;
+                                        }
+                                        continue;
+                                    }
+                                    Err(detached_error) => {
+                                        error!(
+                                            task_id = %task.task_id,
+                                            trace_id = %task.trace_id,
+                                            error = %detached_error,
+                                            "Detached retry failed with runtime error"
+                                        );
+                                        let detached_error_message = detached_error.to_string();
+                                        let recovered = self
+                                            .handle_inference_error(
+                                                session,
+                                                &task,
+                                                &detached_error_message,
+                                            )
+                                            .await?;
+                                        self.complete_task(
+                                            session,
+                                            &task,
+                                            TaskTerminalStatus::Error,
+                                            0,
+                                            Some(detached_error_message),
+                                        )
+                                        .await?;
+                                        self.apply_pending_branch_checkout(session).await?;
+                                        if recovered {
+                                            continue;
+                                        }
+                                        return Err(detached_error);
+                                    }
+                                }
+                            }
                         }
-                        continue;
                     }
                     let recovered = self
                         .handle_inference_error(session, &task, &error_message)

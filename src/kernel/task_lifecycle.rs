@@ -126,6 +126,7 @@ impl ExecutionHost {
         }
 
         self.wait_for_session_durability(session).await;
+        session.clear_conflict_detached_task();
         Ok(())
     }
 
@@ -170,7 +171,8 @@ impl ExecutionHost {
                     Some(session.context_target().clone()),
                     Some(session.execution.visibility),
                     Some(session.execution.durability),
-                    Some(session.execution.write_policy),
+                    Some(session.effective_write_policy()),
+                    Some(session.execution.conflict_policy),
                 );
                 engine.set_active_runtime_slot_id(session.runtime_slot_id.as_deref());
                 engine.set_active_trace_id(Some(&task.trace_id));
@@ -197,7 +199,7 @@ impl ExecutionHost {
                     }),
                 );
                 engine.set_active_session(None, None, None, None);
-                engine.set_active_execution_metadata(None, None, None, None, None);
+                engine.set_active_execution_metadata(None, None, None, None, None, None);
                 engine.set_active_runtime_slot_id(None);
                 engine.set_active_trace_id(None);
                 engine.set_active_event_context(None);
