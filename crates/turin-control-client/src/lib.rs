@@ -770,6 +770,18 @@ impl ControlClient {
         slot_id: Option<String>,
         prompt: String,
     ) -> Result<TaskStatus> {
+        self.submit_task_in_slot_with_conflict_policy(agent_id, session_id, slot_id, prompt, None)
+            .await
+    }
+
+    pub async fn submit_task_in_slot_with_conflict_policy(
+        &self,
+        agent_id: Option<String>,
+        session_id: Option<String>,
+        slot_id: Option<String>,
+        prompt: String,
+        conflict_policy: Option<String>,
+    ) -> Result<TaskStatus> {
         self.request_ok(
             None,
             DaemonRequest::TaskSubmit(SubmitTaskParams {
@@ -779,6 +791,7 @@ impl ControlClient {
                 prompt,
                 content: None,
                 tools: None,
+                conflict_policy,
             }),
         )
         .await
@@ -790,7 +803,7 @@ impl ControlClient {
         session_id: Option<String>,
         prompt: String,
     ) -> Result<TaskStatus> {
-        self.submit_task_in_slot(agent_id, session_id, None, prompt)
+        self.submit_task_in_slot(agent_id, session_id, None, prompt, None)
             .await
     }
 

@@ -15,7 +15,7 @@ use turin::kernel::config::{
     ProviderConfig, TurinConfig,
 };
 use turin::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent, StreamEvent};
-use turin::kernel::session::ExecutionConflictPolicy;
+use turin::kernel::session::{ExecutionConflictPolicy, QueuedTask};
 
 /// A mock provider that returns a text response followed by a tool call in the next turn.
 struct SequenceMockProvider {
@@ -860,7 +860,6 @@ async fn test_stale_branch_conflict_can_continue_detached() -> Result<()> {
     );
 
     let mut session = kernel.create_session().await;
-    session.execution.conflict_policy = ExecutionConflictPolicy::Detached;
 
     let store = kernel.store_manager().open(&session.store_selector).await?;
     let internal_id = session.internal_id.expect("session should be persisted");
@@ -911,9 +910,15 @@ async fn test_stale_branch_conflict_can_continue_detached() -> Result<()> {
     session.set_selected_branch_head_turn_id(Some(first_turn_id));
     session.set_selected_branch_head_turn_index(Some(0));
 
-    kernel
-        .run(&mut session, Some("trigger".to_string()))
-        .await?;
+    {
+        let mut queue = session.queue.lock().await;
+        queue.push_back(
+            QueuedTask::ad_hoc("trigger")
+                .with_conflict_policy(Some(ExecutionConflictPolicy::Detached)),
+        );
+    }
+
+    kernel.run(&mut session, None).await?;
 
     let statuses = store
         .get_all_events(internal_id)

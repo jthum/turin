@@ -174,6 +174,8 @@ impl PeerRuntime {
         self.allocate_runtime_task_id(&mut task);
 
         self.set_capability_ceiling(delegated_capabilities.clone());
+        self.session
+            .set_active_task_conflict_policy(task.conflict_policy);
         let outcome = async {
             self.host.persist_event(
                 &self.session,
@@ -297,7 +299,7 @@ impl PeerRuntime {
                         error!(task_id = %task.task_id, trace_id = %task.trace_id, error = %e, "Peer task failed with runtime error");
                         let error_message = e.to_string();
                         if is_turn_write_conflict(&e) {
-                            match self.session.execution.conflict_policy {
+                            match self.session.effective_conflict_policy() {
                                 ExecutionConflictPolicy::Reject => {
                                     self.host
                                         .complete_task(

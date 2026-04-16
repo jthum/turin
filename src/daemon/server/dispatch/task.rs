@@ -14,17 +14,7 @@ pub(super) async fn submit(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
-    match guard
-        .submit_task_in_slot(
-            params.agent_id.as_deref(),
-            params.session_id.as_deref(),
-            params.slot_id.as_deref(),
-            params.prompt,
-            params.content,
-            params.tools,
-        )
-        .await
-    {
+    match guard.submit_task_params(params).await {
         Ok(task) => serialize_response_with_event(
             id,
             task,

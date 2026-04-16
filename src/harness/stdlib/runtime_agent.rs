@@ -10,7 +10,7 @@ use crate::harness::stdlib::governance_support::{
     require_child_agent as require_child_agent_governance,
 };
 use crate::harness::stdlib::policy_support::{policy_bool, runtime_policy_snapshot};
-use crate::kernel::session::QueuedTask;
+use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask};
 
 fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
     app_data
@@ -35,6 +35,9 @@ fn parse_submit_task(task_val: Value, app_data: &HarnessAppData) -> LuaResult<Qu
             if let Ok(title) = t.get::<String>("title") {
                 task.title = Some(title);
             }
+            if let Ok(conflict_policy) = t.get::<String>("conflict_policy") {
+                task.conflict_policy = Some(parse_conflict_policy(&conflict_policy)?);
+            }
             Ok(task)
         }
         _ => Err(mlua::Error::runtime(
@@ -49,6 +52,20 @@ fn title_from_opts(opts: Option<&Table>) -> Option<String> {
 
 fn timeout_ms_from_opts(opts: Option<&Table>) -> Option<u64> {
     opts.and_then(|t| t.get::<u64>("timeout_ms").ok())
+}
+
+fn conflict_policy_from_opts(opts: Option<&Table>) -> LuaResult<Option<ExecutionConflictPolicy>> {
+    let Some(opts) = opts else {
+        return Ok(None);
+    };
+    let Ok(conflict_policy) = opts.get::<String>("conflict_policy") else {
+        return Ok(None);
+    };
+    Ok(Some(parse_conflict_policy(&conflict_policy)?))
+}
+
+fn parse_conflict_policy(raw: &str) -> LuaResult<ExecutionConflictPolicy> {
+    raw.parse().map_err(mlua::Error::runtime)
 }
 
 pub fn register_runtime_agent_namespace(
@@ -124,6 +141,10 @@ pub fn register_runtime_agent_namespace(
                             return nil_err(lua, "invalid task; expected string or {prompt=...}");
                         }
                     };
+                    let mut task = task;
+                    if task.conflict_policy.is_none() {
+                        task.conflict_policy = conflict_policy_from_opts(opts.as_ref())?;
+                    }
                     let delegated_capabilities = parse_delegated_capabilities(
                         &app_data_snapshot,
                         opts.as_ref(),
@@ -203,6 +224,7 @@ pub fn register_runtime_agent_namespace(
                     let mut task = QueuedTask::ad_hoc(prompt)
                         .with_inherited_trace(active_trace_id(&app_data_snapshot).as_deref());
                     task.title = title_from_opts(opts.as_ref());
+                    task.conflict_policy = conflict_policy_from_opts(opts.as_ref())?;
                     let timeout_ms = timeout_ms_from_opts(opts.as_ref());
                     let delegated_capabilities = parse_delegated_capabilities(
                         &app_data_snapshot,

@@ -114,6 +114,29 @@ impl ExecutionContext {
     }
 }
 
+impl ExecutionConflictPolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Reject => "reject",
+            Self::Detached => "detached",
+        }
+    }
+}
+
+impl std::str::FromStr for ExecutionConflictPolicy {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "reject" => Ok(Self::Reject),
+            "detached" => Ok(Self::Detached),
+            other => Err(format!(
+                "invalid conflict policy '{other}'; expected reject|detached"
+            )),
+        }
+    }
+}
+
 /// One queued unit of work to be executed by the kernel.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QueuedTask {
@@ -125,6 +148,8 @@ pub struct QueuedTask {
     pub content: Option<Vec<TaskInputContent>>,
     #[serde(default)]
     pub tools: Option<ToolsConfig>,
+    #[serde(default)]
+    pub conflict_policy: Option<ExecutionConflictPolicy>,
     #[serde(default = "new_trace_id")]
     pub trace_id: String,
 }
@@ -159,6 +184,7 @@ impl QueuedTask {
             prompt: prompt.into(),
             content: None,
             tools: None,
+            conflict_policy: None,
             trace_id: new_trace_id(),
         }
     }
@@ -175,6 +201,7 @@ impl QueuedTask {
             prompt: prompt.into(),
             content: None,
             tools: None,
+            conflict_policy: None,
             trace_id: new_trace_id(),
         }
     }
@@ -185,6 +212,14 @@ impl QueuedTask {
         {
             self.trace_id = trace_id.to_string();
         }
+        self
+    }
+
+    pub fn with_conflict_policy(
+        mut self,
+        conflict_policy: Option<ExecutionConflictPolicy>,
+    ) -> Self {
+        self.conflict_policy = conflict_policy;
         self
     }
 }
@@ -254,6 +289,7 @@ pub struct SessionState {
     pub context_checkpoint: Option<ContextCompactionCheckpoint>,
     pub history: Vec<InferenceMessage>,
     pub execution: ExecutionContext,
+    pub active_task_conflict_policy: Option<ExecutionConflictPolicy>,
     pub selected_branch_head_turn_id: Option<i64>,
     pub selected_branch_head_turn_index: Option<u32>,
     pub conflict_detached_active: bool,
@@ -304,6 +340,7 @@ impl SessionState {
             context_checkpoint: None,
             history: Vec::new(),
             execution: ExecutionContext::new(),
+            active_task_conflict_policy: None,
             selected_branch_head_turn_id: None,
             selected_branch_head_turn_index: None,
             conflict_detached_active: false,
@@ -422,6 +459,18 @@ impl SessionState {
         }
     }
 
+    pub fn effective_conflict_policy(&self) -> ExecutionConflictPolicy {
+        self.active_task_conflict_policy
+            .unwrap_or(self.execution.conflict_policy)
+    }
+
+    pub fn set_active_task_conflict_policy(
+        &mut self,
+        conflict_policy: Option<ExecutionConflictPolicy>,
+    ) {
+        self.active_task_conflict_policy = conflict_policy;
+    }
+
     pub fn begin_conflict_detached_task(&mut self) {
         self.conflict_detached_active = true;
         self.active_turn_target = None;
@@ -430,6 +479,7 @@ impl SessionState {
     pub fn clear_conflict_detached_task(&mut self) {
         self.conflict_detached_active = false;
         self.active_turn_target = None;
+        self.active_task_conflict_policy = None;
     }
 }
 

@@ -6,6 +6,7 @@ pub struct TaskSubmitCommand<'a> {
     pub session_id: Option<&'a str>,
     pub slot_id: Option<&'a str>,
     pub prompt: &'a str,
+    pub conflict_policy: Option<&'a str>,
     pub wait: bool,
     pub timeout_ms: Option<u64>,
     pub json_output: bool,
@@ -19,7 +20,8 @@ pub async fn run_task_submit(command: TaskSubmitCommand<'_>) -> Result<()> {
             "agent_id": command.agent_id,
             "session_id": command.session_id,
             "slot_id": command.slot_id,
-            "prompt": command.prompt
+            "prompt": command.prompt,
+            "conflict_policy": command.conflict_policy,
         }),
     )
     .await?;

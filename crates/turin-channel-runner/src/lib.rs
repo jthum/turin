@@ -671,6 +671,7 @@ impl ChannelRunner {
                     prompt: task_prompt_for_submission(event),
                     content: (!content.is_empty()).then_some(content),
                     tools: (!self.tools.is_empty()).then_some(self.tools.clone()),
+                    conflict_policy: None,
                 }),
             )
             .await

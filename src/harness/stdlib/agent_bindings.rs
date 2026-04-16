@@ -14,6 +14,7 @@ use crate::harness::stdlib::identity_support::{
     get_active_identity, identity_to_lua_table, session_row_to_lua_table,
 };
 use crate::harness::stdlib::policy_support::{policy_bool, policy_u64, runtime_policy_snapshot};
+use crate::kernel::session::ExecutionConflictPolicy;
 use crate::kernel::session::QueuedTask;
 use crate::kernel::session_refs::{
     SessionReference, format_session_reference, parse_session_reference,
@@ -155,6 +156,18 @@ fn opt_activate(opts: Option<&Table>, default: bool) -> bool {
         .unwrap_or(default)
 }
 
+fn opt_conflict_policy(
+    opts: Option<&Table>,
+) -> std::result::Result<Option<ExecutionConflictPolicy>, String> {
+    let Some(opts) = opts else {
+        return Ok(None);
+    };
+    let Ok(raw) = opts.get::<String>("conflict_policy") else {
+        return Ok(None);
+    };
+    raw.parse().map(Some)
+}
+
 fn bytes_to_simple_uuid(bytes: &[u8]) -> String {
     uuid::Uuid::from_slice(bytes)
         .map(|uuid| uuid.simple().to_string())
@@ -193,13 +206,13 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
 
     let agent_manager = app_data.agent_manager.clone();
 
-    // agent.spawn (local subtask enqueue for current session queue)
+    // agent.spawn(prompt, opts?)
     let spawn_q = app_data.execution_ctx.clone();
     let spawn_policy_snapshot = app_data.clone();
     let spawn_depth = app_data.spawn_depth;
     agent_table.set(
         "spawn",
-        lua.create_function(move |lua, (prompt, _opts): (String, Option<Table>)| {
+        lua.create_function(move |lua, (prompt, opts): (String, Option<Table>)| {
             if let Err(err) =
                 require_governance_capability(&spawn_policy_snapshot, "runtime.agent.spawn")
             {
@@ -214,13 +227,19 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             if spawn_depth >= max_depth {
                 return nil_err(lua, "Policy denial: spawn.max_depth exceeded");
             }
+            let conflict_policy = match opt_conflict_policy(opts.as_ref()) {
+                Ok(conflict_policy) => conflict_policy,
+                Err(err) => return nil_err(lua, &err),
+            };
             let spawn_q = spawn_q.clone();
             let queue_max = queue_max(&snapshot);
             let trace_id = active_trace_id(&spawn_policy_snapshot);
             let enqueue_res = bridge_async_result(async move {
                 queue_push_one(
                     &spawn_q,
-                    QueuedTask::ad_hoc(prompt.clone()).with_inherited_trace(trace_id.as_deref()),
+                    QueuedTask::ad_hoc(prompt.clone())
+                        .with_inherited_trace(trace_id.as_deref())
+                        .with_conflict_policy(conflict_policy),
                     queue_max,
                     false,
                 )

@@ -28,6 +28,7 @@ impl ExecutionHost {
         }
 
         while let Some((mut task, queue_depth_after_pop)) = self.dequeue_next_task(session).await {
+            session.set_active_task_conflict_policy(task.conflict_policy);
             if session.cancel_token.is_cancelled() {
                 self.complete_task(session, &task, TaskTerminalStatus::Cancelled, 0, None)
                     .await?;
@@ -57,7 +58,7 @@ impl ExecutionHost {
                     error!(task_id = %task.task_id, trace_id = %task.trace_id, error = %e, "Task failed with runtime error");
                     let error_message = e.to_string();
                     if is_turn_write_conflict(&e) {
-                        match session.execution.conflict_policy {
+                        match session.effective_conflict_policy() {
                             ExecutionConflictPolicy::Reject => {
                                 self.complete_task(
                                     session,

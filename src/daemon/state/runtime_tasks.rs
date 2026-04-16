@@ -5,13 +5,24 @@ use anyhow::{Result, anyhow};
 use uuid::Uuid;
 
 use super::DaemonState;
+use crate::daemon::protocol::SubmitTaskParams;
 use crate::kernel::agent_manager::{AgentStatusSnapshot, TaskStatusSnapshot};
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::KernelEvent;
-use crate::kernel::session::QueuedTask;
+use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask};
 use crate::kernel::session_refs::parse_session_reference;
 use crate::persistence::manager::StoreSelector;
 use turin_types::{TaskInputContent, ToolsConfig};
+
+struct TaskSubmissionRequest<'a> {
+    agent_id: Option<&'a str>,
+    session_id: Option<&'a str>,
+    slot_id: Option<&'a str>,
+    prompt: String,
+    content: Option<Vec<TaskInputContent>>,
+    tools: Option<ToolsConfig>,
+    conflict_policy: Option<&'a str>,
+}
 
 impl DaemonState {
     pub async fn agent_runtime_status(
@@ -33,8 +44,16 @@ impl DaemonState {
         content: Option<Vec<TaskInputContent>>,
         tools: Option<ToolsConfig>,
     ) -> Result<TaskStatusSnapshot> {
-        self.submit_task_in_slot(agent_id, session_id, None, prompt, content, tools)
-            .await
+        self.submit_task_request(TaskSubmissionRequest {
+            agent_id,
+            session_id,
+            slot_id: None,
+            prompt,
+            content,
+            tools,
+            conflict_policy: None,
+        })
+        .await
     }
 
     pub async fn submit_task_in_slot(
@@ -46,24 +65,65 @@ impl DaemonState {
         content: Option<Vec<TaskInputContent>>,
         tools: Option<ToolsConfig>,
     ) -> Result<TaskStatusSnapshot> {
-        if session_id.is_none() && slot_id.is_some() {
+        self.submit_task_request(TaskSubmissionRequest {
+            agent_id,
+            session_id,
+            slot_id,
+            prompt,
+            content,
+            tools,
+            conflict_policy: None,
+        })
+        .await
+    }
+
+    pub(crate) async fn submit_task_params(
+        &self,
+        params: SubmitTaskParams,
+    ) -> Result<TaskStatusSnapshot> {
+        self.submit_task_request(TaskSubmissionRequest {
+            agent_id: params.agent_id.as_deref(),
+            session_id: params.session_id.as_deref(),
+            slot_id: params.slot_id.as_deref(),
+            prompt: params.prompt,
+            content: params.content,
+            tools: params.tools,
+            conflict_policy: params.conflict_policy.as_deref(),
+        })
+        .await
+    }
+
+    async fn submit_task_request(
+        &self,
+        request: TaskSubmissionRequest<'_>,
+    ) -> Result<TaskStatusSnapshot> {
+        if request.session_id.is_none() && request.slot_id.is_some() {
             anyhow::bail!("task.submit slot_id requires session_id");
         }
-        let mut task = QueuedTask::ad_hoc(prompt);
-        task.content = content;
-        if let Some(tools) = tools
+        let mut task = QueuedTask::ad_hoc(request.prompt);
+        task.content = request.content;
+        if let Some(tools) = request.tools
             && !tools.is_empty()
         {
             task.tools = Some(tools);
         }
-        let request_id = if let Some(session_id) = session_id {
+        task.conflict_policy = match request.conflict_policy {
+            Some(conflict_policy) => Some(
+                conflict_policy
+                    .parse::<ExecutionConflictPolicy>()
+                    .map_err(anyhow::Error::msg)?,
+            ),
+            None => None,
+        };
+        let request_id = if let Some(session_id) = request.session_id {
             self.kernel
                 .agent_manager()
-                .submit_to_session(session_id, slot_id, task, None)
+                .submit_to_session(session_id, request.slot_id, task, None)
                 .await?
         } else {
-            let agent_id =
-                agent_id.ok_or_else(|| anyhow!("task.submit requires agent_id or session_id"))?;
+            let agent_id = request
+                .agent_id
+                .ok_or_else(|| anyhow!("task.submit requires agent_id or session_id"))?;
             self.ensure_enabled_agent(agent_id)?;
             self.kernel
                 .agent_manager()

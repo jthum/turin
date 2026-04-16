@@ -417,6 +417,9 @@ pub(crate) enum DaemonTaskCommands {
         slot_id: Option<String>,
         /// Prompt to submit
         prompt: String,
+        /// Conflict policy for stale branch-head writes
+        #[arg(long, value_parser = ["reject", "detached"])]
+        conflict_policy: Option<String>,
         /// Wait for the task to complete and print the terminal result
         #[arg(long)]
         wait: bool,

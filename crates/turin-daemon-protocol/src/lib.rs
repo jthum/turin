@@ -163,6 +163,8 @@ pub struct SubmitTaskParams {
     pub content: Option<Vec<TaskInputContent>>,
     #[serde(default)]
     pub tools: Option<ToolsConfig>,
+    #[serde(default)]
+    pub conflict_policy: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -542,6 +544,7 @@ mod tests {
                 prompt: "review this".to_string(),
                 content: None,
                 tools: Default::default(),
+                conflict_policy: Some("detached".to_string()),
             }),
         );
 
@@ -550,6 +553,7 @@ mod tests {
         assert_eq!(value["op"], "task.submit");
         assert_eq!(value["params"]["agent_id"], "writer");
         assert_eq!(value["params"]["prompt"], "review this");
+        assert_eq!(value["params"]["conflict_policy"], "detached");
 
         let decoded: RequestEnvelope = serde_json::from_value(value).expect("deserialize request");
         match decoded.request {
@@ -557,6 +561,7 @@ mod tests {
                 assert_eq!(params.agent_id.as_deref(), Some("writer"));
                 assert!(params.session_id.is_none());
                 assert_eq!(params.prompt, "review this");
+                assert_eq!(params.conflict_policy.as_deref(), Some("detached"));
             }
             other => panic!("unexpected request variant: {other:?}"),
         }

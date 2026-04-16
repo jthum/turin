@@ -146,7 +146,7 @@ impl ExecutionHost {
                 Some(session.execution.visibility),
                 Some(session.execution.durability),
                 Some(session.effective_write_policy()),
-                Some(session.execution.conflict_policy),
+                Some(session.effective_conflict_policy()),
             );
             engine.set_active_runtime_slot_id(session.runtime_slot_id.as_deref());
             engine.set_active_trace_id(Some(&task.trace_id));
@@ -312,7 +312,7 @@ impl ExecutionHost {
             }
             Err(error)
                 if crate::persistence::state::is_turn_write_conflict(&error)
-                    && session.execution.conflict_policy
+                    && session.effective_conflict_policy()
                         == crate::kernel::session::ExecutionConflictPolicy::Detached =>
             {
                 warn!(
