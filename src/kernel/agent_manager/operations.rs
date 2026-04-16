@@ -114,6 +114,7 @@ impl AgentManager {
             active_tasks: handle.active_tasks.load(Ordering::Relaxed),
             queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
             current_request_id: handle.control.current_request_id(),
+            conflict_policy: handle.control.current_conflict_policy(),
         })
     }
 
@@ -139,6 +140,7 @@ impl AgentManager {
                     active_tasks: handle.active_tasks.load(Ordering::Relaxed),
                     queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
                     current_request_id: handle.control.current_request_id(),
+                    conflict_policy: handle.control.current_conflict_policy(),
                 });
             }
         } else {
@@ -153,6 +155,7 @@ impl AgentManager {
                         active_tasks: handle.active_tasks.load(Ordering::Relaxed),
                         queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
                         current_request_id: handle.control.current_request_id(),
+                        conflict_policy: handle.control.current_conflict_policy(),
                     });
                 }
                 _ => {
@@ -251,6 +254,7 @@ impl AgentManager {
             active_tasks: handle.active_tasks.load(Ordering::Relaxed),
             queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
             current_request_id: handle.control.current_request_id(),
+            conflict_policy: handle.control.current_conflict_policy(),
         })
     }
 
@@ -322,6 +326,7 @@ impl AgentManager {
             active_tasks: handle.active_tasks.load(Ordering::Relaxed),
             queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
             current_request_id: handle.control.current_request_id(),
+            conflict_policy: handle.control.current_conflict_policy(),
         })
     }
 
@@ -544,6 +549,7 @@ impl AgentManager {
                     active_tasks: handle.active_tasks.load(Ordering::Relaxed),
                     queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
                     current_request_id: handle.control.current_request_id(),
+                    conflict_policy: handle.control.current_conflict_policy(),
                 })
             })
             .collect();

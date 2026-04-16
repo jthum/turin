@@ -465,6 +465,11 @@ async fn explicit_runtime_slots_allow_multiple_live_runtimes_for_one_session() -
     assert_eq!(matching.len(), 2);
     assert!(matching.iter().any(|snapshot| snapshot.slot_id == "slot-a"));
     assert!(matching.iter().any(|snapshot| snapshot.slot_id == "slot-b"));
+    assert!(
+        matching
+            .iter()
+            .all(|snapshot| snapshot.conflict_policy == ExecutionConflictPolicy::Reject)
+    );
     assert_eq!(slot_b.slot_id, "slot-b");
 
     let resume_err = manager
@@ -562,5 +567,38 @@ async fn explicit_runtime_slots_allow_multiple_live_runtimes_for_one_session() -
     assert_eq!(final_killed_session_id, slot_a.session_id);
 
     abort_all_runtime_slots(manager).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn live_session_snapshots_expose_effective_conflict_policy() -> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+
+    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let manager = kernel.agent_manager();
+    let session_id = "s_live_conflict";
+    let control = Arc::new(RuntimeControl::default());
+    control.set_current_session_id(Some(session_id.to_string()));
+    control.set_current_execution_conflict_policy(ExecutionConflictPolicy::Detached);
+
+    manager.runtimes.write().await.insert(
+        RuntimeSlotKey::default_for("default"),
+        Arc::new(AgentRuntimeHandle {
+            queue: Arc::new(Mutex::new(VecDeque::new())),
+            notify: Arc::new(Notify::new()),
+            control,
+            task: None,
+            queued_tasks: Arc::new(AtomicUsize::new(0)),
+            active_tasks: Arc::new(AtomicUsize::new(1)),
+        }),
+    );
+
+    let live = manager.list_live_sessions(None).await;
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].session_id, session_id);
+    assert_eq!(live[0].conflict_policy, ExecutionConflictPolicy::Detached);
+
     Ok(())
 }

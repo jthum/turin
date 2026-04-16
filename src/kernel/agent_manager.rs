@@ -18,7 +18,7 @@ use crate::kernel::execution_host::SessionPersistenceCoordinator;
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_manager::HarnessManager;
 use crate::kernel::policy::RuntimePolicyManager;
-use crate::kernel::session::QueuedTask;
+use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask};
 use crate::persistence::manager::StoreManager;
 use crate::tools::registry::ToolRegistry;
 use tokio::sync::{Notify, RwLock, oneshot};
@@ -79,6 +79,7 @@ pub struct LiveSessionSnapshot {
     pub active_tasks: usize,
     pub queued_tasks: usize,
     pub current_request_id: Option<String>,
+    pub conflict_policy: ExecutionConflictPolicy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -113,16 +114,32 @@ struct PendingTaskRecord {
     runtime_task_id: Option<String>,
 }
 
-#[derive(Default)]
 pub(crate) struct RuntimeControl {
     current_session_id: StdRwLock<Option<String>>,
     current_session_events: StdRwLock<Option<SessionEventSender>>,
     current_session_context: StdRwLock<SessionContextOverrides>,
+    current_conflict_policy: StdRwLock<ExecutionConflictPolicy>,
     current_request_id: StdRwLock<Option<String>>,
     current_runtime_task_id: StdRwLock<Option<String>>,
     current_cancel_token: Mutex<Option<CancellationToken>>,
     session_reset_request: Mutex<Option<SessionResetRequest>>,
     session_generation: AtomicU64,
+}
+
+impl Default for RuntimeControl {
+    fn default() -> Self {
+        Self {
+            current_session_id: StdRwLock::new(None),
+            current_session_events: StdRwLock::new(None),
+            current_session_context: StdRwLock::new(SessionContextOverrides::default()),
+            current_conflict_policy: StdRwLock::new(ExecutionConflictPolicy::Reject),
+            current_request_id: StdRwLock::new(None),
+            current_runtime_task_id: StdRwLock::new(None),
+            current_cancel_token: Mutex::new(None),
+            session_reset_request: Mutex::new(None),
+            session_generation: AtomicU64::new(0),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -146,6 +163,7 @@ impl RuntimeControl {
         session_id: Option<String>,
         event_tx: Option<SessionEventSender>,
         context: SessionContextOverrides,
+        conflict_policy: ExecutionConflictPolicy,
     ) {
         *self
             .current_session_id
@@ -159,13 +177,22 @@ impl RuntimeControl {
             .current_session_context
             .write()
             .expect("runtime control session context lock poisoned") = context;
+        *self
+            .current_conflict_policy
+            .write()
+            .expect("runtime control conflict policy lock poisoned") = conflict_policy;
         self.session_generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     #[cfg(test)]
     fn set_current_session_id(&self, session_id: Option<String>) {
-        self.set_current_session(session_id, None, SessionContextOverrides::default());
+        self.set_current_session(
+            session_id,
+            None,
+            SessionContextOverrides::default(),
+            ExecutionConflictPolicy::Reject,
+        );
     }
 
     fn current_session_id(&self) -> Option<String> {
@@ -185,6 +212,25 @@ impl RuntimeControl {
             .read()
             .expect("runtime control session context lock poisoned")
             .clone()
+    }
+
+    fn set_current_conflict_policy(&self, conflict_policy: ExecutionConflictPolicy) {
+        *self
+            .current_conflict_policy
+            .write()
+            .expect("runtime control conflict policy lock poisoned") = conflict_policy;
+    }
+
+    fn current_conflict_policy(&self) -> ExecutionConflictPolicy {
+        *self
+            .current_conflict_policy
+            .read()
+            .expect("runtime control conflict policy lock poisoned")
+    }
+
+    #[cfg(test)]
+    fn set_current_execution_conflict_policy(&self, conflict_policy: ExecutionConflictPolicy) {
+        self.set_current_conflict_policy(conflict_policy);
     }
 
     fn subscribe_current_session_events(&self) -> Option<SessionEventReceiver> {

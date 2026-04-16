@@ -85,6 +85,7 @@ impl PeerRuntime {
             Some(host.session_reference(&session)),
             Some(session.event_tx.clone()),
             session_context_from_session(&session),
+            session.execution.conflict_policy,
         );
 
         Ok(Self {
@@ -141,6 +142,8 @@ impl PeerRuntime {
         } else if let Err(e) = result {
             error!(agent_id = %self.agent_id, error = %e, "Peer agent task failed");
         }
+        self.control
+            .set_current_conflict_policy(self.session.execution.conflict_policy);
         self.control.clear_active_task();
         if let Err(err) = self.reset_session_if_requested().await {
             error!(agent_id = %self.agent_id, error = %err, "Peer runtime failed to reset session");
@@ -152,8 +155,12 @@ impl PeerRuntime {
             warn!(agent_id = %self.agent_id, error = %e, "Peer agent session end error");
         }
         self.control.clear_active_task();
-        self.control
-            .set_current_session(None, None, SessionContextOverrides::default());
+        self.control.set_current_session(
+            None,
+            None,
+            SessionContextOverrides::default(),
+            crate::kernel::session::ExecutionConflictPolicy::Reject,
+        );
         self.host.shutdown_mcp_clients().await;
         info!(agent_id = %self.agent_id, "Peer runtime shut down");
     }
@@ -176,6 +183,8 @@ impl PeerRuntime {
         self.set_capability_ceiling(delegated_capabilities.clone());
         self.session
             .set_active_task_conflict_policy(task.conflict_policy);
+        self.control
+            .set_current_conflict_policy(self.session.effective_conflict_policy());
         let outcome = async {
             self.host.persist_event(
                 &self.session,
@@ -509,6 +518,7 @@ impl PeerRuntime {
             Some(self.host.session_reference(&session)),
             Some(session.event_tx.clone()),
             session_context_from_session(&session),
+            session.execution.conflict_policy,
         );
         self.session = session;
         Ok(())
@@ -536,6 +546,7 @@ impl PeerRuntime {
             Some(self.host.session_reference(&session)),
             Some(session.event_tx.clone()),
             session_context_from_session(&session),
+            session.execution.conflict_policy,
         );
         self.session = session;
         Ok(())

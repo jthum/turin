@@ -298,6 +298,7 @@ pub struct LiveSession {
     pub active_tasks: usize,
     pub queued_tasks: usize,
     pub current_request_id: Option<String>,
+    pub conflict_policy: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
