@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, instrument, warn};
@@ -10,7 +10,7 @@ use crate::kernel::config::AgentMode;
 use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::harness_hooks::TokenUsageHookAction;
-use crate::kernel::session::{QueuedTask, SessionState};
+use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask, SessionState};
 use crate::kernel::turn;
 use crate::tools::ToolContext;
 use turin_types::layout::{DEFAULT_LAYOUT_ROOT, resolve_relative_to};
@@ -312,8 +312,7 @@ impl ExecutionHost {
             }
             Err(error)
                 if crate::persistence::state::is_turn_write_conflict(&error)
-                    && session.effective_conflict_policy()
-                        == crate::kernel::session::ExecutionConflictPolicy::Detached =>
+                    && session.effective_conflict_policy() == ExecutionConflictPolicy::Detached =>
             {
                 warn!(
                     execution_id = %session.execution_id(),
@@ -321,6 +320,21 @@ impl ExecutionHost {
                 );
                 session.begin_conflict_detached_task();
                 return Ok(());
+            }
+            Err(error)
+                if crate::persistence::state::is_turn_write_conflict(&error)
+                    && session.effective_conflict_policy()
+                        == ExecutionConflictPolicy::ForkSibling =>
+            {
+                let resolved = self
+                    .prepare_fork_sibling_turn_target(session, request)
+                    .await?;
+                warn!(
+                    execution_id = %session.execution_id(),
+                    branch_head_id = session.selected_branch_head_id(),
+                    "Turn write target became stale; continuing on a forked sibling branch"
+                );
+                resolved
             }
             Err(error) => return Err(error),
         };
@@ -334,6 +348,68 @@ impl ExecutionHost {
         }
         session.set_active_turn_write_target(Some(resolved));
         Ok(())
+    }
+
+    async fn prepare_fork_sibling_turn_target(
+        &self,
+        session: &mut SessionState,
+        request: crate::persistence::state::TurnWriteTarget,
+    ) -> Result<crate::persistence::state::TurnWriteTarget> {
+        let crate::persistence::state::TurnWriteTarget::BranchAdvance {
+            expected_head_turn_id,
+            turn_index,
+            ..
+        } = request
+        else {
+            anyhow::bail!("ForkSibling conflict policy requires a branch-advance target");
+        };
+
+        let internal_id = session
+            .internal_id
+            .ok_or_else(|| anyhow!("Session missing internal persistence id"))?;
+        let source_turn_index = turn_index.checked_sub(1);
+        let fork_branch_name = format!("fork-{}-{}", session.execution_id(), turn_index);
+        let store = self
+            .store_manager
+            .open(&session.store_selector)
+            .await
+            .context("ForkSibling conflict policy requires a configured persistent state store")?;
+
+        let (branch, resolved) = {
+            let _guard = session.persistence_lock.lock().await;
+            let branch = store
+                .create_branch_head_from_turn_index(
+                    internal_id,
+                    &fork_branch_name,
+                    source_turn_index,
+                    false,
+                )
+                .await?;
+            let fork_request = match expected_head_turn_id {
+                Some(turn_id) => {
+                    crate::persistence::state::TurnWriteTarget::branch_head_with_expectation(
+                        Some(branch.id),
+                        Some(turn_id),
+                        turn_index,
+                    )
+                }
+                None => crate::persistence::state::TurnWriteTarget::branch_head(
+                    Some(branch.id),
+                    turn_index,
+                ),
+            };
+            let resolved = store
+                .prepare_turn_write_target(internal_id, fork_request)
+                .await?
+                .ok_or_else(|| anyhow!("Forked sibling branch did not yield a writable turn"))?;
+            (branch, resolved)
+        };
+
+        session.set_selected_branch_head_id(Some(branch.id));
+        session.set_selected_branch_head_turn_id(branch.head_turn_id);
+        session.set_selected_branch_head_turn_index(source_turn_index);
+
+        Ok(resolved)
     }
 
     fn clear_turn_persistence(&self, session: &mut SessionState) {

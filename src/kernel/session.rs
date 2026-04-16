@@ -42,6 +42,7 @@ pub enum ExecutionWritePolicy {
 pub enum ExecutionConflictPolicy {
     Reject,
     Detached,
+    ForkSibling,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -119,6 +120,7 @@ impl ExecutionConflictPolicy {
         match self {
             Self::Reject => "reject",
             Self::Detached => "detached",
+            Self::ForkSibling => "fork_sibling",
         }
     }
 }
@@ -130,8 +132,9 @@ impl std::str::FromStr for ExecutionConflictPolicy {
         match value {
             "reject" => Ok(Self::Reject),
             "detached" => Ok(Self::Detached),
+            "fork_sibling" => Ok(Self::ForkSibling),
             other => Err(format!(
-                "invalid conflict policy '{other}'; expected reject|detached"
+                "invalid conflict policy '{other}'; expected reject|detached|fork_sibling"
             )),
         }
     }

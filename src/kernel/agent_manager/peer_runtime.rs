@@ -390,6 +390,24 @@ impl PeerRuntime {
                                         }
                                     }
                                 }
+                                ExecutionConflictPolicy::ForkSibling => {
+                                    self.host
+                                        .complete_task(
+                                            &mut self.session,
+                                            &task,
+                                            TaskTerminalStatus::Conflict,
+                                            0,
+                                            Some(error_message),
+                                        )
+                                        .await?;
+                                    return Ok(PeerRunOutcome {
+                                        runtime_task_id: task.task_id,
+                                        status: TaskTerminalStatus::Conflict,
+                                        task_turn_count: 0,
+                                        output: None,
+                                        assistant_content: None,
+                                    });
+                                }
                             }
                         }
                         let recovered = self

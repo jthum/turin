@@ -129,6 +129,21 @@ impl ExecutionHost {
                                     }
                                 }
                             }
+                            ExecutionConflictPolicy::ForkSibling => {
+                                self.complete_task(
+                                    session,
+                                    &task,
+                                    TaskTerminalStatus::Conflict,
+                                    0,
+                                    Some(error_message),
+                                )
+                                .await?;
+                                self.apply_pending_branch_checkout(session).await?;
+                                if session.stop_requested {
+                                    break;
+                                }
+                                continue;
+                            }
                         }
                     }
                     let recovered = self
