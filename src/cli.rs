@@ -429,13 +429,16 @@ pub(crate) enum DaemonTaskCommands {
         #[command(flatten)]
         args: DaemonOutputArgs,
     },
-    /// Run a one-shot ephemeral sidestep from a persisted session
+    /// Run a one-shot sidestep from a persisted session
     Sidestep {
         /// Persisted session ID to sidestep from
         session_id: String,
         /// Optional temporary runtime slot ID for the sidestep execution
         #[arg(long)]
         slot_id: Option<String>,
+        /// Sidestep execution mode
+        #[arg(long, default_value = "ephemeral", value_parser = ["ephemeral", "fork_sibling"])]
+        mode: String,
         /// Target a specific branch head instead of the session's active branch
         #[arg(long, conflicts_with = "turn_id")]
         branch_head_id: Option<i64>,

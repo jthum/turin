@@ -256,6 +256,8 @@ pub struct QueuedTask {
     pub conflict_policy: Option<ExecutionConflictPolicy>,
     #[serde(default)]
     pub execution: Option<TaskExecutionOverrides>,
+    #[serde(default)]
+    pub branch_outcome: Option<TaskBranchOutcome>,
     #[serde(default = "new_trace_id")]
     pub trace_id: String,
 }
@@ -292,6 +294,7 @@ impl QueuedTask {
             tools: None,
             conflict_policy: None,
             execution: None,
+            branch_outcome: None,
             trace_id: new_trace_id(),
         }
     }
@@ -310,6 +313,7 @@ impl QueuedTask {
             tools: None,
             conflict_policy: None,
             execution: None,
+            branch_outcome: None,
             trace_id: new_trace_id(),
         }
     }
@@ -333,6 +337,11 @@ impl QueuedTask {
 
     pub fn with_execution(mut self, execution: Option<TaskExecutionOverrides>) -> Self {
         self.execution = execution;
+        self
+    }
+
+    pub fn with_branch_outcome(mut self, branch_outcome: Option<TaskBranchOutcome>) -> Self {
+        self.branch_outcome = branch_outcome;
         self
     }
 }

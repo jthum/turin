@@ -18,6 +18,14 @@ pub enum TaskBranchOutcome {
         source_turn_id: Option<i64>,
         persisted_active_head_unchanged: bool,
     },
+    /// The task ran on a sidestep-specific sibling branch without disturbing the active head.
+    SidestepSibling {
+        branch_id: i64,
+        branch_public_id: String,
+        branch_name: String,
+        source_turn_id: Option<i64>,
+        persisted_active_head_unchanged: bool,
+    },
 }
 
 /// Terminal status for a task.

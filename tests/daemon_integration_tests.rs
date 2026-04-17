@@ -697,6 +697,7 @@ async fn daemon_task_sidestep_runs_ephemerally_and_cleans_up_slot() -> Result<()
                     prompt: "Explore a side question".to_string(),
                     content: None,
                     tools: Default::default(),
+                    mode: turin::daemon::protocol::SidestepModeParams::Ephemeral,
                     context_target: None,
                     timeout_ms: Some(5_000),
                 },
@@ -738,6 +739,143 @@ async fn daemon_task_sidestep_runs_ephemerally_and_cleans_up_slot() -> Result<()
         .context("session detail should include messages")?
         .len();
     assert_eq!(after_message_count, before_message_count);
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_task_sidestep_can_fork_a_sibling_branch() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+
+    let opened = result_value(
+        daemon
+            .request(DaemonRequest::SessionOpen(
+                turin::daemon::protocol::OpenSessionParams {
+                    agent_id: "default".to_string(),
+                    slot_id: Some("main".to_string()),
+                    channel_id: None,
+                },
+            ))
+            .await?,
+    );
+    let session_id = opened["session_id"]
+        .as_str()
+        .context("session.open should return session_id")?
+        .to_string();
+
+    let submitted = result_value(
+        daemon
+            .request(DaemonRequest::TaskSubmit(
+                turin::daemon::protocol::SubmitTaskParams {
+                    agent_id: None,
+                    session_id: Some(session_id.clone()),
+                    slot_id: Some("main".to_string()),
+                    prompt: "Seed session".to_string(),
+                    content: None,
+                    tools: Default::default(),
+                    conflict_policy: None,
+                },
+            ))
+            .await?,
+    );
+    let request_id = submitted["request_id"]
+        .as_str()
+        .context("task.submit should return request_id")?
+        .to_string();
+    let waited = result_value(
+        daemon
+            .request(DaemonRequest::TaskWait(
+                turin::daemon::protocol::WaitTaskParams {
+                    request_id,
+                    timeout_ms: Some(5_000),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(waited["status"], "success");
+
+    let before_detail = result_value(
+        daemon
+            .request(DaemonRequest::SessionGet(
+                turin::daemon::protocol::SessionIdParams {
+                    session_id: session_id.clone(),
+                },
+            ))
+            .await?,
+    );
+    let before_message_count = before_detail["messages"]
+        .as_array()
+        .context("session detail should include messages")?
+        .len();
+
+    let before_branches = result_value(
+        daemon
+            .request(DaemonRequest::SessionBranchList(
+                turin::daemon::protocol::SessionIdParams {
+                    session_id: session_id.clone(),
+                },
+            ))
+            .await?,
+    );
+    let before_branch_count = before_branches["branches"]
+        .as_array()
+        .context("session.branch_list should include branches")?
+        .len();
+
+    let sidestep = result_value(
+        daemon
+            .request(DaemonRequest::TaskSidestep(
+                turin::daemon::protocol::SidestepTaskParams {
+                    session_id: session_id.clone(),
+                    slot_id: None,
+                    prompt: "Explore on sibling branch".to_string(),
+                    content: None,
+                    tools: Default::default(),
+                    mode: turin::daemon::protocol::SidestepModeParams::ForkSibling,
+                    context_target: None,
+                    timeout_ms: Some(5_000),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(sidestep["state"], "completed");
+    assert_eq!(sidestep["branch_outcome"]["kind"], "sidestep_sibling");
+    assert_eq!(
+        sidestep["branch_outcome"]["persisted_active_head_unchanged"],
+        true
+    );
+
+    let after_detail = result_value(
+        daemon
+            .request(DaemonRequest::SessionGet(
+                turin::daemon::protocol::SessionIdParams {
+                    session_id: session_id.clone(),
+                },
+            ))
+            .await?,
+    );
+    let after_message_count = after_detail["messages"]
+        .as_array()
+        .context("session detail should include messages")?
+        .len();
+    assert_eq!(after_message_count, before_message_count);
+
+    let after_branches = result_value(
+        daemon
+            .request(DaemonRequest::SessionBranchList(
+                turin::daemon::protocol::SessionIdParams { session_id },
+            ))
+            .await?,
+    );
+    let branches = after_branches["branches"]
+        .as_array()
+        .context("session.branch_list should include branches")?;
+    assert_eq!(branches.len(), before_branch_count + 1);
+    assert!(branches.iter().any(|branch| {
+        branch["name"]
+            .as_str()
+            .is_some_and(|name| name.starts_with("sidestep-"))
+    }));
 
     daemon.stop().await
 }

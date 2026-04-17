@@ -351,6 +351,7 @@ async fn handle_daemon_task_command(command: DaemonTaskCommands) -> Result<()> {
         DaemonTaskCommands::Sidestep {
             session_id,
             slot_id,
+            mode,
             branch_head_id,
             turn_id,
             timeout_ms,
@@ -361,6 +362,7 @@ async fn handle_daemon_task_command(command: DaemonTaskCommands) -> Result<()> {
                 config_path: &args.config.config,
                 session_id: &session_id,
                 slot_id: slot_id.as_deref(),
+                mode: &mode,
                 branch_head_id,
                 turn_id,
                 prompt: &prompt,

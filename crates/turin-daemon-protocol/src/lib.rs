@@ -177,6 +177,14 @@ pub enum SidestepContextTargetParams {
     SummarySource { source_turn_id: i64 },
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SidestepModeParams {
+    #[default]
+    Ephemeral,
+    ForkSibling,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SidestepTaskParams {
     pub session_id: String,
@@ -188,6 +196,8 @@ pub struct SidestepTaskParams {
     pub content: Option<Vec<TaskInputContent>>,
     #[serde(default)]
     pub tools: Option<ToolsConfig>,
+    #[serde(default)]
+    pub mode: SidestepModeParams,
     #[serde(default)]
     pub context_target: Option<SidestepContextTargetParams>,
     #[serde(default)]
@@ -606,6 +616,7 @@ mod tests {
                 prompt: "What else should we add?".to_string(),
                 content: None,
                 tools: Default::default(),
+                mode: SidestepModeParams::ForkSibling,
                 context_target: Some(SidestepContextTargetParams::TurnId { turn_id: 42 }),
                 timeout_ms: Some(2_500),
             }),
@@ -615,6 +626,7 @@ mod tests {
         assert_eq!(value["op"], "task.sidestep");
         assert_eq!(value["params"]["session_id"], "sess_123");
         assert_eq!(value["params"]["slot_id"], "sd_manual");
+        assert_eq!(value["params"]["mode"], "fork_sibling");
         assert_eq!(value["params"]["context_target"]["kind"], "turn_id");
         assert_eq!(value["params"]["context_target"]["turn_id"], 42);
 
@@ -624,6 +636,7 @@ mod tests {
                 assert_eq!(params.session_id, "sess_123");
                 assert_eq!(params.slot_id.as_deref(), Some("sd_manual"));
                 assert_eq!(params.prompt, "What else should we add?");
+                assert_eq!(params.mode, SidestepModeParams::ForkSibling);
                 assert_eq!(params.timeout_ms, Some(2_500));
                 assert!(matches!(
                     params.context_target,

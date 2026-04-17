@@ -27,6 +27,7 @@ impl ExecutionHost {
 
         while let Some((mut task, queue_depth_after_pop)) = self.dequeue_next_task(session).await {
             session.set_active_task_conflict_policy(task.conflict_policy);
+            session.set_current_task_branch_outcome(task.branch_outcome.clone());
             if let Err(error) = self.begin_task_execution_scope(session, &task).await {
                 let error_message = error.to_string();
                 self.complete_task(

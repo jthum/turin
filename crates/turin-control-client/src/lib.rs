@@ -11,8 +11,8 @@ use turin_daemon_protocol::{
     ResponseEnvelope, ResumeSessionParams, RuntimeEventsSubscribeParams,
     SessionBranchCheckoutParams, SessionBranchCreateParams, SessionIdParams, SessionListParams,
     SessionSearchHitKind, SessionSearchParams, SessionSearchScope, SessionTitleParams,
-    SidestepContextTargetParams, SidestepTaskParams, SubmitTaskParams, TaskIdParams,
-    UpdateChannelParams, WaitTaskParams,
+    SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams, SubmitTaskParams,
+    TaskIdParams, UpdateChannelParams, WaitTaskParams,
 };
 use turin_remote_client::RemoteClient;
 
@@ -827,6 +827,7 @@ impl ControlClient {
         session_id: String,
         slot_id: Option<String>,
         prompt: String,
+        mode: SidestepModeParams,
         context_target: Option<SidestepContextTargetParams>,
         timeout_ms: Option<u64>,
     ) -> Result<TaskStatus> {
@@ -838,6 +839,7 @@ impl ControlClient {
                 prompt,
                 content: None,
                 tools: None,
+                mode,
                 context_target,
                 timeout_ms,
             }),

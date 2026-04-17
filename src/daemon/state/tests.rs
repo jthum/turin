@@ -1,10 +1,12 @@
 use super::*;
+use crate::kernel::event::TaskBranchOutcome;
 use crate::kernel::session_refs::parse_session_reference;
 use crate::persistence::manager::StoreSelector;
+use crate::persistence::state::SessionReadTarget;
 use serde_json::json;
 use tempfile::tempdir;
 use tokio::time::{Duration, sleep};
-use turin_daemon_protocol::{SessionSearchScope, SidestepTaskParams};
+use turin_daemon_protocol::{SessionSearchScope, SidestepModeParams, SidestepTaskParams};
 
 fn write_agent_with_state_path(root: &Path, agent_id: &str, state_path: &str) -> Result<()> {
     let agent_dir = root
@@ -244,6 +246,7 @@ async fn sidestep_task_uses_ephemeral_slot_and_does_not_persist_transcript() -> 
             prompt: "Explore a side question".to_string(),
             content: None,
             tools: None,
+            mode: SidestepModeParams::Ephemeral,
             context_target: None,
             timeout_ms: Some(2_000),
         })
@@ -256,6 +259,110 @@ async fn sidestep_task_uses_ephemeral_slot_and_does_not_persist_transcript() -> 
         .await?
         .expect("persisted session detail visible");
     assert_eq!(after_detail.messages.len(), before_message_count);
+    assert!(
+        state
+            .list_live_sessions()
+            .await
+            .iter()
+            .all(|live| live.slot_id != sidestep.slot_id)
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn sidestep_task_can_run_durably_on_a_sibling_branch() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+
+    let live = state.open_session("default", Some("main"), None).await?;
+    let seed = state
+        .submit_task(
+            None,
+            Some(&live.session_id),
+            Some("main"),
+            "Seed session".to_string(),
+            None,
+            Default::default(),
+        )
+        .await?;
+    let completed = state.wait_for_task(&seed.request_id, Some(2_000)).await?;
+    assert_eq!(completed.state, "completed");
+
+    let before_detail = state
+        .get_session(&live.session_id)
+        .await?
+        .expect("persisted session detail visible");
+    let before_message_count = before_detail.messages.len();
+    let before_branches = state
+        .list_session_branches(&live.session_id)
+        .await?
+        .expect("branch list visible");
+
+    let sidestep = state
+        .sidestep_task_params(SidestepTaskParams {
+            session_id: live.session_id.clone(),
+            slot_id: None,
+            prompt: "Explore on sibling branch".to_string(),
+            content: None,
+            tools: None,
+            mode: SidestepModeParams::ForkSibling,
+            context_target: None,
+            timeout_ms: Some(2_000),
+        })
+        .await?;
+    assert_eq!(sidestep.state, "completed");
+    let branch_outcome = sidestep
+        .branch_outcome
+        .clone()
+        .expect("fork_sibling sidestep should surface branch outcome");
+    let sidestep_branch_id = match branch_outcome {
+        TaskBranchOutcome::SidestepSibling {
+            branch_id,
+            persisted_active_head_unchanged,
+            ..
+        } => {
+            assert!(persisted_active_head_unchanged);
+            branch_id
+        }
+        other => panic!("unexpected branch outcome: {other:?}"),
+    };
+
+    let after_detail = state
+        .get_session(&live.session_id)
+        .await?
+        .expect("persisted session detail visible");
+    assert_eq!(after_detail.messages.len(), before_message_count);
+
+    let after_branches = state
+        .list_session_branches(&live.session_id)
+        .await?
+        .expect("branch list visible");
+    assert_eq!(after_branches.len(), before_branches.len() + 1);
+    assert!(
+        after_branches
+            .iter()
+            .any(|branch| !branch.active && branch.name.starts_with("sidestep-"))
+    );
+
+    let session_ref = parse_session_reference(&live.session_id)?;
+    let store_selector = session_ref
+        .store_selector
+        .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+    let store = state.kernel.store_manager().open(&store_selector).await?;
+    let internal_id = before_detail.session.internal_id;
+    let sibling_messages = store
+        .get_messages(
+            internal_id,
+            &SessionReadTarget::BranchHead(sidestep_branch_id),
+        )
+        .await?;
+    assert!(
+        sibling_messages
+            .iter()
+            .any(|message| message.content.contains("Explore on sibling branch"))
+    );
     assert!(
         state
             .list_live_sessions()
