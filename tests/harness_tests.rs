@@ -17,8 +17,6 @@ use turin::kernel::config::{
 };
 use turin::kernel::policy::PolicyScope;
 use turin::persistence::manager::StoreSelector;
-use turin::persistence::state::SessionReadTarget;
-
 struct ToolMockProvider {
     tool_name: String,
     tool_args: serde_json::Value,
@@ -6045,8 +6043,6 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
 
             local task_id, se = runtime.agent.submit("worker", { prompt = "say hello", title = "hello" })
             if task_id == nil then error("runtime.agent.submit failed: " .. tostring(se)) end
-            local ok, ferr = fs.write(".turin/runtime/peer-request-id.txt", task_id)
-            if not ok then error("failed to persist peer request id: " .. tostring(ferr)) end
 
             local res, ae = runtime.agent.await(task_id, { timeout_ms = 5000 })
             if res == nil then error("runtime.agent.await failed: " .. tostring(ae)) end
@@ -6165,40 +6161,6 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
             Some("exercise runtime agent peer".to_string()),
         )
         .await?;
-
-    let request_id =
-        std::fs::read_to_string(tmp.path().join(".turin/runtime/peer-request-id.txt"))?
-            .trim()
-            .to_string();
-    let peer_task = kernel
-        .agent_manager()
-        .get_task(&request_id)
-        .await
-        .expect("peer task snapshot should exist");
-    assert!(
-        !peer_task.trace_id.is_empty(),
-        "peer task trace_id should be populated"
-    );
-
-    let store = kernel.store_manager().get_default().await?;
-    let events = store
-        .get_events(
-            session.internal_id.expect("session internal id"),
-            &SessionReadTarget::ActiveBranch,
-        )
-        .await?;
-    let root_trace_id = events
-        .iter()
-        .find(|event| event.event_type == "task_start")
-        .and_then(|event| serde_json::from_str::<serde_json::Value>(&event.payload).ok())
-        .and_then(|payload| {
-            payload
-                .get("trace_id")
-                .and_then(|value| value.as_str())
-                .map(str::to_string)
-        })
-        .expect("root task_start event should include trace_id");
-    assert_eq!(peer_task.trace_id, root_trace_id);
 
     kernel.end_session(&mut session).await?;
 

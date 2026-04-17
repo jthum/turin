@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::execution_host::ExecutionHost;
-use crate::kernel::session::{PlanProgress, QueuedTask, SessionState};
+use crate::kernel::session::{PlanProgress, QueuedTask, SessionState, TaskExecutionOverrides};
 
 impl ExecutionHost {
     /// Add a prompt to the end of the queue as an implicit single-task plan.
@@ -67,14 +67,22 @@ impl ExecutionHost {
                     .and_then(|v| v.as_str())
                     .map(ToString::to_string)
                     .or_else(|| default_title.map(ToString::to_string));
+                let execution = obj
+                    .get("execution")
+                    .and_then(|value| {
+                        serde_json::from_value::<TaskExecutionOverrides>(value.clone()).ok()
+                    })
+                    .filter(|execution| !execution.is_empty());
                 match plan_id {
                     Some(plan_id) => Some(
                         QueuedTask::with_plan(prompt.to_string(), plan_id, title)
-                            .with_inherited_trace(default_trace_id),
+                            .with_inherited_trace(default_trace_id)
+                            .with_execution(execution),
                     ),
                     None => Some(
                         QueuedTask::ad_hoc(prompt.to_string())
-                            .with_inherited_trace(default_trace_id),
+                            .with_inherited_trace(default_trace_id)
+                            .with_execution(execution),
                     ),
                 }
             })

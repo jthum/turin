@@ -145,8 +145,7 @@ impl PeerRuntime {
         } else if let Err(e) = result {
             error!(agent_id = %self.agent_id, error = %e, "Peer agent task failed");
         }
-        self.control
-            .set_current_conflict_policy(self.session.execution.conflict_policy);
+        self.sync_control_execution_state();
         self.control.clear_active_task();
         if let Err(err) = self.reset_session_if_requested().await {
             error!(agent_id = %self.agent_id, error = %err, "Peer runtime failed to reset session");
@@ -185,10 +184,36 @@ impl PeerRuntime {
         self.allocate_runtime_task_id(&mut task);
 
         self.set_capability_ceiling(delegated_capabilities.clone());
-        self.session
-            .set_active_task_conflict_policy(task.conflict_policy);
-        self.control
-            .set_current_conflict_policy(self.session.effective_conflict_policy());
+        self.session.set_active_task_conflict_policy(task.conflict_policy);
+        if let Err(error) = self
+            .host
+            .begin_task_execution_scope(&mut self.session, &task)
+            .await
+        {
+            let error_message = error.to_string();
+            self.host
+                .complete_task(
+                    &mut self.session,
+                    &task,
+                    TaskTerminalStatus::Error,
+                    0,
+                    None,
+                    Some(error_message),
+                )
+                .await?;
+            self.host.finish_task_execution_scope(&mut self.session).await?;
+            self.sync_control_execution_state();
+            self.clear_capability_ceiling();
+            return Ok(PeerRunOutcome {
+                runtime_task_id: task.task_id,
+                status: TaskTerminalStatus::Error,
+                task_turn_count: 0,
+                branch_outcome: None,
+                output: None,
+                assistant_content: None,
+            });
+        }
+        self.sync_control_execution_state();
         let outcome = async {
             self.host.persist_event(
                 &self.session,
@@ -314,6 +339,9 @@ impl PeerRuntime {
                             None,
                         )
                         .await?;
+                    self.host
+                        .apply_pending_branch_checkout(&mut self.session)
+                        .await?;
                     result
                 }
                 TaskRunAttempt::Terminal {
@@ -329,6 +357,9 @@ impl PeerRuntime {
                             None,
                             Some(error_message),
                         )
+                        .await?;
+                    self.host
+                        .apply_pending_branch_checkout(&mut self.session)
                         .await?;
                     return Ok(PeerRunOutcome {
                         runtime_task_id: task.task_id,
@@ -353,6 +384,9 @@ impl PeerRuntime {
                             None,
                             Some(error_message),
                         )
+                        .await?;
+                    self.host
+                        .apply_pending_branch_checkout(&mut self.session)
                         .await?;
                     if recovered {
                         return Ok(PeerRunOutcome {
@@ -380,7 +414,10 @@ impl PeerRuntime {
             })
         }
         .await;
+        let finish_scope = self.host.finish_task_execution_scope(&mut self.session).await;
         self.clear_capability_ceiling();
+        self.sync_control_execution_state();
+        finish_scope?;
         outcome
     }
 
@@ -503,6 +540,13 @@ impl PeerRuntime {
         );
         self.session = session;
         Ok(())
+    }
+
+    fn sync_control_execution_state(&self) {
+        self.control
+            .set_current_execution_snapshot(ExecutionStatusSnapshot::from_session(&self.session));
+        self.control
+            .set_current_conflict_policy(self.session.effective_conflict_policy());
     }
 }
 

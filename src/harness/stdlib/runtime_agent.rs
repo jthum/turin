@@ -1,4 +1,4 @@
-use mlua::{Lua, Result as LuaResult, Table, Value};
+use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{
@@ -10,7 +10,7 @@ use crate::harness::stdlib::governance_support::{
     require_child_agent as require_child_agent_governance,
 };
 use crate::harness::stdlib::policy_support::{policy_bool, runtime_policy_snapshot};
-use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask};
+use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask, TaskExecutionOverrides};
 
 fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
     app_data
@@ -20,7 +20,7 @@ fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
         .and_then(|ctx| ctx.trace_id.clone())
 }
 
-fn parse_submit_task(task_val: Value, app_data: &HarnessAppData) -> LuaResult<QueuedTask> {
+fn parse_submit_task(lua: &Lua, task_val: Value, app_data: &HarnessAppData) -> LuaResult<QueuedTask> {
     let trace_id = active_trace_id(app_data);
     match task_val {
         Value::String(s) => {
@@ -37,6 +37,9 @@ fn parse_submit_task(task_val: Value, app_data: &HarnessAppData) -> LuaResult<Qu
             }
             if let Ok(conflict_policy) = t.get::<String>("conflict_policy") {
                 task.conflict_policy = Some(parse_conflict_policy(&conflict_policy)?);
+            }
+            if let Ok(execution) = t.get::<Value>("execution") {
+                task.execution = Some(parse_execution_overrides_with_lua(lua, execution)?);
             }
             Ok(task)
         }
@@ -62,6 +65,35 @@ fn conflict_policy_from_opts(opts: Option<&Table>) -> LuaResult<Option<Execution
         return Ok(None);
     };
     Ok(Some(parse_conflict_policy(&conflict_policy)?))
+}
+
+fn execution_overrides_from_opts(
+    lua: &Lua,
+    opts: Option<&Table>,
+) -> LuaResult<Option<TaskExecutionOverrides>> {
+    let Some(opts) = opts else {
+        return Ok(None);
+    };
+    let Ok(execution) = opts.get::<Value>("execution") else {
+        return Ok(None);
+    };
+    if matches!(execution, Value::Nil) {
+        return Ok(None);
+    }
+    Ok(Some(parse_execution_overrides_with_lua(lua, execution)?))
+}
+
+fn parse_execution_overrides_with_lua(
+    lua: &Lua,
+    value: Value,
+) -> LuaResult<TaskExecutionOverrides> {
+    let overrides = lua.from_value::<TaskExecutionOverrides>(value)?;
+    if overrides.is_empty() {
+        return Err(mlua::Error::runtime(
+            "execution overrides must not be an empty table",
+        ));
+    }
+    Ok(overrides)
 }
 
 fn parse_conflict_policy(raw: &str) -> LuaResult<ExecutionConflictPolicy> {
@@ -135,7 +167,7 @@ pub fn register_runtime_agent_namespace(
 
                     let task = match task_val {
                         v @ Value::String(_) | v @ Value::Table(_) => {
-                            parse_submit_task(v, &app_data_snapshot)?
+                            parse_submit_task(lua, v, &app_data_snapshot)?
                         }
                         _ => {
                             return nil_err(lua, "invalid task; expected string or {prompt=...}");
@@ -144,6 +176,9 @@ pub fn register_runtime_agent_namespace(
                     let mut task = task;
                     if task.conflict_policy.is_none() {
                         task.conflict_policy = conflict_policy_from_opts(opts.as_ref())?;
+                    }
+                    if task.execution.is_none() {
+                        task.execution = execution_overrides_from_opts(lua, opts.as_ref())?;
                     }
                     let delegated_capabilities = parse_delegated_capabilities(
                         &app_data_snapshot,
@@ -225,6 +260,7 @@ pub fn register_runtime_agent_namespace(
                         .with_inherited_trace(active_trace_id(&app_data_snapshot).as_deref());
                     task.title = title_from_opts(opts.as_ref());
                     task.conflict_policy = conflict_policy_from_opts(opts.as_ref())?;
+                    task.execution = execution_overrides_from_opts(lua, opts.as_ref())?;
                     let timeout_ms = timeout_ms_from_opts(opts.as_ref());
                     let delegated_capabilities = parse_delegated_capabilities(
                         &app_data_snapshot,

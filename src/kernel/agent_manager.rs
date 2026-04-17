@@ -270,17 +270,16 @@ impl RuntimeControl {
             .expect("runtime control conflict policy lock poisoned")
     }
 
-    #[cfg(test)]
-    fn set_current_execution_conflict_policy(&self, conflict_policy: ExecutionConflictPolicy) {
-        self.set_current_conflict_policy(conflict_policy);
-    }
-
-    #[cfg(test)]
     fn set_current_execution_snapshot(&self, execution: ExecutionStatusSnapshot) {
         *self
             .current_execution
             .write()
             .expect("runtime control execution snapshot lock poisoned") = Some(execution);
+    }
+
+    #[cfg(test)]
+    fn set_current_execution_conflict_policy(&self, conflict_policy: ExecutionConflictPolicy) {
+        self.set_current_conflict_policy(conflict_policy);
     }
 
     fn subscribe_current_session_events(&self) -> Option<SessionEventReceiver> {

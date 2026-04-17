@@ -253,6 +253,31 @@ impl ExecutionHost {
         }
     }
 
+    pub(crate) async fn begin_task_execution_scope(
+        &self,
+        session: &mut SessionState,
+        task: &QueuedTask,
+    ) -> anyhow::Result<()> {
+        let needs_refresh = session
+            .begin_task_execution_override(task.execution.as_ref())
+            .map_err(anyhow::Error::msg)?;
+        if needs_refresh {
+            self.refresh_session_from_persistence(session).await?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn finish_task_execution_scope(
+        &self,
+        session: &mut SessionState,
+    ) -> anyhow::Result<()> {
+        let needs_refresh = session.finish_task_execution_scope();
+        if needs_refresh {
+            self.refresh_session_from_persistence(session).await?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn agent_config_for(
         &self,
         agent_id: &str,

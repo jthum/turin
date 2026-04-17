@@ -1,4 +1,4 @@
-use mlua::{Lua, Result as LuaResult, Table, Value};
+use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{ActiveHarnessExecutionContext, HarnessAppData};
 use crate::harness::stdlib::binding_common::{
@@ -14,8 +14,7 @@ use crate::harness::stdlib::identity_support::{
     get_active_identity, identity_to_lua_table, session_row_to_lua_table,
 };
 use crate::harness::stdlib::policy_support::{policy_bool, policy_u64, runtime_policy_snapshot};
-use crate::kernel::session::ExecutionConflictPolicy;
-use crate::kernel::session::QueuedTask;
+use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask, TaskExecutionOverrides};
 use crate::kernel::session_refs::{
     SessionReference, format_session_reference, parse_session_reference,
 };
@@ -168,6 +167,28 @@ fn opt_conflict_policy(
     raw.parse().map(Some)
 }
 
+fn opt_execution_overrides(
+    lua: &Lua,
+    opts: Option<&Table>,
+) -> std::result::Result<Option<TaskExecutionOverrides>, String> {
+    let Some(opts) = opts else {
+        return Ok(None);
+    };
+    let Ok(value) = opts.get::<Value>("execution") else {
+        return Ok(None);
+    };
+    if matches!(value, Value::Nil) {
+        return Ok(None);
+    }
+    let overrides = lua
+        .from_value::<TaskExecutionOverrides>(value)
+        .map_err(|err| err.to_string())?;
+    if overrides.is_empty() {
+        return Err("execution overrides must not be an empty table".to_string());
+    }
+    Ok(Some(overrides))
+}
+
 fn bytes_to_simple_uuid(bytes: &[u8]) -> String {
     uuid::Uuid::from_slice(bytes)
         .map(|uuid| uuid.simple().to_string())
@@ -231,6 +252,10 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 Ok(conflict_policy) => conflict_policy,
                 Err(err) => return nil_err(lua, &err),
             };
+            let execution = match opt_execution_overrides(lua, opts.as_ref()) {
+                Ok(execution) => execution,
+                Err(err) => return nil_err(lua, &err),
+            };
             let spawn_q = spawn_q.clone();
             let queue_max = queue_max(&snapshot);
             let trace_id = active_trace_id(&spawn_policy_snapshot);
@@ -239,7 +264,8 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     &spawn_q,
                     QueuedTask::ad_hoc(prompt.clone())
                         .with_inherited_trace(trace_id.as_deref())
-                        .with_conflict_policy(conflict_policy),
+                        .with_conflict_policy(conflict_policy)
+                        .with_execution(execution),
                     queue_max,
                     false,
                 )
@@ -300,13 +326,19 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 )?;
                 let timeout_ms = opts.as_ref().and_then(|t| t.get::<u64>("timeout_ms").ok());
                 let trace_id = active_trace_id(&complete_policy_snapshot);
+                let execution = match opt_execution_overrides(lua, opts.as_ref()) {
+                    Ok(execution) => execution,
+                    Err(err) => return nil_err(lua, &err),
+                };
 
                 let manager_submit = manager.clone();
                 let request_id = bridge_async_display_err(async move {
                     manager_submit
                         .submit(
                             &target_agent,
-                            QueuedTask::ad_hoc(prompt).with_inherited_trace(trace_id.as_deref()),
+                            QueuedTask::ad_hoc(prompt)
+                                .with_inherited_trace(trace_id.as_deref())
+                                .with_execution(execution),
                             delegated_capabilities,
                         )
                         .await

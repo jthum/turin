@@ -129,7 +129,6 @@ impl ExecutionHost {
         }
 
         self.wait_for_session_durability(session).await;
-        session.clear_conflict_detached_task();
         Ok(())
     }
 

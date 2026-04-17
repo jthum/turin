@@ -27,9 +27,27 @@ impl ExecutionHost {
 
         while let Some((mut task, queue_depth_after_pop)) = self.dequeue_next_task(session).await {
             session.set_active_task_conflict_policy(task.conflict_policy);
+            if let Err(error) = self.begin_task_execution_scope(session, &task).await {
+                let error_message = error.to_string();
+                self.complete_task(
+                    session,
+                    &task,
+                    TaskTerminalStatus::Error,
+                    0,
+                    None,
+                    Some(error_message),
+                )
+                .await?;
+                self.finish_task_execution_scope(session).await?;
+                if session.stop_requested {
+                    break;
+                }
+                continue;
+            }
             if session.cancel_token.is_cancelled() {
                 self.complete_task(session, &task, TaskTerminalStatus::Cancelled, 0, None, None)
                     .await?;
+                self.finish_task_execution_scope(session).await?;
                 if session.stop_requested {
                     break;
                 }
@@ -39,6 +57,7 @@ impl ExecutionHost {
                 .prepare_task_start(session, &mut task, queue_depth_after_pop)
                 .await?
             {
+                self.finish_task_execution_scope(session).await?;
                 continue;
             }
 
@@ -58,7 +77,10 @@ impl ExecutionHost {
                 } => {
                     self.complete_task(session, &task, status, 0, None, Some(error_message))
                         .await?;
-                    self.apply_pending_branch_checkout(session).await?;
+                    let apply_result = self.apply_pending_branch_checkout(session).await;
+                    let finish_result = self.finish_task_execution_scope(session).await;
+                    apply_result?;
+                    finish_result?;
                     if session.stop_requested {
                         break;
                     }
@@ -78,7 +100,10 @@ impl ExecutionHost {
                         Some(error_message),
                     )
                     .await?;
-                    self.apply_pending_branch_checkout(session).await?;
+                    let apply_result = self.apply_pending_branch_checkout(session).await;
+                    let finish_result = self.finish_task_execution_scope(session).await;
+                    apply_result?;
+                    finish_result?;
                     if recovered {
                         continue;
                     }
@@ -96,7 +121,10 @@ impl ExecutionHost {
             )
             .await?;
 
-            self.apply_pending_branch_checkout(session).await?;
+            let apply_result = self.apply_pending_branch_checkout(session).await;
+            let finish_result = self.finish_task_execution_scope(session).await;
+            apply_result?;
+            finish_result?;
 
             if session.stop_requested || task_result.status == TaskTerminalStatus::Cancelled {
                 info!(
@@ -110,7 +138,10 @@ impl ExecutionHost {
         Ok(())
     }
 
-    async fn apply_pending_branch_checkout(&mut self, session: &mut SessionState) -> Result<()> {
+    pub(crate) async fn apply_pending_branch_checkout(
+        &mut self,
+        session: &mut SessionState,
+    ) -> Result<()> {
         let branch_name = {
             let Some(harness) = self.session_harness_engine(session) else {
                 return Ok(());

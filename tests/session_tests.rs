@@ -19,7 +19,10 @@ use turin::kernel::config::{
     ProviderConfig, StoreTargetConfig, TurinConfig,
 };
 use turin::kernel::policy::PolicyScope;
-use turin::kernel::session::{ExecutionWritePolicy, QueuedTask, SessionStatus};
+use turin::kernel::session::{
+    ExecutionContextTarget, ExecutionWritePolicy, QueuedTask, SessionStatus,
+    TaskExecutionOverrides,
+};
 use turin::kernel::session_refs::parse_session_reference;
 use turin::persistence::state::{SessionReadTarget, TurnWriteTarget};
 use turin_types::TaskInputContent;
@@ -789,6 +792,103 @@ async fn test_local_external_reference_selection_materializes_remote_context_det
 
     kernel.end_session(&mut session).await?;
     kernel.end_session(&mut source).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_task_execution_override_materializes_temp_context_and_restores_session() -> Result<()>
+{
+    let tmp = tempdir()?;
+    let mut kernel = make_kernel(tmp.path()).await?;
+
+    let seen_messages = Arc::new(Mutex::new(Vec::new()));
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(
+            "mock",
+            Arc::new(CaptureMessagesProvider {
+                seen_messages: Arc::clone(&seen_messages),
+            }),
+        ),
+    );
+
+    let mut session = kernel.create_session().await;
+    kernel.run(&mut session, Some("Turn zero".to_string())).await?;
+    kernel.run(&mut session, Some("Turn one".to_string())).await?;
+
+    let original_execution_id = session.execution_id().to_string();
+    let original_target = session.context_target().clone();
+    let original_branch_head_id = session.selected_branch_head_id();
+
+    let store = kernel.store_manager().open(&session.store_selector).await?;
+    let session_id = session.internal_id.expect("session internal id");
+    let checkpoint = store
+        .create_branch_head_from_turn_index(session_id, "checkpoint", Some(0), false)
+        .await?;
+    let first_turn_id = checkpoint
+        .created_from_turn_id
+        .expect("checkpoint source turn id");
+
+    let queued_task = QueuedTask::ad_hoc("Revisit old context")
+        .with_execution(Some(TaskExecutionOverrides {
+            context_target: Some(ExecutionContextTarget::TurnId {
+                turn_id: first_turn_id,
+            }),
+            visibility: None,
+            durability: None,
+            write_policy: None,
+        }));
+    {
+        let mut queue = session.queue.lock().await;
+        queue.push_back(queued_task);
+    }
+
+    kernel.run(&mut session, None).await?;
+
+    let seen = seen_messages
+        .lock()
+        .expect("capture messages mutex poisoned")
+        .clone();
+    let rendered = format!("{seen:?}");
+    assert!(
+        rendered.contains("Turn zero"),
+        "task override should materialize the selected turn context"
+    );
+    assert!(
+        !rendered.contains("Turn one"),
+        "task override should not include later turns outside the selected target"
+    );
+    assert!(
+        rendered.contains("Revisit old context"),
+        "task override should still include the queued task prompt"
+    );
+
+    assert_eq!(session.execution_id(), original_execution_id);
+    assert_eq!(session.context_target(), &original_target);
+    assert_eq!(session.selected_branch_head_id(), original_branch_head_id);
+    assert_eq!(session.turn_index, 2);
+    assert!(
+        session.history.iter().any(|message| message.content.iter().any(|content| {
+            matches!(
+                content,
+                turin::inference::provider::InferenceContent::Text { text }
+                if text == "Turn one"
+            )
+        })),
+        "restored session should return to the original visible history"
+    );
+    assert!(
+        !session.history.iter().any(|message| message.content.iter().any(|content| {
+            matches!(
+                content,
+                turin::inference::provider::InferenceContent::Text { text }
+                if text == "Revisit old context"
+            )
+        })),
+        "detached task execution should not durably mutate the restored session transcript"
+    );
+
+    kernel.end_session(&mut session).await?;
     Ok(())
 }
 

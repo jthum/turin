@@ -24,6 +24,13 @@ pub struct ActiveTaskState {
     pub branch_outcome: Option<TaskBranchOutcome>,
     pub conflict_detached: bool,
     pub turn_target: Option<TurnWriteTarget>,
+    execution_restore: Option<TaskExecutionRestoreState>,
+}
+
+#[derive(Debug, Clone)]
+struct TaskExecutionRestoreState {
+    execution: ExecutionContext,
+    selected_branch_head_cursor: Option<BranchHeadCursor>,
 }
 
 /// Tracks the persisted turn currently at the tip of the selected branch head.
@@ -120,7 +127,7 @@ impl ExecutionContextTarget {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionContext {
     /// Stable identifier for this live execution instance.
     pub execution_id: String,
@@ -154,6 +161,58 @@ impl ExecutionContext {
             write_policy: ExecutionWritePolicy::AdvanceBranchHead,
             conflict_policy: ExecutionConflictPolicy::Reject,
         }
+    }
+}
+
+/// Optional per-task execution overrides layered on top of the live session execution.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TaskExecutionOverrides {
+    #[serde(default)]
+    pub context_target: Option<ExecutionContextTarget>,
+    #[serde(default)]
+    pub visibility: Option<ExecutionVisibility>,
+    #[serde(default)]
+    pub durability: Option<ExecutionDurability>,
+    #[serde(default)]
+    pub write_policy: Option<ExecutionWritePolicy>,
+}
+
+impl TaskExecutionOverrides {
+    pub fn is_empty(&self) -> bool {
+        self.context_target.is_none()
+            && self.visibility.is_none()
+            && self.durability.is_none()
+            && self.write_policy.is_none()
+    }
+
+    pub fn apply_to_execution(&self, execution: &mut ExecutionContext) -> Result<(), String> {
+        if let Some(context_target) = &self.context_target {
+            execution.context_target = context_target.clone();
+            execution.write_policy = context_target.default_write_policy();
+        }
+        if let Some(visibility) = self.visibility {
+            execution.visibility = visibility;
+        }
+        if let Some(durability) = self.durability {
+            execution.durability = durability;
+        }
+        if let Some(write_policy) = self.write_policy {
+            execution.write_policy = write_policy;
+        }
+
+        if execution.write_policy == ExecutionWritePolicy::AdvanceBranchHead
+            && !matches!(
+                execution.context_target,
+                ExecutionContextTarget::BranchHead { .. }
+            )
+        {
+            return Err(
+                "advance_branch_head write policy requires a branch_head execution target"
+                    .to_string(),
+            );
+        }
+
+        Ok(())
     }
 }
 
@@ -195,6 +254,8 @@ pub struct QueuedTask {
     pub tools: Option<ToolsConfig>,
     #[serde(default)]
     pub conflict_policy: Option<ExecutionConflictPolicy>,
+    #[serde(default)]
+    pub execution: Option<TaskExecutionOverrides>,
     #[serde(default = "new_trace_id")]
     pub trace_id: String,
 }
@@ -230,6 +291,7 @@ impl QueuedTask {
             content: None,
             tools: None,
             conflict_policy: None,
+            execution: None,
             trace_id: new_trace_id(),
         }
     }
@@ -247,6 +309,7 @@ impl QueuedTask {
             content: None,
             tools: None,
             conflict_policy: None,
+            execution: None,
             trace_id: new_trace_id(),
         }
     }
@@ -265,6 +328,11 @@ impl QueuedTask {
         conflict_policy: Option<ExecutionConflictPolicy>,
     ) -> Self {
         self.conflict_policy = conflict_policy;
+        self
+    }
+
+    pub fn with_execution(mut self, execution: Option<TaskExecutionOverrides>) -> Self {
+        self.execution = execution;
         self
     }
 }
@@ -537,8 +605,47 @@ impl SessionState {
         self.active_task.turn_target = None;
     }
 
-    pub fn clear_conflict_detached_task(&mut self) {
+    pub fn begin_task_execution_override(
+        &mut self,
+        overrides: Option<&TaskExecutionOverrides>,
+    ) -> Result<bool, String> {
+        let Some(overrides) = overrides.filter(|overrides| !overrides.is_empty()) else {
+            return Ok(false);
+        };
+
+        let previous_execution = self.execution.clone();
+        let previous_target = previous_execution.context_target.clone();
+        let mut task_execution = previous_execution.clone();
+        task_execution.execution_id = new_execution_id();
+        overrides.apply_to_execution(&mut task_execution)?;
+
+        self.active_task.execution_restore = Some(TaskExecutionRestoreState {
+            execution: previous_execution,
+            selected_branch_head_cursor: self.selected_branch_head_cursor,
+        });
+        self.execution = task_execution;
+        self.active_task.conflict_detached = false;
+        self.active_task.turn_target = None;
+
+        let target_changed = self.execution.context_target != previous_target;
+        if target_changed {
+            self.selected_branch_head_cursor = None;
+        }
+
+        Ok(target_changed)
+    }
+
+    pub fn finish_task_execution_scope(&mut self) -> bool {
+        let restore = self.active_task.execution_restore.take();
+        let should_refresh = restore.as_ref().is_some_and(|restore| {
+            self.execution.context_target != restore.execution.context_target
+        });
+        if let Some(restore) = restore {
+            self.execution = restore.execution;
+            self.selected_branch_head_cursor = restore.selected_branch_head_cursor;
+        }
         self.active_task = ActiveTaskState::default();
+        should_refresh
     }
 }
 
@@ -670,10 +777,63 @@ mod tests {
         );
         assert_eq!(session.next_turn_write_target_request(), None);
 
-        session.clear_conflict_detached_task();
+        session.finish_task_execution_scope();
         assert_eq!(
             session.effective_write_policy(),
             ExecutionWritePolicy::AdvanceBranchHead
         );
+    }
+
+    #[test]
+    fn task_execution_override_spawns_nested_execution_and_restores_parent() {
+        let mut session = SessionState::new();
+        session.set_selected_branch_head_id(Some(11));
+        session.set_selected_branch_head_cursor(Some(5), Some(2));
+        let original_execution = session.execution.clone();
+
+        let refresh_needed = session
+            .begin_task_execution_override(Some(&TaskExecutionOverrides {
+                context_target: Some(ExecutionContextTarget::TurnId { turn_id: 5 }),
+                visibility: Some(ExecutionVisibility::Hidden),
+                durability: Some(ExecutionDurability::Ephemeral),
+                write_policy: None,
+            }))
+            .expect("task override should apply");
+        assert!(refresh_needed);
+        assert_ne!(session.execution.execution_id, original_execution.execution_id);
+        assert_eq!(
+            session.context_target(),
+            &ExecutionContextTarget::TurnId { turn_id: 5 }
+        );
+        assert_eq!(session.execution.visibility, ExecutionVisibility::Hidden);
+        assert_eq!(session.execution.durability, ExecutionDurability::Ephemeral);
+        assert_eq!(session.execution.write_policy, ExecutionWritePolicy::Detached);
+        assert_eq!(session.selected_branch_head_cursor, None);
+
+        let restore_refresh = session.finish_task_execution_scope();
+        assert!(restore_refresh);
+        assert_eq!(session.execution, original_execution);
+        assert_eq!(
+            session.selected_branch_head_cursor,
+            Some(BranchHeadCursor {
+                turn_id: 5,
+                turn_index: 2
+            })
+        );
+    }
+
+    #[test]
+    fn task_execution_override_rejects_branch_advancing_non_branch_targets() {
+        let mut session = SessionState::new();
+        let error = session
+            .begin_task_execution_override(Some(&TaskExecutionOverrides {
+                context_target: Some(ExecutionContextTarget::TurnId { turn_id: 7 }),
+                visibility: None,
+                durability: None,
+                write_policy: Some(ExecutionWritePolicy::AdvanceBranchHead),
+            }))
+            .expect_err("invalid override should fail");
+        assert!(error.contains("advance_branch_head"));
+        assert!(session.active_task.execution_restore.is_none());
     }
 }
