@@ -17,6 +17,7 @@ use turin_types::{TaskInputContent, ToolsConfig};
 
 pub type SessionHarnessEngine = Arc<std::sync::Mutex<HarnessInstance>>;
 
+/// Transient per-task execution state that is reset when a task completes.
 #[derive(Debug, Default)]
 pub struct ActiveTaskState {
     pub conflict_policy: Option<ExecutionConflictPolicy>,
@@ -25,48 +26,68 @@ pub struct ActiveTaskState {
     pub turn_target: Option<TurnWriteTarget>,
 }
 
+/// Tracks the persisted turn currently at the tip of the selected branch head.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BranchHeadCursor {
     pub turn_id: i64,
     pub turn_index: u32,
 }
 
+/// Controls whether an execution is visible to normal session consumers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionVisibility {
+    /// Show this execution as part of the normal visible session flow.
     Visible,
+    /// Keep this execution hidden from the default visible session flow.
     Hidden,
 }
 
+/// Controls whether an execution is intended to persist beyond runtime memory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionDurability {
+    /// Persist durable state for this execution when its write policy allows it.
     Durable,
+    /// Treat this execution as ephemeral runtime state.
     Ephemeral,
 }
 
+/// Controls how an execution writes new turns into persisted session state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionWritePolicy {
+    /// Advance the selected branch head by allocating and writing a new turn.
     AdvanceBranchHead,
+    /// Avoid creating new durable turns for this execution.
     Detached,
 }
 
+/// Determines how the kernel resolves stale branch-head writes during execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionConflictPolicy {
+    /// Terminate the task with `Conflict` status.
     Reject,
+    /// Continue the task without durable writes after a stale branch-head conflict.
     Detached,
+    /// Create a sibling branch from the expected source turn and continue durably there.
     ForkSibling,
 }
 
+/// Selects which persisted context path is materialized for an execution.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExecutionContextTarget {
+    /// Follow a session branch head, optionally overriding the persisted active head.
     BranchHead { branch_head_id: Option<i64> },
+    /// Materialize history up to a specific turn.
     TurnId { turn_id: i64 },
+    /// Materialize an explicit ordered set of turns as the execution context.
     SelectedPath { turn_ids: Vec<i64> },
+    /// Materialize context from another persisted session reference.
     ExternalReference { reference: String },
+    /// Materialize a summary source turn without treating it as a writable branch target.
     SummarySource { source_turn_id: i64 },
 }
 
@@ -101,11 +122,17 @@ impl ExecutionContextTarget {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionContext {
+    /// Stable identifier for this live execution instance.
     pub execution_id: String,
+    /// Which persisted context path this execution is currently using.
     pub context_target: ExecutionContextTarget,
+    /// Whether the execution is part of the default visible session flow.
     pub visibility: ExecutionVisibility,
+    /// Whether the execution should persist durable state.
     pub durability: ExecutionDurability,
+    /// How the execution writes turns when it is allowed to persist.
     pub write_policy: ExecutionWritePolicy,
+    /// How the execution responds when its intended branch write becomes stale.
     pub conflict_policy: ExecutionConflictPolicy,
 }
 

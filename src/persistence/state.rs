@@ -7,7 +7,7 @@
 //! - Harness key-value store
 //! - Cognitive memories (vector store)
 //!
-//! Schema definitions live in [`super::schema`], memory search in [`super::search`].
+//! Schema definitions live in `super::schema`, and memory search logic lives alongside it.
 
 use anyhow::{Context, Result};
 use std::sync::Arc;
@@ -36,6 +36,7 @@ pub struct StateStore {
 
 #[derive(Debug, thiserror::Error)]
 pub enum TurnWriteError {
+    /// The selected branch head moved after the execution chose its write target.
     #[error(
         "Branch head changed while preparing turn write target: expected {expected_head_turn_id:?}, found {found_head_turn_id:?}"
     )]
@@ -49,11 +50,16 @@ pub fn is_turn_write_conflict(error: &anyhow::Error) -> bool {
     error.downcast_ref::<TurnWriteError>().is_some()
 }
 
+/// Selects which persisted turn path should be read for a session-scoped query.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionReadTarget {
+    /// Read from the session row's current active branch head.
     ActiveBranch,
+    /// Read from an explicit branch head regardless of the session row's active head.
     BranchHead(i64),
+    /// Read the materialized path up to a specific turn.
     TurnId(i64),
+    /// Read an explicit ordered turn path.
     SelectedPath(Vec<i64>),
 }
 
@@ -68,11 +74,13 @@ impl SessionReadTarget {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnWriteTarget {
+    /// Allocate or validate the next turn on a branch head using optimistic expectations.
     BranchAdvance {
         branch_head_id: Option<i64>,
         expected_head_turn_id: Option<i64>,
         turn_index: u32,
     },
+    /// Reuse a previously allocated persisted turn row.
     ExistingTurn {
         turn_id: i64,
         turn_index: u32,

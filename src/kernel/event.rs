@@ -6,9 +6,11 @@ use crate::kernel::governance::GovernanceSnapshot;
 use crate::kernel::identity::RuntimeIdentity;
 use crate::kernel::session::ContextCompactionCheckpoint;
 
+/// Describes durable branch changes caused by a completed task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TaskBranchOutcome {
+    /// The task resolved a stale branch conflict by continuing on a new sibling branch.
     ForkSibling {
         branch_id: i64,
         branch_public_id: String,
@@ -22,12 +24,19 @@ pub enum TaskBranchOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskTerminalStatus {
+    /// The task completed successfully.
     Success,
+    /// The task was rejected by harness or policy logic.
     Rejected,
+    /// The task could not proceed because its write assumptions became stale.
     Conflict,
+    /// The task exceeded the configured turn budget.
     MaxTurns,
+    /// The task failed due to an unrecovered runtime or inference error.
     Error,
+    /// The task was cancelled cooperatively.
     Cancelled,
+    /// The task was forcefully killed.
     Killed,
 }
 
