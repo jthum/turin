@@ -5,11 +5,14 @@ use anyhow::{Result, anyhow};
 use uuid::Uuid;
 
 use super::DaemonState;
-use crate::daemon::protocol::SubmitTaskParams;
+use crate::daemon::protocol::{SidestepContextTargetParams, SidestepTaskParams, SubmitTaskParams};
 use crate::kernel::agent_manager::{AgentStatusSnapshot, TaskStatusSnapshot};
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::KernelEvent;
-use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask};
+use crate::kernel::session::{
+    ExecutionConflictPolicy, ExecutionContextTarget, ExecutionDurability, ExecutionVisibility,
+    ExecutionWritePolicy, QueuedTask, TaskExecutionOverrides,
+};
 use crate::kernel::session_refs::parse_session_reference;
 use crate::persistence::manager::StoreSelector;
 use turin_types::{TaskInputContent, ToolsConfig};
@@ -22,6 +25,7 @@ struct TaskSubmissionRequest<'a> {
     content: Option<Vec<TaskInputContent>>,
     tools: Option<ToolsConfig>,
     conflict_policy: Option<&'a str>,
+    execution: Option<TaskExecutionOverrides>,
 }
 
 impl DaemonState {
@@ -53,6 +57,7 @@ impl DaemonState {
             content,
             tools,
             conflict_policy: None,
+            execution: None,
         })
         .await
     }
@@ -69,8 +74,66 @@ impl DaemonState {
             content: params.content,
             tools: params.tools,
             conflict_policy: params.conflict_policy.as_deref(),
+            execution: None,
         })
         .await
+    }
+
+    pub(crate) async fn sidestep_task_params(
+        &self,
+        params: SidestepTaskParams,
+    ) -> Result<TaskStatusSnapshot> {
+        let session_id = params.session_id;
+        let sidestep_slot_id = params
+            .slot_id
+            .unwrap_or_else(|| format!("sd_{}", Uuid::now_v7().simple()));
+
+        self.resume_session(&session_id, Some(&sidestep_slot_id))
+            .await?;
+        let context_target = self
+            .resolve_sidestep_execution_target(&session_id, params.context_target)
+            .await?;
+
+        let execution = TaskExecutionOverrides {
+            context_target: Some(context_target),
+            visibility: Some(ExecutionVisibility::Hidden),
+            durability: Some(ExecutionDurability::Ephemeral),
+            write_policy: Some(ExecutionWritePolicy::Detached),
+        };
+
+        let submitted = self
+            .submit_task_request(TaskSubmissionRequest {
+                agent_id: None,
+                session_id: Some(&session_id),
+                slot_id: Some(&sidestep_slot_id),
+                prompt: params.prompt,
+                content: params.content,
+                tools: params.tools,
+                conflict_policy: Some(ExecutionConflictPolicy::Detached.as_str()),
+                execution: Some(execution),
+            })
+            .await;
+
+        let task_result = match submitted {
+            Ok(task) => {
+                self.wait_for_task(&task.request_id, params.timeout_ms)
+                    .await
+            }
+            Err(err) => Err(err),
+        };
+
+        let cleanup_result = self
+            .kill_session(&session_id, Some(&sidestep_slot_id))
+            .await;
+        match (task_result, cleanup_result) {
+            (Ok(task), Ok(_)) => Ok(task),
+            (Ok(_), Err(cleanup_err)) => Err(cleanup_err),
+            (Err(task_err), Ok(_)) => Err(task_err),
+            (Err(task_err), Err(cleanup_err)) => Err(task_err.context(format!(
+                "sidestep cleanup for slot '{}' also failed: {}",
+                sidestep_slot_id, cleanup_err
+            ))),
+        }
     }
 
     async fn submit_task_request(
@@ -95,6 +158,7 @@ impl DaemonState {
             ),
             None => None,
         };
+        task.execution = request.execution;
         let request_id = if let Some(session_id) = request.session_id {
             self.kernel
                 .agent_manager()
@@ -410,6 +474,82 @@ impl DaemonState {
                     .unwrap_or_else(|_| snapshot.session_id == wanted)
             })
             .collect()
+    }
+
+    async fn resolve_sidestep_execution_target(
+        &self,
+        session_id: &str,
+        requested: Option<SidestepContextTargetParams>,
+    ) -> Result<ExecutionContextTarget> {
+        let session_ref = parse_session_reference(session_id)?;
+        let public_id = uuid::Uuid::parse_str(&session_ref.public_id)
+            .map_err(|_| anyhow!("Invalid session id '{}'", session_ref.public_id))?;
+        let store_selector = session_ref
+            .store_selector
+            .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+        let store = self.kernel.store_manager().open(&store_selector).await?;
+        let row = store
+            .get_session_row_by_public_id(public_id)
+            .await?
+            .ok_or_else(|| anyhow!("Session '{}' not found", session_id))?;
+
+        match requested {
+            None => {
+                let branch = store.get_active_branch_head(row.id).await?;
+                Ok(snapshot_target_from_branch_head(branch, None))
+            }
+            Some(SidestepContextTargetParams::BranchHead { branch_head_id }) => {
+                let branch = store.get_branch_head(row.id, branch_head_id).await?;
+                if branch.is_none() {
+                    anyhow::bail!(
+                        "Branch head '{}' not found for session '{}'",
+                        branch_head_id,
+                        session_id
+                    );
+                }
+                Ok(snapshot_target_from_branch_head(
+                    branch,
+                    Some(branch_head_id),
+                ))
+            }
+            Some(other) => Ok(execution_context_target_from_params(other)),
+        }
+    }
+}
+
+fn execution_context_target_from_params(
+    params: SidestepContextTargetParams,
+) -> ExecutionContextTarget {
+    match params {
+        SidestepContextTargetParams::BranchHead { branch_head_id } => {
+            ExecutionContextTarget::BranchHead {
+                branch_head_id: Some(branch_head_id),
+            }
+        }
+        SidestepContextTargetParams::TurnId { turn_id } => {
+            ExecutionContextTarget::TurnId { turn_id }
+        }
+        SidestepContextTargetParams::SelectedPath { turn_ids } => {
+            ExecutionContextTarget::SelectedPath { turn_ids }
+        }
+        SidestepContextTargetParams::ExternalReference { reference } => {
+            ExecutionContextTarget::ExternalReference { reference }
+        }
+        SidestepContextTargetParams::SummarySource { source_turn_id } => {
+            ExecutionContextTarget::SummarySource { source_turn_id }
+        }
+    }
+}
+
+fn snapshot_target_from_branch_head(
+    branch: Option<crate::persistence::schema::BranchHeadRow>,
+    explicit_branch_head_id: Option<i64>,
+) -> ExecutionContextTarget {
+    match branch.and_then(|branch| branch.head_turn_id) {
+        Some(turn_id) => ExecutionContextTarget::TurnId { turn_id },
+        None => ExecutionContextTarget::BranchHead {
+            branch_head_id: explicit_branch_head_id,
+        },
     }
 }
 

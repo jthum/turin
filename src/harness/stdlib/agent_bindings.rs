@@ -588,10 +588,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                         let session_ref_str =
                             format_session_reference(&session_ref.public_id, &selector);
                         let _ = agent_manager
-                            .reload_session_if_live(
-                                &session_ref_str,
-                                requested_slot.as_deref(),
-                            )
+                            .reload_session_if_live(&session_ref_str, requested_slot.as_deref())
                             .await
                             .map_err(|e| e.to_string())?;
                     }

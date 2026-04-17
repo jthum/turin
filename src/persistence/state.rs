@@ -81,10 +81,7 @@ pub enum TurnWriteTarget {
         turn_index: u32,
     },
     /// Reuse a previously allocated persisted turn row.
-    ExistingTurn {
-        turn_id: i64,
-        turn_index: u32,
-    },
+    ExistingTurn { turn_id: i64, turn_index: u32 },
 }
 
 impl TurnWriteTarget {

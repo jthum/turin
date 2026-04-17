@@ -528,9 +528,10 @@ mod tests {
                     current_request_id: None,
                     execution: crate::kernel::agent_manager::ExecutionStatusSnapshot {
                         execution_id: "ex-default".into(),
-                        context_target: crate::kernel::session::ExecutionContextTarget::BranchHead {
-                            branch_head_id: Some(1),
-                        },
+                        context_target:
+                            crate::kernel::session::ExecutionContextTarget::BranchHead {
+                                branch_head_id: Some(1),
+                            },
                         visibility: crate::kernel::session::ExecutionVisibility::Visible,
                         durability: crate::kernel::session::ExecutionDurability::Durable,
                         write_policy:

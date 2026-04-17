@@ -16,9 +16,8 @@ use crate::persistence::manager::StoreSelector;
 
 use super::{
     AgentManager, AgentRuntimeHandle, AgentStatusSnapshot, ExecutionStatusSnapshot,
-    LiveSessionSnapshot,
-    PeerAgentTaskEnvelope, PeerAgentTaskResult, PendingTaskRecord, PendingTaskState,
-    RuntimeSlotKey, TaskStatusSnapshot,
+    LiveSessionSnapshot, PeerAgentTaskEnvelope, PeerAgentTaskResult, PendingTaskRecord,
+    PendingTaskState, RuntimeSlotKey, TaskStatusSnapshot,
 };
 
 fn live_execution_snapshot(handle: &Arc<AgentRuntimeHandle>) -> ExecutionStatusSnapshot {

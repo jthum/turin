@@ -1,5 +1,5 @@
 use crate::daemon::protocol::{
-    NoParams, ResponseEnvelope, SubmitTaskParams, TaskIdParams, WaitTaskParams,
+    NoParams, ResponseEnvelope, SidestepTaskParams, SubmitTaskParams, TaskIdParams, WaitTaskParams,
 };
 
 use super::{
@@ -21,6 +21,24 @@ pub(super) async fn submit(
             "submitted task",
             &ctx.event_tx,
             "task.submitted",
+        ),
+        Err(err) => validation_error(id, err),
+    }
+}
+
+pub(super) async fn sidestep(
+    id: Option<String>,
+    params: SidestepTaskParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard.sidestep_task_params(params).await {
+        Ok(task) => serialize_response_with_event(
+            id,
+            task,
+            "sidestep task",
+            &ctx.event_tx,
+            "task.sidestep.completed",
         ),
         Err(err) => validation_error(id, err),
     }

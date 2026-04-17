@@ -429,6 +429,27 @@ pub(crate) enum DaemonTaskCommands {
         #[command(flatten)]
         args: DaemonOutputArgs,
     },
+    /// Run a one-shot ephemeral sidestep from a persisted session
+    Sidestep {
+        /// Persisted session ID to sidestep from
+        session_id: String,
+        /// Optional temporary runtime slot ID for the sidestep execution
+        #[arg(long)]
+        slot_id: Option<String>,
+        /// Target a specific branch head instead of the session's active branch
+        #[arg(long, conflicts_with = "turn_id")]
+        branch_head_id: Option<i64>,
+        /// Target a specific turn as the sidestep context root
+        #[arg(long, conflicts_with = "branch_head_id")]
+        turn_id: Option<i64>,
+        /// Optional wait timeout in milliseconds
+        #[arg(long)]
+        timeout_ms: Option<u64>,
+        /// Prompt to submit
+        prompt: String,
+        #[command(flatten)]
+        args: DaemonOutputArgs,
+    },
     /// Show one daemon task by request ID
     Get {
         /// Request ID returned by task submission

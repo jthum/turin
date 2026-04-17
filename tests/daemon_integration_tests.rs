@@ -623,6 +623,125 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
     daemon.stop().await
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_task_sidestep_runs_ephemerally_and_cleans_up_slot() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+
+    let opened = result_value(
+        daemon
+            .request(DaemonRequest::SessionOpen(
+                turin::daemon::protocol::OpenSessionParams {
+                    agent_id: "default".to_string(),
+                    slot_id: Some("main".to_string()),
+                    channel_id: None,
+                },
+            ))
+            .await?,
+    );
+    let session_id = opened["session_id"]
+        .as_str()
+        .context("session.open should return session_id")?
+        .to_string();
+
+    let submitted = result_value(
+        daemon
+            .request(DaemonRequest::TaskSubmit(
+                turin::daemon::protocol::SubmitTaskParams {
+                    agent_id: None,
+                    session_id: Some(session_id.clone()),
+                    slot_id: Some("main".to_string()),
+                    prompt: "Seed session".to_string(),
+                    content: None,
+                    tools: Default::default(),
+                    conflict_policy: None,
+                },
+            ))
+            .await?,
+    );
+    let request_id = submitted["request_id"]
+        .as_str()
+        .context("task.submit should return request_id")?
+        .to_string();
+    let waited = result_value(
+        daemon
+            .request(DaemonRequest::TaskWait(
+                turin::daemon::protocol::WaitTaskParams {
+                    request_id,
+                    timeout_ms: Some(5_000),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(waited["status"], "success");
+
+    let before_detail = result_value(
+        daemon
+            .request(DaemonRequest::SessionGet(
+                turin::daemon::protocol::SessionIdParams {
+                    session_id: session_id.clone(),
+                },
+            ))
+            .await?,
+    );
+    let before_message_count = before_detail["messages"]
+        .as_array()
+        .context("session detail should include messages")?
+        .len();
+
+    let sidestep = result_value(
+        daemon
+            .request(DaemonRequest::TaskSidestep(
+                turin::daemon::protocol::SidestepTaskParams {
+                    session_id: session_id.clone(),
+                    slot_id: None,
+                    prompt: "Explore a side question".to_string(),
+                    content: None,
+                    tools: Default::default(),
+                    context_target: None,
+                    timeout_ms: Some(5_000),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(sidestep["state"], "completed");
+    assert!(
+        sidestep["slot_id"]
+            .as_str()
+            .context("sidestep task should return slot_id")?
+            .starts_with("sd_")
+    );
+
+    let live_sessions = result_value(
+        daemon
+            .request(DaemonRequest::SessionListLive(
+                turin::daemon::protocol::NoParams::default(),
+            ))
+            .await?,
+    );
+    assert!(
+        live_sessions["sessions"]
+            .as_array()
+            .context("session.list_live should return sessions")?
+            .iter()
+            .all(|session| session["slot_id"] != sidestep["slot_id"])
+    );
+
+    let after_detail = result_value(
+        daemon
+            .request(DaemonRequest::SessionGet(
+                turin::daemon::protocol::SessionIdParams { session_id },
+            ))
+            .await?,
+    );
+    let after_message_count = after_detail["messages"]
+        .as_array()
+        .context("session detail should include messages")?
+        .len();
+    assert_eq!(after_message_count, before_message_count);
+
+    daemon.stop().await
+}
+
 async fn wait_for_persisted_user_messages(
     daemon: &DaemonHarness,
     session_id: &str,

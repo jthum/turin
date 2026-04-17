@@ -127,11 +127,7 @@ impl ExecutionHost {
         session.harness_generation = 0;
     }
 
-    pub(crate) fn bind_harness_execution_context(
-        &self,
-        session: &SessionState,
-        task: &QueuedTask,
-    ) {
+    pub(crate) fn bind_harness_execution_context(&self, session: &SessionState, task: &QueuedTask) {
         let Some(harness) = self.session_harness_engine(session) else {
             return;
         };

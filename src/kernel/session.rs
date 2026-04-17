@@ -501,6 +501,18 @@ impl SessionState {
         self.active_task.turn_target = None;
     }
 
+    pub fn replace_context_target_preserving_policy(
+        &mut self,
+        context_target: ExecutionContextTarget,
+    ) {
+        self.execution.context_target = context_target;
+        if self.execution.write_policy != ExecutionWritePolicy::AdvanceBranchHead {
+            self.selected_branch_head_cursor = None;
+        }
+        self.active_task.conflict_detached = false;
+        self.active_task.turn_target = None;
+    }
+
     pub fn selected_branch_head_id(&self) -> Option<i64> {
         self.execution.context_target.branch_head_id()
     }
@@ -510,7 +522,8 @@ impl SessionState {
     }
 
     pub fn selected_branch_head_turn_id(&self) -> Option<i64> {
-        self.selected_branch_head_cursor.map(|cursor| cursor.turn_id)
+        self.selected_branch_head_cursor
+            .map(|cursor| cursor.turn_id)
     }
 
     pub fn set_selected_branch_head_turn_id(&mut self, turn_id: Option<i64>) {
@@ -518,7 +531,8 @@ impl SessionState {
     }
 
     pub fn selected_branch_head_turn_index(&self) -> Option<u32> {
-        self.selected_branch_head_cursor.map(|cursor| cursor.turn_index)
+        self.selected_branch_head_cursor
+            .map(|cursor| cursor.turn_index)
     }
 
     pub fn set_selected_branch_head_turn_index(&mut self, turn_index: Option<u32>) {
@@ -555,7 +569,8 @@ impl SessionState {
                     .map_or(0, |cursor| cursor.turn_index + 1);
                 Some(TurnWriteTarget::branch_head_with_expectation(
                     self.selected_branch_head_id(),
-                    self.selected_branch_head_cursor.map(|cursor| cursor.turn_id),
+                    self.selected_branch_head_cursor
+                        .map(|cursor| cursor.turn_id),
                     next_turn_index,
                 ))
             }
@@ -800,14 +815,20 @@ mod tests {
             }))
             .expect("task override should apply");
         assert!(refresh_needed);
-        assert_ne!(session.execution.execution_id, original_execution.execution_id);
+        assert_ne!(
+            session.execution.execution_id,
+            original_execution.execution_id
+        );
         assert_eq!(
             session.context_target(),
             &ExecutionContextTarget::TurnId { turn_id: 5 }
         );
         assert_eq!(session.execution.visibility, ExecutionVisibility::Hidden);
         assert_eq!(session.execution.durability, ExecutionDurability::Ephemeral);
-        assert_eq!(session.execution.write_policy, ExecutionWritePolicy::Detached);
+        assert_eq!(
+            session.execution.write_policy,
+            ExecutionWritePolicy::Detached
+        );
         assert_eq!(session.selected_branch_head_cursor, None);
 
         let restore_refresh = session.finish_task_execution_scope();

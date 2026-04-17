@@ -11,7 +11,8 @@ use turin_daemon_protocol::{
     ResponseEnvelope, ResumeSessionParams, RuntimeEventsSubscribeParams,
     SessionBranchCheckoutParams, SessionBranchCreateParams, SessionIdParams, SessionListParams,
     SessionSearchHitKind, SessionSearchParams, SessionSearchScope, SessionTitleParams,
-    SubmitTaskParams, TaskIdParams, UpdateChannelParams, WaitTaskParams,
+    SidestepContextTargetParams, SidestepTaskParams, SubmitTaskParams, TaskIdParams,
+    UpdateChannelParams, WaitTaskParams,
 };
 use turin_remote_client::RemoteClient;
 
@@ -817,8 +818,31 @@ impl ControlClient {
         session_id: Option<String>,
         prompt: String,
     ) -> Result<TaskStatus> {
-        self.submit_task_in_slot(agent_id, session_id, None, prompt, None)
+        self.submit_task_in_slot(agent_id, session_id, None, prompt)
             .await
+    }
+
+    pub async fn sidestep_task(
+        &self,
+        session_id: String,
+        slot_id: Option<String>,
+        prompt: String,
+        context_target: Option<SidestepContextTargetParams>,
+        timeout_ms: Option<u64>,
+    ) -> Result<TaskStatus> {
+        self.request_ok(
+            None,
+            DaemonRequest::TaskSidestep(SidestepTaskParams {
+                session_id,
+                slot_id,
+                prompt,
+                content: None,
+                tools: None,
+                context_target,
+                timeout_ms,
+            }),
+        )
+        .await
     }
 
     pub async fn wait_task(&self, request_id: &str, timeout_ms: Option<u64>) -> Result<TaskStatus> {

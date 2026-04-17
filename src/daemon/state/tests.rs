@@ -4,7 +4,7 @@ use crate::persistence::manager::StoreSelector;
 use serde_json::json;
 use tempfile::tempdir;
 use tokio::time::{Duration, sleep};
-use turin_daemon_protocol::SessionSearchScope;
+use turin_daemon_protocol::{SessionSearchScope, SidestepTaskParams};
 
 fn write_agent_with_state_path(root: &Path, agent_id: &str, state_path: &str) -> Result<()> {
     let agent_dir = root
@@ -207,6 +207,62 @@ async fn wait_for_task_returns_terminal_result() -> Result<()> {
     assert_eq!(completed.request_id, task.request_id);
     assert_eq!(completed.state, "completed");
     assert!(completed.status.is_some());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn sidestep_task_uses_ephemeral_slot_and_does_not_persist_transcript() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+
+    let live = state.open_session("default", Some("main"), None).await?;
+    let task = state
+        .submit_task(
+            None,
+            Some(&live.session_id),
+            Some("main"),
+            "Hello session".to_string(),
+            None,
+            Default::default(),
+        )
+        .await?;
+    let completed = state.wait_for_task(&task.request_id, Some(2_000)).await?;
+    assert_eq!(completed.state, "completed");
+
+    let before_detail = state
+        .get_session(&live.session_id)
+        .await?
+        .expect("persisted session detail visible");
+    let before_message_count = before_detail.messages.len();
+
+    let sidestep = state
+        .sidestep_task_params(SidestepTaskParams {
+            session_id: live.session_id.clone(),
+            slot_id: None,
+            prompt: "Explore a side question".to_string(),
+            content: None,
+            tools: None,
+            context_target: None,
+            timeout_ms: Some(2_000),
+        })
+        .await?;
+    assert_eq!(sidestep.state, "completed");
+    assert!(sidestep.slot_id.starts_with("sd_"));
+
+    let after_detail = state
+        .get_session(&live.session_id)
+        .await?
+        .expect("persisted session detail visible");
+    assert_eq!(after_detail.messages.len(), before_message_count);
+    assert!(
+        state
+            .list_live_sessions()
+            .await
+            .iter()
+            .all(|live| live.slot_id != sidestep.slot_id)
+    );
 
     Ok(())
 }

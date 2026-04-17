@@ -168,6 +168,33 @@ pub struct SubmitTaskParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SidestepContextTargetParams {
+    BranchHead { branch_head_id: i64 },
+    TurnId { turn_id: i64 },
+    SelectedPath { turn_ids: Vec<i64> },
+    ExternalReference { reference: String },
+    SummarySource { source_turn_id: i64 },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SidestepTaskParams {
+    pub session_id: String,
+    #[serde(default)]
+    pub slot_id: Option<String>,
+    pub prompt: String,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<Vec<TaskInputContent>>,
+    #[serde(default)]
+    pub tools: Option<ToolsConfig>,
+    #[serde(default)]
+    pub context_target: Option<SidestepContextTargetParams>,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct OpenSessionParams {
     pub agent_id: String,
     #[serde(default)]
@@ -323,6 +350,8 @@ pub enum DaemonRequest {
     AgentDelete(EntityIdParams),
     #[serde(rename = "task.submit")]
     TaskSubmit(SubmitTaskParams),
+    #[serde(rename = "task.sidestep")]
+    TaskSidestep(SidestepTaskParams),
     #[serde(rename = "task.get")]
     TaskGet(TaskIdParams),
     #[serde(rename = "task.wait")]
@@ -562,6 +591,44 @@ mod tests {
                 assert!(params.session_id.is_none());
                 assert_eq!(params.prompt, "review this");
                 assert_eq!(params.conflict_policy.as_deref(), Some("detached"));
+            }
+            other => panic!("unexpected request variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sidestep_request_round_trips_typed_shape() {
+        let request = RequestEnvelope::new(
+            Some("req_3".to_string()),
+            DaemonRequest::TaskSidestep(SidestepTaskParams {
+                session_id: "sess_123".to_string(),
+                slot_id: Some("sd_manual".to_string()),
+                prompt: "What else should we add?".to_string(),
+                content: None,
+                tools: Default::default(),
+                context_target: Some(SidestepContextTargetParams::TurnId { turn_id: 42 }),
+                timeout_ms: Some(2_500),
+            }),
+        );
+
+        let value = serde_json::to_value(&request).expect("serialize request");
+        assert_eq!(value["op"], "task.sidestep");
+        assert_eq!(value["params"]["session_id"], "sess_123");
+        assert_eq!(value["params"]["slot_id"], "sd_manual");
+        assert_eq!(value["params"]["context_target"]["kind"], "turn_id");
+        assert_eq!(value["params"]["context_target"]["turn_id"], 42);
+
+        let decoded: RequestEnvelope = serde_json::from_value(value).expect("deserialize request");
+        match decoded.request {
+            DaemonRequest::TaskSidestep(params) => {
+                assert_eq!(params.session_id, "sess_123");
+                assert_eq!(params.slot_id.as_deref(), Some("sd_manual"));
+                assert_eq!(params.prompt, "What else should we add?");
+                assert_eq!(params.timeout_ms, Some(2_500));
+                assert!(matches!(
+                    params.context_target,
+                    Some(SidestepContextTargetParams::TurnId { turn_id: 42 })
+                ));
             }
             other => panic!("unexpected request variant: {other:?}"),
         }

@@ -348,6 +348,27 @@ async fn handle_daemon_task_command(command: DaemonTaskCommands) -> Result<()> {
             })
             .await
         }
+        DaemonTaskCommands::Sidestep {
+            session_id,
+            slot_id,
+            branch_head_id,
+            turn_id,
+            timeout_ms,
+            prompt,
+            args,
+        } => {
+            commands::daemon::run_task_sidestep(commands::daemon::TaskSidestepCommand {
+                config_path: &args.config.config,
+                session_id: &session_id,
+                slot_id: slot_id.as_deref(),
+                branch_head_id,
+                turn_id,
+                prompt: &prompt,
+                timeout_ms,
+                json_output: args.json,
+            })
+            .await
+        }
         DaemonTaskCommands::Get { request_id, args } => {
             commands::daemon::run_task_get(&args.config.config, &request_id, args.json).await
         }

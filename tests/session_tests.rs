@@ -20,8 +20,7 @@ use turin::kernel::config::{
 };
 use turin::kernel::policy::PolicyScope;
 use turin::kernel::session::{
-    ExecutionContextTarget, ExecutionWritePolicy, QueuedTask, SessionStatus,
-    TaskExecutionOverrides,
+    ExecutionContextTarget, ExecutionWritePolicy, QueuedTask, SessionStatus, TaskExecutionOverrides,
 };
 use turin::kernel::session_refs::parse_session_reference;
 use turin::persistence::state::{SessionReadTarget, TurnWriteTarget};
@@ -813,8 +812,12 @@ async fn test_task_execution_override_materializes_temp_context_and_restores_ses
     );
 
     let mut session = kernel.create_session().await;
-    kernel.run(&mut session, Some("Turn zero".to_string())).await?;
-    kernel.run(&mut session, Some("Turn one".to_string())).await?;
+    kernel
+        .run(&mut session, Some("Turn zero".to_string()))
+        .await?;
+    kernel
+        .run(&mut session, Some("Turn one".to_string()))
+        .await?;
 
     let original_execution_id = session.execution_id().to_string();
     let original_target = session.context_target().clone();
@@ -829,8 +832,8 @@ async fn test_task_execution_override_materializes_temp_context_and_restores_ses
         .created_from_turn_id
         .expect("checkpoint source turn id");
 
-    let queued_task = QueuedTask::ad_hoc("Revisit old context")
-        .with_execution(Some(TaskExecutionOverrides {
+    let queued_task =
+        QueuedTask::ad_hoc("Revisit old context").with_execution(Some(TaskExecutionOverrides {
             context_target: Some(ExecutionContextTarget::TurnId {
                 turn_id: first_turn_id,
             }),
@@ -868,23 +871,29 @@ async fn test_task_execution_override_materializes_temp_context_and_restores_ses
     assert_eq!(session.selected_branch_head_id(), original_branch_head_id);
     assert_eq!(session.turn_index, 2);
     assert!(
-        session.history.iter().any(|message| message.content.iter().any(|content| {
-            matches!(
-                content,
-                turin::inference::provider::InferenceContent::Text { text }
-                if text == "Turn one"
-            )
-        })),
+        session
+            .history
+            .iter()
+            .any(|message| message.content.iter().any(|content| {
+                matches!(
+                    content,
+                    turin::inference::provider::InferenceContent::Text { text }
+                    if text == "Turn one"
+                )
+            })),
         "restored session should return to the original visible history"
     );
     assert!(
-        !session.history.iter().any(|message| message.content.iter().any(|content| {
-            matches!(
-                content,
-                turin::inference::provider::InferenceContent::Text { text }
-                if text == "Revisit old context"
-            )
-        })),
+        !session
+            .history
+            .iter()
+            .any(|message| message.content.iter().any(|content| {
+                matches!(
+                    content,
+                    turin::inference::provider::InferenceContent::Text { text }
+                    if text == "Revisit old context"
+                )
+            })),
         "detached task execution should not durably mutate the restored session transcript"
     );
 

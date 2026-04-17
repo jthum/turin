@@ -75,6 +75,7 @@ pub(super) async fn dispatch(
         }
         DaemonRequest::AgentDelete(params) => agent::delete(id, params, &context).await,
         DaemonRequest::TaskSubmit(params) => task::submit(id, params, &context).await,
+        DaemonRequest::TaskSidestep(params) => task::sidestep(id, params, &context).await,
         DaemonRequest::TaskGet(params) => task::get(id, params, &context).await,
         DaemonRequest::TaskWait(params) => task::wait(id, params, &context).await,
         DaemonRequest::TaskCancel(params) => task::cancel(id, params, &context).await,

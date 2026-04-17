@@ -19,8 +19,8 @@ use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_manager::HarnessManager;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::kernel::session::{
-    ExecutionConflictPolicy, ExecutionContextTarget, ExecutionDurability,
-    ExecutionVisibility, ExecutionWritePolicy, QueuedTask, SessionState,
+    ExecutionConflictPolicy, ExecutionContextTarget, ExecutionDurability, ExecutionVisibility,
+    ExecutionWritePolicy, QueuedTask, SessionState,
 };
 use crate::persistence::manager::StoreManager;
 use crate::tools::registry::ToolRegistry;

@@ -144,7 +144,7 @@ impl ExecutionHost {
         session.inference = inference;
         session.context_checkpoint = rebuild_context_checkpoint(&materialized.active_events);
         session.history = history;
-        session.set_context_target(context_target);
+        session.replace_context_target_preserving_policy(context_target);
         session.set_selected_branch_head_cursor(
             materialized.branch_head_turn_id,
             materialized.branch_head_turn_index,

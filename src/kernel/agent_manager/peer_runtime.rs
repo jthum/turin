@@ -17,8 +17,7 @@ use crate::persistence::manager::StoreSelector;
 
 use super::{
     AgentManager, ExecutionStatusSnapshot, PeerAgentTaskEnvelope, PeerAgentTaskResult,
-    RuntimeControl,
-    SessionContextOverrides,
+    RuntimeControl, SessionContextOverrides,
 };
 
 pub(super) struct PeerRuntime {
@@ -184,7 +183,8 @@ impl PeerRuntime {
         self.allocate_runtime_task_id(&mut task);
 
         self.set_capability_ceiling(delegated_capabilities.clone());
-        self.session.set_active_task_conflict_policy(task.conflict_policy);
+        self.session
+            .set_active_task_conflict_policy(task.conflict_policy);
         if let Err(error) = self
             .host
             .begin_task_execution_scope(&mut self.session, &task)
@@ -201,7 +201,9 @@ impl PeerRuntime {
                     Some(error_message),
                 )
                 .await?;
-            self.host.finish_task_execution_scope(&mut self.session).await?;
+            self.host
+                .finish_task_execution_scope(&mut self.session)
+                .await?;
             self.sync_control_execution_state();
             self.clear_capability_ceiling();
             return Ok(PeerRunOutcome {
@@ -414,7 +416,10 @@ impl PeerRuntime {
             })
         }
         .await;
-        let finish_scope = self.host.finish_task_execution_scope(&mut self.session).await;
+        let finish_scope = self
+            .host
+            .finish_task_execution_scope(&mut self.session)
+            .await;
         self.clear_capability_ceiling();
         self.sync_control_execution_state();
         finish_scope?;

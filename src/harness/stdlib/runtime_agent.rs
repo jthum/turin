@@ -20,7 +20,11 @@ fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
         .and_then(|ctx| ctx.trace_id.clone())
 }
 
-fn parse_submit_task(lua: &Lua, task_val: Value, app_data: &HarnessAppData) -> LuaResult<QueuedTask> {
+fn parse_submit_task(
+    lua: &Lua,
+    task_val: Value,
+    app_data: &HarnessAppData,
+) -> LuaResult<QueuedTask> {
     let trace_id = active_trace_id(app_data);
     match task_val {
         Value::String(s) => {
