@@ -7,15 +7,34 @@ use tokio::sync::oneshot;
 
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::KernelEvent;
-use crate::kernel::session::QueuedTask;
+use crate::kernel::session::{
+    ExecutionContextTarget, ExecutionDurability, ExecutionVisibility, ExecutionWritePolicy,
+    QueuedTask,
+};
 use crate::kernel::session_refs::parse_session_reference;
 use crate::persistence::manager::StoreSelector;
 
 use super::{
-    AgentManager, AgentRuntimeHandle, AgentStatusSnapshot, LiveSessionSnapshot,
+    AgentManager, AgentRuntimeHandle, AgentStatusSnapshot, ExecutionStatusSnapshot,
+    LiveSessionSnapshot,
     PeerAgentTaskEnvelope, PeerAgentTaskResult, PendingTaskRecord, PendingTaskState,
     RuntimeSlotKey, TaskStatusSnapshot,
 };
+
+fn live_execution_snapshot(handle: &Arc<AgentRuntimeHandle>) -> ExecutionStatusSnapshot {
+    handle
+        .control
+        .current_execution()
+        .unwrap_or(ExecutionStatusSnapshot {
+            execution_id: String::new(),
+            context_target: ExecutionContextTarget::BranchHead {
+                branch_head_id: None,
+            },
+            visibility: ExecutionVisibility::Visible,
+            durability: ExecutionDurability::Durable,
+            write_policy: ExecutionWritePolicy::AdvanceBranchHead,
+        })
+}
 
 impl AgentManager {
     /// Dispatch a task to an agent by ID. If the agent isn't running, it will be started automatically.
@@ -114,6 +133,7 @@ impl AgentManager {
             active_tasks: handle.active_tasks.load(Ordering::Relaxed),
             queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
             current_request_id: handle.control.current_request_id(),
+            execution: live_execution_snapshot(&handle),
             conflict_policy: handle.control.current_conflict_policy(),
         })
     }
@@ -140,6 +160,7 @@ impl AgentManager {
                     active_tasks: handle.active_tasks.load(Ordering::Relaxed),
                     queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
                     current_request_id: handle.control.current_request_id(),
+                    execution: live_execution_snapshot(&handle),
                     conflict_policy: handle.control.current_conflict_policy(),
                 });
             }
@@ -155,6 +176,7 @@ impl AgentManager {
                         active_tasks: handle.active_tasks.load(Ordering::Relaxed),
                         queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
                         current_request_id: handle.control.current_request_id(),
+                        execution: live_execution_snapshot(handle),
                         conflict_policy: handle.control.current_conflict_policy(),
                     });
                 }
@@ -254,6 +276,7 @@ impl AgentManager {
             active_tasks: handle.active_tasks.load(Ordering::Relaxed),
             queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
             current_request_id: handle.control.current_request_id(),
+            execution: live_execution_snapshot(&handle),
             conflict_policy: handle.control.current_conflict_policy(),
         })
     }
@@ -322,6 +345,7 @@ impl AgentManager {
             active_tasks: handle.active_tasks.load(Ordering::Relaxed),
             queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
             current_request_id: handle.control.current_request_id(),
+            execution: live_execution_snapshot(&handle),
             conflict_policy: handle.control.current_conflict_policy(),
         })
     }
@@ -540,6 +564,7 @@ impl AgentManager {
                     active_tasks: handle.active_tasks.load(Ordering::Relaxed),
                     queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
                     current_request_id: handle.control.current_request_id(),
+                    execution: live_execution_snapshot(handle),
                     conflict_policy: handle.control.current_conflict_policy(),
                 })
             })

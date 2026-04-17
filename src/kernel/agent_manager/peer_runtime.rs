@@ -16,7 +16,8 @@ use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreSelector;
 
 use super::{
-    AgentManager, PeerAgentTaskEnvelope, PeerAgentTaskResult, RuntimeControl,
+    AgentManager, ExecutionStatusSnapshot, PeerAgentTaskEnvelope, PeerAgentTaskResult,
+    RuntimeControl,
     SessionContextOverrides,
 };
 
@@ -84,6 +85,7 @@ impl PeerRuntime {
             Some(host.session_reference(&session)),
             Some(session.event_tx.clone()),
             session_context_from_session(&session),
+            Some(ExecutionStatusSnapshot::from_session(&session)),
             session.execution.conflict_policy,
         );
 
@@ -160,6 +162,7 @@ impl PeerRuntime {
             None,
             None,
             SessionContextOverrides::default(),
+            None,
             crate::kernel::session::ExecutionConflictPolicy::Reject,
         );
         self.host.shutdown_mcp_clients().await;
@@ -466,6 +469,7 @@ impl PeerRuntime {
             Some(self.host.session_reference(&session)),
             Some(session.event_tx.clone()),
             session_context_from_session(&session),
+            Some(ExecutionStatusSnapshot::from_session(&session)),
             session.execution.conflict_policy,
         );
         self.session = session;
@@ -494,6 +498,7 @@ impl PeerRuntime {
             Some(self.host.session_reference(&session)),
             Some(session.event_tx.clone()),
             session_context_from_session(&session),
+            Some(ExecutionStatusSnapshot::from_session(&session)),
             session.execution.conflict_policy,
         );
         self.session = session;

@@ -18,7 +18,10 @@ use crate::kernel::execution_host::SessionPersistenceCoordinator;
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_manager::HarnessManager;
 use crate::kernel::policy::RuntimePolicyManager;
-use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask};
+use crate::kernel::session::{
+    ExecutionConflictPolicy, ExecutionContextTarget, ExecutionDurability,
+    ExecutionVisibility, ExecutionWritePolicy, QueuedTask, SessionState,
+};
 use crate::persistence::manager::StoreManager;
 use crate::tools::registry::ToolRegistry;
 use tokio::sync::{Notify, RwLock, oneshot};
@@ -73,6 +76,27 @@ pub struct TaskStatusSnapshot {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+pub struct ExecutionStatusSnapshot {
+    pub execution_id: String,
+    pub context_target: ExecutionContextTarget,
+    pub visibility: ExecutionVisibility,
+    pub durability: ExecutionDurability,
+    pub write_policy: ExecutionWritePolicy,
+}
+
+impl ExecutionStatusSnapshot {
+    pub(crate) fn from_session(session: &SessionState) -> Self {
+        Self {
+            execution_id: session.execution.execution_id.clone(),
+            context_target: session.execution.context_target.clone(),
+            visibility: session.execution.visibility,
+            durability: session.execution.durability,
+            write_policy: session.effective_write_policy(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct LiveSessionSnapshot {
     pub agent_id: String,
     pub slot_id: String,
@@ -81,6 +105,7 @@ pub struct LiveSessionSnapshot {
     pub active_tasks: usize,
     pub queued_tasks: usize,
     pub current_request_id: Option<String>,
+    pub execution: ExecutionStatusSnapshot,
     pub conflict_policy: ExecutionConflictPolicy,
 }
 
@@ -120,6 +145,7 @@ pub(crate) struct RuntimeControl {
     current_session_id: StdRwLock<Option<String>>,
     current_session_events: StdRwLock<Option<SessionEventSender>>,
     current_session_context: StdRwLock<SessionContextOverrides>,
+    current_execution: StdRwLock<Option<ExecutionStatusSnapshot>>,
     current_conflict_policy: StdRwLock<ExecutionConflictPolicy>,
     current_request_id: StdRwLock<Option<String>>,
     current_runtime_task_id: StdRwLock<Option<String>>,
@@ -134,6 +160,7 @@ impl Default for RuntimeControl {
             current_session_id: StdRwLock::new(None),
             current_session_events: StdRwLock::new(None),
             current_session_context: StdRwLock::new(SessionContextOverrides::default()),
+            current_execution: StdRwLock::new(None),
             current_conflict_policy: StdRwLock::new(ExecutionConflictPolicy::Reject),
             current_request_id: StdRwLock::new(None),
             current_runtime_task_id: StdRwLock::new(None),
@@ -165,6 +192,7 @@ impl RuntimeControl {
         session_id: Option<String>,
         event_tx: Option<SessionEventSender>,
         context: SessionContextOverrides,
+        execution: Option<ExecutionStatusSnapshot>,
         conflict_policy: ExecutionConflictPolicy,
     ) {
         *self
@@ -180,6 +208,10 @@ impl RuntimeControl {
             .write()
             .expect("runtime control session context lock poisoned") = context;
         *self
+            .current_execution
+            .write()
+            .expect("runtime control execution snapshot lock poisoned") = execution;
+        *self
             .current_conflict_policy
             .write()
             .expect("runtime control conflict policy lock poisoned") = conflict_policy;
@@ -193,6 +225,7 @@ impl RuntimeControl {
             session_id,
             None,
             SessionContextOverrides::default(),
+            None,
             ExecutionConflictPolicy::Reject,
         );
     }
@@ -216,6 +249,13 @@ impl RuntimeControl {
             .clone()
     }
 
+    fn current_execution(&self) -> Option<ExecutionStatusSnapshot> {
+        self.current_execution
+            .read()
+            .expect("runtime control execution snapshot lock poisoned")
+            .clone()
+    }
+
     fn set_current_conflict_policy(&self, conflict_policy: ExecutionConflictPolicy) {
         *self
             .current_conflict_policy
@@ -233,6 +273,14 @@ impl RuntimeControl {
     #[cfg(test)]
     fn set_current_execution_conflict_policy(&self, conflict_policy: ExecutionConflictPolicy) {
         self.set_current_conflict_policy(conflict_policy);
+    }
+
+    #[cfg(test)]
+    fn set_current_execution_snapshot(&self, execution: ExecutionStatusSnapshot) {
+        *self
+            .current_execution
+            .write()
+            .expect("runtime control execution snapshot lock poisoned") = Some(execution);
     }
 
     fn subscribe_current_session_events(&self) -> Option<SessionEventReceiver> {

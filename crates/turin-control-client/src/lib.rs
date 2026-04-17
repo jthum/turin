@@ -293,6 +293,15 @@ struct SessionList {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveExecution {
+    pub execution_id: String,
+    pub context_target: Value,
+    pub visibility: String,
+    pub durability: String,
+    pub write_policy: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiveSession {
     pub agent_id: String,
     pub slot_id: String,
@@ -301,6 +310,7 @@ pub struct LiveSession {
     pub active_tasks: usize,
     pub queued_tasks: usize,
     pub current_request_id: Option<String>,
+    pub execution: LiveExecution,
     pub conflict_policy: String,
 }
 

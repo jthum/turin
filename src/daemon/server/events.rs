@@ -526,6 +526,16 @@ mod tests {
                     active_tasks: 0,
                     queued_tasks: 0,
                     current_request_id: None,
+                    execution: crate::kernel::agent_manager::ExecutionStatusSnapshot {
+                        execution_id: "ex-default".into(),
+                        context_target: crate::kernel::session::ExecutionContextTarget::BranchHead {
+                            branch_head_id: Some(1),
+                        },
+                        visibility: crate::kernel::session::ExecutionVisibility::Visible,
+                        durability: crate::kernel::session::ExecutionDurability::Durable,
+                        write_policy:
+                            crate::kernel::session::ExecutionWritePolicy::AdvanceBranchHead,
+                    },
                     conflict_policy: ExecutionConflictPolicy::Reject,
                 },
                 LiveSessionSnapshot {
@@ -536,6 +546,15 @@ mod tests {
                     active_tasks: 1,
                     queued_tasks: 0,
                     current_request_id: Some("req-writer".into()),
+                    execution: crate::kernel::agent_manager::ExecutionStatusSnapshot {
+                        execution_id: "ex-writer".into(),
+                        context_target: crate::kernel::session::ExecutionContextTarget::TurnId {
+                            turn_id: 42,
+                        },
+                        visibility: crate::kernel::session::ExecutionVisibility::Hidden,
+                        durability: crate::kernel::session::ExecutionDurability::Ephemeral,
+                        write_policy: crate::kernel::session::ExecutionWritePolicy::Detached,
+                    },
                     conflict_policy: ExecutionConflictPolicy::Detached,
                 },
             ],
@@ -605,6 +624,7 @@ mod tests {
             scoped.live_sessions[0].conflict_policy,
             ExecutionConflictPolicy::Detached
         );
+        assert_eq!(scoped.live_sessions[0].execution.execution_id, "ex-writer");
         assert_eq!(scoped.registry.issues.len(), 2);
         assert!(
             scoped

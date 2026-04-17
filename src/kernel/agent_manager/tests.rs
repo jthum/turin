@@ -581,6 +581,15 @@ async fn live_session_snapshots_expose_effective_conflict_policy() -> anyhow::Re
     let session_id = "s_live_conflict";
     let control = Arc::new(RuntimeControl::default());
     control.set_current_session_id(Some(session_id.to_string()));
+    control.set_current_execution_snapshot(ExecutionStatusSnapshot {
+        execution_id: "ex_live_conflict".to_string(),
+        context_target: crate::kernel::session::ExecutionContextTarget::BranchHead {
+            branch_head_id: Some(7),
+        },
+        visibility: crate::kernel::session::ExecutionVisibility::Visible,
+        durability: crate::kernel::session::ExecutionDurability::Durable,
+        write_policy: crate::kernel::session::ExecutionWritePolicy::AdvanceBranchHead,
+    });
     control.set_current_execution_conflict_policy(ExecutionConflictPolicy::Detached);
 
     manager.runtimes.write().await.insert(
@@ -598,6 +607,7 @@ async fn live_session_snapshots_expose_effective_conflict_policy() -> anyhow::Re
     let live = manager.list_live_sessions(None).await;
     assert_eq!(live.len(), 1);
     assert_eq!(live[0].session_id, session_id);
+    assert_eq!(live[0].execution.execution_id, "ex_live_conflict");
     assert_eq!(live[0].conflict_policy, ExecutionConflictPolicy::Detached);
 
     Ok(())
