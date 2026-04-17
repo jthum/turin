@@ -17,6 +17,20 @@ use turin_types::{TaskInputContent, ToolsConfig};
 
 pub type SessionHarnessEngine = Arc<std::sync::Mutex<HarnessInstance>>;
 
+#[derive(Debug, Default)]
+pub struct ActiveTaskState {
+    pub conflict_policy: Option<ExecutionConflictPolicy>,
+    pub branch_outcome: Option<TaskBranchOutcome>,
+    pub conflict_detached: bool,
+    pub turn_target: Option<TurnWriteTarget>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BranchHeadCursor {
+    pub turn_id: i64,
+    pub turn_index: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionVisibility {
@@ -293,12 +307,8 @@ pub struct SessionState {
     pub context_checkpoint: Option<ContextCompactionCheckpoint>,
     pub history: Vec<InferenceMessage>,
     pub execution: ExecutionContext,
-    pub active_task_conflict_policy: Option<ExecutionConflictPolicy>,
-    pub current_task_branch_outcome: Option<TaskBranchOutcome>,
-    pub selected_branch_head_turn_id: Option<i64>,
-    pub selected_branch_head_turn_index: Option<u32>,
-    pub conflict_detached_active: bool,
-    pub active_turn_target: Option<TurnWriteTarget>,
+    pub active_task: ActiveTaskState,
+    pub selected_branch_head_cursor: Option<BranchHeadCursor>,
     pub harness_engine: Option<SessionHarnessEngine>,
     pub harness_generation: u64,
     pub queue: Arc<Mutex<VecDeque<QueuedTask>>>,
@@ -345,12 +355,8 @@ impl SessionState {
             context_checkpoint: None,
             history: Vec::new(),
             execution: ExecutionContext::new(),
-            active_task_conflict_policy: None,
-            current_task_branch_outcome: None,
-            selected_branch_head_turn_id: None,
-            selected_branch_head_turn_index: None,
-            conflict_detached_active: false,
-            active_turn_target: None,
+            active_task: ActiveTaskState::default(),
+            selected_branch_head_cursor: None,
             harness_engine: None,
             harness_generation: 0,
             queue: Arc::new(Mutex::new(VecDeque::new())),
@@ -394,11 +400,10 @@ impl SessionState {
         self.execution.write_policy = context_target.default_write_policy();
         self.execution.context_target = context_target;
         if self.execution.write_policy != ExecutionWritePolicy::AdvanceBranchHead {
-            self.selected_branch_head_turn_id = None;
-            self.selected_branch_head_turn_index = None;
+            self.selected_branch_head_cursor = None;
         }
-        self.conflict_detached_active = false;
-        self.active_turn_target = None;
+        self.active_task.conflict_detached = false;
+        self.active_task.turn_target = None;
     }
 
     pub fn selected_branch_head_id(&self) -> Option<i64> {
@@ -410,19 +415,33 @@ impl SessionState {
     }
 
     pub fn selected_branch_head_turn_id(&self) -> Option<i64> {
-        self.selected_branch_head_turn_id
+        self.selected_branch_head_cursor.map(|cursor| cursor.turn_id)
     }
 
     pub fn set_selected_branch_head_turn_id(&mut self, turn_id: Option<i64>) {
-        self.selected_branch_head_turn_id = turn_id;
+        self.set_selected_branch_head_cursor(turn_id, self.selected_branch_head_turn_index());
     }
 
     pub fn selected_branch_head_turn_index(&self) -> Option<u32> {
-        self.selected_branch_head_turn_index
+        self.selected_branch_head_cursor.map(|cursor| cursor.turn_index)
     }
 
     pub fn set_selected_branch_head_turn_index(&mut self, turn_index: Option<u32>) {
-        self.selected_branch_head_turn_index = turn_index;
+        self.set_selected_branch_head_cursor(self.selected_branch_head_turn_id(), turn_index);
+    }
+
+    pub fn set_selected_branch_head_cursor(
+        &mut self,
+        turn_id: Option<i64>,
+        turn_index: Option<u32>,
+    ) {
+        self.selected_branch_head_cursor = match (turn_id, turn_index) {
+            (Some(turn_id), Some(turn_index)) => Some(BranchHeadCursor {
+                turn_id,
+                turn_index,
+            }),
+            _ => None,
+        };
     }
 
     pub fn selected_turn_id(&self) -> Option<i64> {
@@ -437,11 +456,11 @@ impl SessionState {
         match self.effective_write_policy() {
             ExecutionWritePolicy::AdvanceBranchHead => {
                 let next_turn_index = self
-                    .selected_branch_head_turn_index
-                    .map_or(0, |turn_index| turn_index + 1);
+                    .selected_branch_head_cursor
+                    .map_or(0, |cursor| cursor.turn_index + 1);
                 Some(TurnWriteTarget::branch_head_with_expectation(
                     self.selected_branch_head_id(),
-                    self.selected_branch_head_turn_id,
+                    self.selected_branch_head_cursor.map(|cursor| cursor.turn_id),
                     next_turn_index,
                 ))
             }
@@ -450,15 +469,15 @@ impl SessionState {
     }
 
     pub fn active_turn_write_target(&self) -> Option<TurnWriteTarget> {
-        self.active_turn_target
+        self.active_task.turn_target
     }
 
     pub fn set_active_turn_write_target(&mut self, target: Option<TurnWriteTarget>) {
-        self.active_turn_target = target;
+        self.active_task.turn_target = target;
     }
 
     pub fn effective_write_policy(&self) -> ExecutionWritePolicy {
-        if self.conflict_detached_active {
+        if self.active_task.conflict_detached {
             ExecutionWritePolicy::Detached
         } else {
             self.execution.write_policy
@@ -466,7 +485,8 @@ impl SessionState {
     }
 
     pub fn effective_conflict_policy(&self) -> ExecutionConflictPolicy {
-        self.active_task_conflict_policy
+        self.active_task
+            .conflict_policy
             .unwrap_or(self.execution.conflict_policy)
     }
 
@@ -474,23 +494,24 @@ impl SessionState {
         &mut self,
         conflict_policy: Option<ExecutionConflictPolicy>,
     ) {
-        self.active_task_conflict_policy = conflict_policy;
+        self.active_task.conflict_policy = conflict_policy;
+    }
+
+    pub fn current_task_branch_outcome(&self) -> Option<&TaskBranchOutcome> {
+        self.active_task.branch_outcome.as_ref()
     }
 
     pub fn set_current_task_branch_outcome(&mut self, outcome: Option<TaskBranchOutcome>) {
-        self.current_task_branch_outcome = outcome;
+        self.active_task.branch_outcome = outcome;
     }
 
     pub fn begin_conflict_detached_task(&mut self) {
-        self.conflict_detached_active = true;
-        self.active_turn_target = None;
+        self.active_task.conflict_detached = true;
+        self.active_task.turn_target = None;
     }
 
     pub fn clear_conflict_detached_task(&mut self) {
-        self.conflict_detached_active = false;
-        self.active_turn_target = None;
-        self.active_task_conflict_policy = None;
-        self.current_task_branch_outcome = None;
+        self.active_task = ActiveTaskState::default();
     }
 }
 
@@ -573,8 +594,7 @@ mod tests {
         assert_eq!(session.active_turn_write_target(), None);
 
         session.set_selected_branch_head_id(Some(11));
-        session.set_selected_branch_head_turn_id(Some(5));
-        session.set_selected_branch_head_turn_index(Some(0));
+        session.set_selected_branch_head_cursor(Some(5), Some(0));
         assert_eq!(
             session.execution.write_policy,
             ExecutionWritePolicy::AdvanceBranchHead
@@ -598,8 +618,7 @@ mod tests {
     fn branch_write_progression_uses_persisted_head_depth() {
         let mut session = SessionState::new();
         session.set_selected_branch_head_id(Some(11));
-        session.set_selected_branch_head_turn_id(Some(5));
-        session.set_selected_branch_head_turn_index(Some(3));
+        session.set_selected_branch_head_cursor(Some(5), Some(3));
         session.turn_index = 0;
 
         assert_eq!(

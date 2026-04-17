@@ -759,8 +759,7 @@ async fn test_stale_branch_conflict_does_not_trigger_inference_recovery() -> Res
         )
         .await?;
 
-    session.set_selected_branch_head_turn_id(Some(first_turn_id));
-    session.set_selected_branch_head_turn_index(Some(0));
+    session.set_selected_branch_head_cursor(Some(first_turn_id), Some(0));
 
     kernel
         .run(&mut session, Some("trigger".to_string()))
@@ -784,8 +783,7 @@ async fn test_stale_branch_conflict_does_not_trigger_inference_recovery() -> Res
         .await?;
     assert_eq!(recovery, None);
 
-    session.set_selected_branch_head_turn_id(Some(second_turn_id));
-    session.set_selected_branch_head_turn_index(Some(1));
+    session.set_selected_branch_head_cursor(Some(second_turn_id), Some(1));
     kernel.end_session(&mut session).await?;
     Ok(())
 }
@@ -907,8 +905,7 @@ async fn test_stale_branch_conflict_can_continue_detached() -> Result<()> {
         )
         .await?;
 
-    session.set_selected_branch_head_turn_id(Some(first_turn_id));
-    session.set_selected_branch_head_turn_index(Some(0));
+    session.set_selected_branch_head_cursor(Some(first_turn_id), Some(0));
 
     {
         let mut queue = session.queue.lock().await;
@@ -1074,8 +1071,7 @@ async fn test_stale_branch_conflict_can_fork_sibling_durably() -> Result<()> {
         )
         .await?;
 
-    session.set_selected_branch_head_turn_id(Some(first_turn_id));
-    session.set_selected_branch_head_turn_index(Some(0));
+    session.set_selected_branch_head_cursor(Some(first_turn_id), Some(0));
 
     {
         let mut queue = session.queue.lock().await;

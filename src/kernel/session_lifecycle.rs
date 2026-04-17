@@ -145,8 +145,10 @@ impl ExecutionHost {
         session.context_checkpoint = rebuild_context_checkpoint(&materialized.active_events);
         session.history = history;
         session.set_context_target(context_target);
-        session.set_selected_branch_head_turn_id(materialized.branch_head_turn_id);
-        session.set_selected_branch_head_turn_index(materialized.branch_head_turn_index);
+        session.set_selected_branch_head_cursor(
+            materialized.branch_head_turn_id,
+            materialized.branch_head_turn_index,
+        );
         session.turn_index = turn_index;
         session.total_input_tokens = total_input_tokens;
         session.total_output_tokens = total_output_tokens;
@@ -195,8 +197,10 @@ impl ExecutionHost {
         session.context_checkpoint = rebuild_context_checkpoint(&materialized.active_events);
         session.history = history;
         session.set_context_target(context_target);
-        session.set_selected_branch_head_turn_id(materialized.branch_head_turn_id);
-        session.set_selected_branch_head_turn_index(materialized.branch_head_turn_index);
+        session.set_selected_branch_head_cursor(
+            materialized.branch_head_turn_id,
+            materialized.branch_head_turn_index,
+        );
         session.turn_index = turn_index;
         session.total_input_tokens = total_input_tokens;
         session.total_output_tokens = total_output_tokens;
@@ -310,7 +314,7 @@ impl ExecutionHost {
                         match store.get_active_branch_head(id).await {
                             Ok(Some(branch)) => {
                                 session.set_selected_branch_head_id(Some(branch.id));
-                                session.set_selected_branch_head_turn_id(branch.head_turn_id);
+                                let branch_head_turn_id = branch.head_turn_id;
                                 let head_turn_index = match branch.head_turn_id {
                                     Some(turn_id) => match store.get_turn_row(turn_id).await {
                                         Ok(Some(turn)) => Some(turn.branch_depth),
@@ -326,7 +330,10 @@ impl ExecutionHost {
                                     },
                                     None => None,
                                 };
-                                session.set_selected_branch_head_turn_index(head_turn_index);
+                                session.set_selected_branch_head_cursor(
+                                    branch_head_turn_id,
+                                    head_turn_index,
+                                );
                             }
                             Ok(None) => {
                                 warn!("Created session is missing an active branch head");

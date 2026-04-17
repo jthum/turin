@@ -83,7 +83,7 @@ impl ExecutionHost {
         Ok(TaskExecutionResult {
             status,
             task_turn_count,
-            branch_outcome: session.current_task_branch_outcome.clone(),
+            branch_outcome: session.current_task_branch_outcome().cloned(),
         })
     }
 
@@ -311,8 +311,7 @@ impl ExecutionHost {
             turn_index,
         } = resolved
         {
-            session.set_selected_branch_head_turn_id(Some(turn_id));
-            session.set_selected_branch_head_turn_index(Some(turn_index));
+            session.set_selected_branch_head_cursor(Some(turn_id), Some(turn_index));
         }
         session.set_active_turn_write_target(Some(resolved));
         Ok(())
@@ -377,8 +376,7 @@ impl ExecutionHost {
             .map(|value| value.to_string())
             .context("Forked sibling branch public id was invalid")?;
         session.set_selected_branch_head_id(Some(branch.id));
-        session.set_selected_branch_head_turn_id(branch.head_turn_id);
-        session.set_selected_branch_head_turn_index(source_turn_index);
+        session.set_selected_branch_head_cursor(branch.head_turn_id, source_turn_index);
         session.set_current_task_branch_outcome(Some(TaskBranchOutcome::ForkSibling {
             branch_id: branch.id,
             branch_public_id,
