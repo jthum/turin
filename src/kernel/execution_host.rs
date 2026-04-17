@@ -6,14 +6,17 @@ use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
 use crate::kernel::agent_manager::AgentManager;
 use crate::kernel::config::TurinConfig;
+use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::governance::GovernanceManager;
-use crate::kernel::session::QueuedTask;
 use crate::kernel::harness_manager::HarnessManager;
 use crate::kernel::mcp_runtime::McpClientEntry;
 use crate::kernel::policy::RuntimePolicyManager;
-use crate::kernel::session::{SessionHarnessEngine, SessionState};
+use crate::kernel::session::{QueuedTask, SessionHarnessEngine, SessionState};
 use crate::persistence::manager::{StoreManager, StorePathScope};
 use crate::tools::registry::ToolRegistry;
+use tracing::{error, warn};
+
+use super::TaskExecutionResult;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct PersistedSessionLockKey {
@@ -65,6 +68,19 @@ pub struct ExecutionHost {
     pub(crate) clients: HashMap<String, ProviderClient>,
     pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     pub(crate) mcp_clients: Vec<McpClientEntry>,
+}
+
+pub(crate) enum TaskRunAttempt {
+    Completed(TaskExecutionResult),
+    Terminal {
+        status: TaskTerminalStatus,
+        error_message: String,
+    },
+    Error {
+        error: anyhow::Error,
+        error_message: String,
+        recovered: bool,
+    },
 }
 
 impl ExecutionHost {
@@ -169,6 +185,72 @@ impl ExecutionHost {
             .await?;
         session.persistence_lock = self.persistence_locks.lock_for(store_path, internal_id);
         Ok(())
+    }
+
+    pub(crate) async fn run_task_with_conflict_handling(
+        &mut self,
+        session: &mut SessionState,
+        task: &QueuedTask,
+    ) -> anyhow::Result<TaskRunAttempt> {
+        match self.run_task(session, task).await {
+            Ok(result) => Ok(TaskRunAttempt::Completed(result)),
+            Err(error) => {
+                error!(
+                    task_id = %task.task_id,
+                    trace_id = %task.trace_id,
+                    error = %error,
+                    "Task failed with runtime error"
+                );
+                let error_message = error.to_string();
+                if crate::persistence::state::is_turn_write_conflict(&error) {
+                    match session.effective_conflict_policy() {
+                        crate::kernel::session::ExecutionConflictPolicy::Reject
+                        | crate::kernel::session::ExecutionConflictPolicy::ForkSibling => {
+                            return Ok(TaskRunAttempt::Terminal {
+                                status: TaskTerminalStatus::Conflict,
+                                error_message,
+                            });
+                        }
+                        crate::kernel::session::ExecutionConflictPolicy::Detached => {
+                            warn!(
+                                task_id = %task.task_id,
+                                trace_id = %task.trace_id,
+                                "Task write conflict downgraded to detached execution"
+                            );
+                            return match self.run_task(session, task).await {
+                                Ok(result) => Ok(TaskRunAttempt::Completed(result)),
+                                Err(detached_error) => {
+                                    error!(
+                                        task_id = %task.task_id,
+                                        trace_id = %task.trace_id,
+                                        error = %detached_error,
+                                        "Detached retry failed with runtime error"
+                                    );
+                                    let error_message = detached_error.to_string();
+                                    let recovered = self
+                                        .handle_inference_error(session, task, &error_message)
+                                        .await?;
+                                    Ok(TaskRunAttempt::Error {
+                                        error: detached_error,
+                                        error_message,
+                                        recovered,
+                                    })
+                                }
+                            };
+                        }
+                    }
+                }
+
+                let recovered = self
+                    .handle_inference_error(session, task, &error_message)
+                    .await?;
+                Ok(TaskRunAttempt::Error {
+                    error,
+                    error_message,
+                    recovered,
+                })
+            }
+        }
     }
 
     pub(crate) fn agent_config_for(

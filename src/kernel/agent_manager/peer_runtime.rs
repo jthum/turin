@@ -11,11 +11,9 @@ use crate::inference::content::{
 use crate::inference::provider::InferenceRole;
 use crate::kernel::TaskExecutionResult;
 use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
-use crate::kernel::execution_host::ExecutionHost;
-use crate::kernel::session::ExecutionConflictPolicy;
+use crate::kernel::execution_host::{ExecutionHost, TaskRunAttempt};
 use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreSelector;
-use crate::persistence::state::is_turn_write_conflict;
 
 use super::{
     AgentManager, PeerAgentTaskEnvelope, PeerAgentTaskResult, RuntimeControl,
@@ -297,150 +295,63 @@ impl PeerRuntime {
 
             info!(task_id = %task.task_id, trace_id = %task.trace_id, prompt = %task.prompt, "Running peer task");
 
-            let run_result: TaskExecutionResult =
-                match self.host.run_task(&mut self.session, &task).await {
-                    Ok(result) => {
-                        self.host
-                            .complete_task(
-                                &mut self.session,
-                                &task,
-                                result.status,
-                                result.task_turn_count,
-                                result.branch_outcome.clone(),
-                                None,
-                            )
-                            .await?;
-                        result
-                    }
-                    Err(e) => {
-                        error!(task_id = %task.task_id, trace_id = %task.trace_id, error = %e, "Peer task failed with runtime error");
-                        let error_message = e.to_string();
-                        if is_turn_write_conflict(&e) {
-                            match self.session.effective_conflict_policy() {
-                                ExecutionConflictPolicy::Reject => {
-                                    self.host
-                                        .complete_task(
-                                            &mut self.session,
-                                            &task,
-                                            TaskTerminalStatus::Conflict,
-                                            0,
-                                            None,
-                                            Some(error_message),
-                                        )
-                                        .await?;
-                                    return Ok(PeerRunOutcome {
-                                        runtime_task_id: task.task_id,
-                                        status: TaskTerminalStatus::Conflict,
-                                        task_turn_count: 0,
-                                        branch_outcome: None,
-                                        output: None,
-                                        assistant_content: None,
-                                    });
-                                }
-                                ExecutionConflictPolicy::Detached => {
-                                    warn!(
-                                        task_id = %task.task_id,
-                                        trace_id = %task.trace_id,
-                                        "Peer task write conflict downgraded to detached execution"
-                                    );
-                                    match self.host.run_task(&mut self.session, &task).await {
-                                        Ok(result) => {
-                                            self.host
-                                                .complete_task(
-                                                    &mut self.session,
-                                                    &task,
-                                                    result.status,
-                                                    result.task_turn_count,
-                                                    result.branch_outcome.clone(),
-                                                    None,
-                                                )
-                                                .await?;
-                                            return Ok(PeerRunOutcome {
-                                                runtime_task_id: task.task_id,
-                                                status: result.status,
-                                                task_turn_count: result.task_turn_count,
-                                                branch_outcome: result.branch_outcome,
-                                                output: self.last_assistant_text(),
-                                                assistant_content: self.last_assistant_content(),
-                                            });
-                                        }
-                                        Err(detached_error) => {
-                                            error!(
-                                                task_id = %task.task_id,
-                                                trace_id = %task.trace_id,
-                                                error = %detached_error,
-                                                "Detached peer retry failed with runtime error"
-                                            );
-                                            let detached_error_message = detached_error.to_string();
-                                            let recovered = self
-                                                .host
-                                                .handle_inference_error(
-                                                    &mut self.session,
-                                                    &task,
-                                                    &detached_error_message,
-                                                )
-                                                .await?;
-                                            self.host
-                                                .complete_task(
-                                                    &mut self.session,
-                                                    &task,
-                                                    TaskTerminalStatus::Error,
-                                                    0,
-                                                    None,
-                                                    Some(detached_error_message),
-                                                )
-                                                .await?;
-                                            if recovered {
-                                                return Ok(PeerRunOutcome {
-                                                    runtime_task_id: task.task_id,
-                                                    status: TaskTerminalStatus::Error,
-                                                    task_turn_count: 0,
-                                                    branch_outcome: None,
-                                                    output: None,
-                                                    assistant_content: None,
-                                                });
-                                            }
-                                            return Err(detached_error);
-                                        }
-                                    }
-                                }
-                                ExecutionConflictPolicy::ForkSibling => {
-                                    self.host
-                                        .complete_task(
-                                            &mut self.session,
-                                            &task,
-                                            TaskTerminalStatus::Conflict,
-                                            0,
-                                            None,
-                                            Some(error_message),
-                                        )
-                                        .await?;
-                                    return Ok(PeerRunOutcome {
-                                        runtime_task_id: task.task_id,
-                                        status: TaskTerminalStatus::Conflict,
-                                        task_turn_count: 0,
-                                        branch_outcome: None,
-                                        output: None,
-                                        assistant_content: None,
-                                    });
-                                }
-                            }
-                        }
-                        let recovered = self
-                            .host
-                            .handle_inference_error(&mut self.session, &task, &error_message)
-                            .await?;
-                        self.host
-                            .complete_task(
-                                &mut self.session,
-                                &task,
-                                TaskTerminalStatus::Error,
-                                0,
-                                None,
-                                Some(error_message),
-                            )
-                            .await?;
-                        if recovered {
+            let run_result: TaskExecutionResult = match self
+                .host
+                .run_task_with_conflict_handling(&mut self.session, &task)
+                .await?
+            {
+                TaskRunAttempt::Completed(result) => {
+                    self.host
+                        .complete_task(
+                            &mut self.session,
+                            &task,
+                            result.status,
+                            result.task_turn_count,
+                            result.branch_outcome.clone(),
+                            None,
+                        )
+                        .await?;
+                    result
+                }
+                TaskRunAttempt::Terminal {
+                    status,
+                    error_message,
+                } => {
+                    self.host
+                        .complete_task(
+                            &mut self.session,
+                            &task,
+                            status,
+                            0,
+                            None,
+                            Some(error_message),
+                        )
+                        .await?;
+                    return Ok(PeerRunOutcome {
+                        runtime_task_id: task.task_id,
+                        status,
+                        task_turn_count: 0,
+                        branch_outcome: None,
+                        output: None,
+                        assistant_content: None,
+                    });
+                }
+                TaskRunAttempt::Error {
+                    error,
+                    error_message,
+                    recovered,
+                } => {
+                    self.host
+                        .complete_task(
+                            &mut self.session,
+                            &task,
+                            TaskTerminalStatus::Error,
+                            0,
+                            None,
+                            Some(error_message),
+                        )
+                        .await?;
+                    if recovered {
                         return Ok(PeerRunOutcome {
                             runtime_task_id: task.task_id,
                             status: TaskTerminalStatus::Error,
@@ -449,10 +360,10 @@ impl PeerRuntime {
                             output: None,
                             assistant_content: None,
                         });
-                        }
-                        return Err(e);
                     }
-                };
+                    return Err(error);
+                }
+            };
 
             let output = self.last_assistant_text();
 
