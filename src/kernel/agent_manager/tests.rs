@@ -495,18 +495,18 @@ async fn explicit_runtime_slots_allow_multiple_live_runtimes_for_one_session() -
     assert!(submit_err.to_string().contains("multiple runtime slots"));
 
     let reload_err = manager
-        .reload_session(&slot_a.session_id)
+        .reload_session(&slot_a.session_id, None)
         .await
         .expect_err("slot-agnostic reload should reject ambiguity");
     assert!(reload_err.to_string().contains("multiple runtime slots"));
 
     let reloaded = manager
-        .reload_session_in_slot(&slot_a.session_id, Some("slot-b"))
+        .reload_session(&slot_a.session_id, Some("slot-b"))
         .await?;
     assert_eq!(reloaded.slot_id, "slot-b");
 
     let reload_if_live_err = manager
-        .reload_session_if_live(&slot_a.session_id)
+        .reload_session_if_live(&slot_a.session_id, None)
         .await
         .expect_err("slot-agnostic conditional reload should reject ambiguity");
     assert!(

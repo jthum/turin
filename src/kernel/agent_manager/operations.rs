@@ -258,11 +258,7 @@ impl AgentManager {
         })
     }
 
-    pub async fn reload_session(self: &Arc<Self>, session_id: &str) -> Result<LiveSessionSnapshot> {
-        self.reload_session_in_slot(session_id, None).await
-    }
-
-    pub async fn reload_session_in_slot(
+    pub async fn reload_session(
         self: &Arc<Self>,
         session_id: &str,
         slot_id: Option<&str>,
@@ -330,11 +326,7 @@ impl AgentManager {
         })
     }
 
-    pub async fn reload_session_if_live(self: &Arc<Self>, session_id: &str) -> Result<bool> {
-        self.reload_session_if_live_in_slot(session_id, None).await
-    }
-
-    pub async fn reload_session_if_live_in_slot(
+    pub async fn reload_session_if_live(
         self: &Arc<Self>,
         session_id: &str,
         slot_id: Option<&str>,
@@ -347,15 +339,14 @@ impl AgentManager {
             {
                 return Ok(false);
             }
-            self.reload_session_in_slot(session_id, Some(slot_id))
-                .await?;
+            self.reload_session(session_id, Some(slot_id)).await?;
             return Ok(true);
         }
 
         if live_matches.is_empty() {
             return Ok(false);
         }
-        self.reload_session(session_id).await?;
+        self.reload_session(session_id, None).await?;
         Ok(true)
     }
 

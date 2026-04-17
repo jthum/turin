@@ -40,26 +40,6 @@ impl DaemonState {
         &self,
         agent_id: Option<&str>,
         session_id: Option<&str>,
-        prompt: String,
-        content: Option<Vec<TaskInputContent>>,
-        tools: Option<ToolsConfig>,
-    ) -> Result<TaskStatusSnapshot> {
-        self.submit_task_request(TaskSubmissionRequest {
-            agent_id,
-            session_id,
-            slot_id: None,
-            prompt,
-            content,
-            tools,
-            conflict_policy: None,
-        })
-        .await
-    }
-
-    pub async fn submit_task_in_slot(
-        &self,
-        agent_id: Option<&str>,
-        session_id: Option<&str>,
         slot_id: Option<&str>,
         prompt: String,
         content: Option<Vec<TaskInputContent>>,
@@ -190,18 +170,6 @@ impl DaemonState {
     pub async fn subscribe_live_session_events(
         &self,
         session_id: &str,
-    ) -> Option<(
-        String,
-        String,
-        tokio::sync::broadcast::Receiver<(Option<i64>, KernelEvent)>,
-    )> {
-        self.subscribe_live_session_events_in_slot(session_id, None)
-            .await
-    }
-
-    pub async fn subscribe_live_session_events_in_slot(
-        &self,
-        session_id: &str,
         slot_id: Option<&str>,
     ) -> Option<(
         String,
@@ -254,11 +222,7 @@ impl DaemonState {
             .await
     }
 
-    pub async fn cancel_session(&self, session_id: &str) -> Result<serde_json::Value> {
-        self.cancel_session_in_slot(session_id, None).await
-    }
-
-    pub async fn cancel_session_in_slot(
+    pub async fn cancel_session(
         &self,
         session_id: &str,
         slot_id: Option<&str>,
@@ -276,11 +240,7 @@ impl DaemonState {
         }))
     }
 
-    pub async fn kill_session(&self, session_id: &str) -> Result<serde_json::Value> {
-        self.kill_session_in_slot(session_id, None).await
-    }
-
-    pub async fn kill_session_in_slot(
+    pub async fn kill_session(
         &self,
         session_id: &str,
         slot_id: Option<&str>,

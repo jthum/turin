@@ -153,6 +153,7 @@ async fn submit_task_exposes_completed_result_and_blocks_rescan_while_active() -
         .submit_task(
             Some("default"),
             None,
+            None,
             "Hello daemon".to_string(),
             None,
             Default::default(),
@@ -196,6 +197,7 @@ async fn wait_for_task_returns_terminal_result() -> Result<()> {
         .submit_task(
             Some("default"),
             None,
+            None,
             "Hello wait".to_string(),
             None,
             Default::default(),
@@ -218,6 +220,7 @@ async fn session_list_and_get_expose_persisted_session_details() -> Result<()> {
     let task = state
         .submit_task(
             Some("default"),
+            None,
             None,
             "Hello session".to_string(),
             None,
@@ -268,6 +271,7 @@ async fn session_list_and_search_can_target_an_explicit_state_store() -> Result<
         .submit_task(
             None,
             Some(&live.session_id),
+            None,
             "alternate store session body".to_string(),
             None,
             Default::default(),
@@ -417,6 +421,7 @@ provider = "noop"
         .submit_task(
             None,
             Some(&live.session_id),
+            None,
             "route via channel override".to_string(),
             None,
             Default::default(),
@@ -449,7 +454,7 @@ provider = "noop"
     assert!(!first_assistant_text.contains("ROOT_FAST"));
     assert!(!first_assistant_text.contains("PRIMARY"));
 
-    state.kill_session(&live.session_id).await?;
+    state.kill_session(&live.session_id, None).await?;
 
     let resumed = state.resume_session(&live.session_id, None).await?;
     assert_eq!(
@@ -461,6 +466,7 @@ provider = "noop"
         .submit_task(
             None,
             Some(&resumed.session_id),
+            None,
             "route via resumed channel override".to_string(),
             None,
             Default::default(),
@@ -509,6 +515,7 @@ async fn session_branches_can_be_created_listed_and_checked_out() -> Result<()> 
         .submit_task(
             None,
             Some(&session_id),
+            None,
             "first branch turn".to_string(),
             None,
             Default::default(),
@@ -525,6 +532,7 @@ async fn session_branches_can_be_created_listed_and_checked_out() -> Result<()> 
         .submit_task(
             None,
             Some(&session_id),
+            None,
             "second branch turn".to_string(),
             None,
             Default::default(),
@@ -572,6 +580,7 @@ async fn session_branches_can_be_created_listed_and_checked_out() -> Result<()> 
         .submit_task(
             None,
             Some(&session_id),
+            None,
             "third branch turn".to_string(),
             None,
             Default::default(),
@@ -628,6 +637,7 @@ async fn live_session_control_can_target_a_specific_runtime_slot() -> Result<()>
         .submit_task(
             None,
             Some(&slot_a.session_id),
+            None,
             "ambiguous".to_string(),
             None,
             Default::default(),
@@ -641,7 +651,7 @@ async fn live_session_control_can_target_a_specific_runtime_slot() -> Result<()>
     );
 
     let targeted = state
-        .submit_task_in_slot(
+        .submit_task(
             None,
             Some(&slot_a.session_id),
             Some("slot-b"),
@@ -660,7 +670,7 @@ async fn live_session_control_can_target_a_specific_runtime_slot() -> Result<()>
     );
 
     let ambiguous_kill = state
-        .kill_session(&slot_a.session_id)
+        .kill_session(&slot_a.session_id, None)
         .await
         .expect_err("slot-agnostic kill should reject ambiguity");
     assert!(
@@ -670,7 +680,7 @@ async fn live_session_control_can_target_a_specific_runtime_slot() -> Result<()>
     );
 
     let targeted_kill = state
-        .kill_session_in_slot(&slot_a.session_id, Some("slot-b"))
+        .kill_session(&slot_a.session_id, Some("slot-b"))
         .await?;
     assert_eq!(targeted_kill["slot_id"], "slot-b");
     assert_eq!(targeted_kill["session_id"], slot_a.session_id);
@@ -679,7 +689,7 @@ async fn live_session_control_can_target_a_specific_runtime_slot() -> Result<()>
     assert_eq!(live.len(), 1);
     assert_eq!(live[0].slot_id, "slot-a");
 
-    let final_kill = state.kill_session(&slot_a.session_id).await?;
+    let final_kill = state.kill_session(&slot_a.session_id, None).await?;
     assert_eq!(final_kill["slot_id"], "slot-a");
 
     Ok(())
@@ -696,6 +706,7 @@ async fn live_branch_control_can_target_a_specific_runtime_slot() -> Result<()> 
         .submit_task(
             None,
             Some(&slot_a.session_id),
+            None,
             "seed main branch".to_string(),
             None,
             Default::default(),
@@ -732,7 +743,7 @@ async fn live_branch_control_can_target_a_specific_runtime_slot() -> Result<()> 
     assert!(activated.active);
 
     let main_followup = state
-        .submit_task_in_slot(
+        .submit_task(
             None,
             Some(&slot_a.session_id),
             Some("slot-a"),
@@ -750,7 +761,7 @@ async fn live_branch_control_can_target_a_specific_runtime_slot() -> Result<()> 
     );
 
     let alt_followup = state
-        .submit_task_in_slot(
+        .submit_task(
             None,
             Some(&slot_a.session_id),
             Some("slot-b"),
@@ -798,7 +809,7 @@ async fn live_branch_control_can_target_a_specific_runtime_slot() -> Result<()> 
     assert!(checked_out.active);
 
     let main_again = state
-        .submit_task_in_slot(
+        .submit_task(
             None,
             Some(&slot_a.session_id),
             Some("slot-b"),
@@ -1506,6 +1517,7 @@ async fn agent_runtime_status_reflects_live_runtime_state() -> Result<()> {
     let task = state
         .submit_task(
             Some("default"),
+            None,
             None,
             "Hello status".to_string(),
             None,

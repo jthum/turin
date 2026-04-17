@@ -251,7 +251,7 @@ impl DaemonState {
         if activate && let Some(live_snapshot) = live_snapshot.as_ref() {
             self.kernel
                 .agent_manager()
-                .reload_session_in_slot(session_id, Some(&live_snapshot.slot_id))
+                .reload_session(session_id, Some(&live_snapshot.slot_id))
                 .await?;
         }
         info!(
@@ -296,7 +296,7 @@ impl DaemonState {
         {
             self.kernel
                 .agent_manager()
-                .reload_session_in_slot(session_id, Some(&live_snapshot.slot_id))
+                .reload_session(session_id, Some(&live_snapshot.slot_id))
                 .await?;
         }
         if let Some(branch) = &branch {

@@ -40,7 +40,7 @@ pub(super) async fn stream_events(
     let mut session_event_rx = if let Some(session_id) = filter.session_id.as_deref() {
         let guard = state.read().await;
         guard
-            .subscribe_live_session_events_in_slot(session_id, filter.slot_id.as_deref())
+            .subscribe_live_session_events(session_id, filter.slot_id.as_deref())
             .await
             .map(|(agent_id, slot_id, receiver)| {
                 (agent_id, session_id.to_string(), slot_id, receiver)

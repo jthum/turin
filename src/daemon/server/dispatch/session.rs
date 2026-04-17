@@ -253,7 +253,7 @@ pub(super) async fn cancel(
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
     match guard
-        .cancel_session_in_slot(&params.session_id, params.slot_id.as_deref())
+        .cancel_session(&params.session_id, params.slot_id.as_deref())
         .await
     {
         Ok(result) => {
@@ -271,7 +271,7 @@ pub(super) async fn kill(
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
     match guard
-        .kill_session_in_slot(&params.session_id, params.slot_id.as_deref())
+        .kill_session(&params.session_id, params.slot_id.as_deref())
         .await
     {
         Ok(result) => {
