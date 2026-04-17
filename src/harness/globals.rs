@@ -40,6 +40,28 @@ pub struct HarnessEventContext {
     pub durability_tx: Option<tokio::sync::mpsc::UnboundedSender<PersistedKernelRecord>>,
 }
 
+#[derive(Clone)]
+pub struct HarnessExecutionMetadata {
+    pub execution_id: String,
+    pub context_target: ExecutionContextTarget,
+    pub visibility: ExecutionVisibility,
+    pub durability: ExecutionDurability,
+    pub write_policy: ExecutionWritePolicy,
+    pub conflict_policy: ExecutionConflictPolicy,
+}
+
+#[derive(Clone)]
+pub struct HarnessExecutionBinding {
+    pub session_id: String,
+    pub store_selector: StoreSelector,
+    pub default_store_selector: Option<StoreSelector>,
+    pub mode: crate::kernel::config::AgentMode,
+    pub execution: HarnessExecutionMetadata,
+    pub runtime_slot_id: Option<String>,
+    pub trace_id: String,
+    pub event_context: HarnessEventContext,
+}
+
 #[derive(Clone, Default)]
 pub struct HarnessExecutionContext {
     pub execution_id: Option<String>,

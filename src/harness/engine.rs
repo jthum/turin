@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use tracing::error;
 
-use crate::harness::globals::{self, HarnessAppData};
+use crate::harness::globals::{self, HarnessAppData, HarnessExecutionBinding};
 use crate::harness::stdlib::tool_bindings;
 use crate::harness::verdict::{Verdict, compose_verdicts};
 use crate::harness::virtual_tools::{
@@ -183,59 +183,45 @@ impl HarnessEngine {
         Ok(compose_verdicts(&verdicts))
     }
 
-    /// Set the active session ID for the current execution context.
-    /// This is used by global functions (e.g. turin.memory) to isolate data.
-    pub fn set_active_session(
-        &self,
-        session_id: Option<&str>,
-        store_selector: Option<crate::persistence::manager::StoreSelector>,
-        default_store_selector: Option<crate::persistence::manager::StoreSelector>,
-        mode: Option<crate::kernel::config::AgentMode>,
-    ) {
+    /// Bind the full active execution context for the current task.
+    pub fn bind_execution_context(&self, binding: HarnessExecutionBinding) {
         if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
             && let Ok(mut lock) = app_data.execution_ctx.lock()
         {
-            lock.session_id = session_id.map(|s| s.to_string());
-            lock.session_store_selector = store_selector;
-            lock.default_store_selector = default_store_selector;
-            lock.session_mode = mode;
+            lock.session_id = Some(binding.session_id);
+            lock.session_store_selector = Some(binding.store_selector);
+            lock.default_store_selector = binding.default_store_selector;
+            lock.session_mode = Some(binding.mode);
+            lock.execution_id = Some(binding.execution.execution_id);
+            lock.execution_context_target = Some(binding.execution.context_target);
+            lock.execution_visibility = Some(binding.execution.visibility);
+            lock.execution_durability = Some(binding.execution.durability);
+            lock.execution_write_policy = Some(binding.execution.write_policy);
+            lock.execution_conflict_policy = Some(binding.execution.conflict_policy);
+            lock.runtime_slot_id = binding.runtime_slot_id;
+            lock.trace_id = Some(binding.trace_id);
+            lock.event_context = Some(binding.event_context);
         }
     }
 
-    pub fn set_active_trace_id(&self, trace_id: Option<&str>) {
+    /// Clear the active execution context after a task completes.
+    pub fn unbind_execution_context(&self) {
         if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
             && let Ok(mut lock) = app_data.execution_ctx.lock()
         {
-            lock.trace_id = trace_id.map(|s| s.to_string());
-        }
-    }
-
-    pub fn set_active_runtime_slot_id(&self, slot_id: Option<&str>) {
-        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
-            && let Ok(mut lock) = app_data.execution_ctx.lock()
-        {
-            lock.runtime_slot_id = slot_id.map(|s| s.to_string());
-        }
-    }
-
-    pub fn set_active_execution_metadata(
-        &self,
-        execution_id: Option<&str>,
-        context_target: Option<crate::kernel::session::ExecutionContextTarget>,
-        visibility: Option<crate::kernel::session::ExecutionVisibility>,
-        durability: Option<crate::kernel::session::ExecutionDurability>,
-        write_policy: Option<crate::kernel::session::ExecutionWritePolicy>,
-        conflict_policy: Option<crate::kernel::session::ExecutionConflictPolicy>,
-    ) {
-        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
-            && let Ok(mut lock) = app_data.execution_ctx.lock()
-        {
-            lock.execution_id = execution_id.map(|s| s.to_string());
-            lock.execution_context_target = context_target;
-            lock.execution_visibility = visibility;
-            lock.execution_durability = durability;
-            lock.execution_write_policy = write_policy;
-            lock.execution_conflict_policy = conflict_policy;
+            lock.session_id = None;
+            lock.session_store_selector = None;
+            lock.default_store_selector = None;
+            lock.session_mode = None;
+            lock.execution_id = None;
+            lock.execution_context_target = None;
+            lock.execution_visibility = None;
+            lock.execution_durability = None;
+            lock.execution_write_policy = None;
+            lock.execution_conflict_policy = None;
+            lock.runtime_slot_id = None;
+            lock.trace_id = None;
+            lock.event_context = None;
         }
     }
 
@@ -306,17 +292,6 @@ impl HarnessEngine {
                     .ok()
                     .and_then(|lock| lock.import_capabilities.clone())
             })
-    }
-
-    pub fn set_active_event_context(
-        &self,
-        ctx: Option<crate::harness::globals::HarnessEventContext>,
-    ) {
-        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
-            && let Ok(mut lock) = app_data.execution_ctx.lock()
-        {
-            lock.event_context = ctx;
-        }
     }
 
     fn set_active_harness_module(&self, module_name: Option<&str>) {

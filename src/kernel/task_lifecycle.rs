@@ -162,33 +162,8 @@ impl ExecutionHost {
         let verdict_result = {
             self.ensure_session_harness_engine(session)?;
             if let Some(harness) = self.session_harness_engine(session) {
+                self.bind_harness_execution_context(session, task);
                 let engine = harness.lock().expect("session harness mutex poisoned");
-                engine.set_active_session(
-                    Some(&self.session_reference(session)),
-                    Some(session.store_selector.clone()),
-                    session.default_store_selector.clone(),
-                    Some(session.mode.clone()),
-                );
-                engine.set_active_execution_metadata(
-                    Some(session.execution_id()),
-                    Some(session.context_target().clone()),
-                    Some(session.execution.visibility),
-                    Some(session.execution.durability),
-                    Some(session.effective_write_policy()),
-                    Some(session.effective_conflict_policy()),
-                );
-                engine.set_active_runtime_slot_id(session.runtime_slot_id.as_deref());
-                engine.set_active_trace_id(Some(&task.trace_id));
-                engine.set_active_event_context(Some(
-                    crate::harness::globals::HarnessEventContext {
-                        json: self.json,
-                        internal_id: session.internal_id,
-                        branch_head_id: session.selected_branch_head_id(),
-                        execution_id: session.execution_id().to_string(),
-                        event_tx: session.event_tx.clone(),
-                        durability_tx: session.durability_tx.clone(),
-                    },
-                ));
                 let result = engine.evaluate(
                     "on_inference_error",
                     serde_json::json!({
@@ -201,11 +176,8 @@ impl ExecutionHost {
                         "error": error,
                     }),
                 );
-                engine.set_active_session(None, None, None, None);
-                engine.set_active_execution_metadata(None, None, None, None, None, None);
-                engine.set_active_runtime_slot_id(None);
-                engine.set_active_trace_id(None);
-                engine.set_active_event_context(None);
+                drop(engine);
+                self.unbind_harness_execution_context(session);
                 Some(result)
             } else {
                 None

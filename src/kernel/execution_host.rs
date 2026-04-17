@@ -7,6 +7,7 @@ use crate::inference::provider::ProviderClient;
 use crate::kernel::agent_manager::AgentManager;
 use crate::kernel::config::TurinConfig;
 use crate::kernel::governance::GovernanceManager;
+use crate::kernel::session::QueuedTask;
 use crate::kernel::harness_manager::HarnessManager;
 use crate::kernel::mcp_runtime::McpClientEntry;
 use crate::kernel::policy::RuntimePolicyManager;
@@ -108,6 +109,51 @@ impl ExecutionHost {
     pub(crate) fn clear_session_harness_engine(&self, session: &mut SessionState) {
         session.harness_engine = None;
         session.harness_generation = 0;
+    }
+
+    pub(crate) fn bind_harness_execution_context(
+        &self,
+        session: &SessionState,
+        task: &QueuedTask,
+    ) {
+        let Some(harness) = self.session_harness_engine(session) else {
+            return;
+        };
+
+        let engine = harness.lock().expect("session harness mutex poisoned");
+        engine.bind_execution_context(crate::harness::globals::HarnessExecutionBinding {
+            session_id: self.session_reference(session),
+            store_selector: session.store_selector.clone(),
+            default_store_selector: session.default_store_selector.clone(),
+            mode: session.mode.clone(),
+            execution: crate::harness::globals::HarnessExecutionMetadata {
+                execution_id: session.execution_id().to_string(),
+                context_target: session.context_target().clone(),
+                visibility: session.execution.visibility,
+                durability: session.execution.durability,
+                write_policy: session.effective_write_policy(),
+                conflict_policy: session.effective_conflict_policy(),
+            },
+            runtime_slot_id: session.runtime_slot_id.clone(),
+            trace_id: task.trace_id.clone(),
+            event_context: crate::harness::globals::HarnessEventContext {
+                json: self.json,
+                internal_id: session.internal_id,
+                branch_head_id: session.selected_branch_head_id(),
+                execution_id: session.execution_id().to_string(),
+                event_tx: session.event_tx.clone(),
+                durability_tx: session.durability_tx.clone(),
+            },
+        });
+    }
+
+    pub(crate) fn unbind_harness_execution_context(&self, session: &SessionState) {
+        let Some(harness) = self.session_harness_engine(session) else {
+            return;
+        };
+
+        let engine = harness.lock().expect("session harness mutex poisoned");
+        engine.unbind_execution_context();
     }
 
     pub(crate) async fn bind_session_persistence_lock(
