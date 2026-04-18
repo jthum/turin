@@ -6168,6 +6168,251 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_runtime_agent_sidestep_runs_on_peer_sibling_branch() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_runtime_agent_sidestep.db");
+    let orchestrator_harness_dir = tmp.path().join("harnesses_orchestrator");
+    let worker_harness_dir = tmp.path().join("harnesses_worker");
+    std::fs::create_dir(&orchestrator_harness_dir)?;
+    std::fs::create_dir(&worker_harness_dir)?;
+
+    let orchestrator_harness = r#"
+        function on_turn_prepare(ctx)
+            local warm_id, warm_err = runtime.agent.submit("worker", { prompt = "warm up" })
+            if warm_id == nil then error("runtime.agent.submit warmup failed: " .. tostring(warm_err)) end
+
+            local warm_res, await_err = runtime.agent.await(warm_id, { timeout_ms = 5000 })
+            if warm_res == nil then error("runtime.agent.await warmup failed: " .. tostring(await_err)) end
+            if warm_res.status ~= "success" then
+                error("warmup task should succeed, got " .. tostring(warm_res.status))
+            end
+
+            local sidestep_id, sidestep_err = runtime.agent.sidestep("worker", "branch-only", {
+                mode = "fork_sibling"
+            })
+            if sidestep_id == nil then error("runtime.agent.sidestep failed: " .. tostring(sidestep_err)) end
+
+            local sidestep_res, sidestep_await_err = runtime.agent.await(sidestep_id, { timeout_ms = 5000 })
+            if sidestep_res == nil then error("runtime.agent.await sidestep failed: " .. tostring(sidestep_await_err)) end
+            if sidestep_res.status ~= "success" then
+                error("sidestep task should succeed, got " .. tostring(sidestep_res.status))
+            end
+            if sidestep_res.output ~= "worker-ok" then
+                error("sidestep output mismatch: " .. tostring(sidestep_res.output))
+            end
+            if sidestep_res.branch_outcome == nil then
+                error("sidestep task should report branch_outcome")
+            end
+            if sidestep_res.branch_outcome.kind ~= "sidestep_sibling" then
+                error("unexpected branch_outcome kind: " .. tostring(sidestep_res.branch_outcome.kind))
+            end
+            if sidestep_res.branch_outcome.persisted_active_head_unchanged ~= true then
+                error("sidestep should preserve persisted active head")
+            end
+
+            return ALLOW
+        end
+    "#;
+    std::fs::write(
+        orchestrator_harness_dir.join("orchestrator.lua"),
+        orchestrator_harness,
+    )?;
+    std::fs::write(worker_harness_dir.join("worker.lua"), "-- worker harness\n")?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("worker-ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut agents = std::collections::HashMap::new();
+    agents.insert(
+        "worker".to_string(),
+        AgentConfig {
+            tools: Default::default(),
+            id: "worker".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Worker".to_string(),
+            thinking: None,
+            mode: AgentMode::Stateless,
+            harness: Some("worker".to_string()),
+            idle_grace_secs: None,
+            inference: Default::default(),
+            persistence: Default::default(),
+        },
+    );
+
+    let config = TurinConfig {
+        tools: Default::default(),
+        agent: AgentConfig {
+            tools: Default::default(),
+            id: "orchestrator".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Orchestrator".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+            inference: Default::default(),
+            persistence: Default::default(),
+        },
+        agents,
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        layout: Default::default(),
+        inference: InferenceConfig::default(),
+        persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
+        harness: HarnessConfig {
+            directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+            memory_limit_mb: 32,
+        },
+        harnesses: std::collections::HashMap::from([(
+            "worker".to_string(),
+            HarnessConfig {
+                directory: worker_harness_dir.to_string_lossy().to_string(),
+                fs_root: ".".to_string(),
+                memory_limit_mb: 32,
+            },
+        )]),
+        providers,
+        embeddings: Some(EmbeddingConfig::noop()),
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("exercise runtime sidestep".to_string()))
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_agent_sidestep_creates_hidden_sibling_branch_on_current_session() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_agent_sidestep.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    let harness = r#"
+        local queued = false
+
+        function on_turn_prepare(ctx)
+            if not queued then
+                queued = true
+                local token, err = agent.sidestep("branch-only", { mode = "fork_sibling" })
+                if token == nil then error("agent.sidestep failed: " .. tostring(err)) end
+            end
+            return ALLOW
+        end
+    "#;
+    std::fs::write(harness_dir.join("default.lua"), harness)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("worker-ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        tools: Default::default(),
+        agent: AgentConfig {
+            tools: Default::default(),
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Default".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+            inference: Default::default(),
+            persistence: Default::default(),
+        },
+        agents: Default::default(),
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        layout: Default::default(),
+        inference: InferenceConfig::default(),
+        persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+            memory_limit_mb: 32,
+        },
+        harnesses: Default::default(),
+        providers,
+        embeddings: Some(EmbeddingConfig::noop()),
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("seed visible path".to_string()))
+        .await?;
+
+    let store = kernel.store_manager().open(&session.store_selector).await?;
+    let branches = store
+        .list_branch_heads(session.internal_id.expect("session internal id"))
+        .await?;
+    let sidestep_branch = branches
+        .iter()
+        .find(|branch| !branch.is_active && branch.name.starts_with("sidestep-"))
+        .expect("agent.sidestep should create a hidden sibling branch");
+    let branch_messages = store
+        .get_messages(
+            session.internal_id.expect("session internal id"),
+            &turin::persistence::state::SessionReadTarget::BranchHead(sidestep_branch.id),
+        )
+        .await?;
+    assert!(
+        branch_messages
+            .iter()
+            .any(|message| message.content.contains("branch-only")),
+        "sidestep branch should contain the sidestep prompt"
+    );
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_runtime_agent_complete.db");

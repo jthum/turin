@@ -10,7 +10,11 @@ use crate::harness::stdlib::governance_support::{
     require_child_agent as require_child_agent_governance,
 };
 use crate::harness::stdlib::policy_support::{policy_bool, runtime_policy_snapshot};
-use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask, TaskExecutionOverrides};
+use crate::kernel::prepare_persisted_session_sidestep;
+use crate::kernel::session::{
+    ExecutionConflictPolicy, ExecutionContextTarget, QueuedTask, SidestepMode,
+    TaskExecutionOverrides,
+};
 
 fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
     app_data
@@ -85,6 +89,74 @@ fn execution_overrides_from_opts(
         return Ok(None);
     }
     Ok(Some(parse_execution_overrides_with_lua(lua, execution)?))
+}
+
+fn sidestep_mode_from_opts(opts: Option<&Table>) -> LuaResult<SidestepMode> {
+    let Some(opts) = opts else {
+        return Ok(SidestepMode::Ephemeral);
+    };
+    let Ok(raw) = opts.get::<String>("mode") else {
+        return Ok(SidestepMode::Ephemeral);
+    };
+    raw.parse().map_err(mlua::Error::runtime)
+}
+
+fn sidestep_target_from_opts(
+    lua: &Lua,
+    opts: Option<&Table>,
+) -> LuaResult<Option<ExecutionContextTarget>> {
+    let Some(opts) = opts else {
+        return Ok(None);
+    };
+    let Ok(value) = opts.get::<Value>("context_target") else {
+        return Ok(None);
+    };
+    if matches!(value, Value::Nil) {
+        return Ok(None);
+    }
+    lua.from_value::<ExecutionContextTarget>(value).map(Some)
+}
+
+async fn resolve_runtime_agent_sidestep_session(
+    app_data: &HarnessAppData,
+    agent_id: &str,
+    requested_session_id: Option<String>,
+    requested_slot_id: Option<String>,
+) -> Result<crate::kernel::agent_manager::LiveSessionSnapshot, String> {
+    let live = app_data
+        .agent_manager
+        .list_live_sessions(Some(agent_id))
+        .await;
+    if live.is_empty() {
+        return Err(format!(
+            "Agent '{}' has no live session to sidestep",
+            agent_id
+        ));
+    }
+
+    let filtered: Vec<_> = live
+        .into_iter()
+        .filter(|snapshot| {
+            requested_session_id
+                .as_ref()
+                .is_none_or(|session_id| &snapshot.session_id == session_id)
+                && requested_slot_id
+                    .as_ref()
+                    .is_none_or(|slot_id| &snapshot.slot_id == slot_id)
+        })
+        .collect();
+
+    match filtered.as_slice() {
+        [] => Err(format!(
+            "No live session matched agent='{}' session_id={:?} slot_id={:?}",
+            agent_id, requested_session_id, requested_slot_id
+        )),
+        [snapshot] => Ok(snapshot.clone()),
+        _ => Err(format!(
+            "Agent '{}' has multiple matching live sessions; specify session_id or slot_id",
+            agent_id
+        )),
+    }
 }
 
 fn parse_execution_overrides_with_lua(
@@ -200,6 +272,95 @@ pub fn register_runtime_agent_namespace(
                     let result = bridge_async_display_err(async move {
                         manager
                             .submit(&agent_id, task, delegated_capabilities)
+                            .await
+                    });
+                    match result {
+                        Ok(task_id) => string_ok(lua, &task_id),
+                        Err(err) => nil_err(lua, &err),
+                    }
+                },
+            )?,
+        )?;
+    }
+    {
+        let manager = app_data.agent_manager.clone();
+        let app_data_snapshot = app_data.clone();
+        runtime_agent.set(
+            "sidestep",
+            lua.create_function(
+                move |lua, (agent_id, prompt, opts): (String, String, Option<Table>)| {
+                    if let Err(err) =
+                        require_governance_capability(&app_data_snapshot, "runtime.agent.submit")
+                    {
+                        return nil_err(lua, &err);
+                    }
+                    if let Err(err) = require_child_agent_governance(&app_data_snapshot, &agent_id)
+                    {
+                        return nil_err(lua, &err);
+                    }
+                    let snapshot = runtime_policy_snapshot(&app_data_snapshot)
+                        .map_err(mlua::Error::runtime)?;
+                    if !policy_bool(&snapshot, "spawn.enabled", true) {
+                        return nil_err(lua, "Policy denial: spawn.enabled=false");
+                    }
+
+                    let sidestep_mode = sidestep_mode_from_opts(opts.as_ref())?;
+                    let sidestep_target = sidestep_target_from_opts(lua, opts.as_ref())?;
+                    let requested_session_id = opts
+                        .as_ref()
+                        .and_then(|table| table.get::<String>("session_id").ok());
+                    let requested_slot_id = opts
+                        .as_ref()
+                        .and_then(|table| table.get::<String>("slot_id").ok());
+                    let title = title_from_opts(opts.as_ref());
+                    let delegated_capabilities = parse_delegated_capabilities(
+                        &app_data_snapshot,
+                        opts.as_ref(),
+                        "capabilities",
+                        "runtime.agent.submit",
+                    )?;
+                    let delegated_capabilities = apply_active_grant_ceiling_to_peer_delegation(
+                        &app_data_snapshot,
+                        delegated_capabilities,
+                        "runtime.agent.submit",
+                    )?;
+                    let trace_id = active_trace_id(&app_data_snapshot);
+
+                    let manager = manager.clone();
+                    let store_manager = app_data_snapshot.store_manager.clone();
+                    let app_data_snapshot = app_data_snapshot.clone();
+                    let result = bridge_async_display_err(async move {
+                        let live = resolve_runtime_agent_sidestep_session(
+                            &app_data_snapshot,
+                            &agent_id,
+                            requested_session_id,
+                            requested_slot_id,
+                        )
+                        .await
+                        .map_err(anyhow::Error::msg)?;
+                        let prepared = prepare_persisted_session_sidestep(
+                            &store_manager,
+                            &live.session_id,
+                            &live.execution.context_target,
+                            sidestep_mode,
+                            sidestep_target,
+                        )
+                        .await?;
+
+                        let mut task = QueuedTask::ad_hoc(prompt)
+                            .with_inherited_trace(trace_id.as_deref())
+                            .with_conflict_policy(Some(prepared.conflict_policy))
+                            .with_execution(Some(prepared.execution))
+                            .with_branch_outcome(prepared.branch_outcome);
+                        task.title = title;
+
+                        manager
+                            .submit_to_session(
+                                &live.session_id,
+                                Some(&live.slot_id),
+                                task,
+                                delegated_capabilities,
+                            )
                             .await
                     });
                     match result {

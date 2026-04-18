@@ -82,6 +82,16 @@ pub enum ExecutionConflictPolicy {
     ForkSibling,
 }
 
+/// Controls how a sidestep execution branches away from the current path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidestepMode {
+    /// Explore a point-in-time snapshot without creating durable turns.
+    Ephemeral,
+    /// Create a durable sibling branch before running the sidestep.
+    ForkSibling,
+}
+
 /// Selects which persisted context path is materialized for an execution.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -216,6 +226,14 @@ impl TaskExecutionOverrides {
     }
 }
 
+/// Precomputed execution policy for a queued sidestep task.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedSidestepExecution {
+    pub execution: TaskExecutionOverrides,
+    pub conflict_policy: ExecutionConflictPolicy,
+    pub branch_outcome: Option<TaskBranchOutcome>,
+}
+
 impl ExecutionConflictPolicy {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -236,6 +254,29 @@ impl std::str::FromStr for ExecutionConflictPolicy {
             "fork_sibling" => Ok(Self::ForkSibling),
             other => Err(format!(
                 "invalid conflict policy '{other}'; expected reject|detached|fork_sibling"
+            )),
+        }
+    }
+}
+
+impl SidestepMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ephemeral => "ephemeral",
+            Self::ForkSibling => "fork_sibling",
+        }
+    }
+}
+
+impl std::str::FromStr for SidestepMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "ephemeral" => Ok(Self::Ephemeral),
+            "fork_sibling" => Ok(Self::ForkSibling),
+            other => Err(format!(
+                "invalid sidestep mode '{other}'; expected ephemeral|fork_sibling"
             )),
         }
     }

@@ -9,14 +9,15 @@ use crate::kernel::config::StoreTargetConfig;
 use crate::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::{
-    ContextCompactionCheckpoint, ExecutionContextTarget, PersistedKernelRecord, SessionState,
-    SessionStatus,
+    ContextCompactionCheckpoint, ExecutionConflictPolicy, ExecutionContextTarget,
+    ExecutionDurability, ExecutionVisibility, ExecutionWritePolicy, PersistedKernelRecord,
+    PreparedSidestepExecution, SessionState, SessionStatus, SidestepMode, TaskExecutionOverrides,
 };
 use crate::kernel::session_refs::{
     describe_store_selector, format_session_reference, parse_session_reference,
 };
 use crate::persistence::manager::StoreSelector;
-use crate::persistence::schema::{EventRow, MessageRow, SessionRow};
+use crate::persistence::schema::{BranchHeadRow, EventRow, MessageRow, SessionRow};
 use crate::persistence::state::{SessionReadTarget, StateStore};
 use crate::{
     inference::provider::{InferenceMessage, InferenceRole},
@@ -736,6 +737,171 @@ fn store_selector_from_target(target: StoreTargetConfig) -> Option<StoreSelector
     } else {
         target.alias.map(StoreSelector::Alias)
     }
+}
+
+pub(crate) async fn prepare_persisted_session_sidestep(
+    store_manager: &Arc<crate::persistence::manager::StoreManager>,
+    session_id: &str,
+    default_target: &ExecutionContextTarget,
+    mode: SidestepMode,
+    requested_target: Option<ExecutionContextTarget>,
+) -> Result<PreparedSidestepExecution> {
+    let (store_selector, row) = resolve_persisted_session_row(store_manager, session_id).await?;
+    let store = store_manager.open(&store_selector).await?;
+    let resolved_target = requested_target.unwrap_or_else(|| default_target.clone());
+
+    match mode {
+        SidestepMode::Ephemeral => Ok(PreparedSidestepExecution {
+            execution: TaskExecutionOverrides {
+                context_target: Some(
+                    snapshot_sidestep_target(&store, &row, resolved_target).await?,
+                ),
+                visibility: Some(ExecutionVisibility::Hidden),
+                durability: Some(ExecutionDurability::Ephemeral),
+                write_policy: Some(ExecutionWritePolicy::Detached),
+            },
+            conflict_policy: ExecutionConflictPolicy::Detached,
+            branch_outcome: None,
+        }),
+        SidestepMode::ForkSibling => {
+            let source = resolve_sidestep_branch_source(&store, &row, resolved_target).await?;
+            let branch_name = format!("sidestep-{}", uuid::Uuid::now_v7().simple());
+            let branch = store
+                .create_branch_head_from_turn_index(row.id, &branch_name, source.turn_index, false)
+                .await?;
+            let branch_public_id = uuid::Uuid::from_slice(&branch.public_id)
+                .map(|value| value.to_string())
+                .map_err(anyhow::Error::from)?;
+
+            Ok(PreparedSidestepExecution {
+                execution: TaskExecutionOverrides {
+                    context_target: Some(ExecutionContextTarget::BranchHead {
+                        branch_head_id: Some(branch.id),
+                    }),
+                    visibility: Some(ExecutionVisibility::Hidden),
+                    durability: Some(ExecutionDurability::Durable),
+                    write_policy: Some(ExecutionWritePolicy::AdvanceBranchHead),
+                },
+                conflict_policy: ExecutionConflictPolicy::Reject,
+                branch_outcome: Some(crate::kernel::event::TaskBranchOutcome::SidestepSibling {
+                    branch_id: branch.id,
+                    branch_public_id,
+                    branch_name: branch.name,
+                    source_turn_id: branch.created_from_turn_id,
+                    persisted_active_head_unchanged: !branch.is_active,
+                }),
+            })
+        }
+    }
+}
+
+async fn snapshot_sidestep_target(
+    store: &StateStore,
+    row: &SessionRow,
+    target: ExecutionContextTarget,
+) -> Result<ExecutionContextTarget> {
+    match target {
+        ExecutionContextTarget::BranchHead { branch_head_id } => {
+            let branch = match branch_head_id {
+                Some(branch_head_id) => store.get_branch_head(row.id, branch_head_id).await?,
+                None => store.get_active_branch_head(row.id).await?,
+            };
+            Ok(snapshot_target_from_branch_head(branch, branch_head_id))
+        }
+        other => Ok(other),
+    }
+}
+
+async fn resolve_persisted_session_row(
+    store_manager: &Arc<crate::persistence::manager::StoreManager>,
+    session_id: &str,
+) -> Result<(StoreSelector, SessionRow)> {
+    let session_ref = parse_session_reference(session_id)?;
+    let public_id = uuid::Uuid::parse_str(&session_ref.public_id)
+        .with_context(|| format!("Invalid session id '{}'", session_ref.public_id))?;
+    let store_selector = session_ref
+        .store_selector
+        .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+    let store = store_manager.open(&store_selector).await?;
+    let row = store
+        .get_session_row_by_public_id(public_id)
+        .await?
+        .ok_or_else(|| anyhow!("Session '{}' not found", session_id))?;
+    Ok((store_selector, row))
+}
+
+struct SidestepBranchSource {
+    turn_index: Option<u32>,
+}
+
+async fn resolve_sidestep_branch_source(
+    store: &StateStore,
+    row: &SessionRow,
+    target: ExecutionContextTarget,
+) -> Result<SidestepBranchSource> {
+    match target {
+        ExecutionContextTarget::BranchHead { branch_head_id } => {
+            let branch = match branch_head_id {
+                Some(branch_head_id) => store.get_branch_head(row.id, branch_head_id).await?,
+                None => store.get_active_branch_head(row.id).await?,
+            };
+            sidestep_branch_source_from_branch(branch)
+        }
+        ExecutionContextTarget::TurnId { turn_id } => {
+            sidestep_branch_source_from_turn(store, row.id, turn_id).await
+        }
+        ExecutionContextTarget::SelectedPath { turn_ids } => {
+            let Some(turn_id) = turn_ids.last().copied() else {
+                anyhow::bail!("Selected sidestep path must include at least one turn");
+            };
+            sidestep_branch_source_from_turn(store, row.id, turn_id).await
+        }
+        ExecutionContextTarget::SummarySource { source_turn_id } => {
+            sidestep_branch_source_from_turn(store, row.id, source_turn_id).await
+        }
+        ExecutionContextTarget::ExternalReference { .. } => {
+            anyhow::bail!("fork_sibling sidesteps do not support external_reference targets")
+        }
+    }
+}
+
+fn snapshot_target_from_branch_head(
+    branch: Option<BranchHeadRow>,
+    explicit_branch_head_id: Option<i64>,
+) -> ExecutionContextTarget {
+    match branch.and_then(|branch| branch.head_turn_id) {
+        Some(turn_id) => ExecutionContextTarget::TurnId { turn_id },
+        None => ExecutionContextTarget::BranchHead {
+            branch_head_id: explicit_branch_head_id,
+        },
+    }
+}
+
+fn sidestep_branch_source_from_branch(
+    branch: Option<BranchHeadRow>,
+) -> Result<SidestepBranchSource> {
+    let Some(branch) = branch else {
+        anyhow::bail!("No branch head available for sidestep source");
+    };
+    Ok(SidestepBranchSource {
+        turn_index: branch.head_turn_depth,
+    })
+}
+
+async fn sidestep_branch_source_from_turn(
+    store: &StateStore,
+    session_internal_id: i64,
+    turn_id: i64,
+) -> Result<SidestepBranchSource> {
+    let Some(turn) = store.get_turn_row(turn_id).await? else {
+        anyhow::bail!("Turn '{}' not found for sidestep source", turn_id);
+    };
+    if turn.session_id != session_internal_id {
+        anyhow::bail!("Turn '{}' does not belong to the target session", turn_id);
+    }
+    Ok(SidestepBranchSource {
+        turn_index: Some(turn.branch_depth),
+    })
 }
 
 fn rebuild_history(messages: &[MessageRow]) -> Result<(Vec<InferenceMessage>, u32)> {

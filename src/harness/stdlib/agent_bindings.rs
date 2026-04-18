@@ -14,7 +14,11 @@ use crate::harness::stdlib::identity_support::{
     get_active_identity, identity_to_lua_table, session_row_to_lua_table,
 };
 use crate::harness::stdlib::policy_support::{policy_bool, policy_u64, runtime_policy_snapshot};
-use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask, TaskExecutionOverrides};
+use crate::kernel::prepare_persisted_session_sidestep;
+use crate::kernel::session::{
+    ExecutionConflictPolicy, ExecutionContextTarget, QueuedTask, SidestepMode,
+    TaskExecutionOverrides,
+};
 use crate::kernel::session_refs::{
     SessionReference, format_session_reference, parse_session_reference,
 };
@@ -189,6 +193,34 @@ fn opt_execution_overrides(
     Ok(Some(overrides))
 }
 
+fn opt_sidestep_mode(opts: Option<&Table>) -> std::result::Result<SidestepMode, String> {
+    let Some(opts) = opts else {
+        return Ok(SidestepMode::Ephemeral);
+    };
+    let Ok(raw) = opts.get::<String>("mode") else {
+        return Ok(SidestepMode::Ephemeral);
+    };
+    raw.parse()
+}
+
+fn opt_sidestep_context_target(
+    lua: &Lua,
+    opts: Option<&Table>,
+) -> std::result::Result<Option<ExecutionContextTarget>, String> {
+    let Some(opts) = opts else {
+        return Ok(None);
+    };
+    let Ok(value) = opts.get::<Value>("context_target") else {
+        return Ok(None);
+    };
+    if matches!(value, Value::Nil) {
+        return Ok(None);
+    }
+    lua.from_value::<ExecutionContextTarget>(value)
+        .map(Some)
+        .map_err(|err| err.to_string())
+}
+
 fn bytes_to_simple_uuid(bytes: &[u8]) -> String {
     uuid::Uuid::from_slice(bytes)
         .map(|uuid| uuid.simple().to_string())
@@ -274,6 +306,78 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             match enqueue_res {
                 Ok(()) => {
                     let token = format!("q_{}", uuid::Uuid::now_v7().simple());
+                    string_ok(lua, &token)
+                }
+                Err(err) => nil_err(lua, &err),
+            }
+        })?,
+    )?;
+
+    // agent.sidestep(prompt, opts?)
+    let sidestep_q = app_data.execution_ctx.clone();
+    let sidestep_policy_snapshot = app_data.clone();
+    let sidestep_store_manager = app_data.store_manager.clone();
+    agent_table.set(
+        "sidestep",
+        lua.create_function(move |lua, (prompt, opts): (String, Option<Table>)| {
+            if let Err(err) =
+                require_governance_capability(&sidestep_policy_snapshot, "runtime.agent.submit")
+            {
+                return nil_err(lua, &err);
+            }
+            let snapshot =
+                runtime_policy_snapshot(&sidestep_policy_snapshot).map_err(mlua::Error::runtime)?;
+            if !policy_bool(&snapshot, "spawn.enabled", true) {
+                return nil_err(lua, "Policy denial: spawn.enabled=false");
+            }
+
+            let sidestep_mode = match opt_sidestep_mode(opts.as_ref()) {
+                Ok(mode) => mode,
+                Err(err) => return nil_err(lua, &err),
+            };
+            let requested_target = match opt_sidestep_context_target(lua, opts.as_ref()) {
+                Ok(target) => target,
+                Err(err) => return nil_err(lua, &err),
+            };
+            let queue_max = queue_max(&snapshot);
+            let trace_id = active_trace_id(&sidestep_policy_snapshot);
+            let title = opts.as_ref().and_then(|t| t.get::<String>("title").ok());
+            let sidestep_q = sidestep_q.clone();
+            let sidestep_store_manager = sidestep_store_manager.clone();
+            let enqueue_res = bridge_async_result(async move {
+                let (session_id, default_target) = {
+                    let lock = sidestep_q
+                        .lock()
+                        .map_err(|_| "execution context mutex poisoned".to_string())?;
+                    (
+                        lock.session_id
+                            .clone()
+                            .ok_or_else(|| "No active session context".to_string())?,
+                        lock.execution_context_target
+                            .clone()
+                            .ok_or_else(|| "No active execution context target".to_string())?,
+                    )
+                };
+                let prepared = prepare_persisted_session_sidestep(
+                    &sidestep_store_manager,
+                    &session_id,
+                    &default_target,
+                    sidestep_mode,
+                    requested_target,
+                )
+                .await
+                .map_err(|err| err.to_string())?;
+                let mut task = QueuedTask::ad_hoc(prompt)
+                    .with_inherited_trace(trace_id.as_deref())
+                    .with_conflict_policy(Some(prepared.conflict_policy))
+                    .with_execution(Some(prepared.execution))
+                    .with_branch_outcome(prepared.branch_outcome);
+                task.title = title;
+                queue_push_one(&sidestep_q, task, queue_max, false).await
+            });
+            match enqueue_res {
+                Ok(()) => {
+                    let token = format!("sd_{}", uuid::Uuid::now_v7().simple());
                     string_ok(lua, &token)
                 }
                 Err(err) => nil_err(lua, &err),

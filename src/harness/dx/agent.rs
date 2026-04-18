@@ -6,6 +6,7 @@ fn create_agent_proxy(
     lua: &Lua,
     agent_id: String,
     submit_fn: Function,
+    sidestep_fn: Function,
     await_fn: Function,
     status_fn: Function,
     complete_fn: Function,
@@ -24,6 +25,24 @@ fn create_agent_proxy(
                         &submit_fn,
                         (agent_id.clone(), task, opts),
                         "runtime.agent.submit",
+                    )
+                },
+            )?,
+        )?;
+    }
+
+    {
+        let sidestep_fn = sidestep_fn.clone();
+        let agent_id = agent_id.clone();
+        proxy.set(
+            "sidestep",
+            lua.create_function(
+                move |lua, (_self, prompt, opts): (Table, String, Option<Table>)| {
+                    call_and_raise_on_err(
+                        lua,
+                        &sidestep_fn,
+                        (agent_id.clone(), prompt, opts),
+                        "runtime.agent.sidestep",
                     )
                 },
             )?,
@@ -80,6 +99,7 @@ pub fn register_agent_dx(lua: &Lua) -> LuaResult<()> {
     let runtime_agent: Table = runtime.get("agent")?;
 
     let submit_fn: Function = runtime_agent.get("submit")?;
+    let sidestep_fn: Function = runtime_agent.get("sidestep")?;
     let await_fn: Function = runtime_agent.get("await")?;
     let status_fn: Function = runtime_agent.get("get_status")?;
     let complete_fn: Function = runtime_agent.get("complete")?;
@@ -92,6 +112,7 @@ pub fn register_agent_dx(lua: &Lua) -> LuaResult<()> {
                 lua,
                 agent_id,
                 submit_fn.clone(),
+                sidestep_fn.clone(),
                 await_fn.clone(),
                 status_fn.clone(),
                 complete_fn.clone(),
