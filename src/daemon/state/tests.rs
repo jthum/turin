@@ -7,7 +7,8 @@ use serde_json::json;
 use tempfile::tempdir;
 use tokio::time::{Duration, sleep};
 use turin_daemon_protocol::{
-    SessionSearchScope, SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams,
+    PromoteTaskParams, SessionSearchScope, SidestepContextTargetParams, SidestepModeParams,
+    SidestepTaskParams,
 };
 
 fn write_agent_with_state_path(root: &Path, agent_id: &str, state_path: &str) -> Result<()> {
@@ -268,6 +269,86 @@ async fn sidestep_task_uses_ephemeral_slot_and_does_not_persist_transcript() -> 
             .iter()
             .all(|live| live.slot_id != sidestep.slot_id)
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn detached_sidestep_task_can_be_promoted_to_sibling_branch() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+
+    let live = state.open_session("default", Some("main"), None).await?;
+    let seed = state
+        .submit_task(
+            None,
+            Some(&live.session_id),
+            Some("main"),
+            "Seed session".to_string(),
+            None,
+            Default::default(),
+        )
+        .await?;
+    let completed = state.wait_for_task(&seed.request_id, Some(2_000)).await?;
+    assert_eq!(completed.state, "completed");
+
+    let sidestep = state
+        .sidestep_task_params(SidestepTaskParams {
+            session_id: live.session_id.clone(),
+            slot_id: None,
+            prompt: "Explore a side question".to_string(),
+            content: None,
+            tools: None,
+            mode: SidestepModeParams::Ephemeral,
+            context_target: None,
+            timeout_ms: Some(2_000),
+        })
+        .await?;
+    assert_eq!(sidestep.state, "completed");
+    let promotion = sidestep
+        .promotion_candidate
+        .clone()
+        .expect("detached sidestep should expose a promotion candidate");
+    assert_eq!(promotion.session_id, live.session_id);
+
+    let promoted = state
+        .promote_task_params(PromoteTaskParams {
+            request_id: sidestep.request_id.clone(),
+            branch_name: Some("kept-side-question".to_string()),
+        })
+        .await?;
+    assert_eq!(promoted.name, "kept-side-question");
+    assert_eq!(promoted.source_turn_id, Some(promotion.source_turn_id));
+    assert!(!promoted.active);
+
+    let session_ref = parse_session_reference(&live.session_id)?;
+    let store_selector = session_ref
+        .store_selector
+        .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+    let store = state.kernel.store_manager().open(&store_selector).await?;
+    let session_detail = state
+        .get_session(&live.session_id)
+        .await?
+        .expect("persisted session detail visible");
+    let branch_uuid = uuid::Uuid::parse_str(&promoted.branch_id)?;
+    let branch = store
+        .get_branch_head_by_name(session_detail.session.internal_id, &promoted.name)
+        .await?
+        .expect("promoted branch should be queryable");
+    assert_eq!(
+        uuid::Uuid::from_slice(&branch.public_id)?.to_string(),
+        branch_uuid.to_string()
+    );
+    let messages = store
+        .get_messages(
+            session_detail.session.internal_id,
+            &SessionReadTarget::BranchHead(branch.id),
+        )
+        .await?;
+    assert!(messages.iter().any(|message| {
+        message.role == "user" && message.content.contains("Explore a side question")
+    }));
 
     Ok(())
 }
@@ -838,7 +919,10 @@ async fn session_branch_siblings_can_be_queried_by_source_turn() -> Result<()> {
         )
         .await?;
     assert_eq!(
-        state.wait_for_task(&first.request_id, Some(2_000)).await?.state,
+        state
+            .wait_for_task(&first.request_id, Some(2_000))
+            .await?
+            .state,
         "completed"
     );
 

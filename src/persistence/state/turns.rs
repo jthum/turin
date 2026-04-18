@@ -236,6 +236,60 @@ impl StateStore {
             .ok_or_else(|| anyhow!("Created branch head '{}' was not readable", name))
     }
 
+    pub async fn create_branch_head_from_turn_id(
+        &self,
+        session_id: i64,
+        name: &str,
+        source_turn_id: i64,
+        activate: bool,
+    ) -> Result<BranchHeadRow> {
+        let source_turn = self
+            .get_turn_row(source_turn_id)
+            .await?
+            .ok_or_else(|| anyhow!("Source turn '{}' not found", source_turn_id))?;
+        if source_turn.session_id != session_id {
+            anyhow::bail!(
+                "Source turn '{}' does not belong to session '{}'",
+                source_turn_id,
+                session_id
+            );
+        }
+
+        let conn = self.connect().await?;
+        let public_id = uuid::Uuid::now_v7().into_bytes().to_vec();
+
+        conn.execute(
+            r#"
+            INSERT INTO branch_heads (
+                public_id,
+                session_id,
+                name,
+                head_turn_id,
+                created_from_turn_id
+            ) VALUES (?1, ?2, ?3, ?4, ?5)
+            "#,
+            turso::params![public_id, session_id, name, source_turn_id, source_turn_id],
+        )
+        .await
+        .with_context(|| format!("Failed to create branch head '{}' from turn", name))?;
+
+        let branch_id = conn.last_insert_rowid();
+        if activate {
+            conn.execute(
+                "UPDATE sessions SET active_branch_head_id = ?1 WHERE id = ?2",
+                turso::params![branch_id, session_id],
+            )
+            .await
+            .with_context(|| format!("Failed to activate branch head '{}'", name))?;
+        }
+
+        let heads = self.list_branch_heads(session_id).await?;
+        heads
+            .into_iter()
+            .find(|head| head.id == branch_id)
+            .ok_or_else(|| anyhow!("Created branch head '{}' was not readable", name))
+    }
+
     pub async fn checkout_branch_head_by_name(
         &self,
         session_id: i64,

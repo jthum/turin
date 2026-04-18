@@ -2,9 +2,10 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use tokio::sync::oneshot;
 
+use crate::inference::content::{encode_content_json, task_content_from_parts};
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::KernelEvent;
 use crate::kernel::session::{
@@ -13,11 +14,12 @@ use crate::kernel::session::{
 };
 use crate::kernel::session_refs::parse_session_reference;
 use crate::persistence::manager::StoreSelector;
+use crate::persistence::state::TurnWriteTarget;
 
 use super::{
     AgentManager, AgentRuntimeHandle, AgentStatusSnapshot, ExecutionStatusSnapshot,
     LiveSessionSnapshot, PeerAgentTaskEnvelope, PeerAgentTaskResult, PendingTaskRecord,
-    PendingTaskState, RuntimeSlotKey, TaskStatusSnapshot,
+    PendingTaskState, PromotedTaskBranch, RuntimeSlotKey, TaskStatusSnapshot,
 };
 
 fn live_execution_snapshot(handle: &Arc<AgentRuntimeHandle>) -> ExecutionStatusSnapshot {
@@ -602,6 +604,7 @@ impl AgentManager {
                 status: None,
                 task_turn_count: None,
                 branch_outcome: None,
+                promotion_candidate: None,
                 output: None,
                 assistant_content: None,
                 error: None,
@@ -625,6 +628,7 @@ impl AgentManager {
                     status: Some(result.status),
                     task_turn_count: Some(result.task_turn_count),
                     branch_outcome: result.branch_outcome,
+                    promotion_candidate: result.promotion_candidate,
                     output: result.output,
                     assistant_content: result.assistant_content,
                     error: result.error,
@@ -683,6 +687,109 @@ impl AgentManager {
             .results
             .get(request_id)
             .cloned()
+    }
+
+    pub async fn promote_completed_task(
+        &self,
+        request_id: &str,
+        branch_name: Option<&str>,
+    ) -> Result<PromotedTaskBranch> {
+        let result = self
+            .completed_result(request_id)
+            .await
+            .ok_or_else(|| anyhow!("Task '{}' not found", request_id))?;
+        let promotion = result
+            .promotion_candidate
+            .clone()
+            .ok_or_else(|| anyhow!("Task '{}' is not promotable", request_id))?;
+        let assistant_content = result
+            .assistant_content
+            .as_ref()
+            .filter(|content| !content.is_empty())
+            .ok_or_else(|| anyhow!("Task '{}' has no promotable assistant output", request_id))?;
+        let input_content = result
+            .promotion_input_content
+            .as_ref()
+            .filter(|content| !content.is_empty())
+            .ok_or_else(|| anyhow!("Task '{}' is missing promotable task input", request_id))?;
+
+        let session_ref = parse_session_reference(&promotion.session_id)?;
+        let public_id = uuid::Uuid::parse_str(&session_ref.public_id)
+            .with_context(|| format!("Invalid session id '{}'", session_ref.public_id))?;
+        let store_selector = session_ref
+            .store_selector
+            .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+        let store = self.store_manager.open(&store_selector).await?;
+        let row = store
+            .get_session_row_by_public_id(public_id)
+            .await?
+            .ok_or_else(|| anyhow!("Session '{}' not found", promotion.session_id))?;
+        let source_turn = store
+            .get_turn_row(promotion.source_turn_id)
+            .await?
+            .ok_or_else(|| anyhow!("Source turn '{}' not found", promotion.source_turn_id))?;
+        if source_turn.session_id != row.id {
+            anyhow::bail!(
+                "Source turn '{}' does not belong to promoted session '{}'",
+                promotion.source_turn_id,
+                promotion.session_id
+            );
+        }
+
+        let branch_name = branch_name
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("promoted-{}", uuid::Uuid::now_v7().simple()));
+        let branch = store
+            .create_branch_head_from_turn_id(row.id, &branch_name, promotion.source_turn_id, false)
+            .await?;
+        let turn_target = store
+            .prepare_turn_write_target(
+                row.id,
+                TurnWriteTarget::branch_head_with_expectation(
+                    Some(branch.id),
+                    Some(promotion.source_turn_id),
+                    source_turn.branch_depth + 1,
+                ),
+            )
+            .await?
+            .ok_or_else(|| anyhow!("Failed to allocate promoted turn target"))?;
+
+        store
+            .insert_message(
+                row.id,
+                turn_target,
+                "user",
+                &encode_content_json(&task_content_from_parts(input_content)),
+                None,
+            )
+            .await?;
+        store
+            .insert_message(
+                row.id,
+                turn_target,
+                "assistant",
+                &encode_content_json(&task_content_from_parts(assistant_content)),
+                None,
+            )
+            .await?;
+
+        let branch = store
+            .get_branch_head(row.id, branch.id)
+            .await?
+            .ok_or_else(|| anyhow!("Promoted branch '{}' was not readable", branch_name))?;
+
+        Ok(PromotedTaskBranch {
+            session_id: promotion.session_id,
+            branch_id: uuid::Uuid::from_slice(&branch.public_id)
+                .map(|value| value.to_string())
+                .map_err(anyhow::Error::from)?,
+            name: branch.name,
+            head_turn_index: branch.head_turn_depth,
+            source_turn_id: branch.created_from_turn_id,
+            active: branch.is_active,
+            created_at: branch.created_at,
+        })
     }
 
     pub(crate) async fn mark_task_running(&self, request_id: &str, runtime_task_id: String) {

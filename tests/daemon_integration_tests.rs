@@ -744,6 +744,147 @@ async fn daemon_task_sidestep_runs_ephemerally_and_cleans_up_slot() -> Result<()
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+
+    let opened = result_value(
+        daemon
+            .request(DaemonRequest::SessionOpen(
+                turin::daemon::protocol::OpenSessionParams {
+                    agent_id: "default".to_string(),
+                    slot_id: Some("main".to_string()),
+                    channel_id: None,
+                },
+            ))
+            .await?,
+    );
+    let session_id = opened["session_id"]
+        .as_str()
+        .context("session.open should return session_id")?
+        .to_string();
+
+    let submitted = result_value(
+        daemon
+            .request(DaemonRequest::TaskSubmit(
+                turin::daemon::protocol::SubmitTaskParams {
+                    agent_id: None,
+                    session_id: Some(session_id.clone()),
+                    slot_id: Some("main".to_string()),
+                    prompt: "Seed session".to_string(),
+                    content: None,
+                    tools: Default::default(),
+                    conflict_policy: None,
+                },
+            ))
+            .await?,
+    );
+    let request_id = submitted["request_id"]
+        .as_str()
+        .context("task.submit should return request_id")?
+        .to_string();
+    let waited = result_value(
+        daemon
+            .request(DaemonRequest::TaskWait(
+                turin::daemon::protocol::WaitTaskParams {
+                    request_id,
+                    timeout_ms: Some(5_000),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(waited["status"], "success");
+
+    let sidestep = result_value(
+        daemon
+            .request(DaemonRequest::TaskSidestep(
+                turin::daemon::protocol::SidestepTaskParams {
+                    session_id: session_id.clone(),
+                    slot_id: None,
+                    prompt: "Explore a side question".to_string(),
+                    content: None,
+                    tools: Default::default(),
+                    mode: turin::daemon::protocol::SidestepModeParams::Ephemeral,
+                    context_target: None,
+                    timeout_ms: Some(5_000),
+                },
+            ))
+            .await?,
+    );
+    let sidestep_request_id = sidestep["request_id"]
+        .as_str()
+        .context("task.sidestep should return request_id")?
+        .to_string();
+    assert_eq!(sidestep["state"], "completed");
+    assert_eq!(
+        sidestep["promotion_candidate"]["session_id"],
+        serde_json::Value::String(session_id.clone())
+    );
+
+    let promoted = result_value(
+        daemon
+            .request(DaemonRequest::TaskPromote(
+                turin::daemon::protocol::PromoteTaskParams {
+                    request_id: sidestep_request_id,
+                    branch_name: Some("kept-side-question".to_string()),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(promoted["name"], "kept-side-question");
+    assert_eq!(promoted["active"], false);
+
+    let branches = result_value(
+        daemon
+            .request(DaemonRequest::SessionBranchList(
+                turin::daemon::protocol::SessionIdParams {
+                    session_id: session_id.clone(),
+                },
+            ))
+            .await?,
+    );
+    assert!(
+        branches["branches"]
+            .as_array()
+            .context("session.branch_list should include branches")?
+            .iter()
+            .any(|branch| branch["name"] == "kept-side-question")
+    );
+
+    let session_detail = result_value(
+        daemon
+            .request(DaemonRequest::SessionGet(
+                turin::daemon::protocol::SessionIdParams { session_id },
+            ))
+            .await?,
+    );
+    let promoted_branch = branches["branches"]
+        .as_array()
+        .and_then(|branches| {
+            branches.iter().find(|branch| {
+                branch["name"] == serde_json::Value::String("kept-side-question".to_string())
+            })
+        })
+        .context("promoted branch should be present in branch list")?;
+    assert_eq!(
+        promoted_branch["source_turn_id"],
+        sidestep["promotion_candidate"]["source_turn_id"]
+    );
+    assert!(
+        session_detail["messages"]
+            .as_array()
+            .context("session detail should include messages")?
+            .iter()
+            .all(|message| {
+                message["content"]
+                    .as_str()
+                    .is_none_or(|content| !content.contains("Explore a side question"))
+            })
+    );
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn daemon_task_sidestep_can_fork_a_sibling_branch() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
 

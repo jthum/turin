@@ -749,9 +749,14 @@ pub(crate) async fn prepare_persisted_session_sidestep(
     let (store_selector, row) = resolve_persisted_session_row(store_manager, session_id).await?;
     let store = store_manager.open(&store_selector).await?;
     let resolved_target = requested_target.unwrap_or_else(|| default_target.clone());
-    let resolved_target =
-        normalize_sidestep_target(store_manager, &store_selector, &store, &row, resolved_target)
-            .await?;
+    let resolved_target = normalize_sidestep_target(
+        store_manager,
+        &store_selector,
+        &store,
+        &row,
+        resolved_target,
+    )
+    .await?;
 
     match mode {
         SidestepMode::Ephemeral => Ok(PreparedSidestepExecution {
@@ -816,7 +821,9 @@ async fn normalize_sidestep_target(
                     branch_head_id: Some(branch.id),
                 })
             }
-            None => Ok(ExecutionContextTarget::BranchHead { branch_head_id: None }),
+            None => Ok(ExecutionContextTarget::BranchHead {
+                branch_head_id: None,
+            }),
         },
         ExecutionContextTarget::TurnId { turn_id } => {
             validate_session_turn_target(store, row.id, turn_id, "sidestep target").await?;
@@ -845,7 +852,10 @@ async fn normalize_sidestep_target(
             let external_store = store_manager.open(&resolved_selector).await?;
             let public_id = uuid::Uuid::parse_str(&session_ref.public_id)
                 .with_context(|| format!("Invalid session id '{}'", session_ref.public_id))?;
-            let Some(_) = external_store.get_session_row_by_public_id(public_id).await? else {
+            let Some(_) = external_store
+                .get_session_row_by_public_id(public_id)
+                .await?
+            else {
                 anyhow::bail!("External sidestep reference '{}' not found", reference);
             };
             Ok(ExecutionContextTarget::ExternalReference {

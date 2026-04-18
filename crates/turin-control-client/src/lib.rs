@@ -7,13 +7,12 @@ use turin_channel_core::ChannelAdapterManifest;
 use turin_daemon_client::DaemonClient;
 use turin_daemon_protocol::{
     ChannelAccessParams, ChannelAccessRoomParams, DaemonHandshake, DaemonRequest, EntityIdParams,
-    EventEnvelope, LiveSessionTargetParams, NoParams, OpenSessionParams, RequestEnvelope,
-    ResponseEnvelope, ResumeSessionParams, RuntimeEventsSubscribeParams,
+    EventEnvelope, LiveSessionTargetParams, NoParams, OpenSessionParams, PromoteTaskParams,
+    RequestEnvelope, ResponseEnvelope, ResumeSessionParams, RuntimeEventsSubscribeParams,
     SessionBranchCheckoutParams, SessionBranchCreateParams, SessionBranchSiblingsParams,
     SessionIdParams, SessionListParams, SessionSearchHitKind, SessionSearchParams,
-    SessionSearchScope, SessionTitleParams,
-    SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams, SubmitTaskParams,
-    TaskIdParams, UpdateChannelParams, WaitTaskParams,
+    SessionSearchScope, SessionTitleParams, SidestepContextTargetParams, SidestepModeParams,
+    SidestepTaskParams, SubmitTaskParams, TaskIdParams, UpdateChannelParams, WaitTaskParams,
 };
 use turin_remote_client::RemoteClient;
 
@@ -269,10 +268,17 @@ pub struct TaskStatus {
     pub status: Option<String>,
     pub task_turn_count: Option<u32>,
     pub branch_outcome: Option<serde_json::Value>,
+    pub promotion_candidate: Option<TaskPromotionCandidate>,
     pub output: Option<String>,
     #[serde(default)]
     pub assistant_content: Option<Vec<turin_types::TaskInputContent>>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskPromotionCandidate {
+    pub session_id: String,
+    pub source_turn_id: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -882,6 +888,21 @@ impl ControlClient {
             None,
             DaemonRequest::TaskCancel(TaskIdParams {
                 request_id: request_id.to_string(),
+            }),
+        )
+        .await
+    }
+
+    pub async fn promote_task(
+        &self,
+        request_id: &str,
+        branch_name: Option<String>,
+    ) -> Result<SessionBranchDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::TaskPromote(PromoteTaskParams {
+                request_id: request_id.to_string(),
+                branch_name,
             }),
         )
         .await

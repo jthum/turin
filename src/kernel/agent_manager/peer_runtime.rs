@@ -12,12 +12,13 @@ use crate::inference::provider::InferenceRole;
 use crate::kernel::TaskExecutionResult;
 use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
 use crate::kernel::execution_host::{ExecutionHost, TaskRunAttempt};
-use crate::kernel::session::QueuedTask;
+use crate::kernel::session::{ExecutionContextTarget, ExecutionWritePolicy, QueuedTask};
 use crate::persistence::manager::StoreSelector;
+use turin_types::TaskInputContent;
 
 use super::{
     AgentManager, ExecutionStatusSnapshot, PeerAgentTaskEnvelope, PeerAgentTaskResult,
-    RuntimeControl, SessionContextOverrides,
+    RuntimeControl, SessionContextOverrides, TaskPromotionCandidate,
 };
 
 pub(super) struct PeerRuntime {
@@ -43,8 +44,10 @@ pub(super) struct PeerRunOutcome {
     pub(super) status: TaskTerminalStatus,
     pub(super) task_turn_count: u32,
     pub(super) branch_outcome: Option<crate::kernel::event::TaskBranchOutcome>,
+    pub(super) promotion_candidate: Option<TaskPromotionCandidate>,
     pub(super) output: Option<String>,
     pub(super) assistant_content: Option<Vec<turin_types::TaskInputContent>>,
+    pub(super) promotion_input_content: Option<Vec<TaskInputContent>>,
 }
 
 impl PeerRuntime {
@@ -121,8 +124,10 @@ impl PeerRuntime {
                     status: ok.status,
                     task_turn_count: ok.task_turn_count,
                     branch_outcome: ok.branch_outcome,
+                    promotion_candidate: ok.promotion_candidate,
                     output: ok.output,
                     assistant_content: ok.assistant_content,
+                    promotion_input_content: ok.promotion_input_content,
                     error: None,
                 },
                 Err(e) => PeerAgentTaskResult {
@@ -134,8 +139,10 @@ impl PeerRuntime {
                     status: TaskTerminalStatus::Error,
                     task_turn_count: 0,
                     branch_outcome: None,
+                    promotion_candidate: None,
                     output: None,
                     assistant_content: None,
+                    promotion_input_content: None,
                     error: Some(e.to_string()),
                 },
             };
@@ -213,8 +220,10 @@ impl PeerRuntime {
                 status: TaskTerminalStatus::Error,
                 task_turn_count: 0,
                 branch_outcome: None,
+                promotion_candidate: None,
                 output: None,
                 assistant_content: None,
+                promotion_input_content: None,
             });
         }
         self.sync_control_execution_state();
@@ -282,8 +291,10 @@ impl PeerRuntime {
                         status: TaskTerminalStatus::Rejected,
                         task_turn_count: 0,
                         branch_outcome: None,
+                        promotion_candidate: None,
                         output: None,
                         assistant_content: None,
+                        promotion_input_content: None,
                     });
                 }
                 Verdict::Modify(val) => {
@@ -318,8 +329,10 @@ impl PeerRuntime {
                         status: TaskTerminalStatus::Rejected,
                         task_turn_count: 0,
                         branch_outcome: None,
+                        promotion_candidate: None,
                         output: None,
                         assistant_content: None,
+                        promotion_input_content: None,
                     });
                 }
                 Verdict::Allow => {}
@@ -370,8 +383,10 @@ impl PeerRuntime {
                         status,
                         task_turn_count: 0,
                         branch_outcome: None,
+                        promotion_candidate: None,
                         output: None,
                         assistant_content: None,
+                        promotion_input_content: None,
                     });
                 }
                 TaskRunAttempt::Error {
@@ -398,8 +413,10 @@ impl PeerRuntime {
                             status: TaskTerminalStatus::Error,
                             task_turn_count: 0,
                             branch_outcome: None,
+                            promotion_candidate: None,
                             output: None,
                             assistant_content: None,
+                            promotion_input_content: None,
                         });
                     }
                     return Err(error);
@@ -407,14 +424,19 @@ impl PeerRuntime {
             };
 
             let output = self.last_assistant_text();
+            let assistant_content = self.last_assistant_content();
+            let promotion_candidate =
+                promotable_detached_candidate(&self.host, &self.session, run_result.status);
 
             Ok(PeerRunOutcome {
-                runtime_task_id: task.task_id,
+                runtime_task_id: task.task_id.clone(),
                 status: run_result.status,
                 task_turn_count: run_result.task_turn_count,
                 branch_outcome: run_result.branch_outcome,
+                promotion_candidate,
                 output,
-                assistant_content: self.last_assistant_content(),
+                assistant_content,
+                promotion_input_content: Some(task_input_content(&task)),
             })
         }
         .await;
@@ -555,6 +577,41 @@ impl PeerRuntime {
         self.control
             .set_current_conflict_policy(self.session.effective_conflict_policy());
     }
+}
+
+fn task_input_content(task: &QueuedTask) -> Vec<TaskInputContent> {
+    task.content.clone().unwrap_or_else(|| {
+        vec![TaskInputContent::Text {
+            text: task.prompt.clone(),
+        }]
+    })
+}
+
+fn promotable_detached_candidate(
+    host: &ExecutionHost,
+    session: &crate::kernel::session::SessionState,
+    status: TaskTerminalStatus,
+) -> Option<TaskPromotionCandidate> {
+    if status != TaskTerminalStatus::Success
+        || session.effective_write_policy() != ExecutionWritePolicy::Detached
+    {
+        return None;
+    }
+
+    let source_turn_id = match session.context_target() {
+        ExecutionContextTarget::TurnId { turn_id } => Some(*turn_id),
+        ExecutionContextTarget::SelectedPath { turn_ids } => turn_ids.last().copied(),
+        ExecutionContextTarget::SummarySource { source_turn_id } => Some(*source_turn_id),
+        ExecutionContextTarget::BranchHead { .. } => session
+            .selected_branch_head_cursor
+            .map(|cursor| cursor.turn_id),
+        ExecutionContextTarget::ExternalReference { .. } => None,
+    }?;
+
+    Some(TaskPromotionCandidate {
+        session_id: host.session_reference(session),
+        source_turn_id,
+    })
 }
 
 fn session_context_from_session(

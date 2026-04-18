@@ -233,6 +233,13 @@ pub struct WaitTaskParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PromoteTaskParams {
+    pub request_id: String,
+    #[serde(default)]
+    pub branch_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SessionIdParams {
     pub session_id: String,
 }
@@ -372,6 +379,8 @@ pub enum DaemonRequest {
     TaskGet(TaskIdParams),
     #[serde(rename = "task.wait")]
     TaskWait(WaitTaskParams),
+    #[serde(rename = "task.promote")]
+    TaskPromote(PromoteTaskParams),
     #[serde(rename = "task.cancel")]
     TaskCancel(TaskIdParams),
     #[serde(rename = "task.list")]
@@ -650,6 +659,31 @@ mod tests {
                     params.context_target,
                     Some(SidestepContextTargetParams::TurnId { turn_id: 42 })
                 ));
+            }
+            other => panic!("unexpected request variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn promote_task_request_round_trips_typed_shape() {
+        let request = RequestEnvelope::new(
+            Some("req_4".to_string()),
+            DaemonRequest::TaskPromote(PromoteTaskParams {
+                request_id: "req_task".to_string(),
+                branch_name: Some("kept-idea".to_string()),
+            }),
+        );
+
+        let value = serde_json::to_value(&request).expect("serialize request");
+        assert_eq!(value["op"], "task.promote");
+        assert_eq!(value["params"]["request_id"], "req_task");
+        assert_eq!(value["params"]["branch_name"], "kept-idea");
+
+        let decoded: RequestEnvelope = serde_json::from_value(value).expect("deserialize request");
+        match decoded.request {
+            DaemonRequest::TaskPromote(params) => {
+                assert_eq!(params.request_id, "req_task");
+                assert_eq!(params.branch_name.as_deref(), Some("kept-idea"));
             }
             other => panic!("unexpected request variant: {other:?}"),
         }

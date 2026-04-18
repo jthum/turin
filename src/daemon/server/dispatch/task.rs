@@ -1,5 +1,6 @@
 use crate::daemon::protocol::{
-    NoParams, ResponseEnvelope, SidestepTaskParams, SubmitTaskParams, TaskIdParams, WaitTaskParams,
+    NoParams, PromoteTaskParams, ResponseEnvelope, SidestepTaskParams, SubmitTaskParams,
+    TaskIdParams, WaitTaskParams,
 };
 
 use super::{
@@ -71,6 +72,24 @@ pub(super) async fn wait(
         .await
     {
         Ok(task) => ResponseEnvelope::ok(id, serde_json::json!(task)),
+        Err(err) => validation_error(id, err),
+    }
+}
+
+pub(super) async fn promote(
+    id: Option<String>,
+    params: PromoteTaskParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard.promote_task_params(params).await {
+        Ok(branch) => serialize_response_with_event(
+            id,
+            branch,
+            "promoted detached task",
+            &ctx.event_tx,
+            "task.promoted",
+        ),
         Err(err) => validation_error(id, err),
     }
 }

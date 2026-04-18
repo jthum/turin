@@ -6,9 +6,10 @@ use uuid::Uuid;
 
 use super::DaemonState;
 use crate::daemon::protocol::{
-    SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams, SubmitTaskParams,
+    PromoteTaskParams, SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams,
+    SubmitTaskParams,
 };
-use crate::kernel::agent_manager::{AgentStatusSnapshot, TaskStatusSnapshot};
+use crate::kernel::agent_manager::{AgentStatusSnapshot, PromotedTaskBranch, TaskStatusSnapshot};
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::{KernelEvent, TaskBranchOutcome};
 use crate::kernel::prepare_persisted_session_sidestep;
@@ -196,6 +197,16 @@ impl DaemonState {
 
     pub async fn cancel_task(&self, request_id: &str) -> Result<TaskStatusSnapshot> {
         self.kernel.agent_manager().cancel_task(request_id).await
+    }
+
+    pub(crate) async fn promote_task_params(
+        &self,
+        params: PromoteTaskParams,
+    ) -> Result<PromotedTaskBranch> {
+        self.kernel
+            .agent_manager()
+            .promote_completed_task(&params.request_id, params.branch_name.as_deref())
+            .await
     }
 
     pub async fn wait_for_task(

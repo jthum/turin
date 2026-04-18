@@ -78,6 +78,7 @@ pub(super) async fn dispatch(
         DaemonRequest::TaskSidestep(params) => task::sidestep(id, params, &context).await,
         DaemonRequest::TaskGet(params) => task::get(id, params, &context).await,
         DaemonRequest::TaskWait(params) => task::wait(id, params, &context).await,
+        DaemonRequest::TaskPromote(params) => task::promote(id, params, &context).await,
         DaemonRequest::TaskCancel(params) => task::cancel(id, params, &context).await,
         DaemonRequest::TaskList(params) => task::list(id, params, &context).await,
         DaemonRequest::SessionList(params) => session::list(id, params, &context).await,

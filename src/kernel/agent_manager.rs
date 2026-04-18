@@ -34,6 +34,23 @@ pub(crate) type SessionEventSender = tokio::sync::broadcast::Sender<SessionEvent
 pub(crate) type SessionEventReceiver = tokio::sync::broadcast::Receiver<SessionEventRecord>;
 
 #[derive(Debug, Clone, serde::Serialize)]
+pub struct TaskPromotionCandidate {
+    pub session_id: String,
+    pub source_turn_id: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PromotedTaskBranch {
+    pub session_id: String,
+    pub branch_id: String,
+    pub name: String,
+    pub head_turn_index: Option<u32>,
+    pub source_turn_id: Option<i64>,
+    pub active: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PeerAgentTaskResult {
     pub request_id: String,
     pub agent_id: String,
@@ -43,8 +60,11 @@ pub struct PeerAgentTaskResult {
     pub status: TaskTerminalStatus,
     pub task_turn_count: u32,
     pub branch_outcome: Option<TaskBranchOutcome>,
+    pub promotion_candidate: Option<TaskPromotionCandidate>,
     pub output: Option<String>,
     pub assistant_content: Option<Vec<TaskInputContent>>,
+    #[serde(skip_serializing)]
+    pub promotion_input_content: Option<Vec<TaskInputContent>>,
     pub error: Option<String>,
 }
 
@@ -70,6 +90,7 @@ pub struct TaskStatusSnapshot {
     pub status: Option<TaskTerminalStatus>,
     pub task_turn_count: Option<u32>,
     pub branch_outcome: Option<TaskBranchOutcome>,
+    pub promotion_candidate: Option<TaskPromotionCandidate>,
     pub output: Option<String>,
     pub assistant_content: Option<Vec<TaskInputContent>>,
     pub error: Option<String>,
