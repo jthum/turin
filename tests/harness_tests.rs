@@ -3442,15 +3442,41 @@ async fn test_agent_persistence_store_overrides_default_scoped_data_store() -> R
             if branches_after_err ~= nil then error("agent.session.branch_list(session_id) failed: " .. tostring(branches_after_err)) end
             local saw_alt = false
             local saw_queued = false
+            local alt_source_turn_id = nil
             for _, row in ipairs(branches_after) do
                 if row.name == "alt" then
                     saw_alt = true
+                    alt_source_turn_id = row.source_turn_id
                 elseif row.name == "queued" then
                     saw_queued = true
                 end
             end
             if not saw_alt or not saw_queued then
                 error("agent.session.branch_list missing created branches")
+            end
+            if alt_source_turn_id == nil then
+                error("agent.session.branch_list should surface source_turn_id")
+            end
+
+            local siblings, siblings_err = agent.session.branch_siblings(alt_source_turn_id)
+            if siblings_err ~= nil then error("agent.session.branch_siblings failed: " .. tostring(siblings_err)) end
+            if #siblings ~= 2 then
+                error("agent.session.branch_siblings should return the two alternate branches")
+            end
+            local saw_alt_sibling = false
+            local saw_queued_sibling = false
+            for _, row in ipairs(siblings) do
+                if row.name == "alt" then
+                    saw_alt_sibling = true
+                elseif row.name == "queued" then
+                    saw_queued_sibling = true
+                end
+                if row.source_turn_id ~= alt_source_turn_id then
+                    error("agent.session.branch_siblings returned mismatched source turn")
+                end
+            end
+            if not saw_alt_sibling or not saw_queued_sibling then
+                error("agent.session.branch_siblings missing expected siblings")
             end
 
             local checked_out, checkout_err = agent.session.branch_checkout("alt")

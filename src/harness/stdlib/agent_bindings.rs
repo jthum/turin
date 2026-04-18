@@ -246,6 +246,10 @@ fn branch_row_to_lua_table(
         Some(depth) => table.set("head_turn_index", depth)?,
         None => table.set("head_turn_index", Value::Nil)?,
     }
+    match row.created_from_turn_id {
+        Some(turn_id) => table.set("source_turn_id", turn_id)?,
+        None => table.set("source_turn_id", Value::Nil)?,
+    }
     table.set("active", row.is_active)?;
     table.set("deferred", deferred)?;
     table.set("created_at", row.created_at.clone())?;
@@ -702,6 +706,48 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     Ok((branch, deferred)) => Ok(ok_value(Value::Table(branch_row_to_lua_table(
                         lua, &branch, deferred,
                     )?))),
+                    Err(err) => nil_err(lua, &err),
+                }
+            })?,
+        )?;
+    }
+
+    // agent.session.branch_siblings(source_turn_id, opts?)
+    {
+        let manager = app_data.store_manager.clone();
+        let execution_ctx = app_data.execution_ctx.clone();
+        session_ns.set(
+            "branch_siblings",
+            lua.create_function(move |lua, (source_turn_id, opts): (i64, Option<Table>)| {
+                let manager = manager.clone();
+                let execution_ctx = execution_ctx.clone();
+                let requested_session = opt_session_id(opts.as_ref());
+                let result = bridge_async_result(async move {
+                    let session_ref = resolve_session_reference(&execution_ctx, requested_session)?;
+                    let selector = session_ref.store_selector.clone().ok_or_else(|| {
+                        "Session reference store could not be resolved".to_string()
+                    })?;
+                    let store = manager.open(&selector).await.map_err(|e| e.to_string())?;
+                    let uuid =
+                        uuid::Uuid::parse_str(&session_ref.public_id).map_err(|e| e.to_string())?;
+                    let row = store
+                        .get_session_row_by_public_id(uuid)
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| "Session not found".to_string())?;
+                    store
+                        .list_branch_heads_from_source_turn(row.id, source_turn_id)
+                        .await
+                        .map_err(|e| e.to_string())
+                });
+                match result {
+                    Ok(rows) => {
+                        let out = lua.create_table()?;
+                        for (i, row) in rows.iter().enumerate() {
+                            out.set(i + 1, branch_row_to_lua_table(lua, row, false)?)?;
+                        }
+                        Ok(ok_value(Value::Table(out)))
+                    }
                     Err(err) => nil_err(lua, &err),
                 }
             })?,
