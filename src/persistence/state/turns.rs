@@ -156,6 +156,41 @@ impl StateStore {
         Ok(out)
     }
 
+    pub async fn list_branch_heads_from_source_turn(
+        &self,
+        session_id: i64,
+        source_turn_id: i64,
+    ) -> Result<Vec<BranchHeadRow>> {
+        let conn = self.connect().await?;
+        let mut rows = conn
+            .query(
+                r#"
+                SELECT bh.id,
+                       bh.public_id,
+                       bh.session_id,
+                       bh.name,
+                       bh.head_turn_id,
+                       t.branch_depth,
+                       bh.created_from_turn_id,
+                       bh.created_at,
+                       CASE WHEN s.active_branch_head_id = bh.id THEN 1 ELSE 0 END AS is_active
+                FROM branch_heads bh
+                JOIN sessions s ON s.id = bh.session_id
+                LEFT JOIN turns t ON t.id = bh.head_turn_id
+                WHERE bh.session_id = ?1 AND bh.created_from_turn_id = ?2
+                ORDER BY bh.created_at, bh.id
+                "#,
+                turso::params![session_id, source_turn_id],
+            )
+            .await?;
+
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(branch_head_from_row(&row)?);
+        }
+        Ok(out)
+    }
+
     pub async fn create_branch_head_from_turn_index(
         &self,
         session_id: i64,

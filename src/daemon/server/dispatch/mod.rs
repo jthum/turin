@@ -96,6 +96,9 @@ pub(super) async fn dispatch(
         DaemonRequest::SessionBranchCheckout(params) => {
             session::branch_checkout(id, params, &context).await
         }
+        DaemonRequest::SessionBranchSiblings(params) => {
+            session::branch_siblings(id, params, &context).await
+        }
         DaemonRequest::SessionCancel(params) => session::cancel(id, params, &context).await,
         DaemonRequest::SessionKill(params) => session::kill(id, params, &context).await,
         DaemonRequest::HarnessList(params) => harness::list(id, params, &context).await,

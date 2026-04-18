@@ -819,6 +819,58 @@ async fn session_branches_can_be_created_listed_and_checked_out() -> Result<()> 
 }
 
 #[tokio::test]
+async fn session_branch_siblings_can_be_queried_by_source_turn() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+
+    let live = state.open_session("default", Some("main"), None).await?;
+    let session_id = live.session_id.clone();
+
+    let first = state
+        .submit_task(
+            None,
+            Some(&session_id),
+            Some("main"),
+            "first branch turn".to_string(),
+            None,
+            Default::default(),
+        )
+        .await?;
+    assert_eq!(
+        state.wait_for_task(&first.request_id, Some(2_000)).await?.state,
+        "completed"
+    );
+
+    let alt_a = state
+        .create_session_branch(&session_id, "alt-a", None, Some(0), false)
+        .await?
+        .expect("alt-a branch created");
+    let alt_b = state
+        .create_session_branch(&session_id, "alt-b", None, Some(0), false)
+        .await?
+        .expect("alt-b branch created");
+    let _alt_c = state
+        .create_session_branch(&session_id, "alt-c", None, Some(1), false)
+        .await?
+        .expect("alt-c branch created");
+
+    let source_turn_id = alt_a.source_turn_id.expect("alt-a source turn id");
+    assert_eq!(alt_b.source_turn_id, Some(source_turn_id));
+
+    let siblings = state
+        .list_session_branch_siblings(&session_id, source_turn_id)
+        .await?
+        .expect("session exists");
+    assert_eq!(siblings.len(), 2);
+    assert!(siblings.iter().any(|branch| branch.name == "alt-a"));
+    assert!(siblings.iter().any(|branch| branch.name == "alt-b"));
+    assert!(!siblings.iter().any(|branch| branch.name == "alt-c"));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn live_session_control_can_target_a_specific_runtime_slot() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;

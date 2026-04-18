@@ -1,7 +1,7 @@
 use crate::daemon::protocol::{
     LiveSessionTargetParams, NoParams, OpenSessionParams, ResponseEnvelope, ResumeSessionParams,
-    SessionBranchCheckoutParams, SessionBranchCreateParams, SessionIdParams, SessionListParams,
-    SessionSearchParams, SessionTitleParams,
+    SessionBranchCheckoutParams, SessionBranchCreateParams, SessionBranchSiblingsParams,
+    SessionIdParams, SessionListParams, SessionSearchParams, SessionTitleParams,
 };
 use crate::daemon::state::session_store_selector_from_filters;
 
@@ -241,6 +241,26 @@ pub(super) async fn branch_checkout(
                 "Session '{}' or branch '{}' not found",
                 params.session_id, params.branch
             ),
+        ),
+        Err(err) => validation_error(id, err),
+    }
+}
+
+pub(super) async fn branch_siblings(
+    id: Option<String>,
+    params: SessionBranchSiblingsParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard
+        .list_session_branch_siblings(&params.session_id, params.source_turn_id)
+        .await
+    {
+        Ok(Some(branches)) => ResponseEnvelope::ok(id, serde_json::json!({ "branches": branches })),
+        Ok(None) => not_found_error(
+            id,
+            ErrorCode::SessionNotFound,
+            format!("Session '{}' not found", params.session_id),
         ),
         Err(err) => validation_error(id, err),
     }

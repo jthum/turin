@@ -9,8 +9,9 @@ use turin_daemon_protocol::{
     ChannelAccessParams, ChannelAccessRoomParams, DaemonHandshake, DaemonRequest, EntityIdParams,
     EventEnvelope, LiveSessionTargetParams, NoParams, OpenSessionParams, RequestEnvelope,
     ResponseEnvelope, ResumeSessionParams, RuntimeEventsSubscribeParams,
-    SessionBranchCheckoutParams, SessionBranchCreateParams, SessionIdParams, SessionListParams,
-    SessionSearchHitKind, SessionSearchParams, SessionSearchScope, SessionTitleParams,
+    SessionBranchCheckoutParams, SessionBranchCreateParams, SessionBranchSiblingsParams,
+    SessionIdParams, SessionListParams, SessionSearchHitKind, SessionSearchParams,
+    SessionSearchScope, SessionTitleParams,
     SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams, SubmitTaskParams,
     TaskIdParams, UpdateChannelParams, WaitTaskParams,
 };
@@ -357,6 +358,7 @@ pub struct SessionBranchDetail {
     pub branch_id: String,
     pub name: String,
     pub head_turn_index: Option<u32>,
+    pub source_turn_id: Option<i64>,
     pub active: bool,
     pub created_at: String,
 }
@@ -690,6 +692,23 @@ impl ControlClient {
             }),
         )
         .await
+    }
+
+    pub async fn list_session_branch_siblings(
+        &self,
+        session_id: &str,
+        source_turn_id: i64,
+    ) -> Result<Vec<SessionBranchDetail>> {
+        let response: SessionBranchList = self
+            .request_ok(
+                None,
+                DaemonRequest::SessionBranchSiblings(SessionBranchSiblingsParams {
+                    session_id: session_id.to_string(),
+                    source_turn_id,
+                }),
+            )
+            .await?;
+        Ok(response.branches)
     }
 
     pub async fn open_session(

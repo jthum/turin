@@ -318,6 +318,12 @@ pub struct SessionBranchCheckoutParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SessionBranchSiblingsParams {
+    pub session_id: String,
+    pub source_turn_id: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "op", content = "params")]
 pub enum DaemonRequest {
     #[serde(rename = "daemon.ping")]
@@ -390,6 +396,8 @@ pub enum DaemonRequest {
     SessionBranchCreate(SessionBranchCreateParams),
     #[serde(rename = "session.branch_checkout")]
     SessionBranchCheckout(SessionBranchCheckoutParams),
+    #[serde(rename = "session.branch_siblings")]
+    SessionBranchSiblings(SessionBranchSiblingsParams),
     #[serde(rename = "session.cancel")]
     SessionCancel(LiveSessionTargetParams),
     #[serde(rename = "session.kill")]

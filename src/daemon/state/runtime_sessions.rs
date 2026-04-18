@@ -212,6 +212,29 @@ impl DaemonState {
         Ok(Some(branches))
     }
 
+    #[instrument(skip(self), fields(session_id = %session_id, source_turn_id = source_turn_id))]
+    pub async fn list_session_branch_siblings(
+        &self,
+        session_id: &str,
+        source_turn_id: i64,
+    ) -> Result<Option<Vec<SessionBranchDetail>>> {
+        let Some((store_selector, row)) = self.resolve_persisted_session(session_id).await? else {
+            return Ok(None);
+        };
+        debug!(
+            store = %describe_store_selector(&store_selector),
+            "Listing session branch siblings"
+        );
+        let store = self.kernel.store_manager().open(&store_selector).await?;
+        let branches = store
+            .list_branch_heads_from_source_turn(row.id, source_turn_id)
+            .await?
+            .into_iter()
+            .map(branch_detail_from_row)
+            .collect();
+        Ok(Some(branches))
+    }
+
     #[instrument(
         skip(self),
         fields(
@@ -415,6 +438,7 @@ fn branch_detail_from_row(row: BranchHeadRow) -> SessionBranchDetail {
         branch_id: super::helpers::format_uuid_bytes_simple(&row.public_id),
         name: row.name,
         head_turn_index: row.head_turn_depth,
+        source_turn_id: row.created_from_turn_id,
         active: row.is_active,
         created_at: row.created_at,
     }

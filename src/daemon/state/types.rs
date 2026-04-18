@@ -92,6 +92,7 @@ pub struct SessionBranchDetail {
     pub branch_id: String,
     pub name: String,
     pub head_turn_index: Option<u32>,
+    pub source_turn_id: Option<i64>,
     pub active: bool,
     pub created_at: String,
 }

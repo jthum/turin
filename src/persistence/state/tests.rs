@@ -812,6 +812,62 @@ async fn test_explicit_branch_head_reads_and_writes_ignore_active_branch() {
 }
 
 #[tokio::test]
+async fn test_list_branch_heads_from_source_turn_returns_siblings_only() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    store
+        .insert_message(
+            session,
+            turn(0),
+            "user",
+            &json!([{"type": "text", "text": "root"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .insert_message(
+            session,
+            turn(1),
+            "assistant",
+            &json!([{"type": "text", "text": "main"}]),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let sibling_a = store
+        .create_branch_head_from_turn_index(session, "alt-a", Some(0), false)
+        .await
+        .unwrap();
+    let _sibling_b = store
+        .create_branch_head_from_turn_index(session, "alt-b", Some(0), false)
+        .await
+        .unwrap();
+    let _other = store
+        .create_branch_head_from_turn_index(session, "alt-c", Some(1), false)
+        .await
+        .unwrap();
+
+    let siblings = store
+        .list_branch_heads_from_source_turn(
+            session,
+            sibling_a.created_from_turn_id.expect("sibling source turn"),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(siblings.len(), 2);
+    assert!(siblings.iter().any(|branch| branch.name == "alt-a"));
+    assert!(siblings.iter().any(|branch| branch.name == "alt-b"));
+    assert!(!siblings.iter().any(|branch| branch.name == "alt-c"));
+}
+
+#[tokio::test]
 async fn test_prepare_turn_write_target_rejects_stale_branch_head_and_reuses_resolved_turn() {
     let store = StateStore::open_memory().await.unwrap();
     let session = store
