@@ -6,7 +6,9 @@ use crate::persistence::state::SessionReadTarget;
 use serde_json::json;
 use tempfile::tempdir;
 use tokio::time::{Duration, sleep};
-use turin_daemon_protocol::{SessionSearchScope, SidestepModeParams, SidestepTaskParams};
+use turin_daemon_protocol::{
+    SessionSearchScope, SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams,
+};
 
 fn write_agent_with_state_path(root: &Path, agent_id: &str, state_path: &str) -> Result<()> {
     let agent_dir = root
@@ -369,6 +371,38 @@ async fn sidestep_task_can_run_durably_on_a_sibling_branch() -> Result<()> {
             .await
             .iter()
             .all(|live| live.slot_id != sidestep.slot_id)
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn sidestep_task_rejects_missing_branch_head_target() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+
+    let live = state.open_session("default", Some("main"), None).await?;
+    let err = state
+        .sidestep_task_params(SidestepTaskParams {
+            session_id: live.session_id.clone(),
+            slot_id: None,
+            prompt: "Explore invalid target".to_string(),
+            content: None,
+            tools: None,
+            mode: SidestepModeParams::Ephemeral,
+            context_target: Some(SidestepContextTargetParams::BranchHead {
+                branch_head_id: 9_999_999,
+            }),
+            timeout_ms: Some(2_000),
+        })
+        .await
+        .expect_err("missing branch head target should fail during sidestep preparation");
+
+    let err_text = err.to_string();
+    assert!(
+        err_text.contains("Branch head '9999999' not found"),
+        "unexpected sidestep target error: {err_text}"
     );
 
     Ok(())

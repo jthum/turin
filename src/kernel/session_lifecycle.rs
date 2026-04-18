@@ -749,6 +749,9 @@ pub(crate) async fn prepare_persisted_session_sidestep(
     let (store_selector, row) = resolve_persisted_session_row(store_manager, session_id).await?;
     let store = store_manager.open(&store_selector).await?;
     let resolved_target = requested_target.unwrap_or_else(|| default_target.clone());
+    let resolved_target =
+        normalize_sidestep_target(store_manager, &store_selector, &store, &row, resolved_target)
+            .await?;
 
     match mode {
         SidestepMode::Ephemeral => Ok(PreparedSidestepExecution {
@@ -790,6 +793,63 @@ pub(crate) async fn prepare_persisted_session_sidestep(
                     source_turn_id: branch.created_from_turn_id,
                     persisted_active_head_unchanged: !branch.is_active,
                 }),
+            })
+        }
+    }
+}
+
+async fn normalize_sidestep_target(
+    store_manager: &Arc<crate::persistence::manager::StoreManager>,
+    default_store_selector: &StoreSelector,
+    store: &StateStore,
+    row: &SessionRow,
+    target: ExecutionContextTarget,
+) -> Result<ExecutionContextTarget> {
+    match target {
+        ExecutionContextTarget::BranchHead { branch_head_id } => match branch_head_id {
+            Some(branch_head_id) => {
+                let branch = store
+                    .get_branch_head(row.id, branch_head_id)
+                    .await?
+                    .ok_or_else(|| anyhow!("Branch head '{}' not found", branch_head_id))?;
+                Ok(ExecutionContextTarget::BranchHead {
+                    branch_head_id: Some(branch.id),
+                })
+            }
+            None => Ok(ExecutionContextTarget::BranchHead { branch_head_id: None }),
+        },
+        ExecutionContextTarget::TurnId { turn_id } => {
+            validate_session_turn_target(store, row.id, turn_id, "sidestep target").await?;
+            Ok(ExecutionContextTarget::TurnId { turn_id })
+        }
+        ExecutionContextTarget::SelectedPath { turn_ids } => {
+            if turn_ids.is_empty() {
+                anyhow::bail!("Selected sidestep path must include at least one turn");
+            }
+            for turn_id in &turn_ids {
+                validate_session_turn_target(store, row.id, *turn_id, "sidestep path turn").await?;
+            }
+            Ok(ExecutionContextTarget::SelectedPath { turn_ids })
+        }
+        ExecutionContextTarget::SummarySource { source_turn_id } => {
+            validate_session_turn_target(store, row.id, source_turn_id, "sidestep summary source")
+                .await?;
+            Ok(ExecutionContextTarget::SummarySource { source_turn_id })
+        }
+        ExecutionContextTarget::ExternalReference { reference } => {
+            let session_ref = parse_session_reference(&reference)?;
+            let resolved_selector = session_ref
+                .store_selector
+                .clone()
+                .unwrap_or_else(|| default_store_selector.clone());
+            let external_store = store_manager.open(&resolved_selector).await?;
+            let public_id = uuid::Uuid::parse_str(&session_ref.public_id)
+                .with_context(|| format!("Invalid session id '{}'", session_ref.public_id))?;
+            let Some(_) = external_store.get_session_row_by_public_id(public_id).await? else {
+                anyhow::bail!("External sidestep reference '{}' not found", reference);
+            };
+            Ok(ExecutionContextTarget::ExternalReference {
+                reference: format_session_reference(&session_ref.public_id, &resolved_selector),
             })
         }
     }
@@ -888,17 +948,36 @@ fn sidestep_branch_source_from_branch(
     })
 }
 
+async fn validate_session_turn_target(
+    store: &StateStore,
+    session_internal_id: i64,
+    turn_id: i64,
+    label: &str,
+) -> Result<()> {
+    let Some(turn) = store.get_turn_row(turn_id).await? else {
+        anyhow::bail!("{} '{}' not found", label, turn_id);
+    };
+    if turn.session_id != session_internal_id {
+        anyhow::bail!(
+            "{} '{}' does not belong to the target session",
+            label,
+            turn_id
+        );
+    }
+    Ok(())
+}
+
 async fn sidestep_branch_source_from_turn(
     store: &StateStore,
     session_internal_id: i64,
     turn_id: i64,
 ) -> Result<SidestepBranchSource> {
-    let Some(turn) = store.get_turn_row(turn_id).await? else {
-        anyhow::bail!("Turn '{}' not found for sidestep source", turn_id);
-    };
-    if turn.session_id != session_internal_id {
-        anyhow::bail!("Turn '{}' does not belong to the target session", turn_id);
-    }
+    validate_session_turn_target(store, session_internal_id, turn_id, "sidestep source turn")
+        .await?;
+    let turn = store
+        .get_turn_row(turn_id)
+        .await?
+        .expect("validated sidestep source turn should exist");
     Ok(SidestepBranchSource {
         turn_index: Some(turn.branch_depth),
     })
