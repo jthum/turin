@@ -12,6 +12,7 @@ turin-channel-core = { path = "../turin-channel-core" }
 turin-daemon-client = { path = "../turin-daemon-client" }
 turin-daemon-protocol = { path = "../turin-daemon-protocol" }
 turin-remote-client = { path = "../turin-remote-client" }
+turin-types = { path = "../turin-types" }
 
 [dev-dependencies]
 tempfile = "3.10"

@@ -398,6 +398,41 @@ pub fn register_runtime_agent_namespace(
         let manager = app_data.agent_manager.clone();
         let app_data_snapshot = app_data.clone();
         runtime_agent.set(
+            "promote",
+            lua.create_function(move |lua, (task_id, opts): (String, Option<Table>)| {
+                if let Err(err) =
+                    require_governance_capability(&app_data_snapshot, "runtime.agent.submit")
+                {
+                    return nil_err(lua, &err);
+                }
+
+                let branch_name = opts
+                    .as_ref()
+                    .and_then(|t| t.get::<String>("branch_name").ok());
+                let manager = manager.clone();
+                let app_data_snapshot = app_data_snapshot.clone();
+                let result = bridge_async_display_err(async move {
+                    let snapshot = manager
+                        .get_task(&task_id)
+                        .await
+                        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+                    require_child_agent_governance(&app_data_snapshot, &snapshot.agent_id)
+                        .map_err(anyhow::Error::msg)?;
+                    manager
+                        .promote_completed_task(&task_id, branch_name.as_deref())
+                        .await
+                });
+                match result {
+                    Ok(branch) => json_ok(lua, &branch),
+                    Err(err) => nil_err(lua, &err),
+                }
+            })?,
+        )?;
+    }
+    {
+        let manager = app_data.agent_manager.clone();
+        let app_data_snapshot = app_data.clone();
+        runtime_agent.set(
             "complete",
             lua.create_function(
                 move |lua, (agent_id, prompt, opts): (String, String, Option<Table>)| {

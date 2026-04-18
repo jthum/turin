@@ -6334,6 +6334,151 @@ async fn test_runtime_agent_sidestep_runs_on_peer_sibling_branch() -> Result<()>
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_runtime_agent_can_promote_detached_sidestep_result() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_runtime_agent_promote.db");
+    let orchestrator_harness_dir = tmp.path().join("harnesses_orchestrator");
+    let worker_harness_dir = tmp.path().join("harnesses_worker");
+    std::fs::create_dir(&orchestrator_harness_dir)?;
+    std::fs::create_dir(&worker_harness_dir)?;
+
+    let orchestrator_harness = r#"
+        function on_turn_prepare(ctx)
+            local warm_id, warm_err = runtime.agent.submit("worker", { prompt = "warm up" })
+            if warm_id == nil then error("runtime.agent.submit warmup failed: " .. tostring(warm_err)) end
+
+            local warm_res, warm_await_err = runtime.agent.await(warm_id, { timeout_ms = 5000 })
+            if warm_res == nil then error("runtime.agent.await warmup failed: " .. tostring(warm_await_err)) end
+            if warm_res.status ~= "success" then
+                error("warmup task should succeed, got " .. tostring(warm_res.status))
+            end
+
+            local sidestep_id, sidestep_err = runtime.agent.sidestep("worker", "explore detached", {
+                mode = "ephemeral"
+            })
+            if sidestep_id == nil then error("runtime.agent.sidestep failed: " .. tostring(sidestep_err)) end
+
+            local sidestep_res, sidestep_await_err = runtime.agent.await(sidestep_id, { timeout_ms = 5000 })
+            if sidestep_res == nil then error("runtime.agent.await sidestep failed: " .. tostring(sidestep_await_err)) end
+            if sidestep_res.status ~= "success" then
+                error("detached sidestep should succeed, got " .. tostring(sidestep_res.status))
+            end
+            if sidestep_res.promotion_candidate == nil then
+                error("detached sidestep should expose promotion_candidate")
+            end
+
+            local promoted, promote_err = runtime.agent.promote(sidestep_id, {
+                branch_name = "kept-runtime-sidestep"
+            })
+            if promoted == nil then error("runtime.agent.promote failed: " .. tostring(promote_err)) end
+            if promoted.name ~= "kept-runtime-sidestep" then
+                error("promoted branch name mismatch: " .. tostring(promoted.name))
+            end
+            if promoted.source_turn_id ~= sidestep_res.promotion_candidate.source_turn_id then
+                error("promoted branch source turn mismatch")
+            end
+            return ALLOW
+        end
+    "#;
+    std::fs::write(
+        orchestrator_harness_dir.join("orchestrator.lua"),
+        orchestrator_harness,
+    )?;
+    std::fs::write(worker_harness_dir.join("worker.lua"), "-- worker harness\n")?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("worker-ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut agents = std::collections::HashMap::new();
+    agents.insert(
+        "worker".to_string(),
+        AgentConfig {
+            tools: Default::default(),
+            id: "worker".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Worker".to_string(),
+            thinking: None,
+            mode: AgentMode::Stateless,
+            harness: Some("worker".to_string()),
+            idle_grace_secs: None,
+            inference: Default::default(),
+            persistence: Default::default(),
+        },
+    );
+
+    let config = TurinConfig {
+        tools: Default::default(),
+        agent: AgentConfig {
+            tools: Default::default(),
+            id: "orchestrator".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Orchestrator".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+            inference: Default::default(),
+            persistence: Default::default(),
+        },
+        agents,
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        layout: Default::default(),
+        inference: InferenceConfig::default(),
+        persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
+        harness: HarnessConfig {
+            directory: orchestrator_harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+            memory_limit_mb: 32,
+        },
+        harnesses: std::collections::HashMap::from([(
+            "worker".to_string(),
+            HarnessConfig {
+                directory: worker_harness_dir.to_string_lossy().to_string(),
+                fs_root: ".".to_string(),
+                memory_limit_mb: 32,
+            },
+        )]),
+        providers,
+        embeddings: Some(EmbeddingConfig::noop()),
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise runtime sidestep promotion".to_string()),
+        )
+        .await?;
+
+    kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_agent_sidestep_creates_hidden_sibling_branch_on_current_session() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_agent_sidestep.db");

@@ -2,19 +2,21 @@ use mlua::{Function, Lua, Result as LuaResult, Table, Value};
 
 use crate::harness::dx::common::call_and_raise_on_err;
 
-fn create_agent_proxy(
-    lua: &Lua,
-    agent_id: String,
-    submit_fn: Function,
-    sidestep_fn: Function,
-    await_fn: Function,
-    status_fn: Function,
-    complete_fn: Function,
-) -> LuaResult<Table> {
+#[derive(Clone)]
+struct AgentRuntimeFns {
+    submit: Function,
+    sidestep: Function,
+    await_task: Function,
+    promote: Function,
+    status: Function,
+    complete: Function,
+}
+
+fn create_agent_proxy(lua: &Lua, agent_id: String, fns: AgentRuntimeFns) -> LuaResult<Table> {
     let proxy = lua.create_table()?;
 
     {
-        let submit_fn = submit_fn.clone();
+        let submit_fn = fns.submit.clone();
         let agent_id = agent_id.clone();
         proxy.set(
             "submit",
@@ -32,7 +34,7 @@ fn create_agent_proxy(
     }
 
     {
-        let sidestep_fn = sidestep_fn.clone();
+        let sidestep_fn = fns.sidestep.clone();
         let agent_id = agent_id.clone();
         proxy.set(
             "sidestep",
@@ -50,7 +52,7 @@ fn create_agent_proxy(
     }
 
     {
-        let await_fn = await_fn.clone();
+        let await_fn = fns.await_task.clone();
         proxy.set(
             "await",
             lua.create_function(
@@ -62,7 +64,24 @@ fn create_agent_proxy(
     }
 
     {
-        let status_fn = status_fn.clone();
+        let promote_fn = fns.promote.clone();
+        proxy.set(
+            "promote",
+            lua.create_function(
+                move |lua, (_self, task_id, opts): (Table, String, Option<Table>)| {
+                    call_and_raise_on_err(
+                        lua,
+                        &promote_fn,
+                        (task_id, opts),
+                        "runtime.agent.promote",
+                    )
+                },
+            )?,
+        )?;
+    }
+
+    {
+        let status_fn = fns.status.clone();
         let agent_id = agent_id.clone();
         proxy.set(
             "status",
@@ -73,7 +92,7 @@ fn create_agent_proxy(
     }
 
     {
-        let complete_fn = complete_fn.clone();
+        let complete_fn = fns.complete.clone();
         let agent_id = agent_id.clone();
         proxy.set(
             "complete",
@@ -98,25 +117,20 @@ pub fn register_agent_dx(lua: &Lua) -> LuaResult<()> {
     let runtime: Table = globals.get("runtime")?;
     let runtime_agent: Table = runtime.get("agent")?;
 
-    let submit_fn: Function = runtime_agent.get("submit")?;
-    let sidestep_fn: Function = runtime_agent.get("sidestep")?;
-    let await_fn: Function = runtime_agent.get("await")?;
-    let status_fn: Function = runtime_agent.get("get_status")?;
-    let complete_fn: Function = runtime_agent.get("complete")?;
+    let fns = AgentRuntimeFns {
+        submit: runtime_agent.get("submit")?,
+        sidestep: runtime_agent.get("sidestep")?,
+        await_task: runtime_agent.get("await")?,
+        promote: runtime_agent.get("promote")?,
+        status: runtime_agent.get("get_status")?,
+        complete: runtime_agent.get("complete")?,
+    };
 
     let mt = lua.create_table()?;
     mt.set(
         "__call",
         lua.create_function(move |lua, (_self, agent_id): (Value, String)| {
-            create_agent_proxy(
-                lua,
-                agent_id,
-                submit_fn.clone(),
-                sidestep_fn.clone(),
-                await_fn.clone(),
-                status_fn.clone(),
-                complete_fn.clone(),
-            )
+            create_agent_proxy(lua, agent_id, fns.clone())
         })?,
     )?;
     let _ = runtime_agent.set_metatable(Some(mt));
