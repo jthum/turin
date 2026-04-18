@@ -128,6 +128,16 @@ impl ExecutionHost {
             }
         }
 
+        self.record_local_completed_task(
+            session,
+            task,
+            status,
+            task_turn_count,
+            branch_outcome,
+            error_message,
+        )
+        .await;
+
         self.wait_for_session_durability(session).await;
         Ok(())
     }

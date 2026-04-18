@@ -2,19 +2,27 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::inference::content::{
+    summarize_content_for_display, task_output_content_from_inference,
+};
 use crate::inference::embeddings::EmbeddingProvider;
-use crate::inference::provider::ProviderClient;
+use crate::inference::provider::{InferenceRole, ProviderClient};
 use crate::kernel::agent_manager::AgentManager;
 use crate::kernel::config::TurinConfig;
-use crate::kernel::event::TaskTerminalStatus;
+use crate::kernel::event::{TaskBranchOutcome, TaskTerminalStatus};
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_manager::HarnessManager;
 use crate::kernel::mcp_runtime::McpClientEntry;
 use crate::kernel::policy::RuntimePolicyManager;
-use crate::kernel::session::{QueuedTask, SessionHarnessEngine, SessionState};
+use crate::kernel::session::{
+    ExecutionContextTarget, ExecutionWritePolicy, LocalTaskResult, QueuedTask,
+    SessionHarnessEngine, SessionState,
+};
+use crate::kernel::task_promotion::TaskPromotionCandidate;
 use crate::persistence::manager::{StoreManager, StorePathScope};
 use crate::tools::registry::ToolRegistry;
 use tracing::{error, warn};
+use turin_types::TaskInputContent;
 
 use super::TaskExecutionResult;
 
@@ -148,6 +156,7 @@ impl ExecutionHost {
             },
             runtime_slot_id: session.runtime_slot_id.clone(),
             trace_id: task.trace_id.clone(),
+            completed_task_results: session.completed_task_results.clone(),
             event_context: crate::harness::globals::HarnessEventContext {
                 json: self.json,
                 internal_id: session.internal_id,
@@ -293,5 +302,95 @@ impl ExecutionHost {
         session: &SessionState,
     ) -> anyhow::Result<&crate::kernel::config::AgentConfig> {
         self.agent_config_for(session.identity.agent_id())
+    }
+
+    pub(crate) fn last_assistant_text(&self, session: &SessionState) -> Option<String> {
+        session.history.iter().rev().find_map(|msg| {
+            if msg.role != InferenceRole::Assistant {
+                return None;
+            }
+            let summary = summarize_content_for_display(&msg.content);
+            if summary.is_empty() {
+                None
+            } else {
+                Some(summary)
+            }
+        })
+    }
+
+    pub(crate) fn last_assistant_content(
+        &self,
+        session: &SessionState,
+    ) -> Option<Vec<TaskInputContent>> {
+        session.history.iter().rev().find_map(|msg| {
+            if msg.role != InferenceRole::Assistant {
+                return None;
+            }
+            let content = task_output_content_from_inference(&msg.content);
+            if content.is_empty() {
+                None
+            } else {
+                Some(content)
+            }
+        })
+    }
+
+    pub(crate) fn task_input_content(task: &QueuedTask) -> Vec<TaskInputContent> {
+        task.content.clone().unwrap_or_else(|| {
+            vec![TaskInputContent::Text {
+                text: task.prompt.clone(),
+            }]
+        })
+    }
+
+    pub(crate) fn promotable_detached_candidate(
+        &self,
+        session: &SessionState,
+        status: TaskTerminalStatus,
+    ) -> Option<TaskPromotionCandidate> {
+        if status != TaskTerminalStatus::Success
+            || session.effective_write_policy() != ExecutionWritePolicy::Detached
+        {
+            return None;
+        }
+
+        let source_turn_id = match session.context_target() {
+            ExecutionContextTarget::TurnId { turn_id } => Some(*turn_id),
+            ExecutionContextTarget::SelectedPath { turn_ids } => turn_ids.last().copied(),
+            ExecutionContextTarget::SummarySource { source_turn_id } => Some(*source_turn_id),
+            ExecutionContextTarget::BranchHead { .. } => session
+                .selected_branch_head_cursor
+                .map(|cursor| cursor.turn_id),
+            ExecutionContextTarget::ExternalReference { .. } => None,
+        }?;
+
+        Some(TaskPromotionCandidate {
+            session_id: self.session_reference(session),
+            source_turn_id,
+        })
+    }
+
+    pub(crate) async fn record_local_completed_task(
+        &self,
+        session: &SessionState,
+        task: &QueuedTask,
+        status: TaskTerminalStatus,
+        task_turn_count: u32,
+        branch_outcome: Option<TaskBranchOutcome>,
+        error: Option<String>,
+    ) {
+        let result = LocalTaskResult {
+            task_id: task.task_id.clone(),
+            trace_id: task.trace_id.clone(),
+            status,
+            task_turn_count,
+            branch_outcome,
+            promotion_candidate: self.promotable_detached_candidate(session, status),
+            output: self.last_assistant_text(session),
+            assistant_content: self.last_assistant_content(session),
+            promotion_input_content: Some(Self::task_input_content(task)),
+            error,
+        };
+        session.completed_task_results.write().await.insert(result);
     }
 }

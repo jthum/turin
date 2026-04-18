@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures::future::BoxFuture;
 use futures::stream;
 use std::collections::HashMap;
@@ -6577,6 +6577,130 @@ async fn test_agent_sidestep_creates_hidden_sibling_branch_on_current_session() 
             .iter()
             .any(|message| message.content.contains("branch-only")),
         "sidestep branch should contain the sidestep prompt"
+    );
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_agent_can_promote_detached_local_sidestep_result() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_agent_local_promote.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    let harness = r#"
+        local sidestep_id = nil
+        local task_count = 0
+
+        function on_turn_prepare(ctx)
+            task_count = task_count + 1
+            if task_count == 1 then
+                sidestep_id, err = agent.sidestep("explore detached", { mode = "ephemeral" })
+                if sidestep_id == nil then error("agent.sidestep failed: " .. tostring(err)) end
+                local queued, queue_err = agent.session.queue("promote local sidestep")
+                if not queued then error("agent.session.queue failed: " .. tostring(queue_err)) end
+            elseif task_count == 3 then
+                local branch, promote_err = agent.promote(sidestep_id, {
+                    branch_name = "kept-local-sidestep"
+                })
+                if branch == nil then error("agent.promote failed: " .. tostring(promote_err)) end
+                if branch.name ~= "kept-local-sidestep" then
+                    error("promoted branch name mismatch: " .. tostring(branch.name))
+                end
+            end
+            return ALLOW
+        end
+    "#;
+    std::fs::write(harness_dir.join("default.lua"), harness)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("worker-ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        tools: Default::default(),
+        agent: AgentConfig {
+            tools: Default::default(),
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Default".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+            inference: Default::default(),
+            persistence: Default::default(),
+        },
+        agents: Default::default(),
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        layout: Default::default(),
+        inference: InferenceConfig::default(),
+        persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+            memory_limit_mb: 32,
+        },
+        harnesses: Default::default(),
+        providers,
+        embeddings: Some(EmbeddingConfig::noop()),
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("exercise local sidestep promotion".to_string()),
+        )
+        .await?;
+    let store = kernel.store_manager().open(&session.store_selector).await?;
+    let branches = store
+        .list_branch_heads(session.internal_id.expect("session internal id"))
+        .await?;
+    let promoted = branches
+        .iter()
+        .find(|branch| branch.name == "kept-local-sidestep")
+        .context("promoted local sidestep branch should exist")?;
+    let messages = store
+        .get_messages(
+            session.internal_id.expect("session internal id"),
+            &turin::persistence::state::SessionReadTarget::BranchHead(promoted.id),
+        )
+        .await?;
+    let transcript = messages
+        .iter()
+        .map(|message| format!("{}:{}", message.role, message.content))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        transcript.contains("explore detached"),
+        "promoted branch should contain detached sidestep prompt"
+    );
+    assert!(
+        transcript.contains("worker-ok"),
+        "promoted branch should contain detached sidestep output"
     );
 
     kernel.end_session(&mut session).await?;

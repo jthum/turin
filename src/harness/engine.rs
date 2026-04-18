@@ -200,6 +200,7 @@ impl HarnessEngine {
             lock.execution_conflict_policy = Some(binding.execution.conflict_policy);
             lock.runtime_slot_id = binding.runtime_slot_id;
             lock.trace_id = Some(binding.trace_id);
+            lock.completed_task_results = Some(binding.completed_task_results);
             lock.event_context = Some(binding.event_context);
         }
     }
@@ -221,6 +222,7 @@ impl HarnessEngine {
             lock.execution_conflict_policy = None;
             lock.runtime_slot_id = None;
             lock.trace_id = None;
+            lock.completed_task_results = None;
             lock.event_context = None;
         }
     }

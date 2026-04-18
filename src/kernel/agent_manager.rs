@@ -22,6 +22,7 @@ use crate::kernel::session::{
     ExecutionConflictPolicy, ExecutionContextTarget, ExecutionDurability, ExecutionVisibility,
     ExecutionWritePolicy, QueuedTask, SessionState,
 };
+pub use crate::kernel::task_promotion::{PromotedTaskBranch, TaskPromotionCandidate};
 use crate::persistence::manager::StoreManager;
 use crate::tools::registry::ToolRegistry;
 use tokio::sync::{Notify, RwLock, oneshot};
@@ -32,23 +33,6 @@ use turin_types::TaskInputContent;
 pub(crate) type SessionEventRecord = (Option<i64>, KernelEvent);
 pub(crate) type SessionEventSender = tokio::sync::broadcast::Sender<SessionEventRecord>;
 pub(crate) type SessionEventReceiver = tokio::sync::broadcast::Receiver<SessionEventRecord>;
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct TaskPromotionCandidate {
-    pub session_id: String,
-    pub source_turn_id: i64,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct PromotedTaskBranch {
-    pub session_id: String,
-    pub branch_id: String,
-    pub name: String,
-    pub head_turn_index: Option<u32>,
-    pub source_turn_id: Option<i64>,
-    pub active: bool,
-    pub created_at: String,
-}
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PeerAgentTaskResult {

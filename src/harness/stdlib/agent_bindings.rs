@@ -22,7 +22,15 @@ use crate::kernel::session::{
 use crate::kernel::session_refs::{
     SessionReference, format_session_reference, parse_session_reference,
 };
+use crate::kernel::task_promotion::promote_task_result;
 use crate::persistence::manager::StoreSelector;
+
+fn ensure_local_task_id(task: &mut QueuedTask) -> String {
+    if task.task_id.is_empty() {
+        task.task_id = format!("t_{}", uuid::Uuid::now_v7().simple());
+    }
+    task.task_id.clone()
+}
 
 fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
     app_data
@@ -38,10 +46,10 @@ fn queue_max(snapshot: &std::collections::HashMap<String, serde_json::Value>) ->
 
 async fn queue_push_one(
     execution_ctx: &ActiveHarnessExecutionContext,
-    task: QueuedTask,
+    mut task: QueuedTask,
     queue_max: usize,
     push_front: bool,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let queue = execution_ctx
         .lock()
         .ok()
@@ -54,19 +62,20 @@ async fn queue_push_one(
             queue_max
         ));
     }
+    let task_id = ensure_local_task_id(&mut task);
     if push_front {
         q.push_front(task);
     } else {
         q.push_back(task);
     }
-    Ok(())
+    Ok(task_id)
 }
 
 async fn queue_push_many(
     execution_ctx: &ActiveHarnessExecutionContext,
-    tasks: Vec<QueuedTask>,
+    mut tasks: Vec<QueuedTask>,
     queue_max: usize,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     let queue = execution_ctx
         .lock()
         .ok()
@@ -79,10 +88,14 @@ async fn queue_push_many(
             queue_max
         ));
     }
+    let mut task_ids = Vec::with_capacity(tasks.len());
+    for task in &mut tasks {
+        task_ids.push(ensure_local_task_id(task));
+    }
     for task in tasks {
         q.push_back(task);
     }
-    Ok(())
+    Ok(task_ids)
 }
 
 fn current_session_store_selector(
@@ -96,6 +109,17 @@ fn current_session_store_selector(
                 .clone()
                 .unwrap_or_else(|| StoreSelector::Alias("state".to_string()))
         })
+}
+
+fn current_completed_task_results(
+    execution_ctx: &ActiveHarnessExecutionContext,
+) -> Result<crate::kernel::session::CompletedLocalTaskResultsHandle, String> {
+    execution_ctx
+        .lock()
+        .map_err(|_| "execution context mutex poisoned".to_string())?
+        .completed_task_results
+        .clone()
+        .ok_or_else(|| "No active session completed-task cache".to_string())
 }
 
 fn resolve_session_reference(
@@ -308,10 +332,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 .await
             });
             match enqueue_res {
-                Ok(()) => {
-                    let token = format!("q_{}", uuid::Uuid::now_v7().simple());
-                    string_ok(lua, &token)
-                }
+                Ok(task_id) => string_ok(lua, &task_id),
                 Err(err) => nil_err(lua, &err),
             }
         })?,
@@ -380,10 +401,68 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 queue_push_one(&sidestep_q, task, queue_max, false).await
             });
             match enqueue_res {
-                Ok(()) => {
-                    let token = format!("sd_{}", uuid::Uuid::now_v7().simple());
-                    string_ok(lua, &token)
+                Ok(task_id) => string_ok(lua, &task_id),
+                Err(err) => nil_err(lua, &err),
+            }
+        })?,
+    )?;
+
+    // agent.promote(task_id, opts?)
+    let promote_execution_ctx = app_data.execution_ctx.clone();
+    let promote_store_manager = app_data.store_manager.clone();
+    let promote_policy_snapshot = app_data.clone();
+    agent_table.set(
+        "promote",
+        lua.create_function(move |lua, (task_id, opts): (String, Option<Table>)| {
+            if let Err(err) =
+                require_governance_capability(&promote_policy_snapshot, "runtime.agent.submit")
+            {
+                return nil_err(lua, &err);
+            }
+            let branch_name = opts
+                .as_ref()
+                .and_then(|table| table.get::<String>("branch_name").ok());
+            let completed_task_results =
+                match current_completed_task_results(&promote_execution_ctx) {
+                    Ok(results) => results,
+                    Err(err) => return nil_err(lua, &err),
+                };
+            let store_manager = promote_store_manager.clone();
+            let result = bridge_async_display_err(async move {
+                let completed = {
+                    let lock = completed_task_results.read().await;
+                    lock.get(&task_id).cloned()
                 }
+                .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+                let promotion = completed
+                    .promotion_candidate
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("Task '{}' is not promotable", task_id))?;
+                let assistant_content = completed
+                    .assistant_content
+                    .as_ref()
+                    .filter(|content| !content.is_empty())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Task '{}' has no promotable assistant output", task_id)
+                    })?;
+                let input_content = completed
+                    .promotion_input_content
+                    .as_ref()
+                    .filter(|content| !content.is_empty())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Task '{}' is missing promotable task input", task_id)
+                    })?;
+                promote_task_result(
+                    &store_manager,
+                    &promotion,
+                    input_content,
+                    assistant_content,
+                    branch_name.as_deref(),
+                )
+                .await
+            });
+            match result {
+                Ok(branch) => Ok(ok_value(lua.to_value(&branch)?)),
                 Err(err) => nil_err(lua, &err),
             }
         })?,
@@ -509,7 +588,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 .await
             });
             match res {
-                Ok(()) => Ok(ok_bool()),
+                Ok(_) => Ok(ok_bool()),
                 Err(err) => bool_err(lua, &err),
             }
         })?,
@@ -536,7 +615,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 .await
             });
             match res {
-                Ok(()) => Ok(ok_bool()),
+                Ok(_) => Ok(ok_bool()),
                 Err(err) => bool_err(lua, &err),
             }
         })?,
@@ -564,7 +643,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             let res =
                 bridge_async_result(async move { queue_push_many(&aq, tasks, queue_max).await });
             match res {
-                Ok(()) => Ok(ok_bool()),
+                Ok(_) => Ok(ok_bool()),
                 Err(err) => bool_err(lua, &err),
             }
         })?,

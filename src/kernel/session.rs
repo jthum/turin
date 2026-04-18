@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, broadcast, mpsc};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -9,13 +9,18 @@ use crate::inference::provider::InferenceMessage;
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::KernelEvent;
 use crate::kernel::event::TaskBranchOutcome;
+use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::harness_runtime::HarnessInstance;
 use crate::kernel::identity::RuntimeIdentity;
+use crate::kernel::task_promotion::TaskPromotionCandidate;
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::state::TurnWriteTarget;
 use turin_types::{TaskInputContent, ToolsConfig};
 
 pub type SessionHarnessEngine = Arc<std::sync::Mutex<HarnessInstance>>;
+pub type CompletedLocalTaskResultsHandle = Arc<RwLock<CompletedLocalTaskResults>>;
+
+const MAX_COMPLETED_LOCAL_TASK_RESULTS: usize = 128;
 
 /// Transient per-task execution state that is reset when a task completes.
 #[derive(Debug, Default)]
@@ -232,6 +237,47 @@ pub struct PreparedSidestepExecution {
     pub execution: TaskExecutionOverrides,
     pub conflict_policy: ExecutionConflictPolicy,
     pub branch_outcome: Option<TaskBranchOutcome>,
+}
+
+/// Completed current-session task result retained in runtime memory.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LocalTaskResult {
+    pub task_id: String,
+    pub trace_id: String,
+    pub status: TaskTerminalStatus,
+    pub task_turn_count: u32,
+    pub branch_outcome: Option<TaskBranchOutcome>,
+    pub promotion_candidate: Option<TaskPromotionCandidate>,
+    pub output: Option<String>,
+    pub assistant_content: Option<Vec<TaskInputContent>>,
+    #[serde(skip_serializing)]
+    pub promotion_input_content: Option<Vec<TaskInputContent>>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Default)]
+pub struct CompletedLocalTaskResults {
+    order: VecDeque<String>,
+    results: HashMap<String, LocalTaskResult>,
+}
+
+impl CompletedLocalTaskResults {
+    pub fn insert(&mut self, result: LocalTaskResult) {
+        let task_id = result.task_id.clone();
+        if !self.results.contains_key(&task_id) {
+            self.order.push_back(task_id.clone());
+        }
+        self.results.insert(task_id, result);
+        while self.order.len() > MAX_COMPLETED_LOCAL_TASK_RESULTS {
+            if let Some(evicted) = self.order.pop_front() {
+                self.results.remove(&evicted);
+            }
+        }
+    }
+
+    pub fn get(&self, task_id: &str) -> Option<&LocalTaskResult> {
+        self.results.get(task_id)
+    }
 }
 
 impl ExecutionConflictPolicy {
@@ -457,6 +503,7 @@ pub struct SessionState {
     pub harness_engine: Option<SessionHarnessEngine>,
     pub harness_generation: u64,
     pub queue: Arc<Mutex<VecDeque<QueuedTask>>>,
+    pub completed_task_results: CompletedLocalTaskResultsHandle,
     pub plans: HashMap<String, PlanProgress>,
     pub turn_index: u32,
     pub total_input_tokens: u64,
@@ -505,6 +552,7 @@ impl SessionState {
             harness_engine: None,
             harness_generation: 0,
             queue: Arc::new(Mutex::new(VecDeque::new())),
+            completed_task_results: Arc::new(RwLock::new(CompletedLocalTaskResults::default())),
             plans: HashMap::new(),
             turn_index: 0,
             total_input_tokens: 0,

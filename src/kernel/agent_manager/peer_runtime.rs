@@ -5,14 +5,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::harness::verdict::Verdict;
-use crate::inference::content::{
-    summarize_content_for_display, task_output_content_from_inference,
-};
-use crate::inference::provider::InferenceRole;
 use crate::kernel::TaskExecutionResult;
 use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
 use crate::kernel::execution_host::{ExecutionHost, TaskRunAttempt};
-use crate::kernel::session::{ExecutionContextTarget, ExecutionWritePolicy, QueuedTask};
+use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreSelector;
 use turin_types::TaskInputContent;
 
@@ -423,10 +419,11 @@ impl PeerRuntime {
                 }
             };
 
-            let output = self.last_assistant_text();
-            let assistant_content = self.last_assistant_content();
-            let promotion_candidate =
-                promotable_detached_candidate(&self.host, &self.session, run_result.status);
+            let output = self.host.last_assistant_text(&self.session);
+            let assistant_content = self.host.last_assistant_content(&self.session);
+            let promotion_candidate = self
+                .host
+                .promotable_detached_candidate(&self.session, run_result.status);
 
             Ok(PeerRunOutcome {
                 runtime_task_id: task.task_id.clone(),
@@ -436,7 +433,7 @@ impl PeerRuntime {
                 promotion_candidate,
                 output,
                 assistant_content,
-                promotion_input_content: Some(task_input_content(&task)),
+                promotion_input_content: Some(ExecutionHost::task_input_content(&task)),
             })
         }
         .await;
@@ -449,35 +446,6 @@ impl PeerRuntime {
         finish_scope?;
         outcome
     }
-
-    fn last_assistant_text(&self) -> Option<String> {
-        self.session.history.iter().rev().find_map(|msg| {
-            if msg.role != InferenceRole::Assistant {
-                return None;
-            }
-            let summary = summarize_content_for_display(&msg.content);
-            if summary.is_empty() {
-                None
-            } else {
-                Some(summary)
-            }
-        })
-    }
-
-    fn last_assistant_content(&self) -> Option<Vec<turin_types::TaskInputContent>> {
-        self.session.history.iter().rev().find_map(|msg| {
-            if msg.role != InferenceRole::Assistant {
-                return None;
-            }
-            let content = task_output_content_from_inference(&msg.content);
-            if content.is_empty() {
-                None
-            } else {
-                Some(content)
-            }
-        })
-    }
-
     fn set_capability_ceiling(&self, caps: Option<BTreeMap<String, bool>>) {
         if let Some(harness) = self.host.session_harness_engine(&self.session) {
             let engine = harness.lock().expect("session harness mutex poisoned");
@@ -577,41 +545,6 @@ impl PeerRuntime {
         self.control
             .set_current_conflict_policy(self.session.effective_conflict_policy());
     }
-}
-
-fn task_input_content(task: &QueuedTask) -> Vec<TaskInputContent> {
-    task.content.clone().unwrap_or_else(|| {
-        vec![TaskInputContent::Text {
-            text: task.prompt.clone(),
-        }]
-    })
-}
-
-fn promotable_detached_candidate(
-    host: &ExecutionHost,
-    session: &crate::kernel::session::SessionState,
-    status: TaskTerminalStatus,
-) -> Option<TaskPromotionCandidate> {
-    if status != TaskTerminalStatus::Success
-        || session.effective_write_policy() != ExecutionWritePolicy::Detached
-    {
-        return None;
-    }
-
-    let source_turn_id = match session.context_target() {
-        ExecutionContextTarget::TurnId { turn_id } => Some(*turn_id),
-        ExecutionContextTarget::SelectedPath { turn_ids } => turn_ids.last().copied(),
-        ExecutionContextTarget::SummarySource { source_turn_id } => Some(*source_turn_id),
-        ExecutionContextTarget::BranchHead { .. } => session
-            .selected_branch_head_cursor
-            .map(|cursor| cursor.turn_id),
-        ExecutionContextTarget::ExternalReference { .. } => None,
-    }?;
-
-    Some(TaskPromotionCandidate {
-        session_id: host.session_reference(session),
-        source_turn_id,
-    })
 }
 
 fn session_context_from_session(

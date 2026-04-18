@@ -14,8 +14,9 @@ use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
 use crate::kernel::event::KernelEvent;
 use crate::kernel::session::{
-    ExecutionConflictPolicy, ExecutionContextTarget, ExecutionDurability, ExecutionVisibility,
-    ExecutionWritePolicy, PersistedKernelRecord, QueuedTask,
+    CompletedLocalTaskResultsHandle, ExecutionConflictPolicy, ExecutionContextTarget,
+    ExecutionDurability, ExecutionVisibility, ExecutionWritePolicy, PersistedKernelRecord,
+    QueuedTask,
 };
 use crate::persistence::manager::StoreManager;
 use crate::persistence::manager::StoreSelector;
@@ -59,6 +60,7 @@ pub struct HarnessExecutionBinding {
     pub execution: HarnessExecutionMetadata,
     pub runtime_slot_id: Option<String>,
     pub trace_id: String,
+    pub completed_task_results: CompletedLocalTaskResultsHandle,
     pub event_context: HarnessEventContext,
 }
 
@@ -83,6 +85,7 @@ pub struct HarnessExecutionContext {
     pub import_capabilities: Option<BTreeMap<String, bool>>,
     pub governance_grant: Option<String>,
     pub event_context: Option<HarnessEventContext>,
+    pub completed_task_results: Option<CompletedLocalTaskResultsHandle>,
 }
 
 pub type ActiveHarnessExecutionContext = Arc<std::sync::Mutex<HarnessExecutionContext>>;

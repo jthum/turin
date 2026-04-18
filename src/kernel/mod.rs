@@ -19,6 +19,7 @@ pub mod session_refs;
 mod task_execution;
 mod task_lifecycle;
 mod task_planning;
+pub mod task_promotion;
 mod turn;
 
 pub(crate) use session_lifecycle::prepare_persisted_session_sidestep;
