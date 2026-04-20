@@ -6602,6 +6602,17 @@ async fn test_agent_can_promote_detached_local_sidestep_result() -> Result<()> {
                 local queued, queue_err = agent.session.queue("promote local sidestep")
                 if not queued then error("agent.session.queue failed: " .. tostring(queue_err)) end
             elseif task_count == 3 then
+                local task, task_err = agent.task(sidestep_id)
+                if task == nil then error("agent.task failed: " .. tostring(task_err)) end
+                if task.status ~= "success" then
+                    error("local sidestep status mismatch: " .. tostring(task.status))
+                end
+                if task.output ~= "worker-ok" then
+                    error("local sidestep output mismatch: " .. tostring(task.output))
+                end
+                if task.promotion_candidate == nil then
+                    error("local sidestep should expose promotion_candidate")
+                end
                 local branch, promote_err = agent.promote(sidestep_id, {
                     branch_name = "kept-local-sidestep"
                 })

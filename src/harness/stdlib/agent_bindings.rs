@@ -468,6 +468,33 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
         })?,
     )?;
 
+    // agent.task(task_id)
+    let task_execution_ctx = app_data.execution_ctx.clone();
+    let task_policy_snapshot = app_data.clone();
+    agent_table.set(
+        "task",
+        lua.create_function(move |lua, task_id: String| {
+            if let Err(err) =
+                require_governance_capability(&task_policy_snapshot, "runtime.agent.status")
+            {
+                return nil_err(lua, &err);
+            }
+            let completed_task_results = match current_completed_task_results(&task_execution_ctx) {
+                Ok(results) => results,
+                Err(err) => return nil_err(lua, &err),
+            };
+            let lookup_task_id = task_id.clone();
+            let result = bridge_async(async move {
+                let lock = completed_task_results.read().await;
+                lock.get(&lookup_task_id).cloned()
+            });
+            match result {
+                Some(result) => Ok(ok_value(lua.to_value(&result)?)),
+                None => nil_err(lua, &format!("Task '{}' not found", task_id)),
+            }
+        })?,
+    )?;
+
     // agent.complete
     {
         let manager = app_data.agent_manager.clone();
