@@ -366,6 +366,14 @@ pub struct SessionBranchDetail {
     pub name: String,
     pub head_turn_index: Option<u32>,
     pub source_turn_id: Option<i64>,
+    #[serde(default)]
+    pub origin_kind: String,
+    #[serde(default)]
+    pub origin_task_id: Option<String>,
+    #[serde(default)]
+    pub origin_execution_id: Option<String>,
+    #[serde(default)]
+    pub origin_metadata: Option<Value>,
     pub active: bool,
     pub created_at: String,
 }

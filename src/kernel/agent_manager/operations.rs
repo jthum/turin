@@ -721,6 +721,7 @@ impl AgentManager {
             &promotion,
             input_content,
             assistant_content,
+            Some(request_id),
             branch_name,
         )
         .await?;

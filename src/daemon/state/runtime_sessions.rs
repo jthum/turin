@@ -439,6 +439,13 @@ fn branch_detail_from_row(row: BranchHeadRow) -> SessionBranchDetail {
         name: row.name,
         head_turn_index: row.head_turn_depth,
         source_turn_id: row.created_from_turn_id,
+        origin_kind: row.origin_kind,
+        origin_task_id: row.origin_task_id,
+        origin_execution_id: row.origin_execution_id,
+        origin_metadata: row
+            .origin_metadata
+            .as_deref()
+            .and_then(|raw| serde_json::from_str(raw).ok()),
         active: row.is_active,
         created_at: row.created_at,
     }

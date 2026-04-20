@@ -673,6 +673,7 @@ async fn test_create_session_initializes_main_branch() {
         .unwrap()
         .expect("active branch head");
     assert_eq!(head.name, "main");
+    assert_eq!(head.origin_kind, "main");
     assert!(head.is_active);
     assert!(head.head_turn_id.is_none());
 }
@@ -711,6 +712,7 @@ async fn test_get_messages_follows_active_branch_path() {
         .await
         .unwrap();
     assert_eq!(branch.name, "alt");
+    assert_eq!(branch.origin_kind, "manual");
     assert!(branch.is_active);
 
     store

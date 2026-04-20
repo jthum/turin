@@ -17,7 +17,9 @@ use crate::kernel::session_refs::{
     describe_store_selector, format_session_reference, parse_session_reference,
 };
 use crate::persistence::manager::StoreSelector;
-use crate::persistence::schema::{BranchHeadRow, EventRow, MessageRow, SessionRow};
+use crate::persistence::schema::{
+    BranchHeadRow, BranchProvenance, EventRow, MessageRow, SessionRow,
+};
 use crate::persistence::state::{SessionReadTarget, StateStore};
 use crate::{
     inference::provider::{InferenceMessage, InferenceRole},
@@ -775,7 +777,13 @@ pub(crate) async fn prepare_persisted_session_sidestep(
             let source = resolve_sidestep_branch_source(&store, &row, resolved_target).await?;
             let branch_name = format!("sidestep-{}", uuid::Uuid::now_v7().simple());
             let branch = store
-                .create_branch_head_from_turn_index(row.id, &branch_name, source.turn_index, false)
+                .create_branch_head_from_turn_index_with_provenance(
+                    row.id,
+                    &branch_name,
+                    source.turn_index,
+                    false,
+                    BranchProvenance::sidestep(),
+                )
                 .await?;
             let branch_public_id = uuid::Uuid::from_slice(&branch.public_id)
                 .map(|value| value.to_string())

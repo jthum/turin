@@ -5,6 +5,7 @@ use anyhow::{Context, Result, anyhow};
 use crate::inference::content::{encode_content_json, task_content_from_parts};
 use crate::kernel::session_refs::parse_session_reference;
 use crate::persistence::manager::{StoreManager, StoreSelector};
+use crate::persistence::schema::BranchProvenance;
 use crate::persistence::state::TurnWriteTarget;
 use turin_types::TaskInputContent;
 
@@ -21,6 +22,10 @@ pub struct PromotedTaskBranch {
     pub name: String,
     pub head_turn_index: Option<u32>,
     pub source_turn_id: Option<i64>,
+    pub origin_kind: String,
+    pub origin_task_id: Option<String>,
+    pub origin_execution_id: Option<String>,
+    pub origin_metadata: Option<serde_json::Value>,
     pub active: bool,
     pub created_at: String,
 }
@@ -30,6 +35,7 @@ pub(crate) async fn promote_task_result(
     promotion: &TaskPromotionCandidate,
     input_content: &[TaskInputContent],
     assistant_content: &[TaskInputContent],
+    origin_task_id: Option<&str>,
     branch_name: Option<&str>,
 ) -> Result<PromotedTaskBranch> {
     if input_content.is_empty() {
@@ -67,7 +73,13 @@ pub(crate) async fn promote_task_result(
         .map(str::to_string)
         .unwrap_or_else(|| format!("promoted-{}", uuid::Uuid::now_v7().simple()));
     let branch = store
-        .create_branch_head_from_turn_id(row.id, &branch_name, promotion.source_turn_id, false)
+        .create_branch_head_from_turn_id_with_provenance(
+            row.id,
+            &branch_name,
+            promotion.source_turn_id,
+            false,
+            BranchProvenance::promotion(origin_task_id.map(str::to_string)),
+        )
         .await?;
     let turn_target = store
         .prepare_turn_write_target(
@@ -113,6 +125,13 @@ pub(crate) async fn promote_task_result(
         name: branch.name,
         head_turn_index: branch.head_turn_depth,
         source_turn_id: branch.created_from_turn_id,
+        origin_kind: branch.origin_kind,
+        origin_task_id: branch.origin_task_id,
+        origin_execution_id: branch.origin_execution_id,
+        origin_metadata: branch
+            .origin_metadata
+            .as_deref()
+            .and_then(|raw| serde_json::from_str(raw).ok()),
         active: branch.is_active,
         created_at: branch.created_at,
     })

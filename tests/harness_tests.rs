@@ -6573,6 +6573,7 @@ async fn test_agent_sidestep_creates_hidden_sibling_branch_on_current_session() 
         .iter()
         .find(|branch| !branch.is_active && branch.name.starts_with("sidestep-"))
         .expect("agent.sidestep should create a hidden sibling branch");
+    assert_eq!(sidestep_branch.origin_kind, "sidestep");
     let branch_messages = store
         .get_messages(
             session.internal_id.expect("session internal id"),
@@ -6626,6 +6627,12 @@ async fn test_agent_can_promote_detached_local_sidestep_result() -> Result<()> {
                 if branch == nil then error("agent.promote failed: " .. tostring(promote_err)) end
                 if branch.name ~= "kept-local-sidestep" then
                     error("promoted branch name mismatch: " .. tostring(branch.name))
+                end
+                if branch.origin_kind ~= "promotion" then
+                    error("promoted branch origin kind mismatch: " .. tostring(branch.origin_kind))
+                end
+                if branch.origin_task_id ~= sidestep_id then
+                    error("promoted branch origin task mismatch")
                 end
                 local task_after_promote, task_after_err = agent.task(sidestep_id)
                 if task_after_promote == nil then error("agent.task after promote failed: " .. tostring(task_after_err)) end
@@ -6716,6 +6723,7 @@ async fn test_agent_can_promote_detached_local_sidestep_result() -> Result<()> {
         .iter()
         .find(|branch| branch.name == "kept-local-sidestep")
         .context("promoted local sidestep branch should exist")?;
+    assert_eq!(promoted.origin_kind, "promotion");
     let messages = store
         .get_messages(
             session.internal_id.expect("session internal id"),

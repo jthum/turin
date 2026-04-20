@@ -12,6 +12,7 @@ use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::harness_hooks::TokenUsageHookAction;
 use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask, SessionState};
 use crate::kernel::turn;
+use crate::persistence::schema::BranchProvenance;
 use crate::tools::ToolContext;
 use turin_types::layout::{DEFAULT_LAYOUT_ROOT, resolve_relative_to};
 
@@ -43,7 +44,7 @@ impl ExecutionHost {
             });
         }
 
-        self.begin_turn_persistence(session).await?;
+        self.begin_turn_persistence(session, Some(task)).await?;
         self.append_task_user_message(session, &user_content);
 
         let effective_tools = crate::tools::policy::resolve_effective_tools_config(
@@ -161,7 +162,7 @@ impl ExecutionHost {
                 break Ok(TaskTerminalStatus::MaxTurns);
             }
 
-            self.begin_turn_persistence(session).await?;
+            self.begin_turn_persistence(session, Some(task)).await?;
 
             let turn_ctx = turn::TurnContext {
                 task_id: task.task_id.clone(),
@@ -251,7 +252,11 @@ impl ExecutionHost {
         }
     }
 
-    async fn begin_turn_persistence(&self, session: &mut SessionState) -> Result<()> {
+    async fn begin_turn_persistence(
+        &self,
+        session: &mut SessionState,
+        task: Option<&QueuedTask>,
+    ) -> Result<()> {
         if session.active_turn_write_target().is_some() {
             return Ok(());
         }
@@ -295,7 +300,7 @@ impl ExecutionHost {
                         == ExecutionConflictPolicy::ForkSibling =>
             {
                 let resolved = self
-                    .prepare_fork_sibling_turn_target(session, request)
+                    .prepare_fork_sibling_turn_target(session, task, request)
                     .await?;
                 warn!(
                     execution_id = %session.execution_id(),
@@ -320,6 +325,7 @@ impl ExecutionHost {
     async fn prepare_fork_sibling_turn_target(
         &self,
         session: &mut SessionState,
+        task: Option<&QueuedTask>,
         request: crate::persistence::state::TurnWriteTarget,
     ) -> Result<crate::persistence::state::TurnWriteTarget> {
         let crate::persistence::state::TurnWriteTarget::BranchAdvance {
@@ -336,6 +342,10 @@ impl ExecutionHost {
             .ok_or_else(|| anyhow!("Session missing internal persistence id"))?;
         let source_turn_index = turn_index.checked_sub(1);
         let fork_branch_name = format!("fork-{}-{}", session.execution_id(), turn_index);
+        let provenance = BranchProvenance::conflict_fork(
+            task.and_then(|task| (!task.task_id.is_empty()).then(|| task.task_id.clone())),
+            Some(session.execution_id().to_string()),
+        );
         let store = self
             .store_manager
             .open(&session.store_selector)
@@ -345,11 +355,12 @@ impl ExecutionHost {
         let (branch, resolved) = {
             let _guard = session.persistence_lock.lock().await;
             let branch = store
-                .create_branch_head_from_turn_index(
+                .create_branch_head_from_turn_index_with_provenance(
                     internal_id,
                     &fork_branch_name,
                     source_turn_index,
                     false,
+                    provenance,
                 )
                 .await?;
             let fork_request = match expected_head_turn_id {

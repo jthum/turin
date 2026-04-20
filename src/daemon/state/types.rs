@@ -93,6 +93,10 @@ pub struct SessionBranchDetail {
     pub name: String,
     pub head_turn_index: Option<u32>,
     pub source_turn_id: Option<i64>,
+    pub origin_kind: String,
+    pub origin_task_id: Option<String>,
+    pub origin_execution_id: Option<String>,
+    pub origin_metadata: Option<serde_json::Value>,
     pub active: bool,
     pub created_at: String,
 }

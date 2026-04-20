@@ -1,15 +1,18 @@
 use anyhow::{Context, Result, anyhow};
 
-use super::{BranchHeadRow, StateStore, TurnRow, TurnWriteError, TurnWriteTarget};
+use super::{
+    BranchHeadRow, BranchProvenance, StateStore, TurnRow, TurnWriteError, TurnWriteTarget,
+};
 
 impl StateStore {
     pub async fn initialize_main_branch(&self, session_id: i64) -> Result<BranchHeadRow> {
         let conn = self.connect().await?;
         let public_id = uuid::Uuid::now_v7().into_bytes().to_vec();
 
+        let provenance = BranchProvenance::main();
         conn.execute(
-            "INSERT INTO branch_heads (public_id, session_id, name) VALUES (?1, ?2, 'main')",
-            turso::params![public_id, session_id],
+            "INSERT INTO branch_heads (public_id, session_id, name, origin_kind) VALUES (?1, ?2, 'main', ?3)",
+            turso::params![public_id, session_id, provenance.origin_kind],
         )
         .await
         .context("Failed to insert initial main branch head")?;
@@ -39,6 +42,10 @@ impl StateStore {
                        bh.head_turn_id,
                        t.branch_depth,
                        bh.created_from_turn_id,
+                       bh.origin_kind,
+                       bh.origin_task_id,
+                       bh.origin_execution_id,
+                       bh.origin_metadata,
                        bh.created_at,
                        1 AS is_active
                 FROM sessions s
@@ -73,6 +80,10 @@ impl StateStore {
                        bh.head_turn_id,
                        t.branch_depth,
                        bh.created_from_turn_id,
+                       bh.origin_kind,
+                       bh.origin_task_id,
+                       bh.origin_execution_id,
+                       bh.origin_metadata,
                        bh.created_at,
                        CASE WHEN s.active_branch_head_id = bh.id THEN 1 ELSE 0 END AS is_active
                 FROM branch_heads bh
@@ -107,6 +118,10 @@ impl StateStore {
                        bh.head_turn_id,
                        t.branch_depth,
                        bh.created_from_turn_id,
+                       bh.origin_kind,
+                       bh.origin_task_id,
+                       bh.origin_execution_id,
+                       bh.origin_metadata,
                        bh.created_at,
                        CASE WHEN s.active_branch_head_id = bh.id THEN 1 ELSE 0 END AS is_active
                 FROM branch_heads bh
@@ -137,6 +152,10 @@ impl StateStore {
                        bh.head_turn_id,
                        t.branch_depth,
                        bh.created_from_turn_id,
+                       bh.origin_kind,
+                       bh.origin_task_id,
+                       bh.origin_execution_id,
+                       bh.origin_metadata,
                        bh.created_at,
                        CASE WHEN s.active_branch_head_id = bh.id THEN 1 ELSE 0 END AS is_active
                 FROM branch_heads bh
@@ -172,6 +191,10 @@ impl StateStore {
                        bh.head_turn_id,
                        t.branch_depth,
                        bh.created_from_turn_id,
+                       bh.origin_kind,
+                       bh.origin_task_id,
+                       bh.origin_execution_id,
+                       bh.origin_metadata,
                        bh.created_at,
                        CASE WHEN s.active_branch_head_id = bh.id THEN 1 ELSE 0 END AS is_active
                 FROM branch_heads bh
@@ -198,12 +221,36 @@ impl StateStore {
         from_turn_index: Option<u32>,
         activate: bool,
     ) -> Result<BranchHeadRow> {
+        self.create_branch_head_from_turn_index_with_provenance(
+            session_id,
+            name,
+            from_turn_index,
+            activate,
+            BranchProvenance::manual(),
+        )
+        .await
+    }
+
+    pub async fn create_branch_head_from_turn_index_with_provenance(
+        &self,
+        session_id: i64,
+        name: &str,
+        from_turn_index: Option<u32>,
+        activate: bool,
+        provenance: BranchProvenance,
+    ) -> Result<BranchHeadRow> {
         let conn = self.connect().await?;
         let public_id = uuid::Uuid::now_v7().into_bytes().to_vec();
         let source_turn_id = self
             .resolve_branch_source_turn(session_id, from_turn_index)
             .await?;
 
+        let BranchProvenance {
+            origin_kind,
+            origin_task_id,
+            origin_execution_id,
+            origin_metadata,
+        } = provenance;
         conn.execute(
             r#"
             INSERT INTO branch_heads (
@@ -211,10 +258,24 @@ impl StateStore {
                 session_id,
                 name,
                 head_turn_id,
-                created_from_turn_id
-            ) VALUES (?1, ?2, ?3, ?4, ?5)
+                created_from_turn_id,
+                origin_kind,
+                origin_task_id,
+                origin_execution_id,
+                origin_metadata
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
             "#,
-            turso::params![public_id, session_id, name, source_turn_id, source_turn_id],
+            turso::params![
+                public_id,
+                session_id,
+                name,
+                source_turn_id,
+                source_turn_id,
+                origin_kind,
+                origin_task_id,
+                origin_execution_id,
+                origin_metadata
+            ],
         )
         .await
         .with_context(|| format!("Failed to create branch head '{}'", name))?;
@@ -243,6 +304,24 @@ impl StateStore {
         source_turn_id: i64,
         activate: bool,
     ) -> Result<BranchHeadRow> {
+        self.create_branch_head_from_turn_id_with_provenance(
+            session_id,
+            name,
+            source_turn_id,
+            activate,
+            BranchProvenance::manual(),
+        )
+        .await
+    }
+
+    pub async fn create_branch_head_from_turn_id_with_provenance(
+        &self,
+        session_id: i64,
+        name: &str,
+        source_turn_id: i64,
+        activate: bool,
+        provenance: BranchProvenance,
+    ) -> Result<BranchHeadRow> {
         let source_turn = self
             .get_turn_row(source_turn_id)
             .await?
@@ -258,6 +337,12 @@ impl StateStore {
         let conn = self.connect().await?;
         let public_id = uuid::Uuid::now_v7().into_bytes().to_vec();
 
+        let BranchProvenance {
+            origin_kind,
+            origin_task_id,
+            origin_execution_id,
+            origin_metadata,
+        } = provenance;
         conn.execute(
             r#"
             INSERT INTO branch_heads (
@@ -265,10 +350,24 @@ impl StateStore {
                 session_id,
                 name,
                 head_turn_id,
-                created_from_turn_id
-            ) VALUES (?1, ?2, ?3, ?4, ?5)
+                created_from_turn_id,
+                origin_kind,
+                origin_task_id,
+                origin_execution_id,
+                origin_metadata
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
             "#,
-            turso::params![public_id, session_id, name, source_turn_id, source_turn_id],
+            turso::params![
+                public_id,
+                session_id,
+                name,
+                source_turn_id,
+                source_turn_id,
+                origin_kind,
+                origin_task_id,
+                origin_execution_id,
+                origin_metadata
+            ],
         )
         .await
         .with_context(|| format!("Failed to create branch head '{}' from turn", name))?;
@@ -704,7 +803,11 @@ fn branch_head_from_row(row: &turso::Row) -> Result<BranchHeadRow> {
         head_turn_id: row.get::<Option<i64>>(4)?,
         head_turn_depth: row.get::<Option<i64>>(5)?.map(|value| value as u32),
         created_from_turn_id: row.get::<Option<i64>>(6)?,
-        created_at: row.get::<String>(7)?,
-        is_active: row.get::<i64>(8)? != 0,
+        origin_kind: row.get::<String>(7)?,
+        origin_task_id: row.get::<Option<String>>(8)?,
+        origin_execution_id: row.get::<Option<String>>(9)?,
+        origin_metadata: row.get::<Option<String>>(10)?,
+        created_at: row.get::<String>(11)?,
+        is_active: row.get::<i64>(12)? != 0,
     })
 }

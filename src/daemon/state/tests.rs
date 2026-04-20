@@ -320,6 +320,11 @@ async fn detached_sidestep_task_can_be_promoted_to_sibling_branch() -> Result<()
         .await?;
     assert_eq!(promoted.name, "kept-side-question");
     assert_eq!(promoted.source_turn_id, Some(promotion.source_turn_id));
+    assert_eq!(promoted.origin_kind, "promotion");
+    assert_eq!(
+        promoted.origin_task_id.as_deref(),
+        Some(sidestep.request_id.as_str())
+    );
     assert!(!promoted.active);
     let promoted_again = state
         .promote_task_params(PromoteTaskParams {
@@ -366,6 +371,11 @@ async fn detached_sidestep_task_can_be_promoted_to_sibling_branch() -> Result<()
     assert_eq!(
         uuid::Uuid::from_slice(&branch.public_id)?.to_string(),
         branch_uuid.to_string()
+    );
+    assert_eq!(branch.origin_kind, "promotion");
+    assert_eq!(
+        branch.origin_task_id.as_deref(),
+        Some(sidestep.request_id.as_str())
     );
     let messages = store
         .get_messages(
@@ -450,11 +460,11 @@ async fn sidestep_task_can_run_durably_on_a_sibling_branch() -> Result<()> {
         .await?
         .expect("branch list visible");
     assert_eq!(after_branches.len(), before_branches.len() + 1);
-    assert!(
-        after_branches
-            .iter()
-            .any(|branch| !branch.active && branch.name.starts_with("sidestep-"))
-    );
+    let sidestep_branch = after_branches
+        .iter()
+        .find(|branch| !branch.active && branch.name.starts_with("sidestep-"))
+        .expect("sidestep sibling branch visible");
+    assert_eq!(sidestep_branch.origin_kind, "sidestep");
 
     let session_ref = parse_session_reference(&live.session_id)?;
     let store_selector = session_ref

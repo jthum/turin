@@ -1152,11 +1152,14 @@ async fn test_stale_branch_conflict_can_fork_sibling_durably() -> Result<()> {
 
     let branch_heads = store.list_branch_heads(internal_id).await?;
     assert_eq!(branch_heads.len(), 2);
-    assert!(
-        branch_heads
-            .iter()
-            .any(|branch| branch.id == session.selected_branch_head_id().unwrap()),
-        "session should be retargeted to the forked sibling branch"
+    let forked_branch = branch_heads
+        .iter()
+        .find(|branch| branch.id == session.selected_branch_head_id().unwrap())
+        .expect("session should be retargeted to the forked sibling branch");
+    assert_eq!(forked_branch.origin_kind, "conflict_fork");
+    assert_eq!(
+        forked_branch.origin_execution_id.as_deref(),
+        Some(session.execution_id())
     );
 
     kernel.end_session(&mut session).await?;

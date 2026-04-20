@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 11;
+pub(crate) const SCHEMA_VERSION: u32 = 12;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -55,7 +55,12 @@ CREATE TABLE IF NOT EXISTS branch_heads (
     name                 TEXT NOT NULL,
     head_turn_id         INTEGER REFERENCES turns(id),
     created_from_turn_id INTEGER REFERENCES turns(id),
+    origin_kind          TEXT NOT NULL DEFAULT 'manual',
+    origin_task_id       TEXT,
+    origin_execution_id  TEXT,
+    origin_metadata      TEXT,
     created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (origin_metadata IS NULL OR json_valid(origin_metadata)),
     UNIQUE(session_id, name)
 );
 
@@ -247,8 +252,62 @@ pub struct BranchHeadRow {
     pub head_turn_id: Option<i64>,
     pub head_turn_depth: Option<u32>,
     pub created_from_turn_id: Option<i64>,
+    pub origin_kind: String,
+    pub origin_task_id: Option<String>,
+    pub origin_execution_id: Option<String>,
+    pub origin_metadata: Option<String>,
     pub created_at: String,
     pub is_active: bool,
+}
+
+/// Compact durable provenance for why a branch head exists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchProvenance {
+    pub origin_kind: String,
+    pub origin_task_id: Option<String>,
+    pub origin_execution_id: Option<String>,
+    pub origin_metadata: Option<String>,
+}
+
+impl BranchProvenance {
+    pub fn new(kind: impl Into<String>) -> Self {
+        Self {
+            origin_kind: kind.into(),
+            origin_task_id: None,
+            origin_execution_id: None,
+            origin_metadata: None,
+        }
+    }
+
+    pub fn manual() -> Self {
+        Self::new("manual")
+    }
+
+    pub fn main() -> Self {
+        Self::new("main")
+    }
+
+    pub fn sidestep() -> Self {
+        Self::new("sidestep")
+    }
+
+    pub fn conflict_fork(task_id: Option<String>, execution_id: Option<String>) -> Self {
+        Self {
+            origin_kind: "conflict_fork".to_string(),
+            origin_task_id: task_id,
+            origin_execution_id: execution_id,
+            origin_metadata: None,
+        }
+    }
+
+    pub fn promotion(task_id: Option<String>) -> Self {
+        Self {
+            origin_kind: "promotion".to_string(),
+            origin_task_id: task_id,
+            origin_execution_id: None,
+            origin_metadata: None,
+        }
+    }
 }
 
 /// A row from the `tool_executions` table.

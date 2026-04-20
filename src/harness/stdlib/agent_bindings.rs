@@ -274,6 +274,23 @@ fn branch_row_to_lua_table(
         Some(turn_id) => table.set("source_turn_id", turn_id)?,
         None => table.set("source_turn_id", Value::Nil)?,
     }
+    table.set("origin_kind", row.origin_kind.clone())?;
+    match row.origin_task_id.as_deref() {
+        Some(task_id) => table.set("origin_task_id", task_id)?,
+        None => table.set("origin_task_id", Value::Nil)?,
+    }
+    match row.origin_execution_id.as_deref() {
+        Some(execution_id) => table.set("origin_execution_id", execution_id)?,
+        None => table.set("origin_execution_id", Value::Nil)?,
+    }
+    let metadata = row
+        .origin_metadata
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok());
+    match metadata {
+        Some(metadata) => table.set("origin_metadata", lua.to_value(&metadata)?)?,
+        None => table.set("origin_metadata", Value::Nil)?,
+    }
     table.set("active", row.is_active)?;
     table.set("deferred", deferred)?;
     table.set("created_at", row.created_at.clone())?;
@@ -460,6 +477,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     &promotion,
                     input_content,
                     assistant_content,
+                    Some(&task_id),
                     branch_name.as_deref(),
                 )
                 .await?;
