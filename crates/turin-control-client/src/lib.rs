@@ -269,6 +269,7 @@ pub struct TaskStatus {
     pub task_turn_count: Option<u32>,
     pub branch_outcome: Option<serde_json::Value>,
     pub promotion_candidate: Option<TaskPromotionCandidate>,
+    pub promoted_branch: Option<SessionBranchDetail>,
     pub output: Option<String>,
     #[serde(default)]
     pub assistant_content: Option<Vec<turin_types::TaskInputContent>>,

@@ -45,6 +45,7 @@ pub struct PeerAgentTaskResult {
     pub task_turn_count: u32,
     pub branch_outcome: Option<TaskBranchOutcome>,
     pub promotion_candidate: Option<TaskPromotionCandidate>,
+    pub promoted_branch: Option<PromotedTaskBranch>,
     pub output: Option<String>,
     pub assistant_content: Option<Vec<TaskInputContent>>,
     #[serde(skip_serializing)]
@@ -75,6 +76,7 @@ pub struct TaskStatusSnapshot {
     pub task_turn_count: Option<u32>,
     pub branch_outcome: Option<TaskBranchOutcome>,
     pub promotion_candidate: Option<TaskPromotionCandidate>,
+    pub promoted_branch: Option<PromotedTaskBranch>,
     pub output: Option<String>,
     pub assistant_content: Option<Vec<TaskInputContent>>,
     pub error: Option<String>,
@@ -453,6 +455,12 @@ impl CompletedTaskCache {
             if let Some(evicted) = self.order.pop_front() {
                 self.results.remove(&evicted);
             }
+        }
+    }
+
+    fn mark_promoted(&mut self, request_id: &str, branch: PromotedTaskBranch) {
+        if let Some(result) = self.results.get_mut(request_id) {
+            result.promoted_branch = Some(branch);
         }
     }
 }

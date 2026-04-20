@@ -386,6 +386,7 @@ impl ExecutionHost {
             task_turn_count,
             branch_outcome,
             promotion_candidate: self.promotable_detached_candidate(session, status),
+            promoted_branch: None,
             output: self.last_assistant_text(session),
             assistant_content: self.last_assistant_content(session),
             promotion_input_content: Some(Self::task_input_content(task)),

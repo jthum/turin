@@ -604,6 +604,7 @@ impl AgentManager {
                 task_turn_count: None,
                 branch_outcome: None,
                 promotion_candidate: None,
+                promoted_branch: None,
                 output: None,
                 assistant_content: None,
                 error: None,
@@ -628,6 +629,7 @@ impl AgentManager {
                     task_turn_count: Some(result.task_turn_count),
                     branch_outcome: result.branch_outcome,
                     promotion_candidate: result.promotion_candidate,
+                    promoted_branch: result.promoted_branch,
                     output: result.output,
                     assistant_content: result.assistant_content,
                     error: result.error,
@@ -697,6 +699,9 @@ impl AgentManager {
             .completed_result(request_id)
             .await
             .ok_or_else(|| anyhow!("Task '{}' not found", request_id))?;
+        if let Some(branch) = result.promoted_branch {
+            return Ok(branch);
+        }
         let promotion = result
             .promotion_candidate
             .clone()
@@ -711,14 +716,19 @@ impl AgentManager {
             .as_ref()
             .filter(|content| !content.is_empty())
             .ok_or_else(|| anyhow!("Task '{}' is missing promotable task input", request_id))?;
-        promote_task_result(
+        let branch = promote_task_result(
             &self.store_manager,
             &promotion,
             input_content,
             assistant_content,
             branch_name,
         )
-        .await
+        .await?;
+        self.completed_results
+            .write()
+            .await
+            .mark_promoted(request_id, branch.clone());
+        Ok(branch)
     }
 
     pub(crate) async fn mark_task_running(&self, request_id: &str, runtime_task_id: String) {

@@ -434,6 +434,9 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     lock.get(&task_id).cloned()
                 }
                 .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+                if let Some(branch) = completed.promoted_branch {
+                    return Ok::<_, anyhow::Error>(branch);
+                }
                 let promotion = completed
                     .promotion_candidate
                     .clone()
@@ -452,14 +455,19 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     .ok_or_else(|| {
                         anyhow::anyhow!("Task '{}' is missing promotable task input", task_id)
                     })?;
-                promote_task_result(
+                let branch = promote_task_result(
                     &store_manager,
                     &promotion,
                     input_content,
                     assistant_content,
                     branch_name.as_deref(),
                 )
-                .await
+                .await?;
+                completed_task_results
+                    .write()
+                    .await
+                    .mark_promoted(&task_id, branch.clone());
+                Ok::<_, anyhow::Error>(branch)
             });
             match result {
                 Ok(branch) => Ok(ok_value(lua.to_value(&branch)?)),

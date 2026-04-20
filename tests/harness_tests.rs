@@ -6377,6 +6377,13 @@ async fn test_runtime_agent_can_promote_detached_sidestep_result() -> Result<()>
             if promoted.source_turn_id ~= sidestep_res.promotion_candidate.source_turn_id then
                 error("promoted branch source turn mismatch")
             end
+            local promoted_again, promote_again_err = runtime.agent.promote(sidestep_id, {
+                branch_name = "should-not-create-new-branch"
+            })
+            if promoted_again == nil then error("runtime.agent.promote retry failed: " .. tostring(promote_again_err)) end
+            if promoted_again.branch_id ~= promoted.branch_id then
+                error("runtime.agent.promote should be idempotent")
+            end
             return ALLOW
         end
     "#;
@@ -6619,6 +6626,21 @@ async fn test_agent_can_promote_detached_local_sidestep_result() -> Result<()> {
                 if branch == nil then error("agent.promote failed: " .. tostring(promote_err)) end
                 if branch.name ~= "kept-local-sidestep" then
                     error("promoted branch name mismatch: " .. tostring(branch.name))
+                end
+                local task_after_promote, task_after_err = agent.task(sidestep_id)
+                if task_after_promote == nil then error("agent.task after promote failed: " .. tostring(task_after_err)) end
+                if task_after_promote.promoted_branch == nil then
+                    error("local task should expose promoted_branch after promotion")
+                end
+                if task_after_promote.promoted_branch.branch_id ~= branch.branch_id then
+                    error("local promoted branch metadata mismatch")
+                end
+                local branch_again, promote_again_err = agent.promote(sidestep_id, {
+                    branch_name = "should-not-create-new-branch"
+                })
+                if branch_again == nil then error("agent.promote retry failed: " .. tostring(promote_again_err)) end
+                if branch_again.branch_id ~= branch.branch_id then
+                    error("agent.promote should be idempotent")
                 end
             end
             return ALLOW

@@ -12,7 +12,7 @@ use crate::kernel::event::TaskBranchOutcome;
 use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::harness_runtime::HarnessInstance;
 use crate::kernel::identity::RuntimeIdentity;
-use crate::kernel::task_promotion::TaskPromotionCandidate;
+use crate::kernel::task_promotion::{PromotedTaskBranch, TaskPromotionCandidate};
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::state::TurnWriteTarget;
 use turin_types::{TaskInputContent, ToolsConfig};
@@ -248,6 +248,7 @@ pub struct LocalTaskResult {
     pub task_turn_count: u32,
     pub branch_outcome: Option<TaskBranchOutcome>,
     pub promotion_candidate: Option<TaskPromotionCandidate>,
+    pub promoted_branch: Option<PromotedTaskBranch>,
     pub output: Option<String>,
     pub assistant_content: Option<Vec<TaskInputContent>>,
     #[serde(skip_serializing)]
@@ -277,6 +278,12 @@ impl CompletedLocalTaskResults {
 
     pub fn get(&self, task_id: &str) -> Option<&LocalTaskResult> {
         self.results.get(task_id)
+    }
+
+    pub fn mark_promoted(&mut self, task_id: &str, branch: PromotedTaskBranch) {
+        if let Some(result) = self.results.get_mut(task_id) {
+            result.promoted_branch = Some(branch);
+        }
     }
 }
 
