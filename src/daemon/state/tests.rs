@@ -321,6 +321,33 @@ async fn detached_sidestep_task_can_be_promoted_to_sibling_branch() -> Result<()
     assert_eq!(promoted.name, "kept-side-question");
     assert_eq!(promoted.source_turn_id, Some(promotion.source_turn_id));
     assert!(!promoted.active);
+    let promoted_again = state
+        .promote_task_params(PromoteTaskParams {
+            request_id: sidestep.request_id.clone(),
+            branch_name: Some("should-not-create-new-branch".to_string()),
+        })
+        .await?;
+    assert_eq!(promoted_again.branch_id, promoted.branch_id);
+    assert_eq!(promoted_again.name, promoted.name);
+
+    let task_after_promote = state
+        .get_task(&sidestep.request_id)
+        .await
+        .expect("promoted task should remain visible");
+    assert_eq!(
+        task_after_promote
+            .promoted_branch
+            .as_ref()
+            .map(|branch| branch.branch_id.as_str()),
+        Some(promoted.branch_id.as_str())
+    );
+    assert!(state.list_tasks().await.iter().any(|task| {
+        task.request_id == sidestep.request_id
+            && task
+                .promoted_branch
+                .as_ref()
+                .is_some_and(|branch| branch.branch_id == promoted.branch_id)
+    }));
 
     let session_ref = parse_session_reference(&live.session_id)?;
     let store_selector = session_ref

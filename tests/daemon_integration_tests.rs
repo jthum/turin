@@ -824,7 +824,7 @@ async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()
         daemon
             .request(DaemonRequest::TaskPromote(
                 turin::daemon::protocol::PromoteTaskParams {
-                    request_id: sidestep_request_id,
+                    request_id: sidestep_request_id.clone(),
                     branch_name: Some("kept-side-question".to_string()),
                 },
             ))
@@ -832,6 +832,48 @@ async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()
     );
     assert_eq!(promoted["name"], "kept-side-question");
     assert_eq!(promoted["active"], false);
+    let promoted_again = result_value(
+        daemon
+            .request(DaemonRequest::TaskPromote(
+                turin::daemon::protocol::PromoteTaskParams {
+                    request_id: sidestep_request_id.clone(),
+                    branch_name: Some("should-not-create-new-branch".to_string()),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(promoted_again["branch_id"], promoted["branch_id"]);
+    assert_eq!(promoted_again["name"], promoted["name"]);
+
+    let task_after_promote = result_value(
+        daemon
+            .request(DaemonRequest::TaskGet(
+                turin::daemon::protocol::TaskIdParams {
+                    request_id: sidestep_request_id.clone(),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(
+        task_after_promote["promoted_branch"]["branch_id"],
+        promoted["branch_id"]
+    );
+
+    let task_list = result_value(
+        daemon
+            .request(DaemonRequest::TaskList(
+                turin::daemon::protocol::NoParams {},
+            ))
+            .await?,
+    );
+    assert!(
+        task_list["tasks"]
+            .as_array()
+            .context("task.list should include tasks")?
+            .iter()
+            .any(|task| task["request_id"] == sidestep_request_id
+                && task["promoted_branch"]["branch_id"] == promoted["branch_id"])
+    );
 
     let branches = result_value(
         daemon
