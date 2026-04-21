@@ -870,6 +870,114 @@ async fn test_list_branch_heads_from_source_turn_returns_siblings_only() {
 }
 
 #[tokio::test]
+async fn test_sparse_graph_overlay_is_empty_for_ordinary_session() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    store
+        .insert_message(
+            session,
+            turn(0),
+            "user",
+            &json!([{"type": "text", "text": "ordinary"}]),
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        store
+            .list_graph_nodes_for_session(session)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store
+            .list_graph_edges_for_session(session)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn test_sparse_graph_overlay_records_opt_in_branch_relationships() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    store
+        .insert_message(
+            session,
+            turn(0),
+            "user",
+            &json!([{"type": "text", "text": "root"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    let branch = store
+        .create_branch_head_from_turn_index(session, "candidate-a", Some(0), false)
+        .await
+        .unwrap();
+    let branch_public_id = uuid::Uuid::from_slice(&branch.public_id)
+        .unwrap()
+        .to_string();
+
+    let node = store
+        .create_graph_node(
+            Some(session),
+            "experiment",
+            Some("compare refactors"),
+            GraphProvenance::new(Some("task-123".to_string()), Some("exec-456".to_string())),
+            Some(&json!({"purpose": "speculation"})),
+        )
+        .await
+        .unwrap();
+    let node_public_id = uuid::Uuid::from_slice(&node.public_id).unwrap().to_string();
+    let source = GraphRef::new("graph_node", node_public_id);
+    let target = GraphRef::new("branch_head", branch_public_id);
+
+    let mut edge_input = GraphEdgeCreate::new(source.clone(), target.clone(), "contains");
+    edge_input.session_id = Some(session);
+    edge_input.source_role = Some("group".to_string());
+    edge_input.target_role = Some("candidate".to_string());
+    edge_input.metadata = Some(json!({"rank": 1}));
+    let edge = store.create_graph_edge(edge_input).await.unwrap();
+
+    assert_eq!(edge.source, source);
+    assert_eq!(edge.target, target);
+    assert_eq!(edge.relation_kind, "contains");
+    assert_eq!(edge.target_role.as_deref(), Some("candidate"));
+
+    let nodes = store.list_graph_nodes_for_session(session).await.unwrap();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].kind, "experiment");
+    assert_eq!(nodes[0].origin_task_id.as_deref(), Some("task-123"));
+    assert!(
+        nodes[0]
+            .metadata
+            .as_deref()
+            .unwrap()
+            .contains("speculation")
+    );
+
+    let outgoing = store.list_graph_edges_from(&edge.source).await.unwrap();
+    assert_eq!(outgoing.len(), 1);
+    assert_eq!(outgoing[0].id, edge.id);
+
+    let incoming = store.list_graph_edges_to(&edge.target).await.unwrap();
+    assert_eq!(incoming.len(), 1);
+    assert_eq!(incoming[0].id, edge.id);
+}
+
+#[tokio::test]
 async fn test_prepare_turn_write_target_rejects_stale_branch_head_and_reuses_resolved_turn() {
     let store = StateStore::open_memory().await.unwrap();
     let session = store

@@ -17,6 +17,7 @@ use turso::{Connection, Database};
 use super::schema::*;
 
 mod events;
+mod graph;
 mod kv;
 mod messages;
 mod sessions;

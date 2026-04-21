@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 12;
+pub(crate) const SCHEMA_VERSION: u32 = 13;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -86,6 +86,39 @@ CREATE TABLE IF NOT EXISTS turn_tool_executions (
     created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Sparse semantic graph overlay. This stores opt-in meaning across existing
+-- entities without replacing the turn tree or branch heads.
+CREATE TABLE IF NOT EXISTS graph_nodes (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_id           BLOB(16) UNIQUE NOT NULL,
+    session_id          INTEGER REFERENCES sessions(id),
+    kind                TEXT NOT NULL,
+    label               TEXT,
+    origin_task_id      TEXT,
+    origin_execution_id TEXT,
+    metadata            TEXT,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (metadata IS NULL OR json_valid(metadata))
+);
+
+CREATE TABLE IF NOT EXISTS graph_edges (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_id           BLOB(16) UNIQUE NOT NULL,
+    session_id          INTEGER REFERENCES sessions(id),
+    source_kind         TEXT NOT NULL,
+    source_id           TEXT NOT NULL,
+    target_kind         TEXT NOT NULL,
+    target_id           TEXT NOT NULL,
+    relation_kind       TEXT NOT NULL,
+    source_role         TEXT,
+    target_role         TEXT,
+    origin_task_id      TEXT,
+    origin_execution_id TEXT,
+    metadata            TEXT,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (metadata IS NULL OR json_valid(metadata))
+);
+
 -- Scoped key-value store
 CREATE TABLE IF NOT EXISTS kv (
     scope_kind TEXT NOT NULL,
@@ -130,6 +163,10 @@ CREATE INDEX IF NOT EXISTS idx_turns_session_depth ON turns(session_id, branch_d
 CREATE INDEX IF NOT EXISTS idx_branch_heads_session ON branch_heads(session_id);
 CREATE INDEX IF NOT EXISTS idx_turn_messages_turn ON turn_messages(turn_id);
 CREATE INDEX IF NOT EXISTS idx_turn_tool_executions_turn ON turn_tool_executions(turn_id);
+CREATE INDEX IF NOT EXISTS idx_graph_nodes_session_kind ON graph_nodes(session_id, kind);
+CREATE INDEX IF NOT EXISTS idx_graph_edges_session_relation ON graph_edges(session_id, relation_kind);
+CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source_kind, source_id);
+CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target_kind, target_id);
 
 -- Cognitive Memory
 CREATE TABLE IF NOT EXISTS memories (
@@ -306,6 +343,97 @@ impl BranchProvenance {
             origin_task_id: task_id,
             origin_execution_id: None,
             origin_metadata: None,
+        }
+    }
+}
+
+/// Generic reference used by the sparse semantic graph overlay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphRef {
+    pub kind: String,
+    pub id: String,
+}
+
+impl GraphRef {
+    pub fn new(kind: impl Into<String>, id: impl Into<String>) -> Self {
+        Self {
+            kind: kind.into(),
+            id: id.into(),
+        }
+    }
+}
+
+/// A row from the `graph_nodes` table.
+#[derive(Debug, Clone)]
+pub struct GraphNodeRow {
+    pub id: i64,
+    pub public_id: Vec<u8>,
+    pub session_id: Option<i64>,
+    pub kind: String,
+    pub label: Option<String>,
+    pub origin_task_id: Option<String>,
+    pub origin_execution_id: Option<String>,
+    pub metadata: Option<String>,
+    pub created_at: String,
+}
+
+/// A row from the `graph_edges` table.
+#[derive(Debug, Clone)]
+pub struct GraphEdgeRow {
+    pub id: i64,
+    pub public_id: Vec<u8>,
+    pub session_id: Option<i64>,
+    pub source: GraphRef,
+    pub target: GraphRef,
+    pub relation_kind: String,
+    pub source_role: Option<String>,
+    pub target_role: Option<String>,
+    pub origin_task_id: Option<String>,
+    pub origin_execution_id: Option<String>,
+    pub metadata: Option<String>,
+    pub created_at: String,
+}
+
+/// Input for creating a sparse semantic graph edge.
+#[derive(Debug, Clone)]
+pub struct GraphEdgeCreate {
+    pub session_id: Option<i64>,
+    pub source: GraphRef,
+    pub target: GraphRef,
+    pub relation_kind: String,
+    pub source_role: Option<String>,
+    pub target_role: Option<String>,
+    pub provenance: GraphProvenance,
+    pub metadata: Option<serde_json::Value>,
+}
+
+impl GraphEdgeCreate {
+    pub fn new(source: GraphRef, target: GraphRef, relation_kind: impl Into<String>) -> Self {
+        Self {
+            session_id: None,
+            source,
+            target,
+            relation_kind: relation_kind.into(),
+            source_role: None,
+            target_role: None,
+            provenance: GraphProvenance::default(),
+            metadata: None,
+        }
+    }
+}
+
+/// Optional provenance attached to semantic graph nodes and edges.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GraphProvenance {
+    pub origin_task_id: Option<String>,
+    pub origin_execution_id: Option<String>,
+}
+
+impl GraphProvenance {
+    pub fn new(origin_task_id: Option<String>, origin_execution_id: Option<String>) -> Self {
+        Self {
+            origin_task_id,
+            origin_execution_id,
         }
     }
 }
