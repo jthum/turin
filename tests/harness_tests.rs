@@ -6051,6 +6051,129 @@ async fn test_runtime_db_api_and_context_glob() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_runtime_graph_api_records_sparse_relationships() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_runtime_graph_api.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    let harness_code = r#"
+        function on_turn_prepare(ctx)
+            local before, be = runtime.graph.nodes()
+            if before == nil then error("runtime.graph.nodes before failed: " .. tostring(be)) end
+            if #before ~= 0 then error("ordinary session should not start with graph nodes") end
+
+            local node, ne = runtime.graph.node_create({
+                kind = "experiment",
+                label = "compare approaches",
+                origin_task_id = "task-from-harness",
+                metadata = { purpose = "speculation" }
+            })
+            if node == nil then error("runtime.graph.node_create failed: " .. tostring(ne)) end
+            if node.node_id == nil then error("graph node missing node_id") end
+            if node.metadata.purpose ~= "speculation" then error("graph node metadata mismatch") end
+
+            local edge, ee = runtime.graph.edge_create({
+                source = { kind = "graph_node", id = node.node_id },
+                target = { kind = "external_path", id = "wiki://note/interface-design" },
+                relation_kind = "contains",
+                source_role = "group",
+                target_role = "candidate",
+                metadata = { rank = 1 }
+            })
+            if edge == nil then error("runtime.graph.edge_create failed: " .. tostring(ee)) end
+            if edge.relation_kind ~= "contains" then error("graph edge relation mismatch") end
+            if edge.target_role ~= "candidate" then error("graph edge role mismatch") end
+
+            local edges, le = runtime.graph.edges({
+                source = { kind = "graph_node", id = node.node_id }
+            })
+            if edges == nil then error("runtime.graph.edges failed: " .. tostring(le)) end
+            if #edges ~= 1 then error("runtime.graph.edges source lookup mismatch") end
+
+            return ALLOW
+        end
+    "#;
+    std::fs::write(harness_dir.join("runtime_graph.lua"), harness_code)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        tools: Default::default(),
+        agent: AgentConfig {
+            tools: Default::default(),
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Runtime graph API test".to_string(),
+            thinking: None,
+            mode: turin::kernel::config::AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+            inference: Default::default(),
+            persistence: Default::default(),
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: turin::kernel::config::KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        layout: Default::default(),
+        inference: InferenceConfig::default(),
+        persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+            memory_limit_mb: 32,
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: Some(EmbeddingConfig::noop()),
+        governance: turin::kernel::config::GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("exercise runtime graph api".to_string()))
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    let store = kernel.store_manager().open(&session.store_selector).await?;
+    let internal_id = session.internal_id.expect("session internal id");
+    let nodes = store.list_graph_nodes_for_session(internal_id).await?;
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].kind, "experiment");
+    assert_eq!(
+        nodes[0].origin_task_id.as_deref(),
+        Some("task-from-harness")
+    );
+    let edges = store.list_graph_edges_for_session(internal_id).await?;
+    assert_eq!(edges.len(), 1);
+    assert_eq!(edges[0].relation_kind, "contains");
+    assert_eq!(edges[0].target.kind, "external_path");
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_runtime_agent_peer.db");

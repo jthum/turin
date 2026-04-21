@@ -10,6 +10,7 @@ run.log
 
 # Working Docs
 .workspace/
+.codex
 
 # Environment / Secrets
 .env
