@@ -662,8 +662,14 @@ impl StateStore {
         session_id: i64,
         turn_ids: &[i64],
     ) -> Result<Vec<TurnRow>> {
+        if turn_ids.is_empty() {
+            anyhow::bail!("Selected path must include at least one turn");
+        }
         let mut turns = Vec::with_capacity(turn_ids.len());
         for turn_id in turn_ids {
+            if turns.iter().any(|turn: &TurnRow| turn.id == *turn_id) {
+                anyhow::bail!("Selected path contains duplicate turn {}", turn_id);
+            }
             let Some(turn) = self.get_turn_row(*turn_id).await? else {
                 anyhow::bail!("Turn {} on selected path could not be loaded", turn_id);
             };

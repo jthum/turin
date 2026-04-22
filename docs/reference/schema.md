@@ -181,19 +181,19 @@ Key fields:
 
 Events may be attached to a turn or session-wide.
 
-## Legacy / Compatibility Tables
+## Compatibility Mirror Tables
 
 ### `messages`
 
-Older message table keyed by `session_id` and `turn_index`.
+Message mirror keyed by `session_id` and `turn_index`.
 
-New branch-native paths should prefer `turn_messages`.
+Branch-native reads use `turn_messages`. This table is still written by the current persistence path for compatibility with older query surfaces and examples. It is a removal candidate once those surfaces are ported.
 
 ### `tool_executions`
 
-Older tool-execution table keyed by `session_id` and `turn_index`.
+Tool-execution mirror keyed by `session_id` and `turn_index`.
 
-New branch-native paths should prefer `turn_tool_executions`.
+Branch-native reads use `turn_tool_executions`. This table is still written by the current persistence path for compatibility with older query surfaces and examples. It is a removal candidate once those surfaces are ported.
 
 ## Scoped State
 

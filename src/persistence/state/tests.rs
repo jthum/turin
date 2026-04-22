@@ -978,6 +978,122 @@ async fn test_sparse_graph_overlay_records_opt_in_branch_relationships() {
 }
 
 #[tokio::test]
+async fn test_selected_path_preserves_explicit_order_across_branches() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    store
+        .insert_message(
+            session,
+            turn(0),
+            "user",
+            &json!([{"type": "text", "text": "root"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    let alt = store
+        .create_branch_head_from_turn_index(session, "alt", Some(0), false)
+        .await
+        .unwrap();
+
+    store
+        .insert_message(
+            session,
+            turn(1),
+            "assistant",
+            &json!([{"type": "text", "text": "main second"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .insert_message(
+            session,
+            branch_turn(Some(alt.id), 1),
+            "assistant",
+            &json!([{"type": "text", "text": "alt second"}]),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let main_turn_id = store
+        .get_active_branch_head(session)
+        .await
+        .unwrap()
+        .expect("active branch")
+        .head_turn_id
+        .expect("main head turn");
+    let alt_turn_id = store
+        .get_branch_head(session, alt.id)
+        .await
+        .unwrap()
+        .expect("alt branch")
+        .head_turn_id
+        .expect("alt head turn");
+
+    let selected = store
+        .get_messages(
+            session,
+            &SessionReadTarget::SelectedPath(vec![alt_turn_id, main_turn_id]),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(selected.len(), 2);
+    assert!(selected[0].content.contains("alt second"));
+    assert!(selected[1].content.contains("main second"));
+}
+
+#[tokio::test]
+async fn test_selected_path_rejects_empty_and_duplicate_turns() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    store
+        .insert_message(
+            session,
+            turn(0),
+            "user",
+            &json!([{"type": "text", "text": "root"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    let turn_id = store
+        .get_active_branch_head(session)
+        .await
+        .unwrap()
+        .expect("active branch")
+        .head_turn_id
+        .expect("head turn");
+
+    let empty = store
+        .get_messages(session, &SessionReadTarget::SelectedPath(Vec::new()))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(empty.contains("Selected path must include at least one turn"));
+
+    let duplicate = store
+        .get_messages(
+            session,
+            &SessionReadTarget::SelectedPath(vec![turn_id, turn_id]),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(duplicate.contains("duplicate turn"));
+}
+
+#[tokio::test]
 async fn test_prepare_turn_write_target_rejects_stale_branch_head_and_reuses_resolved_turn() {
     let store = StateStore::open_memory().await.unwrap();
     let session = store

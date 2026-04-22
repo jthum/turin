@@ -838,12 +838,10 @@ async fn normalize_sidestep_target(
             Ok(ExecutionContextTarget::TurnId { turn_id })
         }
         ExecutionContextTarget::SelectedPath { turn_ids } => {
-            if turn_ids.is_empty() {
-                anyhow::bail!("Selected sidestep path must include at least one turn");
-            }
-            for turn_id in &turn_ids {
-                validate_session_turn_target(store, row.id, *turn_id, "sidestep path turn").await?;
-            }
+            store
+                .turn_rows_for_selected_path(row.id, &turn_ids)
+                .await
+                .context("Invalid selected sidestep path")?;
             Ok(ExecutionContextTarget::SelectedPath { turn_ids })
         }
         ExecutionContextTarget::SummarySource { source_turn_id } => {
