@@ -6621,7 +6621,20 @@ async fn test_agent_sidestep_creates_hidden_sibling_branch_on_current_session() 
         function on_turn_prepare(ctx)
             if not queued then
                 queued = true
-                local token, err = agent.sidestep("branch-only", { mode = "fork_sibling" })
+                local group, ge = runtime.graph.node_create({
+                    kind = "experiment",
+                    label = "sidestep group"
+                })
+                if group == nil then error("runtime.graph.node_create failed: " .. tostring(ge)) end
+                local token, err = agent.sidestep("branch-only", {
+                    mode = "fork_sibling",
+                    graph = {
+                        source = { kind = "graph_node", id = group.node_id },
+                        relation_kind = "contains",
+                        target_role = "candidate",
+                        metadata = { reason = "branch-only" }
+                    }
+                })
                 if token == nil then error("agent.sidestep failed: " .. tostring(err)) end
             end
             return ALLOW
@@ -6697,6 +6710,13 @@ async fn test_agent_sidestep_creates_hidden_sibling_branch_on_current_session() 
         .find(|branch| !branch.is_active && branch.name.starts_with("sidestep-"))
         .expect("agent.sidestep should create a hidden sibling branch");
     assert_eq!(sidestep_branch.origin_kind, "sidestep");
+    let graph_edges = store
+        .list_graph_edges_for_session(session.internal_id.expect("session internal id"))
+        .await?;
+    assert_eq!(graph_edges.len(), 1);
+    assert_eq!(graph_edges[0].relation_kind, "contains");
+    assert_eq!(graph_edges[0].target.kind, "branch_head");
+    assert_eq!(graph_edges[0].target_role.as_deref(), Some("candidate"));
     let branch_messages = store
         .get_messages(
             session.internal_id.expect("session internal id"),

@@ -14,6 +14,7 @@ use crate::harness::stdlib::identity_support::{
     get_active_identity, identity_to_lua_table, session_row_to_lua_table,
 };
 use crate::harness::stdlib::policy_support::{policy_bool, policy_u64, runtime_policy_snapshot};
+use crate::kernel::event::TaskBranchOutcome;
 use crate::kernel::prepare_persisted_session_sidestep;
 use crate::kernel::session::{
     ExecutionConflictPolicy, ExecutionContextTarget, QueuedTask, SidestepMode,
@@ -24,6 +25,18 @@ use crate::kernel::session_refs::{
 };
 use crate::kernel::task_promotion::promote_task_result;
 use crate::persistence::manager::StoreSelector;
+use crate::persistence::schema::{GraphEdgeCreate, GraphProvenance, GraphRef};
+
+#[derive(Debug, Clone)]
+struct SidestepGraphRelation {
+    source: GraphRef,
+    relation_kind: String,
+    source_role: Option<String>,
+    target_role: Option<String>,
+    origin_task_id: Option<String>,
+    origin_execution_id: Option<String>,
+    metadata: Option<serde_json::Value>,
+}
 
 fn ensure_local_task_id(task: &mut QueuedTask) -> String {
     if task.task_id.is_empty() {
@@ -245,6 +258,107 @@ fn opt_sidestep_context_target(
         .map_err(|err| err.to_string())
 }
 
+fn graph_ref_from_lua_table(table: Table) -> std::result::Result<GraphRef, String> {
+    let kind = table.get::<String>("kind").map_err(|err| err.to_string())?;
+    let id = table.get::<String>("id").map_err(|err| err.to_string())?;
+    if kind.is_empty() || id.is_empty() {
+        return Err("graph ref requires non-empty kind and id".to_string());
+    }
+    Ok(GraphRef::new(kind, id))
+}
+
+fn opt_sidestep_graph_relation(
+    lua: &Lua,
+    opts: Option<&Table>,
+) -> std::result::Result<Option<SidestepGraphRelation>, String> {
+    let Some(opts) = opts else {
+        return Ok(None);
+    };
+    let Ok(graph) = opts.get::<Table>("graph") else {
+        return Ok(None);
+    };
+    let source = graph
+        .get::<Table>("source")
+        .map_err(|err| err.to_string())
+        .and_then(graph_ref_from_lua_table)?;
+    let relation_kind = graph
+        .get::<String>("relation_kind")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "contains".to_string());
+    let metadata = match graph.get::<Value>("metadata") {
+        Ok(Value::Nil) | Err(_) => None,
+        Ok(value) => Some(
+            lua.from_value::<serde_json::Value>(value)
+                .map_err(|err| err.to_string())?,
+        ),
+    };
+    Ok(Some(SidestepGraphRelation {
+        source,
+        relation_kind,
+        source_role: graph
+            .get::<String>("source_role")
+            .ok()
+            .filter(|value| !value.is_empty()),
+        target_role: graph
+            .get::<String>("target_role")
+            .ok()
+            .filter(|value| !value.is_empty()),
+        origin_task_id: graph
+            .get::<String>("origin_task_id")
+            .ok()
+            .filter(|value| !value.is_empty()),
+        origin_execution_id: graph
+            .get::<String>("origin_execution_id")
+            .ok()
+            .filter(|value| !value.is_empty()),
+        metadata,
+    }))
+}
+
+async fn attach_sidestep_graph_relation(
+    store_manager: &std::sync::Arc<crate::persistence::manager::StoreManager>,
+    session_id: &str,
+    branch_outcome: &TaskBranchOutcome,
+    relation: SidestepGraphRelation,
+) -> std::result::Result<(), String> {
+    let TaskBranchOutcome::SidestepSibling {
+        branch_public_id, ..
+    } = branch_outcome
+    else {
+        return Err("sidestep graph relation requires a sidestep sibling branch".to_string());
+    };
+    let session_ref = parse_session_reference(session_id).map_err(|err| err.to_string())?;
+    let public_id = uuid::Uuid::parse_str(&session_ref.public_id).map_err(|err| err.to_string())?;
+    let store_selector = session_ref
+        .store_selector
+        .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+    let store = store_manager
+        .open(&store_selector)
+        .await
+        .map_err(|err| err.to_string())?;
+    let row = store
+        .get_session_row_by_public_id(public_id)
+        .await
+        .map_err(|err| err.to_string())?
+        .ok_or_else(|| format!("Session '{}' not found", session_ref.public_id))?;
+    let mut edge = GraphEdgeCreate::new(
+        relation.source,
+        GraphRef::new("branch_head", branch_public_id.clone()),
+        relation.relation_kind,
+    );
+    edge.session_id = Some(row.id);
+    edge.source_role = relation.source_role;
+    edge.target_role = relation.target_role;
+    edge.provenance = GraphProvenance::new(relation.origin_task_id, relation.origin_execution_id);
+    edge.metadata = relation.metadata;
+    store
+        .create_graph_edge(edge)
+        .await
+        .map(|_| ())
+        .map_err(|err| err.to_string())
+}
+
 fn bytes_to_simple_uuid(bytes: &[u8]) -> String {
     uuid::Uuid::from_slice(bytes)
         .map(|uuid| uuid.simple().to_string())
@@ -381,6 +495,16 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 Ok(target) => target,
                 Err(err) => return nil_err(lua, &err),
             };
+            let graph_relation = match opt_sidestep_graph_relation(lua, opts.as_ref()) {
+                Ok(relation) => relation,
+                Err(err) => return nil_err(lua, &err),
+            };
+            if graph_relation.is_some()
+                && let Err(err) =
+                    require_governance_capability(&sidestep_policy_snapshot, "runtime.graph.write")
+            {
+                return nil_err(lua, &err);
+            }
             let queue_max = queue_max(&snapshot);
             let trace_id = active_trace_id(&sidestep_policy_snapshot);
             let title = opts.as_ref().and_then(|t| t.get::<String>("title").ok());
@@ -409,6 +533,18 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 )
                 .await
                 .map_err(|err| err.to_string())?;
+                if let Some(relation) = graph_relation {
+                    let branch_outcome = prepared.branch_outcome.as_ref().ok_or_else(|| {
+                        "sidestep graph relation requires mode='fork_sibling'".to_string()
+                    })?;
+                    attach_sidestep_graph_relation(
+                        &sidestep_store_manager,
+                        &session_id,
+                        branch_outcome,
+                        relation,
+                    )
+                    .await?;
+                }
                 let mut task = QueuedTask::ad_hoc(prompt)
                     .with_inherited_trace(trace_id.as_deref())
                     .with_conflict_policy(Some(prepared.conflict_policy))
