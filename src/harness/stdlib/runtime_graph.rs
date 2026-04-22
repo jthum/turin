@@ -158,6 +158,110 @@ fn graph_edges_to_lua(lua: &Lua, rows: Vec<GraphEdgeRow>) -> LuaResult<Table> {
     Ok(out)
 }
 
+fn selected_path_to_lua(lua: &Lua, turn_ids: Vec<i64>) -> LuaResult<Table> {
+    let out = lua.create_table()?;
+    out.set("kind", "selected_path")?;
+    let ids = lua.create_table()?;
+    for (idx, turn_id) in turn_ids.into_iter().enumerate() {
+        ids.set(idx + 1, turn_id)?;
+    }
+    out.set("turn_ids", ids)?;
+    Ok(out)
+}
+
+async fn graph_ref_to_turn_id(
+    store: &StateStore,
+    session_id: i64,
+    graph_ref: &GraphRef,
+) -> Result<i64> {
+    match graph_ref.kind.as_str() {
+        "turn" => {
+            let turn_id = graph_ref
+                .id
+                .parse::<i64>()
+                .with_context(|| format!("Invalid turn graph ref id '{}'", graph_ref.id))?;
+            let turn = store
+                .get_turn_row(turn_id)
+                .await?
+                .with_context(|| format!("Turn graph ref '{}' was not found", graph_ref.id))?;
+            if turn.session_id != session_id {
+                anyhow::bail!(
+                    "Turn graph ref '{}' belongs to another session",
+                    graph_ref.id
+                );
+            }
+            Ok(turn.id)
+        }
+        "branch_head" => {
+            let branch_public_id = uuid::Uuid::parse_str(&graph_ref.id)
+                .with_context(|| format!("Invalid branch_head graph ref id '{}'", graph_ref.id))?;
+            let branch = store
+                .get_branch_head_by_public_id(session_id, branch_public_id)
+                .await?
+                .with_context(|| {
+                    format!("Branch head graph ref '{}' was not found", graph_ref.id)
+                })?;
+            branch.head_turn_id.with_context(|| {
+                format!(
+                    "Branch head graph ref '{}' does not have a materialized head turn",
+                    graph_ref.id
+                )
+            })
+        }
+        other => anyhow::bail!(
+            "Graph ref kind '{}' cannot be materialized into a selected path turn",
+            other
+        ),
+    }
+}
+
+async fn selected_path_from_graph_edges(
+    store: &StateStore,
+    session_id: i64,
+    source: GraphRef,
+    relation_kind: Option<String>,
+    target_kind: Option<String>,
+    target_role: Option<String>,
+) -> Result<Vec<i64>> {
+    let edges = store.list_graph_edges_from(&source).await?;
+    let mut turn_ids = Vec::new();
+    for edge in edges {
+        if edge
+            .session_id
+            .is_some_and(|edge_session| edge_session != session_id)
+        {
+            continue;
+        }
+        if relation_kind
+            .as_ref()
+            .is_some_and(|expected| expected != &edge.relation_kind)
+        {
+            continue;
+        }
+        if target_kind
+            .as_ref()
+            .is_some_and(|expected| expected != &edge.target.kind)
+        {
+            continue;
+        }
+        if target_role
+            .as_ref()
+            .is_some_and(|expected| edge.target_role.as_ref() != Some(expected))
+        {
+            continue;
+        }
+        let turn_id = graph_ref_to_turn_id(store, session_id, &edge.target).await?;
+        if turn_ids.contains(&turn_id) {
+            anyhow::bail!("Graph selected path contains duplicate turn {}", turn_id);
+        }
+        turn_ids.push(turn_id);
+    }
+    if turn_ids.is_empty() {
+        anyhow::bail!("Graph selected path produced no materializable turns");
+    }
+    Ok(turn_ids)
+}
+
 fn resolve_session_reference(
     execution_ctx: &ActiveHarnessExecutionContext,
     requested: Option<String>,
@@ -254,6 +358,51 @@ pub fn register_runtime_graph_namespace(
                 });
                 match result {
                     Ok(row) => Ok(ok_value(Value::Table(graph_node_to_lua(lua, row)?))),
+                    Err(err) => nil_err(lua, &err),
+                }
+            })?,
+        )?;
+    }
+
+    {
+        let store_manager = app_data.store_manager.clone();
+        let execution_ctx = app_data.execution_ctx.clone();
+        let app_data_snapshot = app_data.clone();
+        graph_table.set(
+            "selected_path",
+            lua.create_function(move |lua, opts: Table| {
+                if let Err(err) =
+                    require_governance_capability(&app_data_snapshot, "runtime.graph.query")
+                {
+                    return nil_err(lua, &err);
+                }
+                let source = match opts.get::<Table>("source").and_then(graph_ref_from_table) {
+                    Ok(source) => source,
+                    Err(err) => return nil_err(lua, &err.to_string()),
+                };
+                let relation_kind = opt_string(&opts, "relation_kind");
+                let target_kind = opt_string(&opts, "target_kind");
+                let target_role = opt_string(&opts, "target_role");
+                let session_id = opt_string(&opts, "session_id");
+                let store_manager = store_manager.clone();
+                let execution_ctx = execution_ctx.clone();
+                let result = bridge_async_display_err(async move {
+                    let session =
+                        resolve_graph_session(store_manager, execution_ctx, session_id).await?;
+                    selected_path_from_graph_edges(
+                        &session.store,
+                        session.internal_id,
+                        source,
+                        relation_kind,
+                        target_kind,
+                        target_role,
+                    )
+                    .await
+                });
+                match result {
+                    Ok(turn_ids) => {
+                        Ok(ok_value(Value::Table(selected_path_to_lua(lua, turn_ids)?)))
+                    }
                     Err(err) => nil_err(lua, &err),
                 }
             })?,

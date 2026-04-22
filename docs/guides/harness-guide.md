@@ -685,6 +685,44 @@ local rows, qerr = runtime.db.query(
 )
 ```
 
+### Sparse graph selected paths
+
+Use `runtime.graph.*` when a harness needs to record opt-in semantic relationships between graph nodes, branch heads, turns, or external references. Ordinary sessions do not create graph rows by default.
+
+`runtime.graph.selected_path(...)` materializes graph edges that target `branch_head` or `turn` refs into an execution context target:
+
+```lua
+local group, err = runtime.graph.node_create({
+  kind = "experiment",
+  label = "compare candidates",
+})
+if not group then error(err) end
+
+local branch, berr = agent.session.branch_create("candidate-a", {
+  from_turn_index = 0,
+})
+if not branch then error(berr) end
+
+runtime.graph.edge_create({
+  source = { kind = "graph_node", id = group.node_id },
+  target = { kind = "branch_head", id = branch.branch_id },
+  relation_kind = "contains",
+  target_role = "candidate",
+})
+
+local target, terr = runtime.graph.selected_path({
+  source = { kind = "graph_node", id = group.node_id },
+  relation_kind = "contains",
+  target_kind = "branch_head",
+  target_role = "candidate",
+})
+if not target then error(terr) end
+
+agent.sidestep("Analyze this candidate path", {
+  context_target = target,
+})
+```
+
 ### Peer-agent orchestration
 
 ```lua

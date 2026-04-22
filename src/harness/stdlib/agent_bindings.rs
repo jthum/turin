@@ -342,9 +342,12 @@ async fn attach_sidestep_graph_relation(
         .await
         .map_err(|err| err.to_string())?
         .ok_or_else(|| format!("Session '{}' not found", session_ref.public_id))?;
+    let branch_ref_id = uuid::Uuid::parse_str(branch_public_id)
+        .map(|uuid| uuid.simple().to_string())
+        .unwrap_or_else(|_| branch_public_id.clone());
     let mut edge = GraphEdgeCreate::new(
         relation.source,
-        GraphRef::new("branch_head", branch_public_id.clone()),
+        GraphRef::new("branch_head", branch_ref_id),
         relation.relation_kind,
     );
     edge.session_id = Some(row.id);

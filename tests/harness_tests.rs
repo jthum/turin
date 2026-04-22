@@ -6085,11 +6085,31 @@ async fn test_runtime_graph_api_records_sparse_relationships() -> Result<()> {
             if edge.relation_kind ~= "contains" then error("graph edge relation mismatch") end
             if edge.target_role ~= "candidate" then error("graph edge role mismatch") end
 
+            local branch, be = agent.session.branch_create("path-candidate", { from_turn_index = 0 })
+            if branch == nil then error("agent.session.branch_create failed: " .. tostring(be)) end
+            local branch_edge, bee = runtime.graph.edge_create({
+                source = { kind = "graph_node", id = node.node_id },
+                target = { kind = "branch_head", id = branch.branch_id },
+                relation_kind = "contains",
+                target_role = "path_candidate"
+            })
+            if branch_edge == nil then error("runtime.graph.edge_create branch failed: " .. tostring(bee)) end
+
+            local selected_path, spe = runtime.graph.selected_path({
+                source = { kind = "graph_node", id = node.node_id },
+                relation_kind = "contains",
+                target_kind = "branch_head",
+                target_role = "path_candidate"
+            })
+            if selected_path == nil then error("runtime.graph.selected_path failed: " .. tostring(spe)) end
+            if selected_path.kind ~= "selected_path" then error("selected_path kind mismatch") end
+            if #selected_path.turn_ids ~= 1 then error("selected_path turn count mismatch") end
+
             local edges, le = runtime.graph.edges({
                 source = { kind = "graph_node", id = node.node_id }
             })
             if edges == nil then error("runtime.graph.edges failed: " .. tostring(le)) end
-            if #edges ~= 1 then error("runtime.graph.edges source lookup mismatch") end
+            if #edges ~= 2 then error("runtime.graph.edges source lookup mismatch") end
 
             return ALLOW
         end
@@ -6166,9 +6186,11 @@ async fn test_runtime_graph_api_records_sparse_relationships() -> Result<()> {
         Some("task-from-harness")
     );
     let edges = store.list_graph_edges_for_session(internal_id).await?;
-    assert_eq!(edges.len(), 1);
-    assert_eq!(edges[0].relation_kind, "contains");
-    assert_eq!(edges[0].target.kind, "external_path");
+    assert_eq!(edges.len(), 2);
+    assert!(edges.iter().all(|edge| edge.relation_kind == "contains"));
+    assert!(edges.iter().any(|edge| edge.target.kind == "external_path"));
+    assert!(edges.iter().any(|edge| edge.target.kind == "branch_head"
+        && edge.target_role.as_deref() == Some("path_candidate")));
 
     Ok(())
 }
@@ -6717,6 +6739,10 @@ async fn test_agent_sidestep_creates_hidden_sibling_branch_on_current_session() 
     assert_eq!(graph_edges[0].relation_kind, "contains");
     assert_eq!(graph_edges[0].target.kind, "branch_head");
     assert_eq!(graph_edges[0].target_role.as_deref(), Some("candidate"));
+    let sidestep_branch_public_id = uuid::Uuid::from_slice(&sidestep_branch.public_id)?
+        .simple()
+        .to_string();
+    assert_eq!(graph_edges[0].target.id, sidestep_branch_public_id);
     let branch_messages = store
         .get_messages(
             session.internal_id.expect("session internal id"),
