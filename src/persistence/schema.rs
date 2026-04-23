@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 13;
+pub(crate) const SCHEMA_VERSION: u32 = 14;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -24,17 +24,6 @@ CREATE TABLE IF NOT EXISTS events (
     turn_id     INTEGER REFERENCES turns(id),
     event_type  TEXT NOT NULL,
     payload     TEXT NOT NULL,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- Message history (per session)
-CREATE TABLE IF NOT EXISTS messages (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id  INTEGER NOT NULL REFERENCES sessions(id),
-    turn_index  INTEGER NOT NULL,
-    role        TEXT NOT NULL,
-    content     TEXT NOT NULL,
-    token_count INTEGER,
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -130,21 +119,6 @@ CREATE TABLE IF NOT EXISTS kv (
     PRIMARY KEY (scope_kind, scope_key, key)
 );
 
--- Tool execution log
-CREATE TABLE IF NOT EXISTS tool_executions (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id    INTEGER NOT NULL REFERENCES sessions(id),
-    turn_index    INTEGER NOT NULL,
-    tool_call_id  TEXT NOT NULL,
-    tool_name     TEXT NOT NULL,
-    args          TEXT NOT NULL,
-    output        TEXT,
-    is_error      INTEGER NOT NULL DEFAULT 0,
-    duration_ms   INTEGER,
-    verdict       TEXT NOT NULL DEFAULT 'allow',
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS schema_info (
     key   TEXT PRIMARY KEY,
@@ -154,8 +128,6 @@ CREATE TABLE IF NOT EXISTS schema_info (
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
 CREATE INDEX IF NOT EXISTS idx_events_turn ON events(turn_id);
-CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
-CREATE INDEX IF NOT EXISTS idx_tool_executions_session ON tool_executions(session_id);
 CREATE INDEX IF NOT EXISTS idx_kv_scope ON kv(scope_kind, scope_key);
 CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id);
 CREATE INDEX IF NOT EXISTS idx_turns_parent ON turns(parent_turn_id);
@@ -256,7 +228,7 @@ pub struct EventRow {
     pub created_at: String,
 }
 
-/// A row from the `messages` table.
+/// A turn-scoped message row materialized for a selected session path.
 #[derive(Debug, Clone)]
 pub struct MessageRow {
     pub id: i64,
@@ -438,7 +410,7 @@ impl GraphProvenance {
     }
 }
 
-/// A row from the `tool_executions` table.
+/// A turn-scoped tool execution row materialized for a selected session path.
 #[derive(Debug, Clone)]
 pub struct ToolExecutionRow {
     pub id: i64,

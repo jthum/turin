@@ -25,22 +25,6 @@ impl StateStore {
                 anyhow::anyhow!("No active branch head available for session {}", session_id)
             })?;
         conn.execute(
-            "INSERT INTO tool_executions (session_id, turn_index, tool_call_id, tool_name, args, output, is_error, duration_ms, verdict) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            turso::params![
-                session_id,
-                target.turn_index() as i64,
-                tool_call_id,
-                tool_name,
-                args_str.clone(),
-                output,
-                is_error as i64,
-                duration_ms.map(|d| d as i64),
-                verdict,
-            ],
-        )
-        .await
-        .with_context(|| format!("Failed to insert tool execution for session: {}", session_id))?;
-        conn.execute(
             "INSERT INTO turn_tool_executions (turn_id, tool_call_id, tool_name, args, output, is_error, duration_ms, verdict) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             turso::params![
                 turn.id,

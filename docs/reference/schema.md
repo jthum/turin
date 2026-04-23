@@ -4,7 +4,7 @@ This document summarizes Turin's current state-store schema at a conceptual leve
 
 The authoritative schema lives in `src/persistence/schema.rs`. This reference exists so contributors can reason about the durable model without reading the full SQL string every time.
 
-Current schema version: `13`
+Current schema version: `14`
 
 Turin currently does not provide an in-place migration path for incompatible state DB versions. Existing DBs with an older `schema_info.version` are rejected and must be recreated.
 
@@ -181,20 +181,6 @@ Key fields:
 
 Events may be attached to a turn or session-wide.
 
-## Compatibility Mirror Tables
-
-### `messages`
-
-Message mirror keyed by `session_id` and `turn_index`.
-
-Branch-native reads use `turn_messages`. This table is still written by the current persistence path for compatibility with older query surfaces and examples. It is a removal candidate once those surfaces are ported.
-
-### `tool_executions`
-
-Tool-execution mirror keyed by `session_id` and `turn_index`.
-
-Branch-native reads use `turn_tool_executions`. This table is still written by the current persistence path for compatibility with older query surfaces and examples. It is a removal candidate once those surfaces are ported.
-
 ## Scoped State
 
 ### `kv`
@@ -292,7 +278,6 @@ The runtime compares this value against the compiled `SCHEMA_VERSION`.
 The schema includes indexes for common lookups:
 
 - events by session/turn
-- messages by session
 - turns by session, parent, and depth
 - branch heads by session
 - turn messages/tool executions by turn

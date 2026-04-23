@@ -36,11 +36,12 @@ async fn wait_for_persisted_agent_output(
         let conn = store.get_connection().await?;
         let mut rows = conn
             .query(
-                "SELECT s.agent_id, m.role, m.content \
+                "SELECT s.agent_id, tm.role, tm.content \
                  FROM sessions s \
-                 JOIN messages m ON m.session_id = s.id \
+                 JOIN turns t ON t.session_id = s.id \
+                 JOIN turn_messages tm ON tm.turn_id = t.id \
                  WHERE s.agent_id = ?1 \
-                 ORDER BY m.id",
+                 ORDER BY tm.id",
                 [agent_id],
             )
             .await?;
@@ -549,11 +550,12 @@ async fn test_openclaw_style_personal_assistant_routes_review_prompts() -> Resul
 
     let mut reviewer_rows = conn
         .query(
-            "SELECT s.agent_id, m.role, m.content \
+            "SELECT s.agent_id, tm.role, tm.content \
              FROM sessions s \
-             JOIN messages m ON m.session_id = s.id \
+             JOIN turns t ON t.session_id = s.id \
+             JOIN turn_messages tm ON tm.turn_id = t.id \
              WHERE s.agent_id = 'reviewer' \
-             ORDER BY m.id",
+             ORDER BY tm.id",
             (),
         )
         .await?;

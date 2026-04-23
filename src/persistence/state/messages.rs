@@ -50,18 +50,6 @@ impl StateStore {
                 anyhow::anyhow!("No active branch head available for session {}", session_id)
             })?;
         conn.execute(
-            "INSERT INTO messages (session_id, turn_index, role, content, token_count) VALUES (?1, ?2, ?3, ?4, ?5)",
-            turso::params![
-                session_id,
-                target.turn_index() as i64,
-                role,
-                content_str.clone(),
-                token_count.map(|t| t as i64),
-            ],
-        )
-        .await
-        .with_context(|| format!("Failed to insert message for session: {}", session_id))?;
-        conn.execute(
             "INSERT INTO turn_messages (turn_id, role, content, token_count) VALUES (?1, ?2, ?3, ?4)",
             turso::params![
                 turn.id,

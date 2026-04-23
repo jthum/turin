@@ -2,8 +2,8 @@
 //!
 //! Provides persistent storage for:
 //! - Event log (append-only)
-//! - Message history (per session)
-//! - Tool execution log
+//! - Turn-scoped message history
+//! - Turn-scoped tool execution history
 //! - Harness key-value store
 //! - Cognitive memories (vector store)
 //!
