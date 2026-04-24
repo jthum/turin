@@ -2,6 +2,13 @@
 
 `turin-tui` and `turin-app` are built on the same transport-agnostic control layer, but they are no longer shaped the same way.
 
+Current layering:
+
+- daemon / remote protocol: shared wire surface
+- `turin-control-client`: shared typed control client
+- `turin-ui-core`: shared connection/profile/controller layer
+- `turin-tui` and `turin-app`: separate presentation shells on top
+
 - `turin-tui` is now chat-first, with optional side panes for session navigation and live inspection.
 - `turin-app` is still the broader operator console.
 

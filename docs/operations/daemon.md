@@ -328,6 +328,33 @@ turin daemon task get <request_id>
 turin daemon task list
 ```
 
+Task responses now include an execution snapshot, not just queue/terminal state.
+
+Current execution fields on `task.submit`, `task.wait`, `task.get`, `task.list`, and `task.sidestep`:
+
+- `execution.execution_id`
+- `execution.context_target`
+- `execution.write_policy`
+- `execution.durability`
+- `execution.visibility`
+
+This matters because a completed task can now be understood operationally without guessing from branch state alone. For example, an operator can see whether a task:
+
+- advanced a branch head normally
+- ran detached against a fixed turn or selected path
+- ran ephemerally on a hidden sidestep
+- wrote durably onto a hidden sibling branch
+
+`branch_outcome` remains separate from `execution.*`:
+
+- `execution.*` describes how the task ran
+- `branch_outcome` describes what durable branch mutation, if any, it produced
+
+Typical examples:
+
+- an ephemeral sidestep reports `write_policy = "detached"` with `durability = "ephemeral"`
+- a durable sibling sidestep reports `write_policy = "advance_branch_head"` with `visibility = "hidden"`
+
 ### Harnesses
 
 ```bash
@@ -489,6 +516,24 @@ When a channel is `enabled`, the daemon owns the runtime lifecycle:
 - `channel.status <id>` reports live runtime status (`starting`, `running`, `stopped`, `failed`, `unsupported`)
 - `daemon.status` includes a `channel_runtimes` snapshot for control-plane visibility
 - channel runtime state updates automatically after channel/agent/harness/runtime changes and watcher rescans
+
+Live session/runtime observability now also exposes execution-scoped state.
+
+Current live-session fields on `session.open`, `session.resume`, `session.list_live`, `daemon.status.live_sessions`, and `runtime.snapshot.live_sessions`:
+
+- `execution.execution_id`
+- `execution.context_target`
+- `execution.write_policy`
+- `execution.durability`
+- `execution.visibility`
+- `conflict_policy`
+
+This is the operator-facing view of the active execution head for that live slot. It answers:
+
+- what persisted path this runtime is materializing right now
+- whether that path is visible or hidden
+- whether it is expected to persist durable turns
+- how stale branch-head conflicts will be resolved if they occur
 
 For sidecar-backed kinds (`discord`, `telegram`, `whatsapp`), the daemon resolves and starts the runner automatically. Resolution order is:
 
