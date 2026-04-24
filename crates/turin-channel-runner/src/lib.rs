@@ -1208,25 +1208,29 @@ impl ChannelRunner {
                                 last_flush_at = Instant::now();
                             }
                         }
-                        "message_end" if task_started => {
-                            if preview_char_count(
-                                &text_preview,
-                                stream.stream_thinking.then_some(thinking_preview.as_str()),
-                            ) > last_flushed_chars {
-                                self.emit_worker_progress(
-                                    action_tx,
-                                    task_ctx.event,
-                                    ChannelProgressUpdate::StreamingPreview {
-                                        text: text_preview.clone(),
-                                        thinking: preview_thinking(stream.stream_thinking, &thinking_preview),
-                                    },
-                                );
-                                last_flushed_chars = preview_char_count(
+                        "message_end"
+                            if task_started
+                                && preview_char_count(
                                     &text_preview,
                                     stream.stream_thinking.then_some(thinking_preview.as_str()),
-                                );
-                                last_flush_at = Instant::now();
-                            }
+                                ) > last_flushed_chars =>
+                        {
+                            self.emit_worker_progress(
+                                action_tx,
+                                task_ctx.event,
+                                ChannelProgressUpdate::StreamingPreview {
+                                    text: text_preview.clone(),
+                                    thinking: preview_thinking(
+                                        stream.stream_thinking,
+                                        &thinking_preview,
+                                    ),
+                                },
+                            );
+                            last_flushed_chars = preview_char_count(
+                                &text_preview,
+                                stream.stream_thinking.then_some(thinking_preview.as_str()),
+                            );
+                            last_flush_at = Instant::now();
                         }
                         "task_complete" if kernel_event.data.get("trace_id").and_then(|value| value.as_str()) == Some(task_ctx.submitted.trace_id.as_str()) => {
                             task_started = false;
