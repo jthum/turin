@@ -4,6 +4,12 @@ This document describes Turin’s current architecture after the canonical stdli
 
 For the non-obvious decisions behind the current shape, see `docs/adr/index.md`.
 
+Current architectural shape:
+
+- execution context is explicit rather than implicitly following one session-global head
+- turns and branch heads remain the structural execution substrate
+- semantic relationships that do not belong in the structural turn graph live in the sparse graph overlay
+
 ## Design Principles
 
 1. **Kernel is execution physics, not policy.**

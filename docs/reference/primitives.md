@@ -632,6 +632,80 @@ Governance integration:
 - delegated capability ceilings (downward-only)
 - active grant ceilings may be inherited automatically
 
+## `runtime.graph`
+
+Sparse semantic graph overlay API.
+
+- `runtime.graph.node_create(opts) -> node|nil, err?`
+- `runtime.graph.edge_create(opts) -> edge|nil, err?`
+- `runtime.graph.nodes(opts?) -> nodes|nil, err?`
+- `runtime.graph.edges(opts?) -> edges|nil, err?`
+- `runtime.graph.selected_path(opts) -> context_target|nil, err?`
+
+`node_create` options:
+
+```lua
+{
+  kind = "experiment",              -- required
+  label = "compare candidates",
+  origin_task_id = "task-123",
+  origin_execution_id = "exec-456",
+  metadata = { purpose = "speculation" },
+  session_id = "session-ref",       -- optional; defaults to active session
+}
+```
+
+`edge_create` options:
+
+```lua
+{
+  source = { kind = "graph_node", id = "..." }, -- required
+  target = { kind = "branch_head", id = "..." }, -- required
+  relation_kind = "contains",                    -- required
+  source_role = "group",
+  target_role = "candidate",
+  origin_task_id = "task-123",
+  origin_execution_id = "exec-456",
+  metadata = { rank = 1 },
+  session_id = "session-ref",
+}
+```
+
+`edges(opts?)` filters:
+
+- `{ source = { kind = "...", id = "..." } }`
+- `{ target = { kind = "...", id = "..." } }`
+- `{ session_id = "session-ref" }`
+
+`selected_path(opts)` options:
+
+```lua
+{
+  source = { kind = "graph_node", id = "..." }, -- required
+  relation_kind = "contains",
+  target_kind = "branch_head",
+  target_role = "candidate",
+  session_id = "session-ref",
+}
+```
+
+`selected_path(...)` returns an execution context target table:
+
+```lua
+{
+  kind = "selected_path",
+  turn_ids = { 12, 19, 27 }
+}
+```
+
+Notes:
+
+- graph rows are opt-in; ordinary serial sessions do not create them
+- the sparse graph overlay does not replace turn ancestry or branch heads
+- `selected_path(...)` currently materializes targets of kind `turn` and `branch_head`
+- branch-head graph refs should use the same simple UUID value exposed as `branch.branch_id`
+- validation for semantic meaning belongs in the harness/app layer; the runtime only validates what it must materialize safely
+
 ## `runtime.policy`
 
 Runtime policy storage API.

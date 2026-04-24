@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-04-24
+
+### Added
+- **Execution-Scoped Context Targets**
+  - Added explicit execution context target support for branch heads, turn ids, selected paths, external references, and summary-source turns.
+  - Added selected-path hardening so empty and duplicate-path materializations are rejected while explicit caller ordering is preserved.
+- **Sparse Semantic Graph Overlay**
+  - Added opt-in `graph_nodes` and `graph_edges` persistence primitives for semantic relationships that should not live in the structural turn graph.
+  - Added harness `runtime.graph.*` APIs for creating/querying semantic nodes and edges.
+  - Added `runtime.graph.selected_path(...)` so graph relationships targeting turns or branch heads can materialize an execution-scoped selected path directly.
+  - Added optional durable sidestep branch attachments into the sparse graph overlay.
+- **Branch Provenance**
+  - Added persisted branch provenance fields so branch heads record why they were created, including sidestep, promotion, and conflict-fork origin metadata.
+
+### Changed
+- **Persistence Model**
+  - Removed compatibility mirror tables `messages` and `tool_executions`; Turin now persists transcript and tool execution history only through `turn_messages` and `turn_tool_executions`.
+  - Advanced the state schema to version `14`; existing state DBs must still be deleted and recreated because Turin does not provide in-place migrations.
+- **Execution Semantics**
+  - Execution-scoped semantics are now the real substrate model rather than an implementation plan: explicit context targets, explicit write targets, detached execution paths, and branch-native sidesteps are all part of the current runtime.
+
 ## [0.27.0] - 2026-04-02
 
 ### Added
