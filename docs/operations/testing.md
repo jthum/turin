@@ -231,18 +231,36 @@ Notes:
 
 ## Suggested Validation Workflow for Major Changes
 
+Default local gate for parity with CI:
+
+```bash
+scripts/prepush_ci.sh
+```
+
+This runs the shared repo gate:
+
+- `cargo fmt --all --check`
+- `cargo check --workspace --all-targets`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace --all-targets -- --include-ignored`
+
+For full release-build parity, use:
+
+```bash
+scripts/prepush_ci.sh ci
+```
+
 ### Runtime / kernel / stdlib changes
 
-1. `cargo test`
-2. `cargo clippy --all-targets -- -D warnings`
-3. `cargo build --release`
+1. `scripts/prepush_ci.sh`
+2. `cargo build --release`
 4. optional live `smoke` suite
 
 ### Governance changes
 
 1. unit tests (`kernel::governance`)
 2. harness integration tests (`tests/harness_tests.rs`)
-3. `cargo clippy --all-targets -- -D warnings`
+3. `scripts/prepush_ci.sh clippy`
 4. optional governed-mode live `smoke`/`core` suite (project-specific harness/config)
 
 ### Provider compatibility debugging
@@ -349,9 +367,8 @@ Turin’s `Cargo.toml` should stay pinned to GitHub commits or tags for reproduc
 
 Before cutting a release tag:
 
-1. `cargo test`
-2. `cargo clippy --all-targets -- -D warnings`
-3. `cargo build --release`
+1. `scripts/prepush_ci.sh`
+2. `cargo build --release`
 4. record binary size
 5. run opt-in live suites against at least one real provider/proxy
 6. record provider/model + cases passed in release notes or docs

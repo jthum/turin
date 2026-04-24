@@ -21,10 +21,12 @@ jobs:
           components: clippy
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+      - name: Format Check
+        run: scripts/prepush_ci.sh fmt
       - name: Cargo Check
-        run: cargo check --all-targets
+        run: scripts/prepush_ci.sh check
       - name: Cargo Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: scripts/prepush_ci.sh clippy
 
   test:
     name: Test
@@ -36,7 +38,7 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
       - name: Run Tests
-        run: cargo test --all-targets -- --include-ignored
+        run: scripts/prepush_ci.sh test
 
   build:
     name: Release Build
@@ -48,7 +50,7 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
       - name: Build Release
-        run: cargo build --release
+        run: scripts/prepush_ci.sh build
       - name: Archive production artifacts
         uses: actions/upload-artifact@v4
         with:
