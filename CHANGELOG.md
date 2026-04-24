@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-04-24
+
+### Added
+- **Execution Observability**
+  - Added execution snapshots to task status surfaces, including `execution_id`, `context_target`, `write_policy`, `durability`, and `visibility`.
+  - Added the same execution metadata to task lifecycle events so operators can inspect how a task ran, not just whether it succeeded.
+
+### Changed
+- **Operator Surfaces**
+  - `task.submit`, `task.get`, `task.wait`, `task.list`, and `task.sidestep` now expose execution-scoped metadata alongside status and branch outcome.
+  - `session.open`, `session.resume`, `session.list_live`, and daemon runtime snapshots now expose the active execution head plus the current conflict policy for each live slot.
+  - CLI daemon task and live-session renders now display execution-scoped state directly instead of hiding it inside raw JSON-only surfaces.
+
+### Fixed
+- **Post-Release CI**
+  - Fixed post-`0.28.0` workspace clippy regressions in channel crates and stale CLI/TUI fixture expectations.
+  - Hardened daemon integration timing so endpoint startup waits are less fragile on slower CI runners.
+  - Added a checked-in pre-push CI gate script and aligned GitHub Actions to use the same local validation surface.
+
 ## [0.28.0] - 2026-04-24
 
 ### Added

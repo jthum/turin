@@ -355,6 +355,39 @@ Typical examples:
 - an ephemeral sidestep reports `write_policy = "detached"` with `durability = "ephemeral"`
 - a durable sibling sidestep reports `write_policy = "advance_branch_head"` with `visibility = "hidden"`
 
+Example `task.get` / `task.wait` payload shape:
+
+```json
+{
+  "request_id": "01968f6d5fa87e5f93d7f4e1a9d31f49",
+  "agent_id": "default",
+  "slot_id": "sd_01968f6d5f8f7ef8b6f23c4cf4b516d7",
+  "trace_id": "tr_01968f6d5fa07f0fb28d8c3aa51b5f4c",
+  "state": "completed",
+  "runtime_task_id": "t_2",
+  "execution": {
+    "execution_id": "ex_01968f6d5f947c45a5d66e2f618b5cb3",
+    "context_target": {
+      "kind": "turn_id",
+      "turn_id": 42
+    },
+    "visibility": "hidden",
+    "durability": "ephemeral",
+    "write_policy": "detached"
+  },
+  "status": "success",
+  "task_turn_count": 1,
+  "branch_outcome": null,
+  "promotion_candidate": {
+    "session_id": "01968f6d5e8a72d5859c4c0dbe9d44b1",
+    "source_turn_id": 42
+  },
+  "promoted_branch": null,
+  "output": "Side answer",
+  "error": null
+}
+```
+
 ### Harnesses
 
 ```bash
@@ -534,6 +567,31 @@ This is the operator-facing view of the active execution head for that live slot
 - whether that path is visible or hidden
 - whether it is expected to persist durable turns
 - how stale branch-head conflicts will be resolved if they occur
+
+Example `session.list_live` item:
+
+```json
+{
+  "agent_id": "default",
+  "slot_id": "main",
+  "session_id": "01968f6d5e8a72d5859c4c0dbe9d44b1",
+  "running": true,
+  "active_tasks": 1,
+  "queued_tasks": 0,
+  "current_request_id": "01968f6d5fa87e5f93d7f4e1a9d31f49",
+  "execution": {
+    "execution_id": "ex_01968f6d5f947c45a5d66e2f618b5cb3",
+    "context_target": {
+      "kind": "branch_head",
+      "branch_head_id": null
+    },
+    "visibility": "visible",
+    "durability": "durable",
+    "write_policy": "advance_branch_head"
+  },
+  "conflict_policy": "reject"
+}
+```
 
 For sidecar-backed kinds (`discord`, `telegram`, `whatsapp`), the daemon resolves and starts the runner automatically. Resolution order is:
 

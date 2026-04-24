@@ -25,7 +25,7 @@ resolver = "2"
 
 [package]
 name = "turin"
-version = "0.28.0"
+version = "0.28.1"
 edition = "2024"
 description = "An event-driven LLM execution runtime with composable Lua harness scripts and auto-managed channel sidecars"
 
