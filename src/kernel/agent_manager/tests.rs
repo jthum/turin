@@ -109,6 +109,13 @@ async fn abort_all_runtime_slots(manager: &Arc<AgentManager>) {
     tokio::task::yield_now().await;
 }
 
+fn test_execution_snapshot() -> ExecutionStatusSnapshot {
+    ExecutionStatusSnapshot::from_execution(
+        &crate::kernel::session::ExecutionContext::new(),
+        crate::kernel::session::ExecutionWritePolicy::AdvanceBranchHead,
+    )
+}
+
 #[tokio::test]
 async fn build_shared_peer_kernel_reuses_configured_tool_registry() -> anyhow::Result<()> {
     let tmp = tempdir()?;
@@ -157,6 +164,7 @@ async fn cancel_task_removes_queued_work_and_records_terminal_result() -> anyhow
             trace_id: "tr_cancelled".to_string(),
             state: PendingTaskState::Queued,
             runtime_task_id: None,
+            execution: test_execution_snapshot(),
         },
     );
 
@@ -237,6 +245,7 @@ async fn cancel_task_marks_running_work_cancelling() -> anyhow::Result<()> {
             trace_id: "tr_running".to_string(),
             state: PendingTaskState::Running,
             runtime_task_id: Some("t_1".to_string()),
+            execution: test_execution_snapshot(),
         },
     );
 
@@ -286,6 +295,7 @@ async fn cancel_session_cancels_queued_work_and_requests_reset() -> anyhow::Resu
             trace_id: "tr_session_cancel".to_string(),
             state: PendingTaskState::Queued,
             runtime_task_id: None,
+            execution: test_execution_snapshot(),
         },
     );
 
@@ -364,6 +374,7 @@ async fn kill_session_marks_running_and_queued_work_killed() -> anyhow::Result<(
             trace_id: "tr_running_kill".to_string(),
             state: PendingTaskState::Running,
             runtime_task_id: Some("t_running".to_string()),
+            execution: test_execution_snapshot(),
         },
     );
     manager.pending_task_states.write().await.insert(
@@ -373,6 +384,7 @@ async fn kill_session_marks_running_and_queued_work_killed() -> anyhow::Result<(
             trace_id: "tr_queued_kill".to_string(),
             state: PendingTaskState::Queued,
             runtime_task_id: None,
+            execution: test_execution_snapshot(),
         },
     );
 

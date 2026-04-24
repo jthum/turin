@@ -450,6 +450,14 @@ pub(super) fn print_task_status(title: &str, task: &TaskStatusView) {
     println!("  agent:           {}", task.agent_id);
     println!("  slot_id:         {}", task.slot_id);
     println!("  state:           {}", task.state);
+    println!("  execution_id:    {}", task.execution.execution_id);
+    println!(
+        "  context_target:  {}",
+        format_context_target(&task.execution.context_target)
+    );
+    println!("  write_policy:    {}", task.execution.write_policy);
+    println!("  durability:      {}", task.execution.durability);
+    println!("  visibility:      {}", task.execution.visibility);
     if let Some(runtime_task_id) = &task.runtime_task_id {
         println!("  runtime_task_id: {}", runtime_task_id);
     }
@@ -458,6 +466,15 @@ pub(super) fn print_task_status(title: &str, task: &TaskStatusView) {
     }
     if let Some(turns) = task.task_turn_count {
         println!("  task_turns:      {}", turns);
+    }
+    if let Some(branch_outcome) = &task.branch_outcome {
+        println!(
+            "  branch_outcome:  {}",
+            branch_outcome
+                .get("kind")
+                .and_then(|value| value.as_str())
+                .unwrap_or("present")
+        );
     }
     if let Some(error) = &task.error {
         println!("  error:");
@@ -478,7 +495,11 @@ pub(super) fn print_task_list(tasks: TaskListView) {
         "SLOT".to_string(),
         "STATE".to_string(),
         "STATUS".to_string(),
+        "EXEC".to_string(),
+        "TARGET".to_string(),
+        "WRITE".to_string(),
         "TURNS".to_string(),
+        "BRANCH".to_string(),
         "OUT".to_string(),
         "ERR".to_string(),
     ]);
@@ -491,8 +512,17 @@ pub(super) fn print_task_list(tasks: TaskListView) {
             task.slot_id,
             task.state,
             task.status.unwrap_or_else(|| "-".to_string()),
+            task.execution.execution_id,
+            format_context_target(&task.execution.context_target),
+            task.execution.write_policy,
             task.task_turn_count
                 .map(|count| count.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            task.branch_outcome
+                .as_ref()
+                .and_then(|value| value.get("kind"))
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
                 .unwrap_or_else(|| "-".to_string()),
             yes_no(task.output.is_some()),
             yes_no(task.error.is_some()),
@@ -510,6 +540,15 @@ pub(super) fn print_live_session(title: &str, session: &LiveSessionView) {
     println!("  running:         {}", yes_no(session.running));
     println!("  active_tasks:    {}", session.active_tasks);
     println!("  queued_tasks:    {}", session.queued_tasks);
+    println!("  execution_id:    {}", session.execution.execution_id);
+    println!(
+        "  context_target:  {}",
+        format_context_target(&session.execution.context_target)
+    );
+    println!("  write_policy:    {}", session.execution.write_policy);
+    println!("  durability:      {}", session.execution.durability);
+    println!("  visibility:      {}", session.execution.visibility);
+    println!("  conflict_policy: {}", session.conflict_policy);
     println!(
         "  current_request: {}",
         session
@@ -528,6 +567,9 @@ pub(super) fn print_live_session_list(sessions: LiveSessionListView) {
         "RUNNING".to_string(),
         "ACTIVE".to_string(),
         "QUEUED".to_string(),
+        "EXEC".to_string(),
+        "TARGET".to_string(),
+        "WRITE".to_string(),
         "REQUEST".to_string(),
     ]);
 
@@ -539,6 +581,9 @@ pub(super) fn print_live_session_list(sessions: LiveSessionListView) {
             yes_no(session.running),
             session.active_tasks.to_string(),
             session.queued_tasks.to_string(),
+            session.execution.execution_id,
+            format_context_target(&session.execution.context_target),
+            session.execution.write_policy,
             session
                 .current_request_id
                 .unwrap_or_else(|| "-".to_string()),
@@ -866,5 +911,41 @@ fn print_table(rows: &[Vec<String>]) {
                 .join("  ");
             println!("{}", sep);
         }
+    }
+}
+
+fn format_context_target(target: &Value) -> String {
+    let Some(kind) = target.get("kind").and_then(|value| value.as_str()) else {
+        return "-".to_string();
+    };
+    match kind {
+        "branch_head" => match target
+            .get("branch_head_id")
+            .and_then(|value| value.as_i64())
+        {
+            Some(branch_head_id) => format!("branch_head:{branch_head_id}"),
+            None => "branch_head:active".to_string(),
+        },
+        "turn_id" => target
+            .get("turn_id")
+            .and_then(|value| value.as_i64())
+            .map(|turn_id| format!("turn:{turn_id}"))
+            .unwrap_or_else(|| "turn".to_string()),
+        "selected_path" => target
+            .get("turn_ids")
+            .and_then(|value| value.as_array())
+            .map(|turn_ids| format!("selected_path:{}", turn_ids.len()))
+            .unwrap_or_else(|| "selected_path".to_string()),
+        "external_reference" => target
+            .get("reference")
+            .and_then(|value| value.as_str())
+            .map(|reference| format!("external:{reference}"))
+            .unwrap_or_else(|| "external".to_string()),
+        "summary_source" => target
+            .get("source_turn_id")
+            .and_then(|value| value.as_i64())
+            .map(|turn_id| format!("summary:{turn_id}"))
+            .unwrap_or_else(|| "summary".to_string()),
+        other => other.to_string(),
     }
 }

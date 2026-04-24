@@ -265,6 +265,7 @@ pub struct TaskStatus {
     pub trace_id: String,
     pub state: String,
     pub runtime_task_id: Option<String>,
+    pub execution: LiveExecution,
     pub status: Option<String>,
     pub task_turn_count: Option<u32>,
     pub branch_outcome: Option<serde_json::Value>,

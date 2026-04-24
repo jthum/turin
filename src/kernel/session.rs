@@ -158,6 +158,30 @@ pub struct ExecutionContext {
     pub conflict_policy: ExecutionConflictPolicy,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExecutionStatusSnapshot {
+    pub execution_id: String,
+    pub context_target: ExecutionContextTarget,
+    pub visibility: ExecutionVisibility,
+    pub durability: ExecutionDurability,
+    pub write_policy: ExecutionWritePolicy,
+}
+
+impl ExecutionStatusSnapshot {
+    pub fn from_execution(
+        execution: &ExecutionContext,
+        effective_write_policy: ExecutionWritePolicy,
+    ) -> Self {
+        Self {
+            execution_id: execution.execution_id.clone(),
+            context_target: execution.context_target.clone(),
+            visibility: execution.visibility,
+            durability: execution.durability,
+            write_policy: effective_write_policy,
+        }
+    }
+}
+
 impl Default for ExecutionContext {
     fn default() -> Self {
         Self::new()
@@ -244,6 +268,7 @@ pub struct PreparedSidestepExecution {
 pub struct LocalTaskResult {
     pub task_id: String,
     pub trace_id: String,
+    pub execution: ExecutionStatusSnapshot,
     pub status: TaskTerminalStatus,
     pub task_turn_count: u32,
     pub branch_outcome: Option<TaskBranchOutcome>,
@@ -766,6 +791,12 @@ impl SessionState {
         }
         self.active_task = ActiveTaskState::default();
         should_refresh
+    }
+}
+
+impl ExecutionStatusSnapshot {
+    pub(crate) fn from_session(session: &SessionState) -> Self {
+        Self::from_execution(&session.execution, session.effective_write_policy())
     }
 }
 

@@ -37,6 +37,7 @@ pub(super) struct SessionBootstrap {
 #[derive(Debug)]
 pub(super) struct PeerRunOutcome {
     pub(super) runtime_task_id: String,
+    pub(super) execution: ExecutionStatusSnapshot,
     pub(super) status: TaskTerminalStatus,
     pub(super) task_turn_count: u32,
     pub(super) branch_outcome: Option<crate::kernel::event::TaskBranchOutcome>,
@@ -117,6 +118,7 @@ impl PeerRuntime {
                     slot_id: self.slot_id.clone(),
                     trace_id,
                     runtime_task_id: ok.runtime_task_id,
+                    execution: ok.execution,
                     status: ok.status,
                     task_turn_count: ok.task_turn_count,
                     branch_outcome: ok.branch_outcome,
@@ -133,6 +135,7 @@ impl PeerRuntime {
                     slot_id: self.slot_id.clone(),
                     trace_id,
                     runtime_task_id: String::new(),
+                    execution: ExecutionStatusSnapshot::from_session(&self.session),
                     status: TaskTerminalStatus::Error,
                     task_turn_count: 0,
                     branch_outcome: None,
@@ -215,6 +218,7 @@ impl PeerRuntime {
             self.clear_capability_ceiling();
             return Ok(PeerRunOutcome {
                 runtime_task_id: task.task_id,
+                execution: ExecutionStatusSnapshot::from_session(&self.session),
                 status: TaskTerminalStatus::Error,
                 task_turn_count: 0,
                 branch_outcome: None,
@@ -236,6 +240,7 @@ impl PeerRuntime {
                     title: task.title.clone(),
                     prompt: task.prompt.clone(),
                     queue_depth: 0,
+                    execution: ExecutionStatusSnapshot::from_session(&self.session),
                 }),
             );
 
@@ -286,6 +291,7 @@ impl PeerRuntime {
                         .await?;
                     return Ok(PeerRunOutcome {
                         runtime_task_id: task.task_id,
+                        execution: ExecutionStatusSnapshot::from_session(&self.session),
                         status: TaskTerminalStatus::Rejected,
                         task_turn_count: 0,
                         branch_outcome: None,
@@ -324,6 +330,7 @@ impl PeerRuntime {
                         .await?;
                     return Ok(PeerRunOutcome {
                         runtime_task_id: task.task_id,
+                        execution: ExecutionStatusSnapshot::from_session(&self.session),
                         status: TaskTerminalStatus::Rejected,
                         task_turn_count: 0,
                         branch_outcome: None,
@@ -378,6 +385,7 @@ impl PeerRuntime {
                         .await?;
                     return Ok(PeerRunOutcome {
                         runtime_task_id: task.task_id,
+                        execution: ExecutionStatusSnapshot::from_session(&self.session),
                         status,
                         task_turn_count: 0,
                         branch_outcome: None,
@@ -408,6 +416,7 @@ impl PeerRuntime {
                     if recovered {
                         return Ok(PeerRunOutcome {
                             runtime_task_id: task.task_id,
+                            execution: ExecutionStatusSnapshot::from_session(&self.session),
                             status: TaskTerminalStatus::Error,
                             task_turn_count: 0,
                             branch_outcome: None,
@@ -429,6 +438,7 @@ impl PeerRuntime {
 
             Ok(PeerRunOutcome {
                 runtime_task_id: task.task_id.clone(),
+                execution: ExecutionStatusSnapshot::from_session(&self.session),
                 status: run_result.status,
                 task_turn_count: run_result.task_turn_count,
                 branch_outcome: run_result.branch_outcome,

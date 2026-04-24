@@ -712,6 +712,15 @@ async fn daemon_task_sidestep_runs_ephemerally_and_cleans_up_slot() -> Result<()
             .context("sidestep task should return slot_id")?
             .starts_with("sd_")
     );
+    assert!(
+        sidestep["execution"]["execution_id"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("ex_"))
+    );
+    assert_eq!(sidestep["execution"]["visibility"], "hidden");
+    assert_eq!(sidestep["execution"]["durability"], "ephemeral");
+    assert_eq!(sidestep["execution"]["write_policy"], "detached");
+    assert_eq!(sidestep["execution"]["context_target"]["kind"], "turn_id");
 
     let live_sessions = result_value(
         daemon
@@ -1027,6 +1036,18 @@ async fn daemon_task_sidestep_can_fork_a_sibling_branch() -> Result<()> {
     assert_eq!(
         sidestep["branch_outcome"]["persisted_active_head_unchanged"],
         true
+    );
+    assert!(
+        sidestep["execution"]["execution_id"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("ex_"))
+    );
+    assert_eq!(sidestep["execution"]["visibility"], "hidden");
+    assert_eq!(sidestep["execution"]["durability"], "durable");
+    assert_eq!(sidestep["execution"]["write_policy"], "advance_branch_head");
+    assert_eq!(
+        sidestep["execution"]["context_target"]["kind"],
+        "branch_head"
     );
 
     let after_detail = result_value(

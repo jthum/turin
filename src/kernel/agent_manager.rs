@@ -18,10 +18,8 @@ use crate::kernel::execution_host::SessionPersistenceCoordinator;
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_manager::HarnessManager;
 use crate::kernel::policy::RuntimePolicyManager;
-use crate::kernel::session::{
-    ExecutionConflictPolicy, ExecutionContextTarget, ExecutionDurability, ExecutionVisibility,
-    ExecutionWritePolicy, QueuedTask, SessionState,
-};
+pub use crate::kernel::session::ExecutionStatusSnapshot;
+use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask};
 pub use crate::kernel::task_promotion::{PromotedTaskBranch, TaskPromotionCandidate};
 use crate::persistence::manager::StoreManager;
 use crate::tools::registry::ToolRegistry;
@@ -41,6 +39,7 @@ pub struct PeerAgentTaskResult {
     pub slot_id: String,
     pub trace_id: String,
     pub runtime_task_id: String,
+    pub execution: ExecutionStatusSnapshot,
     pub status: TaskTerminalStatus,
     pub task_turn_count: u32,
     pub branch_outcome: Option<TaskBranchOutcome>,
@@ -72,6 +71,7 @@ pub struct TaskStatusSnapshot {
     pub trace_id: String,
     pub state: String,
     pub runtime_task_id: Option<String>,
+    pub execution: ExecutionStatusSnapshot,
     pub status: Option<TaskTerminalStatus>,
     pub task_turn_count: Option<u32>,
     pub branch_outcome: Option<TaskBranchOutcome>,
@@ -80,27 +80,6 @@ pub struct TaskStatusSnapshot {
     pub output: Option<String>,
     pub assistant_content: Option<Vec<TaskInputContent>>,
     pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ExecutionStatusSnapshot {
-    pub execution_id: String,
-    pub context_target: ExecutionContextTarget,
-    pub visibility: ExecutionVisibility,
-    pub durability: ExecutionDurability,
-    pub write_policy: ExecutionWritePolicy,
-}
-
-impl ExecutionStatusSnapshot {
-    pub(crate) fn from_session(session: &SessionState) -> Self {
-        Self {
-            execution_id: session.execution.execution_id.clone(),
-            context_target: session.execution.context_target.clone(),
-            visibility: session.execution.visibility,
-            durability: session.execution.durability,
-            write_policy: session.effective_write_policy(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -146,6 +125,7 @@ struct PendingTaskRecord {
     trace_id: String,
     state: PendingTaskState,
     runtime_task_id: Option<String>,
+    execution: ExecutionStatusSnapshot,
 }
 
 pub(crate) struct RuntimeControl {

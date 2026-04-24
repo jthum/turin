@@ -203,8 +203,10 @@ struct TaskStatusView {
     trace_id: String,
     state: String,
     runtime_task_id: Option<String>,
+    execution: LiveExecutionView,
     status: Option<String>,
     task_turn_count: Option<u32>,
+    branch_outcome: Option<Value>,
     output: Option<String>,
     error: Option<String>,
 }
@@ -237,6 +239,17 @@ struct LiveSessionView {
     active_tasks: usize,
     queued_tasks: usize,
     current_request_id: Option<String>,
+    execution: LiveExecutionView,
+    conflict_policy: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiveExecutionView {
+    execution_id: String,
+    context_target: Value,
+    visibility: String,
+    durability: String,
+    write_policy: String,
 }
 
 #[derive(Debug, Deserialize)]

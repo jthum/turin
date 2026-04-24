@@ -5,7 +5,9 @@ use tracing::{info, warn};
 use crate::harness::verdict::Verdict;
 use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskBranchOutcome, TaskTerminalStatus};
 use crate::kernel::execution_host::ExecutionHost;
-use crate::kernel::session::{PersistedKernelRecord, QueuedTask, SessionState};
+use crate::kernel::session::{
+    ExecutionStatusSnapshot, PersistedKernelRecord, QueuedTask, SessionState,
+};
 
 impl ExecutionHost {
     pub(crate) async fn complete_task(
@@ -26,6 +28,7 @@ impl ExecutionHost {
                 plan_id: task.plan_id.clone(),
                 status,
                 task_turn_count,
+                execution: ExecutionStatusSnapshot::from_session(session),
                 branch_outcome: branch_outcome.clone(),
                 error: error_message.clone(),
             }),
@@ -46,6 +49,7 @@ impl ExecutionHost {
                         "status": status,
                         "task_turn_count": task_turn_count,
                         "turn_count": session.turn_index,
+                        "execution": ExecutionStatusSnapshot::from_session(session),
                         "branch_outcome": branch_outcome,
                         "error": error_message,
                     }),

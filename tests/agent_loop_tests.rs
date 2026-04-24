@@ -1114,6 +1114,21 @@ async fn test_stale_branch_conflict_can_fork_sibling_durably() -> Result<()> {
         task_complete_payload["branch_outcome"]["persisted_active_head_unchanged"],
         true
     );
+    assert!(
+        task_complete_payload["execution"]["execution_id"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("ex_"))
+    );
+    assert_eq!(
+        task_complete_payload["execution"]["context_target"]["kind"],
+        "branch_head"
+    );
+    assert_eq!(
+        task_complete_payload["execution"]["write_policy"],
+        "advance_branch_head"
+    );
+    assert_eq!(task_complete_payload["execution"]["durability"], "durable");
+    assert_eq!(task_complete_payload["execution"]["visibility"], "visible");
 
     let active_messages = store
         .get_messages(

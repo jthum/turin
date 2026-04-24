@@ -4,11 +4,19 @@ use std::sync::atomic::Ordering;
 use anyhow::Result;
 
 use crate::kernel::event::TaskTerminalStatus;
+use crate::kernel::session::{ExecutionContext, ExecutionStatusSnapshot, ExecutionWritePolicy};
 
 use super::{
     AgentManager, AgentRuntimeHandle, PeerAgentTaskResult, PendingTaskState, RuntimeSlotKey,
     TaskStatusSnapshot,
 };
+
+fn default_execution_snapshot() -> ExecutionStatusSnapshot {
+    ExecutionStatusSnapshot::from_execution(
+        &ExecutionContext::new(),
+        ExecutionWritePolicy::AdvanceBranchHead,
+    )
+}
 
 impl AgentManager {
     pub async fn cancel_task(&self, request_id: &str) -> Result<TaskStatusSnapshot> {
@@ -98,6 +106,7 @@ impl AgentManager {
             slot_id: pending.runtime_key.slot_id.clone(),
             trace_id: pending.trace_id.clone(),
             runtime_task_id: String::new(),
+            execution: pending.execution,
             status: TaskTerminalStatus::Cancelled,
             task_turn_count: 0,
             branch_outcome: None,
@@ -122,6 +131,7 @@ impl AgentManager {
             trace_id: completed.trace_id,
             state: "completed".to_string(),
             runtime_task_id: Some(completed.runtime_task_id),
+            execution: completed.execution,
             status: Some(completed.status),
             task_turn_count: Some(completed.task_turn_count),
             branch_outcome: completed.branch_outcome,
@@ -210,6 +220,10 @@ impl AgentManager {
                 slot_id: runtime_key.slot_id.clone(),
                 trace_id: envelope.task.trace_id.clone(),
                 runtime_task_id: String::new(),
+                execution: handle
+                    .control
+                    .current_execution()
+                    .unwrap_or_else(default_execution_snapshot),
                 status: TaskTerminalStatus::Cancelled,
                 task_turn_count: 0,
                 branch_outcome: None,
@@ -252,6 +266,10 @@ impl AgentManager {
                 slot_id: runtime_key.slot_id.clone(),
                 trace_id: envelope.task.trace_id.clone(),
                 runtime_task_id: String::new(),
+                execution: handle
+                    .control
+                    .current_execution()
+                    .unwrap_or_else(default_execution_snapshot),
                 status: TaskTerminalStatus::Killed,
                 task_turn_count: 0,
                 branch_outcome: None,
@@ -282,6 +300,10 @@ impl AgentManager {
                 slot_id: runtime_key.slot_id.clone(),
                 trace_id,
                 runtime_task_id: handle.control.current_runtime_task_id().unwrap_or_default(),
+                execution: handle
+                    .control
+                    .current_execution()
+                    .unwrap_or_else(default_execution_snapshot),
                 status: TaskTerminalStatus::Killed,
                 task_turn_count: 0,
                 branch_outcome: None,

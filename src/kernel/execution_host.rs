@@ -15,8 +15,8 @@ use crate::kernel::harness_manager::HarnessManager;
 use crate::kernel::mcp_runtime::McpClientEntry;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::kernel::session::{
-    ExecutionContextTarget, ExecutionWritePolicy, LocalTaskResult, QueuedTask,
-    SessionHarnessEngine, SessionState,
+    ExecutionContextTarget, ExecutionStatusSnapshot, ExecutionWritePolicy, LocalTaskResult,
+    QueuedTask, SessionHarnessEngine, SessionState,
 };
 use crate::kernel::task_promotion::TaskPromotionCandidate;
 use crate::persistence::manager::{StoreManager, StorePathScope};
@@ -382,6 +382,7 @@ impl ExecutionHost {
         let result = LocalTaskResult {
             task_id: task.task_id.clone(),
             trace_id: task.trace_id.clone(),
+            execution: ExecutionStatusSnapshot::from_session(session),
             status,
             task_turn_count,
             branch_outcome,

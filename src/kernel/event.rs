@@ -4,7 +4,7 @@ use crate::kernel::governance::CapabilityDecision;
 use crate::kernel::governance::GovernanceGrantSnapshot;
 use crate::kernel::governance::GovernanceSnapshot;
 use crate::kernel::identity::RuntimeIdentity;
-use crate::kernel::session::ContextCompactionCheckpoint;
+use crate::kernel::session::{ContextCompactionCheckpoint, ExecutionStatusSnapshot};
 
 /// Describes durable branch changes caused by a completed task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +72,7 @@ pub enum LifecycleEvent {
         title: Option<String>,
         prompt: String,
         queue_depth: usize,
+        execution: ExecutionStatusSnapshot,
     },
     /// Task reaches a terminal status
     TaskComplete {
@@ -81,6 +82,7 @@ pub enum LifecycleEvent {
         plan_id: Option<String>,
         status: TaskTerminalStatus,
         task_turn_count: u32,
+        execution: ExecutionStatusSnapshot,
         #[serde(skip_serializing_if = "Option::is_none")]
         branch_outcome: Option<TaskBranchOutcome>,
         #[serde(skip_serializing_if = "Option::is_none")]

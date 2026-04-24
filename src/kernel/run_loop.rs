@@ -323,6 +323,7 @@ impl ExecutionHost {
                 title: task.title.clone(),
                 prompt: task.prompt.clone(),
                 queue_depth: queue_depth_after_pop,
+                execution: crate::kernel::session::ExecutionStatusSnapshot::from_session(session),
             }),
         );
 

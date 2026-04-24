@@ -8,17 +8,17 @@ use tokio::sync::oneshot;
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::KernelEvent;
 use crate::kernel::session::{
-    ExecutionContextTarget, ExecutionDurability, ExecutionVisibility, ExecutionWritePolicy,
-    QueuedTask,
+    ExecutionContext, ExecutionContextTarget, ExecutionDurability, ExecutionStatusSnapshot,
+    ExecutionVisibility, ExecutionWritePolicy, QueuedTask,
 };
 use crate::kernel::session_refs::parse_session_reference;
 use crate::kernel::task_promotion::promote_task_result;
 use crate::persistence::manager::StoreSelector;
 
 use super::{
-    AgentManager, AgentRuntimeHandle, AgentStatusSnapshot, ExecutionStatusSnapshot,
-    LiveSessionSnapshot, PeerAgentTaskEnvelope, PeerAgentTaskResult, PendingTaskRecord,
-    PendingTaskState, PromotedTaskBranch, RuntimeSlotKey, TaskStatusSnapshot,
+    AgentManager, AgentRuntimeHandle, AgentStatusSnapshot, LiveSessionSnapshot,
+    PeerAgentTaskEnvelope, PeerAgentTaskResult, PendingTaskRecord, PendingTaskState,
+    PromotedTaskBranch, RuntimeSlotKey, TaskStatusSnapshot,
 };
 
 fn live_execution_snapshot(handle: &Arc<AgentRuntimeHandle>) -> ExecutionStatusSnapshot {
@@ -34,6 +34,38 @@ fn live_execution_snapshot(handle: &Arc<AgentRuntimeHandle>) -> ExecutionStatusS
             durability: ExecutionDurability::Durable,
             write_policy: ExecutionWritePolicy::AdvanceBranchHead,
         })
+}
+
+fn intended_task_execution_snapshot(
+    handle: &Arc<AgentRuntimeHandle>,
+    task: &QueuedTask,
+) -> Result<ExecutionStatusSnapshot> {
+    let mut execution = handle
+        .control
+        .current_execution()
+        .map(|snapshot| ExecutionContext {
+            execution_id: snapshot.execution_id,
+            context_target: snapshot.context_target,
+            visibility: snapshot.visibility,
+            durability: snapshot.durability,
+            write_policy: snapshot.write_policy,
+            conflict_policy: handle.control.current_conflict_policy(),
+        })
+        .unwrap_or_default();
+
+    if let Some(overrides) = task.execution.as_ref() {
+        overrides
+            .apply_to_execution(&mut execution)
+            .map_err(anyhow::Error::msg)?;
+    }
+    if let Some(conflict_policy) = task.conflict_policy {
+        execution.conflict_policy = conflict_policy;
+    }
+
+    Ok(ExecutionStatusSnapshot::from_execution(
+        &execution,
+        execution.write_policy,
+    ))
 }
 
 impl AgentManager {
@@ -401,6 +433,7 @@ impl AgentManager {
         let trace_id = task.trace_id.clone();
         let request_id = uuid::Uuid::now_v7().simple().to_string();
         let (tx_result, rx_result) = oneshot::channel();
+        let handle = self.ensure_runtime_slot(runtime_key.clone()).await?;
         {
             let mut pending = self.pending_results.write().await;
             pending.insert(request_id.clone(), rx_result);
@@ -414,17 +447,10 @@ impl AgentManager {
                     trace_id,
                     state: PendingTaskState::Queued,
                     runtime_task_id: None,
+                    execution: intended_task_execution_snapshot(&handle, &task)?,
                 },
             );
         }
-
-        let handle = match self.ensure_runtime_slot(runtime_key).await {
-            Ok(handle) => handle,
-            Err(e) => {
-                self.remove_pending_request(&request_id).await;
-                return Err(e);
-            }
-        };
 
         if let Err(e) = self
             .enqueue_runtime_task(
@@ -600,6 +626,7 @@ impl AgentManager {
                     PendingTaskState::Cancelling => "cancelling".to_string(),
                 },
                 runtime_task_id: pending.runtime_task_id.clone(),
+                execution: pending.execution.clone(),
                 status: None,
                 task_turn_count: None,
                 branch_outcome: None,
@@ -625,6 +652,7 @@ impl AgentManager {
                     trace_id: result.trace_id,
                     state: "completed".to_string(),
                     runtime_task_id: Some(result.runtime_task_id),
+                    execution: result.execution,
                     status: Some(result.status),
                     task_turn_count: Some(result.task_turn_count),
                     branch_outcome: result.branch_outcome,
