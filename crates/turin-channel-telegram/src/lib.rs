@@ -2900,10 +2900,8 @@ fn render_markdown_segments(markdown: &str) -> Vec<String> {
                 _ => {}
             },
             Event::End(tag) => match tag {
-                TagEnd::Paragraph => {
-                    if list_stack.is_empty() {
-                        flush_rich_segment(&mut segments, &mut current);
-                    }
+                TagEnd::Paragraph if list_stack.is_empty() => {
+                    flush_rich_segment(&mut segments, &mut current);
                 }
                 TagEnd::Heading(_) => {
                     current.push_str("</b>");
@@ -2954,10 +2952,8 @@ fn render_markdown_segments(markdown: &str) -> Vec<String> {
                         table.current_cell.clear();
                     }
                 }
-                TagEnd::Link => {
-                    if table_state.is_none() {
-                        current.push_str("</a>");
-                    }
+                TagEnd::Link if table_state.is_none() => {
+                    current.push_str("</a>");
                 }
                 TagEnd::CodeBlock => {
                     if let Some(rendered) = code_block.take() {
