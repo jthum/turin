@@ -1460,10 +1460,8 @@ impl TelegramChannelDriver {
                         return true;
                     }
                 }
-                "text_mention" => {
-                    if entity.user.as_ref().map(|user| user.id) == Some(identity.id) {
-                        return true;
-                    }
+                "text_mention" if entity.user.as_ref().map(|user| user.id) == Some(identity.id) => {
+                    return true;
                 }
                 _ => {}
             }

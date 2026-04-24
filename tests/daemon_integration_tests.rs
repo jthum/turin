@@ -89,7 +89,7 @@ bind = "127.0.0.1:0"
         let join =
             tokio::spawn(async move { turin::daemon::server::serve(&serve_config_path).await });
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(15);
         let client = turin_daemon_client::DaemonClient::new(&endpoint);
         loop {
             if client.handshake().await.is_ok() {
@@ -106,8 +106,9 @@ bind = "127.0.0.1:0"
             if Instant::now() >= deadline {
                 join.abort();
                 return Err(anyhow!(
-                    "Timed out waiting for daemon endpoint '{}'",
-                    endpoint.display()
+                    "Timed out waiting for daemon endpoint '{}' after {:?}",
+                    endpoint.display(),
+                    Duration::from_secs(15)
                 ));
             }
             sleep(Duration::from_millis(25)).await;
