@@ -63,6 +63,19 @@ fn graph_ref_from_table(table: Table) -> LuaResult<GraphRef> {
     Ok(GraphRef::new(kind, id))
 }
 
+fn graph_refs_from_sequence(table: Table) -> LuaResult<Vec<GraphRef>> {
+    let mut refs = Vec::new();
+    for value in table.sequence_values::<Table>() {
+        refs.push(graph_ref_from_table(value?)?);
+    }
+    if refs.is_empty() {
+        return Err(mlua::Error::runtime(
+            "graph refs list must include at least one ref",
+        ));
+    }
+    Ok(refs)
+}
+
 fn graph_node_to_lua(lua: &Lua, row: GraphNodeRow) -> LuaResult<Table> {
     let table = lua.create_table()?;
     table.set("id", row.id)?;
@@ -262,6 +275,22 @@ async fn selected_path_from_graph_edges(
     Ok(turn_ids)
 }
 
+async fn selected_path_from_graph_refs(
+    store: &StateStore,
+    session_id: i64,
+    refs: Vec<GraphRef>,
+) -> Result<Vec<i64>> {
+    let mut turn_ids = Vec::with_capacity(refs.len());
+    for graph_ref in refs {
+        let turn_id = graph_ref_to_turn_id(store, session_id, &graph_ref).await?;
+        if turn_ids.contains(&turn_id) {
+            anyhow::bail!("Graph selected path contains duplicate turn {}", turn_id);
+        }
+        turn_ids.push(turn_id);
+    }
+    Ok(turn_ids)
+}
+
 fn resolve_session_reference(
     execution_ctx: &ActiveHarnessExecutionContext,
     requested: Option<String>,
@@ -376,28 +405,67 @@ pub fn register_runtime_graph_namespace(
                 {
                     return nil_err(lua, &err);
                 }
-                let source = match opts.get::<Table>("source").and_then(graph_ref_from_table) {
-                    Ok(source) => source,
-                    Err(err) => return nil_err(lua, &err.to_string()),
+                let refs = match opts.get::<Value>("refs") {
+                    Ok(Value::Nil) | Err(_) => None,
+                    Ok(Value::Table(table)) => match graph_refs_from_sequence(table) {
+                        Ok(refs) => Some(refs),
+                        Err(err) => return nil_err(lua, &err.to_string()),
+                    },
+                    Ok(_) => return nil_err(lua, "selected_path refs must be an array of graph refs"),
+                };
+                let source = match opts.get::<Value>("source") {
+                    Ok(Value::Nil) | Err(_) => None,
+                    Ok(Value::Table(table)) => match graph_ref_from_table(table) {
+                        Ok(source) => Some(source),
+                        Err(err) => return nil_err(lua, &err.to_string()),
+                    },
+                    Ok(_) => return nil_err(lua, "selected_path source must be a graph ref table"),
                 };
                 let relation_kind = opt_string(&opts, "relation_kind");
                 let target_kind = opt_string(&opts, "target_kind");
                 let target_role = opt_string(&opts, "target_role");
+                match (&refs, &source) {
+                    (Some(_), Some(_)) => {
+                        return nil_err(lua, "selected_path accepts either refs or source, not both");
+                    }
+                    (None, None) => {
+                        return nil_err(lua, "selected_path requires either refs or source");
+                    }
+                    (Some(_), None) => {
+                        if relation_kind.is_some() || target_kind.is_some() || target_role.is_some()
+                        {
+                            return nil_err(
+                                lua,
+                                "selected_path refs mode does not accept relation_kind, target_kind, or target_role",
+                            );
+                        }
+                    }
+                    (None, Some(_)) => {}
+                }
                 let session_id = opt_string(&opts, "session_id");
                 let store_manager = store_manager.clone();
                 let execution_ctx = execution_ctx.clone();
                 let result = bridge_async_display_err(async move {
                     let session =
                         resolve_graph_session(store_manager, execution_ctx, session_id).await?;
-                    selected_path_from_graph_edges(
-                        &session.store,
-                        session.internal_id,
-                        source,
-                        relation_kind,
-                        target_kind,
-                        target_role,
-                    )
-                    .await
+                    match (refs, source) {
+                        (Some(refs), None) => {
+                            selected_path_from_graph_refs(&session.store, session.internal_id, refs)
+                                .await
+                        }
+                        (None, Some(source)) => {
+                            selected_path_from_graph_edges(
+                                &session.store,
+                                session.internal_id,
+                                source,
+                                relation_kind,
+                                target_kind,
+                                target_role,
+                            )
+                            .await
+                        }
+                        _ => unreachable!("selected_path mode was validated before async bridge"),
+                    }
                 });
                 match result {
                     Ok(turn_ids) => {
@@ -543,4 +611,129 @@ pub fn register_runtime_graph_namespace(
 
     runtime_table.set("graph", graph_table)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::persistence::state::TurnWriteTarget;
+
+    fn turn(turn_index: u32) -> TurnWriteTarget {
+        TurnWriteTarget::active_branch(turn_index)
+    }
+
+    fn branch_turn(branch_head_id: Option<i64>, turn_index: u32) -> TurnWriteTarget {
+        TurnWriteTarget::branch_head(branch_head_id, turn_index)
+    }
+
+    #[tokio::test]
+    async fn selected_path_from_graph_refs_preserves_explicit_order() {
+        let store = StateStore::open_memory().await.unwrap();
+        let session_id = store
+            .create_session(uuid::Uuid::now_v7(), "default", None)
+            .await
+            .unwrap();
+
+        store
+            .insert_message(
+                session_id,
+                turn(0),
+                "user",
+                &json!([{"type": "text", "text": "root"}]),
+                None,
+            )
+            .await
+            .unwrap();
+        let alt_branch = store
+            .create_branch_head_from_turn_index(session_id, "alt", Some(0), false)
+            .await
+            .unwrap();
+
+        store
+            .insert_message(
+                session_id,
+                turn(1),
+                "assistant",
+                &json!([{"type": "text", "text": "main second"}]),
+                None,
+            )
+            .await
+            .unwrap();
+        store
+            .insert_message(
+                session_id,
+                branch_turn(Some(alt_branch.id), 1),
+                "assistant",
+                &json!([{"type": "text", "text": "alt second"}]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let main_branch = store
+            .get_active_branch_head(session_id)
+            .await
+            .unwrap()
+            .expect("main branch");
+        let main_turn_id = main_branch.head_turn_id.expect("main head turn");
+        let alt_turn_id = store
+            .get_branch_head(session_id, alt_branch.id)
+            .await
+            .unwrap()
+            .expect("alt branch")
+            .head_turn_id
+            .expect("alt head turn");
+
+        let refs = vec![
+            GraphRef::new("branch_head", bytes_to_simple_uuid(&alt_branch.public_id)),
+            GraphRef::new("turn", main_turn_id.to_string()),
+        ];
+
+        let selected = selected_path_from_graph_refs(&store, session_id, refs)
+            .await
+            .unwrap();
+
+        assert_eq!(selected, vec![alt_turn_id, main_turn_id]);
+    }
+
+    #[tokio::test]
+    async fn selected_path_from_graph_refs_rejects_duplicate_materialized_turns() {
+        let store = StateStore::open_memory().await.unwrap();
+        let session_id = store
+            .create_session(uuid::Uuid::now_v7(), "default", None)
+            .await
+            .unwrap();
+
+        store
+            .insert_message(
+                session_id,
+                turn(0),
+                "user",
+                &json!([{"type": "text", "text": "root"}]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let main_branch = store
+            .get_active_branch_head(session_id)
+            .await
+            .unwrap()
+            .expect("main branch");
+        let turn_id = main_branch.head_turn_id.expect("main head turn");
+
+        let refs = vec![
+            GraphRef::new("branch_head", bytes_to_simple_uuid(&main_branch.public_id)),
+            GraphRef::new("turn", turn_id.to_string()),
+        ];
+
+        let err = selected_path_from_graph_refs(&store, session_id, refs)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("duplicate turn"));
+    }
 }

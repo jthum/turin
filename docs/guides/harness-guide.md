@@ -723,6 +723,18 @@ agent.sidestep("Analyze this candidate path", {
 })
 ```
 
+If the harness already knows the exact sequence it wants, it can skip the graph-edge lookup and materialize an explicit ordered path directly:
+
+```lua
+local target, terr = runtime.graph.selected_path({
+  refs = {
+    { kind = "turn", id = "12" },
+    { kind = "branch_head", id = branch.branch_id },
+  },
+})
+if not target then error(terr) end
+```
+
 ### Peer-agent orchestration
 
 ```lua

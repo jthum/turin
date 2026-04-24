@@ -681,10 +681,22 @@ Sparse semantic graph overlay API.
 
 ```lua
 {
-  source = { kind = "graph_node", id = "..." }, -- required
+  source = { kind = "graph_node", id = "..." }, -- edge-query mode
   relation_kind = "contains",
   target_kind = "branch_head",
   target_role = "candidate",
+  session_id = "session-ref",
+}
+```
+
+Or:
+
+```lua
+{
+  refs = {
+    { kind = "turn", id = "12" },
+    { kind = "branch_head", id = "..." },
+  },                                            -- explicit-order mode
   session_id = "session-ref",
 }
 ```
@@ -702,7 +714,8 @@ Notes:
 
 - graph rows are opt-in; ordinary serial sessions do not create them
 - the sparse graph overlay does not replace turn ancestry or branch heads
-- `selected_path(...)` currently materializes targets of kind `turn` and `branch_head`
+- `selected_path(...)` accepts exactly one mode: `source` for graph-edge materialization or `refs` for explicit ordered refs
+- `selected_path(...)` currently materializes refs of kind `turn` and `branch_head`
 - branch-head graph refs should use the same simple UUID value exposed as `branch.branch_id`
 - validation for semantic meaning belongs in the harness/app layer; the runtime only validates what it must materialize safely
 
