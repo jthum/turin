@@ -18,6 +18,21 @@ struct GraphSession {
     internal_id: i64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SelectedPathOrder {
+    OldestFirst,
+    NewestFirst,
+}
+
+#[derive(Clone, Debug)]
+struct SelectedPathSourceOptions {
+    relation_kind: Option<String>,
+    target_kind: Option<String>,
+    target_role: Option<String>,
+    order: SelectedPathOrder,
+    limit: Option<usize>,
+}
+
 fn bytes_to_simple_uuid(bytes: &[u8]) -> String {
     uuid::Uuid::from_slice(bytes)
         .map(|uuid| uuid.simple().to_string())
@@ -36,6 +51,35 @@ fn opt_string(table: &Table, key: &str) -> Option<String> {
         .get::<String>(key)
         .ok()
         .filter(|value| !value.is_empty())
+}
+
+fn opt_positive_usize(table: &Table, key: &str) -> LuaResult<Option<usize>> {
+    match table.get::<Value>(key) {
+        Ok(Value::Nil) | Err(_) => Ok(None),
+        Ok(Value::Integer(value)) => {
+            let value = usize::try_from(value)
+                .map_err(|_| mlua::Error::runtime(format!("{key} must be a positive integer")))?;
+            if value == 0 {
+                return Err(mlua::Error::runtime(format!(
+                    "{key} must be greater than zero"
+                )));
+            }
+            Ok(Some(value))
+        }
+        Ok(_) => Err(mlua::Error::runtime(format!(
+            "{key} must be a positive integer"
+        ))),
+    }
+}
+
+fn selected_path_order(table: &Table) -> LuaResult<SelectedPathOrder> {
+    match opt_string(table, "order").as_deref() {
+        None | Some("oldest_first") => Ok(SelectedPathOrder::OldestFirst),
+        Some("newest_first") => Ok(SelectedPathOrder::NewestFirst),
+        Some(other) => Err(mlua::Error::runtime(format!(
+            "selected_path order must be 'oldest_first' or 'newest_first', got '{other}'"
+        ))),
+    }
 }
 
 fn graph_metadata(lua: &Lua, table: &Table) -> LuaResult<Option<serde_json::Value>> {
@@ -232,11 +276,15 @@ async fn selected_path_from_graph_edges(
     store: &StateStore,
     session_id: i64,
     source: GraphRef,
-    relation_kind: Option<String>,
-    target_kind: Option<String>,
-    target_role: Option<String>,
+    opts: SelectedPathSourceOptions,
 ) -> Result<Vec<i64>> {
-    let edges = store.list_graph_edges_from(&source).await?;
+    let mut edges = store.list_graph_edges_from(&source).await?;
+    if matches!(opts.order, SelectedPathOrder::NewestFirst) {
+        edges.reverse();
+    }
+    if let Some(limit) = opts.limit {
+        edges.truncate(limit);
+    }
     let mut turn_ids = Vec::new();
     for edge in edges {
         if edge
@@ -245,19 +293,22 @@ async fn selected_path_from_graph_edges(
         {
             continue;
         }
-        if relation_kind
+        if opts
+            .relation_kind
             .as_ref()
             .is_some_and(|expected| expected != &edge.relation_kind)
         {
             continue;
         }
-        if target_kind
+        if opts
+            .target_kind
             .as_ref()
             .is_some_and(|expected| expected != &edge.target.kind)
         {
             continue;
         }
-        if target_role
+        if opts
+            .target_role
             .as_ref()
             .is_some_and(|expected| edge.target_role.as_ref() != Some(expected))
         {
@@ -270,7 +321,17 @@ async fn selected_path_from_graph_edges(
         turn_ids.push(turn_id);
     }
     if turn_ids.is_empty() {
-        anyhow::bail!("Graph selected path produced no materializable turns");
+        let mut detail = format!("source={}#{}", source.kind, source.id);
+        if let Some(relation_kind) = opts.relation_kind.as_deref() {
+            detail.push_str(&format!(", relation_kind={relation_kind}"));
+        }
+        if let Some(target_kind) = opts.target_kind.as_deref() {
+            detail.push_str(&format!(", target_kind={target_kind}"));
+        }
+        if let Some(target_role) = opts.target_role.as_deref() {
+            detail.push_str(&format!(", target_role={target_role}"));
+        }
+        anyhow::bail!("Graph selected path produced no materializable turns ({detail})");
     }
     Ok(turn_ids)
 }
@@ -424,6 +485,14 @@ pub fn register_runtime_graph_namespace(
                 let relation_kind = opt_string(&opts, "relation_kind");
                 let target_kind = opt_string(&opts, "target_kind");
                 let target_role = opt_string(&opts, "target_role");
+                let order = match selected_path_order(&opts) {
+                    Ok(order) => order,
+                    Err(err) => return nil_err(lua, &err.to_string()),
+                };
+                let limit = match opt_positive_usize(&opts, "limit") {
+                    Ok(limit) => limit,
+                    Err(err) => return nil_err(lua, &err.to_string()),
+                };
                 match (&refs, &source) {
                     (Some(_), Some(_)) => {
                         return nil_err(lua, "selected_path accepts either refs or source, not both");
@@ -432,11 +501,15 @@ pub fn register_runtime_graph_namespace(
                         return nil_err(lua, "selected_path requires either refs or source");
                     }
                     (Some(_), None) => {
-                        if relation_kind.is_some() || target_kind.is_some() || target_role.is_some()
+                        if relation_kind.is_some()
+                            || target_kind.is_some()
+                            || target_role.is_some()
+                            || !matches!(order, SelectedPathOrder::OldestFirst)
+                            || limit.is_some()
                         {
                             return nil_err(
                                 lua,
-                                "selected_path refs mode does not accept relation_kind, target_kind, or target_role",
+                                "selected_path refs mode does not accept relation_kind, target_kind, target_role, order, or limit",
                             );
                         }
                     }
@@ -454,13 +527,18 @@ pub fn register_runtime_graph_namespace(
                                 .await
                         }
                         (None, Some(source)) => {
+                            let source_opts = SelectedPathSourceOptions {
+                                relation_kind,
+                                target_kind,
+                                target_role,
+                                order,
+                                limit,
+                            };
                             selected_path_from_graph_edges(
                                 &session.store,
                                 session.internal_id,
                                 source,
-                                relation_kind,
-                                target_kind,
-                                target_role,
+                                source_opts,
                             )
                             .await
                         }
@@ -735,5 +813,99 @@ mod tests {
             .to_string();
 
         assert!(err.contains("duplicate turn"));
+    }
+
+    #[tokio::test]
+    async fn selected_path_from_graph_edges_supports_newest_first_and_limit() {
+        let store = StateStore::open_memory().await.unwrap();
+        let session_id = store
+            .create_session(uuid::Uuid::now_v7(), "default", None)
+            .await
+            .unwrap();
+
+        store
+            .insert_message(
+                session_id,
+                turn(0),
+                "user",
+                &json!([{"type": "text", "text": "root"}]),
+                None,
+            )
+            .await
+            .unwrap();
+        let candidate_a = store
+            .create_branch_head_from_turn_index(session_id, "candidate-a", Some(0), false)
+            .await
+            .unwrap();
+        let candidate_b = store
+            .create_branch_head_from_turn_index(session_id, "candidate-b", Some(0), false)
+            .await
+            .unwrap();
+
+        store
+            .insert_message(
+                session_id,
+                branch_turn(Some(candidate_a.id), 1),
+                "assistant",
+                &json!([{"type": "text", "text": "candidate a"}]),
+                None,
+            )
+            .await
+            .unwrap();
+        store
+            .insert_message(
+                session_id,
+                branch_turn(Some(candidate_b.id), 1),
+                "assistant",
+                &json!([{"type": "text", "text": "candidate b"}]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let group = store
+            .create_graph_node(
+                Some(session_id),
+                "experiment",
+                Some("compare candidates"),
+                GraphProvenance::default(),
+                None,
+            )
+            .await
+            .unwrap();
+
+        for branch in [&candidate_a, &candidate_b] {
+            let edge = GraphEdgeCreate::new(
+                GraphRef::new("graph_node", bytes_to_simple_uuid(&group.public_id)),
+                GraphRef::new("branch_head", bytes_to_simple_uuid(&branch.public_id)),
+                "contains",
+            );
+            store.create_graph_edge(edge).await.unwrap();
+        }
+
+        let selected = selected_path_from_graph_edges(
+            &store,
+            session_id,
+            GraphRef::new("graph_node", bytes_to_simple_uuid(&group.public_id)),
+            SelectedPathSourceOptions {
+                relation_kind: Some("contains".to_string()),
+                target_kind: Some("branch_head".to_string()),
+                target_role: None,
+                order: SelectedPathOrder::NewestFirst,
+                limit: Some(1),
+            },
+        )
+        .await
+        .unwrap();
+
+        let branch_b_turn = store
+            .get_branch_head(session_id, candidate_b.id)
+            .await
+            .unwrap()
+            .expect("candidate b branch")
+            .head_turn_id
+            .expect("candidate b head turn");
+
+        assert_eq!(selected, vec![branch_b_turn]);
     }
 }

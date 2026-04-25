@@ -715,6 +715,8 @@ local target, terr = runtime.graph.selected_path({
   relation_kind = "contains",
   target_kind = "branch_head",
   target_role = "candidate",
+  order = "newest_first",
+  limit = 1,
 })
 if not target then error(terr) end
 
