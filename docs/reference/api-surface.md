@@ -110,6 +110,7 @@ Reference:
 Globals:
 
 - `fs.*`
+- `hash.*`
 - `json.*`
 - `time.*`
 - `log.*`

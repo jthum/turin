@@ -2,21 +2,27 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use mlua::{Function, Lua, LuaSerdeExt, MultiValue, Result as LuaResult, Table, Value};
+use sha2::{Digest, Sha256};
 
 use crate::harness::engine::{
     ModuleLoadOptions, is_loading_phase, load_module_from_source,
     lookup_loaded_module_by_canonical_path, register_watch_root, resolve_governance_root_name,
 };
+use crate::harness::globals::HarnessAppData;
+use crate::harness::globals::block_on_current;
 use crate::harness::stdlib::binding_common::{
     bool_err, nil_err, ok_bool, ok_value, string_ok, string_value,
 };
 use crate::harness::stdlib::governance_support::{
     current_subject, require_capability as require_governance_capability,
 };
+use crate::harness::stdlib::scoped_data_backend::encode_scope_key;
 use crate::kernel::config::{GovernanceImportMode, GovernanceProfile};
+use crate::persistence::manager::{StorePathScope, StoreSelector};
 
 pub fn register_system_globals(lua: &Lua, fs_root: &Path, max_file_size: usize) -> LuaResult<()> {
     register_fs_module(lua, fs_root, max_file_size)?;
+    register_hash_module(lua)?;
     register_json_module(lua)?;
     register_time_module(lua)?;
     register_log_function(lua)?;
@@ -793,6 +799,97 @@ pub(crate) fn require_capability_for_lua(lua: &Lua, capability: &str) -> LuaResu
     Ok(())
 }
 
+const FS_STAT_HASH_KEY_PREFIX: &str = "_turin:fs_stat_hash:";
+
+fn hash_sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
+}
+
+fn normalize_tracking_path(root: &Path, resolved: &Path) -> String {
+    resolved
+        .strip_prefix(root)
+        .unwrap_or(resolved)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn current_session_tracking_context(
+    lua: &Lua,
+) -> Result<
+    Option<(
+        std::sync::Arc<crate::persistence::state::StateStore>,
+        String,
+    )>,
+    String,
+> {
+    let Some(app_data) = lua.app_data_ref::<HarnessAppData>() else {
+        return Ok(None);
+    };
+
+    let store_manager = app_data.store_manager.clone();
+    let execution_ctx = app_data.execution_ctx.clone();
+    drop(app_data);
+
+    let (session_id, store_selector) = execution_ctx
+        .lock()
+        .map_err(|_| "execution context mutex poisoned".to_string())
+        .map(|lock| {
+            (
+                lock.session_id.clone(),
+                lock.session_store_selector
+                    .clone()
+                    .unwrap_or_else(|| StoreSelector::Alias("state".to_string())),
+            )
+        })?;
+
+    let Some(session_id) = session_id else {
+        return Ok(None);
+    };
+
+    let store = block_on_current(async move {
+        store_manager
+            .open_with_path_scope(&store_selector, StorePathScope::AllowAny)
+            .await
+            .map_err(|err| err.to_string())
+    })?;
+
+    Ok(Some((store, encode_scope_key(&session_id, "default"))))
+}
+
+fn load_previous_session_hash(lua: &Lua, tracking_key: &str) -> Result<Option<String>, String> {
+    let Some((store, session_scope_key)) = current_session_tracking_context(lua)? else {
+        return Ok(None);
+    };
+    block_on_current(async move {
+        store
+            .kv_get("session", &session_scope_key, tracking_key)
+            .await
+            .map_err(|err| err.to_string())
+    })
+}
+
+fn store_current_session_hash(lua: &Lua, tracking_key: &str, hash: &str) -> Result<(), String> {
+    let Some((store, session_scope_key)) = current_session_tracking_context(lua)? else {
+        return Ok(());
+    };
+    let tracking_key = tracking_key.to_string();
+    let hash = hash.to_string();
+    block_on_current(async move {
+        store
+            .kv_set("session", &session_scope_key, &tracking_key, &hash)
+            .await
+            .map_err(|err| err.to_string())
+    })
+}
+
 fn register_fs_module(lua: &Lua, fs_root: &Path, max_file_size: usize) -> LuaResult<()> {
     let fs_table = lua.create_table()?;
     let root = fs_root.to_path_buf();
@@ -856,7 +953,64 @@ fn register_fs_module(lua: &Lua, fs_root: &Path, max_file_size: usize) -> LuaRes
         lua.create_function(move |_lua, path: String| Ok(resolve_safe_path(&r4, &path).is_some()))?,
     )?;
 
+    let r5 = root.clone();
+    fs_table.set(
+        "stat",
+        lua.create_function(move |lua, path: String| {
+            require_capability_for_lua(lua, "fs.read")?;
+
+            let resolved = resolve_safe_path(&r5, &path)
+                .ok_or_else(|| mlua::Error::runtime("Unsafe path traversal".to_string()))?;
+            let bytes =
+                std::fs::read(&resolved).map_err(|err| mlua::Error::runtime(err.to_string()))?;
+            let metadata = std::fs::metadata(&resolved)
+                .map_err(|err| mlua::Error::runtime(err.to_string()))?;
+            let hash = hash_sha256_hex(&bytes);
+            let tracking_path = normalize_tracking_path(&r5, &resolved);
+            let tracking_key = format!("{FS_STAT_HASH_KEY_PREFIX}{tracking_path}");
+            let previous_hash =
+                load_previous_session_hash(lua, &tracking_key).map_err(mlua::Error::runtime)?;
+            store_current_session_hash(lua, &tracking_key, &hash).map_err(mlua::Error::runtime)?;
+
+            let stat = lua.create_table()?;
+            stat.set("path", tracking_path)?;
+            stat.set("bytes", bytes.len() as i64)?;
+            stat.set("hash", hash.clone())?;
+            stat.set("previous_hash", previous_hash.clone())?;
+            stat.set("seen_before", previous_hash.is_some())?;
+            stat.set(
+                "changed",
+                previous_hash
+                    .as_ref()
+                    .map(|previous| previous != &hash)
+                    .unwrap_or(true),
+            )?;
+
+            if let Ok(modified) = metadata.modified()
+                && let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH)
+            {
+                stat.set("modified_at", duration.as_secs() as i64)?;
+            } else {
+                stat.set("modified_at", Value::Nil)?;
+            }
+
+            Ok(Value::Table(stat))
+        })?,
+    )?;
+
     lua.globals().set("fs", fs_table)?;
+    Ok(())
+}
+
+fn register_hash_module(lua: &Lua) -> LuaResult<()> {
+    let hash_table = lua.create_table()?;
+    hash_table.set(
+        "sha256",
+        lua.create_function(|lua, text: String| {
+            string_value(lua, &hash_sha256_hex(text.as_bytes()))
+        })?,
+    )?;
+    lua.globals().set("hash", hash_table)?;
     Ok(())
 }
 

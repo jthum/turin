@@ -6,12 +6,11 @@ It exists so the DX review can evaluate consistency at the shape level rather th
 
 ## Result Convention
 
-Most Lua-facing APIs use:
+The surface is currently in transition:
 
-- success: `value`
-- failure: `nil, err`
-
-Hooks are different because they return verdicts or modified payloads rather than tuple-style results.
+- older substrate-style APIs often use `value, err`
+- newer DX-aligned helpers and primitives increasingly return direct values and raise on actual failure
+- hooks are separate because they return verdicts or modified payloads
 
 Primary reference:
 
@@ -186,6 +185,29 @@ Materialization modes currently include:
 - explicit refs mode
 
 This is a read-path shape, not a durable structural entity.
+
+## `fs.stat(...)` Row
+
+Returned by `fs.stat(path)`.
+
+Shape:
+
+```lua
+{
+  path = "SPEC.md",
+  bytes = 18234,
+  hash = "...",
+  previous_hash = nil or "...",
+  seen_before = true or false,
+  changed = true or false,
+  modified_at = nil or 1714377000,
+}
+```
+
+Important distinction:
+
+- current file facts such as `bytes`, `hash`, and `modified_at` describe the file now
+- `previous_hash`, `seen_before`, and `changed` are session-relative tracking fields
 
 ## Store / Selector Shapes
 

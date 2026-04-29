@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
 
-fn test_app_data_for_root(root: PathBuf) -> HarnessAppData {
+fn test_app_data_for_root_and_session(root: PathBuf, session_id: &str) -> HarnessAppData {
     HarnessAppData {
         fs_root: root.clone(),
         workspace_root: root.clone(),
@@ -28,7 +28,7 @@ fn test_app_data_for_root(root: PathBuf) -> HarnessAppData {
         embedding_provider: None,
         execution_ctx: std::sync::Arc::new(std::sync::Mutex::new(
             crate::harness::globals::HarnessExecutionContext {
-                session_id: Some("test-session".to_string()),
+                session_id: Some(session_id.to_string()),
                 queue: Some(std::sync::Arc::new(tokio::sync::Mutex::new(
                     std::collections::VecDeque::new(),
                 ))),
@@ -41,6 +41,10 @@ fn test_app_data_for_root(root: PathBuf) -> HarnessAppData {
         watch_roots: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         loading_phase: std::sync::Arc::new(std::sync::Mutex::new(true)),
     }
+}
+
+fn test_app_data_for_root(root: PathBuf) -> HarnessAppData {
+    test_app_data_for_root_and_session(root, "test-session")
 }
 
 fn test_app_data() -> HarnessAppData {
@@ -876,6 +880,114 @@ async fn test_dx_runtime_agent_status_proxy_and_fs_json_helpers() {
 
     engine.load_dir(dir.path()).unwrap();
     let verdict = engine
+        .evaluate_userdata("on_turn_prepare", MockContext)
+        .unwrap();
+    assert!(verdict.is_allowed());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_hash_sha256_and_fs_stat_track_changes_per_session() {
+    let root = TempDir::new().unwrap();
+    std::fs::write(root.path().join("SPEC.md"), "alpha").unwrap();
+
+    let script = r#"
+        function on_turn_prepare(ctx)
+            local run = session.incr("run")
+            local stat = fs.stat("SPEC.md")
+
+            if hash.sha256("hello") ~= "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" then
+                return REJECT, "hash.sha256 mismatch"
+            end
+
+            if stat.path ~= "SPEC.md" then
+                return REJECT, "fs.stat path mismatch"
+            end
+
+            if run == 1 then
+                if stat.bytes ~= 5 or stat.hash ~= hash.sha256("alpha") then
+                    return REJECT, "run1 stat facts mismatch"
+                end
+                if stat.seen_before ~= false or stat.changed ~= true or stat.previous_hash ~= nil then
+                    return REJECT, "run1 tracking mismatch"
+                end
+            elseif run == 2 then
+                if stat.hash ~= hash.sha256("alpha") then
+                    return REJECT, "run2 hash mismatch"
+                end
+                if stat.seen_before ~= true or stat.changed ~= false or stat.previous_hash ~= hash.sha256("alpha") then
+                    return REJECT, "run2 tracking mismatch"
+                end
+            elseif run == 3 then
+                if stat.bytes ~= 4 or stat.hash ~= hash.sha256("beta") then
+                    return REJECT, "run3 stat facts mismatch"
+                end
+                if stat.seen_before ~= true or stat.changed ~= true or stat.previous_hash ~= hash.sha256("alpha") then
+                    return REJECT, "run3 tracking mismatch"
+                end
+            else
+                return REJECT, "unexpected run"
+            end
+
+            return ALLOW
+        end
+    "#;
+
+    let harness_dir = TempDir::new().unwrap();
+    std::fs::write(harness_dir.path().join("stat.lua"), script).unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data_for_root(root.path().to_path_buf())).unwrap();
+    engine.load_dir(harness_dir.path()).unwrap();
+
+    let verdict = engine
+        .evaluate_userdata("on_turn_prepare", MockContext)
+        .unwrap();
+    assert!(verdict.is_allowed());
+
+    let verdict = engine
+        .evaluate_userdata("on_turn_prepare", MockContext)
+        .unwrap();
+    assert!(verdict.is_allowed());
+
+    std::fs::write(root.path().join("SPEC.md"), "beta").unwrap();
+
+    let verdict = engine
+        .evaluate_userdata("on_turn_prepare", MockContext)
+        .unwrap();
+    assert!(verdict.is_allowed());
+
+    let other_session_script = r#"
+        function on_turn_prepare(ctx)
+            local run = session.incr("run")
+            local stat = fs.stat("SPEC.md")
+
+            if run ~= 1 then
+                return REJECT, "new session counter mismatch"
+            end
+            if stat.hash ~= hash.sha256("beta") or stat.bytes ~= 4 then
+                return REJECT, "new session stat facts mismatch"
+            end
+            if stat.seen_before ~= false or stat.changed ~= true or stat.previous_hash ~= nil then
+                return REJECT, "new session tracking mismatch"
+            end
+
+            return ALLOW
+        end
+    "#;
+    let other_harness_dir = TempDir::new().unwrap();
+    std::fs::write(
+        other_harness_dir.path().join("other_session.lua"),
+        other_session_script,
+    )
+    .unwrap();
+
+    let mut other_engine = HarnessEngine::new(test_app_data_for_root_and_session(
+        root.path().to_path_buf(),
+        "other-session",
+    ))
+    .unwrap();
+    other_engine.load_dir(other_harness_dir.path()).unwrap();
+
+    let verdict = other_engine
         .evaluate_userdata("on_turn_prepare", MockContext)
         .unwrap();
     assert!(verdict.is_allowed());

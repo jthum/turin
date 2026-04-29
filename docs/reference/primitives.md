@@ -6,7 +6,7 @@ the preferred `runtime.*` namespaces and the ergonomic top-level aliases).
 
 ## Result Convention (Important)
 
-Most stdlib functions follow a Lua tuple convention:
+Older substrate-facing stdlib functions often follow a Lua tuple convention:
 
 - success: `(value, nil)` or `(true, nil)`
 - failure: `(nil, "error")` or `(false, "error")`
@@ -21,7 +21,7 @@ local ok, err = runtime.kv.set("foo", "bar", runtime.context("agent", "coder"))
 if not ok then error(err) end
 ```
 
-Some functions return plain values (e.g. `time.epoch_seconds()`) or raise Lua runtime errors for invalid argument shapes.
+Some functions return plain values (e.g. `time.epoch_seconds()`, `hash.sha256(...)`) or raise Lua runtime errors for invalid argument shapes and runtime failures (e.g. `fs.stat(...)`).
 
 ## Verdict Constants (for hooks)
 
@@ -292,14 +292,57 @@ Filesystem helpers scoped to `harness.fs_root` (default: workspace root).
 
 - `fs.read(path) -> string|nil, err?`
 - `fs.write(path, content) -> bool, err?`
+- `fs.stat(path) -> stat_table` (raises on failure)
 - `fs.exists(path) -> bool`
 - `fs.is_safe_path(path) -> bool`
 
 Notes:
 
 - `fs.read`/`fs.write` are governance-capability gated (`fs.read`, `fs.write`) when governance enforcement is enabled.
+- `fs.stat(...)` currently uses the same `fs.read` capability gate because it reads file contents to compute a content hash.
 - `fs.write` enforces a max harness write size (kernel constant, default 10MB).
 - Path traversal outside `harness.fs_root` is denied.
+
+`fs.stat(path)` shape:
+
+```lua
+{
+  path = "SPEC.md",
+  bytes = 18234,
+  hash = "...",
+  previous_hash = nil or "...",
+  seen_before = true or false,
+  changed = true or false,
+  modified_at = nil or 1714377000,
+}
+```
+
+Notes:
+
+- `hash` is a SHA-256 hash of the file's current bytes.
+- `previous_hash`, `seen_before`, and `changed` are tracked per session.
+- on first observation in a session, `seen_before = false` and `changed = true`.
+
+Example:
+
+```lua
+local spec = fs.stat("SPEC.md")
+if spec.changed then
+  log("SPEC.md changed in this session")
+end
+```
+
+## `hash`
+
+- `hash.sha256(text) -> string`
+
+Returns the lowercase hexadecimal SHA-256 digest for the given string.
+
+Example:
+
+```lua
+local digest = hash.sha256("hello")
+```
 
 ## `json`
 
