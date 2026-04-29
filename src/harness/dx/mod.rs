@@ -10,6 +10,7 @@ mod data;
 mod db;
 mod fs_json;
 mod governance;
+mod graph;
 mod time;
 mod verdict;
 
@@ -20,6 +21,7 @@ pub fn register_dx_globals(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()
     code_helpers::register_code_helpers_dx(lua)?;
     db::register_db_dx(lua)?;
     agent::register_agent_dx(lua)?;
+    graph::register_graph_dx(lua)?;
     governance::register_governance_dx(lua)?;
     time::register_time_dx(lua)?;
     fs_json::register_fs_json_globals(lua)?;

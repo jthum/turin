@@ -108,6 +108,11 @@ These are layered on top of the existing scoped aliases.
 - `remember(content, metadata?, opts?)`
 - `recall(query, opts?)`
 - `scope(kind, key, opts?) -> scope_proxy`
+- `graph.new(kind, label?, opts?) -> graph_node_proxy`
+- `graph.node(id_or_row) -> graph_node_proxy`
+- `graph.branch(id_or_row) -> graph_ref`
+- `graph.turn(id_or_row) -> graph_ref`
+- `graph.ref(kind, id_or_row) -> graph_ref`
 - `code.find(query, opts?)`
 
 Notes:
@@ -143,6 +148,52 @@ Notes:
 - it does not invent new scope semantics
 - `scope("global")` is valid and targets the shared global selector
 - non-global scopes require an explicit key
+
+### DX `graph`
+
+- `graph.new(kind, label?, opts?) -> graph_node_proxy`
+- `graph.node(id_or_row) -> graph_node_proxy`
+- `graph.branch(id_or_row) -> graph_ref`
+- `graph.turn(id_or_row) -> graph_ref`
+- `graph.ref(kind, id_or_row) -> graph_ref`
+
+`graph_node_proxy` methods:
+
+- `node:add(target, role_or_opts?) -> edge`
+- `node:link(target, relation, opts?) -> edge`
+- `node:find(role_or_opts?) -> context_target`
+- `node:newest(role_or_opts?) -> context_target`
+- `node:oldest(role_or_opts?) -> context_target`
+- `node:all(role_or_opts?) -> context_target`
+
+Notes:
+
+- this is helper-layer sugar over:
+  - `runtime.graph.node.create(...)`
+  - `runtime.graph.edge.create(...)`
+  - `runtime.graph.path.select(...)`
+- `graph.node(...)` returns a richer node proxy, not just a bare ref table
+- `graph.branch(...)` accepts either a `branch_id` string or a branch row with `branch.branch_id`
+- `graph.turn(...)` accepts either a turn id or a table with `turn_id`
+- `graph.ref(...)` is the generic escape hatch for less common reference kinds such as `external_path`
+- node path helpers default to:
+  - `relation_kind = "contains"`
+  - `target_kind = "branch_head"`
+
+Example:
+
+```lua
+local experiment = graph.new("experiment", "compare candidates")
+local branch, err = agent.session.branch_create("candidate-a", { from_turn_index = 0 })
+if not branch then error(err) end
+
+experiment:add(graph.branch(branch), { role = "candidate" })
+
+local target = experiment:newest("candidate")
+agent.sidestep("Analyze this candidate", {
+  context_target = target,
+})
+```
 
 ### DX `runtime.db(...)`
 

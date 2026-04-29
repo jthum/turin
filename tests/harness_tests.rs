@@ -6040,6 +6040,127 @@ async fn test_runtime_graph_api_records_sparse_relationships() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_graph_dx_helpers_create_link_and_materialize_paths() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test_graph_dx_helpers.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+
+    let harness_code = r#"
+        function on_turn_prepare(ctx)
+            local experiment = graph.new("experiment", "compare candidates")
+            if experiment.kind ~= "graph_node" then error("graph.new kind mismatch") end
+            if experiment.node_id == nil then error("graph.new node_id missing") end
+            if experiment.node_kind ~= "experiment" then error("graph.new node_kind mismatch") end
+
+            local branch, berr = agent.session.branch_create("candidate-a", {
+                from_turn_index = 0,
+            })
+            if branch == nil then error("agent.session.branch_create failed: " .. tostring(berr)) end
+
+            local candidate = graph.branch(branch)
+            if candidate.kind ~= "branch_head" then error("graph.branch kind mismatch") end
+            if candidate.id ~= branch.branch_id then error("graph.branch id mismatch") end
+
+            local edge = experiment:add(candidate, {
+                role = "candidate",
+                metadata = { rank = 1 },
+            })
+            if edge.relation_kind ~= "contains" then error("graph.node.add relation mismatch") end
+            if edge.target_role ~= "candidate" then error("graph.node.add target role mismatch") end
+
+            local note = experiment:link(
+                graph.ref("external_path", "wiki://note/interface-design"),
+                "contains",
+                { role = "note" }
+            )
+            if note.target.kind ~= "external_path" then error("graph.ref target mismatch") end
+
+            local newest = experiment:newest("candidate")
+            if newest.kind ~= "selected_path" then error("graph.node.newest kind mismatch") end
+            if #newest.turn_ids ~= 1 then error("graph.node.newest turn count mismatch") end
+
+            local direct = runtime.graph.path.select({
+                refs = { graph.turn(newest.turn_ids[1]) }
+            })
+            if direct == nil then error("graph.turn explicit select failed") end
+            if #direct.turn_ids ~= 1 then error("graph.turn explicit turn count mismatch") end
+
+            local all = graph.node(experiment):all({
+                role = "candidate",
+                target = "branch",
+            })
+            if #all.turn_ids ~= 1 then error("graph.node(all) candidate count mismatch") end
+
+            return ALLOW
+        end
+    "#;
+    std::fs::write(harness_dir.join("graph_dx.lua"), harness_code)?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: Some("worker-ok".to_string()),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let config = TurinConfig {
+        tools: Default::default(),
+        agent: AgentConfig {
+            tools: Default::default(),
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Graph DX helper test".to_string(),
+            thinking: None,
+            mode: AgentMode::Auto,
+            harness: None,
+            idle_grace_secs: None,
+            inference: Default::default(),
+            persistence: Default::default(),
+        },
+        agents: Default::default(),
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 1,
+            heartbeat_interval_secs: 30,
+            initial_spawn_depth: 0,
+        },
+        layout: Default::default(),
+        inference: InferenceConfig::default(),
+        persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+            memory_limit_mb: 32,
+        },
+        harnesses: Default::default(),
+        providers,
+        embeddings: Some(EmbeddingConfig::noop()),
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("exercise graph dx helpers".to_string()))
+        .await?;
+    kernel.end_session(&mut session).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_runtime_agent_peer.db");
