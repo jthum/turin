@@ -107,6 +107,7 @@ These are layered on top of the existing scoped aliases.
 
 - `remember(content, metadata?, opts?)`
 - `recall(query, opts?)`
+- `scope(kind, key, opts?) -> scope_proxy`
 - `code.find(query, opts?)`
 
 Notes:
@@ -121,7 +122,27 @@ Example:
 remember("Compiler errors should stay concise")
 local file, ferr = fs.read("SPEC.md")
 local rows = code.find("capability decision")
+local project = scope("project", "my-app", { namespace = "notes" })
 ```
+
+`scope_proxy` methods:
+
+- `scope_proxy.remember(content, metadata?)`
+- `scope_proxy.recall(query, opts?)`
+- `scope_proxy.get(key)`
+- `scope_proxy.set(key, value)`
+- `scope_proxy.del(key)`
+- `scope_proxy.incr(key, by?) -> integer`
+
+Notes:
+
+- `scope(...)` is DX sugar over:
+  - `runtime.context(...)`
+  - `memory.as(ctx)`
+  - `kv.as(ctx)`
+- it does not invent new scope semantics
+- `scope("global")` is valid and targets the shared global selector
+- non-global scopes require an explicit key
 
 ### DX `runtime.db(...)`
 

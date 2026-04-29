@@ -167,6 +167,7 @@ Current DX helper globals and helper-layer extensions:
 - `access.*`
 - `remember(...)`
 - `recall(...)`
+- `scope(kind, key, opts?)`
 - `session.remember(...)`
 - `session.recall(...)`
 - `session.get(...)`

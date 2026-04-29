@@ -844,6 +844,64 @@ async fn test_dx_session_user_kv_helpers() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_dx_scope_helper_supports_custom_scopes() {
+    let root = TempDir::new().unwrap();
+    let mut engine = HarnessEngine::new(test_app_data_for_root(root.path().to_path_buf())).unwrap();
+
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("scope_dx.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local project = scope("project", "my-app", {
+                    namespace = "notes",
+                    visibility = "shared",
+                })
+
+                project.set("counter", "0")
+                local a = project.incr("counter")
+                local b = project.incr("counter", 4)
+                if a ~= 1 or b ~= 5 then
+                    return REJECT, "scope.incr mismatch"
+                end
+                if project.get("counter") ~= "5" then
+                    return REJECT, "scope.get mismatch"
+                end
+
+                project.remember("My app uses event sourcing.", { topic = "architecture" })
+                local hits = project.recall("event sourcing")
+                if hits == nil or #hits < 1 then
+                    return REJECT, "scope.recall returned no hits"
+                end
+                if hits[1].metadata == nil or hits[1].metadata.topic ~= "architecture" then
+                    return REJECT, "scope.recall metadata mismatch"
+                end
+
+                project.del("counter")
+                if project.get("counter") ~= nil then
+                    return REJECT, "scope.del mismatch"
+                end
+
+                local global_scope = scope("global")
+                global_scope.set("banner", "shared")
+                if global_scope.get("banner") ~= "shared" then
+                    return REJECT, "scope(global) mismatch"
+                end
+
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate_userdata("on_turn_prepare", MockContext)
+        .unwrap();
+    assert!(verdict.is_allowed());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_dx_runtime_db_proxy_one_and_with_error_precedence() {
     let root = TempDir::new().unwrap();
     let mut engine = HarnessEngine::new(test_app_data_for_root(root.path().to_path_buf())).unwrap();
