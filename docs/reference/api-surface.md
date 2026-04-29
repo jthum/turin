@@ -259,11 +259,11 @@ This is the current canonical map at the harness level.
 
 ### `runtime.graph`
 
-- `node_create(opts)`
-- `edge_create(opts)`
-- `nodes(opts?)`
-- `edges(opts?)`
-- `selected_path(opts)`
+- `node.create(opts)`
+- `node.list(opts?)`
+- `edge.create(opts)`
+- `edge.list(opts?)`
+- `path.select(opts)`
 
 ### `runtime.policy`
 

@@ -406,13 +406,16 @@ pub fn register_runtime_graph_namespace(
     app_data: &HarnessAppData,
 ) -> LuaResult<()> {
     let graph_table = lua.create_table()?;
+    let node_table = lua.create_table()?;
+    let edge_table = lua.create_table()?;
+    let path_table = lua.create_table()?;
 
     {
         let store_manager = app_data.store_manager.clone();
         let execution_ctx = app_data.execution_ctx.clone();
         let app_data_snapshot = app_data.clone();
-        graph_table.set(
-            "node_create",
+        node_table.set(
+            "create",
             lua.create_function(move |lua, opts: Table| {
                 if let Err(err) =
                     require_governance_capability(&app_data_snapshot, "runtime.graph.write")
@@ -458,8 +461,8 @@ pub fn register_runtime_graph_namespace(
         let store_manager = app_data.store_manager.clone();
         let execution_ctx = app_data.execution_ctx.clone();
         let app_data_snapshot = app_data.clone();
-        graph_table.set(
-            "selected_path",
+        path_table.set(
+            "select",
             lua.create_function(move |lua, opts: Table| {
                 if let Err(err) =
                     require_governance_capability(&app_data_snapshot, "runtime.graph.query")
@@ -559,8 +562,8 @@ pub fn register_runtime_graph_namespace(
         let store_manager = app_data.store_manager.clone();
         let execution_ctx = app_data.execution_ctx.clone();
         let app_data_snapshot = app_data.clone();
-        graph_table.set(
-            "edge_create",
+        edge_table.set(
+            "create",
             lua.create_function(move |lua, opts: Table| {
                 if let Err(err) =
                     require_governance_capability(&app_data_snapshot, "runtime.graph.write")
@@ -609,8 +612,8 @@ pub fn register_runtime_graph_namespace(
         let store_manager = app_data.store_manager.clone();
         let execution_ctx = app_data.execution_ctx.clone();
         let app_data_snapshot = app_data.clone();
-        graph_table.set(
-            "nodes",
+        node_table.set(
+            "list",
             lua.create_function(move |lua, opts: Option<Table>| {
                 if let Err(err) =
                     require_governance_capability(&app_data_snapshot, "runtime.graph.query")
@@ -642,8 +645,8 @@ pub fn register_runtime_graph_namespace(
         let store_manager = app_data.store_manager.clone();
         let execution_ctx = app_data.execution_ctx.clone();
         let app_data_snapshot = app_data.clone();
-        graph_table.set(
-            "edges",
+        edge_table.set(
+            "list",
             lua.create_function(move |lua, opts: Option<Table>| {
                 if let Err(err) =
                     require_governance_capability(&app_data_snapshot, "runtime.graph.query")
@@ -687,6 +690,9 @@ pub fn register_runtime_graph_namespace(
         )?;
     }
 
+    graph_table.set("node", node_table)?;
+    graph_table.set("edge", edge_table)?;
+    graph_table.set("path", path_table)?;
     runtime_table.set("graph", graph_table)?;
     Ok(())
 }

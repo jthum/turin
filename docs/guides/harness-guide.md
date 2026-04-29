@@ -688,10 +688,10 @@ local rows, qerr = runtime.db.query(
 
 Use `runtime.graph.*` when a harness needs to record opt-in semantic relationships between graph nodes, branch heads, turns, or external references. Ordinary sessions do not create graph rows by default.
 
-`runtime.graph.selected_path(...)` materializes graph edges that target `branch_head` or `turn` refs into an execution context target:
+`runtime.graph.path.select(...)` materializes graph edges that target `branch_head` or `turn` refs into an execution context target:
 
 ```lua
-local group, err = runtime.graph.node_create({
+local group, err = runtime.graph.node.create({
   kind = "experiment",
   label = "compare candidates",
 })
@@ -702,14 +702,14 @@ local branch, berr = agent.session.branch_create("candidate-a", {
 })
 if not branch then error(berr) end
 
-runtime.graph.edge_create({
+runtime.graph.edge.create({
   source = { kind = "graph_node", id = group.node_id },
   target = { kind = "branch_head", id = branch.branch_id },
   relation_kind = "contains",
   target_role = "candidate",
 })
 
-local target, terr = runtime.graph.selected_path({
+local target, terr = runtime.graph.path.select({
   source = { kind = "graph_node", id = group.node_id },
   relation_kind = "contains",
   target_kind = "branch_head",
@@ -727,7 +727,7 @@ agent.sidestep("Analyze this candidate path", {
 If the harness already knows the exact sequence it wants, it can skip the graph-edge lookup and materialize an explicit ordered path directly:
 
 ```lua
-local target, terr = runtime.graph.selected_path({
+local target, terr = runtime.graph.path.select({
   refs = {
     { kind = "turn", id = "12" },
     { kind = "branch_head", id = branch.branch_id },

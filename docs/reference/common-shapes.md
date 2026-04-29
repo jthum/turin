@@ -125,7 +125,7 @@ This is intentionally generic.
 
 ## Graph Node
 
-Returned by `runtime.graph.node_create(...)` and `runtime.graph.nodes(...)`.
+Returned by `runtime.graph.node.create(...)` and `runtime.graph.node.list(...)`.
 
 Shape:
 
@@ -145,7 +145,7 @@ Shape:
 
 ## Graph Edge
 
-Returned by `runtime.graph.edge_create(...)` and `runtime.graph.edges(...)`.
+Returned by `runtime.graph.edge.create(...)` and `runtime.graph.edge.list(...)`.
 
 Shape:
 
@@ -168,7 +168,7 @@ Shape:
 
 ## `selected_path`
 
-Returned by `runtime.graph.selected_path(...)`.
+Returned by `runtime.graph.path.select(...)`.
 
 Shape:
 

@@ -3132,8 +3132,8 @@ CREATE INDEX idx_code_chunks_search_fts ON code_chunks USING fts(search_text);
             "function",
             "on_turn_prepare",
             "function on_turn_prepare(ctx)",
-            "function on_turn_prepare(ctx) local rows = runtime.graph.edges() end",
-            "harnesses/runtime_graph.lua\non_turn_prepare\nfunction on_turn_prepare(ctx)\nfunction on_turn_prepare(ctx) local rows = runtime.graph.edges() end",
+            "function on_turn_prepare(ctx) local rows = runtime.graph.edge.list() end",
+            "harnesses/runtime_graph.lua\non_turn_prepare\nfunction on_turn_prepare(ctx)\nfunction on_turn_prepare(ctx) local rows = runtime.graph.edge.list() end",
             sparse_vector_blob(),
             1_i64,
             18_i64,
@@ -5903,21 +5903,21 @@ async fn test_runtime_graph_api_records_sparse_relationships() -> Result<()> {
 
     let harness_code = r#"
         function on_turn_prepare(ctx)
-            local before, be = runtime.graph.nodes()
-            if before == nil then error("runtime.graph.nodes before failed: " .. tostring(be)) end
+            local before, be = runtime.graph.node.list()
+            if before == nil then error("runtime.graph.node.list before failed: " .. tostring(be)) end
             if #before ~= 0 then error("ordinary session should not start with graph nodes") end
 
-            local node, ne = runtime.graph.node_create({
+            local node, ne = runtime.graph.node.create({
                 kind = "experiment",
                 label = "compare approaches",
                 origin_task_id = "task-from-harness",
                 metadata = { purpose = "speculation" }
             })
-            if node == nil then error("runtime.graph.node_create failed: " .. tostring(ne)) end
+            if node == nil then error("runtime.graph.node.create failed: " .. tostring(ne)) end
             if node.node_id == nil then error("graph node missing node_id") end
             if node.metadata.purpose ~= "speculation" then error("graph node metadata mismatch") end
 
-            local edge, ee = runtime.graph.edge_create({
+            local edge, ee = runtime.graph.edge.create({
                 source = { kind = "graph_node", id = node.node_id },
                 target = { kind = "external_path", id = "wiki://note/interface-design" },
                 relation_kind = "contains",
@@ -5925,35 +5925,35 @@ async fn test_runtime_graph_api_records_sparse_relationships() -> Result<()> {
                 target_role = "candidate",
                 metadata = { rank = 1 }
             })
-            if edge == nil then error("runtime.graph.edge_create failed: " .. tostring(ee)) end
+            if edge == nil then error("runtime.graph.edge.create failed: " .. tostring(ee)) end
             if edge.relation_kind ~= "contains" then error("graph edge relation mismatch") end
             if edge.target_role ~= "candidate" then error("graph edge role mismatch") end
 
             local branch, be = agent.session.branch_create("path-candidate", { from_turn_index = 0 })
             if branch == nil then error("agent.session.branch_create failed: " .. tostring(be)) end
-            local branch_edge, bee = runtime.graph.edge_create({
+            local branch_edge, bee = runtime.graph.edge.create({
                 source = { kind = "graph_node", id = node.node_id },
                 target = { kind = "branch_head", id = branch.branch_id },
                 relation_kind = "contains",
                 target_role = "path_candidate"
             })
-            if branch_edge == nil then error("runtime.graph.edge_create branch failed: " .. tostring(bee)) end
+            if branch_edge == nil then error("runtime.graph.edge.create branch failed: " .. tostring(bee)) end
 
-            local selected_path, spe = runtime.graph.selected_path({
+            local selected_path, spe = runtime.graph.path.select({
                 source = { kind = "graph_node", id = node.node_id },
                 relation_kind = "contains",
                 target_kind = "branch_head",
                 target_role = "path_candidate"
             })
-            if selected_path == nil then error("runtime.graph.selected_path failed: " .. tostring(spe)) end
+            if selected_path == nil then error("runtime.graph.path.select failed: " .. tostring(spe)) end
             if selected_path.kind ~= "selected_path" then error("selected_path kind mismatch") end
             if #selected_path.turn_ids ~= 1 then error("selected_path turn count mismatch") end
 
-            local edges, le = runtime.graph.edges({
+            local edges, le = runtime.graph.edge.list({
                 source = { kind = "graph_node", id = node.node_id }
             })
-            if edges == nil then error("runtime.graph.edges failed: " .. tostring(le)) end
-            if #edges ~= 2 then error("runtime.graph.edges source lookup mismatch") end
+            if edges == nil then error("runtime.graph.edge.list failed: " .. tostring(le)) end
+            if #edges ~= 2 then error("runtime.graph.edge.list source lookup mismatch") end
 
             return ALLOW
         end
@@ -6487,11 +6487,11 @@ async fn test_agent_sidestep_creates_hidden_sibling_branch_on_current_session() 
         function on_turn_prepare(ctx)
             if not queued then
                 queued = true
-                local group, ge = runtime.graph.node_create({
+                local group, ge = runtime.graph.node.create({
                     kind = "experiment",
                     label = "sidestep group"
                 })
-                if group == nil then error("runtime.graph.node_create failed: " .. tostring(ge)) end
+                if group == nil then error("runtime.graph.node.create failed: " .. tostring(ge)) end
                 local token, err = agent.sidestep("branch-only", {
                     mode = "fork_sibling",
                     graph = {
