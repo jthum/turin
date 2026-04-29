@@ -6,12 +6,12 @@ function on_turn_prepare(ctx)
     error("expected top-level recall hits")
   end
 
-  local file = cache.file("notes.txt")
+  local file, ferr = fs.read("notes.txt")
   if file == nil then
-    error("expected cache.file result")
+    error("expected fs.read result: " .. tostring(ferr))
   end
-  if file.path ~= "notes.txt" then
-    error("cache.file path mismatch: " .. tostring(file.path))
+  if file ~= "cached text" then
+    error("fs.read content mismatch: " .. tostring(file))
   end
 
   local rows = code.find("capability")

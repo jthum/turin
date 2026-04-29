@@ -564,13 +564,13 @@ CREATE INDEX idx_code_chunks_search_fts ON code_chunks USING fts(search_text);
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, vector8(?9), ?10, ?11, ?12, ?13)",
             turso::params![
                 "chunk_lua",
-                "harnesses/runtime_cache.lua",
+                "harnesses/runtime_graph.lua",
                 "lua",
                 "function",
                 "on_turn_prepare",
                 "function on_turn_prepare(ctx)",
-                "function on_turn_prepare(ctx) local rows = runtime.cache.stats() end",
-                "harnesses/runtime_cache.lua\non_turn_prepare\nfunction on_turn_prepare(ctx)\nfunction on_turn_prepare(ctx) local rows = runtime.cache.stats() end",
+                "function on_turn_prepare(ctx) local rows = runtime.graph.edges() end",
+                "harnesses/runtime_graph.lua\non_turn_prepare\nfunction on_turn_prepare(ctx)\nfunction on_turn_prepare(ctx) local rows = runtime.graph.edges() end",
                 sparse_vector_blob(),
                 1_i64,
                 18_i64,
@@ -727,7 +727,7 @@ FROM code_chunks;
                 index_path: None,
             },
             CodeSearchMode::Semantic,
-            "cache",
+            "graph",
             &CodeSearchRequest {
                 strict: false,
                 trace: true,
@@ -769,7 +769,7 @@ FROM code_chunks;
                 index_path: None,
             },
             CodeSearchMode::Lexical,
-            "runtime cache stats",
+            "runtime graph edges",
             &CodeSearchRequest::default(),
             None,
         )
@@ -799,13 +799,13 @@ FROM code_chunks;
                 index_path: None,
             },
             CodeSearchMode::Lexical,
-            "runtime_cache.lua",
+            "runtime_graph.lua",
             &CodeSearchRequest::default(),
             None,
         )
         .await?;
         assert_eq!(lexical_file_rows.len(), 1);
-        assert_eq!(lexical_file_rows[0].path, "harnesses/runtime_cache.lua");
+        assert_eq!(lexical_file_rows[0].path, "harnesses/runtime_graph.lua");
 
         let strict_err = search(
             tmp.path(),
@@ -814,7 +814,7 @@ FROM code_chunks;
                 index_path: None,
             },
             CodeSearchMode::Semantic,
-            "cache",
+            "graph",
             &CodeSearchRequest {
                 strict: true,
                 ..CodeSearchRequest::default()

@@ -1,12 +1,12 @@
 function on_turn_prepare(ctx)
   remember("Workspace reviews should mention safety and DX")
 
-  local cached = cache.file("README.md", { include_content = true })
-  if cached == nil then
-    error("expected cached README")
+  local readme, ferr = fs.read("README.md")
+  if readme == nil then
+    error("expected README content: " .. tostring(ferr))
   end
-  if cached.content == nil or not string.find(cached.content, "DX review fixture", 1, true) then
-    error("cache.file missing README content")
+  if not string.find(readme, "DX review fixture", 1, true) then
+    error("fs.read missing README content")
   end
 
   local status, serr = runtime.code.search.status(".")

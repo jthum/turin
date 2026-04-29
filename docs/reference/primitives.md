@@ -107,13 +107,11 @@ These are layered on top of the existing scoped aliases.
 
 - `remember(content, metadata?, opts?)`
 - `recall(query, opts?)`
-- `cache.file(path, opts?)`
 - `code.find(query, opts?)`
 
 Notes:
 
 - `remember(...)` / `recall(...)` use the same default agent-scoped memory as `memory.*`
-- `cache.file(...)` is a thin wrapper over `runtime.cache.read(...)`
 - `code.find(...)` is a thin wrapper over `runtime.code.search.hybrid(...)`
 - `code.find(...)` defaults to the Turin workspace root and accepts `opts.root` / `opts.index_path` overrides
 
@@ -121,7 +119,7 @@ Example:
 
 ```lua
 remember("Compiler errors should stay concise")
-local file = cache.file("SPEC.md", { include_content = true })
+local file, ferr = fs.read("SPEC.md")
 local rows = code.find("capability decision")
 ```
 
@@ -479,21 +477,6 @@ Notes:
 - prefer key prefixes like `adrs/...` or `users/...` for KV-side grouping
 - see `docs/concepts/memory-vs-kv.md` for the recommended convention
 
-## `runtime.cache`
-
-Session-aware content cache API.
-
-- `runtime.cache.read(path, opts?) -> cache_row|nil, err?`
-- `runtime.cache.invalidate(path, opts?) -> bool, err?`
-- `runtime.cache.stats(opts?) -> stats|nil, err?`
-- `runtime.cache.reset(opts?) -> report|nil, err?`
-
-Notes:
-
-- `runtime.cache.read(...)` inherits the same `fs.read` capability and safe-path rules as `fs.read(...)`
-- `opts` for `read` include `session_id`, `include_content`, `include_previous`, `max_diff_lines`, and `token_estimate`
-- `invalidate`, `stats`, and `reset` are governed separately under `runtime.cache.*`
-
 ## `runtime.code`
 
 Root-path-first code search API backed by `turin-map` indexes.
@@ -829,12 +812,6 @@ Requires an active session context.
   - proxy methods: `get`, `set`, `delete`
 
 All KV variants accept the same `store` / `path` options as `runtime.kv.*`.
-
-## `cache`
-
-- `cache.file(path, opts?)`
-
-Thin wrapper over `runtime.cache.read(...)`.
 
 ## `code`
 

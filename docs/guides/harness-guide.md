@@ -261,7 +261,7 @@ end
 function on_turn_prepare(ctx)
   remember("Build failures should stay concise")
 
-  local spec = cache.file("SPEC.md", { include_content = true })
+  local spec, serr = fs.read("SPEC.md")
   local rows = code.find("capability decision")
 
   if spec and rows and #rows > 0 then
@@ -275,7 +275,6 @@ end
 Notes:
 
 - `remember(...)` / `recall(...)` are intent wrappers over default agent memory
-- `cache.file(...)` follows the same path and capability rules as `fs.read(...)`
 - `code.find(...)` defaults to the workspace root and delegates to hybrid code search
 
 ### Fluent DB access
@@ -640,8 +639,8 @@ The quick success check is simple: `turin-map status` should report `Semantic: e
 Then query it from the harness:
 
 ```lua
-local cached, cerr = runtime.cache.read("SPEC.md", { include_content = true })
-if not cached then error(cerr) end
+local spec, ferr = fs.read("SPEC.md")
+if not spec then error(ferr) end
 
 local status, serr = runtime.code.search.status(".")
 if not status then error(serr) end
@@ -773,7 +772,7 @@ The fast bootstrap flow lives in `docs/getting-started/harness-cookbook.md`.
 ```lua
 local ok, err = kv.set("task_state", "working")
 local rows, merr = memory.search("build failure")
-local file = cache.file("README.md")
+local file, ferr = fs.read("README.md")
 local hits = code.find("grant validation")
 remember("Release notes should stay terse")
 ```

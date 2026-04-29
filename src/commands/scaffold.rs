@@ -166,9 +166,9 @@ const STARTER_TEMPLATE_FILES: &[HarnessTemplateFile] = &[HarnessTemplateFile {
 -- Add stricter guardrails only where they make the workflow clearer.
 
 function on_turn_prepare(ctx)
-  local brief = cache.file("TURIN.md", { include_content = true })
-  if brief and brief.content then
-    ctx.system_prompt = ctx.system_prompt .. "\n\nWorkspace brief:\n" .. brief.content
+  local brief, berr = fs.read("TURIN.md")
+  if brief then
+    ctx.system_prompt = ctx.system_prompt .. "\n\nWorkspace brief:\n" .. brief
   end
 
   return ALLOW
@@ -218,14 +218,14 @@ const CODING_ASSISTANT_TEMPLATE_FILES: &[HarnessTemplateFile] = &[
         contents: r#"-- Coding assistant harness: keep the agent grounded in checked-in context.
 
 function on_turn_prepare(ctx)
-  local brief = cache.file("TURIN.md", { include_content = true })
-  if brief and brief.content then
-    ctx.system_prompt = ctx.system_prompt .. "\n\nProject brief:\n" .. brief.content
+  local brief, berr = fs.read("TURIN.md")
+  if brief then
+    ctx.system_prompt = ctx.system_prompt .. "\n\nProject brief:\n" .. brief
   end
 
-  local constraints = cache.file("CONSTRAINTS.md", { include_content = true })
-  if constraints and constraints.content then
-    ctx.system_prompt = ctx.system_prompt .. "\n\nDelivery constraints:\n" .. constraints.content
+  local constraints, cerr = fs.read("CONSTRAINTS.md")
+  if constraints then
+    ctx.system_prompt = ctx.system_prompt .. "\n\nDelivery constraints:\n" .. constraints
   end
 
   return ALLOW

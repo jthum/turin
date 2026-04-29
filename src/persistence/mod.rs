@@ -1,4 +1,3 @@
-mod cache;
 pub mod manager;
 pub mod schema;
 mod search;

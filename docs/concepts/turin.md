@@ -62,9 +62,8 @@ This release establishes the forward-looking public harness surface:
 - stable hook lifecycle semantics (`on_turn_prepare`, `on_plan_submit`, etc.)
 - canonical stdlib API under `runtime.*`
 - top-level ergonomic aliases (`memory`, `kv`, `agent`, `session`, `user`)
-- first-party DX helpers layered on top of the canonical API (`verdict`, `allowed`, `needs`, `remember`, `recall`, `cache.file`, `code.find`, callable `runtime.db(...)`, callable `runtime.agent(...)`, grant/time/json helpers)
+- first-party DX helpers layered on top of the canonical API (`verdict`, `allowed`, `needs`, `remember`, `recall`, `code.find`, callable `runtime.db(...)`, callable `runtime.agent(...)`, grant/time/json helpers)
 - memory v2 lifecycle primitives (`feedback`, `correct`, `purge`) with lexical/semantic/hybrid recall
-- session-aware content cache primitives under `runtime.cache.*`
 - root-path-first code-search primitives under `runtime.code.search.*`
 - optional `turin-map` indexing companion with direct runtime reads through `turin-code-index`
 - governance profiles/capabilities/import scoping/grants (opt-in)

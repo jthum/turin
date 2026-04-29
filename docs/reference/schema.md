@@ -234,35 +234,6 @@ Key fields:
 - `task_id`
 - `created_at`
 
-## File Cache
-
-### `file_cache_versions`
-
-Stores content-addressed file snapshots used by cache helpers.
-
-Key fields:
-
-- `path`
-- `content_hash`
-- `content`
-- `content_bytes`
-- `created_at`
-
-### `file_cache_reads`
-
-Tracks per-session file cache reads and token savings.
-
-Primary key:
-
-- `session_id`
-- `path`
-
-Fields:
-
-- `content_hash`
-- `tokens_saved`
-- `last_read_at`
-
 ## Schema Metadata
 
 ### `schema_info`

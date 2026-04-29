@@ -194,7 +194,7 @@ async fn real_repo_smoke_runtime_harness_index() -> Result<()> {
         &repo_root,
         selector.clone(),
         CodeSearchMode::Lexical,
-        "dx/code_cache.rs",
+        "dx/code_helpers.rs",
         &CodeSearchRequest {
             limit: 5,
             languages: vec!["rust".to_string()],
@@ -205,8 +205,8 @@ async fn real_repo_smoke_runtime_harness_index() -> Result<()> {
     .await?;
     assert!(!dx_path_rows.is_empty());
     assert!(
-        dx_path_rows[0].path.ends_with("dx/code_cache.rs"),
-        "expected path-oriented query to prioritize dx/code_cache.rs, got {}",
+        dx_path_rows[0].path.ends_with("dx/code_helpers.rs"),
+        "expected path-oriented query to prioritize dx/code_helpers.rs, got {}",
         dx_path_rows[0].path
     );
 

@@ -39,7 +39,7 @@ pub fn capability_decision(capability: &str) -> bool {
     )?;
     fs::write(
         root.join("README.md"),
-        "# DX review fixture\nThis workspace exercises cache.file and code.find.\n",
+        "# DX review fixture\nThis workspace exercises fs.read and code.find.\n",
     )?;
     fs::write(root.join("notes.txt"), "cached text")?;
     Ok(())

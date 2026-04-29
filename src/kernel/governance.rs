@@ -716,7 +716,6 @@ fn preset_capabilities_for_profile(
         GovernanceProfile::Open => {
             caps.insert("runtime.db.*".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.*".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.cache.*".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.graph.*".into(), serde_json::Value::Bool(true));
             caps.insert(
                 "runtime.code.search.*".into(),
@@ -740,7 +739,6 @@ fn preset_capabilities_for_profile(
             caps.insert("runtime.agent.await".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.status".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.spawn".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.cache.*".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.graph.query".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.graph.write".into(), serde_json::Value::Bool(true));
             caps.insert(
@@ -773,7 +771,6 @@ fn preset_capabilities_for_profile(
             caps.insert("runtime.agent.await".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.status".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.agent.spawn".into(), serde_json::Value::Bool(false));
-            caps.insert("runtime.cache.*".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.graph.query".into(), serde_json::Value::Bool(true));
             caps.insert("runtime.graph.write".into(), serde_json::Value::Bool(false));
             caps.insert(

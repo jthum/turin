@@ -124,12 +124,12 @@ Turin’s test suite includes dedicated coverage for:
 - hook lifecycle behavior
 - harness verdict composition
 - canonical stdlib APIs (`runtime.*`)
-- cache and code-search primitives (`runtime.cache.*`, `runtime.code.search.*`)
+- code-search primitives (`runtime.code.search.*`)
 - governance profiles/capabilities/import scoping
 - temporary grants and immutable audit semantics
 - peer-agent orchestration
 - path traversal/security checks
-- DX wrappers such as `remember`, `cache.file`, and `code.find`
+- DX wrappers such as `remember` and `code.find`
 - harness library entries under `library/`
 
 Most behavior should be validated there before spending provider quota.

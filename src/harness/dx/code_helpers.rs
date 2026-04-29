@@ -2,31 +2,14 @@ use mlua::{Function, Lua, Result as LuaResult, Table, Value};
 
 use crate::harness::dx::common::call_and_raise_on_err;
 
-pub fn register_code_cache_dx(lua: &Lua) -> LuaResult<()> {
+pub fn register_code_helpers_dx(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
     let runtime: Table = globals.get("runtime")?;
 
-    let runtime_cache: Table = runtime.get("cache")?;
     let runtime_code: Table = runtime.get("code")?;
     let runtime_search: Table = runtime_code.get("search")?;
 
-    let cache_read: Function = runtime_cache.get("read")?;
     let hybrid_search: Function = runtime_search.get("hybrid")?;
-
-    let cache_table = match globals.get::<Value>("cache")? {
-        Value::Table(table) => table,
-        _ => lua.create_table()?,
-    };
-    {
-        let cache_read = cache_read.clone();
-        cache_table.set(
-            "file",
-            lua.create_function(move |lua, (path, opts): (String, Option<Table>)| {
-                call_and_raise_on_err(lua, &cache_read, (path, opts), "cache.file")
-            })?,
-        )?;
-    }
-    globals.set("cache", cache_table)?;
 
     let code_table = match globals.get::<Value>("code")? {
         Value::Table(table) => table,

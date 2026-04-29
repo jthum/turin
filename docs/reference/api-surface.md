@@ -130,7 +130,6 @@ Namespaces under `runtime`:
 - `runtime.context.*`
 - `runtime.memory.*`
 - `runtime.kv.*`
-- `runtime.cache.*`
 - `runtime.code.*`
 - `runtime.db.*`
 - `runtime.agent.*`
@@ -148,7 +147,6 @@ Author-facing aliases outside `runtime.*`:
 
 - `memory.*`
 - `kv.*`
-- `cache.*`
 - `code.*`
 - `session.memory.*`
 - `session.kv.*`
@@ -180,7 +178,6 @@ Current DX helper globals and helper-layer extensions:
 - `user.set(...)`
 - `user.del(...)`
 - `user.incr(...)`
-- `cache.file(...)`
 - `code.find(...)`
 - `fs.read_json(...)`
 - `fs.write_json(...)`
@@ -230,13 +227,6 @@ This is the current canonical map at the harness level.
 - `get(key, opts?)`
 - `set(key, value, opts?)`
 - `delete(key, opts?)`
-
-### `runtime.cache`
-
-- `read(path, opts?)`
-- `diff(path, opts?)`
-- `stats(opts?)`
-- `reset(opts?)`
 
 ### `runtime.code`
 
