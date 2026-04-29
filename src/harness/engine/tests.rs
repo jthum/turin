@@ -1,8 +1,52 @@
 use super::*;
+use crate::harness::context::{ContextWrapper, RequestOptionsOverride};
+use crate::inference::provider::{
+    InferenceEvent, InferenceProvider, InferenceRequest, InferenceStream, ProviderClient, SdkError,
+};
+use crate::kernel::config::InferenceOverrideConfig;
 use crate::persistence::manager::StoreManager;
+use futures::future::BoxFuture;
+use futures::stream;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
+
+#[derive(Clone)]
+struct CountingTextProvider {
+    counter: Arc<Mutex<u32>>,
+}
+
+impl InferenceProvider for CountingTextProvider {
+    fn stream<'a>(
+        &'a self,
+        _request: InferenceRequest,
+        _options: Option<crate::inference::provider::RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+        let counter = Arc::clone(&self.counter);
+        Box::pin(async move {
+            let next = {
+                let mut lock = counter.lock().unwrap();
+                *lock += 1;
+                *lock
+            };
+            let text = format!("summary-{next}");
+            let events = vec![
+                Ok(InferenceEvent::MessageStart {
+                    role: "assistant".to_string(),
+                    model: "mock-model".to_string(),
+                    provider_id: "mock".to_string(),
+                }),
+                Ok(InferenceEvent::MessageDelta { content: text }),
+                Ok(InferenceEvent::MessageEnd {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                    stop_reason: None,
+                }),
+            ];
+            Ok(Box::pin(stream::iter(events)) as InferenceStream)
+        })
+    }
+}
 
 fn test_app_data_for_root_and_session(root: PathBuf, session_id: &str) -> HarnessAppData {
     HarnessAppData {
@@ -991,6 +1035,111 @@ async fn test_hash_sha256_and_fs_stat_track_changes_per_session() {
         .evaluate_userdata("on_turn_prepare", MockContext)
         .unwrap();
     assert!(verdict.is_allowed());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fs_summary_reuses_cached_summary_until_file_changes() {
+    let root = TempDir::new().unwrap();
+    std::fs::write(root.path().join("SPEC.md"), "alpha").unwrap();
+
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("summary.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local run = session.incr("summary_run")
+                local default = fs.summary("SPEC.md")
+                local default_again = fs.summary("SPEC.md")
+                local custom = fs.summary("SPEC.md", {
+                    prompt = "Summarize only the constraints and obligations."
+                })
+
+                if default ~= default_again then
+                    return REJECT, "default summary should be cached within one turn"
+                end
+
+                if run == 1 then
+                    if default ~= "summary-1" then
+                        return REJECT, "run1 default summary mismatch"
+                    end
+                    if custom ~= "summary-2" then
+                        return REJECT, "run1 custom summary mismatch"
+                    end
+                elseif run == 2 then
+                    if default ~= "summary-1" then
+                        return REJECT, "run2 default summary should be reused"
+                    end
+                    if custom ~= "summary-2" then
+                        return REJECT, "run2 custom summary should be reused"
+                    end
+                elseif run == 3 then
+                    if default ~= "summary-3" then
+                        return REJECT, "run3 default summary mismatch"
+                    end
+                    if custom ~= "summary-4" then
+                        return REJECT, "run3 custom summary mismatch"
+                    end
+                else
+                    return REJECT, "unexpected summary run"
+                end
+
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data_for_root(root.path().to_path_buf())).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+
+    let provider_calls = Arc::new(Mutex::new(0u32));
+    let provider = Arc::new(CountingTextProvider {
+        counter: Arc::clone(&provider_calls),
+    });
+    let mut clients = std::collections::HashMap::new();
+    clients.insert("mock".to_string(), ProviderClient::new("mock", provider));
+
+    let make_ctx = || {
+        ContextWrapper::new(
+            None,
+            "mock-model".to_string(),
+            "mock".to_string(),
+            "Summarize files.".to_string(),
+            Vec::new(),
+            1,
+            1,
+            true,
+            "task-1".to_string(),
+            None,
+            0,
+            100000,
+            0,
+            RequestOptionsOverride::default(),
+            clients.clone(),
+            Arc::new(crate::kernel::config::TurinConfig::default()),
+            "default".to_string(),
+            InferenceOverrideConfig::default(),
+        )
+    };
+
+    let verdict = engine
+        .evaluate_userdata("on_turn_prepare", make_ctx())
+        .unwrap();
+    assert!(verdict.is_allowed());
+
+    let verdict = engine
+        .evaluate_userdata("on_turn_prepare", make_ctx())
+        .unwrap();
+    assert!(verdict.is_allowed());
+
+    std::fs::write(root.path().join("SPEC.md"), "beta").unwrap();
+
+    let verdict = engine
+        .evaluate_userdata("on_turn_prepare", make_ctx())
+        .unwrap();
+    assert!(verdict.is_allowed());
+
+    assert_eq!(*provider_calls.lock().unwrap(), 4);
 }
 
 #[tokio::test(flavor = "multi_thread")]

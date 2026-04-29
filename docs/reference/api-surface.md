@@ -180,6 +180,7 @@ Current DX helper globals and helper-layer extensions:
 - `user.del(...)`
 - `user.incr(...)`
 - `code.find(...)`
+- `fs.summary(...)`
 - `fs.read_json(...)`
 - `fs.write_json(...)`
 - callable `runtime.agent("agent_id") -> proxy`

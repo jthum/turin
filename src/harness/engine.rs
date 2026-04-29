@@ -296,6 +296,15 @@ impl HarnessEngine {
             })
     }
 
+    fn set_active_hook_context(&self, context: Option<mlua::AnyUserData>) {
+        let globals = self.lua.globals();
+        let value = match context {
+            Some(context) => Value::UserData(context),
+            None => Value::Nil,
+        };
+        let _ = globals.set("__current_hook_context", value);
+    }
+
     fn set_active_harness_module(&self, module_name: Option<&str>) {
         let root_name = module_name.and_then(|name| self.lookup_module_root_name(name));
         if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
@@ -422,10 +431,12 @@ impl HarnessEngine {
                 let effective_caps = module_caps.or_else(|| prev_caps.clone());
                 self.set_active_harness_module(Some(&name));
                 self.set_active_capability_delegation(effective_caps);
+                self.set_active_hook_context(Some(ud.clone()));
                 match func.call::<MultiValue>(ud) {
                     Ok(result) => {
                         self.set_active_harness_module(None);
                         self.set_active_capability_delegation(prev_caps);
+                        self.set_active_hook_context(None);
                         if let Ok(v) = parse_verdict(&self.lua, result) {
                             verdicts.push(v);
                         }
@@ -433,6 +444,7 @@ impl HarnessEngine {
                     Err(e) => {
                         self.set_active_harness_module(None);
                         self.set_active_capability_delegation(prev_caps);
+                        self.set_active_hook_context(None);
                         error!(hook = %hook_name, script = %name, "Error in harness hook:\n{}", format_lua_error(&e));
                     }
                 }

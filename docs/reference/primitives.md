@@ -197,8 +197,18 @@ Current semantics:
 
 ### DX `fs`
 
+- `fs.summary(path, opts?) -> string`
 - `fs.read_json(path, opts?) -> value | error`
 - `fs.write_json(path, value, opts?) -> true | error`
+
+`opts` for `summary`:
+
+```lua
+{
+  prompt = "Summarize only the constraints and obligations.", -- optional
+  force = true,                                               -- optional
+}
+```
 
 `opts` for `write_json`:
 
@@ -208,6 +218,13 @@ Current semantics:
 
 Notes:
 
+- `fs.summary(...)` is a high-level file-summary helper built on:
+  - `fs.stat(...)`
+  - `fs.read(...)`
+  - session KV-backed invalidation
+  - the active `ctx:summarize(...)` capability during `on_turn_prepare(ctx)`
+- `fs.summary(...)` currently requires an active `on_turn_prepare(ctx)` context and raises outside that hook.
+- the cache key varies by file hash and summary prompt.
 - these wrap `fs.read/write` and `json.decode/encode`
 - existing `fs.read` / `fs.write` governance checks still apply
 
@@ -293,6 +310,7 @@ Filesystem helpers scoped to `harness.fs_root` (default: workspace root).
 - `fs.read(path) -> string|nil, err?`
 - `fs.write(path, content) -> bool, err?`
 - `fs.stat(path) -> stat_table` (raises on failure)
+- `fs.summary(path, opts?) -> string` (raises on failure; only during `on_turn_prepare(ctx)`)
 - `fs.exists(path) -> bool`
 - `fs.is_safe_path(path) -> bool`
 
@@ -331,6 +349,24 @@ if spec.changed then
   log("SPEC.md changed in this session")
 end
 ```
+
+`fs.summary(path, opts?)`:
+
+```lua
+local spec = fs.summary("SPEC.md")
+local constraints = fs.summary("CONSTRAINTS.md", {
+  prompt = "Summarize only the actionable constraints.",
+})
+```
+
+Notes:
+
+- `fs.summary(...)` caches summaries per session based on:
+  - normalized file path
+  - current file hash
+  - summary prompt variant
+- `opts.force = true` bypasses the cached summary and refreshes it.
+- this helper currently depends on the active `on_turn_prepare(ctx)` hook context because it reuses `ctx:summarize(...)` underneath.
 
 ## `hash`
 
