@@ -1,6 +1,6 @@
 use mlua::{Function, Lua, Result as LuaResult, Table, Value};
 
-use crate::harness::dx::common::call_and_raise_on_err;
+use crate::harness::dx::common::{call_and_raise_on_err, normalize_capabilities_field};
 
 #[derive(Clone)]
 struct AgentRuntimeFns {
@@ -22,6 +22,9 @@ fn create_agent_proxy(lua: &Lua, agent_id: String, fns: AgentRuntimeFns) -> LuaR
             "submit",
             lua.create_function(
                 move |lua, (_self, task, opts): (Table, Value, Option<Table>)| {
+                    if let Some(opts) = opts.as_ref() {
+                        normalize_capabilities_field(lua, opts)?;
+                    }
                     call_and_raise_on_err(
                         lua,
                         &submit_fn,
@@ -98,6 +101,9 @@ fn create_agent_proxy(lua: &Lua, agent_id: String, fns: AgentRuntimeFns) -> LuaR
             "complete",
             lua.create_function(
                 move |lua, (_self, prompt, opts): (Table, String, Option<Table>)| {
+                    if let Some(opts) = opts.as_ref() {
+                        normalize_capabilities_field(lua, opts)?;
+                    }
                     call_and_raise_on_err(
                         lua,
                         &complete_fn,

@@ -1779,7 +1779,7 @@ async fn test_agent_complete_applies_delegated_capability_ceiling() -> Result<()
             local out, err = runtime.agent.complete("worker", "delegated worker run", {
                 timeout_ms = 5000,
                 capabilities = {
-                    ["runtime.db.query"] = true
+                    ["db.query"] = true
                 }
             })
             if out == nil then error("runtime.agent.complete failed: " .. tostring(err)) end

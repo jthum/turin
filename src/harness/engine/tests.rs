@@ -779,14 +779,14 @@ async fn test_dx_access_helpers() {
         dir.path().join("access_dx.lua"),
         r#"
             function on_turn_prepare(ctx)
-                if not allowed("runtime.db.exec") then
+                if not allowed("db.exec") then
                     return REJECT, "expected allowed in default config"
                 end
-                local decision = access.check("runtime.db.exec")
+                local decision = access.check("db.exec")
                 if type(decision) ~= "table" then
                     return REJECT, "access.check did not return table"
                 end
-                needs("runtime.db.exec")
+                needs("db.exec")
                 return ALLOW
             end
             "#,
@@ -1213,16 +1213,16 @@ async fn test_dx_runtime_governance_grant_wrapper() {
                 local result = runtime.governance.grant({
                     ttl_ms = 5000,
                     capabilities = {
-                        ["runtime.db.query"] = true,
-                        ["runtime.governance.grant.get"] = true,
+                        ["db.query"] = true,
+                        ["governance.grant.get"] = true,
                     }
                 }, function()
-                    local query_dec = access.check("runtime.db.query")
+                    local query_dec = access.check("db.query")
                     if query_dec == nil or not query_dec.allowed then
                         error("runtime.db.query should be allowed inside grant")
                     end
 
-                    local policy_dec = access.check("runtime.policy.set")
+                    local policy_dec = access.check("policy.set")
                     if policy_dec == nil then
                         error("runtime.policy.set decision missing")
                     end
@@ -1254,11 +1254,11 @@ async fn test_dx_runtime_governance_grant_wrapper() {
                     runtime.governance.grant({
                         ttl_ms = 5000,
                         capabilities = {
-                            ["runtime.db.query"] = true,
-                            ["runtime.governance.grant.revoke"] = true,
+                            ["db.query"] = true,
+                            ["governance.grant.revoke"] = true,
                         }
                     }, function()
-                        local dec = access.check("runtime.db.query")
+                        local dec = access.check("db.query")
                         local inner_gid = dec.subject_grant_id
                         local revoked, re = runtime.governance.grant_revoke(inner_gid)
                         if not revoked then

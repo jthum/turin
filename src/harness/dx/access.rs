@@ -1,5 +1,6 @@
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
+use crate::harness::dx::common::normalize_helper_capability_name;
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::governance_support::{capability_decision, require_capability};
 
@@ -17,7 +18,8 @@ pub fn register_access_globals(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
         lua.globals().set(
             "allowed",
             lua.create_function(move |_lua, (capability, opts): (String, Option<Table>)| {
-                if capability.trim().is_empty() {
+                let capability = normalize_helper_capability_name(capability.trim());
+                if capability.is_empty() {
                     return Err(mlua::Error::runtime("capability must not be empty"));
                 }
                 let decision = if let Some(agent_id) = read_agent_id(&opts)? {
@@ -37,7 +39,8 @@ pub fn register_access_globals(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
         lua.globals().set(
             "needs",
             lua.create_function(move |_lua, (capability, opts): (String, Option<Table>)| {
-                if capability.trim().is_empty() {
+                let capability = normalize_helper_capability_name(capability.trim());
+                if capability.is_empty() {
                     return Err(mlua::Error::runtime("capability must not be empty"));
                 }
                 if let Some(agent_id) = read_agent_id(&opts)? {
@@ -60,7 +63,8 @@ pub fn register_access_globals(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
         access_table.set(
             "check",
             lua.create_function(move |lua, (capability, opts): (String, Option<Table>)| {
-                if capability.trim().is_empty() {
+                let capability = normalize_helper_capability_name(capability.trim());
+                if capability.is_empty() {
                     return Err(mlua::Error::runtime("capability must not be empty"));
                 }
                 let decision = if let Some(agent_id) = read_agent_id(&opts)? {

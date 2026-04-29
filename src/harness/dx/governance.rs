@@ -1,6 +1,8 @@
 use mlua::{Function, Lua, MultiValue, Result as LuaResult, Table, Value};
 
-use crate::harness::dx::common::{call_and_raise_on_err, tuple_first_and_err};
+use crate::harness::dx::common::{
+    call_and_raise_on_err, normalize_capabilities_field, tuple_first_and_err,
+};
 
 fn revoke_grant_checked(_lua: &Lua, grant_revoke_fn: &Function, grant_id: &str) -> LuaResult<()> {
     let values = grant_revoke_fn.call::<MultiValue>(grant_id.to_string())?;
@@ -31,6 +33,7 @@ pub fn register_governance_dx(lua: &Lua) -> LuaResult<()> {
     runtime_governance.set(
         "grant",
         lua.create_function(move |lua, (spec, callback): (Table, Function)| {
+            normalize_capabilities_field(lua, &spec)?;
             let issued = call_and_raise_on_err(
                 lua,
                 &grant_issue_fn,

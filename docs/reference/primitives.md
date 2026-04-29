@@ -76,6 +76,12 @@ Notes:
 - `allowed(...)` is the top-level boolean predicate
 - `needs(...)` raises on denial; it does not return `(false, err)`
 - `access.check(...)` returns the same decision shape as `runtime.governance.check(...)`
+- helper-layer capability checks accept short forms such as:
+  - `allowed("db.exec")`
+  - `needs("agent.submit")`
+  - `access.check("policy.set")`
+- unqualified helper capability roots default to `runtime.`
+- non-runtime capability roots such as `fs.read` and `fs.write` remain unchanged
 
 ### `session` / `user` DX helpers
 
@@ -241,7 +247,7 @@ Notes:
 
 ```lua
 {
-  capabilities = { ["runtime.db.query"] = true },
+  capabilities = { ["db.query"] = true },
   ttl_ms = 10000,
   max_uses = 1,
   reason = "one-shot operation",
@@ -254,6 +260,8 @@ Behavior:
 - runs `fn` under that active grant
 - revokes the grant after the callback returns
 - if the callback errors, the callback error wins over revoke errors
+- helper-layer `capabilities` maps accept short runtime forms such as `db.query` or `agent.submit`
+- file capabilities remain `fs.read` / `fs.write`
 
 ### DX `time`
 
@@ -753,8 +761,8 @@ Peer-agent orchestration API.
   title = "peer review",
   timeout_ms = 30000,
   capabilities = {
-    ["runtime.db.query"] = true,
-    ["runtime.db.exec"] = false,
+    ["db.query"] = true,
+    ["db.exec"] = false,
   }
 }
 ```
@@ -765,6 +773,7 @@ Governance integration:
 - `allowed_child_agents` allowlists
 - delegated capability ceilings (downward-only)
 - active grant ceilings may be inherited automatically
+- DX `runtime.agent(...)` helpers accept short runtime capability names inside delegated `capabilities` maps
 
 ## `runtime.graph`
 

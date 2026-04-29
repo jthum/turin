@@ -227,13 +227,13 @@ end
 
 ```lua
 function on_turn_prepare(ctx)
-  if not allowed("runtime.db.exec") then
+  if not allowed("db.exec") then
     return verdict.reject("No DB exec capability")
   end
 
-  needs("runtime.agent.submit")
+  needs("agent.submit")
 
-  local d = access.check("runtime.policy.set")
+  local d = access.check("policy.set")
   if not d.allowed then
     log("policy mutation denied: " .. tostring(d.reason))
   end
@@ -243,6 +243,14 @@ end
 ```
 
 `needs(...)` raises a Lua error on denial. Use it when denial should abort the current path immediately.
+
+Helper-layer capability names may omit the `runtime.` prefix. Examples:
+
+- `allowed("db.exec")`
+- `needs("agent.submit")`
+- `access.check("policy.set")`
+
+File capabilities remain `fs.read` / `fs.write`.
 
 ### Session and user helpers
 
@@ -329,8 +337,8 @@ function on_turn_prepare(ctx)
   local result = runtime.governance.grant({
     ttl_ms = 5000,
     capabilities = {
-      ["runtime.agent.submit"] = true,
-      ["runtime.agent.await"] = true,
+      ["agent.submit"] = true,
+      ["agent.await"] = true,
     }
   }, function()
     return runtime.agent("reviewer"):complete("Review this patch")
@@ -761,8 +769,8 @@ local task_id, err = runtime.agent.submit("reviewer", {
   title = "regression review",
 }, {
   capabilities = {
-    ["runtime.db.query"] = true,
-    ["runtime.db.exec"] = false,
+    ["db.query"] = true,
+    ["db.exec"] = false,
     ["fs.read"] = true,
     ["fs.write"] = false,
   }
