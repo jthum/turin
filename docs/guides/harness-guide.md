@@ -563,7 +563,7 @@ end
 
 ## Using the Canonical Runtime API (`runtime.*`)
 
-Prefer `runtime.*` in new harnesses, even though aliases remain available.
+Prefer the helper layer first in new harnesses, even though the canonical `runtime.*` substrate remains available.
 When in doubt:
 
 - use DX helpers for readability
@@ -572,7 +572,16 @@ When in doubt:
 ### Context selectors
 
 ```lua
-local ctx = runtime.context("agent", "coder", {
+local project = scope("agent", "coder", {
+  namespace = "project_memory",
+  visibility = "private",
+})
+```
+
+Canonical equivalent:
+
+```lua
+local project = runtime.context("agent", "coder", {
   namespace = "project_memory",
   visibility = "private",
 })
@@ -581,14 +590,17 @@ local ctx = runtime.context("agent", "coder", {
 ### Memory and KV
 
 ```lua
-local hits, err = runtime.memory.search("compiler error parsing", ctx, { limit = 5 })
-if hits then
-  for _, row in ipairs(hits) do
-    log((row.score or 0) .. " " .. (row.content or ""))
-  end
-end
+local project = scope("agent", "coder", {
+  namespace = "project_memory",
+  visibility = "private",
+})
 
-local ok, kerr = runtime.kv.set("last_error", "E0425", ctx)
+project:set("last_error", "E0425")
+
+local hits = project:recall("compiler error parsing", { limit = 5 })
+for _, row in ipairs(hits or {}) do
+  log((row.score or 0) .. " " .. (row.content or ""))
+end
 ```
 
 Named stores and multi-source search:
@@ -764,7 +776,9 @@ if not target then error(terr) end
 ### Peer-agent orchestration
 
 ```lua
-local task_id, err = runtime.agent.submit("reviewer", {
+local reviewer = runtime.agent("reviewer")
+
+local task_id = reviewer:submit({
   prompt = "Review the proposed patch and list regressions",
   title = "regression review",
 }, {
@@ -776,12 +790,8 @@ local task_id, err = runtime.agent.submit("reviewer", {
   }
 })
 
-if task_id then
-  local result, aerr = runtime.agent.await(task_id, { timeout_ms = 30000 })
-  if result then
-    log(json.encode(result))
-  end
-end
+local result = reviewer:await(task_id, { timeout_ms = 30000 })
+log(json.encode(result))
 ```
 
 ## Using Top-Level Aliases (Ergonomic)
@@ -821,8 +831,8 @@ Turin is flexibility-first, but you can design harnesses to cooperate with gover
 ### 1. Prefer capability checks for feature toggles
 
 ```lua
-local decision = runtime.governance.check("runtime.db.exec")
-if decision and decision.allowed == false then
+local decision = access.check("db.exec")
+if decision.allowed == false then
   return REJECT, "db writes not allowed in this profile"
 end
 ```
@@ -830,19 +840,15 @@ end
 ### 2. Use temporary grants for explicit elevation
 
 ```lua
-local grant, err = runtime.governance.grant_issue({
-  capabilities = { ["runtime.db.exec"] = true },
+runtime.governance.grant({
+  capabilities = { ["db.exec"] = true },
   ttl_ms = 15000,
   max_uses = 1,
   reason = "one-shot migration",
-})
-
-if grant then
-  runtime.governance.with_grant(grant.grant_id, function()
-    local changed, e = runtime.db.exec("delete from temp_rows where stale = 1")
-    if not changed then error(e) end
-  end)
-end
+}, function()
+  local changed, e = runtime.db.exec("delete from temp_rows where stale = 1")
+  if not changed then error(e) end
+end)
 ```
 
 ### 3. Partition harnesses by roots

@@ -8,9 +8,9 @@ function on_turn_prepare(ctx)
   local review = runtime.governance.grant({
     ttl_ms = 5000,
     capabilities = {
-      ["runtime.agent.submit"] = true,
-      ["runtime.agent.await"] = true,
-      ["runtime.agent.status"] = true,
+      ["agent.submit"] = true,
+      ["agent.await"] = true,
+      ["agent.status"] = true,
     }
   }, function()
     return reviewer:complete("Review this patch")

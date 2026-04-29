@@ -1,9 +1,9 @@
 function on_turn_prepare(ctx)
-  if not allowed("runtime.db.query") then
+  if not allowed("db.query") then
     error("runtime.db.query should be allowed")
   end
 
-  local dec = access.check("runtime.db.exec")
+  local dec = access.check("db.exec")
   if dec == nil then
     error("missing runtime.db.exec decision")
   end
@@ -12,7 +12,7 @@ function on_turn_prepare(ctx)
   end
 
   local ok, err = pcall(function()
-    needs("runtime.db.exec")
+    needs("db.exec")
   end)
   if ok then
     error("needs should raise on denied capability")

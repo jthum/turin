@@ -8,7 +8,7 @@ function on_turn_prepare(ctx)
   local review = reviewer:complete("Review delegated caps", {
     timeout_ms = 5000,
     capabilities = {
-      ["runtime.db.query"] = true
+      ["db.query"] = true
     }
   })
 
