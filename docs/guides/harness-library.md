@@ -203,7 +203,7 @@ Pattern:
 
 Pattern:
 
-- main agent calls a reviewer peer through `runtime.agent(...):complete(...)`
+- main agent calls a reviewer peer through `runtime.agent(...):ask(...)`
 - the call site delegates only a narrow capability slice
 - the reviewer harness proves read/query is allowed while mutation stays denied
 - runtime artifacts capture the delegated prompt and reviewer output

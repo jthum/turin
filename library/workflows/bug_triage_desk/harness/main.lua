@@ -72,12 +72,12 @@ function on_turn_prepare(ctx)
   local triager = runtime.agent("triager")
   local responder = runtime.agent("responder")
 
-  local triage = triager:complete(built.triage_prompt)
+  local triage = triager:ask(built.triage_prompt)
   if triage == nil or triage == "" then
     error("triager returned empty output")
   end
 
-  local response = responder:complete(table.concat({
+  local response = responder:ask(table.concat({
     built.response_prompt_prefix,
     "",
     "Triage summary:",

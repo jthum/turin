@@ -88,13 +88,13 @@ end
 
 local function delegate(route, prompt)
   if route == "reviewer" then
-    return runtime.agent("reviewer"):complete(
+    return runtime.agent("reviewer"):ask(
       "Review the following request. Focus on correctness, risk, regressions, and missing checks.\n\nUser request:\n" .. prompt
     )
   end
 
   if route == "planner" then
-    return runtime.agent("planner"):complete(
+    return runtime.agent("planner"):ask(
       "Turn the following request into a concrete action plan with sequencing, dependencies, and next steps.\n\nUser request:\n" .. prompt
     )
   end

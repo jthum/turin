@@ -5,7 +5,7 @@ function on_turn_prepare(ctx)
     error("reviewer status mismatch")
   end
 
-  local review = reviewer:complete("Review delegated caps", {
+  local review = reviewer:ask("Review delegated caps", {
     timeout_ms = 5000,
     capabilities = {
       ["db.query"] = true

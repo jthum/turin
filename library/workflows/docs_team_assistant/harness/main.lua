@@ -71,12 +71,12 @@ function on_turn_prepare(ctx)
   local reviewer = runtime.agent("docs_reviewer")
   local drafter = runtime.agent("draft_writer")
 
-  local review = reviewer:complete(built.review_prompt)
+  local review = reviewer:ask(built.review_prompt)
   if review == nil or review == "" then
     error("docs reviewer returned empty output")
   end
 
-  local draft = drafter:complete(table.concat({
+  local draft = drafter:ask(table.concat({
     built.draft_prompt_prefix,
     "",
     "Review findings:",

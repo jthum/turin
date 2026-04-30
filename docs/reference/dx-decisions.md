@@ -535,7 +535,6 @@ Follow-up:
 Status:
 
 - accepted
-- implementation pending
 
 Decision:
 
@@ -557,7 +556,7 @@ Rationale:
 Affected surfaces:
 
 - `runtime.agent(...)`
-- `runtime.agent.complete(...)`
+- `runtime.agent.ask(...)`
 - `runtime.db.with(...)`
 - docs/examples
 
@@ -570,7 +569,6 @@ Follow-up:
 Status:
 
 - accepted
-- implementation pending
 
 Decision:
 
@@ -609,7 +607,6 @@ Follow-up:
 Status:
 
 - accepted
-- implementation pending
 
 Decision:
 
@@ -727,7 +724,6 @@ Follow-up:
 Status:
 
 - accepted
-- implementation pending
 
 Decision:
 
@@ -749,7 +745,7 @@ Affected surfaces:
 
 Follow-up:
 
-- consider a dedicated helper-layer reference such as `dx-helpers.md`
+- the promoted helper-layer reference now lives in `docs/reference/dx-helpers.md`
 
 ## 2026-04-29 — Example Style Policy
 

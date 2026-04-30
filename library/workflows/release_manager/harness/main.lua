@@ -76,12 +76,12 @@ function on_turn_prepare(ctx)
   local reviewer = runtime.agent("readiness_reviewer")
   local changelog_writer = runtime.agent("changelog_writer")
 
-  local readiness = reviewer:complete(built.review_prompt)
+  local readiness = reviewer:ask(built.review_prompt)
   if readiness == nil or readiness == "" then
     error("readiness reviewer returned empty output")
   end
 
-  local changelog = changelog_writer:complete(table.concat({
+  local changelog = changelog_writer:ask(table.concat({
     built.changelog_prompt_prefix,
     "",
     "Readiness review:",

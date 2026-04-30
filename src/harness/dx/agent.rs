@@ -9,7 +9,7 @@ struct AgentRuntimeFns {
     await_task: Function,
     promote: Function,
     status: Function,
-    complete: Function,
+    ask: Function,
 }
 
 fn create_agent_proxy(lua: &Lua, agent_id: String, fns: AgentRuntimeFns) -> LuaResult<Table> {
@@ -42,7 +42,7 @@ fn create_agent_proxy(lua: &Lua, agent_id: String, fns: AgentRuntimeFns) -> LuaR
         proxy.set(
             "sidestep",
             lua.create_function(
-                move |lua, (_self, prompt, opts): (Table, String, Option<Table>)| {
+                move |lua, (_self, prompt, opts): (Table, String, Option<Value>)| {
                     call_and_raise_on_err(
                         lua,
                         &sidestep_fn,
@@ -95,10 +95,10 @@ fn create_agent_proxy(lua: &Lua, agent_id: String, fns: AgentRuntimeFns) -> LuaR
     }
 
     {
-        let complete_fn = fns.complete.clone();
+        let ask_fn = fns.ask.clone();
         let agent_id = agent_id.clone();
         proxy.set(
-            "complete",
+            "ask",
             lua.create_function(
                 move |lua, (_self, prompt, opts): (Table, String, Option<Table>)| {
                     if let Some(opts) = opts.as_ref() {
@@ -106,9 +106,9 @@ fn create_agent_proxy(lua: &Lua, agent_id: String, fns: AgentRuntimeFns) -> LuaR
                     }
                     call_and_raise_on_err(
                         lua,
-                        &complete_fn,
+                        &ask_fn,
                         (agent_id.clone(), prompt, opts),
-                        "runtime.agent.complete",
+                        "runtime.agent.ask",
                     )
                 },
             )?,
@@ -129,7 +129,7 @@ pub fn register_agent_dx(lua: &Lua) -> LuaResult<()> {
         await_task: runtime_agent.get("await")?,
         promote: runtime_agent.get("promote")?,
         status: runtime_agent.get("get_status")?,
-        complete: runtime_agent.get("complete")?,
+        ask: runtime_agent.get("ask")?,
     };
 
     let mt = lua.create_table()?;

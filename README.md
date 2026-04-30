@@ -425,7 +425,7 @@ Turin’s harness surface is split between **canonical runtime APIs** and **ergo
 - `memory.as(ctx)` / `kv.as(ctx)` for scoped proxies
 - `remember`, `recall`, `scope(...)`, `graph.*`, `fs.summary`, `code.find`
 - `session.memory/kv.*`, `user.memory/kv.*`
-- `agent.spawn`, `agent.complete`, `agent.send`, `agent.session.*`, `agent.mode.*`
+- `agent.spawn`, `agent.ask`, `agent.send`, `agent.session.*`, `agent.mode.*`
 - `fs`, `json`, `time`, `log`, `import`, `import_scoped`, `use`, `use_scoped`, `watch`
 
 See `docs/reference/primitives.md` for the full surface.

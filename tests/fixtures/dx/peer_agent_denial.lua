@@ -1,7 +1,7 @@
 function on_turn_prepare(ctx)
   local blocked = runtime.agent("blocked")
   local ok, err = pcall(function()
-    return blocked:complete("This should be denied")
+    return blocked:ask("This should be denied")
   end)
 
   if ok then

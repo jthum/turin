@@ -10,7 +10,7 @@ function on_turn_prepare(ctx)
       ["agent.status"] = true,
     }
   }, function()
-    return reviewer:complete("Review this request for risk and missing checks:\n\n" .. prompt)
+    return reviewer:ask("Review this request for risk and missing checks:\n\n" .. prompt)
   end)
 
   if review == nil or review == "" then

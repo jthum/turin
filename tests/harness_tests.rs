@@ -1618,7 +1618,7 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
                 error("blocked runtime.agent.submit should mention allowed_child_agents")
             end
 
-            local complete_out, complete_err = agent.complete("nope", { agent_id = "worker_blocked", timeout_ms = 500 })
+            local complete_out, complete_err = agent.ask("nope", { agent_id = "worker_blocked", timeout_ms = 500 })
             if complete_out ~= nil or complete_err == nil then
                 error("agent.complete to blocked worker should fail")
             end
@@ -1776,14 +1776,14 @@ async fn test_agent_complete_applies_delegated_capability_ceiling() -> Result<()
 
     let orchestrator_harness = r#"
         function on_turn_prepare(ctx)
-            local out, err = runtime.agent.complete("worker", "delegated worker run", {
+            local out, err = runtime.agent.ask("worker", "delegated worker run", {
                 timeout_ms = 5000,
                 capabilities = {
                     ["db.query"] = true
                 }
             })
-            if out == nil then error("runtime.agent.complete failed: " .. tostring(err)) end
-            if out ~= "worker-ok" then error("runtime.agent.complete output mismatch: " .. tostring(out)) end
+            if out == nil then error("runtime.agent.ask failed: " .. tostring(err)) end
+            if out ~= "worker-ok" then error("runtime.agent.ask output mismatch: " .. tostring(out)) end
             return ALLOW
         end
     "#;
@@ -6739,7 +6739,7 @@ async fn test_agent_can_promote_detached_local_sidestep_result() -> Result<()> {
         function on_turn_prepare(ctx)
             task_count = task_count + 1
             if task_count == 1 then
-                sidestep_id, err = agent.sidestep("explore detached", { mode = "ephemeral" })
+                sidestep_id, err = agent.sidestep("explore detached", "ephemeral")
                 if sidestep_id == nil then error("agent.sidestep failed: " .. tostring(err)) end
                 local queued, queue_err = agent.session.queue("promote local sidestep")
                 if not queued then error("agent.session.queue failed: " .. tostring(queue_err)) end
@@ -6901,17 +6901,17 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
                     ["runtime.agent.status"] = true,
                 }
             }, function()
-                local out, err = runtime.agent.complete("worker", "say hello", { timeout_ms = 5000, title = "hello" })
-                if out == nil then error("runtime.agent.complete failed: " .. tostring(err)) end
+                local out, err = runtime.agent.ask("worker", "say hello", { timeout_ms = 5000, title = "hello" })
+                if out == nil then error("runtime.agent.ask failed: " .. tostring(err)) end
                 return out
             end)
 
             if review ~= "worker-ok" then
-                error("runtime.agent.complete output mismatch: " .. tostring(review))
+                error("runtime.agent.ask output mismatch: " .. tostring(review))
             end
 
             local ok, err = fs.write(".turin/runtime/peer-complete.txt", review)
-            if not ok then error("fs.write after runtime.agent.complete failed: " .. tostring(err)) end
+            if not ok then error("fs.write after runtime.agent.ask failed: " .. tostring(err)) end
 
             local changed, derr = runtime.db.exec([[
                 CREATE TABLE IF NOT EXISTS peer_complete_probe (
@@ -6919,24 +6919,24 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
                     review TEXT NOT NULL
                 )
             ]])
-            if changed == nil then error("runtime.db.exec create after runtime.agent.complete failed: " .. tostring(derr)) end
+            if changed == nil then error("runtime.db.exec create after runtime.agent.ask failed: " .. tostring(derr)) end
 
             changed, derr = runtime.db.exec(
                 "INSERT INTO peer_complete_probe(review) VALUES (?)",
                 { review }
             )
-            if changed == nil then error("runtime.db.exec insert after runtime.agent.complete failed: " .. tostring(derr)) end
+            if changed == nil then error("runtime.db.exec insert after runtime.agent.ask failed: " .. tostring(derr)) end
 
             local pok, perr = runtime.policy.set("queue.max_depth", 77)
-            if not pok then error("runtime.policy.set after runtime.agent.complete failed: " .. tostring(perr)) end
+            if not pok then error("runtime.policy.set after runtime.agent.ask failed: " .. tostring(perr)) end
 
             local pval, pgerr = runtime.policy.get("queue.max_depth")
-            if pgerr ~= nil then error("runtime.policy.get after runtime.agent.complete failed: " .. tostring(pgerr)) end
-            if pval ~= 77 then error("runtime.policy.get after runtime.agent.complete mismatch: " .. tostring(pval)) end
+            if pgerr ~= nil then error("runtime.policy.get after runtime.agent.ask failed: " .. tostring(pgerr)) end
+            if pval ~= 77 then error("runtime.policy.get after runtime.agent.ask mismatch: " .. tostring(pval)) end
 
             session.set("peer_complete_marker", "done")
             local marker = session.get("peer_complete_marker")
-            if marker ~= "done" then error("session.get after runtime.agent.complete mismatch: " .. tostring(marker)) end
+            if marker ~= "done" then error("session.get after runtime.agent.ask mismatch: " .. tostring(marker)) end
             return ALLOW
         end
     "#;
@@ -7125,12 +7125,12 @@ async fn test_runtime_agent_complete_preserves_nested_grant_context() -> Result<
                     error("outer grant id missing")
                 end
 
-                local review, err = runtime.agent.complete("worker", "say hello", { timeout_ms = 5000, title = "hello" })
+                local review, err = runtime.agent.ask("worker", "say hello", { timeout_ms = 5000, title = "hello" })
                 if review == nil then
-                    error("runtime.agent.complete failed inside nested grant test: " .. tostring(err))
+                    error("runtime.agent.ask failed inside nested grant test: " .. tostring(err))
                 end
                 if review ~= "worker-ok" then
-                    error("runtime.agent.complete output mismatch: " .. tostring(review))
+                    error("runtime.agent.ask output mismatch: " .. tostring(review))
                 end
 
                 local nested = runtime.governance.grant({

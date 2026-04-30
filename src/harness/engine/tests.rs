@@ -954,6 +954,46 @@ async fn test_dx_runtime_db_proxy_one_and_with_error_precedence() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_try_helper_captures_runtime_errors() {
+    let root = TempDir::new().unwrap();
+    let mut engine = HarnessEngine::new(test_app_data_for_root(root.path().to_path_buf())).unwrap();
+
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("try_dx.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local ok, err = try(function()
+                    error("boom")
+                end)
+                if ok ~= nil then
+                    return REJECT, "try should return nil on raised error"
+                end
+                if err == nil or not tostring(err):find("boom", 1, true) then
+                    return REJECT, "try should expose the raised error"
+                end
+
+                local sum = try(function(a, b)
+                    return a + b
+                end, 2, 3)
+                if sum ~= 5 then
+                    return REJECT, "try should preserve successful return values"
+                end
+
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate_userdata("on_turn_prepare", MockContext)
+        .unwrap();
+    assert!(verdict.is_allowed());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_dx_runtime_agent_status_proxy_and_fs_json_helpers() {
     let root = TempDir::new().unwrap();
     let mut engine = HarnessEngine::new(test_app_data_for_root(root.path().to_path_buf())).unwrap();

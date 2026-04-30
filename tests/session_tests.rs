@@ -2013,7 +2013,7 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
         default_harness_dir.join("main.lua"),
         r#"
             function on_turn_prepare(ctx)
-                local out, err = runtime.agent.complete("reviewer", "review this")
+                local out, err = runtime.agent.ask("reviewer", "review this")
                 if out == nil then error(err) end
                 return ALLOW
             end

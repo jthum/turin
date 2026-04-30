@@ -13,7 +13,7 @@ function on_turn_prepare(ctx)
       ["agent.status"] = true,
     }
   }, function()
-    return reviewer:complete("Review this patch")
+    return reviewer:ask("Review this patch")
   end)
 
   if review ~= "REVIEW_OK" then

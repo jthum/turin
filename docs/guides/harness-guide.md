@@ -313,7 +313,7 @@ Notes:
 ```lua
 function on_turn_prepare(ctx)
   local reviewer = runtime.agent("reviewer")
-  local summary = reviewer:complete("Summarize the diff in 3 bullets")
+  local summary = reviewer:ask("Summarize the diff in 3 bullets")
   session.set("review_summary", summary)
   return ALLOW
 end
@@ -323,7 +323,7 @@ Canonical equivalent:
 
 ```lua
 function on_turn_prepare(ctx)
-  local summary, err = runtime.agent.complete("reviewer", "Summarize the diff in 3 bullets")
+  local summary, err = runtime.agent.ask("reviewer", "Summarize the diff in 3 bullets")
   if not summary then error(err) end
   session.set("review_summary", summary)
   return ALLOW
@@ -341,7 +341,7 @@ function on_turn_prepare(ctx)
       ["agent.await"] = true,
     }
   }, function()
-    return runtime.agent("reviewer"):complete("Review this patch")
+    return runtime.agent("reviewer"):ask("Review this patch")
   end)
 
   session.set("grant_review", result)
@@ -721,7 +721,7 @@ experiment:add(graph.branch(branch), { role = "candidate" })
 local target = experiment:newest("candidate")
 
 agent.sidestep("Analyze this candidate path", {
-  context_target = target,
+  target = target,
 })
 ```
 
@@ -757,7 +757,7 @@ local target, terr = runtime.graph.path.select({
 if not target then error(terr) end
 
 agent.sidestep("Analyze this candidate path", {
-  context_target = target,
+  target = target,
 })
 ```
 

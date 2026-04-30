@@ -101,6 +101,21 @@ fn sidestep_mode_from_opts(opts: Option<&Table>) -> LuaResult<SidestepMode> {
     raw.parse().map_err(mlua::Error::runtime)
 }
 
+fn sidestep_opts_table_from_value(lua: &Lua, value: Option<Value>) -> LuaResult<Option<Table>> {
+    match value {
+        None | Some(Value::Nil) => Ok(None),
+        Some(Value::Table(table)) => Ok(Some(table)),
+        Some(Value::String(mode)) => {
+            let table = lua.create_table()?;
+            table.set("mode", mode.to_str()?.to_string())?;
+            Ok(Some(table))
+        }
+        Some(_) => Err(mlua::Error::runtime(
+            "invalid sidestep opts; expected nil, mode string, or options table",
+        )),
+    }
+}
+
 fn sidestep_target_from_opts(
     lua: &Lua,
     opts: Option<&Table>,
@@ -108,8 +123,12 @@ fn sidestep_target_from_opts(
     let Some(opts) = opts else {
         return Ok(None);
     };
-    let Ok(value) = opts.get::<Value>("context_target") else {
-        return Ok(None);
+    let value = match opts.get::<Value>("target") {
+        Ok(Value::Nil) | Err(_) => match opts.get::<Value>("context_target") {
+            Ok(value) => value,
+            Err(_) => Value::Nil,
+        },
+        Ok(value) => value,
     };
     if matches!(value, Value::Nil) {
         return Ok(None);
@@ -288,7 +307,8 @@ pub fn register_runtime_agent_namespace(
         runtime_agent.set(
             "sidestep",
             lua.create_function(
-                move |lua, (agent_id, prompt, opts): (String, String, Option<Table>)| {
+                move |lua, (agent_id, prompt, opts_value): (String, String, Option<Value>)| {
+                    let opts = sidestep_opts_table_from_value(lua, opts_value)?;
                     if let Err(err) =
                         require_governance_capability(&app_data_snapshot, "runtime.agent.submit")
                     {
@@ -433,7 +453,7 @@ pub fn register_runtime_agent_namespace(
         let manager = app_data.agent_manager.clone();
         let app_data_snapshot = app_data.clone();
         runtime_agent.set(
-            "complete",
+            "ask",
             lua.create_function(
                 move |lua, (agent_id, prompt, opts): (String, String, Option<Table>)| {
                     if let Err(err) =
@@ -466,12 +486,12 @@ pub fn register_runtime_agent_namespace(
                         &app_data_snapshot,
                         opts.as_ref(),
                         "capabilities",
-                        "runtime.agent.complete",
+                        "runtime.agent.ask",
                     )?;
                     let delegated_capabilities = apply_active_grant_ceiling_to_peer_delegation(
                         &app_data_snapshot,
                         delegated_capabilities,
-                        "runtime.agent.complete",
+                        "runtime.agent.ask",
                     )?;
 
                     let manager = manager.clone();

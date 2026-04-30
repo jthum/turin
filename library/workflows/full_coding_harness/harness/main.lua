@@ -72,12 +72,12 @@ function on_turn_prepare(ctx)
   local planner = runtime.agent("planner")
   local reviewer = runtime.agent("reviewer")
 
-  local plan = planner:complete(built.planner_prompt)
+  local plan = planner:ask(built.planner_prompt)
   if plan == nil or plan == "" then
     error("planner returned empty output")
   end
 
-  local review = reviewer:complete(table.concat({
+  local review = reviewer:ask(table.concat({
     built.reviewer_prompt_prefix,
     "",
     "Proposed plan:",

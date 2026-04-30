@@ -11,7 +11,7 @@ function on_turn_prepare(ctx)
 
   local result = util.run()
   if result.review ~= "REVIEW_OK" then
-    error("delegated runtime.agent.complete output mismatch: " .. tostring(result.review))
+    error("delegated runtime.agent.ask output mismatch: " .. tostring(result.review))
   end
   if result.db == nil or not result.db.allowed then
     error("delegated runtime.db.exec should stay allowed")
@@ -20,7 +20,7 @@ function on_turn_prepare(ctx)
     error("delegated runtime.policy.set should be denied")
   end
   if result.policy_ok then
-    error("runtime.policy.set should fail inside delegated import after runtime.agent.complete")
+    error("runtime.policy.set should fail inside delegated import after runtime.agent.ask")
   end
   if result.policy_err == nil or not tostring(result.policy_err):find("delegated capabilities", 1, true) then
     error("delegation denial should mention delegated capabilities")
@@ -28,7 +28,7 @@ function on_turn_prepare(ctx)
 
   local self_policy = access.check("policy.set")
   if self_policy == nil or not self_policy.allowed then
-    error("caller capability context should be restored after imported runtime.agent.complete")
+    error("caller capability context should be restored after imported runtime.agent.ask")
   end
 
   return ALLOW

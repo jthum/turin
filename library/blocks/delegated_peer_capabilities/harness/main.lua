@@ -2,7 +2,7 @@ function on_turn_prepare(ctx)
   local reviewer = runtime.agent("reviewer")
   local prompt = tostring(ctx.prompt or "")
 
-  local review = reviewer:complete("Review this request with read-only DB access:\n\n" .. prompt, {
+  local review = reviewer:ask("Review this request with read-only DB access:\n\n" .. prompt, {
     timeout_ms = 10000,
     capabilities = {
       ["db.query"] = true

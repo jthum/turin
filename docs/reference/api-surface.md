@@ -114,6 +114,7 @@ Globals:
 - `json.*`
 - `time.*`
 - `log.*`
+- `try(fn, ...)`
 - `import(name)`
 - `import_scoped(name, opts?)`
 - `use(name, opts?)`
@@ -252,11 +253,11 @@ This is the current canonical map at the harness level.
 - `identity()`
 - `status(agent_id)`
 - `submit(agent_id, task, opts?)`
-- `complete(agent_id, task, opts?)`
+- `ask(agent_id, task, opts?)`
 - `await(task_id, opts?)`
 - `status(task_id, opts?)`
 - `cancel(task_id, opts?)`
-- `sidestep(prompt, opts?)`
+- `sidestep(prompt, "mode"|opts?)`
 
 ### `runtime.graph`
 

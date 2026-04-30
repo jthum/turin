@@ -6,7 +6,7 @@ return {
       error("reviewer status mismatch inside delegated import")
     end
 
-    local review = reviewer:complete("Review delegated import flow")
+    local review = reviewer:ask("Review delegated import flow")
     local changed, derr = runtime.db.exec([[
       CREATE TABLE IF NOT EXISTS delegated_complete_probe (
         id INTEGER PRIMARY KEY,
@@ -14,7 +14,7 @@ return {
       )
     ]])
     if changed == nil then
-      error("runtime.db.exec create after delegated runtime.agent.complete failed: " .. tostring(derr))
+      error("runtime.db.exec create after delegated runtime.agent.ask failed: " .. tostring(derr))
     end
 
     changed, derr = runtime.db.exec(
@@ -22,7 +22,7 @@ return {
       { review }
     )
     if changed == nil then
-      error("runtime.db.exec insert after delegated runtime.agent.complete failed: " .. tostring(derr))
+      error("runtime.db.exec insert after delegated runtime.agent.ask failed: " .. tostring(derr))
     end
 
     local db = access.check("db.exec")

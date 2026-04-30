@@ -26,6 +26,37 @@ pub fn register_system_globals(lua: &Lua, fs_root: &Path, max_file_size: usize) 
     register_json_module(lua)?;
     register_time_module(lua)?;
     register_log_function(lua)?;
+    register_try_function(lua)?;
+    Ok(())
+}
+
+fn register_try_function(lua: &Lua) -> LuaResult<()> {
+    let globals = lua.globals();
+    globals.set(
+        "try",
+        lua.create_function(|lua, args: MultiValue| {
+            let mut iter = args.into_iter();
+            let func = match iter.next() {
+                Some(Value::Function(func)) => func,
+                Some(_) => {
+                    return Err(mlua::Error::runtime(
+                        "try expects a function as its first argument",
+                    ));
+                }
+                None => return Err(mlua::Error::runtime("try expects a function argument")),
+            };
+            let rest: MultiValue = iter.collect();
+            match func.call::<MultiValue>(rest) {
+                Ok(values) => Ok(values),
+                Err(err) => {
+                    let mut out = MultiValue::new();
+                    out.push_back(Value::Nil);
+                    out.push_back(Value::String(lua.create_string(err.to_string())?));
+                    Ok(out)
+                }
+            }
+        })?,
+    )?;
     Ok(())
 }
 

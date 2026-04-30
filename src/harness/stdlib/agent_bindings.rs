@@ -240,6 +240,29 @@ fn opt_sidestep_mode(opts: Option<&Table>) -> std::result::Result<SidestepMode, 
     raw.parse()
 }
 
+fn sidestep_opts_table_from_value(
+    lua: &Lua,
+    value: Option<Value>,
+) -> std::result::Result<Option<Table>, String> {
+    match value {
+        None | Some(Value::Nil) => Ok(None),
+        Some(Value::Table(table)) => Ok(Some(table)),
+        Some(Value::String(mode)) => {
+            let table = lua.create_table().map_err(|err| err.to_string())?;
+            table
+                .set(
+                    "mode",
+                    mode.to_str().map_err(|err| err.to_string())?.to_string(),
+                )
+                .map_err(|err| err.to_string())?;
+            Ok(Some(table))
+        }
+        Some(_) => {
+            Err("invalid sidestep opts; expected nil, mode string, or options table".to_string())
+        }
+    }
+}
+
 fn opt_sidestep_context_target(
     lua: &Lua,
     opts: Option<&Table>,
@@ -247,8 +270,12 @@ fn opt_sidestep_context_target(
     let Some(opts) = opts else {
         return Ok(None);
     };
-    let Ok(value) = opts.get::<Value>("context_target") else {
-        return Ok(None);
+    let value = match opts.get::<Value>("target") {
+        Ok(Value::Nil) | Err(_) => match opts.get::<Value>("context_target") {
+            Ok(value) => value,
+            Err(_) => Value::Nil,
+        },
+        Ok(value) => value,
     };
     if matches!(value, Value::Nil) {
         return Ok(None);
@@ -478,7 +505,11 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
     let sidestep_store_manager = app_data.store_manager.clone();
     agent_table.set(
         "sidestep",
-        lua.create_function(move |lua, (prompt, opts): (String, Option<Table>)| {
+        lua.create_function(move |lua, (prompt, opts_value): (String, Option<Value>)| {
+            let opts = match sidestep_opts_table_from_value(lua, opts_value) {
+                Ok(opts) => opts,
+                Err(err) => return nil_err(lua, &err),
+            };
             if let Err(err) =
                 require_governance_capability(&sidestep_policy_snapshot, "runtime.agent.submit")
             {
@@ -660,13 +691,13 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
         })?,
     )?;
 
-    // agent.complete
+    // agent.ask
     {
         let manager = app_data.agent_manager.clone();
         let default_agent = app_data.config.agent.id.clone();
         let complete_policy_snapshot = app_data.clone();
         agent_table.set(
-            "complete",
+            "ask",
             lua.create_function(move |lua, (prompt, opts): (String, Option<Table>)| {
                 if let Err(err) =
                     require_governance_capability(&complete_policy_snapshot, "runtime.agent.submit")
@@ -696,12 +727,12 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     &complete_policy_snapshot,
                     opts.as_ref(),
                     "capabilities",
-                    "agent.complete",
+                    "agent.ask",
                 )?;
                 let delegated_capabilities = apply_active_grant_ceiling_to_peer_delegation(
                     &complete_policy_snapshot,
                     delegated_capabilities,
-                    "agent.complete",
+                    "agent.ask",
                 )?;
                 let timeout_ms = opts.as_ref().and_then(|t| t.get::<u64>("timeout_ms").ok());
                 let trace_id = active_trace_id(&complete_policy_snapshot);

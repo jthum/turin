@@ -1,6 +1,6 @@
 # Delegated Peer Capabilities
 
-This example shows a main harness delegating a narrow capability set to a reviewer peer agent through `runtime.agent(...):complete(...)`.
+This example shows a main harness delegating a narrow capability set to a reviewer peer agent through `runtime.agent(...):ask(...)`.
 
 Use this pattern when:
 
@@ -22,7 +22,7 @@ Use this pattern when:
 
 ## What It Does
 
-- calls `runtime.agent("reviewer"):complete(...)`
+- calls `runtime.agent("reviewer"):ask(...)`
 - delegates only `db.query`
 - verifies inside the reviewer harness that:
   - `db.query` is allowed

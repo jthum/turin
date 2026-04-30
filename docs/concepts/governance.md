@@ -300,7 +300,7 @@ If non-empty, it acts as an allowlist for peer-agent dispatch from that agent.
 Turin enforces this on:
 
 - `runtime.agent.submit(...)`
-- `agent.complete(...)`
+- `agent.ask(...)`
 - `agent.send(...)`
 
 ## Temporary Grants
@@ -373,7 +373,7 @@ local output = runtime.governance.grant({
     ["agent.await"] = true,
   },
 }, function()
-  return runtime.agent("reviewer"):complete("Review this patch")
+  return runtime.agent("reviewer"):ask("Review this patch")
 end)
 ```
 

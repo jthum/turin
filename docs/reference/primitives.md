@@ -167,10 +167,10 @@ Notes:
 
 - `node:add(target, role_or_opts?) -> edge`
 - `node:link(target, relation, opts?) -> edge`
-- `node:find(role_or_opts?) -> context_target`
-- `node:newest(role_or_opts?) -> context_target`
-- `node:oldest(role_or_opts?) -> context_target`
-- `node:all(role_or_opts?) -> context_target`
+- `node:find(role_or_opts?) -> target`
+- `node:newest(role_or_opts?) -> target`
+- `node:oldest(role_or_opts?) -> target`
+- `node:all(role_or_opts?) -> target`
 
 Notes:
 
@@ -197,7 +197,7 @@ experiment:add(graph.branch(branch), { role = "candidate" })
 
 local target = experiment:newest("candidate")
 agent.sidestep("Analyze this candidate", {
-  context_target = target,
+  target = target,
 })
 ```
 
@@ -232,11 +232,11 @@ Notes:
 - `agent:submit(task, opts?) -> request_id`
 - `agent:await(request_id, opts?) -> result`
 - `agent:status() -> status`
-- `agent:complete(prompt, opts?) -> output_string`
+- `agent:ask(prompt, opts?) -> output_string`
 
 Notes:
 
-- `:complete(...)` delegates to the canonical `runtime.agent.complete(...)` primitive
+- `:ask(...)` delegates to the canonical `runtime.agent.ask(...)` primitive
 - peer-agent governance, child-agent allowlists, delegated capability ceilings, and active grant ceilings still apply
 
 ### DX `runtime.governance.grant(...)`
@@ -730,7 +730,7 @@ Peer-agent orchestration API.
 - `runtime.agent.get_status(agent_id) -> status|nil, err?`
 - `runtime.agent.submit(agent_id, task, opts?) -> task_id|nil, err?`
 - `runtime.agent.await(task_id, opts?) -> result|nil, err?`
-- `runtime.agent.complete(agent_id, prompt, opts?) -> output|nil, err?`
+- `runtime.agent.ask(agent_id, prompt, opts?) -> output|nil, err?`
 
 `task` can be:
 
@@ -754,7 +754,7 @@ Peer-agent orchestration API.
 { timeout_ms = 30000 }
 ```
 
-`opts` for `complete`:
+`opts` for `ask`:
 
 ```lua
 {
@@ -1004,7 +1004,7 @@ Selector-derived scoped data aliases based on the active `RuntimeIdentity`.
 
 ### Peer-agent convenience
 
-- `agent.complete(prompt, opts?) -> output|nil, err?`
+- `agent.ask(prompt, opts?) -> output|nil, err?`
   - submits to a peer agent and awaits result in one call
   - `opts.agent_id` (defaults to current configured agent id)
   - `opts.timeout_ms`

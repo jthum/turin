@@ -130,8 +130,8 @@ scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --api-format op
 - `tool_error` — failing tool call + recovery path
 - `tool_write_read` — multi-tool (`write_file` + `read_file`) roundtrip
 - `governed_denial` — harness-driven governance denial sentinel + successful inference turn
-- `peer_agent` — harness-driven peer-agent `agent.complete(...)` roundtrip + successful main-agent turn
-- `peer_complete_caps` — DX `runtime.agent(...):complete(...)` with explicit delegated `runtime.db.query` ceiling and worker-side denial of `runtime.db.exec`
+- `peer_agent` — harness-driven peer-agent `agent.ask(...)` roundtrip + successful main-agent turn
+- `peer_complete_caps` — DX `runtime.agent(...):ask(...)` with explicit delegated `runtime.db.query` ceiling and worker-side denial of `runtime.db.exec`
 - `queue_steer` — harness-driven queue steering via `on_all_tasks_complete` follow-up prompt injection
 - `runtime_db` — harness-driven `runtime.db.open/list/exec/query/close` + sqlite verification
 - `grant_flow` — temporary grant issue/use/revoke + durable audit event verification
