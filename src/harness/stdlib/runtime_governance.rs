@@ -1,7 +1,9 @@
 use mlua::{Function, Lua, MultiValue, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::HarnessAppData;
-use crate::harness::stdlib::binding_common::{bool_value_ok, json_ok, nil_err, string_value};
+use crate::harness::stdlib::binding_common::{
+    bool_value_ok, json_ok, nil_err, nil_ok, string_value,
+};
 use crate::harness::stdlib::governance_support::{
     capability_decision as governance_capability_decision, current_subject,
     emit_governance_audit_event, parse_delegated_capabilities,
@@ -137,7 +139,7 @@ pub fn register_runtime_governance_namespace(
                     .map_err(mlua::Error::runtime)?
                 {
                     Some(grant) => json_ok(lua, &grant),
-                    None => nil_err(lua, "grant not found"),
+                    None => Ok(nil_ok()),
                 }
             })?,
         )?;

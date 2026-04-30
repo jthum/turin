@@ -1,10 +1,10 @@
 local function read_optional(path)
-  local text = fs.read(path)
+  local text = try(fs.read, path)
   return text or ""
 end
 
 local function write_required(path, content)
-  local ok, err = fs.write(path, content)
+  local ok, err = try(fs.write, path, content)
   if not ok then
     error("failed to write changelog writer artifact: " .. tostring(err))
   end

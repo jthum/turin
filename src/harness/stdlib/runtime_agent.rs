@@ -2,7 +2,7 @@ use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{
-    bridge_async, bridge_async_display_err, json_ok, nil_err, string_ok,
+    bridge_async, bridge_async_display_err, json_ok, nil_err, nil_ok, string_ok,
 };
 use crate::harness::stdlib::governance_support::{
     apply_active_grant_ceiling_to_peer_delegation, parse_delegated_capabilities,
@@ -233,7 +233,7 @@ pub fn register_runtime_agent_namespace(
                 let status = bridge_async(async move { manager.get_status(&agent_id).await });
                 match status {
                     Some(s) => json_ok(lua, &s),
-                    None => nil_err(lua, "unknown agent"),
+                    None => Ok(nil_ok()),
                 }
             })?,
         )?;

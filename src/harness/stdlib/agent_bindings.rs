@@ -686,7 +686,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             });
             match result {
                 Some(result) => Ok(ok_value(lua.to_value(&result)?)),
-                None => nil_err(lua, &format!("Task '{}' not found", task_id)),
+                None => Ok(nil_ok()),
             }
         })?,
     )?;

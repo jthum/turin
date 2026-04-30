@@ -291,7 +291,7 @@ Detailed signatures belong in:
 
 These shapes recur across the surface and should be reviewed as shared semantics, not one function at a time:
 
-- result tuple convention
+- public error/absence contract
 - identity table
 - session row
 - branch row

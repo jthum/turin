@@ -4,10 +4,7 @@ function on_turn_prepare(ctx)
     return REJECT, "delegated runtime.db.query should be allowed"
   end
 
-  local rows, qerr = runtime.db.query("SELECT 7 AS n")
-  if rows == nil then
-    return REJECT, "delegated runtime.db.query failed: " .. tostring(qerr)
-  end
+  local rows = runtime.db.query("SELECT 7 AS n")
   if rows[1] == nil or rows[1].n ~= 7 then
     return REJECT, "delegated runtime.db.query mismatch"
   end
@@ -17,7 +14,7 @@ function on_turn_prepare(ctx)
     return REJECT, "delegated runtime.db.exec should be denied"
   end
 
-  local changed, err = runtime.db.exec("CREATE TABLE IF NOT EXISTS delegated_peer_forbidden (id INTEGER)")
+  local changed, err = try(runtime.db.exec, "CREATE TABLE IF NOT EXISTS delegated_peer_forbidden (id INTEGER)")
   if changed ~= nil or err == nil then
     return REJECT, "delegated runtime.db.exec should be denied"
   end

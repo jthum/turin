@@ -4,10 +4,7 @@ function on_turn_prepare(ctx)
     error("delegated reviewer should have runtime.db.query allowed")
   end
 
-  local rows, qerr = runtime.db.query("SELECT 7 AS n")
-  if rows == nil then
-    error("delegated reviewer runtime.db.query failed: " .. tostring(qerr))
-  end
+  local rows = runtime.db.query("SELECT 7 AS n")
   if #rows < 1 or rows[1].n ~= 7 then
     error("delegated reviewer runtime.db.query mismatch")
   end
@@ -17,7 +14,7 @@ function on_turn_prepare(ctx)
     error("delegated reviewer should have runtime.db.exec denied")
   end
 
-  local changed, err = runtime.db.exec("CREATE TABLE IF NOT EXISTS peer_complete_forbidden (id INTEGER)")
+  local changed, err = try(runtime.db.exec, "CREATE TABLE IF NOT EXISTS peer_complete_forbidden (id INTEGER)")
   if changed ~= nil or err == nil then
     error("delegated reviewer runtime.db.exec should be denied")
   end

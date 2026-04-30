@@ -323,8 +323,7 @@ Canonical equivalent:
 
 ```lua
 function on_turn_prepare(ctx)
-  local summary, err = runtime.agent.ask("reviewer", "Summarize the diff in 3 bullets")
-  if not summary then error(err) end
+  local summary = runtime.agent.ask("reviewer", "Summarize the diff in 3 bullets")
   session.set("review_summary", summary)
   return ALLOW
 end
@@ -616,7 +615,7 @@ runtime.memory.store(
   { storage = "lexical_only", store = "rust_kb" }
 )
 
-local hits, err = runtime.memory.search("borrow checker", project, {
+local hits = runtime.memory.search("borrow checker", project, {
   include_metadata = true,
   sources = {
     { scope_kind = "project", scope_key = "rust" }, -- resolves through placements or state
@@ -686,18 +685,15 @@ With `strict = false`, Turin falls back to lexical results when that path is una
 ### Multi-DB access
 
 ```lua
-local handle, err = runtime.db.open({ path = "scratch/analysis.db" })
-if not handle then
-  return REJECT, err
-end
+local handle = runtime.db.open({ path = "scratch/analysis.db" })
 
-local changed, e = runtime.db.exec(
+local changed = runtime.db.exec(
   "create table if not exists notes (id integer primary key, text text)",
   nil,
   { handle = handle.handle }
 )
 
-local rows, qerr = runtime.db.query(
+local rows = runtime.db.query(
   "select * from notes where id > :min_id",
   { min_id = 0 },
   { handle = handle.handle }
@@ -711,10 +707,9 @@ Use `graph.*` when a harness needs to record opt-in semantic relationships betwe
 ```lua
 local experiment = graph.new("experiment", "compare candidates")
 
-local branch, berr = agent.session.branch_create("candidate-a", {
+local branch = agent.session.branch_create("candidate-a", {
   from_turn_index = 0,
 })
-if not branch then error(berr) end
 
 experiment:add(graph.branch(branch), { role = "candidate" })
 
@@ -728,16 +723,14 @@ agent.sidestep("Analyze this candidate path", {
 The canonical substrate remains available when a harness wants exact control. `runtime.graph.path.select(...)` materializes graph edges that target `branch_head` or `turn` refs into an execution context target:
 
 ```lua
-local group, err = runtime.graph.node.create({
+local group = runtime.graph.node.create({
   kind = "experiment",
   label = "compare candidates",
 })
-if not group then error(err) end
 
-local branch, berr = agent.session.branch_create("candidate-a", {
+local branch = agent.session.branch_create("candidate-a", {
   from_turn_index = 0,
 })
-if not branch then error(berr) end
 
 runtime.graph.edge.create({
   source = { kind = "graph_node", id = group.node_id },
@@ -893,10 +886,10 @@ function on_tool_result(r)
 end
 ```
 
-## Be explicit about tuple returns
+## Use `try(...)` when recovery is intentional
 
-Many primitives return `(value, err)` / `(ok, err)`.
-Always branch on the first return value.
+Public harness APIs raise on actual failure.
+Use `try(...)` or `pcall(...)` only when the harness wants to recover explicitly.
 
 ## Prefer canonical APIs in new code
 

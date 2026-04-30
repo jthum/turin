@@ -1,5 +1,5 @@
 local function read_required(path)
-  local text, err = fs.read(path)
+  local text, err = try(fs.read, path)
   if not text then
     error("required task planner file missing: " .. path .. ": " .. tostring(err))
   end
@@ -7,7 +7,7 @@ local function read_required(path)
 end
 
 local function write_required(path, content)
-  local ok, err = fs.write(path, content)
+  local ok, err = try(fs.write, path, content)
   if not ok then
     error("failed to write task planner artifact " .. path .. ": " .. tostring(err))
   end

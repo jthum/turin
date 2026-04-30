@@ -1491,7 +1491,7 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
                 error("delegated worker should have runtime.policy.set denied")
             end
 
-            local ok, err = runtime.policy.set("peer.delegation.test", true)
+            local ok, err = try(runtime.policy.set, "peer.delegation.test", true)
             if ok ~= false or err == nil then
                 error("worker runtime.policy.set should be denied by delegated ceiling")
             end
@@ -1776,13 +1776,12 @@ async fn test_agent_complete_applies_delegated_capability_ceiling() -> Result<()
 
     let orchestrator_harness = r#"
         function on_turn_prepare(ctx)
-            local out, err = runtime.agent.ask("worker", "delegated worker run", {
+            local out = runtime.agent.ask("worker", "delegated worker run", {
                 timeout_ms = 5000,
                 capabilities = {
                     ["db.query"] = true
                 }
             })
-            if out == nil then error("runtime.agent.ask failed: " .. tostring(err)) end
             if out ~= "worker-ok" then error("runtime.agent.ask output mismatch: " .. tostring(out)) end
             return ALLOW
         end
@@ -1801,10 +1800,7 @@ async fn test_agent_complete_applies_delegated_capability_ceiling() -> Result<()
                 error("delegated worker should have runtime.db.query allowed")
             end
 
-            local rows, qerr = runtime.db.query("SELECT 42 AS n")
-            if rows == nil then
-                error("worker runtime.db.query should be allowed by delegated ceiling: " .. tostring(qerr))
-            end
+            local rows = runtime.db.query("SELECT 42 AS n")
             if #rows < 1 or rows[1].n ~= 42 then
                 error("worker runtime.db.query returned unexpected rows")
             end
@@ -1815,7 +1811,7 @@ async fn test_agent_complete_applies_delegated_capability_ceiling() -> Result<()
                 error("delegated worker should have runtime.db.exec denied")
             end
 
-            local changed, err = runtime.db.exec("CREATE TABLE IF NOT EXISTS peer_forbidden (id INTEGER)")
+            local changed, err = try(runtime.db.exec, "CREATE TABLE IF NOT EXISTS peer_forbidden (id INTEGER)")
             if changed ~= nil or err == nil then
                 error("worker runtime.db.exec should be denied by delegated ceiling")
             end
@@ -2178,18 +2174,14 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
             end
 
             local project = runtime.context("project", "alpha", { namespace = "notes" })
-            local ok, err = runtime.kv.set("raw_key", "raw_val", project)
-            if not ok then error("runtime.kv.set failed: " .. tostring(err)) end
+            runtime.kv.set("raw_key", "raw_val", project)
 
-            local raw_val, raw_err = runtime.kv.get("raw_key", project)
-            if raw_err ~= nil then error("runtime.kv.get err: " .. tostring(raw_err)) end
+            local raw_val = runtime.kv.get("raw_key", project)
             if raw_val ~= "raw_val" then error("runtime.kv.get mismatch") end
 
             local k = kv.as(project)
-            local ok2, err2 = k.set("scoped_key", "scoped_val")
-            if not ok2 then error("kv.as.set failed: " .. tostring(err2)) end
-            local scoped_val, scoped_err = k.get("scoped_key")
-            if scoped_err ~= nil then error("kv.as.get err: " .. tostring(scoped_err)) end
+            k.set("scoped_key", "scoped_val")
+            local scoped_val = k.get("scoped_key")
             if scoped_val ~= "scoped_val" then error("kv.as.get mismatch") end
 
             local m = memory.as(project)
@@ -2904,11 +2896,9 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
 
     let harness_code = r#"
         function on_turn_prepare(ctx)
-            local ok, err = runtime.policy.set("spawn.max_depth", 2)
-            if not ok then error("global policy set failed: " .. tostring(err)) end
+            runtime.policy.set("spawn.max_depth", 2)
 
-            local v, ge = runtime.policy.get("spawn.max_depth")
-            if ge ~= nil then error("global policy get err: " .. tostring(ge)) end
+            local v = runtime.policy.get("spawn.max_depth")
             if v ~= 2 then error("global policy mismatch: " .. tostring(v)) end
 
             local aok, ae = runtime.policy.set("queue.max_depth", 9, {
@@ -4407,7 +4397,7 @@ async fn test_root_max_capabilities_applies_to_top_level_hooks() -> Result<()> {
                     error("denial reason should reference root max_capabilities")
                 end
 
-                local ok, err = runtime.policy.set("root_cap.test", true)
+                local ok, err = try(runtime.policy.set, "root_cap.test", true)
                 if ok then
                     error("runtime.policy.set should fail under root max_capabilities")
                 end
@@ -4526,7 +4516,7 @@ async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
                     error("denial reason should reference agent max_capabilities")
                 end
 
-                local ok, err = runtime.policy.set("agent_cap.test", true)
+                local ok, err = try(runtime.policy.set, "agent_cap.test", true)
                 if ok then
                     error("runtime.policy.set should fail under agent max_capabilities")
                 end
@@ -4683,7 +4673,7 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
                     error("runtime.db.query should be allowed by reviewer_ro capability_profile")
                 end
 
-                local ok, err = runtime.policy.set("reviewer.cap.profile.test", true)
+                local ok, err = try(runtime.policy.set, "reviewer.cap.profile.test", true)
                 if ok ~= false or err == nil then
                     error("runtime.policy.set should fail under agent capability_profile")
                 end
@@ -4870,7 +4860,7 @@ async fn test_runtime_governance_temporary_grants_issue_use_revoke() -> Result<(
                         error("temporary grant should allow runtime.db.query")
                     end
 
-                    local ok, err = runtime.policy.set("grant.test", true)
+                    local ok, err = try(runtime.policy.set, "grant.test", true)
                     if ok ~= false or err == nil then
                         error("runtime.policy.set should fail inside temporary grant")
                     end
@@ -5072,7 +5062,7 @@ async fn test_temporary_grant_ceiling_propagates_to_peer_submit() -> Result<()> 
                     error("worker denial should mention delegated capabilities")
                 end
 
-                local ok, err = runtime.policy.set("grant.peer.test", true)
+                local ok, err = try(runtime.policy.set, "grant.peer.test", true)
                 if ok ~= false or err == nil then
                     error("worker runtime.policy.set should fail under propagated grant ceiling")
                 end
@@ -5201,7 +5191,7 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
                     local dec_policy, pe = runtime.governance.check("runtime.policy.set")
                     if dec_policy == nil then error("policy decision failed: " .. tostring(pe)) end
 
-                    local ok, err = runtime.policy.set("delegation.flag", true)
+                    local ok, err = try(runtime.policy.set, "delegation.flag", true)
                     return dec_query, dec_policy, ok, err
                 end
             }
@@ -5360,7 +5350,7 @@ async fn test_use_scoped_capability_delegation_is_downward_only() -> Result<()> 
                     error("delegated runtime.policy.set should be denied by use capability allowlist")
                 end
 
-                local ok, err = runtime.policy.set("use.delegation.flag", true)
+                local ok, err = try(runtime.policy.set, "use.delegation.flag", true)
                 if ok then
                     error("runtime.policy.set should be denied inside delegated use")
                 end
@@ -6608,12 +6598,11 @@ async fn test_agent_sidestep_creates_hidden_sibling_branch_on_current_session() 
         function on_turn_prepare(ctx)
             if not queued then
                 queued = true
-                local group, ge = runtime.graph.node.create({
+                local group = runtime.graph.node.create({
                     kind = "experiment",
                     label = "sidestep group"
                 })
-                if group == nil then error("runtime.graph.node.create failed: " .. tostring(ge)) end
-                local token, err = agent.sidestep("branch-only", {
+                local token = agent.sidestep("branch-only", {
                     mode = "fork_sibling",
                     graph = {
                         source = { kind = "graph_node", id = group.node_id },
@@ -6622,7 +6611,6 @@ async fn test_agent_sidestep_creates_hidden_sibling_branch_on_current_session() 
                         metadata = { reason = "branch-only" }
                     }
                 })
-                if token == nil then error("agent.sidestep failed: " .. tostring(err)) end
             end
             return ALLOW
         end
@@ -6901,9 +6889,7 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
                     ["runtime.agent.status"] = true,
                 }
             }, function()
-                local out, err = runtime.agent.ask("worker", "say hello", { timeout_ms = 5000, title = "hello" })
-                if out == nil then error("runtime.agent.ask failed: " .. tostring(err)) end
-                return out
+                return runtime.agent.ask("worker", "say hello", { timeout_ms = 5000, title = "hello" })
             end)
 
             if review ~= "worker-ok" then
@@ -7125,10 +7111,7 @@ async fn test_runtime_agent_complete_preserves_nested_grant_context() -> Result<
                     error("outer grant id missing")
                 end
 
-                local review, err = runtime.agent.ask("worker", "say hello", { timeout_ms = 5000, title = "hello" })
-                if review == nil then
-                    error("runtime.agent.ask failed inside nested grant test: " .. tostring(err))
-                end
+                local review = runtime.agent.ask("worker", "say hello", { timeout_ms = 5000, title = "hello" })
                 if review ~= "worker-ok" then
                     error("runtime.agent.ask output mismatch: " .. tostring(review))
                 end

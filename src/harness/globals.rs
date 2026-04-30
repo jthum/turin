@@ -1,6 +1,6 @@
 //! Turin-SL canonical globals injected into the Luau harness VM.
 
-use mlua::{Lua, Result as LuaResult};
+use mlua::{Function, Lua, MultiValue, Result as LuaResult, Table, Value};
 use std::future::Future;
 use std::path::PathBuf;
 use tokio::sync::Mutex;
@@ -134,6 +134,7 @@ pub fn register_globals(lua: &Lua, app_data: HarnessAppData) -> LuaResult<()> {
     tool_bindings::register_tool_globals(lua)?;
     system_globals::register_import_global(lua)?;
     dx::register_dx_globals(lua, &app_data)?;
+    install_public_error_contract(lua)?;
 
     lua.set_app_data(app_data);
     Ok(())
@@ -146,4 +147,87 @@ fn register_verdict_constants(lua: &Lua) -> LuaResult<()> {
     globals.set("ESCALATE", 3)?;
     globals.set("MODIFY", 4)?;
     Ok(())
+}
+
+fn install_public_error_contract(lua: &Lua) -> LuaResult<()> {
+    let globals = lua.globals();
+    for root in [
+        "runtime", "memory", "kv", "agent", "session", "user", "fs", "json", "time",
+    ] {
+        if let Ok(table) = globals.get::<Table>(root) {
+            wrap_public_table(lua, &table, root)?;
+        }
+    }
+    Ok(())
+}
+
+fn wrap_public_table(lua: &Lua, table: &Table, path: &str) -> LuaResult<()> {
+    let mut keys = Vec::<(String, Value)>::new();
+    for pair in table.pairs::<Value, Value>() {
+        let (key, value) = pair?;
+        if let Value::String(key_str) = key {
+            keys.push((key_str.to_str()?.to_string(), value));
+        }
+    }
+
+    for (key, value) in keys {
+        let entry_path = format!("{path}.{key}");
+        match value {
+            Value::Function(func) => {
+                table.set(key, wrap_public_function(lua, func, entry_path)?)?;
+            }
+            Value::Table(child) => {
+                wrap_public_table(lua, &child, &entry_path)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn wrap_public_function(lua: &Lua, func: Function, path: String) -> LuaResult<Function> {
+    lua.create_function(move |lua, args: MultiValue| {
+        let values = func.call::<MultiValue>(args)?;
+        coerce_public_result(lua, &path, values)
+    })
+}
+
+fn coerce_public_result(_lua: &Lua, path: &str, values: MultiValue) -> LuaResult<MultiValue> {
+    let items: Vec<Value> = values.into_iter().collect();
+    if items.is_empty() {
+        return Ok(MultiValue::new());
+    }
+
+    if items.len() >= 2 {
+        match &items[1] {
+            Value::Nil => {
+                let mut out = MultiValue::new();
+                out.push_back(items[0].clone());
+                for value in items.into_iter().skip(2) {
+                    out.push_back(value);
+                }
+                return Ok(out);
+            }
+            Value::String(s) => {
+                let err = match s.to_str() {
+                    Ok(value) => value.to_string(),
+                    Err(_) => "<invalid utf-8 error string>".to_string(),
+                };
+                return Err(mlua::Error::runtime(format!("[{}] {}", path, err)));
+            }
+            Value::Boolean(false) => {
+                return Err(mlua::Error::runtime(format!(
+                    "[{}] operation returned false",
+                    path
+                )));
+            }
+            other => {
+                return Err(mlua::Error::runtime(format!("[{}] {:?}", path, other)));
+            }
+        }
+    }
+
+    let mut out = MultiValue::new();
+    out.push_back(items[0].clone());
+    Ok(out)
 }

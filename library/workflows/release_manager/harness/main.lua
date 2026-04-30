@@ -1,5 +1,5 @@
 local function read_required(path)
-  local text, err = fs.read(path)
+  local text, err = try(fs.read, path)
   if not text then
     error("required release manager file missing: " .. path .. ": " .. tostring(err))
   end
@@ -7,12 +7,12 @@ local function read_required(path)
 end
 
 local function read_optional(path)
-  local text = fs.read(path)
+  local text = try(fs.read, path)
   return text or nil
 end
 
 local function write_required(path, content)
-  local ok, err = fs.write(path, content)
+  local ok, err = try(fs.write, path, content)
   if not ok then
     error("failed to write release manager artifact " .. path .. ": " .. tostring(err))
   end

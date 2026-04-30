@@ -13,12 +13,12 @@ function on_turn_prepare(ctx)
     error("delegated peer review returned empty output")
   end
 
-  local ok, err = fs.write(".turin/runtime/delegated-review.txt", review)
+  local ok, err = try(fs.write, ".turin/runtime/delegated-review.txt", review)
   if not ok then
     error("failed to write delegated review artifact: " .. tostring(err))
   end
 
-  ok, err = fs.write(".turin/runtime/delegated-review-input.txt", prompt)
+  ok, err = try(fs.write, ".turin/runtime/delegated-review-input.txt", prompt)
   if not ok then
     error("failed to write delegated review input artifact: " .. tostring(err))
   end

@@ -327,19 +327,16 @@ Runtime APIs (capability-gated):
 Example:
 
 ```lua
-local grant, err = runtime.governance.grant_issue({
+local grant = runtime.governance.grant_issue({
   capabilities = { ["db.exec"] = true },
   ttl_ms = 10000,
   max_uses = 1,
   reason = "one-shot cleanup",
 })
 
-if grant then
-  runtime.governance.with_grant(grant.grant_id, function()
-    local changed, derr = runtime.db.exec("delete from temp where stale = 1")
-    if not changed then error(derr) end
-  end)
-end
+runtime.governance.with_grant(grant.grant_id, function()
+  runtime.db.exec("delete from temp where stale = 1")
+end)
 ```
 
 Grant properties:

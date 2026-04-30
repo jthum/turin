@@ -6,10 +6,12 @@ It exists so the DX review can evaluate consistency at the shape level rather th
 
 ## Result Convention
 
-The surface is currently in transition:
+Public harness functions now follow one contract:
 
-- older substrate-style APIs often use `value, err`
-- newer DX-aligned helpers and primitives increasingly return direct values and raise on actual failure
+- success returns the useful value directly
+- actual failure raises a Lua runtime error
+- valid empty collections return empty collections
+- valid missing singular values return `nil`
 - hooks are separate because they return verdicts or modified payloads
 
 Primary reference:

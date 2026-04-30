@@ -459,10 +459,9 @@ See `docs/reference/hooks.md` for payloads, verdict semantics, and examples.
 Harnesses can open and operate on multiple state stores dynamically:
 
 ```lua
-local handle, err = runtime.db.open({ path = "scratch/analysis.db" })
-if not handle then error(err) end
+local handle = runtime.db.open({ path = "scratch/analysis.db" })
 
-local rows, qerr = runtime.db.query(
+local rows = runtime.db.query(
   "select name from sqlite_master where type = 'table' order by name",
   nil,
   { handle = handle.handle }
@@ -474,13 +473,12 @@ local rows, qerr = runtime.db.query(
 Harnesses can submit work to peer runtimes and await results:
 
 ```lua
-local task_id, err = runtime.agent.submit("reviewer", {
+local task_id = runtime.agent.submit("reviewer", {
   prompt = "Review the last patch for regressions",
   title = "peer review"
 })
-if not task_id then error(err) end
 
-local result, aerr = runtime.agent.await(task_id, { timeout_ms = 30_000 })
+local result = runtime.agent.await(task_id, { timeout_ms = 30_000 })
 ```
 
 Peer-agent dispatch can be governed by capabilities, per-agent ceilings, allowlists, and temporary grants.

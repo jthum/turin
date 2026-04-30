@@ -6,22 +6,30 @@ the preferred `runtime.*` namespaces and the ergonomic top-level aliases).
 
 ## Result Convention (Important)
 
-Older substrate-facing stdlib functions often follow a Lua tuple convention:
+Harness-facing functions now use one public contract:
 
-- success: `(value, nil)` or `(true, nil)`
-- failure: `(nil, "error")` or `(false, "error")`
+- success returns the useful value directly
+- actual failure raises a Lua runtime error
+- valid empty collections return empty collections
+- valid missing singular values return `nil`
+- use `try(fn, ...)` or `pcall(...)` when recovery is intentional
 
 Examples:
 
 ```lua
-local text, err = fs.read("README.md")
-if not text then error(err) end
+local text = fs.read("README.md")
 
-local ok, err = runtime.kv.set("foo", "bar", runtime.context("agent", "coder"))
-if not ok then error(err) end
+runtime.kv.set("foo", "bar", runtime.context("agent", "coder"))
 ```
 
-Some functions return plain values (e.g. `time.epoch_seconds()`, `hash.sha256(...)`) or raise Lua runtime errors for invalid argument shapes and runtime failures (e.g. `fs.stat(...)`).
+Recovery example:
+
+```lua
+local rows, err = try(runtime.db.query, "select * from notes")
+if not rows then
+  log.warn("query failed: " .. tostring(err))
+end
+```
 
 ## Verdict Constants (for hooks)
 
@@ -39,7 +47,7 @@ Important:
 - `runtime.*` remains the canonical primitive layer
 - DX helpers are ergonomic wrappers over those primitives
 - DX helpers do not bypass governance/capability enforcement
-- DX helpers often raise Lua runtime errors on denied/invalid operations instead of returning `(nil, err)`
+- DX helpers follow the same public contract and raise on actual failure
 
 Use the DX layer when you want cleaner harness code. Use `runtime.*` directly when you want the most explicit primitive behavior.
 
@@ -190,8 +198,7 @@ Example:
 
 ```lua
 local experiment = graph.new("experiment", "compare candidates")
-local branch, err = agent.session.branch_create("candidate-a", { from_turn_index = 0 })
-if not branch then error(err) end
+local branch = agent.session.branch_create("candidate-a", { from_turn_index = 0 })
 
 experiment:add(graph.branch(branch), { role = "candidate" })
 
@@ -387,8 +394,8 @@ local cmd = "mpg123 " .. shell.quote(args.filename)
 
 Filesystem helpers scoped to `harness.fs_root` (default: workspace root).
 
-- `fs.read(path) -> string|nil, err?`
-- `fs.write(path, content) -> bool, err?`
+- `fs.read(path) -> string`
+- `fs.write(path, content) -> bool`
 - `fs.stat(path) -> stat_table` (raises on failure)
 - `fs.summary(path, opts?) -> string` (raises on failure; only during `on_turn_prepare(ctx)`)
 - `fs.exists(path) -> bool`
@@ -462,8 +469,8 @@ local digest = hash.sha256("hello")
 
 ## `json`
 
-- `json.encode(value) -> string|nil, err?`
-- `json.decode(string) -> value|nil, err?`
+- `json.encode(value) -> string`
+- `json.decode(string) -> value`
 
 ## `time`
 
@@ -574,7 +581,7 @@ Selector shape:
 Returns matching store aliases (wildcard `*` supported).
 
 ```lua
-local aliases, err = runtime.context.glob("agent:*")
+local aliases = runtime.context.glob("agent:*")
 ```
 
 ## `runtime.memory`
@@ -622,9 +629,9 @@ Returns rows like:
 
 Canonical KV API with explicit selector.
 
-- `runtime.kv.get(key, ctx, opts?) -> string|nil, err?`
-- `runtime.kv.set(key, value, ctx, opts?) -> bool, err?`
-- `runtime.kv.delete(key, ctx, opts?) -> bool, err?`
+- `runtime.kv.get(key, ctx, opts?) -> string|nil`
+- `runtime.kv.set(key, value, ctx, opts?) -> bool`
+- `runtime.kv.delete(key, ctx, opts?) -> bool`
 
 `opts` for KV:
 
@@ -640,10 +647,10 @@ Notes:
 
 Root-path-first code search API backed by `turin-map` indexes.
 
-- `runtime.code.search.status(codebase, opts?) -> status|nil, err?`
-- `runtime.code.search.lexical(codebase, query, opts?) -> rows|nil, err?`
-- `runtime.code.search.semantic(codebase, query, opts?) -> rows|nil, err?`
-- `runtime.code.search.hybrid(codebase, query, opts?) -> rows|nil, err?`
+- `runtime.code.search.status(codebase, opts?) -> status`
+- `runtime.code.search.lexical(codebase, query, opts?) -> rows`
+- `runtime.code.search.semantic(codebase, query, opts?) -> rows`
+- `runtime.code.search.hybrid(codebase, query, opts?) -> rows`
 
 `codebase` can be:
 
@@ -684,11 +691,11 @@ A DB target can be passed as:
 
 ### Functions
 
-- `runtime.db.open(selector) -> handle_info|nil, err?`
-- `runtime.db.close(handle_or_table) -> bool, err?`
-- `runtime.db.list() -> {handle_info...}|nil, err?`
-- `runtime.db.query(sql, params?, opts?) -> rows|nil, err?`
-- `runtime.db.exec(sql, params?, opts?) -> changed_count|nil, err?`
+- `runtime.db.open(selector) -> handle_info`
+- `runtime.db.close(handle_or_table) -> bool`
+- `runtime.db.list() -> {handle_info...}`
+- `runtime.db.query(sql, params?, opts?) -> rows`
+- `runtime.db.exec(sql, params?, opts?) -> changed_count`
 
 `handle_info` shape:
 
@@ -726,11 +733,11 @@ Runtime policy influences DB behavior (`db.allow_dynamic_open`, `db.path_scope`,
 
 Peer-agent orchestration API.
 
-- `runtime.agent.list() -> statuses|nil, err?`
-- `runtime.agent.get_status(agent_id) -> status|nil, err?`
-- `runtime.agent.submit(agent_id, task, opts?) -> task_id|nil, err?`
-- `runtime.agent.await(task_id, opts?) -> result|nil, err?`
-- `runtime.agent.ask(agent_id, prompt, opts?) -> output|nil, err?`
+- `runtime.agent.list() -> statuses`
+- `runtime.agent.get_status(agent_id) -> status|nil`
+- `runtime.agent.submit(agent_id, task, opts?) -> task_id`
+- `runtime.agent.await(task_id, opts?) -> result`
+- `runtime.agent.ask(agent_id, prompt, opts?) -> output`
 
 `task` can be:
 
@@ -779,11 +786,11 @@ Governance integration:
 
 Sparse semantic graph overlay API.
 
-- `runtime.graph.node.create(opts) -> node|nil, err?`
-- `runtime.graph.node.list(opts?) -> nodes|nil, err?`
-- `runtime.graph.edge.create(opts) -> edge|nil, err?`
-- `runtime.graph.edge.list(opts?) -> edges|nil, err?`
-- `runtime.graph.path.select(opts) -> context_target|nil, err?`
+- `runtime.graph.node.create(opts) -> node`
+- `runtime.graph.node.list(opts?) -> nodes`
+- `runtime.graph.edge.create(opts) -> edge`
+- `runtime.graph.edge.list(opts?) -> edges`
+- `runtime.graph.path.select(opts) -> context_target`
 
 `runtime.graph.node.create` options:
 
@@ -869,8 +876,8 @@ Notes:
 
 Runtime policy storage API.
 
-- `runtime.policy.get(key, scope?) -> json|nil, err?`
-- `runtime.policy.set(key, value, scope?) -> bool, err?`
+- `runtime.policy.get(key, scope?) -> json|nil`
+- `runtime.policy.set(key, value, scope?) -> bool`
 
 `scope` can be:
 
@@ -915,9 +922,9 @@ Governance observability and temporary grants.
 
 ### Temporary grants
 
-- `runtime.governance.grant_issue(opts) -> grant|nil, err?`
-- `runtime.governance.grant_get(grant_id) -> grant|nil, err?`
-- `runtime.governance.grant_revoke(grant_id) -> bool, err?`
+- `runtime.governance.grant_issue(opts) -> grant`
+- `runtime.governance.grant_get(grant_id) -> grant|nil`
+- `runtime.governance.grant_revoke(grant_id) -> bool`
 - `runtime.governance.with_grant(grant_id, fn) -> <fn returns>`
 
 `grant_issue` options:
@@ -992,19 +999,19 @@ Selector-derived scoped data aliases based on the active `RuntimeIdentity`.
 
 ### Local queue/session helpers
 
-- `agent.spawn(prompt, opts?) -> queue_token|nil, err?`
+- `agent.spawn(prompt, opts?) -> queue_token`
   - enqueues a local task in the current session queue
   - governed by `spawn.enabled`, `spawn.max_depth`, queue policy
 - `agent.session.identity() -> identity_table`
-- `agent.session.queue(prompt) -> bool, err?`
-- `agent.session.queue_next(prompt) -> bool, err?`
-- `agent.session.queue_all({prompts...}) -> bool, err?`
-- `agent.session.load(session_id) -> session_row|nil, err?`
-- `agent.session.list(limit?, offset?) -> rows|nil, err?`
+- `agent.session.queue(prompt) -> bool`
+- `agent.session.queue_next(prompt) -> bool`
+- `agent.session.queue_all({prompts...}) -> bool`
+- `agent.session.load(session_id) -> session_row|nil`
+- `agent.session.list(limit?, offset?) -> rows`
 
 ### Peer-agent convenience
 
-- `agent.ask(prompt, opts?) -> output|nil, err?`
+- `agent.ask(prompt, opts?) -> output`
   - submits to a peer agent and awaits result in one call
   - `opts.agent_id` (defaults to current configured agent id)
   - `opts.timeout_ms`
@@ -1015,7 +1022,7 @@ Selector-derived scoped data aliases based on the active `RuntimeIdentity`.
 ### Mode controls
 
 - `agent.mode.get() -> "auto"|"stateful"|"stateless"`
-- `agent.mode.set(mode) -> bool, err?`
+- `agent.mode.set(mode) -> bool`
 
 ## Notes on Old Namespaces
 

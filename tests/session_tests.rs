@@ -2013,8 +2013,7 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
         default_harness_dir.join("main.lua"),
         r#"
             function on_turn_prepare(ctx)
-                local out, err = runtime.agent.ask("reviewer", "review this")
-                if out == nil then error(err) end
+                local out = runtime.agent.ask("reviewer", "review this")
                 return ALLOW
             end
         "#,
@@ -2164,10 +2163,10 @@ async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
     std::fs::write(
         default_harness_dir.join("main.lua"),
         r#"
-            local current, _ = fs.read(".turin/runtime/default-load-count.txt")
+            local current = try(fs.read, ".turin/runtime/default-load-count.txt")
+            if current == nil then current = "" end
             local next_count = (tonumber(current or "0") or 0) + 1
-            local ok, err = fs.write(".turin/runtime/default-load-count.txt", tostring(next_count))
-            if not ok then error(err) end
+            fs.write(".turin/runtime/default-load-count.txt", tostring(next_count))
 
             function on_session_start(event)
                 return ALLOW
@@ -2177,10 +2176,10 @@ async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
     std::fs::write(
         writer_harness_dir.join("main.lua"),
         r#"
-            local current, _ = fs.read(".turin/runtime/writer-load-count.txt")
+            local current = try(fs.read, ".turin/runtime/writer-load-count.txt")
+            if current == nil then current = "" end
             local next_count = (tonumber(current or "0") or 0) + 1
-            local ok, err = fs.write(".turin/runtime/writer-load-count.txt", tostring(next_count))
-            if not ok then error(err) end
+            fs.write(".turin/runtime/writer-load-count.txt", tostring(next_count))
 
             function on_session_start(event)
                 return ALLOW
@@ -2277,10 +2276,10 @@ async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
     std::fs::write(
         writer_harness_dir.join("main.lua"),
         r#"
-            local current, _ = fs.read(".turin/runtime/writer-load-count.txt")
+            local current = try(fs.read, ".turin/runtime/writer-load-count.txt")
+            if current == nil then current = "" end
             local next_count = (tonumber(current or "0") or 0) + 1
-            local ok, err = fs.write(".turin/runtime/writer-load-count.txt", tostring(next_count))
-            if not ok then error(err) end
+            fs.write(".turin/runtime/writer-load-count.txt", tostring(next_count))
 
             function on_session_start(event)
                 return ALLOW
