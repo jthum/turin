@@ -256,7 +256,7 @@ impl StateStore {
                        tm.content,
                        t.session_id,
                        t.id
-                FROM turn_messages tm
+                FROM messages tm
                 JOIN turns t ON t.id = tm.turn_id
                 JOIN sessions s ON s.id = t.session_id
                 WHERE LOWER(tm.content) LIKE ?1
@@ -334,7 +334,7 @@ impl StateStore {
                        ) AS match_text,
                        t.session_id,
                        t.id
-                FROM turn_tool_executions tt
+                FROM tool_executions tt
                 JOIN turns t ON t.id = tt.turn_id
                 JOIN sessions s ON s.id = t.session_id
                 WHERE LOWER(tt.tool_name) LIKE ?1

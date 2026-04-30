@@ -25,7 +25,7 @@ impl StateStore {
                 anyhow::anyhow!("No active branch head available for session {}", session_id)
             })?;
         conn.execute(
-            "INSERT INTO turn_tool_executions (turn_id, tool_call_id, tool_name, args, output, is_error, duration_ms, verdict) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO tool_executions (turn_id, tool_call_id, tool_name, args, output, is_error, duration_ms, verdict) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             turso::params![
                 turn.id,
                 tool_call_id,
@@ -66,7 +66,7 @@ impl StateStore {
         for turn in turns {
             let mut rows = conn
                 .query(
-                    "SELECT id, tool_call_id, tool_name, args, output, is_error, duration_ms, verdict, created_at FROM turn_tool_executions WHERE turn_id = ?1 ORDER BY id",
+                    "SELECT id, tool_call_id, tool_name, args, output, is_error, duration_ms, verdict, created_at FROM tool_executions WHERE turn_id = ?1 ORDER BY id",
                     [turn.id],
                 )
                 .await?;

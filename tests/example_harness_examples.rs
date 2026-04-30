@@ -39,7 +39,7 @@ async fn wait_for_persisted_agent_output(
                 "SELECT s.agent_id, tm.role, tm.content \
                  FROM sessions s \
                  JOIN turns t ON t.session_id = s.id \
-                 JOIN turn_messages tm ON tm.turn_id = t.id \
+                 JOIN messages tm ON tm.turn_id = t.id \
                  WHERE s.agent_id = ?1 \
                  ORDER BY tm.id",
                 [agent_id],
@@ -553,7 +553,7 @@ async fn test_openclaw_style_personal_assistant_routes_review_prompts() -> Resul
             "SELECT s.agent_id, tm.role, tm.content \
              FROM sessions s \
              JOIN turns t ON t.session_id = s.id \
-             JOIN turn_messages tm ON tm.turn_id = t.id \
+             JOIN messages tm ON tm.turn_id = t.id \
              WHERE s.agent_id = 'reviewer' \
              ORDER BY tm.id",
             (),

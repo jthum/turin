@@ -4,7 +4,7 @@ This document summarizes Turin's current state-store schema at a conceptual leve
 
 The authoritative schema lives in `src/persistence/schema.rs`. This reference exists so contributors can reason about the durable model without reading the full SQL string every time.
 
-Current schema version: `14`
+Current schema version: `16`
 
 Turin currently does not provide an in-place migration path for incompatible state DB versions. Existing DBs with an older `schema_info.version` are rejected and must be recreated.
 
@@ -15,10 +15,10 @@ The state store is built around a few durable primitives:
 - `sessions` are durable containers.
 - `turns` are the structural ancestry graph.
 - `branch_heads` are named writable path handles into the turn graph.
-- `turn_messages` and `turn_tool_executions` hang off concrete turns.
+- `messages` and `tool_executions` hang off concrete turns.
 - `graph_nodes` and `graph_edges` are a sparse semantic overlay for opt-in relationships.
 - `events` record runtime/session activity.
-- `kv`, `memories`, and file-cache tables provide scoped supporting state.
+- `kv` and `memories` provide scoped supporting state.
 
 The important split is:
 
@@ -82,7 +82,7 @@ Key fields:
 
 `created_from_turn_id` records where the branch forked. `origin_*` records why/how the branch was born, for example `main`, `manual`, `sidestep`, `promotion`, or `conflict_fork`.
 
-### `turn_messages`
+### `messages`
 
 Messages attached to a concrete turn.
 
@@ -94,7 +94,7 @@ Key fields:
 - `token_count`
 - `created_at`
 
-### `turn_tool_executions`
+### `tool_executions`
 
 Tool execution records attached to a concrete turn.
 

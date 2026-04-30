@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 15;
+pub(crate) const SCHEMA_VERSION: u32 = 16;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS branch_heads (
     UNIQUE(session_id, name)
 );
 
-CREATE TABLE IF NOT EXISTS turn_messages (
+CREATE TABLE IF NOT EXISTS messages (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     turn_id      INTEGER NOT NULL REFERENCES turns(id),
     role        TEXT NOT NULL,
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS turn_messages (
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS turn_tool_executions (
+CREATE TABLE IF NOT EXISTS tool_executions (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     turn_id      INTEGER NOT NULL REFERENCES turns(id),
     tool_call_id TEXT NOT NULL,
@@ -133,8 +133,8 @@ CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id);
 CREATE INDEX IF NOT EXISTS idx_turns_parent ON turns(parent_turn_id);
 CREATE INDEX IF NOT EXISTS idx_turns_session_depth ON turns(session_id, branch_depth);
 CREATE INDEX IF NOT EXISTS idx_branch_heads_session ON branch_heads(session_id);
-CREATE INDEX IF NOT EXISTS idx_turn_messages_turn ON turn_messages(turn_id);
-CREATE INDEX IF NOT EXISTS idx_turn_tool_executions_turn ON turn_tool_executions(turn_id);
+CREATE INDEX IF NOT EXISTS idx_messages_turn ON messages(turn_id);
+CREATE INDEX IF NOT EXISTS idx_tool_executions_turn ON tool_executions(turn_id);
 CREATE INDEX IF NOT EXISTS idx_graph_nodes_session_kind ON graph_nodes(session_id, kind);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_session_relation ON graph_edges(session_id, relation_kind);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source_kind, source_id);
