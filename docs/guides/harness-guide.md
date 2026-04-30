@@ -1,6 +1,6 @@
 # Writing Harness Scripts
 
-This guide covers how to build production-quality Turin harnesses using the canonical `runtime.*` API, stable hook lifecycle, and opt-in governance features.
+This guide covers how to build production-quality Turin harnesses using Turin's promoted helper-first DX layer, the canonical `runtime.*` substrate, the stable hook lifecycle, and opt-in governance features.
 
 ## What a Harness Does
 
@@ -269,7 +269,7 @@ end
 function on_turn_prepare(ctx)
   remember("Build failures should stay concise")
 
-  local spec, serr = fs.read("SPEC.md")
+  local spec = try(fs.read, "SPEC.md")
   local rows = code.find("capability decision")
 
   if spec and rows and #rows > 0 then
@@ -566,7 +566,7 @@ Prefer the helper layer first in new harnesses, even though the canonical `runti
 When in doubt:
 
 - use DX helpers for readability
-- use `runtime.*` directly when you need exact primitive control or want the tuple-style API explicitly
+- use `runtime.*` directly when you need exact primitive control or want the substrate shape explicitly
 
 ### Context selectors
 

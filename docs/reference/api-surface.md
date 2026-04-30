@@ -6,8 +6,6 @@ It is intentionally mechanical. The goal is to capture what exists today so nami
 
 This page does not try to redesign the API.
 
-Where a surface is slated for removal, this page still lists it until implementation lands. See [dx-decisions.md](/home/jthum/Documents/Work/Code/turin/docs/reference/dx-decisions.md) for accepted changes that have not yet been implemented.
-
 ## Surface Levels
 
 Turin has three relevant layers:

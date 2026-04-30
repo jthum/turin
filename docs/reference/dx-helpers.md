@@ -148,6 +148,6 @@ Example:
 ```lua
 local rows, err = try(runtime.db.query, "select * from notes")
 if not rows then
-  log.warn("query failed: " .. tostring(err))
+  log("query failed: " .. tostring(err))
 end
 ```
