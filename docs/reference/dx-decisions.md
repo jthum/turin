@@ -52,7 +52,6 @@ Follow-up:
 Status:
 
 - accepted
-- implementation pending
 
 Decision:
 
@@ -86,7 +85,6 @@ Follow-up:
 Status:
 
 - accepted
-- implementation pending
 
 Decision:
 
@@ -168,7 +166,6 @@ Follow-up:
 Status:
 
 - accepted
-- implementation pending
 
 Decision:
 
@@ -207,7 +204,6 @@ Follow-up:
 Status:
 
 - accepted
-- implementation pending
 
 Decision:
 
@@ -249,7 +245,6 @@ Follow-up:
 Status:
 
 - accepted
-- implementation pending
 
 Decision:
 
@@ -302,7 +297,6 @@ Follow-up:
 Status:
 
 - accepted
-- implementation pending
 
 Decision:
 
@@ -393,7 +387,6 @@ Follow-up:
 Status:
 
 - accepted
-- implementation pending
 
 Decision:
 
@@ -448,7 +441,6 @@ Follow-up:
 Status:
 
 - accepted
-- implementation pending
 
 Decision:
 
@@ -503,7 +495,6 @@ Follow-up:
 Status:
 
 - accepted
-- implementation pending
 
 Decision:
 
@@ -789,114 +780,3 @@ Affected surfaces:
 Follow-up:
 
 - when both helper and substrate forms need to be shown, use separate labeled blocks
-  - structured summaries
-  - manual KV-based invalidation patterns
-- file-oriented flows can use:
-  - `fs.stat(path).hash`
-  - or `hash.sha256(fs.read(path))`
-- adding both `hash.*` and `fs.hash(...)` immediately would create parallel surface area without enough payoff
-
-Affected surfaces:
-
-- system globals
-- helper docs/examples
-- future file-observation helpers
-
-Follow-up:
-
-- implement a small generic hash namespace first
-- consider file-specific sugar later only if `fs.stat(...).hash` proves too clumsy in practice
-
-## 2026-04-27 — Add `fs.stat(...)` As The File Metadata Primitive
-
-Status:
-
-- accepted
-- implementation pending
-
-Decision:
-
-- add `fs.stat(path)` as the low-level file metadata primitive
-- let `fs.stat(path)` also expose session-relative change tracking for the common authoring path
-
-Initial direction:
-
-- current file facts such as:
-  - `hash`
-  - `bytes`
-  - file timestamps where reliable and useful
-- common change-tracking fields such as:
-  - `changed`
-  - `previous_hash`
-  - `seen_before`
-
-Rationale:
-
-- file-oriented workflows need an explicit metadata surface
-- this is the right place for lightweight file observation
-- it is a cleaner primitive than a heavyweight session cache abstraction
-- unlike `fs.read(...)`, `fs.stat(...)` already returns a table, so adding change metadata does not create a polymorphic return-type problem
-- the common authoring flow should be simple:
-
-```lua
-local spec = fs.stat("SPEC.md")
-if spec.changed then
-  ...
-end
-```
-
-Affected surfaces:
-
-- `fs.*`
-- file-oriented helper design
-- docs/examples that currently point authors toward `cache.file(...)`
-
-Follow-up:
-
-- implement change detection by:
-  - computing the current content hash
-  - comparing it with the prior session-scoped hash
-  - updating the stored hash automatically
-- keep `fs.stat(...)` table-shaped and file-focused
-- avoid turning it into a polymorphic summary/cache API
-
-## 2026-04-27 — Add `fs.summary(...)` As The Promoted File-Summary Helper
-
-Status:
-
-- accepted
-- implementation pending
-
-Decision:
-
-- add `fs.summary(path, opts?)` as the promoted high-level helper for file summarization
-- implement it on top of:
-  - normal file reads
-  - the generic hash primitive
-  - KV-backed invalidation
-  - summary generation primitives
-
-Rationale:
-
-- summarizing a few important files is a dominant and high-value harness workflow
-- the happy-path DX is materially better as:
-
-```lua
-ctx.system_prompt = ctx.system_prompt
-  .. "\n\nSpec:\n" .. fs.summary("SPEC.md")
-  .. "\n\nConstraints:\n" .. fs.summary("CONSTRAINTS.md")
-```
-
-- this keeps file-centric authoring in the `fs.*` namespace without preserving the current heavyweight cache design
-
-Affected surfaces:
-
-- `fs.*`
-- harness guide/examples
-- future summary/invalidation helpers
-
-Follow-up:
-
-- keep `fs.summary(...)` file-centric and easy to interpolate into prompts
-- prefer the noun form `summary` over a procedural `summarize`
-- use lower-level primitives underneath so behavior stays consistent if a more generic summarization surface is added later

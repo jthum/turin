@@ -23,9 +23,9 @@ Use this pattern when:
 ## What It Does
 
 - calls `runtime.agent("reviewer"):complete(...)`
-- delegates only `runtime.db.query`
+- delegates only `db.query`
 - verifies inside the reviewer harness that:
-  - `runtime.db.query` is allowed
-  - `runtime.db.exec` is denied by the delegated ceiling
+  - `db.query` is allowed
+  - `db.exec` is denied by the delegated ceiling
 - writes `.turin/runtime/delegated-review.txt` with the reviewer output
 - writes `.turin/runtime/delegated-review-input.txt` with the delegated prompt

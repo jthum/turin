@@ -328,7 +328,7 @@ Example:
 
 ```lua
 local grant, err = runtime.governance.grant_issue({
-  capabilities = { ["runtime.db.exec"] = true },
+  capabilities = { ["db.exec"] = true },
   ttl_ms = 10000,
   max_uses = 1,
   reason = "one-shot cleanup",
@@ -362,15 +362,15 @@ The DX layer adds a few helpers that are governance-relevant but do not change e
 Example:
 
 ```lua
-if not allowed("runtime.db.exec") then
+if not allowed("db.exec") then
   return verdict.reject("db exec denied")
 end
 
 local output = runtime.governance.grant({
   ttl_ms = 5000,
   capabilities = {
-    ["runtime.agent.submit"] = true,
-    ["runtime.agent.await"] = true,
+    ["agent.submit"] = true,
+    ["agent.await"] = true,
   },
 }, function()
   return runtime.agent("reviewer"):complete("Review this patch")

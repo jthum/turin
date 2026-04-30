@@ -5,7 +5,7 @@ function on_turn_prepare(ctx)
   local review = reviewer:complete("Review this request with read-only DB access:\n\n" .. prompt, {
     timeout_ms = 10000,
     capabilities = {
-      ["runtime.db.query"] = true
+      ["db.query"] = true
     }
   })
 

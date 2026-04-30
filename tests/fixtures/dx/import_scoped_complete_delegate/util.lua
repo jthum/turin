@@ -25,8 +25,8 @@ return {
       error("runtime.db.exec insert after delegated runtime.agent.complete failed: " .. tostring(derr))
     end
 
-    local db = access.check("runtime.db.exec")
-    local policy = access.check("runtime.policy.set")
+    local db = access.check("db.exec")
+    local policy = access.check("policy.set")
     local policy_ok, policy_err = runtime.policy.set("dx.import.complete", true)
 
     return {

@@ -1,5 +1,5 @@
 function on_turn_prepare(ctx)
-  local query = access.check("runtime.db.query")
+  local query = access.check("db.query")
   if query == nil or not query.allowed then
     error("delegated reviewer should have runtime.db.query allowed")
   end
@@ -12,7 +12,7 @@ function on_turn_prepare(ctx)
     error("delegated reviewer runtime.db.query mismatch")
   end
 
-  local exec = access.check("runtime.db.exec")
+  local exec = access.check("db.exec")
   if exec == nil or exec.allowed then
     error("delegated reviewer should have runtime.db.exec denied")
   end

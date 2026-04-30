@@ -26,7 +26,7 @@ function on_turn_prepare(ctx)
     error("delegation denial should mention delegated capabilities")
   end
 
-  local self_policy = access.check("runtime.policy.set")
+  local self_policy = access.check("policy.set")
   if self_policy == nil or not self_policy.allowed then
     error("caller capability context should be restored after imported runtime.agent.complete")
   end

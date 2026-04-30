@@ -1,5 +1,5 @@
 function on_turn_prepare(ctx)
-  local query = access.check("runtime.db.query")
+  local query = access.check("db.query")
   if query == nil or not query.allowed then
     return REJECT, "delegated runtime.db.query should be allowed"
   end
@@ -12,7 +12,7 @@ function on_turn_prepare(ctx)
     return REJECT, "delegated runtime.db.query mismatch"
   end
 
-  local exec = access.check("runtime.db.exec")
+  local exec = access.check("db.exec")
   if exec == nil or exec.allowed then
     return REJECT, "delegated runtime.db.exec should be denied"
   end
