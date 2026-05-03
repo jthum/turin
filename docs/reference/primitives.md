@@ -900,7 +900,7 @@ Common runtime policy keys (current):
 
 - `spawn.enabled`
 - `spawn.max_depth`
-- `mode.default`
+- `runtime.idle_secs`
 - `db.allow_dynamic_open`
 - `db.path_scope`
 - `db.max_open_handles`
@@ -1019,10 +1019,14 @@ Selector-derived scoped data aliases based on the active `RuntimeIdentity`.
 - `agent.send(agent_id, prompt) -> bool`
   - deprecated fire-and-forget convenience path
 
-### Mode controls
+### Runtime retention
 
-- `agent.mode.get() -> "auto"|"stateful"|"stateless"`
-- `agent.mode.set(mode) -> bool`
+Use agent config or `runtime.policy.set("runtime.idle_secs", value, scope?)` to control
+when a runtime hibernates after a logical request completes.
+
+- `0` => hibernate immediately after the request finishes
+- positive integer => stay hot for that many idle seconds
+- `nil` / `json.null` => keep the runtime hot indefinitely
 
 ## Notes on Old Namespaces
 

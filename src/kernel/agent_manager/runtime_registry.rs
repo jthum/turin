@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Result;
+use serde_json::Value;
 use tokio::sync::Notify;
 use tracing::{debug, error, info};
 
@@ -11,6 +12,8 @@ use super::{
     AgentManager, AgentRuntimeHandle, PeerAgentTaskEnvelope, RuntimeControl, RuntimeSlotKey,
     SessionContextOverrides,
 };
+use crate::kernel::policy::PolicyScope;
+use crate::kernel::session_refs::parse_session_reference;
 use crate::persistence::manager::StoreSelector;
 
 impl AgentManager {
@@ -103,14 +106,9 @@ impl AgentManager {
             "Starting background peer agent runtime"
         );
 
-        let agent_profile = if agent_id == self.config.agent.id {
-            &self.config.agent
-        } else {
-            self.config
-                .agents
-                .get(agent_id)
-                .ok_or_else(|| anyhow::anyhow!("Unknown agent profile: {}", agent_id))?
-        };
+        if agent_id != self.config.agent.id && !self.config.agents.contains_key(agent_id) {
+            return Err(anyhow::anyhow!("Unknown agent profile: {}", agent_id));
+        }
 
         let queue = Arc::new(std::sync::Mutex::new(
             VecDeque::<PeerAgentTaskEnvelope>::new(),
@@ -122,7 +120,6 @@ impl AgentManager {
         let agent_id_clone = agent_id.to_string();
         let slot_id_clone = runtime_key.slot_id.clone();
         let initial_session_id = initial_session_id.map(str::to_string);
-        let idle_grace_secs = agent_profile.idle_grace_secs;
         let manager = Arc::clone(self);
         let queue_bg = Arc::clone(&queue);
         let notify_bg = Arc::clone(&notify);
@@ -130,6 +127,7 @@ impl AgentManager {
         let queued_tasks_bg = queued_tasks.clone();
         let active_tasks_bg = active_tasks.clone();
         let control_bg = Arc::clone(&control);
+        let idle_control = Arc::clone(&control);
         let join_handle = tokio::spawn(async move {
             debug!(agent_id = %agent_id_clone, slot_id = %slot_id_clone, "Peer agent loop initializing");
 
@@ -175,7 +173,13 @@ impl AgentManager {
                             break;
                         }
                     }
-                    if let Some(idle_secs) = idle_grace_secs {
+                    let runtime_idle_secs = manager
+                        .resolve_runtime_idle_secs(
+                            &agent_id_clone,
+                            idle_control.current_session_id().as_deref(),
+                        )
+                        .await;
+                    if let Some(idle_secs) = runtime_idle_secs {
                         let notified = tokio::time::timeout(
                             std::time::Duration::from_secs(idle_secs),
                             notify_bg.notified(),
@@ -185,7 +189,7 @@ impl AgentManager {
                             info!(
                                 agent_id = %agent_id_clone,
                                 slot_id = %slot_id_clone,
-                                idle_grace_secs = idle_secs,
+                                runtime_idle_secs = idle_secs,
                                 "Peer agent idle timeout reached; shutting down runtime"
                             );
                             break;
@@ -218,6 +222,48 @@ impl AgentManager {
             queued_tasks,
             active_tasks,
         })
+    }
+
+    async fn resolve_runtime_idle_secs(
+        &self,
+        agent_id: &str,
+        current_session_id: Option<&str>,
+    ) -> Option<u64> {
+        let mut effective = if agent_id == self.config.agent.id {
+            self.config.agent.runtime_idle_secs
+        } else {
+            self.config
+                .agents
+                .get(agent_id)
+                .map(|agent| agent.runtime_idle_secs)
+                .unwrap_or(self.config.agent.runtime_idle_secs)
+        };
+
+        let session_public_id = current_session_id.and_then(|raw| {
+            parse_session_reference(raw)
+                .ok()
+                .map(|session_ref| session_ref.public_id)
+        });
+        let scope = PolicyScope {
+            agent_id: Some(agent_id.to_string()),
+            session_id: session_public_id,
+            ..PolicyScope::default()
+        };
+
+        if let Some(shared_runtime) = self.shared_runtime()
+            && let Ok(Some(value)) = shared_runtime
+                .policy_manager
+                .get("runtime.idle_secs", &scope)
+                .await
+        {
+            effective = match value {
+                Value::Null => None,
+                Value::Number(number) => number.as_u64(),
+                _ => effective,
+            };
+        }
+
+        effective
     }
 
     async fn ensure_runtime_with_write_lock(

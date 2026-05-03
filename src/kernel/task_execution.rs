@@ -6,7 +6,6 @@ use tracing::{error, instrument, warn};
 use crate::inference::content::{encode_content_json, materialize_task_input_content};
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::TaskExecutionResult;
-use crate::kernel::config::AgentMode;
 use crate::kernel::event::{TaskBranchOutcome, TaskTerminalStatus};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::harness_hooks::TokenUsageHookAction;
@@ -185,7 +184,6 @@ impl ExecutionHost {
             let token_usage_action = self.evaluate_token_usage(session).await;
             session.turn_index += 1;
             task_turn_count += 1;
-            self.refresh_task_session_mode(session);
 
             match token_usage_action {
                 TokenUsageHookAction::Continue => {}
@@ -211,20 +209,6 @@ impl ExecutionHost {
                 }
             }
 
-            if session.mode == AgentMode::Stateless {
-                match completed_turn {
-                    turn::TurnOutcome::Continue | turn::TurnOutcome::Complete => {
-                        break Ok(TaskTerminalStatus::Success);
-                    }
-                    turn::TurnOutcome::Rejected => {
-                        break Ok(TaskTerminalStatus::Rejected);
-                    }
-                    turn::TurnOutcome::Cancelled => {
-                        break Ok(TaskTerminalStatus::Cancelled);
-                    }
-                }
-            }
-
             match completed_turn {
                 turn::TurnOutcome::Continue => {}
                 turn::TurnOutcome::Complete => {
@@ -241,15 +225,6 @@ impl ExecutionHost {
 
         let task_status = task_status_result?;
         Ok((task_status, task_turn_count))
-    }
-
-    fn refresh_task_session_mode(&self, session: &mut SessionState) {
-        if let Some(harness) = self.session_harness_engine(session)
-            && let Ok(engine) = harness.lock()
-            && let Some(m) = engine.get_active_session_mode()
-        {
-            session.mode = m;
-        }
     }
 
     async fn begin_turn_persistence(

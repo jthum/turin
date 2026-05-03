@@ -56,9 +56,8 @@ impl DaemonState {
             model: input.model,
             provider: input.provider,
             thinking: input.thinking,
-            mode: input.mode,
             harness: input.harness,
-            idle_grace_secs: input.idle_grace_secs,
+            runtime_idle_secs: input.runtime_idle_secs,
             tools: input.tools,
             inference: Default::default(),
             persistence: ContextPersistenceConfig::default(),
@@ -105,11 +104,8 @@ impl DaemonState {
         if let Some(thinking) = input.thinking {
             file.thinking = Some(thinking);
         }
-        if let Some(mode) = input.mode {
-            file.mode = Some(mode);
-        }
-        if let Some(idle_grace_secs) = input.idle_grace_secs {
-            file.idle_grace_secs = Some(idle_grace_secs);
+        if let Some(runtime_idle_secs) = input.runtime_idle_secs {
+            file.runtime_idle_secs = Some(runtime_idle_secs);
         }
         if let Some(tools) = input.tools {
             file.tools = tools;
@@ -211,9 +207,8 @@ impl DaemonState {
             provider: file.provider,
             model: file.model,
             system_prompt: file.system_prompt,
-            mode: file.mode.map(|mode| format!("{:?}", mode).to_lowercase()),
             harness: file.harness,
-            idle_grace_secs: file.idle_grace_secs,
+            runtime_idle_secs: file.runtime_idle_secs,
             has_local_harness: agent_dir.join("harness").is_dir(),
         }))
     }

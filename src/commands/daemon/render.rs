@@ -216,18 +216,16 @@ pub(super) fn print_agent_detail(agent: AgentDetailView) {
     println!("  provider:          {}", agent.provider);
     println!("  model:             {}", agent.model);
     println!(
-        "  mode:              {}",
-        agent.mode.unwrap_or_else(|| "-".to_string())
-    );
-    println!(
         "  harness:           {}",
         agent.harness.unwrap_or_else(|| "local".to_string())
     );
     println!("  local_harness:     {}", yes_no(agent.has_local_harness));
     println!("  directory:         {}", agent.directory);
-    if let Some(idle_grace_secs) = agent.idle_grace_secs {
-        println!("  idle_grace_secs:   {}", idle_grace_secs);
-    }
+    let runtime_idle = agent
+        .runtime_idle_secs
+        .map(|secs| secs.to_string())
+        .unwrap_or_else(|| "never".to_string());
+    println!("  runtime_idle_secs: {}", runtime_idle);
     if let Some(system_prompt) = &agent.system_prompt {
         println!("  system_prompt:");
         print_indented(system_prompt);

@@ -18,7 +18,7 @@ use crate::daemon::registry::{
     RegistryLoad, RegistrySnapshot, build_effective_config, scan_registry, snapshot,
 };
 use crate::kernel::Kernel;
-use crate::kernel::config::{AgentMode, ThinkingConfig, TurinConfig};
+use crate::kernel::config::{ThinkingConfig, TurinConfig};
 
 pub(crate) use runtime_sessions::session_store_selector_from_filters;
 pub use types::{
@@ -74,9 +74,8 @@ pub struct CreateAgentInput {
     pub model: String,
     pub system_prompt: Option<String>,
     pub thinking: Option<ThinkingConfig>,
-    pub mode: Option<AgentMode>,
     pub harness: Option<String>,
-    pub idle_grace_secs: Option<u64>,
+    pub runtime_idle_secs: Option<u64>,
     pub enabled: bool,
     pub tools: ToolsConfig,
 }
@@ -87,8 +86,7 @@ pub struct UpdateAgentInput {
     pub model: Option<String>,
     pub system_prompt: Option<String>,
     pub thinking: Option<ThinkingConfig>,
-    pub mode: Option<AgentMode>,
-    pub idle_grace_secs: Option<u64>,
+    pub runtime_idle_secs: Option<u64>,
     pub tools: Option<ToolsConfig>,
 }
 

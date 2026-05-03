@@ -108,9 +108,8 @@ struct AgentDetailView {
     provider: String,
     model: String,
     system_prompt: Option<String>,
-    mode: Option<String>,
     harness: Option<String>,
-    idle_grace_secs: Option<u64>,
+    runtime_idle_secs: Option<u64>,
     has_local_harness: bool,
 }
 

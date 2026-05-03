@@ -118,8 +118,8 @@ impl HarnessManager {
 mod tests {
     use super::*;
     use crate::kernel::config::{
-        AgentConfig, AgentMode, EmbeddingConfig, HarnessConfig, KernelConfig, LayoutConfig,
-        PersistenceConfig, ProviderConfig, TurinConfig,
+        AgentConfig, EmbeddingConfig, HarnessConfig, KernelConfig, LayoutConfig, PersistenceConfig,
+        ProviderConfig, TurinConfig,
     };
     use std::collections::HashMap;
     use tempfile::tempdir;
@@ -150,9 +150,8 @@ mod tests {
                 model: "mock-model".to_string(),
                 provider: "mock".to_string(),
                 thinking: None,
-                mode: AgentMode::Auto,
                 harness: None,
-                idle_grace_secs: None,
+                runtime_idle_secs: None,
                 inference: Default::default(),
                 persistence: Default::default(),
             },
@@ -166,9 +165,8 @@ mod tests {
                         model: "mock-model".to_string(),
                         provider: "mock".to_string(),
                         thinking: None,
-                        mode: AgentMode::Auto,
                         harness: Some("shared".to_string()),
-                        idle_grace_secs: None,
+                        runtime_idle_secs: None,
                         inference: Default::default(),
                         persistence: Default::default(),
                     },
@@ -182,9 +180,8 @@ mod tests {
                         model: "mock-model".to_string(),
                         provider: "mock".to_string(),
                         thinking: None,
-                        mode: AgentMode::Auto,
                         harness: Some("shared".to_string()),
-                        idle_grace_secs: None,
+                        runtime_idle_secs: None,
                         inference: Default::default(),
                         persistence: Default::default(),
                     },

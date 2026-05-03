@@ -176,9 +176,8 @@ pub struct AgentDetail {
     pub provider: String,
     pub model: String,
     pub system_prompt: Option<String>,
-    pub mode: Option<String>,
     pub harness: Option<String>,
-    pub idle_grace_secs: Option<u64>,
+    pub runtime_idle_secs: Option<u64>,
     pub has_local_harness: bool,
 }
 

@@ -9,8 +9,8 @@ use turin_types::ToolsConfig;
 
 use crate::kernel::agent_manager::AgentManager;
 use crate::kernel::config::{
-    AgentConfig, AgentMode, ContextPersistenceConfig, HarnessConfig, InferenceOverrideConfig,
-    ThinkingConfig, TurinConfig,
+    AgentConfig, ContextPersistenceConfig, HarnessConfig, InferenceOverrideConfig, ThinkingConfig,
+    TurinConfig,
 };
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_runtime::{HarnessRuntime, HarnessRuntimeInitContext};
@@ -46,7 +46,7 @@ pub struct AgentSummary {
     pub enabled: bool,
     pub provider: String,
     pub model: String,
-    pub mode: String,
+    pub runtime_idle_secs: Option<u64>,
     pub harness_kind: String,
     pub harness_ref: String,
 }
@@ -122,11 +122,9 @@ pub(crate) struct AgentFileConfig {
     #[serde(default)]
     pub thinking: Option<ThinkingConfig>,
     #[serde(default)]
-    pub mode: Option<AgentMode>,
-    #[serde(default)]
     pub harness: Option<String>,
     #[serde(default)]
-    pub idle_grace_secs: Option<u64>,
+    pub runtime_idle_secs: Option<u64>,
     #[serde(default)]
     pub tools: ToolsConfig,
     #[serde(default)]
@@ -450,9 +448,10 @@ fn scan_agent_dir(
         model: parsed.model,
         provider: parsed.provider,
         thinking: parsed.thinking,
-        mode: parsed.mode.unwrap_or(bootstrap.agent.mode.clone()),
         harness: Some(harness_id.clone()),
-        idle_grace_secs: parsed.idle_grace_secs,
+        runtime_idle_secs: parsed
+            .runtime_idle_secs
+            .or(bootstrap.agent.runtime_idle_secs),
         tools: parsed.tools,
         inference: parsed.inference,
         persistence: parsed.persistence,
@@ -650,7 +649,7 @@ pub fn snapshot(load: &RegistryLoad) -> RegistrySnapshot {
                 enabled: agent.enabled,
                 provider: agent.agent_config.provider.clone(),
                 model: agent.agent_config.model.clone(),
-                mode: format!("{:?}", agent.agent_config.mode).to_lowercase(),
+                runtime_idle_secs: agent.agent_config.runtime_idle_secs,
                 harness_kind: match agent.harness_kind {
                     HarnessKind::Local => "local".to_string(),
                     HarnessKind::Shared => "shared".to_string(),

@@ -103,7 +103,7 @@ struct GeneratedAgentConfig {
     system_prompt: String,
     model: String,
     provider: String,
-    mode: String,
+    runtime_idle_secs: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -853,7 +853,7 @@ fn generate_turin_config(
             system_prompt: system_prompt.to_string(),
             model: model.to_string(),
             provider: provider.name().to_string(),
-            mode: "auto".to_string(),
+            runtime_idle_secs: 20,
         },
         kernel: GeneratedKernelConfig {
             workspace_root: ".".to_string(),

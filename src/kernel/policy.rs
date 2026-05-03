@@ -5,8 +5,6 @@ use anyhow::{Result, anyhow};
 use serde_json::Value;
 use tokio::sync::RwLock;
 
-use crate::kernel::config::AgentMode;
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PolicyScope {
     pub scope: Option<String>,
@@ -19,7 +17,6 @@ pub struct PolicyScope {
 pub struct RuntimePolicy {
     pub spawn_enabled: bool,
     pub spawn_max_depth: u32,
-    pub mode_default: AgentMode,
     pub db_allow_dynamic_open: bool,
     pub db_path_scope: String,
     pub db_max_open_handles: usize,
@@ -34,7 +31,6 @@ impl Default for RuntimePolicy {
         Self {
             spawn_enabled: true,
             spawn_max_depth: 3,
-            mode_default: AgentMode::Auto,
             db_allow_dynamic_open: true,
             db_path_scope: "workspace_only".to_string(),
             db_max_open_handles: 128,
@@ -53,17 +49,6 @@ impl RuntimePolicy {
         map.insert(
             "spawn.max_depth".to_string(),
             Value::from(self.spawn_max_depth as u64),
-        );
-        map.insert(
-            "mode.default".to_string(),
-            Value::String(
-                match self.mode_default {
-                    AgentMode::Auto => "auto",
-                    AgentMode::Stateful => "stateful",
-                    AgentMode::Stateless => "stateless",
-                }
-                .to_string(),
-            ),
         );
         map.insert(
             "db.allow_dynamic_open".to_string(),
@@ -214,7 +199,7 @@ fn validate_key(key: &str) -> Result<()> {
     match key {
         "spawn.enabled"
         | "spawn.max_depth"
-        | "mode.default"
+        | "runtime.idle_secs"
         | "db.allow_dynamic_open"
         | "db.path_scope"
         | "db.max_open_handles"
@@ -242,13 +227,16 @@ fn validate_value(key: &str, value: &Value) -> Result<()> {
                 Err(anyhow!("Policy '{}' expects non-negative integer", key))
             }
         }
-        "mode.default" => match value.as_str() {
-            Some("auto" | "stateful" | "stateless") => Ok(()),
-            _ => Err(anyhow!(
-                "Policy '{}' expects one of: auto, stateful, stateless",
-                key
-            )),
-        },
+        "runtime.idle_secs" => {
+            if value.is_null() || value.as_u64().is_some() {
+                Ok(())
+            } else {
+                Err(anyhow!(
+                    "Policy '{}' expects null or non-negative integer",
+                    key
+                ))
+            }
+        }
         "db.path_scope" => match value.as_str() {
             Some("workspace_only" | "allow_any") => Ok(()),
             _ => Err(anyhow!(

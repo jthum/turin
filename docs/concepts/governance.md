@@ -438,7 +438,7 @@ Runtime policy is intentionally flexible and can remain harness-mutable when you
 
 - `spawn.enabled`
 - `spawn.max_depth`
-- `mode.default`
+- `runtime.idle_secs`
 - `db.allow_dynamic_open`
 - `db.path_scope`
 - `db.max_open_handles`

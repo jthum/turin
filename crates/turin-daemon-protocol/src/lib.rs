@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
 use turin_channel_core::ChannelAdapterManifest;
-use turin_types::{AgentMode, TaskInputContent, ThinkingConfig, ToolsConfig};
+use turin_types::{TaskInputContent, ThinkingConfig, ToolsConfig};
 
 pub const DAEMON_PROTOCOL_VERSION: u32 = 1;
 pub const DAEMON_TRANSPORT_UNIX: &str = "unix";
@@ -51,11 +51,9 @@ pub struct CreateAgentParams {
     #[serde(default)]
     pub thinking: Option<ThinkingConfig>,
     #[serde(default)]
-    pub mode: Option<AgentMode>,
-    #[serde(default)]
     pub harness: Option<String>,
     #[serde(default)]
-    pub idle_grace_secs: Option<u64>,
+    pub runtime_idle_secs: Option<u64>,
     #[serde(default)]
     pub tools: ToolsConfig,
     #[serde(default = "default_enabled")]
@@ -79,9 +77,7 @@ pub struct UpdateAgentParams {
     #[serde(default)]
     pub thinking: Option<ThinkingConfig>,
     #[serde(default)]
-    pub mode: Option<AgentMode>,
-    #[serde(default)]
-    pub idle_grace_secs: Option<u64>,
+    pub runtime_idle_secs: Option<u64>,
     #[serde(default)]
     pub tools: Option<ToolsConfig>,
 }

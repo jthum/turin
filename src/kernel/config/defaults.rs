@@ -24,6 +24,10 @@ pub(super) fn default_heartbeat_interval() -> u32 {
     30
 }
 
+pub(super) fn default_runtime_idle_secs() -> Option<u64> {
+    Some(20)
+}
+
 pub(super) fn default_state_path() -> String {
     format!("{DEFAULT_LAYOUT_DATA_DIR}/state.db")
 }

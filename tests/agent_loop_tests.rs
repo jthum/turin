@@ -127,9 +127,8 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
             provider: "mock".to_string(),
             system_prompt: "Test".to_string(),
             thinking: None,
-            mode: turin::kernel::config::AgentMode::Auto,
             harness: None,
-            idle_grace_secs: None,
+            runtime_idle_secs: None,
             inference: Default::default(),
             persistence: Default::default(),
         },
@@ -329,9 +328,8 @@ async fn test_harness_observation() -> Result<()> {
             provider: "mock".to_string(),
             system_prompt: "Test".to_string(),
             thinking: None,
-            mode: turin::kernel::config::AgentMode::Auto,
             harness: None,
-            idle_grace_secs: None,
+            runtime_idle_secs: None,
             inference: Default::default(),
             persistence: Default::default(),
         },
@@ -445,9 +443,8 @@ async fn test_nested_agent_spawning() -> Result<()> {
             provider: "mock".to_string(),
             system_prompt: "Outer".to_string(),
             thinking: None,
-            mode: turin::kernel::config::AgentMode::Auto,
             harness: None,
-            idle_grace_secs: None,
+            runtime_idle_secs: None,
             inference: Default::default(),
             persistence: Default::default(),
         },
@@ -569,9 +566,8 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
             provider: "mock".to_string(),
             system_prompt: "Recover on stream errors".to_string(),
             thinking: None,
-            mode: turin::kernel::config::AgentMode::Auto,
             harness: None,
-            idle_grace_secs: None,
+            runtime_idle_secs: None,
             inference: Default::default(),
             persistence: Default::default(),
         },
@@ -665,9 +661,8 @@ async fn test_stale_branch_conflict_does_not_trigger_inference_recovery() -> Res
             provider: "mock".to_string(),
             system_prompt: "Conflict classification".to_string(),
             thinking: None,
-            mode: turin::kernel::config::AgentMode::Auto,
             harness: None,
-            idle_grace_secs: None,
+            runtime_idle_secs: None,
             inference: Default::default(),
             persistence: Default::default(),
         },
@@ -815,9 +810,8 @@ async fn test_stale_branch_conflict_can_continue_detached() -> Result<()> {
             provider: "mock".to_string(),
             system_prompt: "Conflict detaches".to_string(),
             thinking: None,
-            mode: turin::kernel::config::AgentMode::Auto,
             harness: None,
-            idle_grace_secs: None,
+            runtime_idle_secs: None,
             inference: Default::default(),
             persistence: Default::default(),
         },
@@ -981,9 +975,8 @@ async fn test_stale_branch_conflict_can_fork_sibling_durably() -> Result<()> {
             provider: "mock".to_string(),
             system_prompt: "Conflict forks".to_string(),
             thinking: None,
-            mode: turin::kernel::config::AgentMode::Auto,
             harness: None,
-            idle_grace_secs: None,
+            runtime_idle_secs: None,
             inference: Default::default(),
             persistence: Default::default(),
         },
@@ -1182,18 +1175,11 @@ async fn test_stale_branch_conflict_can_fork_sibling_durably() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_dynamic_mode_switching_stateless() -> Result<()> {
+async fn test_runtime_idle_zero_still_completes_tool_follow_up_turns() -> Result<()> {
     let tmp = tempdir()?;
-    let db_path = tmp.path().join("test_stateless.db");
+    let db_path = tmp.path().join("test_runtime_idle_zero.db");
     let harness_dir = tmp.path().join("harnesses");
     std::fs::create_dir(&harness_dir)?;
-
-    let harness_code = r#"
-        function on_turn_start(event)
-            agent.mode.set("stateless")
-        end
-    "#;
-    std::fs::write(harness_dir.join("stateless.lua"), harness_code)?;
 
     let mut providers = HashMap::new();
     providers.insert(
@@ -1213,11 +1199,10 @@ async fn test_dynamic_mode_switching_stateless() -> Result<()> {
             id: "default".to_string(),
             model: "mock-model".to_string(),
             provider: "mock".to_string(),
-            system_prompt: "Stateless classifier".to_string(),
+            system_prompt: "Cold-after-request classifier".to_string(),
             thinking: None,
-            mode: turin::kernel::config::AgentMode::Auto,
             harness: None,
-            idle_grace_secs: None,
+            runtime_idle_secs: Some(0),
             inference: Default::default(),
             persistence: Default::default(),
         },
@@ -1249,36 +1234,54 @@ async fn test_dynamic_mode_switching_stateless() -> Result<()> {
     kernel.init_harness().await?;
 
     let provider = Arc::new(SequenceMockProvider {
-        responses: Arc::new(std::sync::Mutex::new(vec![vec![
-            InferenceEvent::MessageStart {
-                role: "assistant".to_string(),
-                model: "mock-model".to_string(),
-                provider_id: "mock".to_string(),
-            },
-            InferenceEvent::MessageDelta {
-                content: "One shot only.".to_string(),
-            },
-            InferenceEvent::MessageEnd {
-                input_tokens: 1,
-                output_tokens: 1,
-                stop_reason: None,
-            },
-        ]])),
+        responses: Arc::new(std::sync::Mutex::new(vec![
+            vec![
+                InferenceEvent::MessageStart {
+                    role: "assistant".to_string(),
+                    model: "mock-model".to_string(),
+                    provider_id: "mock".to_string(),
+                },
+                InferenceEvent::ToolCallStart {
+                    id: "call_1".to_string(),
+                    name: "read_file".to_string(),
+                },
+                InferenceEvent::ToolCallDelta {
+                    delta: serde_json::json!({"path": "missing.txt"}).to_string(),
+                },
+                InferenceEvent::MessageEnd {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                    stop_reason: None,
+                },
+            ],
+            vec![
+                InferenceEvent::MessageStart {
+                    role: "assistant".to_string(),
+                    model: "mock-model".to_string(),
+                    provider_id: "mock".to_string(),
+                },
+                InferenceEvent::MessageDelta {
+                    content: "Follow-up turn completed.".to_string(),
+                },
+                InferenceEvent::MessageEnd {
+                    input_tokens: 5,
+                    output_tokens: 2,
+                    stop_reason: None,
+                },
+            ],
+        ])),
     });
     kernel.add_client("mock".to_string(), ProviderClient::new("mock", provider));
 
     let mut session = kernel.create_session().await;
-    // The run normally would loop 2 times due to the tool call, but stateless drops it instantly after the first yield
     kernel
         .run(&mut session, Some("process".to_string()))
         .await?;
 
-    // Verify it terminated strictly after exactly 1 turn
     assert_eq!(
-        session.turn_index, 1,
-        "Agent should only complete exactly 1 turn due to stateless mode"
+        session.turn_index, 2,
+        "Cold-after-request retention must not cut off the follow-up model turn after tools run"
     );
-    assert_eq!(session.mode, turin::kernel::config::AgentMode::Stateless);
 
     kernel.end_session(&mut session).await?;
     Ok(())

@@ -5,7 +5,7 @@ use turin_local_ipc::resolve_endpoint as resolve_local_ipc_endpoint;
 use turin_types::layout::config_workspace_anchor;
 
 use crate::persistence::manager::StoreSelector;
-pub use turin_types::{AgentMode, ThinkingConfig, ToolSelectionConfig, ToolsConfig};
+pub use turin_types::{ThinkingConfig, ToolSelectionConfig, ToolsConfig};
 
 mod defaults;
 mod inference;
@@ -91,15 +91,15 @@ pub struct AgentConfig {
     /// Extended thinking configuration
     #[serde(default)]
     pub thinking: Option<ThinkingConfig>,
-    /// Agent execution mode ("auto", "stateful", "stateless")
-    #[serde(default)]
-    pub mode: AgentMode,
     /// Optional per-agent harness binding. Omit to use the default `[harness]`.
     #[serde(default)]
     pub harness: Option<String>,
-    /// Optional idle shutdown grace period for peer runtimes.
-    #[serde(default)]
-    pub idle_grace_secs: Option<u64>,
+    /// How long the runtime stays hot after a logical request completes.
+    ///
+    /// `Some(0)` hibernates immediately, `Some(n)` waits `n` idle seconds,
+    /// and `None` keeps the runtime hot indefinitely.
+    #[serde(default = "default_runtime_idle_secs")]
+    pub runtime_idle_secs: Option<u64>,
     #[serde(default)]
     pub tools: ToolsConfig,
     #[serde(default)]
@@ -872,9 +872,8 @@ impl Default for AgentConfig {
             model: "test-model".to_string(),
             provider: "mock".to_string(),
             thinking: None,
-            mode: AgentMode::Auto,
             harness: None,
-            idle_grace_secs: None,
+            runtime_idle_secs: default_runtime_idle_secs(),
             tools: ToolsConfig::default(),
             inference: InferenceOverrideConfig::default(),
             persistence: ContextPersistenceConfig::default(),

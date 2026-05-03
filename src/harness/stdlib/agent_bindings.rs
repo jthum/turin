@@ -3,7 +3,7 @@ use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 use crate::harness::globals::{ActiveHarnessExecutionContext, HarnessAppData};
 use crate::harness::stdlib::binding_common::{
     bool_err, bridge_async, bridge_async_display_err, bridge_async_result, nil_err, nil_ok,
-    ok_bool, ok_value, string_ok, string_value,
+    ok_bool, ok_value, string_ok,
 };
 use crate::harness::stdlib::governance_support::{
     apply_active_grant_ceiling_to_peer_delegation, parse_delegated_capabilities,
@@ -444,7 +444,6 @@ fn branch_row_to_lua_table(
 pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
     let agent_table = lua.create_table()?;
     let session_ns = lua.create_table()?;
-    let mode_ns = lua.create_table()?;
 
     let agent_manager = app_data.agent_manager.clone();
 
@@ -1159,46 +1158,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
         )?;
     }
 
-    let execution_ctx_get = app_data.execution_ctx.clone();
-    mode_ns.set(
-        "get",
-        lua.create_function(move |lua, ()| {
-            let mode = execution_ctx_get
-                .lock()
-                .map_err(|_| mlua::Error::runtime("harness execution context mutex poisoned"))?
-                .session_mode
-                .clone()
-                .unwrap_or(crate::kernel::config::AgentMode::Auto);
-            let mode_str = match mode {
-                crate::kernel::config::AgentMode::Auto => "auto",
-                crate::kernel::config::AgentMode::Stateful => "stateful",
-                crate::kernel::config::AgentMode::Stateless => "stateless",
-            };
-            string_value(lua, mode_str)
-        })?,
-    )?;
-
-    let execution_ctx_set = app_data.execution_ctx.clone();
-    mode_ns.set(
-        "set",
-        lua.create_function(move |lua, m: String| {
-            let mode = match m.as_str() {
-                "stateful" => crate::kernel::config::AgentMode::Stateful,
-                "stateless" => crate::kernel::config::AgentMode::Stateless,
-                "auto" => crate::kernel::config::AgentMode::Auto,
-                _ => {
-                    return bool_err(lua, "invalid mode; expected auto|stateful|stateless");
-                }
-            };
-            if let Ok(mut lock) = execution_ctx_set.lock() {
-                lock.session_mode = Some(mode);
-            }
-            Ok(ok_bool())
-        })?,
-    )?;
-
     agent_table.set("session", session_ns)?;
-    agent_table.set("mode", mode_ns)?;
 
     // Deprecated send
     let send_policy_snapshot = app_data.clone();

@@ -191,7 +191,6 @@ impl HarnessEngine {
             lock.session_id = Some(binding.session_id);
             lock.session_store_selector = Some(binding.store_selector);
             lock.default_store_selector = binding.default_store_selector;
-            lock.session_mode = Some(binding.mode);
             lock.execution_id = Some(binding.execution.execution_id);
             lock.execution_context_target = Some(binding.execution.context_target);
             lock.execution_visibility = Some(binding.execution.visibility);
@@ -213,7 +212,6 @@ impl HarnessEngine {
             lock.session_id = None;
             lock.session_store_selector = None;
             lock.default_store_selector = None;
-            lock.session_mode = None;
             lock.execution_id = None;
             lock.execution_context_target = None;
             lock.execution_visibility = None;
@@ -265,15 +263,6 @@ impl HarnessEngine {
                     .ok()
                     .and_then(|mut lock| lock.pending_branch_checkout.take())
             })
-    }
-
-    pub fn get_active_session_mode(&self) -> Option<crate::kernel::config::AgentMode> {
-        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
-            && let Ok(lock) = app_data.execution_ctx.lock()
-        {
-            return lock.session_mode.clone();
-        }
-        None
     }
 
     pub fn set_active_capability_delegation(&self, caps: Option<BTreeMap<String, bool>>) {

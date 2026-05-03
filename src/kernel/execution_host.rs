@@ -145,7 +145,6 @@ impl ExecutionHost {
             session_id: self.session_reference(session),
             store_selector: session.store_selector.clone(),
             default_store_selector: session.default_store_selector.clone(),
-            mode: session.mode.clone(),
             execution: crate::harness::globals::HarnessExecutionMetadata {
                 execution_id: session.execution_id().to_string(),
                 context_target: session.context_target().clone(),

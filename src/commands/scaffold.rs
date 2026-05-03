@@ -367,7 +367,7 @@ pub fn render_turin_toml(options: &InitOptions) -> String {
     ));
     toml.push_str(&format!("model = \"{}\"\n", options.model));
     toml.push_str(&format!("provider = \"{}\"\n", options.provider.alias()));
-    toml.push_str("mode = \"auto\"\n\n");
+    toml.push_str("runtime_idle_secs = 20\n\n");
 
     toml.push_str("[kernel]\n");
     toml.push_str("workspace_root = \".\"\n");
