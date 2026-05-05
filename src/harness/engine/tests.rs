@@ -300,6 +300,21 @@ async fn test_schedule_dx_helpers_create_and_list_jobs() {
                     error("expected disable to clear enabled flag")
                 end
 
+                local updated = schedule.update(recurring.public_id, {
+                    prompt = "Run QA tests",
+                    interval_seconds = 120,
+                    overlap = "skip"
+                })
+                if updated.prompt ~= "Run QA tests" then
+                    error("expected update to replace prompt")
+                end
+                if updated.interval_seconds ~= 120 then
+                    error("expected update to replace interval")
+                end
+                if updated.overlap_policy ~= "skip" then
+                    error("expected update to normalize overlap policy")
+                end
+
                 local reenabled = schedule.enable(recurring.public_id)
                 if reenabled.enabled ~= true then
                     error("expected enable to restore enabled flag")

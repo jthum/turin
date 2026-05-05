@@ -83,6 +83,7 @@ pub(super) async fn dispatch(
         DaemonRequest::TaskCancel(params) => task::cancel(id, params, &context).await,
         DaemonRequest::TaskList(params) => task::list(id, params, &context).await,
         DaemonRequest::ScheduleCreate(params) => schedule::create(id, params, &context).await,
+        DaemonRequest::ScheduleUpdate(params) => schedule::update(id, params, &context).await,
         DaemonRequest::ScheduleGet(params) => schedule::get(id, params, &context).await,
         DaemonRequest::ScheduleList(params) => schedule::list(id, params, &context).await,
         DaemonRequest::ScheduleEnable(params) => schedule::enable(id, params, &context).await,

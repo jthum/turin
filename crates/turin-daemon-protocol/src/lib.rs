@@ -195,6 +195,25 @@ pub struct ScheduleCreateParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ScheduleUpdateParams {
+    pub id: String,
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub next_run_unix_ms: Option<i64>,
+    #[serde(default)]
+    pub interval_seconds: Option<u64>,
+    #[serde(default)]
+    pub overlap_policy: Option<String>,
+    #[serde(default)]
+    pub persistence: Option<ContextPersistenceParams>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ScheduleJobList {
     pub jobs: Vec<ScheduleJobDetail>,
 }
@@ -444,6 +463,8 @@ pub enum DaemonRequest {
     TaskList(NoParams),
     #[serde(rename = "schedule.create")]
     ScheduleCreate(ScheduleCreateParams),
+    #[serde(rename = "schedule.update")]
+    ScheduleUpdate(ScheduleUpdateParams),
     #[serde(rename = "schedule.get")]
     ScheduleGet(EntityIdParams),
     #[serde(rename = "schedule.list")]

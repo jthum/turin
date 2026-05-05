@@ -3,7 +3,8 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use tokio::sync::Notify;
 use turin_daemon_protocol::{
-    ContextPersistenceParams, ScheduleCreateParams, ScheduleJobDetail, StoreTargetParams,
+    ContextPersistenceParams, ScheduleCreateParams, ScheduleJobDetail, ScheduleUpdateParams,
+    StoreTargetParams,
 };
 
 use crate::persistence::schema::ScheduledJobRow;
@@ -73,6 +74,57 @@ impl HarnessSchedulerAccess {
 
     pub async fn get_job(&self, public_id: &str) -> Result<Option<ScheduleJobDetail>> {
         let public_id = uuid::Uuid::parse_str(public_id)?;
+        Ok(self
+            .jobs_store
+            .get_scheduled_job_by_public_id(public_id)
+            .await?
+            .map(map_scheduled_job_detail))
+    }
+
+    pub async fn update_job(
+        &self,
+        params: ScheduleUpdateParams,
+    ) -> Result<Option<ScheduleJobDetail>> {
+        let public_id = uuid::Uuid::parse_str(&params.id)?;
+        let Some(row) = self
+            .jobs_store
+            .get_scheduled_job_by_public_id(public_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let persistence = params
+            .persistence
+            .or_else(|| scheduled_job_persistence(&row).ok().flatten());
+        let state_target = serialize_store_target(
+            persistence
+                .as_ref()
+                .and_then(|persistence| persistence.state.as_ref()),
+        )?;
+        let store_target = serialize_store_target(
+            persistence
+                .as_ref()
+                .and_then(|persistence| persistence.store.as_ref()),
+        )?;
+        self.jobs_store
+            .update_scheduled_job(
+                row.id,
+                params.agent_id.as_deref().unwrap_or(&row.agent_id),
+                params.prompt.as_deref().unwrap_or(&row.prompt),
+                state_target.as_deref(),
+                store_target.as_deref(),
+                params.next_run_unix_ms.unwrap_or(row.next_run_unix_ms),
+                params.interval_seconds.or(row.interval_seconds),
+                params
+                    .overlap_policy
+                    .as_deref()
+                    .unwrap_or(row.overlap_policy.as_str()),
+                params.enabled.unwrap_or(row.enabled),
+            )
+            .await?;
+        if let Some(wake) = &self.wake {
+            wake.notify_one();
+        }
         Ok(self
             .jobs_store
             .get_scheduled_job_by_public_id(public_id)

@@ -54,6 +54,17 @@ pub struct CreateScheduledJobInput {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct UpdateScheduledJobInput {
+    pub agent_id: Option<String>,
+    pub prompt: Option<String>,
+    pub persistence: Option<ContextPersistenceParams>,
+    pub next_run_unix_ms: Option<i64>,
+    pub interval_seconds: Option<u64>,
+    pub overlap_policy: Option<ScheduledJobOverlapPolicy>,
+    pub enabled: Option<bool>,
+}
+
 impl DaemonState {
     pub(crate) fn set_scheduler_wake(&mut self, wake: std::sync::Arc<tokio::sync::Notify>) {
         self.scheduler_wake = Some(std::sync::Arc::clone(&wake));
@@ -121,6 +132,66 @@ impl DaemonState {
             .into_iter()
             .map(map_scheduled_job_detail)
             .collect())
+    }
+
+    pub(crate) async fn update_scheduled_job(
+        &self,
+        public_id: &str,
+        input: UpdateScheduledJobInput,
+    ) -> Result<Option<ScheduleJobDetail>> {
+        let store = Arc::clone(&self.jobs_store);
+        let public_id = uuid::Uuid::parse_str(public_id)?;
+        let Some(row) = store.get_scheduled_job_by_public_id(public_id).await? else {
+            return Ok(None);
+        };
+
+        let agent_id = input.agent_id.unwrap_or_else(|| row.agent_id.clone());
+        self.ensure_enabled_agent(&agent_id)?;
+
+        let prompt = input.prompt.unwrap_or_else(|| row.prompt.clone());
+        let next_run_unix_ms = input.next_run_unix_ms.unwrap_or(row.next_run_unix_ms);
+        let interval_seconds = input.interval_seconds.or(row.interval_seconds);
+        let overlap_policy = input
+            .overlap_policy
+            .unwrap_or_else(|| {
+                row.overlap_policy
+                    .parse::<ScheduledJobOverlapPolicy>()
+                    .unwrap_or(ScheduledJobOverlapPolicy::Skip)
+            })
+            .as_str()
+            .to_string();
+        let enabled = input.enabled.unwrap_or(row.enabled);
+
+        let persistence = match input.persistence {
+            Some(persistence) => Some(persistence),
+            None => scheduled_job_persistence(&row)?,
+        };
+        let _ = self.resolve_scheduled_job_persistence(persistence.as_ref())?;
+        let state_target =
+            serialize_store_target(persistence.as_ref().and_then(|value| value.state.as_ref()))?;
+        let store_target =
+            serialize_store_target(persistence.as_ref().and_then(|value| value.store.as_ref()))?;
+
+        store
+            .update_scheduled_job(
+                row.id,
+                &agent_id,
+                &prompt,
+                state_target.as_deref(),
+                store_target.as_deref(),
+                next_run_unix_ms,
+                interval_seconds,
+                &overlap_policy,
+                enabled,
+            )
+            .await?;
+        if let Some(wake) = &self.scheduler_wake {
+            wake.notify_one();
+        }
+        Ok(store
+            .get_scheduled_job_by_public_id(public_id)
+            .await?
+            .map(map_scheduled_job_detail))
     }
 
     pub(crate) async fn scheduled_job_detail(

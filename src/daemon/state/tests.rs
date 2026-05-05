@@ -1,4 +1,6 @@
-use super::scheduled_jobs::{CreateScheduledJobInput, ScheduledJobOverlapPolicy};
+use super::scheduled_jobs::{
+    CreateScheduledJobInput, ScheduledJobOverlapPolicy, UpdateScheduledJobInput,
+};
 use super::*;
 use crate::kernel::event::TaskBranchOutcome;
 use crate::kernel::session_refs::parse_session_reference;
@@ -450,6 +452,22 @@ async fn scheduled_job_lifecycle_ops_round_trip() -> Result<()> {
         .await?
         .expect("scheduled job should enable");
     assert!(enabled.enabled);
+
+    let updated = state
+        .update_scheduled_job(
+            &created.public_id,
+            UpdateScheduledJobInput {
+                prompt: Some("Updated lifecycle check".to_string()),
+                interval_seconds: Some(120),
+                enabled: Some(false),
+                ..UpdateScheduledJobInput::default()
+            },
+        )
+        .await?
+        .expect("scheduled job should update");
+    assert_eq!(updated.prompt, "Updated lifecycle check");
+    assert_eq!(updated.interval_seconds, Some(120));
+    assert!(!updated.enabled);
 
     let deleted = state
         .delete_scheduled_job(&created.public_id)

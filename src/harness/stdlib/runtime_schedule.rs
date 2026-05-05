@@ -1,6 +1,8 @@
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 use serde::Deserialize;
-use turin_daemon_protocol::{ContextPersistenceParams, ScheduleCreateParams, StoreTargetParams};
+use turin_daemon_protocol::{
+    ContextPersistenceParams, ScheduleCreateParams, ScheduleUpdateParams, StoreTargetParams,
+};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{bridge_async_result, nil_err, ok_value};
@@ -11,6 +13,27 @@ struct LuaScheduleCreateOpts {
     prompt: String,
     #[serde(default)]
     agent: Option<String>,
+    #[serde(default)]
+    next_run_unix_ms: Option<i64>,
+    #[serde(default)]
+    after_seconds: Option<f64>,
+    #[serde(default)]
+    interval_seconds: Option<f64>,
+    #[serde(default)]
+    overlap_policy: Option<String>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    persistence: Option<LuaSchedulePersistenceOpts>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LuaScheduleUpdateOpts {
+    id: String,
+    #[serde(default)]
+    agent: Option<String>,
+    #[serde(default)]
+    prompt: Option<String>,
     #[serde(default)]
     next_run_unix_ms: Option<i64>,
     #[serde(default)]
@@ -174,6 +197,45 @@ fn schedule_create_params(
     })
 }
 
+fn schedule_update_params(lua: &Lua, opts: Table) -> LuaResult<ScheduleUpdateParams> {
+    let parsed = lua
+        .from_value::<LuaScheduleUpdateOpts>(Value::Table(opts))
+        .map_err(|e| {
+            mlua::Error::runtime(format!("invalid runtime.schedule.update opts: {}", e))
+        })?;
+
+    let next_run_unix_ms = match (parsed.next_run_unix_ms, parsed.after_seconds) {
+        (Some(at), None) => Some(at),
+        (None, Some(after)) => {
+            Some(now_unix_ms().saturating_add(
+                (parse_non_negative_seconds(after, "after_seconds")? as i64) * 1000,
+            ))
+        }
+        (Some(_), Some(_)) => {
+            return Err(mlua::Error::runtime(
+                "runtime.schedule.update opts cannot specify both next_run_unix_ms and after_seconds",
+            ));
+        }
+        (None, None) => None,
+    };
+
+    let interval_seconds = parsed
+        .interval_seconds
+        .map(|value| parse_non_negative_seconds(value, "interval_seconds"))
+        .transpose()?;
+
+    Ok(ScheduleUpdateParams {
+        id: parsed.id,
+        agent_id: parsed.agent,
+        prompt: parsed.prompt,
+        persistence: parse_persistence(parsed.persistence)?,
+        next_run_unix_ms,
+        interval_seconds,
+        overlap_policy: parsed.overlap_policy,
+        enabled: parsed.enabled,
+    })
+}
+
 fn scheduler_access(
     app_data: &HarnessAppData,
 ) -> Result<std::sync::Arc<crate::harness::scheduler::HarnessSchedulerAccess>, String> {
@@ -220,6 +282,41 @@ pub fn register_runtime_schedule_namespace(
                 });
                 match result {
                     Ok(job) => Ok(ok_value(lua.to_value(&job)?)),
+                    Err(err) => nil_err(lua, &err),
+                }
+            })?,
+        )?;
+    }
+
+    {
+        let app_data = app_data.clone();
+        schedule_ns.set(
+            "update",
+            lua.create_function(move |lua, opts: Table| {
+                require_capability(&app_data, "runtime.schedule.update")
+                    .map_err(mlua::Error::runtime)?;
+                let params = schedule_update_params(lua, opts)?;
+                let scheduler = match scheduler_access(&app_data) {
+                    Ok(scheduler) => scheduler,
+                    Err(err) => return nil_err(lua, &err),
+                };
+
+                if let Some(agent_id) = params.agent_id.as_ref()
+                    && !agent_id.eq(&current_agent_id(&app_data))
+                    && !app_data.config.agents.contains_key(agent_id)
+                {
+                    return nil_err(lua, &format!("Unknown scheduled agent '{}'", agent_id));
+                }
+
+                let result = bridge_async_result(async move {
+                    scheduler
+                        .update_job(params)
+                        .await
+                        .map_err(|e| e.to_string())
+                });
+                match result {
+                    Ok(Some(job)) => Ok(ok_value(lua.to_value(&job)?)),
+                    Ok(None) => nil_err(lua, "Scheduled job not found"),
                     Err(err) => nil_err(lua, &err),
                 }
             })?,

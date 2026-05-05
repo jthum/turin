@@ -9,11 +9,11 @@ use turin_daemon_protocol::{
     ChannelAccessParams, ChannelAccessRoomParams, DaemonHandshake, DaemonRequest, EntityIdParams,
     EventEnvelope, LiveSessionTargetParams, NoParams, OpenSessionParams, PromoteTaskParams,
     RequestEnvelope, ResponseEnvelope, ResumeSessionParams, RuntimeEventsSubscribeParams,
-    ScheduleCreateParams, ScheduleJobDetail, ScheduleJobList, SessionBranchCheckoutParams,
-    SessionBranchCreateParams, SessionBranchSiblingsParams, SessionIdParams, SessionListParams,
-    SessionSearchHitKind, SessionSearchParams, SessionSearchScope, SessionTitleParams,
-    SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams, SubmitTaskParams,
-    TaskIdParams, UpdateChannelParams, WaitTaskParams,
+    ScheduleCreateParams, ScheduleJobDetail, ScheduleJobList, ScheduleUpdateParams,
+    SessionBranchCheckoutParams, SessionBranchCreateParams, SessionBranchSiblingsParams,
+    SessionIdParams, SessionListParams, SessionSearchHitKind, SessionSearchParams,
+    SessionSearchScope, SessionTitleParams, SidestepContextTargetParams, SidestepModeParams,
+    SidestepTaskParams, SubmitTaskParams, TaskIdParams, UpdateChannelParams, WaitTaskParams,
 };
 use turin_remote_client::RemoteClient;
 
@@ -562,6 +562,11 @@ impl ControlClient {
             DaemonRequest::ScheduleGet(EntityIdParams { id: id.into() }),
         )
         .await
+    }
+
+    pub async fn update_schedule(&self, params: ScheduleUpdateParams) -> Result<ScheduleJobDetail> {
+        self.request_ok(None, DaemonRequest::ScheduleUpdate(params))
+            .await
     }
 
     pub async fn list_schedules(&self) -> Result<Vec<ScheduleJobDetail>> {

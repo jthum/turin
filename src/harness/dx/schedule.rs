@@ -2,23 +2,7 @@ use mlua::{Function, Lua, Result as LuaResult, Table, Value};
 
 use crate::harness::dx::common::call_and_raise_on_err;
 
-fn merge_schedule_opts(
-    lua: &Lua,
-    prompt: String,
-    time_field: &str,
-    time_value: Value,
-    opts: Option<Table>,
-) -> LuaResult<Table> {
-    let merged = lua.create_table()?;
-    if let Some(opts) = opts {
-        for pair in opts.pairs::<Value, Value>() {
-            let (key, value) = pair?;
-            merged.set(key, value)?;
-        }
-    }
-    merged.set("prompt", prompt)?;
-    merged.set(time_field, time_value)?;
-
+fn normalize_schedule_opts_in_place(lua: &Lua, merged: &Table) -> LuaResult<()> {
     if let Value::String(overlap) = merged.get::<Value>("overlap")? {
         merged.set("overlap_policy", overlap)?;
     }
@@ -47,6 +31,26 @@ fn merge_schedule_opts(
         }
     }
 
+    Ok(())
+}
+
+fn merge_schedule_opts(
+    lua: &Lua,
+    prompt: String,
+    time_field: &str,
+    time_value: Value,
+    opts: Option<Table>,
+) -> LuaResult<Table> {
+    let merged = lua.create_table()?;
+    if let Some(opts) = opts {
+        for pair in opts.pairs::<Value, Value>() {
+            let (key, value) = pair?;
+            merged.set(key, value)?;
+        }
+    }
+    merged.set("prompt", prompt)?;
+    merged.set(time_field, time_value)?;
+    normalize_schedule_opts_in_place(lua, &merged)?;
     Ok(merged)
 }
 
@@ -56,6 +60,7 @@ pub fn register_schedule_dx(lua: &Lua) -> LuaResult<()> {
     let runtime_schedule: Table = runtime.get("schedule")?;
 
     let create_fn: Function = runtime_schedule.get("create")?;
+    let update_fn: Function = runtime_schedule.get("update")?;
     let get_fn: Function = runtime_schedule.get("get")?;
     let list_fn: Function = runtime_schedule.get("list")?;
     let enable_fn: Function = runtime_schedule.get("enable")?;
@@ -70,6 +75,25 @@ pub fn register_schedule_dx(lua: &Lua) -> LuaResult<()> {
             "create",
             lua.create_function(move |lua, opts: Table| {
                 call_and_raise_on_err(lua, &create_fn, opts, "runtime.schedule.create")
+            })?,
+        )?;
+    }
+
+    {
+        let update_fn = update_fn.clone();
+        schedule.set(
+            "update",
+            lua.create_function(move |lua, (public_id, opts): (String, Option<Table>)| {
+                let merged = lua.create_table()?;
+                if let Some(opts) = opts {
+                    for pair in opts.pairs::<Value, Value>() {
+                        let (key, value) = pair?;
+                        merged.set(key, value)?;
+                    }
+                }
+                merged.set("id", public_id)?;
+                normalize_schedule_opts_in_place(lua, &merged)?;
+                call_and_raise_on_err(lua, &update_fn, merged, "runtime.schedule.update")
             })?,
         )?;
     }

@@ -364,6 +364,50 @@ impl StateStore {
         Ok(())
     }
 
+    pub async fn update_scheduled_job(
+        &self,
+        id: i64,
+        agent_id: &str,
+        prompt: &str,
+        state_target: Option<&str>,
+        store_target: Option<&str>,
+        next_run_unix_ms: i64,
+        interval_seconds: Option<u64>,
+        overlap_policy: &str,
+        enabled: bool,
+    ) -> Result<()> {
+        let conn = self.connect().await?;
+        conn.execute(
+            r#"
+            UPDATE scheduled_jobs
+            SET agent_id = ?2,
+                prompt = ?3,
+                state_target = ?4,
+                store_target = ?5,
+                next_run_unix_ms = ?6,
+                interval_seconds = ?7,
+                overlap_policy = ?8,
+                enabled = ?9,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?1
+            "#,
+            turso::params![
+                id,
+                agent_id,
+                prompt,
+                state_target,
+                store_target,
+                next_run_unix_ms,
+                interval_seconds.map(|v| v as i64),
+                overlap_policy,
+                if enabled { 1 } else { 0 }
+            ],
+        )
+        .await
+        .context("Failed to update scheduled job")?;
+        Ok(())
+    }
+
     pub async fn delete_scheduled_job(&self, id: i64) -> Result<()> {
         let conn = self.connect().await?;
         conn.execute(
