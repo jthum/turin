@@ -56,7 +56,11 @@ pub fn register_schedule_dx(lua: &Lua) -> LuaResult<()> {
     let runtime_schedule: Table = runtime.get("schedule")?;
 
     let create_fn: Function = runtime_schedule.get("create")?;
+    let get_fn: Function = runtime_schedule.get("get")?;
     let list_fn: Function = runtime_schedule.get("list")?;
+    let enable_fn: Function = runtime_schedule.get("enable")?;
+    let disable_fn: Function = runtime_schedule.get("disable")?;
+    let delete_fn: Function = runtime_schedule.get("delete")?;
 
     let schedule = lua.create_table()?;
 
@@ -117,6 +121,46 @@ pub fn register_schedule_dx(lua: &Lua) -> LuaResult<()> {
             "list",
             lua.create_function(move |lua, opts: Option<Table>| {
                 call_and_raise_on_err(lua, &list_fn, opts, "runtime.schedule.list")
+            })?,
+        )?;
+    }
+
+    {
+        let get_fn = get_fn.clone();
+        schedule.set(
+            "get",
+            lua.create_function(move |lua, public_id: String| {
+                call_and_raise_on_err(lua, &get_fn, public_id, "runtime.schedule.get")
+            })?,
+        )?;
+    }
+
+    {
+        let enable_fn = enable_fn.clone();
+        schedule.set(
+            "enable",
+            lua.create_function(move |lua, public_id: String| {
+                call_and_raise_on_err(lua, &enable_fn, public_id, "runtime.schedule.enable")
+            })?,
+        )?;
+    }
+
+    {
+        let disable_fn = disable_fn.clone();
+        schedule.set(
+            "disable",
+            lua.create_function(move |lua, public_id: String| {
+                call_and_raise_on_err(lua, &disable_fn, public_id, "runtime.schedule.disable")
+            })?,
+        )?;
+    }
+
+    {
+        let delete_fn = delete_fn.clone();
+        schedule.set(
+            "delete",
+            lua.create_function(move |lua, public_id: String| {
+                call_and_raise_on_err(lua, &delete_fn, public_id, "runtime.schedule.delete")
             })?,
         )?;
     }

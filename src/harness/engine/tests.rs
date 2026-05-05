@@ -290,9 +290,34 @@ async fn test_schedule_dx_helpers_create_and_list_jobs() {
                     error("expected state persistence override")
                 end
 
+                local fetched = schedule.get(recurring.public_id)
+                if fetched.public_id ~= recurring.public_id then
+                    error("expected schedule.get to round-trip recurring job")
+                end
+
+                local disabled = schedule.disable(recurring.public_id)
+                if disabled.enabled ~= false then
+                    error("expected disable to clear enabled flag")
+                end
+
+                local reenabled = schedule.enable(recurring.public_id)
+                if reenabled.enabled ~= true then
+                    error("expected enable to restore enabled flag")
+                end
+
                 local jobs = schedule.list()
                 if #jobs ~= 2 then
                     error("expected 2 scheduled jobs, got " .. tostring(#jobs))
+                end
+
+                local deleted = schedule.delete(one.public_id)
+                if deleted.public_id ~= one.public_id then
+                    error("expected delete to return removed job")
+                end
+
+                jobs = schedule.list()
+                if #jobs ~= 1 then
+                    error("expected 1 scheduled job after delete, got " .. tostring(#jobs))
                 end
 
                 return ALLOW

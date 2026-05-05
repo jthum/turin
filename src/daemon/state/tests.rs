@@ -412,6 +412,61 @@ provider = "noop"
 }
 
 #[tokio::test]
+async fn scheduled_job_lifecycle_ops_round_trip() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+
+    let now_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64;
+    let created = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: "Lifecycle check".to_string(),
+            persistence: None,
+            next_run_unix_ms: now_unix_ms + 60_000,
+            interval_seconds: Some(300),
+            overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            enabled: true,
+        })
+        .await?;
+
+    let fetched = state
+        .scheduled_job_detail(&created.public_id)
+        .await?
+        .expect("scheduled job should exist");
+    assert_eq!(fetched.public_id, created.public_id);
+    assert!(fetched.enabled);
+
+    let disabled = state
+        .set_scheduled_job_enabled(&created.public_id, false)
+        .await?
+        .expect("scheduled job should disable");
+    assert!(!disabled.enabled);
+
+    let enabled = state
+        .set_scheduled_job_enabled(&created.public_id, true)
+        .await?
+        .expect("scheduled job should enable");
+    assert!(enabled.enabled);
+
+    let deleted = state
+        .delete_scheduled_job(&created.public_id)
+        .await?
+        .expect("scheduled job should delete");
+    assert_eq!(deleted.public_id, created.public_id);
+    assert!(
+        state
+            .scheduled_job_detail(&created.public_id)
+            .await?
+            .is_none()
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn sidestep_task_uses_ephemeral_slot_and_does_not_persist_transcript() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;

@@ -268,6 +268,110 @@ pub fn register_runtime_schedule_namespace(
         )?;
     }
 
+    {
+        let app_data = app_data.clone();
+        schedule_ns.set(
+            "get",
+            lua.create_function(move |lua, public_id: String| {
+                require_capability(&app_data, "runtime.schedule.get")
+                    .map_err(mlua::Error::runtime)?;
+                let scheduler = match scheduler_access(&app_data) {
+                    Ok(scheduler) => scheduler,
+                    Err(err) => return nil_err(lua, &err),
+                };
+                let result = bridge_async_result(async move {
+                    scheduler
+                        .get_job(&public_id)
+                        .await
+                        .map_err(|e| e.to_string())
+                });
+                match result {
+                    Ok(Some(job)) => Ok(ok_value(lua.to_value(&job)?)),
+                    Ok(None) => nil_err(lua, "scheduled job not found"),
+                    Err(err) => nil_err(lua, &err),
+                }
+            })?,
+        )?;
+    }
+
+    {
+        let app_data = app_data.clone();
+        schedule_ns.set(
+            "enable",
+            lua.create_function(move |lua, public_id: String| {
+                require_capability(&app_data, "runtime.schedule.enable")
+                    .map_err(mlua::Error::runtime)?;
+                let scheduler = match scheduler_access(&app_data) {
+                    Ok(scheduler) => scheduler,
+                    Err(err) => return nil_err(lua, &err),
+                };
+                let result = bridge_async_result(async move {
+                    scheduler
+                        .set_job_enabled(&public_id, true)
+                        .await
+                        .map_err(|e| e.to_string())
+                });
+                match result {
+                    Ok(Some(job)) => Ok(ok_value(lua.to_value(&job)?)),
+                    Ok(None) => nil_err(lua, "scheduled job not found"),
+                    Err(err) => nil_err(lua, &err),
+                }
+            })?,
+        )?;
+    }
+
+    {
+        let app_data = app_data.clone();
+        schedule_ns.set(
+            "disable",
+            lua.create_function(move |lua, public_id: String| {
+                require_capability(&app_data, "runtime.schedule.disable")
+                    .map_err(mlua::Error::runtime)?;
+                let scheduler = match scheduler_access(&app_data) {
+                    Ok(scheduler) => scheduler,
+                    Err(err) => return nil_err(lua, &err),
+                };
+                let result = bridge_async_result(async move {
+                    scheduler
+                        .set_job_enabled(&public_id, false)
+                        .await
+                        .map_err(|e| e.to_string())
+                });
+                match result {
+                    Ok(Some(job)) => Ok(ok_value(lua.to_value(&job)?)),
+                    Ok(None) => nil_err(lua, "scheduled job not found"),
+                    Err(err) => nil_err(lua, &err),
+                }
+            })?,
+        )?;
+    }
+
+    {
+        let app_data = app_data.clone();
+        schedule_ns.set(
+            "delete",
+            lua.create_function(move |lua, public_id: String| {
+                require_capability(&app_data, "runtime.schedule.delete")
+                    .map_err(mlua::Error::runtime)?;
+                let scheduler = match scheduler_access(&app_data) {
+                    Ok(scheduler) => scheduler,
+                    Err(err) => return nil_err(lua, &err),
+                };
+                let result = bridge_async_result(async move {
+                    scheduler
+                        .delete_job(&public_id)
+                        .await
+                        .map_err(|e| e.to_string())
+                });
+                match result {
+                    Ok(Some(job)) => Ok(ok_value(lua.to_value(&job)?)),
+                    Ok(None) => nil_err(lua, "scheduled job not found"),
+                    Err(err) => nil_err(lua, &err),
+                }
+            })?,
+        )?;
+    }
+
     runtime_table.set("schedule", schedule_ns)?;
     Ok(())
 }

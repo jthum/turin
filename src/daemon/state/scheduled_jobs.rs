@@ -123,6 +123,61 @@ impl DaemonState {
             .collect())
     }
 
+    pub(crate) async fn scheduled_job_detail(
+        &self,
+        public_id: &str,
+    ) -> Result<Option<ScheduleJobDetail>> {
+        let store = Arc::clone(&self.jobs_store);
+        let public_id = uuid::Uuid::parse_str(public_id)?;
+        Ok(store
+            .get_scheduled_job_by_public_id(public_id)
+            .await?
+            .map(map_scheduled_job_detail))
+    }
+
+    pub(crate) async fn set_scheduled_job_enabled(
+        &self,
+        public_id: &str,
+        enabled: bool,
+    ) -> Result<Option<ScheduleJobDetail>> {
+        let store = Arc::clone(&self.jobs_store);
+        let public_id = uuid::Uuid::parse_str(public_id)?;
+        let Some(row) = store.get_scheduled_job_by_public_id(public_id).await? else {
+            return Ok(None);
+        };
+        store.set_scheduled_job_enabled(row.id, enabled).await?;
+        if let Some(wake) = &self.scheduler_wake {
+            wake.notify_one();
+        }
+        Ok(store
+            .get_scheduled_job_by_public_id(public_id)
+            .await?
+            .map(map_scheduled_job_detail))
+    }
+
+    pub(crate) async fn delete_scheduled_job(
+        &self,
+        public_id: &str,
+    ) -> Result<Option<ScheduleJobDetail>> {
+        let store = Arc::clone(&self.jobs_store);
+        let public_id = uuid::Uuid::parse_str(public_id)?;
+        let Some(row) = store.get_scheduled_job_by_public_id(public_id).await? else {
+            return Ok(None);
+        };
+        if row.running_task_id.is_some() {
+            anyhow::bail!(
+                "Cannot delete scheduled job '{}' while it has an active run",
+                public_id
+            );
+        }
+        let detail = map_scheduled_job_detail(row.clone());
+        store.delete_scheduled_job(row.id).await?;
+        if let Some(wake) = &self.scheduler_wake {
+            wake.notify_one();
+        }
+        Ok(Some(detail))
+    }
+
     pub(crate) async fn scheduler_tick(&self) -> Result<Option<Duration>> {
         let store = Arc::clone(&self.jobs_store);
         let now = now_unix_ms();

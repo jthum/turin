@@ -70,6 +70,64 @@ impl HarnessSchedulerAccess {
             .map(map_scheduled_job_detail)
             .collect())
     }
+
+    pub async fn get_job(&self, public_id: &str) -> Result<Option<ScheduleJobDetail>> {
+        let public_id = uuid::Uuid::parse_str(public_id)?;
+        Ok(self
+            .jobs_store
+            .get_scheduled_job_by_public_id(public_id)
+            .await?
+            .map(map_scheduled_job_detail))
+    }
+
+    pub async fn set_job_enabled(
+        &self,
+        public_id: &str,
+        enabled: bool,
+    ) -> Result<Option<ScheduleJobDetail>> {
+        let public_id = uuid::Uuid::parse_str(public_id)?;
+        let Some(row) = self
+            .jobs_store
+            .get_scheduled_job_by_public_id(public_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        self.jobs_store
+            .set_scheduled_job_enabled(row.id, enabled)
+            .await?;
+        if let Some(wake) = &self.wake {
+            wake.notify_one();
+        }
+        Ok(self
+            .jobs_store
+            .get_scheduled_job_by_public_id(public_id)
+            .await?
+            .map(map_scheduled_job_detail))
+    }
+
+    pub async fn delete_job(&self, public_id: &str) -> Result<Option<ScheduleJobDetail>> {
+        let public_id = uuid::Uuid::parse_str(public_id)?;
+        let Some(row) = self
+            .jobs_store
+            .get_scheduled_job_by_public_id(public_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        if row.running_task_id.is_some() {
+            anyhow::bail!(
+                "Cannot delete scheduled job '{}' while it has an active run",
+                public_id
+            );
+        }
+        let detail = map_scheduled_job_detail(row.clone());
+        self.jobs_store.delete_scheduled_job(row.id).await?;
+        if let Some(wake) = &self.wake {
+            wake.notify_one();
+        }
+        Ok(Some(detail))
+    }
 }
 
 fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {

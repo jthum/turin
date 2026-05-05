@@ -8,8 +8,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::time::sleep;
 use turin_daemon_protocol::{
     ChannelRunnerHeartbeatParams, ChannelRunnerHelloParams, DAEMON_PROTOCOL_VERSION,
-    DaemonHandshake, DaemonRequest, EventEnvelope, NoParams, RequestEnvelope, ResponseEnvelope,
-    RuntimeEventsSubscribeParams, ScheduleCreateParams, ScheduleJobDetail, ScheduleJobList,
+    DaemonHandshake, DaemonRequest, EntityIdParams, EventEnvelope, NoParams, RequestEnvelope,
+    ResponseEnvelope, RuntimeEventsSubscribeParams, ScheduleCreateParams, ScheduleJobDetail,
+    ScheduleJobList,
 };
 use turin_local_ipc::{
     LocalIpcReadHalf, connect as connect_local_ipc, current_transport_name,
@@ -277,11 +278,43 @@ impl DaemonClient {
             .await
     }
 
+    pub async fn schedule_get(&self, id: impl Into<String>) -> Result<ScheduleJobDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::ScheduleGet(EntityIdParams { id: id.into() }),
+        )
+        .await
+    }
+
     pub async fn schedule_list(&self) -> Result<Vec<ScheduleJobDetail>> {
         let response: ScheduleJobList = self
             .request_ok(None, DaemonRequest::ScheduleList(NoParams::default()))
             .await?;
         Ok(response.jobs)
+    }
+
+    pub async fn schedule_enable(&self, id: impl Into<String>) -> Result<ScheduleJobDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::ScheduleEnable(EntityIdParams { id: id.into() }),
+        )
+        .await
+    }
+
+    pub async fn schedule_disable(&self, id: impl Into<String>) -> Result<ScheduleJobDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::ScheduleDisable(EntityIdParams { id: id.into() }),
+        )
+        .await
+    }
+
+    pub async fn schedule_delete(&self, id: impl Into<String>) -> Result<ScheduleJobDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::ScheduleDelete(EntityIdParams { id: id.into() }),
+        )
+        .await
     }
 
     pub async fn wait_until_ready(

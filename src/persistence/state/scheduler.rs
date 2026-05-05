@@ -3,6 +3,49 @@ use anyhow::{Context, Result};
 use super::{ScheduledJobRow, StateStore};
 
 impl StateStore {
+    pub async fn get_scheduled_job_by_public_id(
+        &self,
+        public_id: uuid::Uuid,
+    ) -> Result<Option<ScheduledJobRow>> {
+        let conn = self.connect().await?;
+        let public_id_bytes = public_id.into_bytes().to_vec();
+        let mut rows = conn
+            .query(
+                r#"
+                SELECT id, public_id, agent_id, prompt, state_target, store_target,
+                       next_run_unix_ms, interval_seconds,
+                       overlap_policy, enabled, running_task_id, pending_rerun,
+                       last_run_unix_ms, last_status, created_at, updated_at
+                FROM scheduled_jobs
+                WHERE public_id = ?1
+                LIMIT 1
+                "#,
+                turso::params![public_id_bytes],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            return Ok(Some(ScheduledJobRow {
+                id: row.get::<i64>(0)?,
+                public_id: row.get::<Vec<u8>>(1)?,
+                agent_id: row.get::<String>(2)?,
+                prompt: row.get::<String>(3)?,
+                state_target: row.get::<Option<String>>(4)?,
+                store_target: row.get::<Option<String>>(5)?,
+                next_run_unix_ms: row.get::<i64>(6)?,
+                interval_seconds: row.get::<Option<i64>>(7)?.map(|v| v as u64),
+                overlap_policy: row.get::<String>(8)?,
+                enabled: row.get::<i64>(9)? != 0,
+                running_task_id: row.get::<Option<String>>(10)?,
+                pending_rerun: row.get::<i64>(11)? != 0,
+                last_run_unix_ms: row.get::<Option<i64>>(12)?,
+                last_status: row.get::<Option<String>>(13)?,
+                created_at: row.get::<String>(14)?,
+                updated_at: row.get::<String>(15)?,
+            }));
+        }
+        Ok(None)
+    }
+
     pub async fn create_scheduled_job(
         &self,
         public_id: uuid::Uuid,
@@ -302,6 +345,33 @@ impl StateStore {
         )
         .await
         .context("Failed to record scheduled job submit failure")?;
+        Ok(())
+    }
+
+    pub async fn set_scheduled_job_enabled(&self, id: i64, enabled: bool) -> Result<()> {
+        let conn = self.connect().await?;
+        conn.execute(
+            r#"
+            UPDATE scheduled_jobs
+            SET enabled = ?2,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?1
+            "#,
+            turso::params![id, if enabled { 1 } else { 0 }],
+        )
+        .await
+        .context("Failed to update scheduled job enabled state")?;
+        Ok(())
+    }
+
+    pub async fn delete_scheduled_job(&self, id: i64) -> Result<()> {
+        let conn = self.connect().await?;
+        conn.execute(
+            "DELETE FROM scheduled_jobs WHERE id = ?1",
+            turso::params![id],
+        )
+        .await
+        .context("Failed to delete scheduled job")?;
         Ok(())
     }
 }

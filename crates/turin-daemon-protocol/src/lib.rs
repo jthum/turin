@@ -195,6 +195,11 @@ pub struct ScheduleCreateParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ScheduleJobList {
+    pub jobs: Vec<ScheduleJobDetail>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ScheduleJobDetail {
     pub id: i64,
     pub public_id: String,
@@ -217,11 +222,6 @@ pub struct ScheduleJobDetail {
     pub last_status: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ScheduleJobList {
-    pub jobs: Vec<ScheduleJobDetail>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -444,8 +444,16 @@ pub enum DaemonRequest {
     TaskList(NoParams),
     #[serde(rename = "schedule.create")]
     ScheduleCreate(ScheduleCreateParams),
+    #[serde(rename = "schedule.get")]
+    ScheduleGet(EntityIdParams),
     #[serde(rename = "schedule.list")]
     ScheduleList(NoParams),
+    #[serde(rename = "schedule.enable")]
+    ScheduleEnable(EntityIdParams),
+    #[serde(rename = "schedule.disable")]
+    ScheduleDisable(EntityIdParams),
+    #[serde(rename = "schedule.delete")]
+    ScheduleDelete(EntityIdParams),
     #[serde(rename = "session.list")]
     SessionList(SessionListParams),
     #[serde(rename = "session.list_live")]
@@ -533,6 +541,7 @@ pub enum ErrorCode {
     InvalidParams,
     AgentNotFound,
     TaskNotFound,
+    ScheduleNotFound,
     SessionNotFound,
     HarnessNotFound,
     ChannelNotFound,
@@ -550,6 +559,7 @@ impl fmt::Display for ErrorCode {
             ErrorCode::InvalidParams => "invalid_params",
             ErrorCode::AgentNotFound => "agent_not_found",
             ErrorCode::TaskNotFound => "task_not_found",
+            ErrorCode::ScheduleNotFound => "schedule_not_found",
             ErrorCode::SessionNotFound => "session_not_found",
             ErrorCode::HarnessNotFound => "harness_not_found",
             ErrorCode::ChannelNotFound => "channel_not_found",
