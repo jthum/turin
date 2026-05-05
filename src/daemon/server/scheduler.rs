@@ -25,7 +25,7 @@ pub(super) fn start_internal_scheduler(
 
         loop {
             let next_sleep = {
-                let guard = state_for_task.read().await;
+                let mut guard = state_for_task.write().await;
                 match guard.scheduler_tick().await {
                     Ok(next_due) => next_due.unwrap_or(SCHEDULER_IDLE_POLL),
                     Err(err) => {

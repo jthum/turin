@@ -1,7 +1,8 @@
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 use serde::Deserialize;
 use turin_daemon_protocol::{
-    ContextPersistenceParams, ScheduleCreateParams, ScheduleUpdateParams, StoreTargetParams,
+    ContextPersistenceParams, ScheduleActionParams, ScheduleCreateParams, ScheduleUpdateParams,
+    StoreTargetParams,
 };
 use turin_types::{TaskInputContent, ToolsConfig};
 
@@ -11,13 +12,18 @@ use crate::harness::stdlib::governance_support::{current_agent_id, require_capab
 
 #[derive(Debug, Deserialize)]
 struct LuaScheduleCreateOpts {
-    prompt: String,
+    #[serde(default)]
+    prompt: Option<String>,
     #[serde(default)]
     content: Option<serde_json::Value>,
     #[serde(default)]
     tools: Option<serde_json::Value>,
     #[serde(default)]
     conflict_policy: Option<String>,
+    #[serde(default)]
+    action: Option<serde_json::Value>,
+    #[serde(default)]
+    params: Option<serde_json::Value>,
     #[serde(default)]
     agent: Option<String>,
     #[serde(default)]
@@ -47,6 +53,10 @@ struct LuaScheduleUpdateOpts {
     tools: Option<serde_json::Value>,
     #[serde(default)]
     conflict_policy: Option<String>,
+    #[serde(default)]
+    action: Option<serde_json::Value>,
+    #[serde(default)]
+    params: Option<serde_json::Value>,
     #[serde(default)]
     next_run_unix_ms: Option<i64>,
     #[serde(default)]
@@ -151,6 +161,38 @@ fn parse_schedule_tools(content: Option<serde_json::Value>) -> LuaResult<Option<
         .map_err(|e| mlua::Error::runtime(format!("invalid runtime.schedule tools: {}", e)))
 }
 
+fn parse_schedule_action(
+    action: Option<serde_json::Value>,
+    params: Option<serde_json::Value>,
+) -> LuaResult<Option<ScheduleActionParams>> {
+    let Some(action) = action else {
+        return Ok(None);
+    };
+    match action {
+        serde_json::Value::String(name) => Ok(Some(ScheduleActionParams { name, params })),
+        serde_json::Value::Object(mut map) => {
+            if let Some(value) = map
+                .remove("action")
+                .and_then(|value| value.as_str().map(|s| s.to_string()))
+            {
+                let params = map.remove("params").or(params);
+                return Ok(Some(ScheduleActionParams {
+                    name: value,
+                    params,
+                }));
+            }
+            serde_json::from_value(serde_json::Value::Object(map))
+                .map(Some)
+                .map_err(|e| {
+                    mlua::Error::runtime(format!("invalid runtime.schedule action: {}", e))
+                })
+        }
+        _ => Err(mlua::Error::runtime(
+            "runtime.schedule action must be string or table".to_string(),
+        )),
+    }
+}
+
 fn is_path_like(selector: &str) -> bool {
     selector.contains('/')
         || selector.contains('\\')
@@ -221,6 +263,7 @@ fn schedule_create_params(
         content: parse_schedule_content(parsed.content)?,
         tools: parse_schedule_tools(parsed.tools)?,
         conflict_policy: parsed.conflict_policy,
+        action: parse_schedule_action(parsed.action, parsed.params)?,
         persistence: parse_persistence(parsed.persistence)?,
         next_run_unix_ms,
         interval_seconds,
@@ -263,6 +306,7 @@ fn schedule_update_params(lua: &Lua, opts: Table) -> LuaResult<ScheduleUpdatePar
         content: parse_schedule_content(parsed.content)?,
         tools: parse_schedule_tools(parsed.tools)?,
         conflict_policy: parsed.conflict_policy,
+        action: parse_schedule_action(parsed.action, parsed.params)?,
         persistence: parse_persistence(parsed.persistence)?,
         next_run_unix_ms,
         interval_seconds,

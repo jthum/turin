@@ -10,8 +10,8 @@ use serde_json::json;
 use tempfile::tempdir;
 use tokio::time::{Duration, sleep};
 use turin_daemon_protocol::{
-    ContextPersistenceParams, PromoteTaskParams, SessionSearchScope, SidestepContextTargetParams,
-    SidestepModeParams, SidestepTaskParams, StoreTargetParams,
+    ContextPersistenceParams, PromoteTaskParams, ScheduleActionParams, SessionSearchScope,
+    SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams, StoreTargetParams,
 };
 use turin_types::{TaskInputContent, ToolSelectionConfig, ToolsConfig};
 
@@ -223,7 +223,7 @@ async fn wait_for_task_returns_terminal_result() -> Result<()> {
 async fn scheduled_one_shot_job_submits_and_disables_after_completion() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;
-    let state = DaemonState::load(&config_path).await?;
+    let mut state = DaemonState::load(&config_path).await?;
 
     let now_unix_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -231,10 +231,11 @@ async fn scheduled_one_shot_job_submits_and_disables_after_completion() -> Resul
     let job = state
         .create_scheduled_job(CreateScheduledJobInput {
             agent_id: "default".to_string(),
-            prompt: "Hello from scheduler".to_string(),
+            prompt: Some("Hello from scheduler".to_string()),
             content: None,
             tools: None,
             conflict_policy: None,
+            action: None,
             persistence: None,
             next_run_unix_ms: now_unix_ms - 1,
             interval_seconds: None,
@@ -287,7 +288,7 @@ async fn scheduled_one_shot_job_submits_and_disables_after_completion() -> Resul
 async fn scheduled_interval_job_reschedules_after_submit() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;
-    let state = DaemonState::load(&config_path).await?;
+    let mut state = DaemonState::load(&config_path).await?;
 
     let now_unix_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -295,10 +296,11 @@ async fn scheduled_interval_job_reschedules_after_submit() -> Result<()> {
     let job = state
         .create_scheduled_job(CreateScheduledJobInput {
             agent_id: "default".to_string(),
-            prompt: "Heartbeat run".to_string(),
+            prompt: Some("Heartbeat run".to_string()),
             content: None,
             tools: None,
             conflict_policy: None,
+            action: None,
             persistence: None,
             next_run_unix_ms: now_unix_ms - 1,
             interval_seconds: Some(60),
@@ -362,17 +364,18 @@ provider = "noop"
 "#,
     )?;
 
-    let state = DaemonState::load(&config_path).await?;
+    let mut state = DaemonState::load(&config_path).await?;
     let now_unix_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis() as i64;
     let job = state
         .create_scheduled_job(CreateScheduledJobInput {
             agent_id: "default".to_string(),
-            prompt: "Run in project alpha store".to_string(),
+            prompt: Some("Run in project alpha store".to_string()),
             content: None,
             tools: None,
             conflict_policy: None,
+            action: None,
             persistence: Some(ContextPersistenceParams {
                 state: Some(StoreTargetParams {
                     path: None,
@@ -424,6 +427,76 @@ provider = "noop"
 }
 
 #[tokio::test]
+async fn scheduled_action_job_can_disable_agent() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let mut state = DaemonState::load(&config_path).await?;
+
+    let created_agent = state
+        .create_agent(CreateAgentInput {
+            id: "night-qa".to_string(),
+            provider: "mock".to_string(),
+            model: "mock-model".to_string(),
+            system_prompt: Some("QA".to_string()),
+            thinking: None,
+            harness: None,
+            runtime_idle_secs: None,
+            enabled: true,
+            tools: Default::default(),
+        })
+        .await?;
+    assert!(created_agent.enabled);
+
+    let now_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64;
+    let job = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: None,
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action: Some(ScheduleActionParams {
+                name: "agent.disable".to_string(),
+                params: Some(json!({ "id": "night-qa" })),
+            }),
+            persistence: None,
+            next_run_unix_ms: now_unix_ms - 1,
+            interval_seconds: None,
+            overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            enabled: true,
+        })
+        .await?;
+    assert_eq!(job.kind, "action");
+    assert!(job.prompt.is_none());
+    assert_eq!(
+        job.action.as_ref().map(|action| action.name.as_str()),
+        Some("agent.disable")
+    );
+
+    state.scheduler_tick().await?;
+    let updated_agent = state
+        .agent_detail("night-qa")?
+        .expect("scheduled action should leave agent visible");
+    assert!(!updated_agent.enabled);
+
+    let jobs = state.list_scheduled_jobs().await?;
+    let finished = jobs
+        .iter()
+        .find(|entry| entry.id == job.id)
+        .expect("scheduled action job visible after tick");
+    assert!(!finished.enabled);
+    assert_eq!(
+        finished.last_status.as_deref(),
+        Some("completed: agent disabled")
+    );
+    assert!(finished.running_task_id.is_none());
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn scheduled_job_lifecycle_ops_round_trip() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;
@@ -435,7 +508,7 @@ async fn scheduled_job_lifecycle_ops_round_trip() -> Result<()> {
     let created = state
         .create_scheduled_job(CreateScheduledJobInput {
             agent_id: "default".to_string(),
-            prompt: "Lifecycle check".to_string(),
+            prompt: Some("Lifecycle check".to_string()),
             content: Some(vec![TaskInputContent::Text {
                 text: "Use persistent QA context".to_string(),
             }]),
@@ -447,6 +520,7 @@ async fn scheduled_job_lifecycle_ops_round_trip() -> Result<()> {
                 ..ToolsConfig::default()
             }),
             conflict_policy: Some("detached".to_string()),
+            action: None,
             persistence: None,
             next_run_unix_ms: now_unix_ms + 60_000,
             interval_seconds: Some(300),
@@ -461,6 +535,8 @@ async fn scheduled_job_lifecycle_ops_round_trip() -> Result<()> {
         .expect("scheduled job should exist");
     assert_eq!(fetched.public_id, created.public_id);
     assert!(fetched.enabled);
+    assert_eq!(fetched.kind, "prompt");
+    assert_eq!(fetched.prompt.as_deref(), Some("Lifecycle check"));
     assert!(matches!(
         fetched.content.as_deref(),
         Some([TaskInputContent::Text { text }]) if text == "Use persistent QA context"
@@ -499,7 +575,7 @@ async fn scheduled_job_lifecycle_ops_round_trip() -> Result<()> {
         )
         .await?
         .expect("scheduled job should update");
-    assert_eq!(updated.prompt, "Updated lifecycle check");
+    assert_eq!(updated.prompt.as_deref(), Some("Updated lifecycle check"));
     assert_eq!(updated.interval_seconds, Some(120));
     assert!(!updated.enabled);
 

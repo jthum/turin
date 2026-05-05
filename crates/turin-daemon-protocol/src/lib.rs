@@ -180,9 +180,17 @@ pub struct ContextPersistenceParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ScheduleActionParams {
+    pub name: String,
+    #[serde(default)]
+    pub params: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ScheduleCreateParams {
     pub agent_id: String,
-    pub prompt: String,
+    #[serde(default)]
+    pub prompt: Option<String>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<Vec<TaskInputContent>>,
@@ -190,6 +198,8 @@ pub struct ScheduleCreateParams {
     pub tools: Option<ToolsConfig>,
     #[serde(default)]
     pub conflict_policy: Option<String>,
+    #[serde(default)]
+    pub action: Option<ScheduleActionParams>,
     pub next_run_unix_ms: i64,
     #[serde(default)]
     pub interval_seconds: Option<u64>,
@@ -216,6 +226,8 @@ pub struct ScheduleUpdateParams {
     #[serde(default)]
     pub conflict_policy: Option<String>,
     #[serde(default)]
+    pub action: Option<ScheduleActionParams>,
+    #[serde(default)]
     pub next_run_unix_ms: Option<i64>,
     #[serde(default)]
     pub interval_seconds: Option<u64>,
@@ -237,13 +249,17 @@ pub struct ScheduleJobDetail {
     pub id: i64,
     pub public_id: String,
     pub agent_id: String,
-    pub prompt: String,
+    pub kind: String,
+    #[serde(default)]
+    pub prompt: Option<String>,
     #[serde(default)]
     pub content: Option<Vec<TaskInputContent>>,
     #[serde(default)]
     pub tools: Option<ToolsConfig>,
     #[serde(default)]
     pub conflict_policy: Option<String>,
+    #[serde(default)]
+    pub action: Option<ScheduleActionParams>,
     #[serde(default)]
     pub persistence: Option<ContextPersistenceParams>,
     pub next_run_unix_ms: i64,
@@ -864,7 +880,7 @@ mod tests {
             Some("req_sched".to_string()),
             DaemonRequest::ScheduleCreate(ScheduleCreateParams {
                 agent_id: "default".to_string(),
-                prompt: "Heartbeat".to_string(),
+                prompt: Some("Heartbeat".to_string()),
                 content: Some(vec![TaskInputContent::Text {
                     text: "Follow up with context".to_string(),
                 }]),
@@ -876,6 +892,7 @@ mod tests {
                     ..ToolsConfig::default()
                 }),
                 conflict_policy: Some("detached".to_string()),
+                action: None,
                 next_run_unix_ms: 1_700_000_000_000,
                 interval_seconds: Some(300),
                 overlap_policy: Some("skip".to_string()),
@@ -909,7 +926,7 @@ mod tests {
         match decoded.request {
             DaemonRequest::ScheduleCreate(params) => {
                 assert_eq!(params.agent_id, "default");
-                assert_eq!(params.prompt, "Heartbeat");
+                assert_eq!(params.prompt.as_deref(), Some("Heartbeat"));
                 assert!(matches!(
                     params.content.as_deref(),
                     Some([TaskInputContent::Text { text }]) if text == "Follow up with context"
@@ -923,6 +940,7 @@ mod tests {
                     Some(vec!["shell_exec".to_string()])
                 );
                 assert_eq!(params.conflict_policy.as_deref(), Some("detached"));
+                assert!(params.action.is_none());
                 assert_eq!(params.next_run_unix_ms, 1_700_000_000_000i64);
                 assert_eq!(params.interval_seconds, Some(300));
                 assert_eq!(params.overlap_policy.as_deref(), Some("skip"));

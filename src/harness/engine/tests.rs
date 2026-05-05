@@ -336,14 +336,25 @@ async fn test_schedule_dx_helpers_create_and_list_jobs() {
                     error("expected conflict_policy to round-trip")
                 end
 
+                local action_job = schedule.after(45, {
+                    action = "agent.disable",
+                    params = { id = "night-qa" }
+                })
+                if action_job.kind ~= "action" then
+                    error("expected action job kind")
+                end
+                if action_job.action == nil or action_job.action.name ~= "agent.disable" then
+                    error("expected action payload to round-trip")
+                end
+
                 local reenabled = schedule.enable(recurring.public_id)
                 if reenabled.enabled ~= true then
                     error("expected enable to restore enabled flag")
                 end
 
                 local jobs = schedule.list()
-                if #jobs ~= 3 then
-                    error("expected 3 scheduled jobs, got " .. tostring(#jobs))
+                if #jobs ~= 4 then
+                    error("expected 4 scheduled jobs, got " .. tostring(#jobs))
                 end
 
                 local deleted = schedule.delete(one.public_id)
@@ -352,8 +363,8 @@ async fn test_schedule_dx_helpers_create_and_list_jobs() {
                 end
 
                 jobs = schedule.list()
-                if #jobs ~= 2 then
-                    error("expected 2 scheduled jobs after delete, got " .. tostring(#jobs))
+                if #jobs ~= 3 then
+                    error("expected 3 scheduled jobs after delete, got " .. tostring(#jobs))
                 end
 
                 return ALLOW

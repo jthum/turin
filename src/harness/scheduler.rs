@@ -3,8 +3,8 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use tokio::sync::Notify;
 use turin_daemon_protocol::{
-    ContextPersistenceParams, ScheduleCreateParams, ScheduleJobDetail, ScheduleUpdateParams,
-    StoreTargetParams,
+    ContextPersistenceParams, ScheduleActionParams, ScheduleCreateParams, ScheduleJobDetail,
+    ScheduleUpdateParams, StoreTargetParams,
 };
 
 use crate::persistence::schema::ScheduledJobRow;
@@ -23,8 +23,16 @@ impl HarnessSchedulerAccess {
 
     pub async fn create_job(&self, params: ScheduleCreateParams) -> Result<ScheduleJobDetail> {
         let public_id = uuid::Uuid::now_v7();
+        let job_kind = validate_schedule_payload(params.prompt.as_ref(), params.action.as_ref())?;
         let content = serialize_json(params.content.as_ref())?;
         let tools = serialize_json(params.tools.as_ref())?;
+        let action_name = params.action.as_ref().map(|action| action.name.as_str());
+        let action_params = serialize_json(
+            params
+                .action
+                .as_ref()
+                .and_then(|action| action.params.as_ref()),
+        )?;
         let state_target = serialize_store_target(
             params
                 .persistence
@@ -42,10 +50,13 @@ impl HarnessSchedulerAccess {
             .create_scheduled_job(
                 public_id,
                 &params.agent_id,
-                &params.prompt,
+                job_kind,
+                params.prompt.as_deref(),
                 content.as_deref(),
                 tools.as_deref(),
                 params.conflict_policy.as_deref(),
+                action_name,
+                action_params.as_deref(),
                 state_target.as_deref(),
                 store_target.as_deref(),
                 params.next_run_unix_ms,
@@ -101,6 +112,19 @@ impl HarnessSchedulerAccess {
         let persistence = params
             .persistence
             .or_else(|| scheduled_job_persistence(&row).ok().flatten());
+        let job_kind =
+            match validate_schedule_payload(params.prompt.as_ref(), params.action.as_ref()) {
+                Ok(kind) => kind,
+                Err(_) if params.prompt.is_none() && params.action.is_none() => {
+                    row.job_kind.as_str()
+                }
+                Err(err) => return Err(err),
+            };
+        let prompt = if job_kind == "prompt" {
+            params.prompt.or_else(|| row.prompt.clone())
+        } else {
+            None
+        };
         let content = match params.content {
             Some(content) => Some(content),
             None => parse_json(row.content.as_deref())?,
@@ -110,8 +134,14 @@ impl HarnessSchedulerAccess {
             None => parse_json(row.tools.as_deref())?,
         };
         let conflict_policy = params.conflict_policy.or(row.conflict_policy.clone());
+        let action = params
+            .action
+            .or_else(|| scheduled_job_action(&row).ok().flatten());
         let content_json = serialize_json(content.as_ref())?;
         let tools_json = serialize_json(tools.as_ref())?;
+        let action_name = action.as_ref().map(|action| action.name.as_str());
+        let action_params =
+            serialize_json(action.as_ref().and_then(|action| action.params.as_ref()))?;
         let state_target = serialize_store_target(
             persistence
                 .as_ref()
@@ -126,10 +156,13 @@ impl HarnessSchedulerAccess {
             .update_scheduled_job(
                 row.id,
                 params.agent_id.as_deref().unwrap_or(&row.agent_id),
-                params.prompt.as_deref().unwrap_or(&row.prompt),
+                job_kind,
+                prompt.as_deref(),
                 content_json.as_deref(),
                 tools_json.as_deref(),
                 conflict_policy.as_deref(),
+                action_name,
+                action_params.as_deref(),
                 state_target.as_deref(),
                 store_target.as_deref(),
                 params.next_run_unix_ms.unwrap_or(row.next_run_unix_ms),
@@ -206,14 +239,17 @@ fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {
         .map(|id| id.to_string())
         .unwrap_or_else(|_| format_uuid_bytes_simple(&row.public_id));
     let persistence = scheduled_job_persistence(&row).ok().flatten();
+    let action = scheduled_job_action(&row).ok().flatten();
     ScheduleJobDetail {
         id: row.id,
         public_id: public_id.clone(),
         agent_id: row.agent_id,
+        kind: row.job_kind,
         prompt: row.prompt,
         content: parse_json(row.content.as_deref()).ok().flatten(),
         tools: parse_json(row.tools.as_deref()).ok().flatten(),
         conflict_policy: row.conflict_policy,
+        action,
         persistence,
         next_run_unix_ms: row.next_run_unix_ms,
         interval_seconds: row.interval_seconds,
@@ -285,4 +321,28 @@ fn scheduled_job_persistence(job: &ScheduledJobRow) -> Result<Option<ContextPers
         return Ok(None);
     }
     Ok(Some(ContextPersistenceParams { state, store }))
+}
+
+fn scheduled_job_action(job: &ScheduledJobRow) -> Result<Option<ScheduleActionParams>> {
+    let Some(name) = job.action_name.clone() else {
+        return Ok(None);
+    };
+    Ok(Some(ScheduleActionParams {
+        name,
+        params: parse_json(job.action_params.as_deref())?,
+    }))
+}
+
+fn validate_schedule_payload(
+    prompt: Option<&String>,
+    action: Option<&ScheduleActionParams>,
+) -> Result<&'static str> {
+    match (prompt, action) {
+        (Some(_), None) => Ok("prompt"),
+        (None, Some(_)) => Ok("action"),
+        (Some(_), Some(_)) => {
+            anyhow::bail!("Scheduled job cannot define both prompt and action payloads")
+        }
+        (None, None) => anyhow::bail!("Scheduled job requires prompt or action payload"),
+    }
 }

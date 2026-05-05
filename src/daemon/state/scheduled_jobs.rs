@@ -3,7 +3,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, anyhow};
 use serde::Serialize;
-use turin_daemon_protocol::{ContextPersistenceParams, ScheduleJobDetail, StoreTargetParams};
+use turin_daemon_protocol::{
+    ContextPersistenceParams, ScheduleActionParams, ScheduleJobDetail, StoreTargetParams,
+};
 use turin_types::{TaskInputContent, ToolsConfig};
 
 use super::DaemonState;
@@ -47,10 +49,11 @@ impl std::str::FromStr for ScheduledJobOverlapPolicy {
 #[derive(Debug, Clone)]
 pub struct CreateScheduledJobInput {
     pub agent_id: String,
-    pub prompt: String,
+    pub prompt: Option<String>,
     pub content: Option<Vec<TaskInputContent>>,
     pub tools: Option<ToolsConfig>,
     pub conflict_policy: Option<String>,
+    pub action: Option<ScheduleActionParams>,
     pub persistence: Option<ContextPersistenceParams>,
     pub next_run_unix_ms: i64,
     pub interval_seconds: Option<u64>,
@@ -65,11 +68,39 @@ pub struct UpdateScheduledJobInput {
     pub content: Option<Vec<TaskInputContent>>,
     pub tools: Option<ToolsConfig>,
     pub conflict_policy: Option<String>,
+    pub action: Option<ScheduleActionParams>,
     pub persistence: Option<ContextPersistenceParams>,
     pub next_run_unix_ms: Option<i64>,
     pub interval_seconds: Option<u64>,
     pub overlap_policy: Option<ScheduledJobOverlapPolicy>,
     pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScheduledJobKind {
+    Prompt,
+    Action,
+}
+
+impl ScheduledJobKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Prompt => "prompt",
+            Self::Action => "action",
+        }
+    }
+}
+
+impl std::str::FromStr for ScheduledJobKind {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "prompt" => Ok(Self::Prompt),
+            "action" => Ok(Self::Action),
+            _ => Err(anyhow!("Unsupported scheduled job kind '{}'", value)),
+        }
+    }
 }
 
 impl DaemonState {
@@ -91,11 +122,20 @@ impl DaemonState {
         input: CreateScheduledJobInput,
     ) -> Result<ScheduleJobDetail> {
         self.ensure_enabled_agent(&input.agent_id)?;
+        let job_kind =
+            validate_scheduled_job_payload(input.prompt.as_ref(), input.action.as_ref())?;
         let _ = self.resolve_scheduled_job_persistence(input.persistence.as_ref())?;
         let store = Arc::clone(&self.jobs_store);
         let public_id = uuid::Uuid::now_v7();
         let content = serialize_json(input.content.as_ref())?;
         let tools = serialize_json(input.tools.as_ref())?;
+        let action_name = input.action.as_ref().map(|action| action.name.clone());
+        let action_params = serialize_json(
+            input
+                .action
+                .as_ref()
+                .and_then(|action| action.params.as_ref()),
+        )?;
         let state_target = serialize_store_target(
             input
                 .persistence
@@ -112,10 +152,13 @@ impl DaemonState {
             .create_scheduled_job(
                 public_id,
                 &input.agent_id,
-                &input.prompt,
+                job_kind.as_str(),
+                input.prompt.as_deref(),
                 content.as_deref(),
                 tools.as_deref(),
                 input.conflict_policy.as_deref(),
+                action_name.as_deref(),
+                action_params.as_deref(),
                 state_target.as_deref(),
                 store_target.as_deref(),
                 input.next_run_unix_ms,
@@ -160,7 +203,24 @@ impl DaemonState {
         let agent_id = input.agent_id.unwrap_or_else(|| row.agent_id.clone());
         self.ensure_enabled_agent(&agent_id)?;
 
-        let prompt = input.prompt.unwrap_or_else(|| row.prompt.clone());
+        let job_kind = match (input.prompt.as_ref(), input.action.as_ref()) {
+            (Some(_), None) => ScheduledJobKind::Prompt,
+            (None, Some(_)) => ScheduledJobKind::Action,
+            (None, None) => row.job_kind.parse::<ScheduledJobKind>()?,
+            (Some(_), Some(_)) => {
+                anyhow::bail!("Scheduled job cannot define both prompt and action payloads")
+            }
+        };
+        let prompt = if matches!(job_kind, ScheduledJobKind::Prompt) {
+            Some(
+                input
+                    .prompt
+                    .or_else(|| row.prompt.clone())
+                    .ok_or_else(|| anyhow!("Prompt jobs require prompt text"))?,
+            )
+        } else {
+            None
+        };
         let content = match input.content {
             Some(content) => Some(content),
             None => parse_json(row.content.as_deref())?,
@@ -170,6 +230,11 @@ impl DaemonState {
             None => parse_json(row.tools.as_deref())?,
         };
         let conflict_policy = input.conflict_policy.or(row.conflict_policy.clone());
+        let action = match input.action {
+            Some(action) => Some(action),
+            None => scheduled_job_action(&row)?,
+        };
+        validate_scheduled_job_payload(prompt.as_ref(), action.as_ref())?;
         let next_run_unix_ms = input.next_run_unix_ms.unwrap_or(row.next_run_unix_ms);
         let interval_seconds = input.interval_seconds.or(row.interval_seconds);
         let overlap_policy = input
@@ -189,6 +254,9 @@ impl DaemonState {
         };
         let content_json = serialize_json(content.as_ref())?;
         let tools_json = serialize_json(tools.as_ref())?;
+        let action_name = action.as_ref().map(|action| action.name.clone());
+        let action_params =
+            serialize_json(action.as_ref().and_then(|action| action.params.as_ref()))?;
         let _ = self.resolve_scheduled_job_persistence(persistence.as_ref())?;
         let state_target =
             serialize_store_target(persistence.as_ref().and_then(|value| value.state.as_ref()))?;
@@ -199,10 +267,13 @@ impl DaemonState {
             .update_scheduled_job(
                 row.id,
                 &agent_id,
-                &prompt,
+                job_kind.as_str(),
+                prompt.as_deref(),
                 content_json.as_deref(),
                 tools_json.as_deref(),
                 conflict_policy.as_deref(),
+                action_name.as_deref(),
+                action_params.as_deref(),
                 state_target.as_deref(),
                 store_target.as_deref(),
                 next_run_unix_ms,
@@ -275,7 +346,7 @@ impl DaemonState {
         Ok(Some(detail))
     }
 
-    pub(crate) async fn scheduler_tick(&self) -> Result<Option<Duration>> {
+    pub(crate) async fn scheduler_tick(&mut self) -> Result<Option<Duration>> {
         let store = Arc::clone(&self.jobs_store);
         let now = now_unix_ms();
 
@@ -330,11 +401,15 @@ impl DaemonState {
     }
 
     async fn process_due_scheduled_job(
-        &self,
+        &mut self,
         store: &std::sync::Arc<crate::persistence::state::StateStore>,
         job: &ScheduledJobRow,
         now_unix_ms: i64,
     ) -> Result<()> {
+        let job_kind = job
+            .job_kind
+            .parse::<ScheduledJobKind>()
+            .unwrap_or(ScheduledJobKind::Prompt);
         if job.running_task_id.is_some() {
             let overlap = job
                 .overlap_policy
@@ -354,35 +429,80 @@ impl DaemonState {
             return Ok(());
         }
 
-        let submit = self.submit_scheduled_job(job).await;
-        match submit {
-            Ok(task) => {
-                let (next_run_unix_ms, enabled) = match job.interval_seconds {
-                    Some(interval_seconds) => (
-                        advance_recurring_due(job.next_run_unix_ms, interval_seconds, now_unix_ms),
-                        true,
-                    ),
-                    None => (job.next_run_unix_ms, false),
-                };
-                store
-                    .mark_scheduled_job_started(
-                        job.id,
-                        &task.request_id,
-                        next_run_unix_ms,
-                        enabled,
-                        now_unix_ms,
-                    )
-                    .await?;
+        match job_kind {
+            ScheduledJobKind::Prompt => {
+                let submit = self.submit_scheduled_job(job).await;
+                match submit {
+                    Ok(task) => {
+                        let (next_run_unix_ms, enabled) = match job.interval_seconds {
+                            Some(interval_seconds) => (
+                                advance_recurring_due(
+                                    job.next_run_unix_ms,
+                                    interval_seconds,
+                                    now_unix_ms,
+                                ),
+                                true,
+                            ),
+                            None => (job.next_run_unix_ms, false),
+                        };
+                        store
+                            .mark_scheduled_job_started(
+                                job.id,
+                                &task.request_id,
+                                next_run_unix_ms,
+                                enabled,
+                                now_unix_ms,
+                            )
+                            .await?;
+                    }
+                    Err(err) => {
+                        let message = format!("submit_failed: {}", err);
+                        store
+                            .mark_scheduled_job_submit_failed(
+                                job.id,
+                                now_unix_ms + SCHEDULED_JOB_FAILURE_RETRY_MS,
+                                &message,
+                            )
+                            .await?;
+                    }
+                }
             }
-            Err(err) => {
-                let message = format!("submit_failed: {}", err);
-                store
-                    .mark_scheduled_job_submit_failed(
-                        job.id,
-                        now_unix_ms + SCHEDULED_JOB_FAILURE_RETRY_MS,
-                        &message,
-                    )
-                    .await?;
+            ScheduledJobKind::Action => {
+                let run = self.execute_scheduled_action(job).await;
+                match run {
+                    Ok(status) => {
+                        let (next_run_unix_ms, enabled) = match job.interval_seconds {
+                            Some(interval_seconds) => (
+                                advance_recurring_due(
+                                    job.next_run_unix_ms,
+                                    interval_seconds,
+                                    now_unix_ms,
+                                ),
+                                true,
+                            ),
+                            None => (job.next_run_unix_ms, false),
+                        };
+                        store
+                            .mark_scheduled_job_action_completed(
+                                job.id,
+                                next_run_unix_ms,
+                                enabled,
+                                now_unix_ms,
+                                &status,
+                            )
+                            .await?;
+                    }
+                    Err(err) => {
+                        let message = format!("action_failed: {}", err);
+                        store
+                            .mark_scheduled_job_submit_failed(
+                                job.id,
+                                now_unix_ms + SCHEDULED_JOB_FAILURE_RETRY_MS,
+                                &message,
+                            )
+                            .await?;
+                    }
+                }
             }
         }
 
@@ -426,6 +546,35 @@ impl DaemonState {
             .ok_or_else(|| anyhow!("Task '{}' was submitted but is not visible", request_id))
     }
 
+    async fn execute_scheduled_action(&mut self, job: &ScheduledJobRow) -> Result<String> {
+        let Some(action) = scheduled_job_action(job)? else {
+            anyhow::bail!("Action job '{}' is missing action payload", job.id);
+        };
+        match action.name.as_str() {
+            "agent.enable" => {
+                let id = required_action_id(&action)?;
+                self.set_agent_enabled(&id, true).await?;
+                Ok("completed: agent enabled".to_string())
+            }
+            "agent.disable" => {
+                let id = required_action_id(&action)?;
+                self.set_agent_enabled(&id, false).await?;
+                Ok("completed: agent disabled".to_string())
+            }
+            "channel.enable" => {
+                let id = required_action_id(&action)?;
+                self.set_channel_enabled(&id, true).await?;
+                Ok("completed: channel enabled".to_string())
+            }
+            "channel.disable" => {
+                let id = required_action_id(&action)?;
+                self.set_channel_enabled(&id, false).await?;
+                Ok("completed: channel disabled".to_string())
+            }
+            other => anyhow::bail!("Unsupported scheduled action '{}'", other),
+        }
+    }
+
     fn resolve_scheduled_job_persistence(
         &self,
         persistence: Option<&ContextPersistenceParams>,
@@ -463,14 +612,17 @@ fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {
         .map(|id| id.to_string())
         .unwrap_or_else(|_| super::helpers::format_uuid_bytes_simple(&row.public_id));
     let persistence = scheduled_job_persistence(&row).ok().flatten();
+    let action = scheduled_job_action(&row).ok().flatten();
     ScheduleJobDetail {
         id: row.id,
         public_id: public_id.clone(),
         agent_id: row.agent_id,
+        kind: row.job_kind,
         prompt: row.prompt,
         content: parse_json(row.content.as_deref()).ok().flatten(),
         tools: parse_json(row.tools.as_deref()).ok().flatten(),
         conflict_policy: row.conflict_policy,
+        action,
         persistence,
         next_run_unix_ms: row.next_run_unix_ms,
         interval_seconds: row.interval_seconds,
@@ -487,7 +639,11 @@ fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {
 }
 
 fn scheduled_job_task(job: &ScheduledJobRow) -> Result<QueuedTask> {
-    let mut task = QueuedTask::ad_hoc(job.prompt.clone());
+    let mut task = QueuedTask::ad_hoc(
+        job.prompt
+            .clone()
+            .ok_or_else(|| anyhow!("Prompt job '{}' is missing prompt text", job.id))?,
+    );
     task.content = parse_json(job.content.as_deref())?;
     if let Some(tools) = parse_json::<ToolsConfig>(job.tools.as_deref())?
         && !tools.is_empty()
@@ -499,6 +655,40 @@ fn scheduled_job_task(job: &ScheduledJobRow) -> Result<QueuedTask> {
         None => None,
     };
     Ok(task)
+}
+
+fn scheduled_job_action(job: &ScheduledJobRow) -> Result<Option<ScheduleActionParams>> {
+    let Some(name) = job.action_name.clone() else {
+        return Ok(None);
+    };
+    Ok(Some(ScheduleActionParams {
+        name,
+        params: parse_json(job.action_params.as_deref())?,
+    }))
+}
+
+fn validate_scheduled_job_payload(
+    prompt: Option<&String>,
+    action: Option<&ScheduleActionParams>,
+) -> Result<ScheduledJobKind> {
+    match (prompt, action) {
+        (Some(_), None) => Ok(ScheduledJobKind::Prompt),
+        (None, Some(_)) => Ok(ScheduledJobKind::Action),
+        (Some(_), Some(_)) => {
+            anyhow::bail!("Scheduled job cannot define both prompt and action payloads")
+        }
+        (None, None) => anyhow::bail!("Scheduled job requires prompt or action payload"),
+    }
+}
+
+fn required_action_id(action: &ScheduleActionParams) -> Result<String> {
+    action
+        .params
+        .as_ref()
+        .and_then(|value| value.get("id"))
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+        .ok_or_else(|| anyhow!("Scheduled action '{}' requires params.id", action.name))
 }
 
 fn now_unix_ms() -> i64 {

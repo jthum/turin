@@ -12,8 +12,8 @@ impl StateStore {
         let mut rows = conn
             .query(
                 r#"
-                SELECT id, public_id, agent_id, prompt, content, tools, conflict_policy,
-                       state_target, store_target,
+                SELECT id, public_id, agent_id, job_kind, prompt, content, tools, conflict_policy,
+                       action_name, action_params, state_target, store_target,
                        next_run_unix_ms, interval_seconds,
                        overlap_policy, enabled, running_task_id, pending_rerun,
                        last_run_unix_ms, last_status, created_at, updated_at
@@ -29,22 +29,25 @@ impl StateStore {
                 id: row.get::<i64>(0)?,
                 public_id: row.get::<Vec<u8>>(1)?,
                 agent_id: row.get::<String>(2)?,
-                prompt: row.get::<String>(3)?,
-                content: row.get::<Option<String>>(4)?,
-                tools: row.get::<Option<String>>(5)?,
-                conflict_policy: row.get::<Option<String>>(6)?,
-                state_target: row.get::<Option<String>>(7)?,
-                store_target: row.get::<Option<String>>(8)?,
-                next_run_unix_ms: row.get::<i64>(9)?,
-                interval_seconds: row.get::<Option<i64>>(10)?.map(|v| v as u64),
-                overlap_policy: row.get::<String>(11)?,
-                enabled: row.get::<i64>(12)? != 0,
-                running_task_id: row.get::<Option<String>>(13)?,
-                pending_rerun: row.get::<i64>(14)? != 0,
-                last_run_unix_ms: row.get::<Option<i64>>(15)?,
-                last_status: row.get::<Option<String>>(16)?,
-                created_at: row.get::<String>(17)?,
-                updated_at: row.get::<String>(18)?,
+                job_kind: row.get::<String>(3)?,
+                prompt: row.get::<Option<String>>(4)?,
+                content: row.get::<Option<String>>(5)?,
+                tools: row.get::<Option<String>>(6)?,
+                conflict_policy: row.get::<Option<String>>(7)?,
+                action_name: row.get::<Option<String>>(8)?,
+                action_params: row.get::<Option<String>>(9)?,
+                state_target: row.get::<Option<String>>(10)?,
+                store_target: row.get::<Option<String>>(11)?,
+                next_run_unix_ms: row.get::<i64>(12)?,
+                interval_seconds: row.get::<Option<i64>>(13)?.map(|v| v as u64),
+                overlap_policy: row.get::<String>(14)?,
+                enabled: row.get::<i64>(15)? != 0,
+                running_task_id: row.get::<Option<String>>(16)?,
+                pending_rerun: row.get::<i64>(17)? != 0,
+                last_run_unix_ms: row.get::<Option<i64>>(18)?,
+                last_status: row.get::<Option<String>>(19)?,
+                created_at: row.get::<String>(20)?,
+                updated_at: row.get::<String>(21)?,
             }));
         }
         Ok(None)
@@ -54,10 +57,13 @@ impl StateStore {
         &self,
         public_id: uuid::Uuid,
         agent_id: &str,
-        prompt: &str,
+        job_kind: &str,
+        prompt: Option<&str>,
         content: Option<&str>,
         tools: Option<&str>,
         conflict_policy: Option<&str>,
+        action_name: Option<&str>,
+        action_params: Option<&str>,
         state_target: Option<&str>,
         store_target: Option<&str>,
         next_run_unix_ms: i64,
@@ -70,18 +76,21 @@ impl StateStore {
         conn.execute(
             r#"
             INSERT INTO scheduled_jobs (
-                public_id, agent_id, prompt, content, tools, conflict_policy, state_target, store_target,
+                public_id, agent_id, job_kind, prompt, content, tools, conflict_policy, action_name, action_params, state_target, store_target,
                 next_run_unix_ms, interval_seconds,
                 overlap_policy, enabled, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             "#,
             turso::params![
                 public_id_bytes,
                 agent_id,
+                job_kind,
                 prompt,
                 content,
                 tools,
                 conflict_policy,
+                action_name,
+                action_params,
                 state_target,
                 store_target,
                 next_run_unix_ms,
@@ -100,8 +109,8 @@ impl StateStore {
         let mut rows = conn
             .query(
                 r#"
-                SELECT id, public_id, agent_id, prompt, content, tools, conflict_policy,
-                       state_target, store_target,
+                SELECT id, public_id, agent_id, job_kind, prompt, content, tools, conflict_policy,
+                       action_name, action_params, state_target, store_target,
                        next_run_unix_ms, interval_seconds,
                        overlap_policy, enabled, running_task_id, pending_rerun,
                        last_run_unix_ms, last_status, created_at, updated_at
@@ -117,22 +126,25 @@ impl StateStore {
                 id: row.get::<i64>(0)?,
                 public_id: row.get::<Vec<u8>>(1)?,
                 agent_id: row.get::<String>(2)?,
-                prompt: row.get::<String>(3)?,
-                content: row.get::<Option<String>>(4)?,
-                tools: row.get::<Option<String>>(5)?,
-                conflict_policy: row.get::<Option<String>>(6)?,
-                state_target: row.get::<Option<String>>(7)?,
-                store_target: row.get::<Option<String>>(8)?,
-                next_run_unix_ms: row.get::<i64>(9)?,
-                interval_seconds: row.get::<Option<i64>>(10)?.map(|v| v as u64),
-                overlap_policy: row.get::<String>(11)?,
-                enabled: row.get::<i64>(12)? != 0,
-                running_task_id: row.get::<Option<String>>(13)?,
-                pending_rerun: row.get::<i64>(14)? != 0,
-                last_run_unix_ms: row.get::<Option<i64>>(15)?,
-                last_status: row.get::<Option<String>>(16)?,
-                created_at: row.get::<String>(17)?,
-                updated_at: row.get::<String>(18)?,
+                job_kind: row.get::<String>(3)?,
+                prompt: row.get::<Option<String>>(4)?,
+                content: row.get::<Option<String>>(5)?,
+                tools: row.get::<Option<String>>(6)?,
+                conflict_policy: row.get::<Option<String>>(7)?,
+                action_name: row.get::<Option<String>>(8)?,
+                action_params: row.get::<Option<String>>(9)?,
+                state_target: row.get::<Option<String>>(10)?,
+                store_target: row.get::<Option<String>>(11)?,
+                next_run_unix_ms: row.get::<i64>(12)?,
+                interval_seconds: row.get::<Option<i64>>(13)?.map(|v| v as u64),
+                overlap_policy: row.get::<String>(14)?,
+                enabled: row.get::<i64>(15)? != 0,
+                running_task_id: row.get::<Option<String>>(16)?,
+                pending_rerun: row.get::<i64>(17)? != 0,
+                last_run_unix_ms: row.get::<Option<i64>>(18)?,
+                last_status: row.get::<Option<String>>(19)?,
+                created_at: row.get::<String>(20)?,
+                updated_at: row.get::<String>(21)?,
             });
         }
         Ok(result)
@@ -147,8 +159,8 @@ impl StateStore {
         let mut rows = conn
             .query(
                 r#"
-                SELECT id, public_id, agent_id, prompt, content, tools, conflict_policy,
-                       state_target, store_target,
+                SELECT id, public_id, agent_id, job_kind, prompt, content, tools, conflict_policy,
+                       action_name, action_params, state_target, store_target,
                        next_run_unix_ms, interval_seconds,
                        overlap_policy, enabled, running_task_id, pending_rerun,
                        last_run_unix_ms, last_status, created_at, updated_at
@@ -166,22 +178,25 @@ impl StateStore {
                 id: row.get::<i64>(0)?,
                 public_id: row.get::<Vec<u8>>(1)?,
                 agent_id: row.get::<String>(2)?,
-                prompt: row.get::<String>(3)?,
-                content: row.get::<Option<String>>(4)?,
-                tools: row.get::<Option<String>>(5)?,
-                conflict_policy: row.get::<Option<String>>(6)?,
-                state_target: row.get::<Option<String>>(7)?,
-                store_target: row.get::<Option<String>>(8)?,
-                next_run_unix_ms: row.get::<i64>(9)?,
-                interval_seconds: row.get::<Option<i64>>(10)?.map(|v| v as u64),
-                overlap_policy: row.get::<String>(11)?,
-                enabled: row.get::<i64>(12)? != 0,
-                running_task_id: row.get::<Option<String>>(13)?,
-                pending_rerun: row.get::<i64>(14)? != 0,
-                last_run_unix_ms: row.get::<Option<i64>>(15)?,
-                last_status: row.get::<Option<String>>(16)?,
-                created_at: row.get::<String>(17)?,
-                updated_at: row.get::<String>(18)?,
+                job_kind: row.get::<String>(3)?,
+                prompt: row.get::<Option<String>>(4)?,
+                content: row.get::<Option<String>>(5)?,
+                tools: row.get::<Option<String>>(6)?,
+                conflict_policy: row.get::<Option<String>>(7)?,
+                action_name: row.get::<Option<String>>(8)?,
+                action_params: row.get::<Option<String>>(9)?,
+                state_target: row.get::<Option<String>>(10)?,
+                store_target: row.get::<Option<String>>(11)?,
+                next_run_unix_ms: row.get::<i64>(12)?,
+                interval_seconds: row.get::<Option<i64>>(13)?.map(|v| v as u64),
+                overlap_policy: row.get::<String>(14)?,
+                enabled: row.get::<i64>(15)? != 0,
+                running_task_id: row.get::<Option<String>>(16)?,
+                pending_rerun: row.get::<i64>(17)? != 0,
+                last_run_unix_ms: row.get::<Option<i64>>(18)?,
+                last_status: row.get::<Option<String>>(19)?,
+                created_at: row.get::<String>(20)?,
+                updated_at: row.get::<String>(21)?,
             });
         }
         Ok(result)
@@ -207,8 +222,8 @@ impl StateStore {
         let mut rows = conn
             .query(
                 r#"
-                SELECT id, public_id, agent_id, prompt, content, tools, conflict_policy,
-                       state_target, store_target,
+                SELECT id, public_id, agent_id, job_kind, prompt, content, tools, conflict_policy,
+                       action_name, action_params, state_target, store_target,
                        next_run_unix_ms, interval_seconds,
                        overlap_policy, enabled, running_task_id, pending_rerun,
                        last_run_unix_ms, last_status, created_at, updated_at
@@ -225,22 +240,25 @@ impl StateStore {
                 id: row.get::<i64>(0)?,
                 public_id: row.get::<Vec<u8>>(1)?,
                 agent_id: row.get::<String>(2)?,
-                prompt: row.get::<String>(3)?,
-                content: row.get::<Option<String>>(4)?,
-                tools: row.get::<Option<String>>(5)?,
-                conflict_policy: row.get::<Option<String>>(6)?,
-                state_target: row.get::<Option<String>>(7)?,
-                store_target: row.get::<Option<String>>(8)?,
-                next_run_unix_ms: row.get::<i64>(9)?,
-                interval_seconds: row.get::<Option<i64>>(10)?.map(|v| v as u64),
-                overlap_policy: row.get::<String>(11)?,
-                enabled: row.get::<i64>(12)? != 0,
-                running_task_id: row.get::<Option<String>>(13)?,
-                pending_rerun: row.get::<i64>(14)? != 0,
-                last_run_unix_ms: row.get::<Option<i64>>(15)?,
-                last_status: row.get::<Option<String>>(16)?,
-                created_at: row.get::<String>(17)?,
-                updated_at: row.get::<String>(18)?,
+                job_kind: row.get::<String>(3)?,
+                prompt: row.get::<Option<String>>(4)?,
+                content: row.get::<Option<String>>(5)?,
+                tools: row.get::<Option<String>>(6)?,
+                conflict_policy: row.get::<Option<String>>(7)?,
+                action_name: row.get::<Option<String>>(8)?,
+                action_params: row.get::<Option<String>>(9)?,
+                state_target: row.get::<Option<String>>(10)?,
+                store_target: row.get::<Option<String>>(11)?,
+                next_run_unix_ms: row.get::<i64>(12)?,
+                interval_seconds: row.get::<Option<i64>>(13)?.map(|v| v as u64),
+                overlap_policy: row.get::<String>(14)?,
+                enabled: row.get::<i64>(15)? != 0,
+                running_task_id: row.get::<Option<String>>(16)?,
+                pending_rerun: row.get::<i64>(17)? != 0,
+                last_run_unix_ms: row.get::<Option<i64>>(18)?,
+                last_status: row.get::<Option<String>>(19)?,
+                created_at: row.get::<String>(20)?,
+                updated_at: row.get::<String>(21)?,
             });
         }
         Ok(result)
@@ -347,6 +365,39 @@ impl StateStore {
         Ok(())
     }
 
+    pub async fn mark_scheduled_job_action_completed(
+        &self,
+        id: i64,
+        next_run_unix_ms: i64,
+        enabled: bool,
+        last_run_unix_ms: i64,
+        last_status: &str,
+    ) -> Result<()> {
+        let conn = self.connect().await?;
+        conn.execute(
+            r#"
+            UPDATE scheduled_jobs
+            SET last_status = ?2,
+                next_run_unix_ms = ?3,
+                enabled = ?4,
+                last_run_unix_ms = ?5,
+                pending_rerun = 0,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?1
+            "#,
+            turso::params![
+                id,
+                last_status,
+                next_run_unix_ms,
+                if enabled { 1 } else { 0 },
+                last_run_unix_ms
+            ],
+        )
+        .await
+        .context("Failed to record scheduled action completion")?;
+        Ok(())
+    }
+
     pub async fn mark_scheduled_job_submit_failed(
         &self,
         id: i64,
@@ -390,10 +441,13 @@ impl StateStore {
         &self,
         id: i64,
         agent_id: &str,
-        prompt: &str,
+        job_kind: &str,
+        prompt: Option<&str>,
         content: Option<&str>,
         tools: Option<&str>,
         conflict_policy: Option<&str>,
+        action_name: Option<&str>,
+        action_params: Option<&str>,
         state_target: Option<&str>,
         store_target: Option<&str>,
         next_run_unix_ms: i64,
@@ -406,26 +460,32 @@ impl StateStore {
             r#"
             UPDATE scheduled_jobs
             SET agent_id = ?2,
-                prompt = ?3,
-                content = ?4,
-                tools = ?5,
-                conflict_policy = ?6,
-                state_target = ?7,
-                store_target = ?8,
-                next_run_unix_ms = ?9,
-                interval_seconds = ?10,
-                overlap_policy = ?11,
-                enabled = ?12,
+                job_kind = ?3,
+                prompt = ?4,
+                content = ?5,
+                tools = ?6,
+                conflict_policy = ?7,
+                action_name = ?8,
+                action_params = ?9,
+                state_target = ?10,
+                store_target = ?11,
+                next_run_unix_ms = ?12,
+                interval_seconds = ?13,
+                overlap_policy = ?14,
+                enabled = ?15,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             WHERE id = ?1
             "#,
             turso::params![
                 id,
                 agent_id,
+                job_kind,
                 prompt,
                 content,
                 tools,
                 conflict_policy,
+                action_name,
+                action_params,
                 state_target,
                 store_target,
                 next_run_unix_ms,

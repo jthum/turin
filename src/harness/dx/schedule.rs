@@ -36,7 +36,7 @@ fn normalize_schedule_opts_in_place(lua: &Lua, merged: &Table) -> LuaResult<()> 
 
 fn merge_schedule_opts(
     lua: &Lua,
-    prompt: String,
+    payload: Value,
     time_field: &str,
     time_value: Value,
     opts: Option<Table>,
@@ -48,7 +48,21 @@ fn merge_schedule_opts(
             merged.set(key, value)?;
         }
     }
-    merged.set("prompt", prompt)?;
+    match payload {
+        Value::String(prompt) => merged.set("prompt", prompt)?,
+        Value::Table(table) => {
+            for pair in table.pairs::<Value, Value>() {
+                let (key, value) = pair?;
+                merged.set(key, value)?;
+            }
+        }
+        other => {
+            return Err(mlua::Error::runtime(format!(
+                "schedule payload must be string or table, got {:?}",
+                other.type_name()
+            )));
+        }
+    }
     merged.set(time_field, time_value)?;
     normalize_schedule_opts_in_place(lua, &merged)?;
     Ok(merged)
@@ -103,8 +117,8 @@ pub fn register_schedule_dx(lua: &Lua) -> LuaResult<()> {
         schedule.set(
             "after",
             lua.create_function(
-                move |lua, (seconds, prompt, opts): (Value, String, Option<Table>)| {
-                    let merged = merge_schedule_opts(lua, prompt, "after_seconds", seconds, opts)?;
+                move |lua, (seconds, payload, opts): (Value, Value, Option<Table>)| {
+                    let merged = merge_schedule_opts(lua, payload, "after_seconds", seconds, opts)?;
                     call_and_raise_on_err(lua, &create_fn, merged, "runtime.schedule.create")
                 },
             )?,
@@ -116,9 +130,9 @@ pub fn register_schedule_dx(lua: &Lua) -> LuaResult<()> {
         schedule.set(
             "every",
             lua.create_function(
-                move |lua, (seconds, prompt, opts): (Value, String, Option<Table>)| {
+                move |lua, (seconds, payload, opts): (Value, Value, Option<Table>)| {
                     let merged =
-                        merge_schedule_opts(lua, prompt, "interval_seconds", seconds, opts)?;
+                        merge_schedule_opts(lua, payload, "interval_seconds", seconds, opts)?;
                     call_and_raise_on_err(lua, &create_fn, merged, "runtime.schedule.create")
                 },
             )?,
@@ -130,9 +144,9 @@ pub fn register_schedule_dx(lua: &Lua) -> LuaResult<()> {
         schedule.set(
             "at",
             lua.create_function(
-                move |lua, (unix_ms, prompt, opts): (Value, String, Option<Table>)| {
+                move |lua, (unix_ms, payload, opts): (Value, Value, Option<Table>)| {
                     let merged =
-                        merge_schedule_opts(lua, prompt, "next_run_unix_ms", unix_ms, opts)?;
+                        merge_schedule_opts(lua, payload, "next_run_unix_ms", unix_ms, opts)?;
                     call_and_raise_on_err(lua, &create_fn, merged, "runtime.schedule.create")
                 },
             )?,
