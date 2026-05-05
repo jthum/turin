@@ -23,6 +23,8 @@ impl HarnessSchedulerAccess {
 
     pub async fn create_job(&self, params: ScheduleCreateParams) -> Result<ScheduleJobDetail> {
         let public_id = uuid::Uuid::now_v7();
+        let content = serialize_json(params.content.as_ref())?;
+        let tools = serialize_json(params.tools.as_ref())?;
         let state_target = serialize_store_target(
             params
                 .persistence
@@ -41,6 +43,9 @@ impl HarnessSchedulerAccess {
                 public_id,
                 &params.agent_id,
                 &params.prompt,
+                content.as_deref(),
+                tools.as_deref(),
+                params.conflict_policy.as_deref(),
                 state_target.as_deref(),
                 store_target.as_deref(),
                 params.next_run_unix_ms,
@@ -96,6 +101,17 @@ impl HarnessSchedulerAccess {
         let persistence = params
             .persistence
             .or_else(|| scheduled_job_persistence(&row).ok().flatten());
+        let content = match params.content {
+            Some(content) => Some(content),
+            None => parse_json(row.content.as_deref())?,
+        };
+        let tools = match params.tools {
+            Some(tools) => Some(tools),
+            None => parse_json(row.tools.as_deref())?,
+        };
+        let conflict_policy = params.conflict_policy.or(row.conflict_policy.clone());
+        let content_json = serialize_json(content.as_ref())?;
+        let tools_json = serialize_json(tools.as_ref())?;
         let state_target = serialize_store_target(
             persistence
                 .as_ref()
@@ -111,6 +127,9 @@ impl HarnessSchedulerAccess {
                 row.id,
                 params.agent_id.as_deref().unwrap_or(&row.agent_id),
                 params.prompt.as_deref().unwrap_or(&row.prompt),
+                content_json.as_deref(),
+                tools_json.as_deref(),
+                conflict_policy.as_deref(),
                 state_target.as_deref(),
                 store_target.as_deref(),
                 params.next_run_unix_ms.unwrap_or(row.next_run_unix_ms),
@@ -192,6 +211,9 @@ fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {
         public_id: public_id.clone(),
         agent_id: row.agent_id,
         prompt: row.prompt,
+        content: parse_json(row.content.as_deref()).ok().flatten(),
+        tools: parse_json(row.tools.as_deref()).ok().flatten(),
+        conflict_policy: row.conflict_policy,
         persistence,
         next_run_unix_ms: row.next_run_unix_ms,
         interval_seconds: row.interval_seconds,
@@ -233,6 +255,25 @@ fn serialize_store_target(target: Option<&StoreTargetParams>) -> Result<Option<S
 
 fn parse_store_target(raw: Option<&str>) -> Result<Option<StoreTargetParams>> {
     raw.map(serde_json::from_str)
+        .transpose()
+        .map_err(anyhow::Error::from)
+}
+
+fn parse_json<T>(raw: Option<&str>) -> Result<Option<T>>
+where
+    T: serde::de::DeserializeOwned,
+{
+    raw.map(serde_json::from_str)
+        .transpose()
+        .map_err(anyhow::Error::from)
+}
+
+fn serialize_json<T>(value: Option<&T>) -> Result<Option<String>>
+where
+    T: serde::Serialize,
+{
+    value
+        .map(serde_json::to_string)
         .transpose()
         .map_err(anyhow::Error::from)
 }

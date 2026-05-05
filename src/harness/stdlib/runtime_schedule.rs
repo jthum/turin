@@ -3,6 +3,7 @@ use serde::Deserialize;
 use turin_daemon_protocol::{
     ContextPersistenceParams, ScheduleCreateParams, ScheduleUpdateParams, StoreTargetParams,
 };
+use turin_types::{TaskInputContent, ToolsConfig};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{bridge_async_result, nil_err, ok_value};
@@ -11,6 +12,12 @@ use crate::harness::stdlib::governance_support::{current_agent_id, require_capab
 #[derive(Debug, Deserialize)]
 struct LuaScheduleCreateOpts {
     prompt: String,
+    #[serde(default)]
+    content: Option<serde_json::Value>,
+    #[serde(default)]
+    tools: Option<serde_json::Value>,
+    #[serde(default)]
+    conflict_policy: Option<String>,
     #[serde(default)]
     agent: Option<String>,
     #[serde(default)]
@@ -34,6 +41,12 @@ struct LuaScheduleUpdateOpts {
     agent: Option<String>,
     #[serde(default)]
     prompt: Option<String>,
+    #[serde(default)]
+    content: Option<serde_json::Value>,
+    #[serde(default)]
+    tools: Option<serde_json::Value>,
+    #[serde(default)]
+    conflict_policy: Option<String>,
     #[serde(default)]
     next_run_unix_ms: Option<i64>,
     #[serde(default)]
@@ -122,6 +135,22 @@ fn parse_persistence(
     Ok(Some(ContextPersistenceParams { state, store }))
 }
 
+fn parse_schedule_content(
+    content: Option<serde_json::Value>,
+) -> LuaResult<Option<Vec<TaskInputContent>>> {
+    content
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|e| mlua::Error::runtime(format!("invalid runtime.schedule content: {}", e)))
+}
+
+fn parse_schedule_tools(content: Option<serde_json::Value>) -> LuaResult<Option<ToolsConfig>> {
+    content
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|e| mlua::Error::runtime(format!("invalid runtime.schedule tools: {}", e)))
+}
+
 fn is_path_like(selector: &str) -> bool {
     selector.contains('/')
         || selector.contains('\\')
@@ -189,6 +218,9 @@ fn schedule_create_params(
     Ok(ScheduleCreateParams {
         agent_id: parsed.agent.unwrap_or_else(|| current_agent_id(app_data)),
         prompt: parsed.prompt,
+        content: parse_schedule_content(parsed.content)?,
+        tools: parse_schedule_tools(parsed.tools)?,
+        conflict_policy: parsed.conflict_policy,
         persistence: parse_persistence(parsed.persistence)?,
         next_run_unix_ms,
         interval_seconds,
@@ -228,6 +260,9 @@ fn schedule_update_params(lua: &Lua, opts: Table) -> LuaResult<ScheduleUpdatePar
         id: parsed.id,
         agent_id: parsed.agent,
         prompt: parsed.prompt,
+        content: parse_schedule_content(parsed.content)?,
+        tools: parse_schedule_tools(parsed.tools)?,
+        conflict_policy: parsed.conflict_policy,
         persistence: parse_persistence(parsed.persistence)?,
         next_run_unix_ms,
         interval_seconds,

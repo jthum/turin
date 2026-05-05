@@ -854,6 +854,13 @@ Daemon-backed durable scheduler API.
 ```lua
 {
   prompt = "Follow up on the failed build", -- required
+  content = {
+    { type = "text", text = "Use the attached QA context" },
+  },
+  tools = {
+    allow = { "shell_exec" },
+  },
+  conflict_policy = "detached",
   agent = "default",                        -- optional, defaults to current agent
   next_run_unix_ms = 1760000000000,        -- exact due time
   after_seconds = 300,                     -- helper-style alternative
@@ -873,6 +880,13 @@ Daemon-backed durable scheduler API.
 {
   id = "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d47", -- required
   prompt = "Follow up after deploy",
+  content = {
+    { type = "text", text = "Preserve the prior test artifact context" },
+  },
+  tools = {
+    allow = { "shell_exec" },
+  },
+  conflict_policy = "detached",
   next_run_unix_ms = 1760003600000,
   after_seconds = 300,                         -- helper-style alternative
   interval_seconds = 1800,
@@ -896,6 +910,7 @@ Rules:
   - `"skip"`
   - `"queue"`
 - `agent` must be the current agent or another configured agent id
+- `content`, `tools`, and `conflict_policy` follow the same shapes used by `task.submit(...)`
 - `runtime.schedule.list(...)` currently supports:
   - `{ agent = "reviewer" }`
 

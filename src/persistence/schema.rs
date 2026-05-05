@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 18;
+pub(crate) const SCHEMA_VERSION: u32 = 19;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -180,6 +180,9 @@ CREATE TABLE IF NOT EXISTS scheduled_jobs (
     public_id        BLOB(16) UNIQUE NOT NULL,
     agent_id         TEXT NOT NULL,
     prompt           TEXT NOT NULL,
+    content          TEXT,
+    tools            TEXT,
+    conflict_policy  TEXT,
     state_target     TEXT,
     store_target     TEXT,
     next_run_unix_ms INTEGER NOT NULL,
@@ -285,6 +288,9 @@ pub struct ScheduledJobRow {
     pub public_id: Vec<u8>,
     pub agent_id: String,
     pub prompt: String,
+    pub content: Option<String>,
+    pub tools: Option<String>,
+    pub conflict_policy: Option<String>,
     pub state_target: Option<String>,
     pub store_target: Option<String>,
     pub next_run_unix_ms: i64,

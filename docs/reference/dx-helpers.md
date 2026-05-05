@@ -125,6 +125,7 @@ Notes:
 - this is a daemon-backed surface and requires a daemon-managed runtime
 - scheduled jobs live in daemon-owned `jobs.db`
 - jobs may still target different `state` / `store` persistence contexts
+- `runtime.schedule.create(...)` / `update(...)` may also carry structured `content`, `tools`, and `conflict_policy` fields when a scheduled prompt needs richer task input than a bare string
 - `schedule.update(...)` changes only the fields you provide; it does not mutate the already-running attempt for a currently active job
 
 ## Graph Helpers

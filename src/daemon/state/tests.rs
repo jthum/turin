@@ -13,6 +13,7 @@ use turin_daemon_protocol::{
     ContextPersistenceParams, PromoteTaskParams, SessionSearchScope, SidestepContextTargetParams,
     SidestepModeParams, SidestepTaskParams, StoreTargetParams,
 };
+use turin_types::{TaskInputContent, ToolSelectionConfig, ToolsConfig};
 
 fn write_agent_with_state_path(root: &Path, agent_id: &str, state_path: &str) -> Result<()> {
     let agent_dir = root
@@ -231,6 +232,9 @@ async fn scheduled_one_shot_job_submits_and_disables_after_completion() -> Resul
         .create_scheduled_job(CreateScheduledJobInput {
             agent_id: "default".to_string(),
             prompt: "Hello from scheduler".to_string(),
+            content: None,
+            tools: None,
+            conflict_policy: None,
             persistence: None,
             next_run_unix_ms: now_unix_ms - 1,
             interval_seconds: None,
@@ -292,6 +296,9 @@ async fn scheduled_interval_job_reschedules_after_submit() -> Result<()> {
         .create_scheduled_job(CreateScheduledJobInput {
             agent_id: "default".to_string(),
             prompt: "Heartbeat run".to_string(),
+            content: None,
+            tools: None,
+            conflict_policy: None,
             persistence: None,
             next_run_unix_ms: now_unix_ms - 1,
             interval_seconds: Some(60),
@@ -363,6 +370,9 @@ provider = "noop"
         .create_scheduled_job(CreateScheduledJobInput {
             agent_id: "default".to_string(),
             prompt: "Run in project alpha store".to_string(),
+            content: None,
+            tools: None,
+            conflict_policy: None,
             persistence: Some(ContextPersistenceParams {
                 state: Some(StoreTargetParams {
                     path: None,
@@ -426,6 +436,17 @@ async fn scheduled_job_lifecycle_ops_round_trip() -> Result<()> {
         .create_scheduled_job(CreateScheduledJobInput {
             agent_id: "default".to_string(),
             prompt: "Lifecycle check".to_string(),
+            content: Some(vec![TaskInputContent::Text {
+                text: "Use persistent QA context".to_string(),
+            }]),
+            tools: Some(ToolsConfig {
+                selection: ToolSelectionConfig {
+                    allow: Some(vec!["shell_exec".to_string()]),
+                    exclude: Vec::new(),
+                },
+                ..ToolsConfig::default()
+            }),
+            conflict_policy: Some("detached".to_string()),
             persistence: None,
             next_run_unix_ms: now_unix_ms + 60_000,
             interval_seconds: Some(300),
@@ -440,6 +461,19 @@ async fn scheduled_job_lifecycle_ops_round_trip() -> Result<()> {
         .expect("scheduled job should exist");
     assert_eq!(fetched.public_id, created.public_id);
     assert!(fetched.enabled);
+    assert!(matches!(
+        fetched.content.as_deref(),
+        Some([TaskInputContent::Text { text }]) if text == "Use persistent QA context"
+    ));
+    assert_eq!(
+        fetched
+            .tools
+            .as_ref()
+            .and_then(|tools| tools.selection.allow.as_ref())
+            .cloned(),
+        Some(vec!["shell_exec".to_string()])
+    );
+    assert_eq!(fetched.conflict_policy.as_deref(), Some("detached"));
 
     let disabled = state
         .set_scheduled_job_enabled(&created.public_id, false)

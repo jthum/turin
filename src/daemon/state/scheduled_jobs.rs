@@ -4,6 +4,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Result, anyhow};
 use serde::Serialize;
 use turin_daemon_protocol::{ContextPersistenceParams, ScheduleJobDetail, StoreTargetParams};
+use turin_types::{TaskInputContent, ToolsConfig};
 
 use super::DaemonState;
 use crate::kernel::agent_manager::TaskStatusSnapshot;
@@ -47,6 +48,9 @@ impl std::str::FromStr for ScheduledJobOverlapPolicy {
 pub struct CreateScheduledJobInput {
     pub agent_id: String,
     pub prompt: String,
+    pub content: Option<Vec<TaskInputContent>>,
+    pub tools: Option<ToolsConfig>,
+    pub conflict_policy: Option<String>,
     pub persistence: Option<ContextPersistenceParams>,
     pub next_run_unix_ms: i64,
     pub interval_seconds: Option<u64>,
@@ -58,6 +62,9 @@ pub struct CreateScheduledJobInput {
 pub struct UpdateScheduledJobInput {
     pub agent_id: Option<String>,
     pub prompt: Option<String>,
+    pub content: Option<Vec<TaskInputContent>>,
+    pub tools: Option<ToolsConfig>,
+    pub conflict_policy: Option<String>,
     pub persistence: Option<ContextPersistenceParams>,
     pub next_run_unix_ms: Option<i64>,
     pub interval_seconds: Option<u64>,
@@ -87,6 +94,8 @@ impl DaemonState {
         let _ = self.resolve_scheduled_job_persistence(input.persistence.as_ref())?;
         let store = Arc::clone(&self.jobs_store);
         let public_id = uuid::Uuid::now_v7();
+        let content = serialize_json(input.content.as_ref())?;
+        let tools = serialize_json(input.tools.as_ref())?;
         let state_target = serialize_store_target(
             input
                 .persistence
@@ -104,6 +113,9 @@ impl DaemonState {
                 public_id,
                 &input.agent_id,
                 &input.prompt,
+                content.as_deref(),
+                tools.as_deref(),
+                input.conflict_policy.as_deref(),
                 state_target.as_deref(),
                 store_target.as_deref(),
                 input.next_run_unix_ms,
@@ -149,6 +161,15 @@ impl DaemonState {
         self.ensure_enabled_agent(&agent_id)?;
 
         let prompt = input.prompt.unwrap_or_else(|| row.prompt.clone());
+        let content = match input.content {
+            Some(content) => Some(content),
+            None => parse_json(row.content.as_deref())?,
+        };
+        let tools = match input.tools {
+            Some(tools) => Some(tools),
+            None => parse_json(row.tools.as_deref())?,
+        };
+        let conflict_policy = input.conflict_policy.or(row.conflict_policy.clone());
         let next_run_unix_ms = input.next_run_unix_ms.unwrap_or(row.next_run_unix_ms);
         let interval_seconds = input.interval_seconds.or(row.interval_seconds);
         let overlap_policy = input
@@ -166,6 +187,8 @@ impl DaemonState {
             Some(persistence) => Some(persistence),
             None => scheduled_job_persistence(&row)?,
         };
+        let content_json = serialize_json(content.as_ref())?;
+        let tools_json = serialize_json(tools.as_ref())?;
         let _ = self.resolve_scheduled_job_persistence(persistence.as_ref())?;
         let state_target =
             serialize_store_target(persistence.as_ref().and_then(|value| value.state.as_ref()))?;
@@ -177,6 +200,9 @@ impl DaemonState {
                 row.id,
                 &agent_id,
                 &prompt,
+                content_json.as_deref(),
+                tools_json.as_deref(),
+                conflict_policy.as_deref(),
                 state_target.as_deref(),
                 store_target.as_deref(),
                 next_run_unix_ms,
@@ -389,7 +415,7 @@ impl DaemonState {
             .submit_to_session(
                 &live.session_id,
                 Some(&live.slot_id),
-                QueuedTask::ad_hoc(job.prompt.clone()),
+                scheduled_job_task(job)?,
                 None,
             )
             .await?;
@@ -442,6 +468,9 @@ fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {
         public_id: public_id.clone(),
         agent_id: row.agent_id,
         prompt: row.prompt,
+        content: parse_json(row.content.as_deref()).ok().flatten(),
+        tools: parse_json(row.tools.as_deref()).ok().flatten(),
+        conflict_policy: row.conflict_policy,
         persistence,
         next_run_unix_ms: row.next_run_unix_ms,
         interval_seconds: row.interval_seconds,
@@ -455,6 +484,21 @@ fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {
         created_at: row.created_at,
         updated_at: row.updated_at,
     }
+}
+
+fn scheduled_job_task(job: &ScheduledJobRow) -> Result<QueuedTask> {
+    let mut task = QueuedTask::ad_hoc(job.prompt.clone());
+    task.content = parse_json(job.content.as_deref())?;
+    if let Some(tools) = parse_json::<ToolsConfig>(job.tools.as_deref())?
+        && !tools.is_empty()
+    {
+        task.tools = Some(tools);
+    }
+    task.conflict_policy = match job.conflict_policy.as_deref() {
+        Some(conflict_policy) => Some(conflict_policy.parse().map_err(anyhow::Error::msg)?),
+        None => None,
+    };
+    Ok(task)
 }
 
 fn now_unix_ms() -> i64 {
@@ -500,6 +544,25 @@ fn serialize_store_target(target: Option<&StoreTargetParams>) -> Result<Option<S
 
 fn parse_store_target(raw: Option<&str>) -> Result<Option<StoreTargetParams>> {
     raw.map(serde_json::from_str)
+        .transpose()
+        .map_err(anyhow::Error::from)
+}
+
+fn parse_json<T>(raw: Option<&str>) -> Result<Option<T>>
+where
+    T: serde::de::DeserializeOwned,
+{
+    raw.map(serde_json::from_str)
+        .transpose()
+        .map_err(anyhow::Error::from)
+}
+
+fn serialize_json<T>(value: Option<&T>) -> Result<Option<String>>
+where
+    T: serde::Serialize,
+{
+    value
+        .map(serde_json::to_string)
         .transpose()
         .map_err(anyhow::Error::from)
 }

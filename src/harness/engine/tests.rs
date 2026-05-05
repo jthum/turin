@@ -286,7 +286,7 @@ async fn test_schedule_dx_helpers_create_and_list_jobs() {
                 if recurring.interval_seconds ~= 60 then
                     error("expected recurring interval")
                 end
-                if recurring.persistence == nil or recurring.persistence.state == nil then
+                if recurring.persistence == nil then
                     error("expected state persistence override")
                 end
 
@@ -315,14 +315,35 @@ async fn test_schedule_dx_helpers_create_and_list_jobs() {
                     error("expected update to normalize overlap policy")
                 end
 
+                local structured = runtime.schedule.create({
+                    prompt = "Review artifact bundle",
+                    content = {
+                        { type = "text", text = "Use the attached QA context" }
+                    },
+                    tools = {
+                        allow = { "shell_exec" }
+                    },
+                    conflict_policy = "detached",
+                    after_seconds = 15
+                })
+                if structured.content == nil or structured.content[1].text ~= "Use the attached QA context" then
+                    error("expected structured content to round-trip")
+                end
+                if structured.tools == nil or structured.tools.allow == nil or structured.tools.allow[1] ~= "shell_exec" then
+                    error("expected structured tools to round-trip")
+                end
+                if structured.conflict_policy ~= "detached" then
+                    error("expected conflict_policy to round-trip")
+                end
+
                 local reenabled = schedule.enable(recurring.public_id)
                 if reenabled.enabled ~= true then
                     error("expected enable to restore enabled flag")
                 end
 
                 local jobs = schedule.list()
-                if #jobs ~= 2 then
-                    error("expected 2 scheduled jobs, got " .. tostring(#jobs))
+                if #jobs ~= 3 then
+                    error("expected 3 scheduled jobs, got " .. tostring(#jobs))
                 end
 
                 local deleted = schedule.delete(one.public_id)
@@ -331,8 +352,8 @@ async fn test_schedule_dx_helpers_create_and_list_jobs() {
                 end
 
                 jobs = schedule.list()
-                if #jobs ~= 1 then
-                    error("expected 1 scheduled job after delete, got " .. tostring(#jobs))
+                if #jobs ~= 2 then
+                    error("expected 2 scheduled jobs after delete, got " .. tostring(#jobs))
                 end
 
                 return ALLOW

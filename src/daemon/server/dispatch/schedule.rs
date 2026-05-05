@@ -31,6 +31,9 @@ pub(super) async fn create(
         .create_scheduled_job(CreateScheduledJobInput {
             agent_id: params.agent_id,
             prompt: params.prompt,
+            content: params.content,
+            tools: params.tools,
+            conflict_policy: params.conflict_policy,
             persistence: params.persistence,
             next_run_unix_ms: params.next_run_unix_ms,
             interval_seconds: params.interval_seconds,
@@ -72,6 +75,9 @@ pub(super) async fn update(
             UpdateScheduledJobInput {
                 agent_id: params.agent_id,
                 prompt: params.prompt,
+                content: params.content,
+                tools: params.tools,
+                conflict_policy: params.conflict_policy,
                 persistence: params.persistence,
                 next_run_unix_ms: params.next_run_unix_ms,
                 interval_seconds: params.interval_seconds,

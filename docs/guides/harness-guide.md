@@ -359,6 +359,7 @@ Notes:
 - it only works in daemon-managed runtimes
 - recurring jobs currently support overlap policies such as `skip` and `queue`
 - job persistence may be redirected with `state = ...`, `store = ...`, or `persistence = {...}`
+- when needed, `runtime.schedule.create(...)` can also carry structured `content`, tool allowlists, and conflict policy just like `task.submit(...)`
 
 ### Grant wrapper
 
