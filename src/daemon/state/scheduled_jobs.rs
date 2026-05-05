@@ -647,7 +647,36 @@ impl DaemonState {
                 self.set_channel_enabled(&id, false).await?;
                 Ok("completed: channel disabled".to_string())
             }
-            other => anyhow::bail!("Unsupported scheduled action '{}'", other),
+            _ => self.execute_harness_scheduled_action(&job.agent_id, &action),
+        }
+    }
+
+    fn execute_harness_scheduled_action(
+        &self,
+        agent_id: &str,
+        action: &ScheduleActionParams,
+    ) -> Result<String> {
+        let runtime = self.kernel.runtime_for_agent(agent_id);
+        let instance = runtime.create_instance(self.kernel.harness_init_context())?;
+        let result = instance.invoke_declared_action_for_agent(
+            agent_id,
+            &action.name,
+            action.params.clone().unwrap_or(serde_json::Value::Null),
+        )?;
+        match result {
+            Some(serde_json::Value::String(message)) if !message.is_empty() => {
+                Ok(format!("completed: {}", message))
+            }
+            Some(serde_json::Value::Object(map)) => {
+                if let Some(status) = map.get("status").and_then(|value| value.as_str())
+                    && !status.is_empty()
+                {
+                    return Ok(format!("completed: {}", status));
+                }
+                Ok("completed".to_string())
+            }
+            Some(_) => Ok("completed".to_string()),
+            None => anyhow::bail!("Unsupported scheduled action '{}'", action.name),
         }
     }
 

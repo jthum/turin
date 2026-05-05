@@ -376,6 +376,18 @@ Notes:
   - `agent.disable`
   - `channel.enable`
   - `channel.disable`
+- custom scheduled action names may also be defined in the harness itself:
+
+```lua
+action.define("ops.enqueue_followup", function(params)
+  runtime.schedule.create({
+    prompt = params.prompt or "Follow up",
+    after_seconds = params.after_seconds or 30,
+  })
+  return { status = "queued followup" }
+end)
+```
+
 - when needed, `runtime.schedule.create(...)` / `update(...)` can also carry structured `content`, tool allowlists, and conflict policy just like `task.submit(...)`
 
 ### Grant wrapper

@@ -135,6 +135,8 @@ Notes:
   - `agent.disable`
   - `channel.enable`
   - `channel.disable`
+- custom action names may be defined at harness load time with:
+  - `action.define("qa.run_smoke", function(params) ... end)`
 - `runtime.schedule.create(...)` / `update(...)` may also carry structured `content`, `tools`, and `conflict_policy` fields when a scheduled prompt needs richer task input than a bare string
 - `schedule.update(...)` changes only the fields you provide; it does not mutate the already-running attempt for a currently active job
 

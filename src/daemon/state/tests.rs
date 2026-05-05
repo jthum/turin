@@ -587,6 +587,104 @@ async fn scheduled_action_job_can_disable_agent() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn scheduled_harness_action_can_enqueue_followup_job() -> Result<()> {
+    let temp = tempdir()?;
+    std::fs::create_dir_all(temp.path().join("default-harness"))?;
+    std::fs::write(
+        temp.path().join("default-harness").join("main.lua"),
+        r#"
+            action.define("ops.enqueue_followup", function(params)
+                runtime.schedule.create({
+                    prompt = params.prompt or "Follow up",
+                    after_seconds = params.after_seconds or 30
+                })
+                return {
+                    status = "queued followup"
+                }
+            end)
+        "#,
+    )?;
+    let config_path = temp.path().join(".turin").join("config.toml");
+    std::fs::create_dir_all(config_path.parent().expect("config parent"))?;
+    std::fs::write(
+        &config_path,
+        r#"[agent]
+id = "default"
+system_prompt = "bootstrap"
+model = "mock-model"
+provider = "mock"
+
+[kernel]
+workspace_root = "."
+
+[persistence.state]
+path = "state.db"
+
+[harness]
+directory = "default-harness"
+fs_root = "."
+
+[providers.mock]
+type = "mock"
+
+[embeddings]
+provider = "noop"
+"#,
+    )?;
+
+    let mut state = DaemonState::load(&config_path).await?;
+    let now_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64;
+    let job = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: None,
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action: Some(ScheduleActionParams {
+                name: "ops.enqueue_followup".to_string(),
+                params: Some(json!({
+                    "prompt": "Follow up from harness action",
+                    "after_seconds": 30
+                })),
+            }),
+            persistence: None,
+            next_run_unix_ms: now_unix_ms - 1,
+            interval_seconds: None,
+            overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            work_key: None,
+            max_concurrency: None,
+            enabled: true,
+        })
+        .await?;
+
+    state.scheduler_tick().await?;
+    let jobs = state.list_scheduled_jobs().await?;
+    assert_eq!(jobs.len(), 2, "expected original action job plus follow-up job");
+    let finished = jobs
+        .iter()
+        .find(|entry| entry.id == job.id)
+        .expect("scheduled harness action should remain visible");
+    assert_eq!(
+        finished.last_status.as_deref(),
+        Some("completed: queued followup")
+    );
+    let follow_up = jobs
+        .iter()
+        .find(|entry| entry.id != job.id)
+        .expect("follow-up job should exist");
+    assert_eq!(
+        follow_up.prompt.as_deref(),
+        Some("Follow up from harness action")
+    );
+    assert!(follow_up.action.is_none());
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn scheduled_job_lifecycle_ops_round_trip() -> Result<()> {
     let temp = tempdir()?;

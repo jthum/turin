@@ -587,6 +587,36 @@ fn test_engine_invokes_virtual_tool_result_handler() {
 }
 
 #[test]
+fn test_engine_invokes_declared_action_handler() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            action.define("qa.run_smoke", function(params)
+                return {
+                    status = "queued " .. tostring(params.suite)
+                }
+            end)
+            "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+
+    let result = engine
+        .invoke_declared_action_for_agent(
+            "test-agent",
+            "qa.run_smoke",
+            serde_json::json!({ "suite": "checkout" }),
+        )
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(result["status"], "queued checkout");
+}
+
+#[test]
 fn test_engine_imports_nested_module_from_subdirectory() {
     let dir = TempDir::new().unwrap();
     std::fs::create_dir_all(dir.path().join("modules")).unwrap();

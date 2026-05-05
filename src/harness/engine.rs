@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use tracing::error;
 
 use crate::harness::globals::{self, HarnessAppData, HarnessExecutionBinding};
-use crate::harness::stdlib::tool_bindings;
+use crate::harness::stdlib::{action_bindings, tool_bindings};
 use crate::harness::verdict::{Verdict, compose_verdicts};
 use crate::harness::virtual_tools::{
     DeclaredVirtualTool, VirtualToolPlan, VirtualToolResultResolution,
@@ -458,6 +458,28 @@ impl HarnessEngine {
         tool_bindings::declared_virtual_tools(&self.lua)
     }
 
+    pub fn invoke_declared_action_for_agent(
+        &self,
+        agent_id: &str,
+        name: &str,
+        params: serde_json::Value,
+    ) -> Result<Option<serde_json::Value>> {
+        let previous_agent = self
+            .lua
+            .app_data_ref::<HarnessAppData>()
+            .and_then(|app_data| {
+                app_data
+                    .execution_ctx
+                    .lock()
+                    .ok()
+                    .and_then(|lock| lock.agent_id.clone())
+            });
+        self.set_active_action_agent(Some(agent_id));
+        let result = action_bindings::invoke_declared_action(&self.lua, name, params);
+        self.set_active_action_agent(previous_agent.as_deref());
+        result
+    }
+
     pub fn invoke_virtual_tool(
         &self,
         name: &str,
@@ -477,6 +499,14 @@ impl HarnessEngine {
 
     pub fn discard_virtual_tool_result_handler(&self, key: &str) -> Result<()> {
         tool_bindings::discard_virtual_result_handler(&self.lua, key)
+    }
+
+    fn set_active_action_agent(&self, agent_id: Option<&str>) {
+        if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
+            && let Ok(mut lock) = app_data.execution_ctx.lock()
+        {
+            lock.agent_id = agent_id.map(|value| value.to_string());
+        }
     }
 
     pub fn set_loading_phase(&self, is_loading: bool) {

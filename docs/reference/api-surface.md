@@ -170,6 +170,7 @@ Current DX helper globals and helper-layer extensions:
 - `scope(kind, key, opts?)`
 - `graph.*`
 - `schedule.*`
+- `action.define(...)`
 - `session.remember(...)`
 - `session.recall(...)`
 - `session.get(...)`

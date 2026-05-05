@@ -127,6 +127,7 @@ These are layered on top of the existing scoped aliases.
 - `graph.branch(id_or_row) -> graph_ref`
 - `graph.turn(id_or_row) -> graph_ref`
 - `graph.ref(kind, id_or_row) -> graph_ref`
+- `action.define(name, fn) -> nil`
 - `schedule.after(seconds, payload, opts?) -> job`
 - `schedule.every(seconds, payload, opts?) -> job`
 - `schedule.at(unix_ms, payload, opts?) -> job`
@@ -324,6 +325,14 @@ Notes:
   - `agent.disable`
   - `channel.enable`
   - `channel.disable`
+- custom scheduled action names may be registered during harness load with:
+
+```lua
+action.define("qa.run_smoke", function(params)
+  return { status = "queued " .. tostring(params.suite) }
+end)
+```
+
 - `schedule.delete(...)` rejects running jobs rather than orphaning active execution
 - `schedule.update(...)` only changes the fields you provide; running attempts continue with the task that was already submitted
 
@@ -959,6 +968,7 @@ Rules:
   - `agent.disable`
   - `channel.enable`
   - `channel.disable`
+- other action names may be harness-defined, provided the target harness registered them with `action.define(...)`
 - `runtime.schedule.list(...)` currently supports:
   - `{ agent = "reviewer" }`
 

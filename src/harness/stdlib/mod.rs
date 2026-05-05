@@ -1,3 +1,4 @@
+pub mod action_bindings;
 pub mod agent_bindings;
 pub mod binding_common;
 pub mod context_selectors;
