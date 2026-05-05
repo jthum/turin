@@ -192,6 +192,7 @@ Current DX helper globals and helper-layer extensions:
 - `schedule.after(...)`
 - `schedule.every(...)`
 - `schedule.at(...)`
+- `schedule.update(...)`
 
 These are helper-layer conveniences over the canonical substrate and should be evaluated separately during DX review.
 

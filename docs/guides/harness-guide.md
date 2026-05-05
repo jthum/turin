@@ -342,6 +342,10 @@ function on_turn_prepare(ctx)
 
   local fetched = schedule.get(nightly.public_id)
   if fetched and fetched.enabled then
+    schedule.update(fetched.public_id, {
+      interval_seconds = 7200,
+      overlap = "queue",
+    })
     session.set("scheduler_job", fetched.public_id)
   end
 

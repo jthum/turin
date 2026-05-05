@@ -50,6 +50,7 @@ end
 - `schedule.after(...)`
 - `schedule.every(...)`
 - `schedule.at(...)`
+- `schedule.update(...)`
 - `schedule.get(...)`
 - `schedule.enable(...)`
 - `schedule.disable(...)`
@@ -112,6 +113,7 @@ Preferred scheduler helpers:
 - `schedule.after(seconds, prompt, opts?)`
 - `schedule.every(seconds, prompt, opts?)`
 - `schedule.at(unix_ms, prompt, opts?)`
+- `schedule.update(public_id, opts?)`
 - `schedule.get(public_id)`
 - `schedule.list(opts?)`
 - `schedule.enable(public_id)`
@@ -123,6 +125,7 @@ Notes:
 - this is a daemon-backed surface and requires a daemon-managed runtime
 - scheduled jobs live in daemon-owned `jobs.db`
 - jobs may still target different `state` / `store` persistence contexts
+- `schedule.update(...)` changes only the fields you provide; it does not mutate the already-running attempt for a currently active job
 
 ## Graph Helpers
 

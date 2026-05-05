@@ -130,6 +130,7 @@ These are layered on top of the existing scoped aliases.
 - `schedule.after(seconds, prompt, opts?) -> job`
 - `schedule.every(seconds, prompt, opts?) -> job`
 - `schedule.at(unix_ms, prompt, opts?) -> job`
+- `schedule.update(public_id, opts?) -> job`
 - `schedule.get(public_id) -> job`
 - `schedule.list(opts?) -> jobs`
 - `schedule.enable(public_id) -> job`
@@ -259,6 +260,7 @@ Notes:
 - `schedule.after(seconds, prompt, opts?) -> job`
 - `schedule.every(seconds, prompt, opts?) -> job`
 - `schedule.at(unix_ms, prompt, opts?) -> job`
+- `schedule.update(public_id, opts?) -> job`
 - `schedule.get(public_id) -> job`
 - `schedule.list(opts?) -> jobs`
 - `schedule.enable(public_id) -> job`
@@ -277,12 +279,27 @@ Notes:
 }
 ```
 
+`opts` for `update`:
+
+```lua
+{
+  prompt = "Re-run QA sweep",
+  after_seconds = 300,
+  interval_seconds = 1200,
+  overlap = "queue",
+  enabled = true,
+  state = "ops",
+  store = { path = "./project.db" },
+}
+```
+
 Notes:
 
 - `schedule.*` is helper-layer sugar over the daemon-backed scheduler
 - it requires a daemon-managed runtime and raises outside that environment
 - `state = ...` / `store = ...` are shorthand for `persistence = { state = ..., store = ... }`
 - `schedule.delete(...)` rejects running jobs rather than orphaning active execution
+- `schedule.update(...)` only changes the fields you provide; running attempts continue with the task that was already submitted
 
 ### DX `runtime.governance.grant(...)`
 
@@ -825,6 +842,7 @@ Governance integration:
 Daemon-backed durable scheduler API.
 
 - `runtime.schedule.create(opts) -> job`
+- `runtime.schedule.update(opts) -> job`
 - `runtime.schedule.get(public_id) -> job`
 - `runtime.schedule.list(opts?) -> jobs`
 - `runtime.schedule.enable(public_id) -> job`
@@ -849,12 +867,31 @@ Daemon-backed durable scheduler API.
 }
 ```
 
+`runtime.schedule.update(opts)`:
+
+```lua
+{
+  id = "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d47", -- required
+  prompt = "Follow up after deploy",
+  next_run_unix_ms = 1760003600000,
+  after_seconds = 300,                         -- helper-style alternative
+  interval_seconds = 1800,
+  overlap_policy = "queue",
+  enabled = false,
+  persistence = {
+    state = "ops",
+    store = { alias = "project_alpha" },
+  },
+}
+```
+
 Rules:
 
 - specify one scheduling anchor:
   - `next_run_unix_ms`
   - `after_seconds`
   - or `interval_seconds` alone (first run scheduled relative to now)
+- `runtime.schedule.update(opts)` accepts the same scheduling anchor rules, but only for the fields you choose to replace
 - `overlap_policy` currently supports:
   - `"skip"`
   - `"queue"`
@@ -868,6 +905,7 @@ Notes:
 - scheduled execution still runs through Turin’s normal task path
 - jobs may target arbitrary state/store contexts through `persistence`
 - this namespace is unavailable outside daemon-managed runtimes
+- updating a running job affects future scheduling metadata only; it does not rewrite the already-running task
 
 ## `runtime.graph`
 
