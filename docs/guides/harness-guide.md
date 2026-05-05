@@ -369,7 +369,7 @@ Notes:
 
 - `schedule.*` is backed by the daemon scheduler, not by ad hoc local state writes
 - it only works in daemon-managed runtimes
-- recurring jobs currently support overlap policies such as `skip` and `queue`
+- recurring jobs currently support overlap policies such as `skip`, `queue`, and `parallel`
 - jobs may coordinate across related schedules with:
   - `work_key`
   - `max_concurrency`

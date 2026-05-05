@@ -273,7 +273,7 @@ Notes:
 ```lua
 {
   agent = "reviewer",
-  overlap = "skip", -- or "queue"
+  overlap = "skip", -- or "queue" / "parallel"
   recurring = "daily", -- optional, mainly for schedule.at(...)
   work_key = "project:alpha:qa",
   max_concurrency = 1,
@@ -972,6 +972,7 @@ Rules:
 - `overlap_policy` currently supports:
   - `"skip"`
   - `"queue"`
+  - `"parallel"`
 - `recurring` currently supports:
   - `"daily"`
   - `"weekly"`

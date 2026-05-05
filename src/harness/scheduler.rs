@@ -280,6 +280,7 @@ fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {
         enabled: row.enabled,
         slot_id: scheduled_job_slot_id(&public_id),
         running_task_id: row.running_task_id,
+        active_run_count: row.active_run_count,
         pending_rerun: row.pending_rerun,
         last_run_unix_ms: row.last_run_unix_ms,
         last_status: row.last_status,

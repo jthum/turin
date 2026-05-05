@@ -78,6 +78,45 @@ provider = "noop"
     Ok(config_path)
 }
 
+fn write_bootstrap_with_mock_response(root: &Path, response: &str) -> Result<PathBuf> {
+    std::fs::create_dir_all(root.join("default-harness"))?;
+    std::fs::write(
+        root.join("default-harness").join("main.lua"),
+        "-- bootstrap\n",
+    )?;
+    let config_path = root.join(".turin").join("config.toml");
+    std::fs::create_dir_all(config_path.parent().expect("config parent"))?;
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"[agent]
+id = "default"
+system_prompt = "bootstrap"
+model = "mock-model"
+provider = "mock"
+
+[kernel]
+workspace_root = "."
+
+[persistence.state]
+path = "state.db"
+
+[harness]
+directory = "default-harness"
+fs_root = "."
+
+[providers.mock]
+type = "mock"
+base_url = "{response}"
+
+[embeddings]
+provider = "noop"
+"#
+        ),
+    )?;
+    Ok(config_path)
+}
+
 #[tokio::test]
 async fn create_disable_and_delete_agent_updates_filesystem_state() -> Result<()> {
     let temp = tempdir()?;
@@ -458,6 +497,77 @@ async fn scheduled_jobs_with_same_work_key_queue_until_capacity_frees() -> Resul
         "queued grouped job should start after capacity frees"
     );
     assert!(!second_job.pending_rerun);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn scheduled_parallel_job_can_start_multiple_active_runs() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap_with_mock_response(temp.path(), "delay_ms=1800;slow")?;
+    let mut state = DaemonState::load(&config_path).await?;
+
+    let now_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64;
+    let job = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: Some("Run a slow heartbeat".to_string()),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action: None,
+            persistence: None,
+            next_run_unix_ms: now_unix_ms - 1,
+            interval_seconds: Some(1),
+            recurring_pattern: None,
+            overlap_policy: ScheduledJobOverlapPolicy::Parallel,
+            work_key: None,
+            max_concurrency: None,
+            enabled: true,
+        })
+        .await?;
+
+    state.scheduler_tick().await?;
+    sleep(Duration::from_millis(1100)).await;
+    state.scheduler_tick().await?;
+
+    let jobs = state.list_scheduled_jobs().await?;
+    let running = jobs
+        .iter()
+        .find(|entry| entry.id == job.id)
+        .expect("parallel scheduled job visible");
+    assert_eq!(running.overlap_policy, "parallel");
+    assert_eq!(running.active_run_count, 2);
+    assert!(running.running_task_id.is_some());
+
+    let active_runs = state.jobs_store.list_active_scheduled_job_runs().await?;
+    let task_ids: Vec<_> = active_runs
+        .into_iter()
+        .filter(|run| run.scheduled_job_id == job.id)
+        .map(|run| run.task_id)
+        .collect();
+    assert_eq!(task_ids.len(), 2);
+    assert_ne!(task_ids[0], task_ids[1]);
+
+    state
+        .set_scheduled_job_enabled(&job.public_id, false)
+        .await?
+        .expect("parallel job should disable for cleanup");
+
+    for task_id in &task_ids {
+        let completed = state.wait_for_task(task_id, Some(5_000)).await?;
+        assert_eq!(completed.state, "completed");
+    }
+
+    state.scheduler_tick().await?;
+    let jobs = state.list_scheduled_jobs().await?;
+    let settled = jobs
+        .iter()
+        .find(|entry| entry.id == job.id)
+        .expect("parallel scheduled job still visible");
+    assert_eq!(settled.active_run_count, 0);
 
     Ok(())
 }

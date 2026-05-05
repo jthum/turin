@@ -137,6 +137,10 @@ Notes:
 - `opts.recurring` currently supports:
   - `"daily"`
   - `"weekly"`
+- `opts.overlap` currently supports:
+  - `"skip"`
+  - `"queue"`
+  - `"parallel"`
 - built-in action payloads currently support:
   - `agent.enable`
   - `agent.disable`

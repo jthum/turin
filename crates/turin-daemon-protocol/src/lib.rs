@@ -288,6 +288,8 @@ pub struct ScheduleJobDetail {
     pub slot_id: String,
     #[serde(default)]
     pub running_task_id: Option<String>,
+    #[serde(default)]
+    pub active_run_count: u32,
     pub pending_rerun: bool,
     #[serde(default)]
     pub last_run_unix_ms: Option<i64>,

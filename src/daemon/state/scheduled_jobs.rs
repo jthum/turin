@@ -13,7 +13,7 @@ use crate::kernel::agent_manager::TaskStatusSnapshot;
 use crate::kernel::config::{ContextPersistenceConfig, InferenceOverrideConfig, StoreTargetConfig};
 use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreSelector;
-use crate::persistence::schema::ScheduledJobRow;
+use crate::persistence::schema::{ScheduledJobRow, ScheduledJobRunRow};
 
 const SCHEDULED_JOB_BATCH_LIMIT: usize = 32;
 const SCHEDULED_JOB_FAILURE_RETRY_MS: i64 = 60_000;
@@ -23,6 +23,7 @@ const SCHEDULED_JOB_FAILURE_RETRY_MS: i64 = 60_000;
 pub enum ScheduledJobOverlapPolicy {
     Skip,
     Queue,
+    Parallel,
 }
 
 impl ScheduledJobOverlapPolicy {
@@ -30,6 +31,7 @@ impl ScheduledJobOverlapPolicy {
         match self {
             Self::Skip => "skip",
             Self::Queue => "queue",
+            Self::Parallel => "parallel",
         }
     }
 }
@@ -41,6 +43,7 @@ impl std::str::FromStr for ScheduledJobOverlapPolicy {
         match value {
             "skip" => Ok(Self::Skip),
             "queue" => Ok(Self::Queue),
+            "parallel" => Ok(Self::Parallel),
             _ => Err(anyhow!("Unsupported overlap policy '{}'", value)),
         }
     }
@@ -379,7 +382,7 @@ impl DaemonState {
         let Some(row) = store.get_scheduled_job_by_public_id(public_id).await? else {
             return Ok(None);
         };
-        if row.running_task_id.is_some() {
+        if row.active_run_count > 0 {
             anyhow::bail!(
                 "Cannot delete scheduled job '{}' while it has an active run",
                 public_id
@@ -397,9 +400,9 @@ impl DaemonState {
         let store = Arc::clone(&self.jobs_store);
         let now = now_unix_ms();
 
-        let running_jobs = store.list_running_scheduled_jobs().await?;
-        for job in running_jobs {
-            self.reconcile_running_scheduled_job(&store, &job, now)
+        let running_runs = store.list_active_scheduled_job_runs().await?;
+        for run in running_runs {
+            self.reconcile_running_scheduled_job_run(&store, &run, now)
                 .await?;
         }
 
@@ -417,16 +420,16 @@ impl DaemonState {
         }))
     }
 
-    async fn reconcile_running_scheduled_job(
+    async fn reconcile_running_scheduled_job_run(
         &self,
         store: &std::sync::Arc<crate::persistence::state::StateStore>,
-        job: &ScheduledJobRow,
+        run: &ScheduledJobRunRow,
         now_unix_ms: i64,
     ) -> Result<()> {
-        let Some(task_id) = &job.running_task_id else {
+        let Some(job) = store.get_scheduled_job_by_id(run.scheduled_job_id).await? else {
             return Ok(());
         };
-        let snapshot = self.get_task(task_id).await;
+        let snapshot = self.get_task(&run.task_id).await;
         if let Some(snapshot) = snapshot.as_ref()
             && matches!(snapshot.state.as_str(), "queued" | "running" | "cancelling")
         {
@@ -437,15 +440,23 @@ impl DaemonState {
             .as_ref()
             .map(scheduled_job_terminal_status)
             .or_else(|| Some("orphaned".to_string()));
-        let next_run_override = if job.pending_rerun && job.enabled {
-            Some(now_unix_ms)
-        } else {
-            None
-        };
         store
-            .mark_scheduled_job_finished(job.id, last_status.as_deref(), next_run_override, false)
+            .finish_scheduled_job_run(job.id, &run.task_id, now_unix_ms, last_status.as_deref())
             .await?;
-        self.wake_group_pending_jobs(store, job, now_unix_ms).await
+        let Some(updated_job) = store.get_scheduled_job_by_id(job.id).await? else {
+            return Ok(());
+        };
+        if updated_job.active_run_count == 0 {
+            let next_run_override = if updated_job.pending_rerun && updated_job.enabled {
+                Some(now_unix_ms)
+            } else {
+                None
+            };
+            store
+                .finalize_scheduled_job_after_runs(job.id, next_run_override, false)
+                .await?;
+        }
+        self.wake_group_pending_jobs(store, &job, now_unix_ms).await
     }
 
     async fn process_due_scheduled_job(
@@ -458,21 +469,23 @@ impl DaemonState {
             .job_kind
             .parse::<ScheduledJobKind>()
             .unwrap_or(ScheduledJobKind::Prompt);
-        if job.running_task_id.is_some() {
+        if job.active_run_count > 0 {
             let overlap = job
                 .overlap_policy
                 .parse::<ScheduledJobOverlapPolicy>()
                 .unwrap_or(ScheduledJobOverlapPolicy::Skip);
-            if let Some(advanced) = next_recurring_due(job, now_unix_ms)? {
-                store
-                    .mark_scheduled_job_overlap(
-                        job.id,
-                        advanced,
-                        matches!(overlap, ScheduledJobOverlapPolicy::Queue),
-                    )
-                    .await?;
+            if !matches!(overlap, ScheduledJobOverlapPolicy::Parallel) {
+                if let Some(advanced) = next_recurring_due(job, now_unix_ms)? {
+                    store
+                        .mark_scheduled_job_overlap(
+                            job.id,
+                            advanced,
+                            matches!(overlap, ScheduledJobOverlapPolicy::Queue),
+                        )
+                        .await?;
+                }
+                return Ok(());
             }
-            return Ok(());
         }
 
         if let Some(work_key) = job.work_key.as_deref() {
@@ -603,7 +616,11 @@ impl DaemonState {
         let (next_run_unix_ms, pending_rerun) = match (recurring_next, overlap) {
             (Some(next), ScheduledJobOverlapPolicy::Skip) => (next, false),
             (Some(next), ScheduledJobOverlapPolicy::Queue) => (next, true),
+            (Some(next), ScheduledJobOverlapPolicy::Parallel) => (next, true),
             (None, ScheduledJobOverlapPolicy::Queue) => {
+                (now_unix_ms + SCHEDULED_JOB_FAILURE_RETRY_MS, true)
+            }
+            (None, ScheduledJobOverlapPolicy::Parallel) => {
                 (now_unix_ms + SCHEDULED_JOB_FAILURE_RETRY_MS, true)
             }
             (None, ScheduledJobOverlapPolicy::Skip) => {
@@ -754,6 +771,7 @@ fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {
         enabled: row.enabled,
         slot_id: scheduled_job_slot_id(&public_id),
         running_task_id: row.running_task_id,
+        active_run_count: row.active_run_count,
         pending_rerun: row.pending_rerun,
         last_run_unix_ms: row.last_run_unix_ms,
         last_status: row.last_status,

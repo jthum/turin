@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 22;
+pub(crate) const SCHEMA_VERSION: u32 = 23;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -196,6 +196,7 @@ CREATE TABLE IF NOT EXISTS scheduled_jobs (
     max_concurrency  INTEGER,
     enabled          INTEGER NOT NULL DEFAULT 1,
     running_task_id  TEXT,
+    active_run_count INTEGER NOT NULL DEFAULT 0,
     pending_rerun    INTEGER NOT NULL DEFAULT 0,
     last_run_unix_ms INTEGER,
     last_status      TEXT,
@@ -205,6 +206,20 @@ CREATE TABLE IF NOT EXISTS scheduled_jobs (
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_due ON scheduled_jobs(enabled, next_run_unix_ms);
 CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_running ON scheduled_jobs(running_task_id);
+
+CREATE TABLE IF NOT EXISTS scheduled_job_runs (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    scheduled_job_id  INTEGER NOT NULL REFERENCES scheduled_jobs(id),
+    task_id           TEXT NOT NULL UNIQUE,
+    started_unix_ms   INTEGER NOT NULL,
+    finished_unix_ms  INTEGER,
+    last_status       TEXT,
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_scheduled_job_runs_active ON scheduled_job_runs(scheduled_job_id, finished_unix_ms);
+CREATE INDEX IF NOT EXISTS idx_scheduled_job_runs_task ON scheduled_job_runs(task_id);
 
 "#;
 
@@ -310,8 +325,21 @@ pub struct ScheduledJobRow {
     pub max_concurrency: Option<u32>,
     pub enabled: bool,
     pub running_task_id: Option<String>,
+    pub active_run_count: u32,
     pub pending_rerun: bool,
     pub last_run_unix_ms: Option<i64>,
+    pub last_status: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScheduledJobRunRow {
+    pub id: i64,
+    pub scheduled_job_id: i64,
+    pub task_id: String,
+    pub started_unix_ms: i64,
+    pub finished_unix_ms: Option<i64>,
     pub last_status: Option<String>,
     pub created_at: String,
     pub updated_at: String,
