@@ -111,6 +111,7 @@ tokio-tungstenite = { version = "0.24", default-features = false }
 url = "2.5"
 reqwest = { version = "0.13", default-features = false, features = ["brotli", "deflate", "gzip", "json", "query", "rustls"] }
 scraper = "0.23"
+time = { version = "0.3", features = ["formatting", "local-offset", "parsing"] }
 
 [dev-dependencies]
 tempfile = "3.10"

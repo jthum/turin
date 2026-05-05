@@ -112,7 +112,7 @@ Preferred scheduler helpers:
 
 - `schedule.after(seconds, payload, opts?)`
 - `schedule.every(seconds, payload, opts?)`
-- `schedule.at(unix_ms, payload, opts?)`
+- `schedule.at(timestamp, payload, opts?)`
 - `schedule.update(public_id, opts?)`
 - `schedule.get(public_id)`
 - `schedule.list(opts?)`
@@ -130,6 +130,13 @@ Notes:
 - `payload` may be either:
   - a bare prompt string
   - or a table such as `{ action = "agent.disable", params = { id = "night-qa" } }`
+- `timestamp` may be:
+  - unix milliseconds
+  - an RFC3339 timestamp string
+  - a local-time shorthand like `"08:00"` or `"08:00:30"`
+- `opts.recurring` currently supports:
+  - `"daily"`
+  - `"weekly"`
 - built-in action payloads currently support:
   - `agent.enable`
   - `agent.disable`

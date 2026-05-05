@@ -204,6 +204,8 @@ pub struct ScheduleCreateParams {
     #[serde(default)]
     pub interval_seconds: Option<u64>,
     #[serde(default)]
+    pub recurring_pattern: Option<String>,
+    #[serde(default)]
     pub overlap_policy: Option<String>,
     #[serde(default)]
     pub work_key: Option<String>,
@@ -235,6 +237,8 @@ pub struct ScheduleUpdateParams {
     pub next_run_unix_ms: Option<i64>,
     #[serde(default)]
     pub interval_seconds: Option<u64>,
+    #[serde(default)]
+    pub recurring_pattern: Option<String>,
     #[serde(default)]
     pub overlap_policy: Option<String>,
     #[serde(default)]
@@ -273,6 +277,8 @@ pub struct ScheduleJobDetail {
     pub next_run_unix_ms: i64,
     #[serde(default)]
     pub interval_seconds: Option<u64>,
+    #[serde(default)]
+    pub recurring_pattern: Option<String>,
     pub overlap_policy: String,
     #[serde(default)]
     pub work_key: Option<String>,
@@ -907,6 +913,7 @@ mod tests {
                 action: None,
                 next_run_unix_ms: 1_700_000_000_000,
                 interval_seconds: Some(300),
+                recurring_pattern: None,
                 overlap_policy: Some("skip".to_string()),
                 work_key: Some("project:alpha:qa".to_string()),
                 max_concurrency: Some(1),
@@ -959,6 +966,7 @@ mod tests {
                 assert!(params.action.is_none());
                 assert_eq!(params.next_run_unix_ms, 1_700_000_000_000i64);
                 assert_eq!(params.interval_seconds, Some(300));
+                assert_eq!(params.recurring_pattern, None);
                 assert_eq!(params.overlap_policy.as_deref(), Some("skip"));
                 assert_eq!(params.work_key.as_deref(), Some("project:alpha:qa"));
                 assert_eq!(params.max_concurrency, Some(1));

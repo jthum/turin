@@ -69,7 +69,7 @@ Simple things should be simple. Powerful things should be possible.
 - **Hybrid memory search** with native lexical/vector/hybrid retrieval
 - **Hybrid code search** with lexical, semantic, hybrid, and traceable fallback behavior
 - **Peer-agent orchestration** with status inspection and async submit/await result handling
-- **Scheduled task orchestration** with one-shot/recurring jobs, prompt or named action payloads, overlap policy, and cross-store execution targeting
+- **Scheduled task orchestration** with one-shot/recurring jobs, anchored `daily` / `weekly` recurrence, prompt or named action payloads, overlap policy, and cross-store execution targeting
 - **Opt-in governance** with profiles/capabilities/import scoping/agent ceilings/grants
 - **Live provider smoke tooling** (manual/opt-in) for real endpoint validation
 

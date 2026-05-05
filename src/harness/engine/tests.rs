@@ -352,6 +352,20 @@ async fn test_schedule_dx_helpers_create_and_list_jobs() {
                     error("expected conflict_policy to round-trip")
                 end
 
+                local anchored = schedule.at("2030-01-02T03:04:05Z", "Nightly checks", {
+                    recurring = "weekly"
+                })
+                if anchored.recurring_pattern ~= "weekly" then
+                    error("expected recurring pattern to round-trip for anchored schedule")
+                end
+
+                local morning = schedule.at("08:00", "Daily digest", {
+                    recurring = "daily"
+                })
+                if morning.recurring_pattern ~= "daily" then
+                    error("expected recurring pattern to round-trip for local-time schedule")
+                end
+
                 local action_job = schedule.after(45, {
                     action = "agent.disable",
                     params = { id = "night-qa" }
@@ -369,8 +383,8 @@ async fn test_schedule_dx_helpers_create_and_list_jobs() {
                 end
 
                 local jobs = schedule.list()
-                if #jobs ~= 4 then
-                    error("expected 4 scheduled jobs, got " .. tostring(#jobs))
+                if #jobs ~= 6 then
+                    error("expected 6 scheduled jobs, got " .. tostring(#jobs))
                 end
 
                 local deleted = schedule.delete(one.public_id)
@@ -379,8 +393,8 @@ async fn test_schedule_dx_helpers_create_and_list_jobs() {
                 end
 
                 jobs = schedule.list()
-                if #jobs ~= 3 then
-                    error("expected 3 scheduled jobs after delete, got " .. tostring(#jobs))
+                if #jobs ~= 5 then
+                    error("expected 5 scheduled jobs after delete, got " .. tostring(#jobs))
                 end
 
                 return ALLOW

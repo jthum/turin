@@ -57,6 +57,7 @@ pub struct CreateScheduledJobInput {
     pub persistence: Option<ContextPersistenceParams>,
     pub next_run_unix_ms: i64,
     pub interval_seconds: Option<u64>,
+    pub recurring_pattern: Option<String>,
     pub overlap_policy: ScheduledJobOverlapPolicy,
     pub work_key: Option<String>,
     pub max_concurrency: Option<u32>,
@@ -74,6 +75,7 @@ pub struct UpdateScheduledJobInput {
     pub persistence: Option<ContextPersistenceParams>,
     pub next_run_unix_ms: Option<i64>,
     pub interval_seconds: Option<u64>,
+    pub recurring_pattern: Option<String>,
     pub overlap_policy: Option<ScheduledJobOverlapPolicy>,
     pub work_key: Option<String>,
     pub max_concurrency: Option<u32>,
@@ -84,6 +86,33 @@ pub struct UpdateScheduledJobInput {
 enum ScheduledJobKind {
     Prompt,
     Action,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScheduledJobRecurringPattern {
+    Daily,
+    Weekly,
+}
+
+impl ScheduledJobRecurringPattern {
+    fn step_ms(self) -> i64 {
+        match self {
+            Self::Daily => 86_400_000,
+            Self::Weekly => 604_800_000,
+        }
+    }
+}
+
+impl std::str::FromStr for ScheduledJobRecurringPattern {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "daily" => Ok(Self::Daily),
+            "weekly" => Ok(Self::Weekly),
+            _ => Err(anyhow!("Unsupported recurring pattern '{}'", value)),
+        }
+    }
 }
 
 impl ScheduledJobKind {
@@ -128,6 +157,10 @@ impl DaemonState {
         self.ensure_enabled_agent(&input.agent_id)?;
         let job_kind =
             validate_scheduled_job_payload(input.prompt.as_ref(), input.action.as_ref())?;
+        validate_scheduled_job_recurrence(
+            input.interval_seconds,
+            input.recurring_pattern.as_deref(),
+        )?;
         let _ = self.resolve_scheduled_job_persistence(input.persistence.as_ref())?;
         let store = Arc::clone(&self.jobs_store);
         let public_id = uuid::Uuid::now_v7();
@@ -167,6 +200,7 @@ impl DaemonState {
                 store_target.as_deref(),
                 input.next_run_unix_ms,
                 input.interval_seconds,
+                input.recurring_pattern.as_deref(),
                 input.overlap_policy.as_str(),
                 input.work_key.as_deref(),
                 input.max_concurrency,
@@ -243,6 +277,8 @@ impl DaemonState {
         validate_scheduled_job_payload(prompt.as_ref(), action.as_ref())?;
         let next_run_unix_ms = input.next_run_unix_ms.unwrap_or(row.next_run_unix_ms);
         let interval_seconds = input.interval_seconds.or(row.interval_seconds);
+        let recurring_pattern = input.recurring_pattern.or(row.recurring_pattern.clone());
+        validate_scheduled_job_recurrence(interval_seconds, recurring_pattern.as_deref())?;
         let overlap_policy = input
             .overlap_policy
             .unwrap_or_else(|| {
@@ -286,6 +322,7 @@ impl DaemonState {
                 store_target.as_deref(),
                 next_run_unix_ms,
                 interval_seconds,
+                recurring_pattern.as_deref(),
                 &overlap_policy,
                 work_key.as_deref(),
                 max_concurrency,
@@ -426,9 +463,7 @@ impl DaemonState {
                 .overlap_policy
                 .parse::<ScheduledJobOverlapPolicy>()
                 .unwrap_or(ScheduledJobOverlapPolicy::Skip);
-            if let Some(interval_seconds) = job.interval_seconds {
-                let advanced =
-                    advance_recurring_due(job.next_run_unix_ms, interval_seconds, now_unix_ms);
+            if let Some(advanced) = next_recurring_due(job, now_unix_ms)? {
                 store
                     .mark_scheduled_job_overlap(
                         job.id,
@@ -455,15 +490,8 @@ impl DaemonState {
                 let submit = self.submit_scheduled_job(job).await;
                 match submit {
                     Ok(task) => {
-                        let (next_run_unix_ms, enabled) = match job.interval_seconds {
-                            Some(interval_seconds) => (
-                                advance_recurring_due(
-                                    job.next_run_unix_ms,
-                                    interval_seconds,
-                                    now_unix_ms,
-                                ),
-                                true,
-                            ),
+                        let (next_run_unix_ms, enabled) = match next_recurring_due(job, now_unix_ms)? {
+                            Some(next) => (next, true),
                             None => (job.next_run_unix_ms, false),
                         };
                         store
@@ -492,15 +520,8 @@ impl DaemonState {
                 let run = self.execute_scheduled_action(job).await;
                 match run {
                     Ok(status) => {
-                        let (next_run_unix_ms, enabled) = match job.interval_seconds {
-                            Some(interval_seconds) => (
-                                advance_recurring_due(
-                                    job.next_run_unix_ms,
-                                    interval_seconds,
-                                    now_unix_ms,
-                                ),
-                                true,
-                            ),
+                        let (next_run_unix_ms, enabled) = match next_recurring_due(job, now_unix_ms)? {
+                            Some(next) => (next, true),
                             None => (job.next_run_unix_ms, false),
                         };
                         store
@@ -578,15 +599,10 @@ impl DaemonState {
             .overlap_policy
             .parse::<ScheduledJobOverlapPolicy>()
             .unwrap_or(ScheduledJobOverlapPolicy::Skip);
-        let (next_run_unix_ms, pending_rerun) = match (job.interval_seconds, overlap) {
-            (Some(interval_seconds), ScheduledJobOverlapPolicy::Skip) => (
-                advance_recurring_due(job.next_run_unix_ms, interval_seconds, now_unix_ms),
-                false,
-            ),
-            (Some(interval_seconds), ScheduledJobOverlapPolicy::Queue) => (
-                advance_recurring_due(job.next_run_unix_ms, interval_seconds, now_unix_ms),
-                true,
-            ),
+        let recurring_next = next_recurring_due(job, now_unix_ms)?;
+        let (next_run_unix_ms, pending_rerun) = match (recurring_next, overlap) {
+            (Some(next), ScheduledJobOverlapPolicy::Skip) => (next, false),
+            (Some(next), ScheduledJobOverlapPolicy::Queue) => (next, true),
             (None, ScheduledJobOverlapPolicy::Queue) => {
                 (now_unix_ms + SCHEDULED_JOB_FAILURE_RETRY_MS, true)
             }
@@ -731,6 +747,7 @@ fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {
         persistence,
         next_run_unix_ms: row.next_run_unix_ms,
         interval_seconds: row.interval_seconds,
+        recurring_pattern: row.recurring_pattern,
         overlap_policy: row.overlap_policy,
         work_key: row.work_key,
         max_concurrency: row.max_concurrency,
@@ -788,6 +805,21 @@ fn validate_scheduled_job_payload(
     }
 }
 
+fn validate_scheduled_job_recurrence(
+    interval_seconds: Option<u64>,
+    recurring_pattern: Option<&str>,
+) -> Result<()> {
+    if interval_seconds.is_some() && recurring_pattern.is_some() {
+        anyhow::bail!(
+            "scheduled job cannot define both interval_seconds and recurring_pattern"
+        );
+    }
+    if let Some(pattern) = recurring_pattern {
+        let _ = pattern.parse::<ScheduledJobRecurringPattern>()?;
+    }
+    Ok(())
+}
+
 fn required_action_id(action: &ScheduleActionParams) -> Result<String> {
     action
         .params
@@ -805,13 +837,32 @@ fn now_unix_ms() -> i64 {
         .as_millis() as i64
 }
 
-fn advance_recurring_due(next_run_unix_ms: i64, interval_seconds: u64, now_unix_ms: i64) -> i64 {
-    let step = (interval_seconds as i64).saturating_mul(1000).max(1_000);
+fn advance_recurring_due(next_run_unix_ms: i64, step_ms: i64, now_unix_ms: i64) -> i64 {
+    let step = step_ms.max(1_000);
     let mut next = next_run_unix_ms;
     while next <= now_unix_ms {
         next = next.saturating_add(step);
     }
     next
+}
+
+fn next_recurring_due(job: &ScheduledJobRow, now_unix_ms: i64) -> Result<Option<i64>> {
+    if let Some(interval_seconds) = job.interval_seconds {
+        return Ok(Some(advance_recurring_due(
+            job.next_run_unix_ms,
+            (interval_seconds as i64).saturating_mul(1000),
+            now_unix_ms,
+        )));
+    }
+    if let Some(pattern) = job.recurring_pattern.as_deref() {
+        let step_ms = pattern.parse::<ScheduledJobRecurringPattern>()?.step_ms();
+        return Ok(Some(advance_recurring_due(
+            job.next_run_unix_ms,
+            step_ms,
+            now_unix_ms,
+        )));
+    }
+    Ok(None)
 }
 
 fn scheduled_job_terminal_status(snapshot: &TaskStatusSnapshot) -> String {

@@ -239,6 +239,7 @@ async fn scheduled_one_shot_job_submits_and_disables_after_completion() -> Resul
             persistence: None,
             next_run_unix_ms: now_unix_ms - 1,
             interval_seconds: None,
+            recurring_pattern: None,
             overlap_policy: ScheduledJobOverlapPolicy::Skip,
             work_key: None,
             max_concurrency: None,
@@ -306,6 +307,7 @@ async fn scheduled_interval_job_reschedules_after_submit() -> Result<()> {
             persistence: None,
             next_run_unix_ms: now_unix_ms - 1,
             interval_seconds: Some(60),
+            recurring_pattern: None,
             overlap_policy: ScheduledJobOverlapPolicy::Skip,
             work_key: None,
             max_concurrency: None,
@@ -324,6 +326,52 @@ async fn scheduled_interval_job_reschedules_after_submit() -> Result<()> {
     assert!(
         scheduled.next_run_unix_ms > now_unix_ms,
         "recurring job should advance its next due time"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn scheduled_daily_job_reschedules_after_submit() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let mut state = DaemonState::load(&config_path).await?;
+
+    let now_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64;
+    let anchored = now_unix_ms - 3_600_000;
+    let job = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: Some("Morning review".to_string()),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action: None,
+            persistence: None,
+            next_run_unix_ms: anchored,
+            interval_seconds: None,
+            recurring_pattern: Some("daily".to_string()),
+            overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            work_key: None,
+            max_concurrency: None,
+            enabled: true,
+        })
+        .await?;
+
+    state.scheduler_tick().await?;
+    let jobs = state.list_scheduled_jobs().await?;
+    let scheduled = jobs
+        .iter()
+        .find(|entry| entry.id == job.id)
+        .expect("scheduled job visible");
+    assert_eq!(scheduled.recurring_pattern.as_deref(), Some("daily"));
+    assert!(scheduled.running_task_id.is_some());
+    assert!(scheduled.enabled);
+    assert!(
+        scheduled.next_run_unix_ms >= anchored + 86_400_000,
+        "daily recurring job should advance by at least one day"
     );
 
     Ok(())
@@ -349,6 +397,7 @@ async fn scheduled_jobs_with_same_work_key_queue_until_capacity_frees() -> Resul
             persistence: None,
             next_run_unix_ms: now_unix_ms - 1,
             interval_seconds: None,
+            recurring_pattern: None,
             overlap_policy: ScheduledJobOverlapPolicy::Queue,
             work_key: Some("project:alpha:qa".to_string()),
             max_concurrency: Some(1),
@@ -366,6 +415,7 @@ async fn scheduled_jobs_with_same_work_key_queue_until_capacity_frees() -> Resul
             persistence: None,
             next_run_unix_ms: now_unix_ms - 1,
             interval_seconds: None,
+            recurring_pattern: None,
             overlap_policy: ScheduledJobOverlapPolicy::Queue,
             work_key: Some("project:alpha:qa".to_string()),
             max_concurrency: Some(1),
@@ -472,6 +522,7 @@ provider = "noop"
             }),
             next_run_unix_ms: now_unix_ms - 1,
             interval_seconds: None,
+            recurring_pattern: None,
             overlap_policy: ScheduledJobOverlapPolicy::Skip,
             work_key: None,
             max_concurrency: None,
@@ -553,6 +604,7 @@ async fn scheduled_action_job_can_disable_agent() -> Result<()> {
             persistence: None,
             next_run_unix_ms: now_unix_ms - 1,
             interval_seconds: None,
+            recurring_pattern: None,
             overlap_policy: ScheduledJobOverlapPolicy::Skip,
             work_key: None,
             max_concurrency: None,
@@ -654,6 +706,7 @@ provider = "noop"
             persistence: None,
             next_run_unix_ms: now_unix_ms - 1,
             interval_seconds: None,
+            recurring_pattern: None,
             overlap_policy: ScheduledJobOverlapPolicy::Skip,
             work_key: None,
             max_concurrency: None,
@@ -713,6 +766,7 @@ async fn scheduled_job_lifecycle_ops_round_trip() -> Result<()> {
             persistence: None,
             next_run_unix_ms: now_unix_ms + 60_000,
             interval_seconds: Some(300),
+            recurring_pattern: None,
             overlap_policy: ScheduledJobOverlapPolicy::Skip,
             work_key: None,
             max_concurrency: None,
@@ -760,6 +814,7 @@ async fn scheduled_job_lifecycle_ops_round_trip() -> Result<()> {
             UpdateScheduledJobInput {
                 prompt: Some("Updated lifecycle check".to_string()),
                 interval_seconds: Some(120),
+                recurring_pattern: None,
                 work_key: Some("project:alpha:qa".to_string()),
                 max_concurrency: Some(1),
                 enabled: Some(false),

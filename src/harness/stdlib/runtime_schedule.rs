@@ -1,5 +1,7 @@
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 use serde::Deserialize;
+use time::format_description::well_known::Rfc3339;
+use time::{Duration as TimeDuration, OffsetDateTime, Time, UtcOffset};
 use turin_daemon_protocol::{
     ContextPersistenceParams, ScheduleActionParams, ScheduleCreateParams, ScheduleUpdateParams,
     StoreTargetParams,
@@ -27,11 +29,15 @@ struct LuaScheduleCreateOpts {
     #[serde(default)]
     agent: Option<String>,
     #[serde(default)]
+    next_run: Option<serde_json::Value>,
+    #[serde(default)]
     next_run_unix_ms: Option<i64>,
     #[serde(default)]
     after_seconds: Option<f64>,
     #[serde(default)]
     interval_seconds: Option<f64>,
+    #[serde(default)]
+    recurring: Option<String>,
     #[serde(default)]
     overlap_policy: Option<String>,
     #[serde(default)]
@@ -64,9 +70,13 @@ struct LuaScheduleUpdateOpts {
     #[serde(default)]
     next_run_unix_ms: Option<i64>,
     #[serde(default)]
+    next_run: Option<serde_json::Value>,
+    #[serde(default)]
     after_seconds: Option<f64>,
     #[serde(default)]
     interval_seconds: Option<f64>,
+    #[serde(default)]
+    recurring: Option<String>,
     #[serde(default)]
     overlap_policy: Option<String>,
     #[serde(default)]
@@ -226,6 +236,105 @@ fn parse_non_negative_seconds(value: f64, field_name: &str) -> LuaResult<u64> {
     Ok(value.round() as u64)
 }
 
+fn parse_recurring_pattern(recurring: Option<String>) -> LuaResult<Option<String>> {
+    match recurring.as_deref() {
+        None => Ok(None),
+        Some("daily" | "weekly") => Ok(recurring),
+        Some(other) => Err(mlua::Error::runtime(format!(
+            "runtime.schedule recurring must be 'daily' or 'weekly', got '{}'",
+            other
+        ))),
+    }
+}
+
+fn parse_local_time_shorthand(raw: &str) -> LuaResult<Time> {
+    let parts: Vec<_> = raw.split(':').collect();
+    let [hour, minute, second] = match parts.as_slice() {
+        [hour, minute] => [*hour, *minute, "0"],
+        [hour, minute, second] => [*hour, *minute, *second],
+        _ => {
+            return Err(mlua::Error::runtime(
+                "runtime.schedule next_run time shorthand must be 'HH:MM' or 'HH:MM:SS'"
+                    .to_string(),
+            ));
+        }
+    };
+    let hour = hour.parse::<u8>().map_err(|_| {
+        mlua::Error::runtime("runtime.schedule next_run hour must be an integer".to_string())
+    })?;
+    let minute = minute.parse::<u8>().map_err(|_| {
+        mlua::Error::runtime("runtime.schedule next_run minute must be an integer".to_string())
+    })?;
+    let second = second.parse::<u8>().map_err(|_| {
+        mlua::Error::runtime("runtime.schedule next_run second must be an integer".to_string())
+    })?;
+    Time::from_hms(hour, minute, second).map_err(|_| {
+        mlua::Error::runtime(format!(
+            "runtime.schedule next_run shorthand '{}' is not a valid local time",
+            raw
+        ))
+    })
+}
+
+fn parse_string_next_run(raw: &str, recurring_pattern: Option<&str>) -> LuaResult<i64> {
+    if let Ok(parsed) = OffsetDateTime::parse(raw, &Rfc3339) {
+        return Ok(parsed.unix_timestamp_nanos() as i64 / 1_000_000);
+    }
+
+    let parsed_time = parse_local_time_shorthand(raw)?;
+    if matches!(recurring_pattern, Some("weekly")) {
+        return Err(mlua::Error::runtime(
+            "runtime.schedule next_run weekly shorthand requires an anchored timestamp (for example RFC3339)"
+                .to_string(),
+        ));
+    }
+
+    let local_offset = UtcOffset::current_local_offset().map_err(|_| {
+        mlua::Error::runtime(
+            "runtime.schedule next_run local-time shorthand requires a detectable local offset"
+                .to_string(),
+        )
+    })?;
+    let local_now = OffsetDateTime::now_utc().to_offset(local_offset);
+    let mut next = local_now.date().with_time(parsed_time).assume_offset(local_offset);
+    if next <= local_now {
+        next = next
+            .checked_add(TimeDuration::days(1))
+            .ok_or_else(|| mlua::Error::runtime("runtime.schedule next_run overflow".to_string()))?;
+    }
+    Ok(next.unix_timestamp_nanos() as i64 / 1_000_000)
+}
+
+fn parse_next_run_value(
+    next_run: Option<serde_json::Value>,
+    next_run_unix_ms: Option<i64>,
+    recurring_pattern: Option<&str>,
+) -> LuaResult<Option<i64>> {
+    match (next_run_unix_ms, next_run) {
+        (Some(at), None) => Ok(Some(at)),
+        (None, Some(serde_json::Value::String(raw))) => {
+            Ok(Some(parse_string_next_run(&raw, recurring_pattern)?))
+        }
+        (None, Some(serde_json::Value::Number(number))) => {
+            if let Some(value) = number.as_i64() {
+                Ok(Some(value))
+            } else {
+                Err(mlua::Error::runtime(
+                    "runtime.schedule next_run numeric value must be an integer timestamp in unix ms"
+                        .to_string(),
+                ))
+            }
+        }
+        (None, Some(_)) => Err(mlua::Error::runtime(
+            "runtime.schedule next_run must be a unix-ms number or timestamp string".to_string(),
+        )),
+        (Some(_), Some(_)) => Err(mlua::Error::runtime(
+            "runtime.schedule opts cannot specify both next_run and next_run_unix_ms".to_string(),
+        )),
+        (None, None) => Ok(None),
+    }
+}
+
 fn schedule_create_params(
     lua: &Lua,
     app_data: &HarnessAppData,
@@ -237,13 +346,16 @@ fn schedule_create_params(
             mlua::Error::runtime(format!("invalid runtime.schedule.create opts: {}", e))
         })?;
 
-    let next_run_unix_ms = match (parsed.next_run_unix_ms, parsed.after_seconds) {
+    let recurring_pattern = parse_recurring_pattern(parsed.recurring)?;
+    let explicit_next_run =
+        parse_next_run_value(parsed.next_run, parsed.next_run_unix_ms, recurring_pattern.as_deref())?;
+    let next_run_unix_ms = match (explicit_next_run, parsed.after_seconds) {
         (Some(at), None) => at,
         (None, Some(after)) => now_unix_ms()
             .saturating_add((parse_non_negative_seconds(after, "after_seconds")? as i64) * 1000),
         (Some(_), Some(_)) => {
             return Err(mlua::Error::runtime(
-                "runtime.schedule.create opts cannot specify both next_run_unix_ms and after_seconds",
+                "runtime.schedule.create opts cannot specify both next_run/next_run_unix_ms and after_seconds",
             ));
         }
         (None, None) => {
@@ -254,7 +366,7 @@ fn schedule_create_params(
                 )
             } else {
                 return Err(mlua::Error::runtime(
-                    "runtime.schedule.create opts require next_run_unix_ms, after_seconds, or interval_seconds",
+                    "runtime.schedule.create opts require next_run, next_run_unix_ms, after_seconds, or interval_seconds",
                 ));
             }
         }
@@ -275,6 +387,7 @@ fn schedule_create_params(
         persistence: parse_persistence(parsed.persistence)?,
         next_run_unix_ms,
         interval_seconds,
+        recurring_pattern,
         overlap_policy: Some(parsed.overlap_policy.unwrap_or_else(|| "skip".to_string())),
         work_key: parsed.work_key,
         max_concurrency: parsed.max_concurrency,
@@ -289,7 +402,10 @@ fn schedule_update_params(lua: &Lua, opts: Table) -> LuaResult<ScheduleUpdatePar
             mlua::Error::runtime(format!("invalid runtime.schedule.update opts: {}", e))
         })?;
 
-    let next_run_unix_ms = match (parsed.next_run_unix_ms, parsed.after_seconds) {
+    let recurring_pattern = parse_recurring_pattern(parsed.recurring)?;
+    let explicit_next_run =
+        parse_next_run_value(parsed.next_run, parsed.next_run_unix_ms, recurring_pattern.as_deref())?;
+    let next_run_unix_ms = match (explicit_next_run, parsed.after_seconds) {
         (Some(at), None) => Some(at),
         (None, Some(after)) => {
             Some(now_unix_ms().saturating_add(
@@ -298,7 +414,7 @@ fn schedule_update_params(lua: &Lua, opts: Table) -> LuaResult<ScheduleUpdatePar
         }
         (Some(_), Some(_)) => {
             return Err(mlua::Error::runtime(
-                "runtime.schedule.update opts cannot specify both next_run_unix_ms and after_seconds",
+                "runtime.schedule.update opts cannot specify both next_run/next_run_unix_ms and after_seconds",
             ));
         }
         (None, None) => None,
@@ -320,6 +436,7 @@ fn schedule_update_params(lua: &Lua, opts: Table) -> LuaResult<ScheduleUpdatePar
         persistence: parse_persistence(parsed.persistence)?,
         next_run_unix_ms,
         interval_seconds,
+        recurring_pattern,
         overlap_policy: parsed.overlap_policy,
         work_key: parsed.work_key,
         max_concurrency: parsed.max_concurrency,

@@ -341,6 +341,12 @@ function on_turn_prepare(ctx)
   })
 
   schedule.after(300, "Follow up on the last failed build")
+  schedule.at("2030-01-02T03:04:05Z", "Run the weekly release checklist", {
+    recurring = "weekly",
+  })
+  schedule.at("08:00", "Send the morning digest", {
+    recurring = "daily",
+  })
   schedule.after(45, {
     action = "agent.disable",
     params = { id = "night-qa" },
@@ -371,6 +377,11 @@ Notes:
 - `schedule.after(...)`, `schedule.every(...)`, and `schedule.at(...)` accept either:
   - a bare prompt string
   - or a payload table such as `{ action = "agent.disable", params = { id = "night-qa" } }`
+- `schedule.at(...)` accepts:
+  - unix milliseconds
+  - RFC3339 timestamps such as `"2030-01-02T03:04:05Z"`
+  - local-time shorthand such as `"08:00"` or `"08:00:30"`
+- `recurring = "daily"` or `recurring = "weekly"` may be combined with `schedule.at(...)`
 - built-in scheduled daemon actions currently include:
   - `agent.enable`
   - `agent.disable`

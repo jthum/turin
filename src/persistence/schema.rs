@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 21;
+pub(crate) const SCHEMA_VERSION: u32 = 22;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -190,6 +190,7 @@ CREATE TABLE IF NOT EXISTS scheduled_jobs (
     store_target     TEXT,
     next_run_unix_ms INTEGER NOT NULL,
     interval_seconds INTEGER,
+    recurring_pattern TEXT,
     overlap_policy   TEXT NOT NULL DEFAULT 'skip',
     work_key         TEXT,
     max_concurrency  INTEGER,
@@ -303,6 +304,7 @@ pub struct ScheduledJobRow {
     pub store_target: Option<String>,
     pub next_run_unix_ms: i64,
     pub interval_seconds: Option<u64>,
+    pub recurring_pattern: Option<String>,
     pub overlap_policy: String,
     pub work_key: Option<String>,
     pub max_concurrency: Option<u32>,

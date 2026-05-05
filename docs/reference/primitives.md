@@ -130,7 +130,7 @@ These are layered on top of the existing scoped aliases.
 - `action.define(name, fn) -> nil`
 - `schedule.after(seconds, payload, opts?) -> job`
 - `schedule.every(seconds, payload, opts?) -> job`
-- `schedule.at(unix_ms, payload, opts?) -> job`
+- `schedule.at(timestamp, payload, opts?) -> job`
 - `schedule.update(public_id, opts?) -> job`
 - `schedule.get(public_id) -> job`
 - `schedule.list(opts?) -> jobs`
@@ -260,7 +260,7 @@ Notes:
 
 - `schedule.after(seconds, payload, opts?) -> job`
 - `schedule.every(seconds, payload, opts?) -> job`
-- `schedule.at(unix_ms, payload, opts?) -> job`
+- `schedule.at(timestamp, payload, opts?) -> job`
 - `schedule.update(public_id, opts?) -> job`
 - `schedule.get(public_id) -> job`
 - `schedule.list(opts?) -> jobs`
@@ -274,6 +274,7 @@ Notes:
 {
   agent = "reviewer",
   overlap = "skip", -- or "queue"
+  recurring = "daily", -- optional, mainly for schedule.at(...)
   work_key = "project:alpha:qa",
   max_concurrency = 1,
   enabled = true,
@@ -317,6 +318,10 @@ Notes:
 
 - `schedule.*` is helper-layer sugar over the daemon-backed scheduler
 - it requires a daemon-managed runtime and raises outside that environment
+- `schedule.at(...)` accepts unix milliseconds, RFC3339 timestamp strings, and local-time shorthand such as `"08:00"`
+- `recurring` currently supports:
+  - `"daily"`
+  - `"weekly"`
 - `state = ...` / `store = ...` are shorthand for `persistence = { state = ..., store = ... }`
 - `work_key` lets related jobs coordinate in the same concurrency lane
 - `max_concurrency` bounds how many prompt jobs may run concurrently in that lane
@@ -900,8 +905,10 @@ Daemon-backed durable scheduler API.
   conflict_policy = "detached",
   agent = "default",                        -- optional, defaults to current agent
   next_run_unix_ms = 1760000000000,        -- exact due time
+  next_run = "2030-01-02T03:04:05Z",       -- RFC3339 or local-time shorthand
   after_seconds = 300,                     -- helper-style alternative
   interval_seconds = 3600,                 -- recurring interval
+  recurring = "daily",                     -- anchored recurrence for next_run
   overlap_policy = "skip",                 -- default "skip"
   work_key = "project:alpha:heartbeat",
   max_concurrency = 1,
@@ -929,8 +936,10 @@ Daemon-backed durable scheduler API.
   },
   conflict_policy = "detached",
   next_run_unix_ms = 1760003600000,
+  next_run = "08:00",
   after_seconds = 300,                         -- helper-style alternative
   interval_seconds = 1800,
+  recurring = "weekly",
   overlap_policy = "queue",
   work_key = "project:alpha:qa",
   max_concurrency = 2,
@@ -945,9 +954,13 @@ Daemon-backed durable scheduler API.
 Rules:
 
 - specify one scheduling anchor:
+  - `next_run`
   - `next_run_unix_ms`
   - `after_seconds`
   - or `interval_seconds` alone (first run scheduled relative to now)
+- use at most one recurring mode:
+  - `interval_seconds`
+  - or `recurring`
 - choose one job payload family:
   - prompt job:
     - `prompt`
@@ -959,6 +972,9 @@ Rules:
 - `overlap_policy` currently supports:
   - `"skip"`
   - `"queue"`
+- `recurring` currently supports:
+  - `"daily"`
+  - `"weekly"`
 - `work_key` groups related prompt jobs into the same concurrency lane
 - `max_concurrency` bounds concurrent prompt runs within that lane
 - `agent` must be the current agent or another configured agent id

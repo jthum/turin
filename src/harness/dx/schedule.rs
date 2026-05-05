@@ -144,9 +144,9 @@ pub fn register_schedule_dx(lua: &Lua) -> LuaResult<()> {
         schedule.set(
             "at",
             lua.create_function(
-                move |lua, (unix_ms, payload, opts): (Value, Value, Option<Table>)| {
+                move |lua, (next_run, payload, opts): (Value, Value, Option<Table>)| {
                     let merged =
-                        merge_schedule_opts(lua, payload, "next_run_unix_ms", unix_ms, opts)?;
+                        merge_schedule_opts(lua, payload, "next_run", next_run, opts)?;
                     call_and_raise_on_err(lua, &create_fn, merged, "runtime.schedule.create")
                 },
             )?,

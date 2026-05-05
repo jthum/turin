@@ -24,6 +24,10 @@ impl HarnessSchedulerAccess {
     pub async fn create_job(&self, params: ScheduleCreateParams) -> Result<ScheduleJobDetail> {
         let public_id = uuid::Uuid::now_v7();
         let job_kind = validate_schedule_payload(params.prompt.as_ref(), params.action.as_ref())?;
+        validate_schedule_recurrence(
+            params.interval_seconds,
+            params.recurring_pattern.as_deref(),
+        )?;
         let content = serialize_json(params.content.as_ref())?;
         let tools = serialize_json(params.tools.as_ref())?;
         let action_name = params.action.as_ref().map(|action| action.name.as_str());
@@ -61,6 +65,7 @@ impl HarnessSchedulerAccess {
                 store_target.as_deref(),
                 params.next_run_unix_ms,
                 params.interval_seconds,
+                params.recurring_pattern.as_deref(),
                 params.overlap_policy.as_deref().unwrap_or("skip"),
                 params.work_key.as_deref(),
                 params.max_concurrency,
@@ -122,6 +127,13 @@ impl HarnessSchedulerAccess {
                 }
                 Err(err) => return Err(err),
             };
+        validate_schedule_recurrence(
+            params.interval_seconds.or(row.interval_seconds),
+            params
+                .recurring_pattern
+                .as_deref()
+                .or(row.recurring_pattern.as_deref()),
+        )?;
         let prompt = if job_kind == "prompt" {
             params.prompt.or_else(|| row.prompt.clone())
         } else {
@@ -169,6 +181,10 @@ impl HarnessSchedulerAccess {
                 store_target.as_deref(),
                 params.next_run_unix_ms.unwrap_or(row.next_run_unix_ms),
                 params.interval_seconds.or(row.interval_seconds),
+                params
+                    .recurring_pattern
+                    .as_deref()
+                    .or(row.recurring_pattern.as_deref()),
                 params
                     .overlap_policy
                     .as_deref()
@@ -257,6 +273,7 @@ fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {
         persistence,
         next_run_unix_ms: row.next_run_unix_ms,
         interval_seconds: row.interval_seconds,
+        recurring_pattern: row.recurring_pattern,
         overlap_policy: row.overlap_policy,
         work_key: row.work_key,
         max_concurrency: row.max_concurrency,
@@ -337,6 +354,27 @@ fn scheduled_job_action(job: &ScheduledJobRow) -> Result<Option<ScheduleActionPa
         name,
         params: parse_json(job.action_params.as_deref())?,
     }))
+}
+
+fn validate_schedule_recurrence(
+    interval_seconds: Option<u64>,
+    recurring_pattern: Option<&str>,
+) -> Result<()> {
+    if interval_seconds.is_some() && recurring_pattern.is_some() {
+        anyhow::bail!(
+            "scheduled job cannot define both interval_seconds and recurring_pattern"
+        );
+    }
+    if let Some(pattern) = recurring_pattern {
+        match pattern {
+            "daily" | "weekly" => {}
+            _ => anyhow::bail!(
+                "unsupported recurring pattern '{}'; expected 'daily' or 'weekly'",
+                pattern
+            ),
+        }
+    }
+    Ok(())
 }
 
 fn validate_schedule_payload(
