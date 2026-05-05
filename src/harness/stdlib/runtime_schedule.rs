@@ -296,11 +296,14 @@ fn parse_string_next_run(raw: &str, recurring_pattern: Option<&str>) -> LuaResul
         )
     })?;
     let local_now = OffsetDateTime::now_utc().to_offset(local_offset);
-    let mut next = local_now.date().with_time(parsed_time).assume_offset(local_offset);
+    let mut next = local_now
+        .date()
+        .with_time(parsed_time)
+        .assume_offset(local_offset);
     if next <= local_now {
-        next = next
-            .checked_add(TimeDuration::days(1))
-            .ok_or_else(|| mlua::Error::runtime("runtime.schedule next_run overflow".to_string()))?;
+        next = next.checked_add(TimeDuration::days(1)).ok_or_else(|| {
+            mlua::Error::runtime("runtime.schedule next_run overflow".to_string())
+        })?;
     }
     Ok(next.unix_timestamp_nanos() as i64 / 1_000_000)
 }
@@ -347,8 +350,11 @@ fn schedule_create_params(
         })?;
 
     let recurring_pattern = parse_recurring_pattern(parsed.recurring)?;
-    let explicit_next_run =
-        parse_next_run_value(parsed.next_run, parsed.next_run_unix_ms, recurring_pattern.as_deref())?;
+    let explicit_next_run = parse_next_run_value(
+        parsed.next_run,
+        parsed.next_run_unix_ms,
+        recurring_pattern.as_deref(),
+    )?;
     let next_run_unix_ms = match (explicit_next_run, parsed.after_seconds) {
         (Some(at), None) => at,
         (None, Some(after)) => now_unix_ms()
@@ -403,8 +409,11 @@ fn schedule_update_params(lua: &Lua, opts: Table) -> LuaResult<ScheduleUpdatePar
         })?;
 
     let recurring_pattern = parse_recurring_pattern(parsed.recurring)?;
-    let explicit_next_run =
-        parse_next_run_value(parsed.next_run, parsed.next_run_unix_ms, recurring_pattern.as_deref())?;
+    let explicit_next_run = parse_next_run_value(
+        parsed.next_run,
+        parsed.next_run_unix_ms,
+        recurring_pattern.as_deref(),
+    )?;
     let next_run_unix_ms = match (explicit_next_run, parsed.after_seconds) {
         (Some(at), None) => Some(at),
         (None, Some(after)) => {

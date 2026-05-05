@@ -24,10 +24,7 @@ impl HarnessSchedulerAccess {
     pub async fn create_job(&self, params: ScheduleCreateParams) -> Result<ScheduleJobDetail> {
         let public_id = uuid::Uuid::now_v7();
         let job_kind = validate_schedule_payload(params.prompt.as_ref(), params.action.as_ref())?;
-        validate_schedule_recurrence(
-            params.interval_seconds,
-            params.recurring_pattern.as_deref(),
-        )?;
+        validate_schedule_recurrence(params.interval_seconds, params.recurring_pattern.as_deref())?;
         let content = serialize_json(params.content.as_ref())?;
         let tools = serialize_json(params.tools.as_ref())?;
         let action_name = params.action.as_ref().map(|action| action.name.as_str());
@@ -362,9 +359,7 @@ fn validate_schedule_recurrence(
     recurring_pattern: Option<&str>,
 ) -> Result<()> {
     if interval_seconds.is_some() && recurring_pattern.is_some() {
-        anyhow::bail!(
-            "scheduled job cannot define both interval_seconds and recurring_pattern"
-        );
+        anyhow::bail!("scheduled job cannot define both interval_seconds and recurring_pattern");
     }
     if let Some(pattern) = recurring_pattern {
         match pattern {

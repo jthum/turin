@@ -8,8 +8,8 @@ use tokio::sync::Mutex;
 use crate::harness::dx;
 use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::harness::stdlib::{
-    action_bindings, agent_bindings, memory_kv_bindings, runtime_bindings,
-    session_user_aliases, system_globals, tool_bindings,
+    action_bindings, agent_bindings, memory_kv_bindings, runtime_bindings, session_user_aliases,
+    system_globals, tool_bindings,
 };
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;

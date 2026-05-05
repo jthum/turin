@@ -490,7 +490,9 @@ impl DaemonState {
 
         if let Some(work_key) = job.work_key.as_deref() {
             let max_concurrency = job.max_concurrency.unwrap_or(1).max(1);
-            let active = store.count_running_scheduled_jobs_for_work_key(work_key).await?;
+            let active = store
+                .count_running_scheduled_jobs_for_work_key(work_key)
+                .await?;
             if active >= max_concurrency {
                 self.defer_capacity_blocked_job(store, job, now_unix_ms)
                     .await?;
@@ -503,10 +505,11 @@ impl DaemonState {
                 let submit = self.submit_scheduled_job(job).await;
                 match submit {
                     Ok(task) => {
-                        let (next_run_unix_ms, enabled) = match next_recurring_due(job, now_unix_ms)? {
-                            Some(next) => (next, true),
-                            None => (job.next_run_unix_ms, false),
-                        };
+                        let (next_run_unix_ms, enabled) =
+                            match next_recurring_due(job, now_unix_ms)? {
+                                Some(next) => (next, true),
+                                None => (job.next_run_unix_ms, false),
+                            };
                         store
                             .mark_scheduled_job_started(
                                 job.id,
@@ -533,10 +536,11 @@ impl DaemonState {
                 let run = self.execute_scheduled_action(job).await;
                 match run {
                     Ok(status) => {
-                        let (next_run_unix_ms, enabled) = match next_recurring_due(job, now_unix_ms)? {
-                            Some(next) => (next, true),
-                            None => (job.next_run_unix_ms, false),
-                        };
+                        let (next_run_unix_ms, enabled) =
+                            match next_recurring_due(job, now_unix_ms)? {
+                                Some(next) => (next, true),
+                                None => (job.next_run_unix_ms, false),
+                            };
                         store
                             .mark_scheduled_job_action_completed(
                                 job.id,
@@ -546,7 +550,8 @@ impl DaemonState {
                                 &status,
                             )
                             .await?;
-                        self.wake_group_pending_jobs(store, job, now_unix_ms).await?;
+                        self.wake_group_pending_jobs(store, job, now_unix_ms)
+                            .await?;
                     }
                     Err(err) => {
                         let message = format!("action_failed: {}", err);
@@ -828,9 +833,7 @@ fn validate_scheduled_job_recurrence(
     recurring_pattern: Option<&str>,
 ) -> Result<()> {
     if interval_seconds.is_some() && recurring_pattern.is_some() {
-        anyhow::bail!(
-            "scheduled job cannot define both interval_seconds and recurring_pattern"
-        );
+        anyhow::bail!("scheduled job cannot define both interval_seconds and recurring_pattern");
     }
     if let Some(pattern) = recurring_pattern {
         let _ = pattern.parse::<ScheduledJobRecurringPattern>()?;

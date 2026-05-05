@@ -826,7 +826,11 @@ provider = "noop"
 
     state.scheduler_tick().await?;
     let jobs = state.list_scheduled_jobs().await?;
-    assert_eq!(jobs.len(), 2, "expected original action job plus follow-up job");
+    assert_eq!(
+        jobs.len(),
+        2,
+        "expected original action job plus follow-up job"
+    );
     let finished = jobs
         .iter()
         .find(|entry| entry.id == job.id)

@@ -365,7 +365,9 @@ impl StateStore {
         } else {
             None
         };
-        let remaining = self.count_active_scheduled_job_runs(scheduled_job_id).await?;
+        let remaining = self
+            .count_active_scheduled_job_runs(scheduled_job_id)
+            .await?;
 
         conn.execute(
             r#"
@@ -376,7 +378,12 @@ impl StateStore {
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             WHERE id = ?1
             "#,
-            turso::params![scheduled_job_id, running_task_id, remaining as i64, last_status],
+            turso::params![
+                scheduled_job_id,
+                running_task_id,
+                remaining as i64,
+                last_status
+            ],
         )
         .await
         .context("Failed to refresh scheduled job after run completion")?;
