@@ -273,6 +273,8 @@ Notes:
 {
   agent = "reviewer",
   overlap = "skip", -- or "queue"
+  work_key = "project:alpha:qa",
+  max_concurrency = 1,
   enabled = true,
   state = "ops",
   store = { path = "./project.db" },
@@ -302,6 +304,8 @@ or:
   after_seconds = 300,
   interval_seconds = 1200,
   overlap = "queue",
+  work_key = "project:alpha:qa",
+  max_concurrency = 2,
   enabled = true,
   state = "ops",
   store = { path = "./project.db" },
@@ -313,6 +317,8 @@ Notes:
 - `schedule.*` is helper-layer sugar over the daemon-backed scheduler
 - it requires a daemon-managed runtime and raises outside that environment
 - `state = ...` / `store = ...` are shorthand for `persistence = { state = ..., store = ... }`
+- `work_key` lets related jobs coordinate in the same concurrency lane
+- `max_concurrency` bounds how many prompt jobs may run concurrently in that lane
 - built-in action payloads currently support:
   - `agent.enable`
   - `agent.disable`
@@ -888,6 +894,8 @@ Daemon-backed durable scheduler API.
   after_seconds = 300,                     -- helper-style alternative
   interval_seconds = 3600,                 -- recurring interval
   overlap_policy = "skip",                 -- default "skip"
+  work_key = "project:alpha:heartbeat",
+  max_concurrency = 1,
   enabled = true,
   persistence = {
     state = "ops",
@@ -915,6 +923,8 @@ Daemon-backed durable scheduler API.
   after_seconds = 300,                         -- helper-style alternative
   interval_seconds = 1800,
   overlap_policy = "queue",
+  work_key = "project:alpha:qa",
+  max_concurrency = 2,
   enabled = false,
   persistence = {
     state = "ops",
@@ -940,6 +950,8 @@ Rules:
 - `overlap_policy` currently supports:
   - `"skip"`
   - `"queue"`
+- `work_key` groups related prompt jobs into the same concurrency lane
+- `max_concurrency` bounds concurrent prompt runs within that lane
 - `agent` must be the current agent or another configured agent id
 - `content`, `tools`, and `conflict_policy` follow the same shapes used by `task.submit(...)`
 - built-in action names currently support:

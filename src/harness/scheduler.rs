@@ -62,6 +62,8 @@ impl HarnessSchedulerAccess {
                 params.next_run_unix_ms,
                 params.interval_seconds,
                 params.overlap_policy.as_deref().unwrap_or("skip"),
+                params.work_key.as_deref(),
+                params.max_concurrency,
                 params.enabled,
             )
             .await?;
@@ -171,6 +173,8 @@ impl HarnessSchedulerAccess {
                     .overlap_policy
                     .as_deref()
                     .unwrap_or(row.overlap_policy.as_str()),
+                params.work_key.as_deref().or(row.work_key.as_deref()),
+                params.max_concurrency.or(row.max_concurrency),
                 params.enabled.unwrap_or(row.enabled),
             )
             .await?;
@@ -254,6 +258,8 @@ fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {
         next_run_unix_ms: row.next_run_unix_ms,
         interval_seconds: row.interval_seconds,
         overlap_policy: row.overlap_policy,
+        work_key: row.work_key,
+        max_concurrency: row.max_concurrency,
         enabled: row.enabled,
         slot_id: scheduled_job_slot_id(&public_id),
         running_task_id: row.running_task_id,

@@ -125,6 +125,8 @@ Notes:
 - this is a daemon-backed surface and requires a daemon-managed runtime
 - scheduled jobs live in daemon-owned `jobs.db`
 - jobs may still target different `state` / `store` persistence contexts
+- `opts.work_key` lets related jobs share a concurrency lane
+- `opts.max_concurrency` bounds how many prompt jobs in that lane may run at once
 - `payload` may be either:
   - a bare prompt string
   - or a table such as `{ action = "agent.disable", params = { id = "night-qa" } }`

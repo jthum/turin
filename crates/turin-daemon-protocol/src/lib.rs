@@ -206,6 +206,10 @@ pub struct ScheduleCreateParams {
     #[serde(default)]
     pub overlap_policy: Option<String>,
     #[serde(default)]
+    pub work_key: Option<String>,
+    #[serde(default)]
+    pub max_concurrency: Option<u32>,
+    #[serde(default)]
     pub persistence: Option<ContextPersistenceParams>,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
@@ -233,6 +237,10 @@ pub struct ScheduleUpdateParams {
     pub interval_seconds: Option<u64>,
     #[serde(default)]
     pub overlap_policy: Option<String>,
+    #[serde(default)]
+    pub work_key: Option<String>,
+    #[serde(default)]
+    pub max_concurrency: Option<u32>,
     #[serde(default)]
     pub persistence: Option<ContextPersistenceParams>,
     #[serde(default)]
@@ -266,6 +274,10 @@ pub struct ScheduleJobDetail {
     #[serde(default)]
     pub interval_seconds: Option<u64>,
     pub overlap_policy: String,
+    #[serde(default)]
+    pub work_key: Option<String>,
+    #[serde(default)]
+    pub max_concurrency: Option<u32>,
     pub enabled: bool,
     pub slot_id: String,
     #[serde(default)]
@@ -896,6 +908,8 @@ mod tests {
                 next_run_unix_ms: 1_700_000_000_000,
                 interval_seconds: Some(300),
                 overlap_policy: Some("skip".to_string()),
+                work_key: Some("project:alpha:qa".to_string()),
+                max_concurrency: Some(1),
                 persistence: Some(ContextPersistenceParams {
                     state: Some(StoreTargetParams {
                         path: None,
@@ -917,6 +931,8 @@ mod tests {
         assert_eq!(value["params"]["next_run_unix_ms"], 1_700_000_000_000i64);
         assert_eq!(value["params"]["interval_seconds"], 300);
         assert_eq!(value["params"]["overlap_policy"], "skip");
+        assert_eq!(value["params"]["work_key"], "project:alpha:qa");
+        assert_eq!(value["params"]["max_concurrency"], 1);
         assert_eq!(
             value["params"]["persistence"]["state"]["alias"],
             "project-alpha"
@@ -944,6 +960,8 @@ mod tests {
                 assert_eq!(params.next_run_unix_ms, 1_700_000_000_000i64);
                 assert_eq!(params.interval_seconds, Some(300));
                 assert_eq!(params.overlap_policy.as_deref(), Some("skip"));
+                assert_eq!(params.work_key.as_deref(), Some("project:alpha:qa"));
+                assert_eq!(params.max_concurrency, Some(1));
                 assert_eq!(
                     params
                         .persistence

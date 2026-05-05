@@ -336,6 +336,8 @@ function on_turn_prepare(ctx)
   local nightly = schedule.every(3600, "Review the workspace and continue useful work", {
     overlap = "skip",
     state = "ops",
+    work_key = "project:alpha:heartbeat",
+    max_concurrency = 1,
   })
 
   schedule.after(300, "Follow up on the last failed build")
@@ -362,6 +364,9 @@ Notes:
 - `schedule.*` is backed by the daemon scheduler, not by ad hoc local state writes
 - it only works in daemon-managed runtimes
 - recurring jobs currently support overlap policies such as `skip` and `queue`
+- jobs may coordinate across related schedules with:
+  - `work_key`
+  - `max_concurrency`
 - job persistence may be redirected with `state = ...`, `store = ...`, or `persistence = {...}`
 - `schedule.after(...)`, `schedule.every(...)`, and `schedule.at(...)` accept either:
   - a bare prompt string

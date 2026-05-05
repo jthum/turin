@@ -15,7 +15,7 @@ impl StateStore {
                 SELECT id, public_id, agent_id, job_kind, prompt, content, tools, conflict_policy,
                        action_name, action_params, state_target, store_target,
                        next_run_unix_ms, interval_seconds,
-                       overlap_policy, enabled, running_task_id, pending_rerun,
+                       overlap_policy, work_key, max_concurrency, enabled, running_task_id, pending_rerun,
                        last_run_unix_ms, last_status, created_at, updated_at
                 FROM scheduled_jobs
                 WHERE public_id = ?1
@@ -41,13 +41,15 @@ impl StateStore {
                 next_run_unix_ms: row.get::<i64>(12)?,
                 interval_seconds: row.get::<Option<i64>>(13)?.map(|v| v as u64),
                 overlap_policy: row.get::<String>(14)?,
-                enabled: row.get::<i64>(15)? != 0,
-                running_task_id: row.get::<Option<String>>(16)?,
-                pending_rerun: row.get::<i64>(17)? != 0,
-                last_run_unix_ms: row.get::<Option<i64>>(18)?,
-                last_status: row.get::<Option<String>>(19)?,
-                created_at: row.get::<String>(20)?,
-                updated_at: row.get::<String>(21)?,
+                work_key: row.get::<Option<String>>(15)?,
+                max_concurrency: row.get::<Option<i64>>(16)?.map(|v| v as u32),
+                enabled: row.get::<i64>(17)? != 0,
+                running_task_id: row.get::<Option<String>>(18)?,
+                pending_rerun: row.get::<i64>(19)? != 0,
+                last_run_unix_ms: row.get::<Option<i64>>(20)?,
+                last_status: row.get::<Option<String>>(21)?,
+                created_at: row.get::<String>(22)?,
+                updated_at: row.get::<String>(23)?,
             }));
         }
         Ok(None)
@@ -69,6 +71,8 @@ impl StateStore {
         next_run_unix_ms: i64,
         interval_seconds: Option<u64>,
         overlap_policy: &str,
+        work_key: Option<&str>,
+        max_concurrency: Option<u32>,
         enabled: bool,
     ) -> Result<i64> {
         let conn = self.connect().await?;
@@ -78,8 +82,8 @@ impl StateStore {
             INSERT INTO scheduled_jobs (
                 public_id, agent_id, job_kind, prompt, content, tools, conflict_policy, action_name, action_params, state_target, store_target,
                 next_run_unix_ms, interval_seconds,
-                overlap_policy, enabled, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                overlap_policy, work_key, max_concurrency, enabled, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             "#,
             turso::params![
                 public_id_bytes,
@@ -96,6 +100,8 @@ impl StateStore {
                 next_run_unix_ms,
                 interval_seconds.map(|v| v as i64),
                 overlap_policy,
+                work_key,
+                max_concurrency.map(|v| v as i64),
                 if enabled { 1 } else { 0 }
             ],
         )
@@ -112,7 +118,7 @@ impl StateStore {
                 SELECT id, public_id, agent_id, job_kind, prompt, content, tools, conflict_policy,
                        action_name, action_params, state_target, store_target,
                        next_run_unix_ms, interval_seconds,
-                       overlap_policy, enabled, running_task_id, pending_rerun,
+                       overlap_policy, work_key, max_concurrency, enabled, running_task_id, pending_rerun,
                        last_run_unix_ms, last_status, created_at, updated_at
                 FROM scheduled_jobs
                 ORDER BY id ASC
@@ -138,13 +144,15 @@ impl StateStore {
                 next_run_unix_ms: row.get::<i64>(12)?,
                 interval_seconds: row.get::<Option<i64>>(13)?.map(|v| v as u64),
                 overlap_policy: row.get::<String>(14)?,
-                enabled: row.get::<i64>(15)? != 0,
-                running_task_id: row.get::<Option<String>>(16)?,
-                pending_rerun: row.get::<i64>(17)? != 0,
-                last_run_unix_ms: row.get::<Option<i64>>(18)?,
-                last_status: row.get::<Option<String>>(19)?,
-                created_at: row.get::<String>(20)?,
-                updated_at: row.get::<String>(21)?,
+                work_key: row.get::<Option<String>>(15)?,
+                max_concurrency: row.get::<Option<i64>>(16)?.map(|v| v as u32),
+                enabled: row.get::<i64>(17)? != 0,
+                running_task_id: row.get::<Option<String>>(18)?,
+                pending_rerun: row.get::<i64>(19)? != 0,
+                last_run_unix_ms: row.get::<Option<i64>>(20)?,
+                last_status: row.get::<Option<String>>(21)?,
+                created_at: row.get::<String>(22)?,
+                updated_at: row.get::<String>(23)?,
             });
         }
         Ok(result)
@@ -162,7 +170,7 @@ impl StateStore {
                 SELECT id, public_id, agent_id, job_kind, prompt, content, tools, conflict_policy,
                        action_name, action_params, state_target, store_target,
                        next_run_unix_ms, interval_seconds,
-                       overlap_policy, enabled, running_task_id, pending_rerun,
+                       overlap_policy, work_key, max_concurrency, enabled, running_task_id, pending_rerun,
                        last_run_unix_ms, last_status, created_at, updated_at
                 FROM scheduled_jobs
                 WHERE enabled = 1 AND next_run_unix_ms <= ?1
@@ -190,13 +198,15 @@ impl StateStore {
                 next_run_unix_ms: row.get::<i64>(12)?,
                 interval_seconds: row.get::<Option<i64>>(13)?.map(|v| v as u64),
                 overlap_policy: row.get::<String>(14)?,
-                enabled: row.get::<i64>(15)? != 0,
-                running_task_id: row.get::<Option<String>>(16)?,
-                pending_rerun: row.get::<i64>(17)? != 0,
-                last_run_unix_ms: row.get::<Option<i64>>(18)?,
-                last_status: row.get::<Option<String>>(19)?,
-                created_at: row.get::<String>(20)?,
-                updated_at: row.get::<String>(21)?,
+                work_key: row.get::<Option<String>>(15)?,
+                max_concurrency: row.get::<Option<i64>>(16)?.map(|v| v as u32),
+                enabled: row.get::<i64>(17)? != 0,
+                running_task_id: row.get::<Option<String>>(18)?,
+                pending_rerun: row.get::<i64>(19)? != 0,
+                last_run_unix_ms: row.get::<Option<i64>>(20)?,
+                last_status: row.get::<Option<String>>(21)?,
+                created_at: row.get::<String>(22)?,
+                updated_at: row.get::<String>(23)?,
             });
         }
         Ok(result)
@@ -225,7 +235,7 @@ impl StateStore {
                 SELECT id, public_id, agent_id, job_kind, prompt, content, tools, conflict_policy,
                        action_name, action_params, state_target, store_target,
                        next_run_unix_ms, interval_seconds,
-                       overlap_policy, enabled, running_task_id, pending_rerun,
+                       overlap_policy, work_key, max_concurrency, enabled, running_task_id, pending_rerun,
                        last_run_unix_ms, last_status, created_at, updated_at
                 FROM scheduled_jobs
                 WHERE running_task_id IS NOT NULL
@@ -252,16 +262,37 @@ impl StateStore {
                 next_run_unix_ms: row.get::<i64>(12)?,
                 interval_seconds: row.get::<Option<i64>>(13)?.map(|v| v as u64),
                 overlap_policy: row.get::<String>(14)?,
-                enabled: row.get::<i64>(15)? != 0,
-                running_task_id: row.get::<Option<String>>(16)?,
-                pending_rerun: row.get::<i64>(17)? != 0,
-                last_run_unix_ms: row.get::<Option<i64>>(18)?,
-                last_status: row.get::<Option<String>>(19)?,
-                created_at: row.get::<String>(20)?,
-                updated_at: row.get::<String>(21)?,
+                work_key: row.get::<Option<String>>(15)?,
+                max_concurrency: row.get::<Option<i64>>(16)?.map(|v| v as u32),
+                enabled: row.get::<i64>(17)? != 0,
+                running_task_id: row.get::<Option<String>>(18)?,
+                pending_rerun: row.get::<i64>(19)? != 0,
+                last_run_unix_ms: row.get::<Option<i64>>(20)?,
+                last_status: row.get::<Option<String>>(21)?,
+                created_at: row.get::<String>(22)?,
+                updated_at: row.get::<String>(23)?,
             });
         }
         Ok(result)
+    }
+
+    pub async fn count_running_scheduled_jobs_for_work_key(&self, work_key: &str) -> Result<u32> {
+        let conn = self.connect().await?;
+        let mut rows = conn
+            .query(
+                r#"
+                SELECT COUNT(*)
+                FROM scheduled_jobs
+                WHERE running_task_id IS NOT NULL AND work_key = ?1
+                "#,
+                turso::params![work_key],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            Ok(row.get::<i64>(0)? as u32)
+        } else {
+            Ok(0)
+        }
     }
 
     pub async fn mark_scheduled_job_started(
@@ -437,6 +468,59 @@ impl StateStore {
         Ok(())
     }
 
+    pub async fn mark_scheduled_job_capacity_blocked(
+        &self,
+        id: i64,
+        next_run_unix_ms: i64,
+        pending_rerun: bool,
+        last_status: &str,
+    ) -> Result<()> {
+        let conn = self.connect().await?;
+        conn.execute(
+            r#"
+            UPDATE scheduled_jobs
+            SET next_run_unix_ms = ?2,
+                pending_rerun = ?3,
+                last_status = ?4,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?1
+            "#,
+            turso::params![
+                id,
+                next_run_unix_ms,
+                if pending_rerun { 1 } else { 0 },
+                last_status
+            ],
+        )
+        .await
+        .context("Failed to mark scheduled job capacity blocked")?;
+        Ok(())
+    }
+
+    pub async fn wake_pending_scheduled_jobs_for_work_key(
+        &self,
+        work_key: &str,
+        next_run_unix_ms: i64,
+    ) -> Result<()> {
+        let conn = self.connect().await?;
+        conn.execute(
+            r#"
+            UPDATE scheduled_jobs
+            SET next_run_unix_ms = ?2,
+                pending_rerun = 0,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE work_key = ?1
+              AND running_task_id IS NULL
+              AND enabled = 1
+              AND pending_rerun = 1
+            "#,
+            turso::params![work_key, next_run_unix_ms],
+        )
+        .await
+        .context("Failed to wake pending scheduled jobs for work key")?;
+        Ok(())
+    }
+
     pub async fn update_scheduled_job(
         &self,
         id: i64,
@@ -453,6 +537,8 @@ impl StateStore {
         next_run_unix_ms: i64,
         interval_seconds: Option<u64>,
         overlap_policy: &str,
+        work_key: Option<&str>,
+        max_concurrency: Option<u32>,
         enabled: bool,
     ) -> Result<()> {
         let conn = self.connect().await?;
@@ -472,7 +558,9 @@ impl StateStore {
                 next_run_unix_ms = ?12,
                 interval_seconds = ?13,
                 overlap_policy = ?14,
-                enabled = ?15,
+                work_key = ?15,
+                max_concurrency = ?16,
+                enabled = ?17,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             WHERE id = ?1
             "#,
@@ -491,6 +579,8 @@ impl StateStore {
                 next_run_unix_ms,
                 interval_seconds.map(|v| v as i64),
                 overlap_policy,
+                work_key,
+                max_concurrency.map(|v| v as i64),
                 if enabled { 1 } else { 0 }
             ],
         )

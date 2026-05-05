@@ -39,6 +39,8 @@ pub(super) async fn create(
             next_run_unix_ms: params.next_run_unix_ms,
             interval_seconds: params.interval_seconds,
             overlap_policy,
+            work_key: params.work_key,
+            max_concurrency: params.max_concurrency,
             enabled: params.enabled,
         })
         .await
@@ -84,6 +86,8 @@ pub(super) async fn update(
                 next_run_unix_ms: params.next_run_unix_ms,
                 interval_seconds: params.interval_seconds,
                 overlap_policy,
+                work_key: params.work_key,
+                max_concurrency: params.max_concurrency,
                 enabled: params.enabled,
             },
         )

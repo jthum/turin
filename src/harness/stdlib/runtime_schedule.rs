@@ -35,6 +35,10 @@ struct LuaScheduleCreateOpts {
     #[serde(default)]
     overlap_policy: Option<String>,
     #[serde(default)]
+    work_key: Option<String>,
+    #[serde(default)]
+    max_concurrency: Option<u32>,
+    #[serde(default)]
     enabled: Option<bool>,
     #[serde(default)]
     persistence: Option<LuaSchedulePersistenceOpts>,
@@ -65,6 +69,10 @@ struct LuaScheduleUpdateOpts {
     interval_seconds: Option<f64>,
     #[serde(default)]
     overlap_policy: Option<String>,
+    #[serde(default)]
+    work_key: Option<String>,
+    #[serde(default)]
+    max_concurrency: Option<u32>,
     #[serde(default)]
     enabled: Option<bool>,
     #[serde(default)]
@@ -268,6 +276,8 @@ fn schedule_create_params(
         next_run_unix_ms,
         interval_seconds,
         overlap_policy: Some(parsed.overlap_policy.unwrap_or_else(|| "skip".to_string())),
+        work_key: parsed.work_key,
+        max_concurrency: parsed.max_concurrency,
         enabled: parsed.enabled.unwrap_or(true),
     })
 }
@@ -311,6 +321,8 @@ fn schedule_update_params(lua: &Lua, opts: Table) -> LuaResult<ScheduleUpdatePar
         next_run_unix_ms,
         interval_seconds,
         overlap_policy: parsed.overlap_policy,
+        work_key: parsed.work_key,
+        max_concurrency: parsed.max_concurrency,
         enabled: parsed.enabled,
     })
 }

@@ -281,13 +281,21 @@ async fn test_schedule_dx_helpers_create_and_list_jobs() {
 
                 local recurring = schedule.every(60, "Run tests", {
                     state = "qa",
-                    store = { path = "./project.db" }
+                    store = { path = "./project.db" },
+                    work_key = "project:alpha:qa",
+                    max_concurrency = 1
                 })
                 if recurring.interval_seconds ~= 60 then
                     error("expected recurring interval")
                 end
                 if recurring.persistence == nil then
                     error("expected state persistence override")
+                end
+                if recurring.work_key ~= "project:alpha:qa" then
+                    error("expected work_key to round-trip")
+                end
+                if recurring.max_concurrency ~= 1 then
+                    error("expected max_concurrency to round-trip")
                 end
 
                 local fetched = schedule.get(recurring.public_id)
@@ -303,7 +311,9 @@ async fn test_schedule_dx_helpers_create_and_list_jobs() {
                 local updated = schedule.update(recurring.public_id, {
                     prompt = "Run QA tests",
                     interval_seconds = 120,
-                    overlap = "skip"
+                    overlap = "skip",
+                    work_key = "project:alpha:qa:updated",
+                    max_concurrency = 2
                 })
                 if updated.prompt ~= "Run QA tests" then
                     error("expected update to replace prompt")
@@ -313,6 +323,12 @@ async fn test_schedule_dx_helpers_create_and_list_jobs() {
                 end
                 if updated.overlap_policy ~= "skip" then
                     error("expected update to normalize overlap policy")
+                end
+                if updated.work_key ~= "project:alpha:qa:updated" then
+                    error("expected update to replace work_key")
+                end
+                if updated.max_concurrency ~= 2 then
+                    error("expected update to replace max_concurrency")
                 end
 
                 local structured = runtime.schedule.create({

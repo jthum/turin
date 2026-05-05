@@ -240,6 +240,8 @@ async fn scheduled_one_shot_job_submits_and_disables_after_completion() -> Resul
             next_run_unix_ms: now_unix_ms - 1,
             interval_seconds: None,
             overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            work_key: None,
+            max_concurrency: None,
             enabled: true,
         })
         .await?;
@@ -305,6 +307,8 @@ async fn scheduled_interval_job_reschedules_after_submit() -> Result<()> {
             next_run_unix_ms: now_unix_ms - 1,
             interval_seconds: Some(60),
             overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            work_key: None,
+            max_concurrency: None,
             enabled: true,
         })
         .await?;
@@ -321,6 +325,89 @@ async fn scheduled_interval_job_reschedules_after_submit() -> Result<()> {
         scheduled.next_run_unix_ms > now_unix_ms,
         "recurring job should advance its next due time"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn scheduled_jobs_with_same_work_key_queue_until_capacity_frees() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let mut state = DaemonState::load(&config_path).await?;
+
+    let now_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64;
+    let first = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: Some("First grouped run".to_string()),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action: None,
+            persistence: None,
+            next_run_unix_ms: now_unix_ms - 1,
+            interval_seconds: None,
+            overlap_policy: ScheduledJobOverlapPolicy::Queue,
+            work_key: Some("project:alpha:qa".to_string()),
+            max_concurrency: Some(1),
+            enabled: true,
+        })
+        .await?;
+    let second = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: Some("Second grouped run".to_string()),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action: None,
+            persistence: None,
+            next_run_unix_ms: now_unix_ms - 1,
+            interval_seconds: None,
+            overlap_policy: ScheduledJobOverlapPolicy::Queue,
+            work_key: Some("project:alpha:qa".to_string()),
+            max_concurrency: Some(1),
+            enabled: true,
+        })
+        .await?;
+
+    state.scheduler_tick().await?;
+    let jobs = state.list_scheduled_jobs().await?;
+    let first_job = jobs
+        .iter()
+        .find(|entry| entry.id == first.id)
+        .expect("first grouped job visible");
+    let second_job = jobs
+        .iter()
+        .find(|entry| entry.id == second.id)
+        .expect("second grouped job visible");
+    let first_task_id = first_job
+        .running_task_id
+        .clone()
+        .expect("first grouped job should start");
+    assert!(second_job.running_task_id.is_none());
+    assert!(second_job.pending_rerun);
+    assert_eq!(
+        second_job.last_status.as_deref(),
+        Some("blocked: concurrency limit reached")
+    );
+
+    let completed = state.wait_for_task(&first_task_id, Some(2_000)).await?;
+    assert_eq!(completed.state, "completed");
+
+    state.scheduler_tick().await?;
+    let jobs = state.list_scheduled_jobs().await?;
+    let second_job = jobs
+        .iter()
+        .find(|entry| entry.id == second.id)
+        .expect("second grouped job visible after wake");
+    assert!(
+        second_job.running_task_id.is_some(),
+        "queued grouped job should start after capacity frees"
+    );
+    assert!(!second_job.pending_rerun);
 
     Ok(())
 }
@@ -386,6 +473,8 @@ provider = "noop"
             next_run_unix_ms: now_unix_ms - 1,
             interval_seconds: None,
             overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            work_key: None,
+            max_concurrency: None,
             enabled: true,
         })
         .await?;
@@ -465,6 +554,8 @@ async fn scheduled_action_job_can_disable_agent() -> Result<()> {
             next_run_unix_ms: now_unix_ms - 1,
             interval_seconds: None,
             overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            work_key: None,
+            max_concurrency: None,
             enabled: true,
         })
         .await?;
@@ -525,6 +616,8 @@ async fn scheduled_job_lifecycle_ops_round_trip() -> Result<()> {
             next_run_unix_ms: now_unix_ms + 60_000,
             interval_seconds: Some(300),
             overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            work_key: None,
+            max_concurrency: None,
             enabled: true,
         })
         .await?;
@@ -569,6 +662,8 @@ async fn scheduled_job_lifecycle_ops_round_trip() -> Result<()> {
             UpdateScheduledJobInput {
                 prompt: Some("Updated lifecycle check".to_string()),
                 interval_seconds: Some(120),
+                work_key: Some("project:alpha:qa".to_string()),
+                max_concurrency: Some(1),
                 enabled: Some(false),
                 ..UpdateScheduledJobInput::default()
             },
@@ -577,6 +672,8 @@ async fn scheduled_job_lifecycle_ops_round_trip() -> Result<()> {
         .expect("scheduled job should update");
     assert_eq!(updated.prompt.as_deref(), Some("Updated lifecycle check"));
     assert_eq!(updated.interval_seconds, Some(120));
+    assert_eq!(updated.work_key.as_deref(), Some("project:alpha:qa"));
+    assert_eq!(updated.max_concurrency, Some(1));
     assert!(!updated.enabled);
 
     let deleted = state

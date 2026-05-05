@@ -58,6 +58,8 @@ pub struct CreateScheduledJobInput {
     pub next_run_unix_ms: i64,
     pub interval_seconds: Option<u64>,
     pub overlap_policy: ScheduledJobOverlapPolicy,
+    pub work_key: Option<String>,
+    pub max_concurrency: Option<u32>,
     pub enabled: bool,
 }
 
@@ -73,6 +75,8 @@ pub struct UpdateScheduledJobInput {
     pub next_run_unix_ms: Option<i64>,
     pub interval_seconds: Option<u64>,
     pub overlap_policy: Option<ScheduledJobOverlapPolicy>,
+    pub work_key: Option<String>,
+    pub max_concurrency: Option<u32>,
     pub enabled: Option<bool>,
 }
 
@@ -164,6 +168,8 @@ impl DaemonState {
                 input.next_run_unix_ms,
                 input.interval_seconds,
                 input.overlap_policy.as_str(),
+                input.work_key.as_deref(),
+                input.max_concurrency,
                 input.enabled,
             )
             .await?;
@@ -246,6 +252,8 @@ impl DaemonState {
             })
             .as_str()
             .to_string();
+        let work_key = input.work_key.or(row.work_key.clone());
+        let max_concurrency = input.max_concurrency.or(row.max_concurrency);
         let enabled = input.enabled.unwrap_or(row.enabled);
 
         let persistence = match input.persistence {
@@ -279,6 +287,8 @@ impl DaemonState {
                 next_run_unix_ms,
                 interval_seconds,
                 &overlap_policy,
+                work_key.as_deref(),
+                max_concurrency,
                 enabled,
             )
             .await?;
@@ -397,7 +407,8 @@ impl DaemonState {
         };
         store
             .mark_scheduled_job_finished(job.id, last_status.as_deref(), next_run_override, false)
-            .await
+            .await?;
+        self.wake_group_pending_jobs(store, job, now_unix_ms).await
     }
 
     async fn process_due_scheduled_job(
@@ -427,6 +438,16 @@ impl DaemonState {
                     .await?;
             }
             return Ok(());
+        }
+
+        if let Some(work_key) = job.work_key.as_deref() {
+            let max_concurrency = job.max_concurrency.unwrap_or(1).max(1);
+            let active = store.count_running_scheduled_jobs_for_work_key(work_key).await?;
+            if active >= max_concurrency {
+                self.defer_capacity_blocked_job(store, job, now_unix_ms)
+                    .await?;
+                return Ok(());
+            }
         }
 
         match job_kind {
@@ -491,6 +512,7 @@ impl DaemonState {
                                 &status,
                             )
                             .await?;
+                        self.wake_group_pending_jobs(store, job, now_unix_ms).await?;
                     }
                     Err(err) => {
                         let message = format!("action_failed: {}", err);
@@ -544,6 +566,60 @@ impl DaemonState {
             .get_task(&request_id)
             .await
             .ok_or_else(|| anyhow!("Task '{}' was submitted but is not visible", request_id))
+    }
+
+    async fn defer_capacity_blocked_job(
+        &self,
+        store: &std::sync::Arc<crate::persistence::state::StateStore>,
+        job: &ScheduledJobRow,
+        now_unix_ms: i64,
+    ) -> Result<()> {
+        let overlap = job
+            .overlap_policy
+            .parse::<ScheduledJobOverlapPolicy>()
+            .unwrap_or(ScheduledJobOverlapPolicy::Skip);
+        let (next_run_unix_ms, pending_rerun) = match (job.interval_seconds, overlap) {
+            (Some(interval_seconds), ScheduledJobOverlapPolicy::Skip) => (
+                advance_recurring_due(job.next_run_unix_ms, interval_seconds, now_unix_ms),
+                false,
+            ),
+            (Some(interval_seconds), ScheduledJobOverlapPolicy::Queue) => (
+                advance_recurring_due(job.next_run_unix_ms, interval_seconds, now_unix_ms),
+                true,
+            ),
+            (None, ScheduledJobOverlapPolicy::Queue) => {
+                (now_unix_ms + SCHEDULED_JOB_FAILURE_RETRY_MS, true)
+            }
+            (None, ScheduledJobOverlapPolicy::Skip) => {
+                (now_unix_ms + SCHEDULED_JOB_FAILURE_RETRY_MS, false)
+            }
+        };
+        store
+            .mark_scheduled_job_capacity_blocked(
+                job.id,
+                next_run_unix_ms,
+                pending_rerun,
+                "blocked: concurrency limit reached",
+            )
+            .await
+    }
+
+    async fn wake_group_pending_jobs(
+        &self,
+        store: &std::sync::Arc<crate::persistence::state::StateStore>,
+        job: &ScheduledJobRow,
+        now_unix_ms: i64,
+    ) -> Result<()> {
+        let Some(work_key) = job.work_key.as_deref() else {
+            return Ok(());
+        };
+        store
+            .wake_pending_scheduled_jobs_for_work_key(work_key, now_unix_ms)
+            .await?;
+        if let Some(wake) = &self.scheduler_wake {
+            wake.notify_one();
+        }
+        Ok(())
     }
 
     async fn execute_scheduled_action(&mut self, job: &ScheduledJobRow) -> Result<String> {
@@ -627,6 +703,8 @@ fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {
         next_run_unix_ms: row.next_run_unix_ms,
         interval_seconds: row.interval_seconds,
         overlap_policy: row.overlap_policy,
+        work_key: row.work_key,
+        max_concurrency: row.max_concurrency,
         enabled: row.enabled,
         slot_id: scheduled_job_slot_id(&public_id),
         running_task_id: row.running_task_id,
