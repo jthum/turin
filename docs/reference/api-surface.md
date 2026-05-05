@@ -193,6 +193,11 @@ Current DX helper globals and helper-layer extensions:
 - `schedule.every(...)`
 - `schedule.at(...)`
 - `schedule.update(...)`
+- `schedule.get(...)`
+- `schedule.list(...)`
+- `schedule.enable(...)`
+- `schedule.disable(...)`
+- `schedule.delete(...)`
 
 These are helper-layer conveniences over the canonical substrate and should be evaluated separately during DX review.
 

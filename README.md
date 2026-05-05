@@ -15,7 +15,7 @@ Turin now ships a coherent, canonical runtime with:
 - **First-party Harness DX layer** (`verdict.*`, `allowed`, `needs`, `scope(...)`, `graph.*`, `schedule.*`, callable `runtime.db(...)`, callable `runtime.agent(...)`, `remember`, `recall`, `fs.summary`, `code.find`, grant/time/json helpers)
 - **Multi-DB runtime** with dynamic DB handles (`runtime.db.open/query/exec/list/close`)
 - **Multi-agent runtime** with peer agent submit/await/status orchestration (`runtime.agent.*`)
-- **Daemon-backed durable scheduler** with harness-facing helpers and daemon-owned `jobs.db` (`runtime.schedule.*`, `schedule.*`, including in-place job updates)
+- **Daemon-backed durable scheduler** with harness-facing helpers, built-in action jobs, and daemon-owned `jobs.db` (`runtime.schedule.*`, `schedule.*`, including in-place job updates)
 - **Memory v2 primitives** with lifecycle controls (`feedback`, `correct`, `purge`) and lexical/semantic/hybrid recall
 - **Code search primitives** backed by an optional `turin-map` indexing companion and direct runtime reads (`runtime.code.search.*`)
 - **Stable hook model** with explicit lifecycle hooks and typed event payloads
@@ -69,7 +69,7 @@ Simple things should be simple. Powerful things should be possible.
 - **Hybrid memory search** with native lexical/vector/hybrid retrieval
 - **Hybrid code search** with lexical, semantic, hybrid, and traceable fallback behavior
 - **Peer-agent orchestration** with status inspection and async submit/await result handling
-- **Scheduled task orchestration** with one-shot/recurring jobs, overlap policy, and cross-store execution targeting
+- **Scheduled task orchestration** with one-shot/recurring jobs, prompt or built-in action payloads, overlap policy, and cross-store execution targeting
 - **Opt-in governance** with profiles/capabilities/import scoping/agent ceilings/grants
 - **Live provider smoke tooling** (manual/opt-in) for real endpoint validation
 

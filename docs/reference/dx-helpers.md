@@ -110,9 +110,9 @@ And:
 
 Preferred scheduler helpers:
 
-- `schedule.after(seconds, prompt, opts?)`
-- `schedule.every(seconds, prompt, opts?)`
-- `schedule.at(unix_ms, prompt, opts?)`
+- `schedule.after(seconds, payload, opts?)`
+- `schedule.every(seconds, payload, opts?)`
+- `schedule.at(unix_ms, payload, opts?)`
 - `schedule.update(public_id, opts?)`
 - `schedule.get(public_id)`
 - `schedule.list(opts?)`
@@ -125,6 +125,14 @@ Notes:
 - this is a daemon-backed surface and requires a daemon-managed runtime
 - scheduled jobs live in daemon-owned `jobs.db`
 - jobs may still target different `state` / `store` persistence contexts
+- `payload` may be either:
+  - a bare prompt string
+  - or a table such as `{ action = "agent.disable", params = { id = "night-qa" } }`
+- built-in action payloads currently support:
+  - `agent.enable`
+  - `agent.disable`
+  - `channel.enable`
+  - `channel.disable`
 - `runtime.schedule.create(...)` / `update(...)` may also carry structured `content`, `tools`, and `conflict_policy` fields when a scheduled prompt needs richer task input than a bare string
 - `schedule.update(...)` changes only the fields you provide; it does not mutate the already-running attempt for a currently active job
 

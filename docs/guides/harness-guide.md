@@ -339,6 +339,10 @@ function on_turn_prepare(ctx)
   })
 
   schedule.after(300, "Follow up on the last failed build")
+  schedule.after(45, {
+    action = "agent.disable",
+    params = { id = "night-qa" },
+  })
 
   local fetched = schedule.get(nightly.public_id)
   if fetched and fetched.enabled then
@@ -359,7 +363,15 @@ Notes:
 - it only works in daemon-managed runtimes
 - recurring jobs currently support overlap policies such as `skip` and `queue`
 - job persistence may be redirected with `state = ...`, `store = ...`, or `persistence = {...}`
-- when needed, `runtime.schedule.create(...)` can also carry structured `content`, tool allowlists, and conflict policy just like `task.submit(...)`
+- `schedule.after(...)`, `schedule.every(...)`, and `schedule.at(...)` accept either:
+  - a bare prompt string
+  - or a payload table such as `{ action = "agent.disable", params = { id = "night-qa" } }`
+- built-in scheduled daemon actions currently include:
+  - `agent.enable`
+  - `agent.disable`
+  - `channel.enable`
+  - `channel.disable`
+- when needed, `runtime.schedule.create(...)` / `update(...)` can also carry structured `content`, tool allowlists, and conflict policy just like `task.submit(...)`
 
 ### Grant wrapper
 

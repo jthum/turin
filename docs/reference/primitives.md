@@ -127,9 +127,9 @@ These are layered on top of the existing scoped aliases.
 - `graph.branch(id_or_row) -> graph_ref`
 - `graph.turn(id_or_row) -> graph_ref`
 - `graph.ref(kind, id_or_row) -> graph_ref`
-- `schedule.after(seconds, prompt, opts?) -> job`
-- `schedule.every(seconds, prompt, opts?) -> job`
-- `schedule.at(unix_ms, prompt, opts?) -> job`
+- `schedule.after(seconds, payload, opts?) -> job`
+- `schedule.every(seconds, payload, opts?) -> job`
+- `schedule.at(unix_ms, payload, opts?) -> job`
 - `schedule.update(public_id, opts?) -> job`
 - `schedule.get(public_id) -> job`
 - `schedule.list(opts?) -> jobs`
@@ -257,9 +257,9 @@ Notes:
 
 ### DX `schedule`
 
-- `schedule.after(seconds, prompt, opts?) -> job`
-- `schedule.every(seconds, prompt, opts?) -> job`
-- `schedule.at(unix_ms, prompt, opts?) -> job`
+- `schedule.after(seconds, payload, opts?) -> job`
+- `schedule.every(seconds, payload, opts?) -> job`
+- `schedule.at(unix_ms, payload, opts?) -> job`
 - `schedule.update(public_id, opts?) -> job`
 - `schedule.get(public_id) -> job`
 - `schedule.list(opts?) -> jobs`
@@ -276,6 +276,21 @@ Notes:
   enabled = true,
   state = "ops",
   store = { path = "./project.db" },
+}
+```
+
+`payload` for `after` / `every` / `at` may be:
+
+```lua
+"Review the latest failed build"
+```
+
+or:
+
+```lua
+{
+  action = "agent.disable",
+  params = { id = "night-qa" },
 }
 ```
 
@@ -298,6 +313,11 @@ Notes:
 - `schedule.*` is helper-layer sugar over the daemon-backed scheduler
 - it requires a daemon-managed runtime and raises outside that environment
 - `state = ...` / `store = ...` are shorthand for `persistence = { state = ..., store = ... }`
+- built-in action payloads currently support:
+  - `agent.enable`
+  - `agent.disable`
+  - `channel.enable`
+  - `channel.disable`
 - `schedule.delete(...)` rejects running jobs rather than orphaning active execution
 - `schedule.update(...)` only changes the fields you provide; running attempts continue with the task that was already submitted
 
@@ -853,7 +873,9 @@ Daemon-backed durable scheduler API.
 
 ```lua
 {
-  prompt = "Follow up on the failed build", -- required
+  prompt = "Follow up on the failed build", -- prompt jobs provide this
+  action = "agent.disable",                 -- action jobs provide this instead
+  params = { id = "night-qa" },
   content = {
     { type = "text", text = "Use the attached QA context" },
   },
@@ -880,6 +902,8 @@ Daemon-backed durable scheduler API.
 {
   id = "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d47", -- required
   prompt = "Follow up after deploy",
+  action = "channel.disable",
+  params = { id = "qa-telegram" },
   content = {
     { type = "text", text = "Preserve the prior test artifact context" },
   },
@@ -905,12 +929,24 @@ Rules:
   - `next_run_unix_ms`
   - `after_seconds`
   - or `interval_seconds` alone (first run scheduled relative to now)
+- choose one job payload family:
+  - prompt job:
+    - `prompt`
+    - optionally `content`, `tools`, `conflict_policy`
+  - action job:
+    - `action`
+    - optional `params`
 - `runtime.schedule.update(opts)` accepts the same scheduling anchor rules, but only for the fields you choose to replace
 - `overlap_policy` currently supports:
   - `"skip"`
   - `"queue"`
 - `agent` must be the current agent or another configured agent id
 - `content`, `tools`, and `conflict_policy` follow the same shapes used by `task.submit(...)`
+- built-in action names currently support:
+  - `agent.enable`
+  - `agent.disable`
+  - `channel.enable`
+  - `channel.disable`
 - `runtime.schedule.list(...)` currently supports:
   - `{ agent = "reviewer" }`
 
