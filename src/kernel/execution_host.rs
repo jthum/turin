@@ -72,6 +72,7 @@ pub struct ExecutionHost {
     pub(crate) policy_manager: Arc<RuntimePolicyManager>,
     pub(crate) governance_manager: Arc<GovernanceManager>,
     pub(crate) harness_manager: Arc<HarnessManager>,
+    pub(crate) scheduler: Option<Arc<crate::harness::scheduler::HarnessSchedulerAccess>>,
     pub(crate) persistence_locks: Arc<SessionPersistenceCoordinator>,
     pub(crate) clients: HashMap<String, ProviderClient>,
     pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
@@ -142,6 +143,7 @@ impl ExecutionHost {
 
         let engine = harness.lock().expect("session harness mutex poisoned");
         engine.bind_execution_context(crate::harness::globals::HarnessExecutionBinding {
+            agent_id: session.identity.agent_id().to_string(),
             session_id: self.session_reference(session),
             store_selector: session.store_selector.clone(),
             default_store_selector: session.default_store_selector.clone(),

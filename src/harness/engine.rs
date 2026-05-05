@@ -188,6 +188,7 @@ impl HarnessEngine {
         if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
             && let Ok(mut lock) = app_data.execution_ctx.lock()
         {
+            lock.agent_id = Some(binding.agent_id);
             lock.session_id = Some(binding.session_id);
             lock.session_store_selector = Some(binding.store_selector);
             lock.default_store_selector = binding.default_store_selector;
@@ -209,6 +210,7 @@ impl HarnessEngine {
         if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
             && let Ok(mut lock) = app_data.execution_ctx.lock()
         {
+            lock.agent_id = None;
             lock.session_id = None;
             lock.session_store_selector = None;
             lock.default_store_selector = None;

@@ -16,6 +16,7 @@ mod channel;
 mod daemon;
 mod harness;
 mod runtime;
+mod schedule;
 mod session;
 mod task;
 
@@ -81,6 +82,8 @@ pub(super) async fn dispatch(
         DaemonRequest::TaskPromote(params) => task::promote(id, params, &context).await,
         DaemonRequest::TaskCancel(params) => task::cancel(id, params, &context).await,
         DaemonRequest::TaskList(params) => task::list(id, params, &context).await,
+        DaemonRequest::ScheduleCreate(params) => schedule::create(id, params, &context).await,
+        DaemonRequest::ScheduleList(params) => schedule::list(id, params, &context).await,
         DaemonRequest::SessionList(params) => session::list(id, params, &context).await,
         DaemonRequest::SessionListLive(params) => session::list_live(id, params, &context).await,
         DaemonRequest::SessionSearch(params) => session::search(id, params, &context).await,

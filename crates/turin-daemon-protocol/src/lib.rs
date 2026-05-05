@@ -163,6 +163,67 @@ pub struct SubmitTaskParams {
     pub conflict_policy: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct StoreTargetParams {
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub alias: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ContextPersistenceParams {
+    #[serde(default)]
+    pub state: Option<StoreTargetParams>,
+    #[serde(default)]
+    pub store: Option<StoreTargetParams>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ScheduleCreateParams {
+    pub agent_id: String,
+    pub prompt: String,
+    pub next_run_unix_ms: i64,
+    #[serde(default)]
+    pub interval_seconds: Option<u64>,
+    #[serde(default)]
+    pub overlap_policy: Option<String>,
+    #[serde(default)]
+    pub persistence: Option<ContextPersistenceParams>,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ScheduleJobDetail {
+    pub id: i64,
+    pub public_id: String,
+    pub agent_id: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub persistence: Option<ContextPersistenceParams>,
+    pub next_run_unix_ms: i64,
+    #[serde(default)]
+    pub interval_seconds: Option<u64>,
+    pub overlap_policy: String,
+    pub enabled: bool,
+    pub slot_id: String,
+    #[serde(default)]
+    pub running_task_id: Option<String>,
+    pub pending_rerun: bool,
+    #[serde(default)]
+    pub last_run_unix_ms: Option<i64>,
+    #[serde(default)]
+    pub last_status: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ScheduleJobList {
+    pub jobs: Vec<ScheduleJobDetail>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SidestepContextTargetParams {
@@ -381,6 +442,10 @@ pub enum DaemonRequest {
     TaskCancel(TaskIdParams),
     #[serde(rename = "task.list")]
     TaskList(NoParams),
+    #[serde(rename = "schedule.create")]
+    ScheduleCreate(ScheduleCreateParams),
+    #[serde(rename = "schedule.list")]
+    ScheduleList(NoParams),
     #[serde(rename = "session.list")]
     SessionList(SessionListParams),
     #[serde(rename = "session.list_live")]
@@ -740,5 +805,60 @@ mod tests {
             serde_json::from_value(value).expect("deserialize handshake");
         assert!(decoded.capabilities.runtime_snapshot_v1);
         assert!(decoded.capabilities.channels);
+    }
+
+    #[test]
+    fn schedule_create_request_round_trips_typed_shape() {
+        let request = RequestEnvelope::new(
+            Some("req_sched".to_string()),
+            DaemonRequest::ScheduleCreate(ScheduleCreateParams {
+                agent_id: "default".to_string(),
+                prompt: "Heartbeat".to_string(),
+                next_run_unix_ms: 1_700_000_000_000,
+                interval_seconds: Some(300),
+                overlap_policy: Some("skip".to_string()),
+                persistence: Some(ContextPersistenceParams {
+                    state: Some(StoreTargetParams {
+                        path: None,
+                        alias: Some("project-alpha".to_string()),
+                    }),
+                    store: None,
+                }),
+                enabled: true,
+            }),
+        );
+
+        let value = serde_json::to_value(&request).expect("serialize request");
+        assert_eq!(value["op"], "schedule.create");
+        assert_eq!(value["params"]["agent_id"], "default");
+        assert_eq!(value["params"]["prompt"], "Heartbeat");
+        assert_eq!(value["params"]["next_run_unix_ms"], 1_700_000_000_000i64);
+        assert_eq!(value["params"]["interval_seconds"], 300);
+        assert_eq!(value["params"]["overlap_policy"], "skip");
+        assert_eq!(
+            value["params"]["persistence"]["state"]["alias"],
+            "project-alpha"
+        );
+
+        let decoded: RequestEnvelope = serde_json::from_value(value).expect("deserialize request");
+        match decoded.request {
+            DaemonRequest::ScheduleCreate(params) => {
+                assert_eq!(params.agent_id, "default");
+                assert_eq!(params.prompt, "Heartbeat");
+                assert_eq!(params.next_run_unix_ms, 1_700_000_000_000i64);
+                assert_eq!(params.interval_seconds, Some(300));
+                assert_eq!(params.overlap_policy.as_deref(), Some("skip"));
+                assert_eq!(
+                    params
+                        .persistence
+                        .as_ref()
+                        .and_then(|p| p.state.as_ref())
+                        .and_then(|state| state.alias.as_deref()),
+                    Some("project-alpha")
+                );
+                assert!(params.enabled);
+            }
+            other => panic!("unexpected request variant: {other:?}"),
+        }
     }
 }

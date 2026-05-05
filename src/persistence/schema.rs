@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 16;
+pub(crate) const SCHEMA_VERSION: u32 = 18;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -174,6 +174,29 @@ CREATE TABLE IF NOT EXISTS memory_feedback_events (
 
 CREATE INDEX IF NOT EXISTS idx_memory_feedback_events_memory ON memory_feedback_events(memory_id);
 
+-- Durable scheduler jobs
+CREATE TABLE IF NOT EXISTS scheduled_jobs (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_id        BLOB(16) UNIQUE NOT NULL,
+    agent_id         TEXT NOT NULL,
+    prompt           TEXT NOT NULL,
+    state_target     TEXT,
+    store_target     TEXT,
+    next_run_unix_ms INTEGER NOT NULL,
+    interval_seconds INTEGER,
+    overlap_policy   TEXT NOT NULL DEFAULT 'skip',
+    enabled          INTEGER NOT NULL DEFAULT 1,
+    running_task_id  TEXT,
+    pending_rerun    INTEGER NOT NULL DEFAULT 0,
+    last_run_unix_ms INTEGER,
+    last_status      TEXT,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_due ON scheduled_jobs(enabled, next_run_unix_ms);
+CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_running ON scheduled_jobs(running_task_id);
+
 "#;
 
 /// Native Turso FTS schema
@@ -254,6 +277,26 @@ pub struct BranchProvenance {
     pub origin_task_id: Option<String>,
     pub origin_execution_id: Option<String>,
     pub origin_metadata: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScheduledJobRow {
+    pub id: i64,
+    pub public_id: Vec<u8>,
+    pub agent_id: String,
+    pub prompt: String,
+    pub state_target: Option<String>,
+    pub store_target: Option<String>,
+    pub next_run_unix_ms: i64,
+    pub interval_seconds: Option<u64>,
+    pub overlap_policy: String,
+    pub enabled: bool,
+    pub running_task_id: Option<String>,
+    pub pending_rerun: bool,
+    pub last_run_unix_ms: Option<i64>,
+    pub last_status: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 impl BranchProvenance {

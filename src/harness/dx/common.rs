@@ -56,6 +56,7 @@ pub fn normalize_helper_capability_name(capability: &str) -> String {
         "kv",
         "memory",
         "policy",
+        "schedule",
     ];
 
     if let Some((root, _)) = capability.split_once('.')

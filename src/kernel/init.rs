@@ -25,6 +25,7 @@ impl ExecutionHost {
             agent_manager: self.agent_manager.clone(),
             policy_manager: self.policy_manager.clone(),
             governance_manager: self.governance_manager.clone(),
+            scheduler: self.scheduler.clone(),
             embedding_provider: self.embedding_provider.clone(),
         }
     }

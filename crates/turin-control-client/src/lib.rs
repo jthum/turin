@@ -9,10 +9,11 @@ use turin_daemon_protocol::{
     ChannelAccessParams, ChannelAccessRoomParams, DaemonHandshake, DaemonRequest, EntityIdParams,
     EventEnvelope, LiveSessionTargetParams, NoParams, OpenSessionParams, PromoteTaskParams,
     RequestEnvelope, ResponseEnvelope, ResumeSessionParams, RuntimeEventsSubscribeParams,
-    SessionBranchCheckoutParams, SessionBranchCreateParams, SessionBranchSiblingsParams,
-    SessionIdParams, SessionListParams, SessionSearchHitKind, SessionSearchParams,
-    SessionSearchScope, SessionTitleParams, SidestepContextTargetParams, SidestepModeParams,
-    SidestepTaskParams, SubmitTaskParams, TaskIdParams, UpdateChannelParams, WaitTaskParams,
+    ScheduleCreateParams, ScheduleJobDetail, ScheduleJobList, SessionBranchCheckoutParams,
+    SessionBranchCreateParams, SessionBranchSiblingsParams, SessionIdParams, SessionListParams,
+    SessionSearchHitKind, SessionSearchParams, SessionSearchScope, SessionTitleParams,
+    SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams, SubmitTaskParams,
+    TaskIdParams, UpdateChannelParams, WaitTaskParams,
 };
 use turin_remote_client::RemoteClient;
 
@@ -548,6 +549,18 @@ impl ControlClient {
             .request_ok(None, DaemonRequest::SessionListLive(NoParams::default()))
             .await?;
         Ok(response.sessions)
+    }
+
+    pub async fn create_schedule(&self, params: ScheduleCreateParams) -> Result<ScheduleJobDetail> {
+        self.request_ok(None, DaemonRequest::ScheduleCreate(params))
+            .await
+    }
+
+    pub async fn list_schedules(&self) -> Result<Vec<ScheduleJobDetail>> {
+        let response: ScheduleJobList = self
+            .request_ok(None, DaemonRequest::ScheduleList(NoParams::default()))
+            .await?;
+        Ok(response.jobs)
     }
 
     pub async fn list_sessions(&self, limit: usize, offset: usize) -> Result<Vec<SessionSummary>> {

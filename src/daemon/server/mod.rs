@@ -1,5 +1,6 @@
 mod dispatch;
 mod events;
+mod scheduler;
 #[cfg(test)]
 mod tests;
 mod watch;
@@ -78,6 +79,7 @@ pub async fn serve(config_path: &Path) -> Result<()> {
     )
     .await?;
     events::start_task_event_poller(Arc::clone(&state), event_tx.clone(), shutdown_rx.clone());
+    scheduler::start_internal_scheduler(Arc::clone(&state), shutdown_rx.clone());
     let client_ctx = ClientContext {
         state: Arc::clone(&state),
         watcher_slot: Arc::clone(&watcher_slot),

@@ -15,6 +15,7 @@ pub mod runtime_db;
 pub mod runtime_governance;
 pub mod runtime_graph;
 pub mod runtime_policy;
+pub mod runtime_schedule;
 pub mod scoped_data_backend;
 pub mod session_user_aliases;
 pub mod system_globals;

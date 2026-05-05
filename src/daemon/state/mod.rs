@@ -3,24 +3,30 @@ mod helpers;
 mod registry_ops;
 mod runtime_sessions;
 mod runtime_tasks;
+mod scheduled_jobs;
 #[cfg(test)]
 mod tests;
 mod types;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
+use tokio::sync::Notify;
 use turin_types::ToolsConfig;
 
 use crate::daemon::channels::ChannelRuntimeSnapshot;
 use crate::daemon::registry::{
     RegistryLoad, RegistrySnapshot, build_effective_config, scan_registry, snapshot,
 };
+use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::kernel::Kernel;
 use crate::kernel::config::{ThinkingConfig, TurinConfig};
+use crate::persistence::state::StateStore;
 
 pub(crate) use runtime_sessions::session_store_selector_from_filters;
+pub(crate) use scheduled_jobs::{CreateScheduledJobInput, ScheduledJobOverlapPolicy};
 pub use types::{
     AgentDetail, ChannelDetail, HarnessDetail, SessionBranchDetail, SessionDetail,
     SessionEventDetail, SessionMessageDetail, SessionSearchHit, SessionSummary,
@@ -65,6 +71,8 @@ pub struct DaemonState {
     endpoint: PathBuf,
     pub(super) registry_load: RegistryLoad,
     pub(super) kernel: Kernel,
+    pub(super) jobs_store: Arc<StateStore>,
+    pub(super) scheduler_wake: Option<Arc<Notify>>,
 }
 
 #[derive(Debug, Clone)]
@@ -123,10 +131,19 @@ impl DaemonState {
         let registry_load = scan_registry(&bootstrap_config, &config_base)?;
         let effective_config = build_effective_config(&bootstrap_config, &registry_load)?;
         let endpoint = bootstrap_config.resolve_daemon_endpoint(&config_base);
+        let jobs_db_path = bootstrap_config.resolve_daemon_jobs_db(&config_base);
+        let jobs_store = Arc::new(StateStore::open(&jobs_db_path.display().to_string()).await?);
 
         let mut kernel = Kernel::builder(effective_config).build()?;
         kernel.init_state().await?;
         kernel.init_clients()?;
+        kernel.host.scheduler = Some(Arc::new(HarnessSchedulerAccess::new(
+            Arc::clone(&jobs_store),
+            None,
+        )));
+        kernel
+            .agent_manager()
+            .bind_scheduler_access(kernel.host.scheduler.clone());
         kernel.init_harness().await?;
         kernel.start_watcher()?;
 
@@ -137,6 +154,8 @@ impl DaemonState {
             endpoint,
             registry_load,
             kernel,
+            jobs_store,
+            scheduler_wake: None,
         })
     }
 
@@ -185,16 +204,26 @@ impl DaemonState {
 
         let registry_load = scan_registry(&bootstrap_config, &self.config_base)?;
         let effective_config = build_effective_config(&bootstrap_config, &registry_load)?;
+        let jobs_db_path = bootstrap_config.resolve_daemon_jobs_db(&self.config_base);
+        let jobs_store = Arc::new(StateStore::open(&jobs_db_path.display().to_string()).await?);
 
         let mut new_kernel = Kernel::builder(effective_config).build()?;
         new_kernel.init_state().await?;
         new_kernel.init_clients()?;
+        new_kernel.host.scheduler = Some(Arc::new(HarnessSchedulerAccess::new(
+            Arc::clone(&jobs_store),
+            self.scheduler_wake.clone(),
+        )));
+        new_kernel
+            .agent_manager()
+            .bind_scheduler_access(new_kernel.host.scheduler.clone());
         new_kernel.init_harness().await?;
         new_kernel.start_watcher()?;
 
         let old_kernel = std::mem::replace(&mut self.kernel, new_kernel);
         self.bootstrap_config = bootstrap_config;
         self.registry_load = registry_load;
+        self.jobs_store = jobs_store;
 
         tokio::spawn(async move {
             let mut kernel = old_kernel;

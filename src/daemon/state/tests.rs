@@ -1,3 +1,4 @@
+use super::scheduled_jobs::{CreateScheduledJobInput, ScheduledJobOverlapPolicy};
 use super::*;
 use crate::kernel::event::TaskBranchOutcome;
 use crate::kernel::session_refs::parse_session_reference;
@@ -7,8 +8,8 @@ use serde_json::json;
 use tempfile::tempdir;
 use tokio::time::{Duration, sleep};
 use turin_daemon_protocol::{
-    PromoteTaskParams, SessionSearchScope, SidestepContextTargetParams, SidestepModeParams,
-    SidestepTaskParams,
+    ContextPersistenceParams, PromoteTaskParams, SessionSearchScope, SidestepContextTargetParams,
+    SidestepModeParams, SidestepTaskParams, StoreTargetParams,
 };
 
 fn write_agent_with_state_path(root: &Path, agent_id: &str, state_path: &str) -> Result<()> {
@@ -211,6 +212,201 @@ async fn wait_for_task_returns_terminal_result() -> Result<()> {
     assert_eq!(completed.request_id, task.request_id);
     assert_eq!(completed.state, "completed");
     assert!(completed.status.is_some());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn scheduled_one_shot_job_submits_and_disables_after_completion() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+
+    let now_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64;
+    let job = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: "Hello from scheduler".to_string(),
+            persistence: None,
+            next_run_unix_ms: now_unix_ms - 1,
+            interval_seconds: None,
+            overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            enabled: true,
+        })
+        .await?;
+
+    let default_state_store = state.kernel.store_manager().get_default().await?;
+    assert!(
+        default_state_store.list_scheduled_jobs().await?.is_empty(),
+        "scheduled jobs should not be stored in the primary session state DB"
+    );
+    assert_eq!(state.jobs_store.list_scheduled_jobs().await?.len(), 1);
+
+    let next_sleep = state.scheduler_tick().await?;
+    assert!(next_sleep.is_none());
+
+    let jobs = state.list_scheduled_jobs().await?;
+    let running = jobs
+        .iter()
+        .find(|entry| entry.id == job.id)
+        .expect("scheduled job visible after tick");
+    let task_id = running
+        .running_task_id
+        .clone()
+        .expect("scheduled job should have submitted a task");
+    assert!(
+        !running.enabled,
+        "one-shot job should disable itself after submit"
+    );
+
+    let completed = state.wait_for_task(&task_id, Some(2_000)).await?;
+    assert_eq!(completed.state, "completed");
+
+    state.scheduler_tick().await?;
+    let jobs = state.list_scheduled_jobs().await?;
+    let finished = jobs
+        .iter()
+        .find(|entry| entry.id == job.id)
+        .expect("scheduled job still visible");
+    assert!(finished.running_task_id.is_none());
+    assert!(!finished.enabled);
+    assert!(finished.last_status.is_some());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn scheduled_interval_job_reschedules_after_submit() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+
+    let now_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64;
+    let job = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: "Heartbeat run".to_string(),
+            persistence: None,
+            next_run_unix_ms: now_unix_ms - 1,
+            interval_seconds: Some(60),
+            overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            enabled: true,
+        })
+        .await?;
+
+    state.scheduler_tick().await?;
+    let jobs = state.list_scheduled_jobs().await?;
+    let scheduled = jobs
+        .iter()
+        .find(|entry| entry.id == job.id)
+        .expect("scheduled job visible");
+    assert!(scheduled.running_task_id.is_some());
+    assert!(scheduled.enabled);
+    assert!(
+        scheduled.next_run_unix_ms > now_unix_ms,
+        "recurring job should advance its next due time"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn scheduled_job_can_target_named_state_store() -> Result<()> {
+    let temp = tempdir()?;
+    std::fs::create_dir_all(temp.path().join("default-harness"))?;
+    std::fs::write(
+        temp.path().join("default-harness").join("main.lua"),
+        "-- bootstrap\n",
+    )?;
+    let config_path = temp.path().join(".turin").join("config.toml");
+    std::fs::create_dir_all(config_path.parent().expect("config parent"))?;
+    std::fs::write(
+        &config_path,
+        r#"[agent]
+id = "default"
+system_prompt = "bootstrap"
+model = "mock-model"
+provider = "mock"
+
+[kernel]
+workspace_root = "."
+
+[persistence.state]
+path = "state.db"
+
+[persistence.states.project_alpha]
+path = "project-alpha.db"
+
+[harness]
+directory = "default-harness"
+fs_root = "."
+
+[providers.mock]
+type = "mock"
+
+[embeddings]
+provider = "noop"
+"#,
+    )?;
+
+    let state = DaemonState::load(&config_path).await?;
+    let now_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64;
+    let job = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: "Run in project alpha store".to_string(),
+            persistence: Some(ContextPersistenceParams {
+                state: Some(StoreTargetParams {
+                    path: None,
+                    alias: Some("project_alpha".to_string()),
+                }),
+                store: None,
+            }),
+            next_run_unix_ms: now_unix_ms - 1,
+            interval_seconds: None,
+            overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            enabled: true,
+        })
+        .await?;
+
+    assert_eq!(
+        job.persistence
+            .as_ref()
+            .and_then(|p| p.state.as_ref())
+            .and_then(|state| state.alias.as_deref()),
+        Some("project_alpha")
+    );
+
+    state.scheduler_tick().await?;
+    let jobs = state.list_scheduled_jobs().await?;
+    let running = jobs
+        .iter()
+        .find(|entry| entry.id == job.id)
+        .expect("scheduled job visible after tick");
+    let task_id = running
+        .running_task_id
+        .clone()
+        .expect("scheduled job should have submitted a task");
+    let completed = state.wait_for_task(&task_id, Some(2_000)).await?;
+    assert_eq!(completed.state, "completed");
+
+    let sessions = state
+        .list_sessions(
+            20,
+            0,
+            Some(StoreSelector::Alias("project_alpha".to_string())),
+        )
+        .await?;
+    assert!(
+        !sessions.is_empty(),
+        "scheduled job should persist session state in named state store"
+    );
 
     Ok(())
 }

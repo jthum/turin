@@ -20,6 +20,7 @@ mod events;
 mod graph;
 mod kv;
 mod messages;
+mod scheduler;
 mod sessions;
 #[cfg(test)]
 mod tests;

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use tokio::sync::Mutex;
 
 use crate::harness::dx;
+use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::harness::stdlib::{
     agent_bindings, memory_kv_bindings, runtime_bindings, session_user_aliases, system_globals,
     tool_bindings,
@@ -53,6 +54,7 @@ pub struct HarnessExecutionMetadata {
 
 #[derive(Clone)]
 pub struct HarnessExecutionBinding {
+    pub agent_id: String,
     pub session_id: String,
     pub store_selector: StoreSelector,
     pub default_store_selector: Option<StoreSelector>,
@@ -65,6 +67,7 @@ pub struct HarnessExecutionBinding {
 
 #[derive(Clone, Default)]
 pub struct HarnessExecutionContext {
+    pub agent_id: Option<String>,
     pub execution_id: Option<String>,
     pub execution_context_target: Option<ExecutionContextTarget>,
     pub execution_visibility: Option<ExecutionVisibility>,
@@ -98,6 +101,7 @@ pub struct HarnessAppData {
     pub agent_manager: Arc<crate::kernel::agent_manager::AgentManager>,
     pub policy_manager: Arc<crate::kernel::policy::RuntimePolicyManager>,
     pub governance_manager: Arc<crate::kernel::governance::GovernanceManager>,
+    pub scheduler: Option<Arc<HarnessSchedulerAccess>>,
     pub execution_ctx: ActiveHarnessExecutionContext,
     pub clients: HashMap<String, ProviderClient>,
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,

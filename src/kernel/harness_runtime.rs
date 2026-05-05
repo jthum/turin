@@ -9,6 +9,7 @@ use tracing::{debug, info, warn};
 
 use crate::harness::engine::HarnessEngine;
 use crate::harness::globals::{HarnessAppData, HarnessExecutionContext};
+use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
 use crate::kernel::agent_manager::AgentManager;
@@ -31,6 +32,7 @@ pub(crate) struct HarnessRuntimeInitContext {
     pub(crate) agent_manager: Arc<AgentManager>,
     pub(crate) policy_manager: Arc<RuntimePolicyManager>,
     pub(crate) governance_manager: Arc<GovernanceManager>,
+    pub(crate) scheduler: Option<Arc<HarnessSchedulerAccess>>,
     pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
 }
 
@@ -239,6 +241,7 @@ impl HarnessRuntime {
             agent_manager: ctx.agent_manager,
             policy_manager: ctx.policy_manager,
             governance_manager: ctx.governance_manager,
+            scheduler: ctx.scheduler,
             execution_ctx: Arc::new(std::sync::Mutex::new(HarnessExecutionContext::default())),
             clients: ctx.clients,
             embedding_provider: ctx.embedding_provider,

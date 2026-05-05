@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::{Arc, Mutex, OnceLock, RwLock as StdRwLock};
 
+use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
 use crate::kernel::config::InferenceOverrideConfig;
@@ -463,6 +464,8 @@ pub struct AgentManager {
     shared_runtime: OnceLock<SharedPeerRuntimeContext>,
     /// Live inference state copied from the root kernel after provider initialization.
     shared_inference: Mutex<SharedInferenceState>,
+    /// Optional daemon-owned scheduler access propagated to peer runtimes.
+    shared_scheduler: Mutex<Option<Arc<HarnessSchedulerAccess>>>,
 }
 
 impl AgentManager {
@@ -477,6 +480,7 @@ impl AgentManager {
             completed_results: RwLock::new(CompletedTaskCache::default()),
             shared_runtime: OnceLock::new(),
             shared_inference: Mutex::new(SharedInferenceState::default()),
+            shared_scheduler: Mutex::new(None),
         }
     }
 
@@ -500,5 +504,19 @@ impl AgentManager {
             clients,
             embedding_provider,
         };
+    }
+
+    pub(crate) fn bind_scheduler_access(&self, scheduler: Option<Arc<HarnessSchedulerAccess>>) {
+        *self
+            .shared_scheduler
+            .lock()
+            .expect("agent manager shared scheduler mutex poisoned") = scheduler;
+    }
+
+    pub(crate) fn shared_scheduler(&self) -> Option<Arc<HarnessSchedulerAccess>> {
+        self.shared_scheduler
+            .lock()
+            .expect("agent manager shared scheduler mutex poisoned")
+            .clone()
     }
 }

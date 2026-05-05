@@ -1,15 +1,18 @@
 use super::*;
 use crate::harness::context::{ContextWrapper, RequestOptionsOverride};
+use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::inference::provider::{
     InferenceEvent, InferenceProvider, InferenceRequest, InferenceStream, ProviderClient, SdkError,
 };
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::persistence::manager::StoreManager;
+use crate::persistence::state::StateStore;
 use futures::future::BoxFuture;
 use futures::stream;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
+use tokio::sync::Notify;
 
 #[derive(Clone)]
 struct CountingTextProvider {
@@ -68,10 +71,12 @@ fn test_app_data_for_root_and_session(root: PathBuf, session_id: &str) -> Harnes
         governance_manager: Arc::new(crate::kernel::governance::GovernanceManager::new(
             crate::kernel::config::GovernanceConfig::default(),
         )),
+        scheduler: None,
         clients: std::collections::HashMap::new(),
         embedding_provider: None,
         execution_ctx: std::sync::Arc::new(std::sync::Mutex::new(
             crate::harness::globals::HarnessExecutionContext {
+                agent_id: Some("test-agent".to_string()),
                 session_id: Some(session_id.to_string()),
                 queue: Some(std::sync::Arc::new(tokio::sync::Mutex::new(
                     std::collections::VecDeque::new(),
@@ -93,6 +98,23 @@ fn test_app_data_for_root(root: PathBuf) -> HarnessAppData {
 
 fn test_app_data() -> HarnessAppData {
     test_app_data_for_root(PathBuf::from("."))
+}
+
+async fn test_app_data_with_scheduler(root: PathBuf) -> HarnessAppData {
+    let mut app_data = test_app_data_for_root(root);
+    app_data.config = std::sync::Arc::new(crate::kernel::config::TurinConfig {
+        agent: crate::kernel::config::AgentConfig {
+            id: "test-agent".to_string(),
+            ..crate::kernel::config::AgentConfig::default()
+        },
+        ..crate::kernel::config::TurinConfig::default()
+    });
+    let jobs_store = Arc::new(StateStore::open_memory().await.expect("open jobs store"));
+    app_data.scheduler = Some(Arc::new(HarnessSchedulerAccess::new(
+        jobs_store,
+        Some(Arc::new(Notify::new())),
+    )));
+    app_data
 }
 
 #[test]
@@ -210,6 +232,82 @@ fn test_engine_escalate_verdict() {
         .unwrap();
     assert!(verdict.is_escalated());
     assert_eq!(verdict.reason(), Some("File writes need human approval"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_runtime_schedule_requires_daemon_managed_runtime() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local ok, err = pcall(function()
+                    return runtime.schedule.list()
+                end)
+                if ok then
+                    error("expected runtime.schedule.list to fail without daemon scheduler")
+                end
+                local message = tostring(err)
+                if not string.find(message, "daemon%-managed runtime") then
+                    error("unexpected error: " .. message)
+                end
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_schedule_dx_helpers_create_and_list_jobs() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local one = schedule.after(30, "Check status", {
+                    overlap = "queue"
+                })
+                if one.agent_id ~= "test-agent" then
+                    error("expected default agent binding")
+                end
+
+                local recurring = schedule.every(60, "Run tests", {
+                    state = "qa",
+                    store = { path = "./project.db" }
+                })
+                if recurring.interval_seconds ~= 60 then
+                    error("expected recurring interval")
+                end
+                if recurring.persistence == nil or recurring.persistence.state == nil then
+                    error("expected state persistence override")
+                end
+
+                local jobs = schedule.list()
+                if #jobs ~= 2 then
+                    error("expected 2 scheduled jobs, got " .. tostring(#jobs))
+                end
+
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut engine =
+        HarnessEngine::new(test_app_data_with_scheduler(dir.path().to_path_buf()).await).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
 }
 
 #[test]

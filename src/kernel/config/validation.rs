@@ -87,6 +87,10 @@ impl TurinConfig {
             "daemon.channels_dir must not be empty"
         );
         anyhow::ensure!(
+            !self.daemon.jobs_db.trim().is_empty(),
+            "daemon.jobs_db must not be empty"
+        );
+        anyhow::ensure!(
             !self.daemon.endpoint.trim().is_empty(),
             "daemon.endpoint must not be empty"
         );

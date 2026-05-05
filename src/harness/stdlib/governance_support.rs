@@ -6,8 +6,13 @@ use crate::kernel::session_refs::format_session_reference;
 use mlua::{Result as LuaResult, Table, Value};
 use std::collections::BTreeMap;
 
-pub(crate) fn current_agent_id(app_data: &HarnessAppData) -> &str {
-    app_data.config.agent.id.as_str()
+pub(crate) fn current_agent_id(app_data: &HarnessAppData) -> String {
+    if let Ok(lock) = app_data.execution_ctx.lock()
+        && let Some(agent_id) = lock.agent_id.as_deref()
+    {
+        return agent_id.to_string();
+    }
+    app_data.config.agent.id.clone()
 }
 
 pub(crate) fn capability_decision(
@@ -151,7 +156,7 @@ pub(crate) fn current_subject(app_data: &HarnessAppData) -> GovernanceSubject {
         })
         .unwrap_or((None, None, None, None, None));
     GovernanceSubject {
-        agent_id: Some(current_agent_id(app_data).to_string()),
+        agent_id: Some(current_agent_id(app_data)),
         session_reference,
         module_name,
         root_name,

@@ -9,7 +9,7 @@ use tokio::time::sleep;
 use turin_daemon_protocol::{
     ChannelRunnerHeartbeatParams, ChannelRunnerHelloParams, DAEMON_PROTOCOL_VERSION,
     DaemonHandshake, DaemonRequest, EventEnvelope, NoParams, RequestEnvelope, ResponseEnvelope,
-    RuntimeEventsSubscribeParams,
+    RuntimeEventsSubscribeParams, ScheduleCreateParams, ScheduleJobDetail, ScheduleJobList,
 };
 use turin_local_ipc::{
     LocalIpcReadHalf, connect as connect_local_ipc, current_transport_name,
@@ -270,6 +270,18 @@ impl DaemonClient {
             failed_channel_count,
             state,
         })
+    }
+
+    pub async fn schedule_create(&self, params: ScheduleCreateParams) -> Result<ScheduleJobDetail> {
+        self.request_ok(None, DaemonRequest::ScheduleCreate(params))
+            .await
+    }
+
+    pub async fn schedule_list(&self) -> Result<Vec<ScheduleJobDetail>> {
+        let response: ScheduleJobList = self
+            .request_ok(None, DaemonRequest::ScheduleList(NoParams::default()))
+            .await?;
+        Ok(response.jobs)
     }
 
     pub async fn wait_until_ready(

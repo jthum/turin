@@ -629,6 +629,7 @@ fn validate_harness_dir(
         agent_manager,
         policy_manager: Arc::new(RuntimePolicyManager::new()),
         governance_manager: Arc::new(GovernanceManager::new(bootstrap.governance.clone())),
+        scheduler: None,
         embedding_provider: None,
     })?;
 

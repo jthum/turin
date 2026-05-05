@@ -440,6 +440,8 @@ pub struct DaemonConfig {
     pub harnesses_dir: String,
     #[serde(default = "default_daemon_channels_dir")]
     pub channels_dir: String,
+    #[serde(default = "default_daemon_jobs_db")]
+    pub jobs_db: String,
     #[serde(default = "default_daemon_endpoint")]
     pub endpoint: String,
 }
@@ -450,6 +452,7 @@ impl Default for DaemonConfig {
             agents_dir: default_daemon_agents_dir(),
             harnesses_dir: default_daemon_harnesses_dir(),
             channels_dir: default_daemon_channels_dir(),
+            jobs_db: default_daemon_jobs_db(),
             endpoint: default_daemon_endpoint(),
         }
     }
@@ -714,6 +717,17 @@ impl TurinConfig {
         )
     }
 
+    pub fn resolve_daemon_jobs_db(&self, base: &Path) -> PathBuf {
+        let layout = self.resolved_layout(base);
+        resolve_runtime_path(
+            base,
+            &self.kernel.workspace_root,
+            &self.daemon.jobs_db,
+            default_daemon_jobs_db().as_str(),
+            &layout.data_dir.join("jobs.db"),
+        )
+    }
+
     pub fn resolve_daemon_endpoint(&self, base: &Path) -> PathBuf {
         let layout = self.resolved_layout(base);
         if self.daemon.endpoint == default_daemon_endpoint() {
@@ -778,6 +792,14 @@ impl TurinConfig {
         } else if Path::new(&self.daemon.channels_dir).is_relative() {
             self.daemon.channels_dir = workspace_root
                 .join(&self.daemon.channels_dir)
+                .display()
+                .to_string();
+        }
+        if self.daemon.jobs_db == default_daemon_jobs_db() {
+            self.daemon.jobs_db = layout.data_dir.join("jobs.db").display().to_string();
+        } else if Path::new(&self.daemon.jobs_db).is_relative() {
+            self.daemon.jobs_db = workspace_root
+                .join(&self.daemon.jobs_db)
                 .display()
                 .to_string();
         }

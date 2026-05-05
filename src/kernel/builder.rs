@@ -78,6 +78,7 @@ impl RuntimeBuilder {
                 policy_manager,
                 governance_manager,
                 harness_manager,
+                scheduler: None,
                 persistence_locks,
                 clients: HashMap::new(),
                 embedding_provider: self.embedding_provider,
