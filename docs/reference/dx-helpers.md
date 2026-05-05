@@ -47,6 +47,13 @@ end
 - `graph.node(...)`
 - `graph.branch(...)`
 - `graph.turn(...)`
+- `schedule.after(...)`
+- `schedule.every(...)`
+- `schedule.at(...)`
+- `schedule.get(...)`
+- `schedule.enable(...)`
+- `schedule.disable(...)`
+- `schedule.delete(...)`
 - callable `runtime.db(...)`
 - callable `runtime.agent(...)`
 - `runtime.governance.grant(spec, fn)`
@@ -97,6 +104,25 @@ Preferred methods:
 And:
 
 - `runtime.db.with(selector, fn, opts?)`
+
+### `schedule.*`
+
+Preferred scheduler helpers:
+
+- `schedule.after(seconds, prompt, opts?)`
+- `schedule.every(seconds, prompt, opts?)`
+- `schedule.at(unix_ms, prompt, opts?)`
+- `schedule.get(public_id)`
+- `schedule.list(opts?)`
+- `schedule.enable(public_id)`
+- `schedule.disable(public_id)`
+- `schedule.delete(public_id)`
+
+Notes:
+
+- this is a daemon-backed surface and requires a daemon-managed runtime
+- scheduled jobs live in daemon-owned `jobs.db`
+- jobs may still target different `state` / `store` persistence contexts
 
 ## Graph Helpers
 

@@ -133,6 +133,7 @@ Namespaces under `runtime`:
 - `runtime.code.*`
 - `runtime.db.*`
 - `runtime.agent.*`
+- `runtime.schedule.*`
 - `runtime.graph.*`
 - `runtime.policy.*`
 - `runtime.governance.*`
@@ -168,6 +169,7 @@ Current DX helper globals and helper-layer extensions:
 - `recall(...)`
 - `scope(kind, key, opts?)`
 - `graph.*`
+- `schedule.*`
 - `session.remember(...)`
 - `session.recall(...)`
 - `session.get(...)`
@@ -187,6 +189,9 @@ Current DX helper globals and helper-layer extensions:
 - callable `runtime.agent("agent_id") -> proxy`
 - `runtime.db.with(selector, fn, opts?)`
 - `runtime.governance.grant(spec, fn)`
+- `schedule.after(...)`
+- `schedule.every(...)`
+- `schedule.at(...)`
 
 These are helper-layer conveniences over the canonical substrate and should be evaluated separately during DX review.
 

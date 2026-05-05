@@ -12,9 +12,10 @@ Turin is intentionally unopinionated about workflow and personality. It provides
 Turin now ships a coherent, canonical runtime with:
 
 - **Canonical Harness API** (`runtime.*`) plus ergonomic aliases (`memory.*`, `kv.*`, `agent.*`, `session.*`, `user.*`)
-- **First-party Harness DX layer** (`verdict.*`, `allowed`, `needs`, `scope(...)`, `graph.*`, callable `runtime.db(...)`, callable `runtime.agent(...)`, `remember`, `recall`, `fs.summary`, `code.find`, grant/time/json helpers)
+- **First-party Harness DX layer** (`verdict.*`, `allowed`, `needs`, `scope(...)`, `graph.*`, `schedule.*`, callable `runtime.db(...)`, callable `runtime.agent(...)`, `remember`, `recall`, `fs.summary`, `code.find`, grant/time/json helpers)
 - **Multi-DB runtime** with dynamic DB handles (`runtime.db.open/query/exec/list/close`)
 - **Multi-agent runtime** with peer agent submit/await/status orchestration (`runtime.agent.*`)
+- **Daemon-backed durable scheduler** with harness-facing helpers and daemon-owned `jobs.db` (`runtime.schedule.*`, `schedule.*`)
 - **Memory v2 primitives** with lifecycle controls (`feedback`, `correct`, `purge`) and lexical/semantic/hybrid recall
 - **Code search primitives** backed by an optional `turin-map` indexing companion and direct runtime reads (`runtime.code.search.*`)
 - **Stable hook model** with explicit lifecycle hooks and typed event payloads
@@ -49,8 +50,9 @@ Simple things should be simple. Powerful things should be possible.
 - **Harness scripting in Luau** for governance, workflows, context engineering, memory policies, and orchestration
 - **Canonical stdlib API**:
   - `runtime.context`, `runtime.memory`, `runtime.code.search`, `runtime.kv`, `runtime.db`, `runtime.agent`, `runtime.policy`, `runtime.governance`
+  - `runtime.schedule`
 - **First-party DX layer**:
-  - `verdict`, `allowed`, `needs`, `scope`, `graph`, `session`, `user`, `remember`, `recall`, `fs.summary`, `code.find`, callable `runtime.db(...)`, callable `runtime.agent(...)`
+  - `verdict`, `allowed`, `needs`, `scope`, `graph`, `schedule`, `session`, `user`, `remember`, `recall`, `fs.summary`, `code.find`, callable `runtime.db(...)`, callable `runtime.agent(...)`
 - **Top-level ergonomic aliases**:
   - `fs`, `json`, `time`, `log`, `import`, `import_scoped`, `use`, `use_scoped`, `watch`
   - `memory`, `kv`, `session`, `user`, `agent`
@@ -67,6 +69,7 @@ Simple things should be simple. Powerful things should be possible.
 - **Hybrid memory search** with native lexical/vector/hybrid retrieval
 - **Hybrid code search** with lexical, semantic, hybrid, and traceable fallback behavior
 - **Peer-agent orchestration** with status inspection and async submit/await result handling
+- **Scheduled task orchestration** with one-shot/recurring jobs, overlap policy, and cross-store execution targeting
 - **Opt-in governance** with profiles/capabilities/import scoping/agent ceilings/grants
 - **Live provider smoke tooling** (manual/opt-in) for real endpoint validation
 
@@ -413,6 +416,8 @@ Turin’s harness surface is split between **canonical runtime APIs** and **ergo
   - `open`, `close`, `list`, `query`, `exec`
 - `runtime.agent`
   - `list`, `get_status`, `submit`, `await`
+- `runtime.schedule`
+  - `create`, `get`, `list`, `enable`, `disable`, `delete`
 - `runtime.policy`
   - `get`, `set`
 - `runtime.governance`
@@ -423,7 +428,7 @@ Turin’s harness surface is split between **canonical runtime APIs** and **ergo
 
 - `memory.*` / `kv.*` for default agent-scoped data
 - `memory.as(ctx)` / `kv.as(ctx)` for scoped proxies
-- `remember`, `recall`, `scope(...)`, `graph.*`, `fs.summary`, `code.find`
+- `remember`, `recall`, `scope(...)`, `graph.*`, `schedule.*`, `fs.summary`, `code.find`
 - `session.memory/kv.*`, `user.memory/kv.*`
 - `agent.spawn`, `agent.ask`, `agent.send`, `agent.session.*`
 - `fs`, `json`, `time`, `log`, `import`, `import_scoped`, `use`, `use_scoped`, `watch`

@@ -127,6 +127,14 @@ These are layered on top of the existing scoped aliases.
 - `graph.branch(id_or_row) -> graph_ref`
 - `graph.turn(id_or_row) -> graph_ref`
 - `graph.ref(kind, id_or_row) -> graph_ref`
+- `schedule.after(seconds, prompt, opts?) -> job`
+- `schedule.every(seconds, prompt, opts?) -> job`
+- `schedule.at(unix_ms, prompt, opts?) -> job`
+- `schedule.get(public_id) -> job`
+- `schedule.list(opts?) -> jobs`
+- `schedule.enable(public_id) -> job`
+- `schedule.disable(public_id) -> job`
+- `schedule.delete(public_id) -> job`
 - `code.find(query, opts?)`
 
 Notes:
@@ -245,6 +253,36 @@ Notes:
 
 - `:ask(...)` delegates to the canonical `runtime.agent.ask(...)` primitive
 - peer-agent governance, child-agent allowlists, delegated capability ceilings, and active grant ceilings still apply
+
+### DX `schedule`
+
+- `schedule.after(seconds, prompt, opts?) -> job`
+- `schedule.every(seconds, prompt, opts?) -> job`
+- `schedule.at(unix_ms, prompt, opts?) -> job`
+- `schedule.get(public_id) -> job`
+- `schedule.list(opts?) -> jobs`
+- `schedule.enable(public_id) -> job`
+- `schedule.disable(public_id) -> job`
+- `schedule.delete(public_id) -> job`
+
+`opts` for `after` / `every` / `at`:
+
+```lua
+{
+  agent = "reviewer",
+  overlap = "skip", -- or "queue"
+  enabled = true,
+  state = "ops",
+  store = { path = "./project.db" },
+}
+```
+
+Notes:
+
+- `schedule.*` is helper-layer sugar over the daemon-backed scheduler
+- it requires a daemon-managed runtime and raises outside that environment
+- `state = ...` / `store = ...` are shorthand for `persistence = { state = ..., store = ... }`
+- `schedule.delete(...)` rejects running jobs rather than orphaning active execution
 
 ### DX `runtime.governance.grant(...)`
 
@@ -781,6 +819,55 @@ Governance integration:
 - delegated capability ceilings (downward-only)
 - active grant ceilings may be inherited automatically
 - DX `runtime.agent(...)` helpers accept short runtime capability names inside delegated `capabilities` maps
+
+## `runtime.schedule`
+
+Daemon-backed durable scheduler API.
+
+- `runtime.schedule.create(opts) -> job`
+- `runtime.schedule.get(public_id) -> job`
+- `runtime.schedule.list(opts?) -> jobs`
+- `runtime.schedule.enable(public_id) -> job`
+- `runtime.schedule.disable(public_id) -> job`
+- `runtime.schedule.delete(public_id) -> job`
+
+`runtime.schedule.create(opts)`:
+
+```lua
+{
+  prompt = "Follow up on the failed build", -- required
+  agent = "default",                        -- optional, defaults to current agent
+  next_run_unix_ms = 1760000000000,        -- exact due time
+  after_seconds = 300,                     -- helper-style alternative
+  interval_seconds = 3600,                 -- recurring interval
+  overlap_policy = "skip",                 -- default "skip"
+  enabled = true,
+  persistence = {
+    state = "ops",
+    store = { path = "./project.db" },
+  },
+}
+```
+
+Rules:
+
+- specify one scheduling anchor:
+  - `next_run_unix_ms`
+  - `after_seconds`
+  - or `interval_seconds` alone (first run scheduled relative to now)
+- `overlap_policy` currently supports:
+  - `"skip"`
+  - `"queue"`
+- `agent` must be the current agent or another configured agent id
+- `runtime.schedule.list(...)` currently supports:
+  - `{ agent = "reviewer" }`
+
+Notes:
+
+- scheduler metadata lives in the daemon-owned `jobs.db`
+- scheduled execution still runs through Turin’s normal task path
+- jobs may target arbitrary state/store contexts through `persistence`
+- this namespace is unavailable outside daemon-managed runtimes
 
 ## `runtime.graph`
 

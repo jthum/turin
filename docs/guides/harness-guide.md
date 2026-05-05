@@ -329,6 +329,33 @@ function on_turn_prepare(ctx)
 end
 ```
 
+### Durable scheduling
+
+```lua
+function on_turn_prepare(ctx)
+  local nightly = schedule.every(3600, "Review the workspace and continue useful work", {
+    overlap = "skip",
+    state = "ops",
+  })
+
+  schedule.after(300, "Follow up on the last failed build")
+
+  local fetched = schedule.get(nightly.public_id)
+  if fetched and fetched.enabled then
+    session.set("scheduler_job", fetched.public_id)
+  end
+
+  return ALLOW
+end
+```
+
+Notes:
+
+- `schedule.*` is backed by the daemon scheduler, not by ad hoc local state writes
+- it only works in daemon-managed runtimes
+- recurring jobs currently support overlap policies such as `skip` and `queue`
+- job persistence may be redirected with `state = ...`, `store = ...`, or `persistence = {...}`
+
 ### Grant wrapper
 
 ```lua
