@@ -45,7 +45,7 @@ fn ensure_local_task_id(task: &mut QueuedTask) -> String {
     task.task_id.clone()
 }
 
-fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
+pub(crate) fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
     app_data
         .execution_ctx
         .lock()
@@ -53,11 +53,11 @@ fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
         .and_then(|ctx| ctx.trace_id.clone())
 }
 
-fn queue_max(snapshot: &std::collections::HashMap<String, serde_json::Value>) -> usize {
+pub(crate) fn queue_max(snapshot: &std::collections::HashMap<String, serde_json::Value>) -> usize {
     policy_u64(snapshot, "queue.max_depth", 1024) as usize
 }
 
-async fn queue_push_one(
+pub(crate) async fn queue_push_one(
     execution_ctx: &ActiveHarnessExecutionContext,
     mut task: QueuedTask,
     queue_max: usize,

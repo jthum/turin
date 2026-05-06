@@ -180,6 +180,7 @@ Common list methods:
 - `list:empty() -> boolean`
 - `list:orphaned(opts?) -> items`
 - `list:release_stale(opts?) -> items`
+- `list:dispatch_next(opts?) -> { item = item, result = result } | nil`
 
 Common item methods:
 
@@ -187,6 +188,7 @@ Common item methods:
 - `item:children() -> items`
 - `item:claim() -> item|nil`
 - `item:heartbeat() -> item`
+- `item:dispatch(opts?) -> result`
 - `item:done(meta?) -> item`
 - `item:fail(reason?) -> item`
 - `item:requeue() -> item`
@@ -208,6 +210,11 @@ Notes:
   - built-in fields like `title`, `kind`, `status`, `priority`
   - metadata keys stored on the item
 - stale-claim helpers use `opts.stale_after_seconds` and default to 300 seconds
+- `item:dispatch(...)` uses the shared durable payload model:
+  - prompt items enqueue a normal local Turin task and return `{ dispatched = "task", task_id = ... }`
+  - action items invoke the declared action handler and return `{ dispatched = "action", action = "...", result = ... }`
+- `list:dispatch_next(...)` claims the next eligible item and immediately delegates to `item:dispatch(...)`
+- dispatch helpers do not auto-complete the item
 - worklists are backed by state stores, so `opts` may also carry:
   - `scope`
   - `state`

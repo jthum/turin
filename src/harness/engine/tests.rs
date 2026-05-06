@@ -681,6 +681,81 @@ async fn test_worklist_claim_heartbeat_and_stale_release() {
     assert_eq!(verdict, Verdict::Allow);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_worklist_dispatches_prompt_and_action_payloads() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            action.define("qa.run_smoke", function(params)
+                return {
+                    status = "queued " .. tostring(params.suite)
+                }
+            end)
+
+            function on_turn_prepare(ctx)
+                local tasks = worklist("dispatch")
+
+                tasks:add({
+                    title = "Review latest failures",
+                    prompt = "Review latest failures",
+                    metadata = { role = "dev" }
+                })
+                tasks:add({
+                    title = "Run checkout smoke test",
+                    action = "qa.run_smoke",
+                    params = { suite = "checkout" },
+                    priority = 10,
+                    metadata = { role = "qa" }
+                })
+
+                local action_run = tasks:dispatch_next({
+                    where = { role = "qa" }
+                })
+                if action_run == nil or action_run.result.dispatched ~= "action" then
+                    error("expected action dispatch result")
+                end
+                if action_run.result.result.status ~= "queued checkout" then
+                    error("expected action handler result to round-trip")
+                end
+
+                local prompt_run = tasks:dispatch_next({
+                    where = { role = "dev" }
+                })
+                if prompt_run == nil or prompt_run.result.dispatched ~= "task" then
+                    error("expected prompt dispatch result")
+                end
+                if not prompt_run.result.task_id then
+                    error("expected prompt dispatch task id")
+                end
+
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let app_data = test_app_data_for_root(dir.path().to_path_buf());
+    let mut engine = HarnessEngine::new(app_data.clone()).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+
+    let queue = app_data
+        .execution_ctx
+        .lock()
+        .unwrap()
+        .queue
+        .clone()
+        .expect("active session queue");
+    let queued = queue.lock().await;
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].prompt, "Review latest failures");
+    assert_eq!(queued[0].title.as_deref(), Some("Review latest failures"));
+}
+
 #[test]
 fn test_engine_composition_reject_wins() {
     let dir = TempDir::new().unwrap();

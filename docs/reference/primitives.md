@@ -403,6 +403,7 @@ Common `list_proxy` methods:
 - `list:empty() -> boolean`
 - `list:orphaned(opts?) -> items`
 - `list:release_stale(opts?) -> items`
+- `list:dispatch_next(opts?) -> { item = item, result = result } | nil`
 
 Common `item_proxy` methods:
 
@@ -410,6 +411,7 @@ Common `item_proxy` methods:
 - `item:children() -> items`
 - `item:claim() -> item|nil`
 - `item:heartbeat() -> item`
+- `item:dispatch(opts?) -> result`
 - `item:done(meta?) -> item`
 - `item:fail(reason?) -> item`
 - `item:requeue() -> item`
@@ -422,6 +424,11 @@ Notes:
 - item proxies expose both direct fields and a normalized `payload` table
 - `opts.where` filters compare against built-in item fields and metadata keys
 - stale-claim helpers use `opts.stale_after_seconds` and default to 300 seconds
+- `item:dispatch(...)`:
+  - enqueues prompt items onto the active session queue as normal Turin tasks
+  - invokes action items through the declared action registry
+- `list:dispatch_next(...)` claims the next eligible item and dispatches it immediately
+- dispatch helpers do not auto-complete the item
 - worklists are state-store backed, not daemon-scheduler backed
 
 ### DX `runtime.governance.grant(...)`
@@ -1120,6 +1127,7 @@ State-store-backed durable work coordination API.
 - `list:empty() -> boolean`
 - `list:orphaned(opts?) -> items`
 - `list:release_stale(opts?) -> items`
+- `list:dispatch_next(opts?) -> { item = item, result = result } | nil`
 
 `item_proxy` methods:
 
@@ -1127,6 +1135,7 @@ State-store-backed durable work coordination API.
 - `item:children() -> items`
 - `item:claim() -> item|nil`
 - `item:heartbeat() -> item`
+- `item:dispatch(opts?) -> result`
 - `item:done(meta?) -> item`
 - `item:fail(reason?) -> item`
 - `item:requeue() -> item`
@@ -1149,6 +1158,11 @@ Rules and notes:
   - `id`, `public_id`, `title`, `kind`, `status`, `priority`, `parent_id`
   - metadata keys
 - `item:heartbeat()` refreshes the active claim heartbeat for the current execution
+- `item:dispatch(...)`:
+  - returns `{ dispatched = "task", task_id = ... }` for prompt items
+  - returns `{ dispatched = "action", action = "...", result = ... }` for action items
+- `list:dispatch_next(...)` claims the next eligible item and delegates to `item:dispatch(...)`
+- dispatch helpers do not auto-complete the item
 - `list:orphaned(...)` and `list:release_stale(...)` accept:
   - `stale_after_seconds`
   - optional `limit`

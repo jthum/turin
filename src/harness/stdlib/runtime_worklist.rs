@@ -7,6 +7,8 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 use turin_types::{TaskInputContent, ToolsConfig};
 
 use crate::harness::globals::HarnessAppData;
+use crate::harness::stdlib::action_bindings;
+use crate::harness::stdlib::agent_bindings::{active_trace_id, queue_max, queue_push_one};
 use crate::harness::stdlib::binding_common::resolve_scoped_store_selector;
 use crate::harness::stdlib::context_selectors::table_to_selector;
 use crate::harness::stdlib::db_support::{
@@ -15,6 +17,7 @@ use crate::harness::stdlib::db_support::{
 use crate::harness::stdlib::governance_support::{current_agent_id, require_capability};
 use crate::harness::stdlib::policy_support::runtime_policy_snapshot;
 use crate::kernel::identity::ContextSelector;
+use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask};
 use crate::persistence::manager::{StoreManager, StoreSelector};
 use crate::persistence::schema::{WorkItemRow, WorklistRow};
 use crate::persistence::state::{StateStore, WorkItemInsert, WorkItemUpdate};
@@ -470,6 +473,67 @@ fn item_payload_value(lua: &Lua, row: &WorkItemRow) -> LuaResult<Value> {
     Ok(Value::Table(payload))
 }
 
+fn dispatch_prompt_item(
+    row: &WorkItemRow,
+    app_data: &HarnessAppData,
+) -> anyhow::Result<serde_json::Value> {
+    let prompt = row
+        .prompt
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("prompt work item '{}' is missing prompt", row.title))?;
+    let trace_id = active_trace_id(app_data);
+    let mut task = QueuedTask::ad_hoc(prompt).with_inherited_trace(trace_id.as_deref());
+    task.title = Some(row.title.clone());
+    task.content = parse_json_opt::<Vec<TaskInputContent>>(row.content.as_deref())?;
+    task.tools = parse_json_opt::<ToolsConfig>(row.tools.as_deref())?;
+    task.conflict_policy = row
+        .conflict_policy
+        .as_deref()
+        .map(str::parse::<ExecutionConflictPolicy>)
+        .transpose()
+        .map_err(anyhow::Error::msg)?;
+
+    let snapshot = runtime_policy_snapshot(app_data).map_err(anyhow::Error::msg)?;
+    let task_id = crate::harness::globals::block_on_current(async {
+        queue_push_one(&app_data.execution_ctx, task, queue_max(&snapshot), false).await
+    })
+    .map_err(anyhow::Error::msg)?;
+
+    Ok(serde_json::json!({
+        "dispatched": "task",
+        "task_id": task_id,
+    }))
+}
+
+fn dispatch_action_item(lua: &Lua, row: &WorkItemRow) -> anyhow::Result<serde_json::Value> {
+    let action_name = row
+        .action_name
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("action work item '{}' is missing action", row.title))?;
+    let params =
+        parse_json_opt::<JsonValue>(row.action_params.as_deref())?.unwrap_or(JsonValue::Null);
+    let result = action_bindings::invoke_declared_action(lua, action_name, params)?
+        .ok_or_else(|| anyhow::anyhow!("declared action '{}' is not defined", action_name))?;
+    Ok(serde_json::json!({
+        "dispatched": "action",
+        "action": action_name,
+        "result": result,
+    }))
+}
+
+fn dispatch_item_result(
+    lua: &Lua,
+    row: &WorkItemRow,
+    app_data: &HarnessAppData,
+) -> LuaResult<Value> {
+    let result = match row.item_kind.as_str() {
+        "action" => dispatch_action_item(lua, row),
+        _ => dispatch_prompt_item(row, app_data),
+    }
+    .map_err(mlua::Error::runtime)?;
+    lua.to_value(&result)
+}
+
 fn current_claim_identity(app_data: &HarnessAppData) -> (String, Option<String>, Option<String>) {
     let agent_id = current_agent_id(app_data);
     let lock = app_data.execution_ctx.lock().ok();
@@ -620,6 +684,24 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                     )
                 })?;
                 Ok(Value::Table(item_proxy(lua, handle.clone(), row)?))
+            })?,
+        )?;
+    }
+
+    {
+        let handle = handle.clone();
+        let item_id = row.id;
+        proxy.set(
+            "dispatch",
+            lua.create_function(move |lua, (_self, _opts): (Table, Option<Table>)| {
+                require_capability(&handle.app_data, "runtime.worklist.dispatch")
+                    .map_err(mlua::Error::runtime)?;
+                let row = crate::harness::globals::block_on_current(async {
+                    handle.store.get_work_item_by_id(item_id).await
+                })
+                .map_err(mlua::Error::runtime)?
+                .ok_or_else(|| mlua::Error::runtime("work item not found".to_string()))?;
+                dispatch_item_result(lua, &row, &handle.app_data)
             })?,
         )?;
     }
@@ -1004,6 +1086,34 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     .map_err(mlua::Error::runtime)?;
                     out.set(index + 1, item_proxy(lua, handle.clone(), released)?)?;
                 }
+                Ok(Value::Table(out))
+            })?,
+        )?;
+    }
+
+    {
+        let handle = handle.clone();
+        proxy.set(
+            "dispatch_next",
+            lua.create_function(move |lua, (self_tbl, opts): (Table, Option<Table>)| {
+                require_capability(&handle.app_data, "runtime.worklist.dispatch")
+                    .map_err(mlua::Error::runtime)?;
+                let next_value = proxy_method_call(lua, &self_tbl, "next", opts)?;
+                let item_table = match next_value {
+                    Value::Nil => return Ok(Value::Nil),
+                    Value::Table(table) => table,
+                    other => {
+                        return Err(mlua::Error::runtime(format!(
+                            "worklist.next returned unexpected value {:?}",
+                            other
+                        )));
+                    }
+                };
+                let dispatch_fn = item_table.get::<mlua::Function>("dispatch")?;
+                let result: Value = dispatch_fn.call((item_table.clone(), Value::Nil))?;
+                let out = lua.create_table()?;
+                out.set("item", item_table)?;
+                out.set("result", result)?;
                 Ok(Value::Table(out))
             })?,
         )?;

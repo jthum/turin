@@ -468,6 +468,15 @@ Notes:
   - `item:add(...)`
   - `item:children()`
   - `item:next()`
+- execution helpers are available on top of the shared prompt/action model:
+  - `item:dispatch()`
+  - `list:dispatch_next(opts?)`
+- `item:dispatch()`:
+  - enqueues prompt items onto the active session queue as normal Turin tasks
+  - invokes action items through the declared action registry
+- dispatch does not auto-complete the item; the harness still decides whether to call:
+  - `item:done(...)`
+  - `item:fail(...)`
 - claim recovery helpers are available when an execution disappears without releasing work:
   - `list:orphaned({ stale_after_seconds = ... })`
   - `list:release_stale({ stale_after_seconds = ... })`
