@@ -19,7 +19,7 @@ use std::sync::Arc;
 struct DbRuntimeSettings {
     path_scope: StorePathScope,
     max_open_handles: usize,
-    idle_close_secs: u64,
+    idle_close_seconds: u64,
 }
 
 fn db_runtime_settings(snapshot: &HashMap<String, serde_json::Value>) -> DbRuntimeSettings {
@@ -27,7 +27,7 @@ fn db_runtime_settings(snapshot: &HashMap<String, serde_json::Value>) -> DbRunti
         path_scope: store_path_scope_from_snapshot(snapshot),
         max_open_handles: policy_u64(snapshot, "db.max_open_handles", 128).clamp(1, u64::MAX)
             as usize,
-        idle_close_secs: policy_u64(snapshot, "db.idle_close_seconds", 300),
+        idle_close_seconds: policy_u64(snapshot, "db.idle_close_seconds", 300),
     }
 }
 
@@ -59,7 +59,7 @@ async fn open_store_for_query_exec(
     settings: DbRuntimeSettings,
 ) -> Result<Arc<crate::persistence::state::StateStore>, String> {
     let _ = manager
-        .trim_cache(settings.max_open_handles, settings.idle_close_secs)
+        .trim_cache(settings.max_open_handles, settings.idle_close_seconds)
         .await;
     manager
         .open_with_path_scope(&selector, settings.path_scope)
@@ -99,7 +99,7 @@ pub fn register_runtime_db_namespace(
                             &selector,
                             settings.path_scope,
                             settings.max_open_handles,
-                            settings.idle_close_secs,
+                            settings.idle_close_seconds,
                         )
                         .await
                 });

@@ -19,9 +19,9 @@ impl StoreManager {
         selector: &StoreSelector,
         path_scope: StorePathScope,
         max_open_handles: usize,
-        idle_close_secs: u64,
+        idle_close_seconds: u64,
     ) -> Result<StoreHandleInfo> {
-        self.trim_cache(max_open_handles, idle_close_secs).await;
+        self.trim_cache(max_open_handles, idle_close_seconds).await;
 
         let (target_path, alias) = self
             .resolve_selector_with_alias(selector, path_scope)
@@ -78,8 +78,8 @@ impl StoreManager {
     }
 
     /// Trim idle/unreferenced cache entries. Returns number evicted.
-    pub async fn trim_cache(&self, max_entries: usize, idle_close_secs: u64) -> usize {
-        let idle_cutoff = std::time::Duration::from_secs(idle_close_secs);
+    pub async fn trim_cache(&self, max_entries: usize, idle_close_seconds: u64) -> usize {
+        let idle_cutoff = std::time::Duration::from_secs(idle_close_seconds);
         let protected_paths = {
             let handles = self.handles.read().await;
             handles

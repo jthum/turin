@@ -20,7 +20,7 @@ pub struct RuntimePolicy {
     pub db_allow_dynamic_open: bool,
     pub db_path_scope: String,
     pub db_max_open_handles: usize,
-    pub db_idle_close_secs: u64,
+    pub db_idle_close_seconds: u64,
     pub queue_max_depth: usize,
     pub tool_exec_enabled: bool,
     pub hook_token_usage_reject_mode: String,
@@ -34,7 +34,7 @@ impl Default for RuntimePolicy {
             db_allow_dynamic_open: true,
             db_path_scope: "workspace_only".to_string(),
             db_max_open_handles: 128,
-            db_idle_close_secs: 300,
+            db_idle_close_seconds: 300,
             queue_max_depth: 1024,
             tool_exec_enabled: true,
             hook_token_usage_reject_mode: "informational".to_string(),
@@ -64,7 +64,7 @@ impl RuntimePolicy {
         );
         map.insert(
             "db.idle_close_seconds".to_string(),
-            Value::from(self.db_idle_close_secs),
+            Value::from(self.db_idle_close_seconds),
         );
         map.insert(
             "queue.max_depth".to_string(),

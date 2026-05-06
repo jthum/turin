@@ -179,9 +179,9 @@ impl AgentManager {
                             idle_control.current_session_id().as_deref(),
                         )
                         .await;
-                    if let Some(idle_secs) = idle_timeout_seconds {
+                    if let Some(idle_timeout_seconds) = idle_timeout_seconds {
                         let notified = tokio::time::timeout(
-                            std::time::Duration::from_secs(idle_secs),
+                            std::time::Duration::from_secs(idle_timeout_seconds),
                             notify_bg.notified(),
                         )
                         .await;
@@ -189,7 +189,7 @@ impl AgentManager {
                             info!(
                                 agent_id = %agent_id_clone,
                                 slot_id = %slot_id_clone,
-                                idle_timeout_seconds = idle_secs,
+                                idle_timeout_seconds,
                                 "Peer agent idle timeout reached; shutting down runtime"
                             );
                             break;

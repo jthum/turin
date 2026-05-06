@@ -66,11 +66,11 @@ fn runtime_store_settings(
         .and_then(|value| value.as_u64())
         .unwrap_or(128)
         .clamp(1, u64::MAX) as usize;
-    let idle_close_secs = snapshot
+    let idle_close_seconds = snapshot
         .get("db.idle_close_seconds")
         .and_then(|value| value.as_u64())
         .unwrap_or(300);
-    Ok((path_scope, max_open_handles, idle_close_secs))
+    Ok((path_scope, max_open_handles, idle_close_seconds))
 }
 
 async fn open_store(
@@ -78,9 +78,11 @@ async fn open_store(
     selector: StoreSelector,
     path_scope: crate::persistence::manager::StorePathScope,
     max_open_handles: usize,
-    idle_close_secs: u64,
+    idle_close_seconds: u64,
 ) -> anyhow::Result<Arc<StateStore>> {
-    let _ = manager.trim_cache(max_open_handles, idle_close_secs).await;
+    let _ = manager
+        .trim_cache(max_open_handles, idle_close_seconds)
+        .await;
     manager.open_with_path_scope(&selector, path_scope).await
 }
 
@@ -1320,7 +1322,7 @@ pub fn register_runtime_worklist_namespace(
                 })?;
                 let scope = parse_scope_value(opts.get::<Value>("scope")?)?;
                 let selector = resolve_store_selector(&app_data, &opts, scope.as_ref())?;
-                let (path_scope, max_open_handles, idle_close_secs) =
+                let (path_scope, max_open_handles, idle_close_seconds) =
                     runtime_store_settings(&app_data)?;
                 let manager = app_data.store_manager.clone();
                 let store = crate::harness::globals::block_on_current(async move {
@@ -1329,7 +1331,7 @@ pub fn register_runtime_worklist_namespace(
                         selector,
                         path_scope,
                         max_open_handles,
-                        idle_close_secs,
+                        idle_close_seconds,
                     )
                     .await
                 })

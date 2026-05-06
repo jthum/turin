@@ -52,11 +52,11 @@ impl ResolvedRemoteConfig {
             anyhow::bail!("Remote auth token must not be empty");
         }
 
-        let keepalive_secs = options
+        let keepalive_seconds = options
             .event_keepalive_seconds
             .unwrap_or(config.remote.event_keepalive_seconds);
         anyhow::ensure!(
-            keepalive_secs > 0,
+            keepalive_seconds > 0,
             "Remote event keepalive must be greater than 0"
         );
 
@@ -65,7 +65,7 @@ impl ResolvedRemoteConfig {
             daemon_endpoint,
             auth_token,
             auth_token_env,
-            event_keepalive: Duration::from_secs(keepalive_secs),
+            event_keepalive: Duration::from_secs(keepalive_seconds),
             allow_non_loopback: options
                 .allow_non_loopback
                 .unwrap_or(config.remote.allow_non_loopback),

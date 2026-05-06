@@ -207,17 +207,17 @@ impl TurinConfig {
         }
 
         for (provider_name, provider) in &self.providers {
-            if let Some(timeout_secs) = provider.request_timeout_seconds {
+            if let Some(timeout_seconds) = provider.request_timeout_seconds {
                 anyhow::ensure!(
-                    timeout_secs > 0,
+                    timeout_seconds > 0,
                     "providers.{}.request_timeout_seconds must be greater than 0",
                     provider_name
                 );
             }
 
-            if let Some(timeout_secs) = provider.total_timeout_seconds {
+            if let Some(timeout_seconds) = provider.total_timeout_seconds {
                 anyhow::ensure!(
-                    timeout_secs > 0,
+                    timeout_seconds > 0,
                     "providers.{}.total_timeout_seconds must be greater than 0",
                     provider_name
                 );
@@ -231,12 +231,12 @@ impl TurinConfig {
                 );
             }
 
-            if let (Some(request_secs), Some(total_secs)) = (
+            if let (Some(request_seconds), Some(total_seconds)) = (
                 provider.request_timeout_seconds,
                 provider.total_timeout_seconds,
             ) {
                 anyhow::ensure!(
-                    total_secs >= request_secs,
+                    total_seconds >= request_seconds,
                     "providers.{}.total_timeout_seconds must be >= request_timeout_seconds",
                     provider_name
                 );
