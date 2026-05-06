@@ -8,7 +8,7 @@ use turin_daemon_protocol::{
 };
 
 use crate::persistence::schema::ScheduledJobRow;
-use crate::persistence::state::StateStore;
+use crate::persistence::state::{ScheduledJobInsert, ScheduledJobUpdate, StateStore};
 
 #[derive(Clone)]
 pub struct HarnessSchedulerAccess {
@@ -48,26 +48,26 @@ impl HarnessSchedulerAccess {
         )?;
         let id = self
             .jobs_store
-            .create_scheduled_job(
+            .create_scheduled_job(ScheduledJobInsert {
                 public_id,
-                &params.agent_id,
+                agent_id: &params.agent_id,
                 job_kind,
-                params.prompt.as_deref(),
-                content.as_deref(),
-                tools.as_deref(),
-                params.conflict_policy.as_deref(),
+                prompt: params.prompt.as_deref(),
+                content: content.as_deref(),
+                tools: tools.as_deref(),
+                conflict_policy: params.conflict_policy.as_deref(),
                 action_name,
-                action_params.as_deref(),
-                state_target.as_deref(),
-                store_target.as_deref(),
-                params.next_run_unix_ms,
-                params.interval_seconds,
-                params.recurring_pattern.as_deref(),
-                params.overlap_policy.as_deref().unwrap_or("skip"),
-                params.work_key.as_deref(),
-                params.max_concurrency,
-                params.enabled,
-            )
+                action_params: action_params.as_deref(),
+                state_target: state_target.as_deref(),
+                store_target: store_target.as_deref(),
+                next_run_unix_ms: params.next_run_unix_ms,
+                interval_seconds: params.interval_seconds,
+                recurring_pattern: params.recurring_pattern.as_deref(),
+                overlap_policy: params.overlap_policy.as_deref().unwrap_or("skip"),
+                work_key: params.work_key.as_deref(),
+                max_concurrency: params.max_concurrency,
+                enabled: params.enabled,
+            })
             .await?;
         if let Some(wake) = &self.wake {
             wake.notify_one();
@@ -164,32 +164,32 @@ impl HarnessSchedulerAccess {
                 .and_then(|persistence| persistence.store.as_ref()),
         )?;
         self.jobs_store
-            .update_scheduled_job(
-                row.id,
-                params.agent_id.as_deref().unwrap_or(&row.agent_id),
+            .update_scheduled_job(ScheduledJobUpdate {
+                id: row.id,
+                agent_id: params.agent_id.as_deref().unwrap_or(&row.agent_id),
                 job_kind,
-                prompt.as_deref(),
-                content_json.as_deref(),
-                tools_json.as_deref(),
-                conflict_policy.as_deref(),
+                prompt: prompt.as_deref(),
+                content: content_json.as_deref(),
+                tools: tools_json.as_deref(),
+                conflict_policy: conflict_policy.as_deref(),
                 action_name,
-                action_params.as_deref(),
-                state_target.as_deref(),
-                store_target.as_deref(),
-                params.next_run_unix_ms.unwrap_or(row.next_run_unix_ms),
-                params.interval_seconds.or(row.interval_seconds),
-                params
+                action_params: action_params.as_deref(),
+                state_target: state_target.as_deref(),
+                store_target: store_target.as_deref(),
+                next_run_unix_ms: params.next_run_unix_ms.unwrap_or(row.next_run_unix_ms),
+                interval_seconds: params.interval_seconds.or(row.interval_seconds),
+                recurring_pattern: params
                     .recurring_pattern
                     .as_deref()
                     .or(row.recurring_pattern.as_deref()),
-                params
+                overlap_policy: params
                     .overlap_policy
                     .as_deref()
                     .unwrap_or(row.overlap_policy.as_str()),
-                params.work_key.as_deref().or(row.work_key.as_deref()),
-                params.max_concurrency.or(row.max_concurrency),
-                params.enabled.unwrap_or(row.enabled),
-            )
+                work_key: params.work_key.as_deref().or(row.work_key.as_deref()),
+                max_concurrency: params.max_concurrency.or(row.max_concurrency),
+                enabled: params.enabled.unwrap_or(row.enabled),
+            })
             .await?;
         if let Some(wake) = &self.wake {
             wake.notify_one();

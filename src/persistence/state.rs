@@ -27,6 +27,8 @@ mod tests;
 mod tools;
 mod turns;
 
+pub use scheduler::{ScheduledJobInsert, ScheduledJobUpdate};
+
 /// The state store manages all Turin persistence.
 ///
 /// It holds a reference to the database engine and spawns connections on demand.

@@ -2,6 +2,48 @@ use anyhow::{Context, Result};
 
 use super::{ScheduledJobRow, ScheduledJobRunRow, StateStore};
 
+pub struct ScheduledJobInsert<'a> {
+    pub public_id: uuid::Uuid,
+    pub agent_id: &'a str,
+    pub job_kind: &'a str,
+    pub prompt: Option<&'a str>,
+    pub content: Option<&'a str>,
+    pub tools: Option<&'a str>,
+    pub conflict_policy: Option<&'a str>,
+    pub action_name: Option<&'a str>,
+    pub action_params: Option<&'a str>,
+    pub state_target: Option<&'a str>,
+    pub store_target: Option<&'a str>,
+    pub next_run_unix_ms: i64,
+    pub interval_seconds: Option<u64>,
+    pub recurring_pattern: Option<&'a str>,
+    pub overlap_policy: &'a str,
+    pub work_key: Option<&'a str>,
+    pub max_concurrency: Option<u32>,
+    pub enabled: bool,
+}
+
+pub struct ScheduledJobUpdate<'a> {
+    pub id: i64,
+    pub agent_id: &'a str,
+    pub job_kind: &'a str,
+    pub prompt: Option<&'a str>,
+    pub content: Option<&'a str>,
+    pub tools: Option<&'a str>,
+    pub conflict_policy: Option<&'a str>,
+    pub action_name: Option<&'a str>,
+    pub action_params: Option<&'a str>,
+    pub state_target: Option<&'a str>,
+    pub store_target: Option<&'a str>,
+    pub next_run_unix_ms: i64,
+    pub interval_seconds: Option<u64>,
+    pub recurring_pattern: Option<&'a str>,
+    pub overlap_policy: &'a str,
+    pub work_key: Option<&'a str>,
+    pub max_concurrency: Option<u32>,
+    pub enabled: bool,
+}
+
 impl StateStore {
     pub async fn get_scheduled_job_by_public_id(
         &self,
@@ -30,29 +72,9 @@ impl StateStore {
         Ok(None)
     }
 
-    pub async fn create_scheduled_job(
-        &self,
-        public_id: uuid::Uuid,
-        agent_id: &str,
-        job_kind: &str,
-        prompt: Option<&str>,
-        content: Option<&str>,
-        tools: Option<&str>,
-        conflict_policy: Option<&str>,
-        action_name: Option<&str>,
-        action_params: Option<&str>,
-        state_target: Option<&str>,
-        store_target: Option<&str>,
-        next_run_unix_ms: i64,
-        interval_seconds: Option<u64>,
-        recurring_pattern: Option<&str>,
-        overlap_policy: &str,
-        work_key: Option<&str>,
-        max_concurrency: Option<u32>,
-        enabled: bool,
-    ) -> Result<i64> {
+    pub async fn create_scheduled_job(&self, job: ScheduledJobInsert<'_>) -> Result<i64> {
         let conn = self.connect().await?;
-        let public_id_bytes = public_id.into_bytes().to_vec();
+        let public_id_bytes = job.public_id.into_bytes().to_vec();
         conn.execute(
             r#"
             INSERT INTO scheduled_jobs (
@@ -63,23 +85,23 @@ impl StateStore {
             "#,
             turso::params![
                 public_id_bytes,
-                agent_id,
-                job_kind,
-                prompt,
-                content,
-                tools,
-                conflict_policy,
-                action_name,
-                action_params,
-                state_target,
-                store_target,
-                next_run_unix_ms,
-                interval_seconds.map(|v| v as i64),
-                recurring_pattern,
-                overlap_policy,
-                work_key,
-                max_concurrency.map(|v| v as i64),
-                if enabled { 1 } else { 0 }
+                job.agent_id,
+                job.job_kind,
+                job.prompt,
+                job.content,
+                job.tools,
+                job.conflict_policy,
+                job.action_name,
+                job.action_params,
+                job.state_target,
+                job.store_target,
+                job.next_run_unix_ms,
+                job.interval_seconds.map(|v| v as i64),
+                job.recurring_pattern,
+                job.overlap_policy,
+                job.work_key,
+                job.max_concurrency.map(|v| v as i64),
+                if job.enabled { 1 } else { 0 }
             ],
         )
         .await
@@ -600,27 +622,7 @@ impl StateStore {
         Ok(())
     }
 
-    pub async fn update_scheduled_job(
-        &self,
-        id: i64,
-        agent_id: &str,
-        job_kind: &str,
-        prompt: Option<&str>,
-        content: Option<&str>,
-        tools: Option<&str>,
-        conflict_policy: Option<&str>,
-        action_name: Option<&str>,
-        action_params: Option<&str>,
-        state_target: Option<&str>,
-        store_target: Option<&str>,
-        next_run_unix_ms: i64,
-        interval_seconds: Option<u64>,
-        recurring_pattern: Option<&str>,
-        overlap_policy: &str,
-        work_key: Option<&str>,
-        max_concurrency: Option<u32>,
-        enabled: bool,
-    ) -> Result<()> {
+    pub async fn update_scheduled_job(&self, job: ScheduledJobUpdate<'_>) -> Result<()> {
         let conn = self.connect().await?;
         conn.execute(
             r#"
@@ -646,24 +648,24 @@ impl StateStore {
             WHERE id = ?1
             "#,
             turso::params![
-                id,
-                agent_id,
-                job_kind,
-                prompt,
-                content,
-                tools,
-                conflict_policy,
-                action_name,
-                action_params,
-                state_target,
-                store_target,
-                next_run_unix_ms,
-                interval_seconds.map(|v| v as i64),
-                recurring_pattern,
-                overlap_policy,
-                work_key,
-                max_concurrency.map(|v| v as i64),
-                if enabled { 1 } else { 0 }
+                job.id,
+                job.agent_id,
+                job.job_kind,
+                job.prompt,
+                job.content,
+                job.tools,
+                job.conflict_policy,
+                job.action_name,
+                job.action_params,
+                job.state_target,
+                job.store_target,
+                job.next_run_unix_ms,
+                job.interval_seconds.map(|v| v as i64),
+                job.recurring_pattern,
+                job.overlap_policy,
+                job.work_key,
+                job.max_concurrency.map(|v| v as i64),
+                if job.enabled { 1 } else { 0 }
             ],
         )
         .await

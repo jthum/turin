@@ -14,6 +14,7 @@ use crate::kernel::config::{ContextPersistenceConfig, InferenceOverrideConfig, S
 use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{ScheduledJobRow, ScheduledJobRunRow};
+use crate::persistence::state::{ScheduledJobInsert, ScheduledJobUpdate};
 
 const SCHEDULED_JOB_BATCH_LIMIT: usize = 32;
 const SCHEDULED_JOB_FAILURE_RETRY_MS: i64 = 60_000;
@@ -189,26 +190,26 @@ impl DaemonState {
                 .and_then(|persistence| persistence.store.as_ref()),
         )?;
         let id = store
-            .create_scheduled_job(
+            .create_scheduled_job(ScheduledJobInsert {
                 public_id,
-                &input.agent_id,
-                job_kind.as_str(),
-                input.prompt.as_deref(),
-                content.as_deref(),
-                tools.as_deref(),
-                input.conflict_policy.as_deref(),
-                action_name.as_deref(),
-                action_params.as_deref(),
-                state_target.as_deref(),
-                store_target.as_deref(),
-                input.next_run_unix_ms,
-                input.interval_seconds,
-                input.recurring_pattern.as_deref(),
-                input.overlap_policy.as_str(),
-                input.work_key.as_deref(),
-                input.max_concurrency,
-                input.enabled,
-            )
+                agent_id: &input.agent_id,
+                job_kind: job_kind.as_str(),
+                prompt: input.prompt.as_deref(),
+                content: content.as_deref(),
+                tools: tools.as_deref(),
+                conflict_policy: input.conflict_policy.as_deref(),
+                action_name: action_name.as_deref(),
+                action_params: action_params.as_deref(),
+                state_target: state_target.as_deref(),
+                store_target: store_target.as_deref(),
+                next_run_unix_ms: input.next_run_unix_ms,
+                interval_seconds: input.interval_seconds,
+                recurring_pattern: input.recurring_pattern.as_deref(),
+                overlap_policy: input.overlap_policy.as_str(),
+                work_key: input.work_key.as_deref(),
+                max_concurrency: input.max_concurrency,
+                enabled: input.enabled,
+            })
             .await?;
         if let Some(wake) = &self.scheduler_wake {
             wake.notify_one();
@@ -311,26 +312,26 @@ impl DaemonState {
             serialize_store_target(persistence.as_ref().and_then(|value| value.store.as_ref()))?;
 
         store
-            .update_scheduled_job(
-                row.id,
-                &agent_id,
-                job_kind.as_str(),
-                prompt.as_deref(),
-                content_json.as_deref(),
-                tools_json.as_deref(),
-                conflict_policy.as_deref(),
-                action_name.as_deref(),
-                action_params.as_deref(),
-                state_target.as_deref(),
-                store_target.as_deref(),
+            .update_scheduled_job(ScheduledJobUpdate {
+                id: row.id,
+                agent_id: &agent_id,
+                job_kind: job_kind.as_str(),
+                prompt: prompt.as_deref(),
+                content: content_json.as_deref(),
+                tools: tools_json.as_deref(),
+                conflict_policy: conflict_policy.as_deref(),
+                action_name: action_name.as_deref(),
+                action_params: action_params.as_deref(),
+                state_target: state_target.as_deref(),
+                store_target: store_target.as_deref(),
                 next_run_unix_ms,
                 interval_seconds,
-                recurring_pattern.as_deref(),
-                &overlap_policy,
-                work_key.as_deref(),
+                recurring_pattern: recurring_pattern.as_deref(),
+                overlap_policy: &overlap_policy,
+                work_key: work_key.as_deref(),
                 max_concurrency,
                 enabled,
-            )
+            })
             .await?;
         if let Some(wake) = &self.scheduler_wake {
             wake.notify_one();
