@@ -246,6 +246,18 @@ Current handshake values:
 
 External channel sidecars also expose a separate manifest protocol through `describe`; see [channel-sidecars.md](../reference/channel-sidecars.md).
 
+Daemon/control-plane surfaces now also include store-targeted worklist inspection:
+
+- `worklist.list`
+- `worklist.get`
+- `worklist.items`
+
+Important boundary:
+
+- scheduled jobs are globally indexed in daemon-owned `jobs.db`
+- worklists are not; they live in whichever state/store backend a harness chose
+- so control-plane worklist queries must carry or assume an explicit persistence target instead of pretending there is one global worklist namespace
+
 Event stream example:
 
 ```json

@@ -16,7 +16,7 @@ Turin now ships a coherent, canonical runtime with:
 - **Multi-DB runtime** with dynamic DB handles (`runtime.db.open/query/exec/list/close`)
 - **Multi-agent runtime** with peer agent submit/await/status orchestration (`runtime.agent.*`)
 - **Daemon-backed durable scheduler** with harness-facing helpers, built-in or harness-defined action jobs, and daemon-owned `jobs.db` (`runtime.schedule.*`, `schedule.*`, including in-place job updates)
-- **Durable worklists** with hierarchical claimable items, prompt/action payloads, stale-claim recovery, and store/scope routing (`runtime.worklist.*`, `worklist(...)`)
+- **Durable worklists** with hierarchical claimable items, prompt/action payloads, stale-claim recovery, store/scope routing, and daemon query APIs for external inspection (`runtime.worklist.*`, `worklist(...)`, `worklist.list/get/items`)
 - **Memory v2 primitives** with lifecycle controls (`feedback`, `correct`, `purge`) and lexical/semantic/hybrid recall
 - **Code search primitives** backed by an optional `turin-map` indexing companion and direct runtime reads (`runtime.code.search.*`)
 - **Stable hook model** with explicit lifecycle hooks and typed event payloads

@@ -143,6 +143,35 @@ Reference:
 
 - [primitives.md](/home/jthum/Documents/Work/Code/turin/docs/reference/primitives.md#canonical-runtime-api-runtime)
 
+### Daemon Control Plane
+
+Current typed daemon/control-plane surfaces include:
+
+- `daemon.ping`
+- `daemon.status`
+- `runtime.events.subscribe`
+- `agent.*`
+- `task.*`
+- `schedule.create`
+- `schedule.update`
+- `schedule.get`
+- `schedule.list`
+- `schedule.runs`
+- `schedule.enable`
+- `schedule.disable`
+- `schedule.delete`
+- `worklist.list`
+- `worklist.get`
+- `worklist.items`
+- `session.*`
+- `harness.*`
+- `channel.*`
+
+Notes:
+
+- `worklist.*` control-plane queries are explicitly store-targeted because worklists live in arbitrary state/store backends, not in a daemon-owned global index like `jobs.db`
+- current `worklist.*` daemon operations are read-only inspection APIs; mutation still lives in the harness/runtime worklist surface
+
 ### Top-Level Authoring Aliases
 
 Author-facing aliases outside `runtime.*`:
