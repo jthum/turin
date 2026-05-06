@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 24;
+pub(crate) const SCHEMA_VERSION: u32 = 25;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -223,6 +223,54 @@ CREATE TABLE IF NOT EXISTS scheduled_job_runs (
 CREATE INDEX IF NOT EXISTS idx_scheduled_job_runs_active ON scheduled_job_runs(scheduled_job_id, finished_unix_ms);
 CREATE INDEX IF NOT EXISTS idx_scheduled_job_runs_task ON scheduled_job_runs(task_id);
 
+CREATE TABLE IF NOT EXISTS worklists (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_id  BLOB(16) UNIQUE NOT NULL,
+    name       TEXT NOT NULL,
+    scope_ref  TEXT NOT NULL DEFAULT '',
+    metadata   TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    CHECK (metadata IS NULL OR json_valid(metadata)),
+    UNIQUE(name, scope_ref)
+);
+
+CREATE TABLE IF NOT EXISTS work_items (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_id            BLOB(16) UNIQUE NOT NULL,
+    worklist_id          INTEGER NOT NULL REFERENCES worklists(id),
+    parent_item_id       INTEGER REFERENCES work_items(id),
+    title                TEXT NOT NULL,
+    item_kind            TEXT NOT NULL DEFAULT 'prompt',
+    prompt               TEXT,
+    content              TEXT,
+    tools                TEXT,
+    conflict_policy      TEXT,
+    action_name          TEXT,
+    action_params        TEXT,
+    status               TEXT NOT NULL DEFAULT 'pending',
+    priority             INTEGER NOT NULL DEFAULT 0,
+    after_ids            TEXT,
+    metadata             TEXT,
+    claim_agent_id       TEXT,
+    claim_session_id     TEXT,
+    claim_execution_id   TEXT,
+    claim_heartbeat_unix_ms INTEGER,
+    claimed_at           TEXT,
+    completed_at         TEXT,
+    failure_reason       TEXT,
+    created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    CHECK (after_ids IS NULL OR json_valid(after_ids)),
+    CHECK (metadata IS NULL OR json_valid(metadata)),
+    CHECK (action_params IS NULL OR json_valid(action_params))
+);
+
+CREATE INDEX IF NOT EXISTS idx_worklists_scope ON worklists(scope_ref, name);
+CREATE INDEX IF NOT EXISTS idx_work_items_worklist_status ON work_items(worklist_id, status, priority DESC, id ASC);
+CREATE INDEX IF NOT EXISTS idx_work_items_parent ON work_items(parent_item_id);
+CREATE INDEX IF NOT EXISTS idx_work_items_claim ON work_items(worklist_id, claim_execution_id);
+
 "#;
 
 /// Native Turso FTS schema
@@ -345,6 +393,46 @@ pub struct ScheduledJobRunRow {
     pub started_unix_ms: i64,
     pub finished_unix_ms: Option<i64>,
     pub last_status: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorklistRow {
+    pub id: i64,
+    pub public_id: Vec<u8>,
+    pub name: String,
+    pub scope_ref: String,
+    pub metadata: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkItemRow {
+    pub id: i64,
+    pub public_id: Vec<u8>,
+    pub worklist_id: i64,
+    pub parent_item_id: Option<i64>,
+    pub title: String,
+    pub item_kind: String,
+    pub prompt: Option<String>,
+    pub content: Option<String>,
+    pub tools: Option<String>,
+    pub conflict_policy: Option<String>,
+    pub action_name: Option<String>,
+    pub action_params: Option<String>,
+    pub status: String,
+    pub priority: i64,
+    pub after_ids: Option<String>,
+    pub metadata: Option<String>,
+    pub claim_agent_id: Option<String>,
+    pub claim_session_id: Option<String>,
+    pub claim_execution_id: Option<String>,
+    pub claim_heartbeat_unix_ms: Option<i64>,
+    pub claimed_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub failure_reason: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

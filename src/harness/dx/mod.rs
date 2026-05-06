@@ -14,6 +14,7 @@ mod graph;
 mod schedule;
 mod time;
 mod verdict;
+mod worklist;
 
 pub fn register_dx_globals(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
     verdict::register_verdict_globals(lua)?;
@@ -24,6 +25,7 @@ pub fn register_dx_globals(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()
     agent::register_agent_dx(lua)?;
     graph::register_graph_dx(lua)?;
     schedule::register_schedule_dx(lua)?;
+    worklist::register_worklist_dx(lua)?;
     governance::register_governance_dx(lua)?;
     time::register_time_dx(lua)?;
     fs_json::register_fs_json_globals(lua)?;

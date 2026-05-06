@@ -26,8 +26,10 @@ mod sessions;
 mod tests;
 mod tools;
 mod turns;
+mod worklists;
 
 pub use scheduler::{ScheduledJobInsert, ScheduledJobUpdate};
+pub use worklists::{WorkItemInsert, WorkItemUpdate};
 
 /// The state store manages all Turin persistence.
 ///

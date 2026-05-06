@@ -423,6 +423,146 @@ async fn test_schedule_dx_helpers_create_and_list_jobs() {
     assert_eq!(verdict, Verdict::Allow);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_worklist_dx_helpers_support_prompt_and_action_items() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local tasks = worklist("sprint", {
+                    scope = "project:alpha"
+                })
+
+                local fix = tasks:add("Fix login redirect", {
+                    metadata = { role = "dev" }
+                })
+                if fix.kind ~= "prompt" or fix.prompt ~= "Fix login redirect" then
+                    error("expected prompt item to round-trip")
+                end
+
+                local qa = tasks:add({
+                    title = "Run checkout smoke test",
+                    action = "qa.run_smoke",
+                    params = { suite = "checkout" },
+                    priority = 10,
+                    metadata = { role = "qa" }
+                })
+                if qa.kind ~= "action" or qa.action ~= "qa.run_smoke" then
+                    error("expected action item to round-trip")
+                end
+                if qa.params == nil or qa.params.suite ~= "checkout" then
+                    error("expected action params to round-trip")
+                end
+
+                local found = tasks:find({
+                    where = { role = "qa" }
+                })
+                if found == nil or found.id ~= qa.id then
+                    error("expected find(where=role=qa) to return action item")
+                end
+
+                local claimed = tasks:next({
+                    where = { role = "qa" }
+                })
+                if claimed == nil or claimed.id ~= qa.id then
+                    error("expected filtered next() to claim qa item")
+                end
+
+                local active = tasks:active()
+                if active == nil or active.id ~= qa.id then
+                    error("expected active() to return claimed qa item")
+                end
+
+                claimed:requeue()
+                local reclaimed = tasks:next({
+                    where = { role = "qa" }
+                })
+                if reclaimed == nil or reclaimed.id ~= qa.id then
+                    error("expected requeued item to be claimable again")
+                end
+                reclaimed:done({ result = "ok" })
+
+                local current = tasks:current()
+                if current == nil or current.id ~= fix.id then
+                    error("expected current() to claim remaining prompt item")
+                end
+                current:done()
+
+                local progress = tasks:progress()
+                if progress.done ~= 2 or progress.total ~= 2 then
+                    error("expected progress to show 2/2 completion")
+                end
+
+                if tasks:empty() ~= true then
+                    error("expected worklist to be empty after all items complete")
+                end
+
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_worklist_items_support_hierarchy_and_dependencies() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local roadmap = worklist("roadmap")
+                local epic = roadmap:add("Ship onboarding revamp")
+
+                local spec = epic:add("Write spec")
+                local implement = epic:add("Implement flow", {
+                    after = { spec.id }
+                })
+
+                local children = epic:children()
+                if #children ~= 2 then
+                    error("expected epic children to round-trip")
+                end
+
+                local first = epic:next()
+                if first == nil or first.id ~= spec.id then
+                    error("expected dependency-free child to claim first")
+                end
+                first:done()
+
+                local second = epic:next()
+                if second == nil or second.id ~= implement.id then
+                    error("expected dependent child after prerequisite completion")
+                end
+                second:done()
+
+                local progress = epic:progress()
+                if progress.done ~= 2 or progress.total ~= 2 then
+                    error("expected child progress to show 2/2 completion")
+                end
+
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+}
+
 #[test]
 fn test_engine_composition_reject_wins() {
     let dir = TempDir::new().unwrap();
