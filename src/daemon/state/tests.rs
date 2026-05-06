@@ -878,6 +878,117 @@ provider = "noop"
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn scheduled_builtin_worklist_dispatch_action_enqueues_prompt_task() -> Result<()> {
+    let temp = tempdir()?;
+    std::fs::create_dir_all(temp.path().join("default-harness"))?;
+    std::fs::write(
+        temp.path().join("default-harness").join("main.lua"),
+        "-- builtin worklist actions do not require harness-defined handlers\n",
+    )?;
+    let config_path = temp.path().join(".turin").join("config.toml");
+    std::fs::create_dir_all(config_path.parent().expect("config parent"))?;
+    std::fs::write(
+        &config_path,
+        r#"[agent]
+id = "default"
+system_prompt = "bootstrap"
+model = "mock-model"
+provider = "mock"
+
+[kernel]
+workspace_root = "."
+
+[persistence.state]
+path = "state.db"
+
+[harness]
+directory = "default-harness"
+fs_root = "."
+
+[providers.mock]
+type = "mock"
+
+[embeddings]
+provider = "noop"
+"#,
+    )?;
+
+    let mut state = DaemonState::load(&config_path).await?;
+    let default_state_store = state.kernel.store_manager().get_default().await?;
+    let worklist = default_state_store
+        .open_worklist("dispatch", "", None)
+        .await?;
+    default_state_store
+        .create_work_item(crate::persistence::state::WorkItemInsert {
+            public_id: uuid::Uuid::now_v7(),
+            worklist_id: worklist.id,
+            parent_item_id: None,
+            title: "Review latest failures",
+            item_kind: "prompt",
+            prompt: Some("Review latest failures"),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action_name: None,
+            action_params: None,
+            priority: 0,
+            after_ids: None,
+            metadata: Some(r#"{"role":"dev"}"#),
+        })
+        .await?;
+
+    let now_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64;
+    let job = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: None,
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action: Some(ScheduleActionParams {
+                name: "worklist.dispatch_next".to_string(),
+                params: Some(json!({
+                    "name": "dispatch",
+                    "where": { "role": "dev" }
+                })),
+            }),
+            persistence: None,
+            next_run_unix_ms: now_unix_ms - 1,
+            interval_seconds: None,
+            recurring_pattern: None,
+            overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            work_key: None,
+            max_concurrency: None,
+            enabled: true,
+        })
+        .await?;
+
+    state.scheduler_tick().await?;
+    let jobs = state.list_scheduled_jobs().await?;
+    let finished = jobs
+        .iter()
+        .find(|entry| entry.id == job.id)
+        .expect("scheduled worklist action should remain visible");
+    assert_eq!(finished.last_error_code, None);
+    assert_eq!(finished.failure_count, 0);
+    assert!(
+        finished
+            .last_status
+            .as_deref()
+            .is_some_and(|status| status.contains("completed"))
+    );
+
+    let task_statuses = state.list_tasks().await;
+    assert_eq!(task_statuses.len(), 1);
+    assert_eq!(task_statuses[0].agent_id, "default");
+    assert!(!task_statuses[0].request_id.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn scheduled_missing_harness_action_surfaces_error_code_and_failure_count() -> Result<()> {
     let temp = tempdir()?;
     std::fs::create_dir_all(temp.path().join("default-harness"))?;

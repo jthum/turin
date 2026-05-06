@@ -3,6 +3,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, anyhow};
 use serde::Serialize;
+use serde_json::{Map as JsonMap, Value as JsonValue};
 use turin_daemon_protocol::{
     ContextPersistenceParams, ScheduleActionParams, ScheduleJobDetail, ScheduleJobRunDetail,
     ScheduleJobRunList, StoreTargetParams,
@@ -12,9 +13,9 @@ use turin_types::{TaskInputContent, ToolsConfig};
 use super::DaemonState;
 use crate::kernel::agent_manager::TaskStatusSnapshot;
 use crate::kernel::config::{ContextPersistenceConfig, InferenceOverrideConfig, StoreTargetConfig};
-use crate::kernel::session::QueuedTask;
+use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask};
 use crate::persistence::manager::StoreSelector;
-use crate::persistence::schema::{ScheduledJobRow, ScheduledJobRunRow};
+use crate::persistence::schema::{ScheduledJobRow, ScheduledJobRunRow, WorkItemRow};
 use crate::persistence::state::{ScheduledJobInsert, ScheduledJobUpdate};
 
 const SCHEDULED_JOB_BATCH_LIMIT: usize = 32;
@@ -717,9 +718,33 @@ impl DaemonState {
                 format!("action job '{}' is missing action payload", job.id),
             ));
         };
+        self.execute_named_scheduled_action(&job.agent_id, &action)
+            .await
+    }
+
+    async fn execute_named_scheduled_action(
+        &mut self,
+        agent_id: &str,
+        action: &ScheduleActionParams,
+    ) -> std::result::Result<String, ScheduledJobFailure> {
+        match action.name.as_str() {
+            "worklist.dispatch_next" => {
+                self.execute_scheduled_worklist_dispatch(agent_id, action)
+                    .await
+            }
+            "worklist.release_stale" => self.execute_scheduled_worklist_release_stale(action).await,
+            _ => self.execute_leaf_scheduled_action(agent_id, action).await,
+        }
+    }
+
+    async fn execute_leaf_scheduled_action(
+        &mut self,
+        agent_id: &str,
+        action: &ScheduleActionParams,
+    ) -> std::result::Result<String, ScheduledJobFailure> {
         match action.name.as_str() {
             "agent.enable" => {
-                let id = required_action_id(&action).map_err(|err| {
+                let id = required_action_id(action).map_err(|err| {
                     ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
                 })?;
                 self.set_agent_enabled(&id, true).await.map_err(|err| {
@@ -728,7 +753,7 @@ impl DaemonState {
                 Ok("completed: agent enabled".to_string())
             }
             "agent.disable" => {
-                let id = required_action_id(&action).map_err(|err| {
+                let id = required_action_id(action).map_err(|err| {
                     ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
                 })?;
                 self.set_agent_enabled(&id, false).await.map_err(|err| {
@@ -737,7 +762,7 @@ impl DaemonState {
                 Ok("completed: agent disabled".to_string())
             }
             "channel.enable" => {
-                let id = required_action_id(&action).map_err(|err| {
+                let id = required_action_id(action).map_err(|err| {
                     ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
                 })?;
                 self.set_channel_enabled(&id, true).await.map_err(|err| {
@@ -746,7 +771,7 @@ impl DaemonState {
                 Ok("completed: channel enabled".to_string())
             }
             "channel.disable" => {
-                let id = required_action_id(&action).map_err(|err| {
+                let id = required_action_id(action).map_err(|err| {
                     ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
                 })?;
                 self.set_channel_enabled(&id, false).await.map_err(|err| {
@@ -754,8 +779,201 @@ impl DaemonState {
                 })?;
                 Ok("completed: channel disabled".to_string())
             }
-            _ => self.execute_harness_scheduled_action(&job.agent_id, &action),
+            _ => self.execute_harness_scheduled_action(agent_id, action),
         }
+    }
+
+    async fn execute_scheduled_worklist_dispatch(
+        &mut self,
+        agent_id: &str,
+        action: &ScheduleActionParams,
+    ) -> std::result::Result<String, ScheduledJobFailure> {
+        let params = scheduled_worklist_action_params(action).map_err(|err| {
+            ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
+        })?;
+        let selector = scheduled_worklist_store_selector(&params).map_err(|err| {
+            ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
+        })?;
+        let store = self
+            .kernel
+            .store_manager()
+            .open(&selector)
+            .await
+            .map_err(|err| {
+                ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
+            })?;
+        let worklist = store
+            .open_worklist(&params.name, params.scope.as_deref().unwrap_or(""), None)
+            .await
+            .map_err(|err| {
+                ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
+            })?;
+        let rows = store.list_work_items(worklist.id).await.map_err(|err| {
+            ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
+        })?;
+        let status_map = rows
+            .iter()
+            .map(|row| {
+                (
+                    format_work_item_public_id(&row.public_id),
+                    row.status.clone(),
+                )
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        let now_unix_ms = now_unix_ms();
+        let execution_id = format!("scheduled:worklist:{}", action.name);
+        for row in rows
+            .iter()
+            .filter(|row| row.parent_item_id.is_none())
+            .filter(|row| row.status == "pending")
+            .filter(|row| row.claim_execution_id.is_none())
+            .filter(|row| work_item_dependencies_satisfied(row, &status_map))
+            .filter(|row| work_item_matches_where(row, params.where_filter.as_ref()))
+            .take(params.limit.unwrap_or(usize::MAX))
+        {
+            let claimed = store
+                .try_claim_work_item(row.id, agent_id, None, Some(&execution_id), now_unix_ms)
+                .await
+                .map_err(|err| {
+                    ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
+                })?;
+            if !claimed {
+                continue;
+            }
+            let refreshed = store
+                .get_work_item_by_id(row.id)
+                .await
+                .map_err(|err| {
+                    ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
+                })?
+                .ok_or_else(|| {
+                    ScheduledJobFailure::new(
+                        "schedule_action_builtin_failed",
+                        "claimed work item vanished",
+                    )
+                })?;
+            let status = match refreshed.item_kind.as_str() {
+                "action" => {
+                    let nested = ScheduleActionParams {
+                        name: refreshed.action_name.clone().ok_or_else(|| {
+                            ScheduledJobFailure::new(
+                                "schedule_action_invalid_payload",
+                                "worklist action item missing action",
+                            )
+                        })?,
+                        params: refreshed
+                            .action_params
+                            .as_deref()
+                            .map(serde_json::from_str)
+                            .transpose()
+                            .map_err(|err| {
+                                ScheduledJobFailure::new(
+                                    "schedule_action_invalid_payload",
+                                    err.to_string(),
+                                )
+                            })?,
+                    };
+                    if nested.name.starts_with("worklist.") {
+                        return Err(ScheduledJobFailure::new(
+                            "schedule_action_invalid_payload",
+                            "nested worklist.* actions are not supported inside scheduled worklist dispatch",
+                        ));
+                    }
+                    self.execute_leaf_scheduled_action(agent_id, &nested)
+                        .await?
+                }
+                _ => {
+                    let live = self
+                        .kernel
+                        .agent_manager()
+                        .open_session(
+                            agent_id,
+                            Some("worklist"),
+                            Some(selector.clone()),
+                            None,
+                            None,
+                            InferenceOverrideConfig::default(),
+                        )
+                        .await
+                        .map_err(|err| {
+                            ScheduledJobFailure::new(
+                                "schedule_action_builtin_failed",
+                                err.to_string(),
+                            )
+                        })?;
+                    let request_id = self
+                        .kernel
+                        .agent_manager()
+                        .submit_to_session(
+                            &live.session_id,
+                            Some(&live.slot_id),
+                            work_item_task(&refreshed).map_err(|err| {
+                                ScheduledJobFailure::new(
+                                    "schedule_action_invalid_payload",
+                                    err.to_string(),
+                                )
+                            })?,
+                            None,
+                        )
+                        .await
+                        .map_err(|err| {
+                            ScheduledJobFailure::new(
+                                "schedule_action_builtin_failed",
+                                err.to_string(),
+                            )
+                        })?;
+                    format!("completed: queued task {}", request_id)
+                }
+            };
+            return Ok(status);
+        }
+        Ok("completed: no eligible work item".to_string())
+    }
+
+    async fn execute_scheduled_worklist_release_stale(
+        &mut self,
+        action: &ScheduleActionParams,
+    ) -> std::result::Result<String, ScheduledJobFailure> {
+        let params = scheduled_worklist_action_params(action).map_err(|err| {
+            ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
+        })?;
+        let selector = scheduled_worklist_store_selector(&params).map_err(|err| {
+            ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
+        })?;
+        let store = self
+            .kernel
+            .store_manager()
+            .open(&selector)
+            .await
+            .map_err(|err| {
+                ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
+            })?;
+        let worklist = store
+            .open_worklist(&params.name, params.scope.as_deref().unwrap_or(""), None)
+            .await
+            .map_err(|err| {
+                ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
+            })?;
+        let stale_before =
+            now_unix_ms().saturating_sub(params.stale_after_seconds.unwrap_or(300) as i64 * 1000);
+        let rows = store.list_work_items(worklist.id).await.map_err(|err| {
+            ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
+        })?;
+        let candidates = rows
+            .into_iter()
+            .filter(|row| row.parent_item_id.is_none())
+            .filter(|row| work_item_is_orphaned(row, stale_before))
+            .filter(|row| work_item_matches_where(row, params.where_filter.as_ref()))
+            .take(params.limit.unwrap_or(usize::MAX))
+            .collect::<Vec<_>>();
+        let mut released = 0usize;
+        for row in candidates {
+            store.release_work_item(row.id).await.map_err(|err| {
+                ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
+            })?;
+            released += 1;
+        }
+        Ok(format!("completed: released {} stale work items", released))
     }
 
     fn execute_harness_scheduled_action(
@@ -884,6 +1102,167 @@ fn map_scheduled_job_run_detail(row: ScheduledJobRunRow) -> ScheduleJobRunDetail
         created_at: row.created_at,
         updated_at: row.updated_at,
     }
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+struct ScheduledWorklistActionParams {
+    name: String,
+    scope: Option<String>,
+    #[serde(default)]
+    store: Option<JsonValue>,
+    path: Option<String>,
+    #[serde(rename = "where", default)]
+    where_filter: Option<JsonMap<String, JsonValue>>,
+    stale_after_seconds: Option<u64>,
+    limit: Option<usize>,
+}
+
+fn scheduled_worklist_action_params(
+    action: &ScheduleActionParams,
+) -> Result<ScheduledWorklistActionParams> {
+    let params = action.params.clone().unwrap_or(JsonValue::Null);
+    match params {
+        JsonValue::Object(_) | JsonValue::Null => {
+            let parsed = serde_json::from_value::<ScheduledWorklistActionParams>(params)?;
+            if parsed.name.is_empty() {
+                anyhow::bail!("Scheduled action '{}' requires params.name", action.name);
+            }
+            Ok(parsed)
+        }
+        _ => anyhow::bail!(
+            "Scheduled action '{}' requires object-like params",
+            action.name
+        ),
+    }
+}
+
+fn scheduled_worklist_store_selector(
+    params: &ScheduledWorklistActionParams,
+) -> Result<StoreSelector> {
+    if let Some(path) = params.path.as_deref() {
+        return Ok(StoreSelector::Path(path.to_string()));
+    }
+    if let Some(store) = params.store.as_ref() {
+        return store_selector_from_json(store);
+    }
+    Ok(StoreSelector::Alias("state".to_string()))
+}
+
+fn store_selector_from_json(value: &JsonValue) -> Result<StoreSelector> {
+    match value {
+        JsonValue::String(s) => Ok(parse_store_selector_string(s)),
+        JsonValue::Object(map) => {
+            if let Some(path) = map.get("path").and_then(|value| value.as_str()) {
+                return Ok(StoreSelector::Path(path.to_string()));
+            }
+            if let Some(store) = map.get("store").and_then(|value| value.as_str()) {
+                return Ok(StoreSelector::Alias(store.to_string()));
+            }
+            if let Some(alias) = map.get("alias").and_then(|value| value.as_str()) {
+                return Ok(StoreSelector::Alias(alias.to_string()));
+            }
+            anyhow::bail!("invalid store selector object for worklist action")
+        }
+        _ => anyhow::bail!("invalid store selector for worklist action"),
+    }
+}
+
+fn parse_store_selector_string(s: &str) -> StoreSelector {
+    if s.contains('/')
+        || s.contains('\\')
+        || s.starts_with('.')
+        || s.ends_with(".db")
+        || s.starts_with('~')
+    {
+        StoreSelector::Path(s.to_string())
+    } else {
+        StoreSelector::Alias(s.to_string())
+    }
+}
+
+fn format_work_item_public_id(bytes: &[u8]) -> String {
+    uuid::Uuid::from_slice(bytes)
+        .map(|uuid| uuid.to_string())
+        .unwrap_or_else(|_| super::helpers::format_uuid_bytes_simple(bytes))
+}
+
+fn work_item_filter_value(row: &WorkItemRow, metadata: &JsonValue, key: &str) -> Option<JsonValue> {
+    match key {
+        "id" | "public_id" => Some(JsonValue::String(format_work_item_public_id(
+            &row.public_id,
+        ))),
+        "title" => Some(JsonValue::String(row.title.clone())),
+        "kind" => Some(JsonValue::String(row.item_kind.clone())),
+        "status" => Some(JsonValue::String(row.status.clone())),
+        "priority" => Some(JsonValue::Number(row.priority.into())),
+        "parent_id" => Some(
+            row.parent_item_id
+                .map(|value| JsonValue::Number(value.into()))
+                .unwrap_or(JsonValue::Null),
+        ),
+        _ => metadata.get(key).cloned(),
+    }
+}
+
+fn work_item_matches_where(
+    row: &WorkItemRow,
+    where_map: Option<&JsonMap<String, JsonValue>>,
+) -> bool {
+    let Some(where_map) = where_map else {
+        return true;
+    };
+    let metadata = row
+        .metadata
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<JsonValue>(raw).ok())
+        .unwrap_or(JsonValue::Null);
+    where_map.iter().all(|(key, expected)| {
+        work_item_filter_value(row, &metadata, key).as_ref() == Some(expected)
+    })
+}
+
+fn work_item_dependencies_satisfied(
+    row: &WorkItemRow,
+    status_map: &std::collections::HashMap<String, String>,
+) -> bool {
+    row.after_ids
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .all(|dep| status_map.get(&dep).is_some_and(|status| status == "done"))
+}
+
+fn work_item_is_orphaned(row: &WorkItemRow, stale_before_unix_ms: i64) -> bool {
+    row.status == "active"
+        && match row.claim_heartbeat_unix_ms {
+            Some(heartbeat) => heartbeat <= stale_before_unix_ms,
+            None => true,
+        }
+}
+
+fn work_item_task(row: &WorkItemRow) -> Result<QueuedTask> {
+    let mut task = QueuedTask::ad_hoc(
+        row.prompt
+            .clone()
+            .ok_or_else(|| anyhow!("Prompt work item '{}' is missing prompt", row.title))?,
+    );
+    task.title = Some(row.title.clone());
+    task.content = parse_json(row.content.as_deref())?;
+    if let Some(tools) = parse_json::<ToolsConfig>(row.tools.as_deref())?
+        && !tools.is_empty()
+    {
+        task.tools = Some(tools);
+    }
+    task.conflict_policy = match row.conflict_policy.as_deref() {
+        Some(conflict_policy) => Some(
+            conflict_policy
+                .parse::<ExecutionConflictPolicy>()
+                .map_err(anyhow::Error::msg)?,
+        ),
+        None => None,
+    };
+    Ok(task)
 }
 
 fn scheduled_job_task(job: &ScheduledJobRow) -> Result<QueuedTask> {

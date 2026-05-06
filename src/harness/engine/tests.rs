@@ -756,6 +756,62 @@ async fn test_worklist_dispatches_prompt_and_action_payloads() {
     assert_eq!(queued[0].title.as_deref(), Some("Review latest failures"));
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_engine_invokes_builtin_worklist_dispatch_action() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("main.lua"), "-- no custom actions needed\n").unwrap();
+
+    let app_data = test_app_data_for_root(dir.path().to_path_buf());
+    let store = open_default_state_store(&app_data).await;
+    let list = store.open_worklist("dispatch", "", None).await.unwrap();
+    store
+        .create_work_item(WorkItemInsert {
+            public_id: uuid::Uuid::now_v7(),
+            worklist_id: list.id,
+            parent_item_id: None,
+            title: "Review latest failures",
+            item_kind: "prompt",
+            prompt: Some("Review latest failures"),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action_name: None,
+            action_params: None,
+            priority: 0,
+            after_ids: None,
+            metadata: None,
+        })
+        .await
+        .unwrap();
+
+    let mut engine = HarnessEngine::new(app_data.clone()).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+
+    let result = engine
+        .invoke_declared_action_for_agent(
+            "test-agent",
+            "worklist.dispatch_next",
+            serde_json::json!({ "name": "dispatch" }),
+        )
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(result["item"]["title"], "Review latest failures");
+    assert_eq!(result["result"]["dispatched"], "task");
+    assert!(result["result"]["task_id"].is_string());
+
+    let queue = app_data
+        .execution_ctx
+        .lock()
+        .unwrap()
+        .queue
+        .clone()
+        .expect("active session queue");
+    let queued = queue.lock().await;
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].prompt, "Review latest failures");
+}
+
 #[test]
 fn test_engine_composition_reject_wins() {
     let dir = TempDir::new().unwrap();
