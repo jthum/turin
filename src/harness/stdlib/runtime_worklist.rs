@@ -326,6 +326,23 @@ fn parse_limit(opts: Option<Table>) -> LuaResult<Option<usize>> {
     }
 }
 
+fn parse_stale_after_ms(opts: Option<Table>) -> LuaResult<i64> {
+    let Some(opts) = opts else {
+        return Ok(300_000);
+    };
+    match opts.get::<Value>("stale_after_seconds")? {
+        Value::Nil => Ok(300_000),
+        Value::Integer(i) if i >= 0 => Ok(i.saturating_mul(1000)),
+        Value::Number(n) if n.is_finite() && n >= 0.0 => {
+            Ok((n * 1000.0).round().clamp(0.0, i64::MAX as f64) as i64)
+        }
+        other => Err(mlua::Error::runtime(format!(
+            "worklist stale_after_seconds must be a non-negative number, got {:?}",
+            other
+        ))),
+    }
+}
+
 fn public_id_string(bytes: &[u8]) -> String {
     uuid::Uuid::from_slice(bytes)
         .map(|uuid| uuid.to_string())
@@ -396,6 +413,14 @@ fn dependencies_satisfied(row: &WorkItemRow, status_map: &HashMap<String, String
         .unwrap_or_default();
     deps.into_iter()
         .all(|dep| status_map.get(&dep).is_some_and(|status| status == "done"))
+}
+
+fn row_is_orphaned(row: &WorkItemRow, stale_before_unix_ms: i64) -> bool {
+    row.status == "active"
+        && match row.claim_heartbeat_unix_ms {
+            Some(heartbeat) => heartbeat <= stale_before_unix_ms,
+            None => true,
+        }
 }
 
 fn current_claim_identity(app_data: &HarnessAppData) -> (String, Option<String>, Option<String>) {
@@ -493,6 +518,39 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                 if !claimed && row.claim_execution_id.as_deref() != execution_id.as_deref() {
                     return Ok(Value::Nil);
                 }
+                Ok(Value::Table(item_proxy(lua, handle.clone(), row)?))
+            })?,
+        )?;
+    }
+
+    {
+        let handle = handle.clone();
+        let item_id = row.id;
+        proxy.set(
+            "heartbeat",
+            lua.create_function(move |lua, _self: Table| {
+                require_capability(&handle.app_data, "runtime.worklist.heartbeat")
+                    .map_err(mlua::Error::runtime)?;
+                let (_agent_id, _session_id, execution_id) =
+                    current_claim_identity(&handle.app_data);
+                let execution_id = execution_id.ok_or_else(|| {
+                    mlua::Error::runtime(
+                        "runtime.worklist.heartbeat requires an active execution identity"
+                            .to_string(),
+                    )
+                })?;
+                let row = crate::harness::globals::block_on_current(async {
+                    handle
+                        .store
+                        .heartbeat_work_item_claim(item_id, &execution_id, now_unix_ms())
+                        .await
+                })
+                .map_err(mlua::Error::runtime)?
+                .ok_or_else(|| {
+                    mlua::Error::runtime(
+                        "work item is not actively claimed by this execution".to_string(),
+                    )
+                })?;
                 Ok(Value::Table(item_proxy(lua, handle.clone(), row)?))
             })?,
         )?;
@@ -815,6 +873,73 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     .take(limit.unwrap_or(usize::MAX))
                 {
                     out.set(index, item_proxy(lua, handle.clone(), row)?)?;
+                    index += 1;
+                }
+                Ok(Value::Table(out))
+            })?,
+        )?;
+    }
+
+    {
+        let handle = handle.clone();
+        proxy.set(
+            "orphaned",
+            lua.create_function(move |lua, (_self, opts): (Table, Option<Table>)| {
+                let limit = parse_limit(opts.clone())?;
+                let stale_after_ms = parse_stale_after_ms(opts.clone())?;
+                let where_map = parse_where_map(lua, opts)?;
+                let stale_before = now_unix_ms().saturating_sub(stale_after_ms);
+                let rows = crate::harness::globals::block_on_current(async {
+                    handle.store.list_work_items(handle.worklist.id).await
+                })
+                .map_err(mlua::Error::runtime)?;
+                let out = lua.create_table()?;
+                let mut index = 1;
+                for row in rows
+                    .into_iter()
+                    .filter(|row| row.parent_item_id == handle.parent_item_id)
+                    .filter(|row| row_is_orphaned(row, stale_before))
+                    .filter(|row| row_matches_where(row, where_map.as_ref()))
+                    .take(limit.unwrap_or(usize::MAX))
+                {
+                    out.set(index, item_proxy(lua, handle.clone(), row)?)?;
+                    index += 1;
+                }
+                Ok(Value::Table(out))
+            })?,
+        )?;
+    }
+
+    {
+        let handle = handle.clone();
+        proxy.set(
+            "release_stale",
+            lua.create_function(move |lua, (_self, opts): (Table, Option<Table>)| {
+                require_capability(&handle.app_data, "runtime.worklist.release_stale")
+                    .map_err(mlua::Error::runtime)?;
+                let limit = parse_limit(opts.clone())?;
+                let stale_after_ms = parse_stale_after_ms(opts.clone())?;
+                let where_map = parse_where_map(lua, opts)?;
+                let stale_before = now_unix_ms().saturating_sub(stale_after_ms);
+                let rows = crate::harness::globals::block_on_current(async {
+                    handle.store.list_work_items(handle.worklist.id).await
+                })
+                .map_err(mlua::Error::runtime)?;
+                let candidates = rows
+                    .into_iter()
+                    .filter(|row| row.parent_item_id == handle.parent_item_id)
+                    .filter(|row| row_is_orphaned(row, stale_before))
+                    .filter(|row| row_matches_where(row, where_map.as_ref()))
+                    .take(limit.unwrap_or(usize::MAX))
+                    .collect::<Vec<_>>();
+                let out = lua.create_table()?;
+                let mut index = 1;
+                for row in candidates {
+                    let released = crate::harness::globals::block_on_current(async {
+                        handle.store.release_work_item(row.id).await
+                    })
+                    .map_err(mlua::Error::runtime)?;
+                    out.set(index, item_proxy(lua, handle.clone(), released)?)?;
                     index += 1;
                 }
                 Ok(Value::Table(out))

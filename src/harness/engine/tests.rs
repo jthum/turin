@@ -5,8 +5,8 @@ use crate::inference::provider::{
     InferenceEvent, InferenceProvider, InferenceRequest, InferenceStream, ProviderClient, SdkError,
 };
 use crate::kernel::config::InferenceOverrideConfig;
-use crate::persistence::manager::StoreManager;
-use crate::persistence::state::StateStore;
+use crate::persistence::manager::{StoreManager, StorePathScope, StoreSelector};
+use crate::persistence::state::{StateStore, WorkItemInsert};
 use futures::future::BoxFuture;
 use futures::stream;
 use std::path::{Path, PathBuf};
@@ -115,6 +115,17 @@ async fn test_app_data_with_scheduler(root: PathBuf) -> HarnessAppData {
         Some(Arc::new(Notify::new())),
     )));
     app_data
+}
+
+async fn open_default_state_store(app_data: &HarnessAppData) -> Arc<StateStore> {
+    app_data
+        .store_manager
+        .open_with_path_scope(
+            &StoreSelector::Alias("state".to_string()),
+            StorePathScope::WorkspaceOnly,
+        )
+        .await
+        .expect("open default state store")
 }
 
 #[test]
@@ -556,6 +567,88 @@ async fn test_worklist_items_support_hierarchy_and_dependencies() {
     .unwrap();
 
     let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_worklist_claim_heartbeat_and_stale_release() {
+    let dir = TempDir::new().unwrap();
+    let app_data = test_app_data_for_root(dir.path().to_path_buf());
+    let store = open_default_state_store(&app_data).await;
+    let list = store.open_worklist("ops", "", None).await.unwrap();
+    let claimed = store
+        .create_work_item(WorkItemInsert {
+            public_id: uuid::Uuid::now_v7(),
+            worklist_id: list.id,
+            parent_item_id: None,
+            title: "Stale health check",
+            item_kind: "prompt",
+            prompt: Some("Check stale runtime"),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action_name: None,
+            action_params: None,
+            priority: 0,
+            after_ids: None,
+            metadata: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        store
+            .try_claim_work_item(
+                claimed.id,
+                "test-agent",
+                Some("seed-session"),
+                Some("seed-exec"),
+                1,
+            )
+            .await
+            .unwrap()
+    );
+
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local tasks = worklist("ops")
+
+                local orphaned = tasks:orphaned({
+                    stale_after_seconds = 1
+                })
+                if #orphaned ~= 1 then
+                    error("expected one stale claimed item")
+                end
+
+                local released = tasks:release_stale({
+                    stale_after_seconds = 1
+                })
+                if #released ~= 1 or released[1].status ~= "pending" then
+                    error("expected stale claim to be released back to pending")
+                end
+
+                local fresh = tasks:next()
+                if fresh == nil or fresh.title ~= "Stale health check" then
+                    error("expected released item to be claimable again")
+                end
+
+                local heartbeated = fresh:heartbeat()
+                if heartbeated.claim_execution_id == nil then
+                    error("expected heartbeat to preserve active claim identity")
+                end
+
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(app_data).unwrap();
     engine.load_dir(dir.path()).unwrap();
     let verdict = engine
         .evaluate("on_turn_prepare", serde_json::json!({}))

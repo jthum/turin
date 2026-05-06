@@ -329,6 +329,33 @@ impl StateStore {
             .ok_or_else(|| anyhow::anyhow!("Work item {} released but not visible", id))
     }
 
+    pub async fn heartbeat_work_item_claim(
+        &self,
+        id: i64,
+        claim_execution_id: &str,
+        heartbeat_unix_ms: i64,
+    ) -> Result<Option<WorkItemRow>> {
+        let conn = self.connect().await?;
+        let changed = conn
+            .execute(
+                r#"
+                UPDATE work_items
+                SET claim_heartbeat_unix_ms = ?3,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                WHERE id = ?1
+                  AND status = 'active'
+                  AND claim_execution_id = ?2
+                "#,
+                turso::params![id, claim_execution_id, heartbeat_unix_ms],
+            )
+            .await
+            .context("Failed to heartbeat work item claim")?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        self.get_work_item_by_id(id).await
+    }
+
     pub async fn complete_work_item(&self, id: i64, metadata: Option<&str>) -> Result<WorkItemRow> {
         let current = self
             .get_work_item_by_id(id)
