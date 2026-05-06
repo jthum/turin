@@ -445,11 +445,30 @@ async fn test_worklist_dx_helpers_support_prompt_and_action_items() {
                     scope = "project:alpha"
                 })
 
-                local fix = tasks:add("Fix login redirect", {
+                local fix = tasks:add({
+                    title = "Fix login redirect",
+                    prompt = "Fix login redirect",
+                    content = {
+                        { type = "text", text = "Repro starts on /login" }
+                    },
+                    tools = {
+                        allow = { "shell_exec" }
+                    },
+                    conflict_policy = "detached"
+                }, {
                     metadata = { role = "dev" }
                 })
                 if fix.kind ~= "prompt" or fix.prompt ~= "Fix login redirect" then
                     error("expected prompt item to round-trip")
+                end
+                if fix.content == nil or fix.content[1].text ~= "Repro starts on /login" then
+                    error("expected structured prompt content to round-trip")
+                end
+                if fix.tools == nil or fix.tools.allow[1] ~= "shell_exec" then
+                    error("expected structured prompt tools to round-trip")
+                end
+                if fix.payload == nil or fix.payload.kind ~= "prompt" then
+                    error("expected normalized prompt payload view")
                 end
 
                 local qa = tasks:add({
@@ -464,6 +483,12 @@ async fn test_worklist_dx_helpers_support_prompt_and_action_items() {
                 end
                 if qa.params == nil or qa.params.suite ~= "checkout" then
                     error("expected action params to round-trip")
+                end
+                if qa.payload == nil or qa.payload.kind ~= "action" then
+                    error("expected normalized action payload view")
+                end
+                if qa.payload.action == nil or qa.payload.action.name ~= "qa.run_smoke" then
+                    error("expected normalized action payload name")
                 end
 
                 local found = tasks:find({

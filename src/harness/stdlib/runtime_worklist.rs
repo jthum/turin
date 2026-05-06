@@ -423,6 +423,53 @@ fn row_is_orphaned(row: &WorkItemRow, stale_before_unix_ms: i64) -> bool {
         }
 }
 
+fn item_payload_value(lua: &Lua, row: &WorkItemRow) -> LuaResult<Value> {
+    let payload = lua.create_table()?;
+    payload.set("kind", row.item_kind.clone())?;
+    match row.item_kind.as_str() {
+        "action" => {
+            let action = lua.create_table()?;
+            action.set("name", row.action_name.clone())?;
+            action.set(
+                "params",
+                match parse_json_opt::<JsonValue>(row.action_params.as_deref())
+                    .ok()
+                    .flatten()
+                {
+                    Some(value) => lua.to_value(&value)?,
+                    None => Value::Nil,
+                },
+            )?;
+            payload.set("action", action)?;
+        }
+        _ => {
+            payload.set("prompt", row.prompt.clone())?;
+            payload.set(
+                "content",
+                match parse_json_opt::<Vec<TaskInputContent>>(row.content.as_deref())
+                    .ok()
+                    .flatten()
+                {
+                    Some(value) => lua.to_value(&value)?,
+                    None => Value::Nil,
+                },
+            )?;
+            payload.set(
+                "tools",
+                match parse_json_opt::<ToolsConfig>(row.tools.as_deref())
+                    .ok()
+                    .flatten()
+                {
+                    Some(value) => lua.to_value(&value)?,
+                    None => Value::Nil,
+                },
+            )?;
+            payload.set("conflict_policy", row.conflict_policy.clone())?;
+        }
+    }
+    Ok(Value::Table(payload))
+}
+
 fn current_claim_identity(app_data: &HarnessAppData) -> (String, Option<String>, Option<String>) {
     let agent_id = current_agent_id(app_data);
     let lock = app_data.execution_ctx.lock().ok();
@@ -451,6 +498,26 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
     proxy.set("priority", row.priority)?;
     proxy.set("parent_internal_id", row.parent_item_id)?;
     proxy.set("prompt", row.prompt.clone())?;
+    proxy.set(
+        "content",
+        match parse_json_opt::<Vec<TaskInputContent>>(row.content.as_deref())
+            .ok()
+            .flatten()
+        {
+            Some(value) => lua.to_value(&value)?,
+            None => Value::Nil,
+        },
+    )?;
+    proxy.set(
+        "tools",
+        match parse_json_opt::<ToolsConfig>(row.tools.as_deref())
+            .ok()
+            .flatten()
+        {
+            Some(value) => lua.to_value(&value)?,
+            None => Value::Nil,
+        },
+    )?;
     proxy.set("conflict_policy", row.conflict_policy.clone())?;
     proxy.set("action", row.action_name.clone())?;
     proxy.set(
@@ -487,6 +554,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
     proxy.set("claim_session_id", row.claim_session_id.clone())?;
     proxy.set("claim_execution_id", row.claim_execution_id.clone())?;
     proxy.set("failure_reason", row.failure_reason.clone())?;
+    proxy.set("payload", item_payload_value(lua, &row)?)?;
 
     {
         let handle = handle.clone();
