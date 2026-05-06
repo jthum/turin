@@ -209,7 +209,7 @@ impl ExecutionHost {
             allowed,
             blocked,
             limit = MAX_TOOL_CALLS_PER_WINDOW,
-            window_secs = TOOL_CALL_WINDOW.as_secs(),
+            window_seconds = TOOL_CALL_WINDOW.as_secs(),
             "Tool rate limit exceeded; blocking excess tool calls",
         );
 

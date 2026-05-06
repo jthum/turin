@@ -35,7 +35,7 @@ model = "claude-sonnet-4-20250514"   # or any configured provider model
 provider = "anthropic"               # key under [providers.*]
 mode = "auto"                        # auto | stateful | stateless
 # harness = "default"                        # optional explicit harness binding
-# idle_grace_secs = 60                       # optional peer runtime idle shutdown grace
+# idle_timeout_seconds = 60                    # optional peer runtime idle shutdown grace
 #
 # [agent.tools]
 # allow = ["group:web", "read_file"] # optional per-agent subset from the inherited parent set
@@ -91,7 +91,7 @@ mode = "auto"                        # auto | stateful | stateless
 # provider = "anthropic"
 # mode = "stateful"
 # harness = "reviewer"
-# idle_grace_secs = 120
+# idle_grace_seconds = 120
 #
 # [agents.reviewer.tools]
 # allow = ["group:fs", "group:web"]

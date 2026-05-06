@@ -28,19 +28,19 @@ pub fn register_time_dx(lua: &Lua) -> LuaResult<()> {
     time_table.set(
         "since",
         lua.create_function(move |_lua, ts: Value| {
-            let ts_secs = parse_seconds(ts, "ts")?;
-            let now_secs = now_epoch_seconds()?;
-            Ok(now_secs - ts_secs)
+            let ts_seconds = parse_seconds(ts, "ts")?;
+            let now_seconds = now_epoch_seconds()?;
+            Ok(now_seconds - ts_seconds)
         })?,
     )?;
 
     time_table.set(
         "after",
         lua.create_function(move |_lua, (ts, threshold): (Value, Value)| {
-            let ts_secs = parse_seconds(ts, "ts")?;
-            let threshold_secs = parse_seconds(threshold, "threshold")?;
-            let now_secs = now_epoch_seconds()?;
-            Ok((now_secs - ts_secs) >= threshold_secs)
+            let ts_seconds = parse_seconds(ts, "ts")?;
+            let threshold_seconds = parse_seconds(threshold, "threshold")?;
+            let now_seconds = now_epoch_seconds()?;
+            Ok((now_seconds - ts_seconds) >= threshold_seconds)
         })?,
     )?;
 

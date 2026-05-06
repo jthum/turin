@@ -694,7 +694,7 @@ async fn run_auth_flow(
     render_auth_flow_display(&start.display)?;
 
     let session = start.session;
-    let mut poll_interval = start.display.poll_interval_secs.unwrap_or(5);
+    let mut poll_interval = start.display.poll_interval_seconds.unwrap_or(5);
 
     loop {
         tokio::time::sleep(Duration::from_secs(poll_interval.max(1))).await;
@@ -708,7 +708,7 @@ async fn run_auth_flow(
         )? {
             ChannelAuthFlowPollResponse::Pending { display } => {
                 render_auth_flow_display(&display)?;
-                poll_interval = display.poll_interval_secs.unwrap_or(poll_interval);
+                poll_interval = display.poll_interval_seconds.unwrap_or(poll_interval);
             }
             ChannelAuthFlowPollResponse::Complete { values, message } => {
                 if let Some(message) = message {
@@ -756,8 +756,8 @@ fn render_auth_flow_display(display: &ChannelAuthFlowDisplay) -> Result<()> {
             println!("QR payload: {qr_text}");
         }
     }
-    if let Some(expires_in_secs) = display.expires_in_secs {
-        println!("This step expires in {} seconds.", expires_in_secs);
+    if let Some(expires_in_seconds) = display.expires_in_seconds {
+        println!("This step expires in {} seconds.", expires_in_seconds);
     }
     Ok(())
 }

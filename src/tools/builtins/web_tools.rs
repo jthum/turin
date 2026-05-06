@@ -67,8 +67,8 @@ impl WebSearchProvider {
 #[derive(Deserialize)]
 struct WebFetchArgs {
     url: String,
-    #[serde(default = "default_fetch_timeout_secs")]
-    timeout_secs: u64,
+    #[serde(default = "default_fetch_timeout_seconds")]
+    timeout_seconds: u64,
     #[serde(default = "default_fetch_max_chars")]
     max_chars: usize,
 }
@@ -78,8 +78,8 @@ struct WebSearchArgs {
     query: String,
     #[serde(default = "default_search_limit")]
     limit: usize,
-    #[serde(default = "default_fetch_timeout_secs")]
-    timeout_secs: u64,
+    #[serde(default = "default_fetch_timeout_seconds")]
+    timeout_seconds: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -134,7 +134,7 @@ struct SearxngSearchResult {
     content: String,
 }
 
-fn default_fetch_timeout_secs() -> u64 {
+fn default_fetch_timeout_seconds() -> u64 {
     20
 }
 
@@ -257,10 +257,10 @@ fn configured_search_providers(settings: &WebSearchToolSettings) -> Result<Vec<W
     Ok(providers)
 }
 
-fn build_http_client(timeout_secs: u64) -> Result<Client, ToolError> {
+fn build_http_client(timeout_seconds: u64) -> Result<Client, ToolError> {
     Client::builder()
         .redirect(Policy::limited(10))
-        .timeout(Duration::from_secs(timeout_secs))
+        .timeout(Duration::from_secs(timeout_seconds))
         .build()
         .map_err(|e| ToolError::ExecutionError(format!("Failed to build HTTP client: {e}")))
 }
@@ -689,7 +689,7 @@ impl Tool for WebFetchTool {
                     "type": "string",
                     "description": "HTTP or HTTPS URL to fetch"
                 },
-                "timeout_secs": {
+                "timeout_seconds": {
                     "type": "integer",
                     "description": "Request timeout in seconds",
                     "default": 20
@@ -707,7 +707,7 @@ impl Tool for WebFetchTool {
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolEffect, ToolError> {
         let args: WebFetchArgs = parse_args(params)?;
         let url = validate_web_url(&args.url)?;
-        let client = build_http_client(args.timeout_secs)?;
+        let client = build_http_client(args.timeout_seconds)?;
         let request = apply_fetch_headers(client.get(url.clone()), &ctx.tools.web_fetch)?;
         let response = request
             .send()
@@ -783,7 +783,7 @@ impl Tool for WebSearchTool {
                     "description": "Maximum number of results to return",
                     "default": 5
                 },
-                "timeout_secs": {
+                "timeout_seconds": {
                     "type": "integer",
                     "description": "Request timeout in seconds",
                     "default": 20
@@ -803,7 +803,7 @@ impl Tool for WebSearchTool {
         }
 
         let limit = args.limit.clamp(1, 10);
-        let client = build_http_client(args.timeout_secs)?;
+        let client = build_http_client(args.timeout_seconds)?;
         let providers = configured_search_providers(&ctx.tools.web_search)
             .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
         let mut errors = Vec::new();

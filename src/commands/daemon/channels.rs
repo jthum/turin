@@ -164,8 +164,8 @@ fn print_channel_access(channel_id: &str, access: &ChannelAccessView) {
                 .as_deref()
                 .or(room.sample_user_id.as_deref())
                 .unwrap_or("-"),
-            room.first_seen_unix_secs,
-            room.last_seen_unix_secs,
+            room.first_seen_unix_seconds,
+            room.last_seen_unix_seconds,
         );
     }
     println!("  approved: {}", access.approved_rooms.len());
@@ -180,7 +180,7 @@ fn print_channel_access(channel_id: &str, access: &ChannelAccessView) {
                 .as_deref()
                 .or(room.approved_by_user_id.as_deref())
                 .unwrap_or("-"),
-            room.approved_at_unix_secs,
+            room.approved_at_unix_seconds,
         );
     }
 }

@@ -34,13 +34,13 @@ const ROCKETCHAT_MESSAGE_MAX_LEN: usize = 4_000;
 const SEEN_MESSAGE_IDS_LIMIT: usize = 1_024;
 const RECENT_SENT_MESSAGE_IDS_LIMIT: usize = 256;
 const DEFAULT_REALTIME_RECONNECT_DELAY_MS: u64 = 2_000;
-const ROCKETCHAT_TYPING_STATUS_INTERVAL_SECS: u64 = 4;
-const ROCKETCHAT_HTTP_TIMEOUT_SECS: u64 = 30;
-const ROCKETCHAT_HTTP_CONNECT_TIMEOUT_SECS: u64 = 10;
-const ROCKETCHAT_REALTIME_CONNECT_TIMEOUT_SECS: u64 = 15;
-const ROCKETCHAT_REALTIME_HANDSHAKE_TIMEOUT_SECS: u64 = 15;
-const ROCKETCHAT_REALTIME_KEEPALIVE_SECS: u64 = 15;
-const ROCKETCHAT_REALTIME_STALE_SECS: u64 = 45;
+const ROCKETCHAT_TYPING_STATUS_INTERVAL_SECONDS: u64 = 4;
+const ROCKETCHAT_HTTP_TIMEOUT_SECONDS: u64 = 30;
+const ROCKETCHAT_HTTP_CONNECT_TIMEOUT_SECONDS: u64 = 10;
+const ROCKETCHAT_REALTIME_CONNECT_TIMEOUT_SECONDS: u64 = 15;
+const ROCKETCHAT_REALTIME_HANDSHAKE_TIMEOUT_SECONDS: u64 = 15;
+const ROCKETCHAT_REALTIME_KEEPALIVE_SECONDS: u64 = 15;
+const ROCKETCHAT_REALTIME_STALE_SECONDS: u64 = 45;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RocketChatRespondMode {
@@ -1186,19 +1186,20 @@ impl RocketChatChannelDriver {
         if self.ws_stream.is_none() {
             return false;
         }
-        if last_activity.elapsed() < Duration::from_secs(ROCKETCHAT_REALTIME_KEEPALIVE_SECS) {
+        if last_activity.elapsed() < Duration::from_secs(ROCKETCHAT_REALTIME_KEEPALIVE_SECONDS) {
             return false;
         }
         self.last_realtime_keepalive_at
             .is_none_or(|last_keepalive| {
-                last_keepalive.elapsed() >= Duration::from_secs(ROCKETCHAT_REALTIME_KEEPALIVE_SECS)
+                last_keepalive.elapsed()
+                    >= Duration::from_secs(ROCKETCHAT_REALTIME_KEEPALIVE_SECONDS)
             })
     }
 
     fn realtime_connection_stale(&self) -> bool {
         self.ws_stream.is_some()
             && self.last_realtime_activity_at.is_some_and(|last_activity| {
-                last_activity.elapsed() >= Duration::from_secs(ROCKETCHAT_REALTIME_STALE_SECS)
+                last_activity.elapsed() >= Duration::from_secs(ROCKETCHAT_REALTIME_STALE_SECONDS)
             })
     }
 
@@ -1253,7 +1254,7 @@ impl RocketChatChannelDriver {
         let now = Instant::now();
         if self.last_typing_at.get(&key).is_some_and(|previous| {
             now.duration_since(*previous)
-                < Duration::from_secs(ROCKETCHAT_TYPING_STATUS_INTERVAL_SECS)
+                < Duration::from_secs(ROCKETCHAT_TYPING_STATUS_INTERVAL_SECONDS)
         }) {
             return Ok(());
         }
@@ -1335,7 +1336,7 @@ impl RocketChatChannelDriver {
 
         let websocket_url = self.config.websocket_url.clone();
         let (mut stream, _) = tokio::time::timeout(
-            Duration::from_secs(ROCKETCHAT_REALTIME_CONNECT_TIMEOUT_SECS),
+            Duration::from_secs(ROCKETCHAT_REALTIME_CONNECT_TIMEOUT_SECONDS),
             connect_async(&websocket_url),
         )
         .await
@@ -1364,7 +1365,7 @@ impl RocketChatChannelDriver {
         .context("[rocketchat_realtime_connect_send_failed] Failed to send DDP connect message")?;
 
         tokio::time::timeout(
-            Duration::from_secs(ROCKETCHAT_REALTIME_HANDSHAKE_TIMEOUT_SECS),
+            Duration::from_secs(ROCKETCHAT_REALTIME_HANDSHAKE_TIMEOUT_SECONDS),
             self.await_connected(&mut stream),
         )
         .await
@@ -1372,7 +1373,7 @@ impl RocketChatChannelDriver {
             "[rocketchat_realtime_connect_timeout] Timed out waiting for Rocket.Chat DDP connect acknowledgement",
         )??;
         tokio::time::timeout(
-            Duration::from_secs(ROCKETCHAT_REALTIME_HANDSHAKE_TIMEOUT_SECS),
+            Duration::from_secs(ROCKETCHAT_REALTIME_HANDSHAKE_TIMEOUT_SECONDS),
             self.login_realtime(&mut stream),
         )
         .await
@@ -1522,7 +1523,7 @@ impl RocketChatChannelDriver {
             if self.realtime_connection_stale() {
                 warn!(
                     channel_id = %self.channel_id,
-                    stale_after_secs = ROCKETCHAT_REALTIME_STALE_SECS,
+                    stale_after_seconds = ROCKETCHAT_REALTIME_STALE_SECONDS,
                     "Rocket.Chat realtime connection went idle; resetting transport"
                 );
                 if let Err(reset_err) = self.reset_transport_state() {
@@ -2299,8 +2300,8 @@ async fn send_ws_json(stream: &mut RocketChatWsStream, payload: serde_json::Valu
 
 fn build_http_client() -> Result<Client> {
     Client::builder()
-        .connect_timeout(Duration::from_secs(ROCKETCHAT_HTTP_CONNECT_TIMEOUT_SECS))
-        .timeout(Duration::from_secs(ROCKETCHAT_HTTP_TIMEOUT_SECS))
+        .connect_timeout(Duration::from_secs(ROCKETCHAT_HTTP_CONNECT_TIMEOUT_SECONDS))
+        .timeout(Duration::from_secs(ROCKETCHAT_HTTP_TIMEOUT_SECONDS))
         .build()
         .context("[rocketchat_http_client_build_failed] Failed to build Rocket.Chat HTTP client")
 }

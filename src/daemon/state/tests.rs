@@ -2618,7 +2618,7 @@ async fn channel_create_and_update_accept_valid_telegram_settings() -> Result<()
             settings: json!({
                 "token_env": "TELEGRAM_BOT_TOKEN",
                 "chat_id": -100123456,
-                "poll_timeout_secs": 10,
+                "poll_timeout_seconds": 10,
             }),
         })
         .await?;

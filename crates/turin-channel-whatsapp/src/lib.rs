@@ -40,8 +40,8 @@ use whatsapp_rust_ureq_http_client::UreqHttpClient;
 
 const DEFAULT_WORKSPACE_ID: &str = "whatsapp";
 const DEFAULT_AUTH_FLOW_ID: &str = "pair";
-const DEFAULT_AUTH_POLL_INTERVAL_SECS: u64 = 3;
-const DEFAULT_AUTH_TIMEOUT_SECS: u64 = 300;
+const DEFAULT_AUTH_POLL_INTERVAL_SECONDS: u64 = 3;
+const DEFAULT_AUTH_TIMEOUT_SECONDS: u64 = 300;
 const DEFAULT_RUNTIME_STORE_BASENAME: &str = "whatsapp-session.db";
 const DEFAULT_PERSONAL_TRIGGER_PREFIX: &str = "/turin";
 
@@ -507,7 +507,7 @@ pub fn start_auth_flow(
         phase: WhatsAppAuthPhase::Pending,
         display: ChannelAuthFlowDisplay {
             message: Some("Starting WhatsApp pairing...".to_string()),
-            poll_interval_secs: Some(DEFAULT_AUTH_POLL_INTERVAL_SECS),
+            poll_interval_seconds: Some(DEFAULT_AUTH_POLL_INTERVAL_SECONDS),
             ..ChannelAuthFlowDisplay::default()
         },
         message: None,
@@ -519,7 +519,7 @@ pub fn start_auth_flow(
         .map(|state| state.display)
         .unwrap_or(ChannelAuthFlowDisplay {
             message: Some("Starting WhatsApp pairing...".to_string()),
-            poll_interval_secs: Some(DEFAULT_AUTH_POLL_INTERVAL_SECS),
+            poll_interval_seconds: Some(DEFAULT_AUTH_POLL_INTERVAL_SECONDS),
             ..ChannelAuthFlowDisplay::default()
         });
 
@@ -596,7 +596,7 @@ pub async fn run_auth_flow_worker(session_json: &str) -> Result<()> {
         )
     })?;
     let mut bot_handle = bot.run().await.context("Failed to start WhatsApp bot")?;
-    let deadline = Instant::now() + Duration::from_secs(DEFAULT_AUTH_TIMEOUT_SECS);
+    let deadline = Instant::now() + Duration::from_secs(DEFAULT_AUTH_TIMEOUT_SECONDS);
 
     loop {
         if client.is_logged_in() {
@@ -604,7 +604,7 @@ pub async fn run_auth_flow_worker(session_json: &str) -> Result<()> {
                 phase: WhatsAppAuthPhase::Complete,
                 display: ChannelAuthFlowDisplay {
                     message: Some("WhatsApp pairing complete.".to_string()),
-                    poll_interval_secs: Some(DEFAULT_AUTH_POLL_INTERVAL_SECS),
+                    poll_interval_seconds: Some(DEFAULT_AUTH_POLL_INTERVAL_SECONDS),
                     ..ChannelAuthFlowDisplay::default()
                 },
                 message: Some(format!(
@@ -1188,7 +1188,7 @@ async fn build_bot(
                     Event::PairingQrCode { code, timeout } => {
                         if driver_event_tx.is_some() {
                             warn!(
-                                expires_in_secs = timeout.as_secs(),
+                                expires_in_seconds = timeout.as_secs(),
                                 "WhatsApp runtime requested QR pairing; pair the session through setup before using the channel"
                             );
                         }
@@ -1202,8 +1202,8 @@ async fn build_bot(
                                     "Scan this QR code in WhatsApp > Linked Devices.".to_string(),
                                 ),
                                 qr_text: Some(code),
-                                expires_in_secs: Some(timeout.as_secs()),
-                                poll_interval_secs: Some(DEFAULT_AUTH_POLL_INTERVAL_SECS),
+                                expires_in_seconds: Some(timeout.as_secs()),
+                                poll_interval_seconds: Some(DEFAULT_AUTH_POLL_INTERVAL_SECONDS),
                                 ..ChannelAuthFlowDisplay::default()
                             },
                             message: None,
@@ -1212,7 +1212,7 @@ async fn build_bot(
                     Event::PairingCode { code, timeout } => {
                         if driver_event_tx.is_some() {
                             warn!(
-                                expires_in_secs = timeout.as_secs(),
+                                expires_in_seconds = timeout.as_secs(),
                                 "WhatsApp runtime requested a pairing code; pair the session through setup before using the channel"
                             );
                         }
@@ -1226,8 +1226,8 @@ async fn build_bot(
                                     "Enter this pairing code in WhatsApp > Linked Devices > Link with phone number instead.".to_string(),
                                 ),
                                 pairing_code: Some(code),
-                                expires_in_secs: Some(timeout.as_secs()),
-                                poll_interval_secs: Some(DEFAULT_AUTH_POLL_INTERVAL_SECS),
+                                expires_in_seconds: Some(timeout.as_secs()),
+                                poll_interval_seconds: Some(DEFAULT_AUTH_POLL_INTERVAL_SECONDS),
                                 ..ChannelAuthFlowDisplay::default()
                             },
                             message: None,
@@ -1244,7 +1244,7 @@ async fn build_bot(
                             phase: WhatsAppAuthPhase::Complete,
                             display: ChannelAuthFlowDisplay {
                                 message: Some("WhatsApp pairing complete.".to_string()),
-                                poll_interval_secs: Some(DEFAULT_AUTH_POLL_INTERVAL_SECS),
+                                poll_interval_seconds: Some(DEFAULT_AUTH_POLL_INTERVAL_SECONDS),
                                 ..ChannelAuthFlowDisplay::default()
                             },
                             message: Some(format!(

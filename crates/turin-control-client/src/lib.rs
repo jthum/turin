@@ -238,7 +238,7 @@ pub struct ChannelAccessRoom {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovedChannelRoom {
     pub room: ChannelAccessRoom,
-    pub approved_at_unix_secs: u64,
+    pub approved_at_unix_seconds: u64,
     pub approved_by_user_id: Option<String>,
     pub approved_by_username: Option<String>,
 }
@@ -246,8 +246,8 @@ pub struct ApprovedChannelRoom {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingChannelRoom {
     pub room: ChannelAccessRoom,
-    pub first_seen_unix_secs: u64,
-    pub last_seen_unix_secs: u64,
+    pub first_seen_unix_seconds: u64,
+    pub last_seen_unix_seconds: u64,
     pub sample_user_id: Option<String>,
     pub sample_username: Option<String>,
 }

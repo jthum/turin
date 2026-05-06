@@ -260,7 +260,7 @@ turin daemon channel create telegram-ops \
   --agent default \
   --setting token_env=TELEGRAM_BOT_TOKEN \
   --setting chat_ids=-1001234567890,-100987654321,498502840 \
-  --setting poll_timeout_secs=10 \
+  --setting poll_timeout_seconds=10 \
   --setting poll_interval_ms=250 \
   --setting respond_mode=mentions_or_replies \
   --setting session_scope=user \
@@ -285,7 +285,7 @@ Setting notes:
 - `banned_users`: optional list of senders who are always denied; overrides `allowed_users`
 - `respond_mode`: `all`, `mentions`, `replies`, or `mentions_or_replies`; default `all`
 - `session_scope`: `user`, `thread`, or `room`; default `user`
-- `poll_timeout_secs`: long-poll timeout, default `30`, maximum `50`
+- `poll_timeout_seconds`: long-poll timeout, default `30`, maximum `50`
 - `poll_interval_ms`: delay between empty polls, default `250`
 - `task_timeout_ms`: optional Turin task wait timeout for this channel; `0` or omitted means wait indefinitely
 - `stream_mode`: `off`, `typing`, `draft`, or `block`; default `off`
@@ -344,7 +344,7 @@ idle_timeout_seconds = 600
 token_env = "TELEGRAM_BOT_TOKEN"
 pairing_mode = "auto"
 pairing_users = ["498502840"]
-poll_timeout_secs = 10
+poll_timeout_seconds = 10
 poll_interval_ms = 250
 respond_mode = "mentions_or_replies"
 stream_mode = "block"

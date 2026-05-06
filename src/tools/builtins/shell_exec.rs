@@ -16,7 +16,7 @@ struct ShellExecArgs {
     cwd: Option<String>,
     /// Timeout in seconds (default: 30)
     #[serde(default = "default_timeout")]
-    timeout_secs: u64,
+    timeout_seconds: u64,
 }
 
 fn default_timeout() -> u64 {
@@ -45,7 +45,7 @@ impl Tool for ShellExecTool {
                     "type": "string",
                     "description": "Working directory (relative to workspace root). Defaults to workspace root."
                 },
-                "timeout_secs": {
+                "timeout_seconds": {
                     "type": "integer",
                     "description": "Timeout in seconds (default: 30)",
                     "default": 30
@@ -93,7 +93,7 @@ impl Tool for ShellExecTool {
         // 100KB limit
         const MAX_OUTPUT_BYTES: usize = 100 * 1024;
 
-        let timeout = std::time::Duration::from_secs(args.timeout_secs);
+        let timeout = std::time::Duration::from_secs(args.timeout_seconds);
         let _start = std::time::Instant::now();
 
         // Use a loop to read until both streams are closed or timeout
@@ -168,7 +168,7 @@ impl Tool for ShellExecTool {
                 // Timeout
                 return Err(ToolError::ExecutionError(format!(
                     "Command timed out after {} seconds (process killed)",
-                    args.timeout_secs
+                    args.timeout_seconds
                 )));
             }
         };
@@ -313,7 +313,7 @@ mod tests {
 
         let result = tool
             .execute(
-                serde_json::json!({ "command": "sleep 60", "timeout_secs": 1 }),
+                serde_json::json!({ "command": "sleep 60", "timeout_seconds": 1 }),
                 &ctx,
             )
             .await;
@@ -344,7 +344,7 @@ mod tests {
             .execute(
                 serde_json::json!({
                     "command": "yes '0123456789' | head -c 105000",
-                    "timeout_secs": 10
+                    "timeout_seconds": 10
                 }),
                 &ctx,
             )

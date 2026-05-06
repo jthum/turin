@@ -545,7 +545,7 @@ turin daemon channel update telegram-ops \
   - `token_env` (environment variable containing a Telegram bot token)
   - `chat_id` (Telegram numeric chat id to listen on and reply to)
 - optional settings:
-  - `poll_timeout_secs` (default `30`, maximum `50`)
+  - `poll_timeout_seconds` (default `30`, maximum `50`)
   - `poll_interval_ms` (default `250`)
   - `max_updates_per_poll`
   - `stream_mode` (`off`, `typing`, `draft`, `block`)

@@ -174,7 +174,7 @@ struct ChannelAccessRoomView {
 #[derive(Debug, Deserialize)]
 struct ApprovedRoomView {
     room: ChannelAccessRoomView,
-    approved_at_unix_secs: u64,
+    approved_at_unix_seconds: u64,
     approved_by_user_id: Option<String>,
     approved_by_username: Option<String>,
 }
@@ -182,8 +182,8 @@ struct ApprovedRoomView {
 #[derive(Debug, Deserialize)]
 struct PendingRoomView {
     room: ChannelAccessRoomView,
-    first_seen_unix_secs: u64,
-    last_seen_unix_secs: u64,
+    first_seen_unix_seconds: u64,
+    last_seen_unix_seconds: u64,
     sample_user_id: Option<String>,
     sample_username: Option<String>,
 }

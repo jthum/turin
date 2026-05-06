@@ -189,7 +189,7 @@ pub struct ChannelRoomRef {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApprovedRoomView {
     pub room: ChannelRoomRef,
-    pub approved_at_unix_secs: u64,
+    pub approved_at_unix_seconds: u64,
     pub approved_by_user_id: Option<String>,
     pub approved_by_username: Option<String>,
 }
@@ -197,8 +197,8 @@ pub struct ApprovedRoomView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingRoomView {
     pub room: ChannelRoomRef,
-    pub first_seen_unix_secs: u64,
-    pub last_seen_unix_secs: u64,
+    pub first_seen_unix_seconds: u64,
+    pub last_seen_unix_seconds: u64,
     pub sample_user_id: Option<String>,
     pub sample_username: Option<String>,
 }
@@ -220,7 +220,7 @@ struct AccessStateFile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ApprovedRoom {
     room: ChannelRoomKey,
-    approved_at_unix_secs: u64,
+    approved_at_unix_seconds: u64,
     approved_by_user_id: Option<String>,
     approved_by_username: Option<String>,
 }
@@ -228,8 +228,8 @@ struct ApprovedRoom {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PendingRoom {
     room: ChannelRoomKey,
-    first_seen_unix_secs: u64,
-    last_seen_unix_secs: u64,
+    first_seen_unix_seconds: u64,
+    last_seen_unix_seconds: u64,
     sample_user_id: Option<String>,
     sample_username: Option<String>,
 }
@@ -405,7 +405,7 @@ impl FileAccessStateStore {
             serialized_room,
             ApprovedRoom {
                 room: room_key,
-                approved_at_unix_secs: unix_secs(SystemTime::now()),
+                approved_at_unix_seconds: unix_seconds(SystemTime::now()),
                 approved_by_user_id,
                 approved_by_username,
             },
@@ -753,7 +753,7 @@ impl ChannelRunner {
                     room_key.clone(),
                     ApprovedRoom {
                         room,
-                        approved_at_unix_secs: unix_secs(now),
+                        approved_at_unix_seconds: unix_seconds(now),
                         approved_by_user_id: Some(event.user.id.clone()),
                         approved_by_username: event.user.username.clone(),
                     },
@@ -763,10 +763,10 @@ impl ChannelRunner {
                 Ok(EventAccessDecision::Allow)
             }
             PairingMode::Pending => {
-                let now_secs = unix_secs(SystemTime::now());
+                let now_seconds = unix_seconds(SystemTime::now());
                 let notify = match state.pending_rooms.get_mut(&room_key) {
                     Some(existing) => {
-                        existing.last_seen_unix_secs = now_secs;
+                        existing.last_seen_unix_seconds = now_seconds;
                         false
                     }
                     None => {
@@ -774,8 +774,8 @@ impl ChannelRunner {
                             room_key,
                             PendingRoom {
                                 room,
-                                first_seen_unix_secs: now_secs,
-                                last_seen_unix_secs: now_secs,
+                                first_seen_unix_seconds: now_seconds,
+                                last_seen_unix_seconds: now_seconds,
                                 sample_user_id: Some(event.user.id.clone()),
                                 sample_username: event.user.username.clone(),
                             },
@@ -1287,7 +1287,7 @@ fn channel_access_snapshot(state: &AccessStateFile) -> ChannelAccessSnapshot {
         .values()
         .map(|room| ApprovedRoomView {
             room: ChannelRoomRef::from(&room.room),
-            approved_at_unix_secs: room.approved_at_unix_secs,
+            approved_at_unix_seconds: room.approved_at_unix_seconds,
             approved_by_user_id: room.approved_by_user_id.clone(),
             approved_by_username: room.approved_by_username.clone(),
         })
@@ -1305,8 +1305,8 @@ fn channel_access_snapshot(state: &AccessStateFile) -> ChannelAccessSnapshot {
         .values()
         .map(|room| PendingRoomView {
             room: ChannelRoomRef::from(&room.room),
-            first_seen_unix_secs: room.first_seen_unix_secs,
-            last_seen_unix_secs: room.last_seen_unix_secs,
+            first_seen_unix_seconds: room.first_seen_unix_seconds,
+            last_seen_unix_seconds: room.last_seen_unix_seconds,
             sample_user_id: room.sample_user_id.clone(),
             sample_username: room.sample_username.clone(),
         })
@@ -1412,7 +1412,7 @@ fn pending_approval_message() -> OutboundMessage {
     )
 }
 
-fn unix_secs(time: SystemTime) -> u64 {
+fn unix_seconds(time: SystemTime) -> u64 {
     time.duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
@@ -1749,7 +1749,7 @@ mod tests {
             key,
             ApprovedRoom {
                 room,
-                approved_at_unix_secs: 1,
+                approved_at_unix_seconds: 1,
                 approved_by_user_id: Some("user".into()),
                 approved_by_username: Some("owner".into()),
             },

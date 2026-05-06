@@ -454,9 +454,9 @@ pub struct ChannelAuthFlowDisplay {
     #[serde(default)]
     pub pairing_code: Option<String>,
     #[serde(default)]
-    pub expires_in_secs: Option<u64>,
+    pub expires_in_seconds: Option<u64>,
     #[serde(default)]
-    pub poll_interval_secs: Option<u64>,
+    pub poll_interval_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -595,7 +595,7 @@ pub struct ConversationBinding {
     pub agent_id: String,
     pub slot_id: String,
     pub session_id: String,
-    pub updated_at_unix_secs: u64,
+    pub updated_at_unix_seconds: u64,
 }
 
 impl ConversationBinding {
@@ -609,16 +609,16 @@ impl ConversationBinding {
             agent_id: agent_id.into(),
             slot_id: key.deterministic_slot_id(),
             session_id: session_id.into(),
-            updated_at_unix_secs: unix_secs(now),
+            updated_at_unix_seconds: unix_seconds(now),
         }
     }
 
     pub fn touch(&mut self, now: SystemTime) {
-        self.updated_at_unix_secs = unix_secs(now);
+        self.updated_at_unix_seconds = unix_seconds(now);
     }
 
     pub fn is_expired(&self, now: SystemTime, ttl: Duration) -> bool {
-        unix_secs(now).saturating_sub(self.updated_at_unix_secs) > ttl.as_secs()
+        unix_seconds(now).saturating_sub(self.updated_at_unix_seconds) > ttl.as_secs()
     }
 }
 
@@ -655,7 +655,7 @@ pub fn decide_routing(
     }
 }
 
-fn unix_secs(time: SystemTime) -> u64 {
+fn unix_seconds(time: SystemTime) -> u64 {
     time.duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()

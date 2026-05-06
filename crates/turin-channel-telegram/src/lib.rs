@@ -33,7 +33,7 @@ pub struct TelegramChannelDriverConfig {
     pub chat_ids: Vec<String>,
     pub accept_all_chats: bool,
     pub token: String,
-    pub poll_timeout_secs: u64,
+    pub poll_timeout_seconds: u64,
     pub poll_interval: Duration,
     pub max_updates_per_poll: u8,
     pub max_inbound_text_chars: usize,
@@ -400,7 +400,7 @@ impl TelegramChannelDriverConfig {
             chat_ids: settings.chat_ids,
             accept_all_chats: settings.accept_all_chats,
             token,
-            poll_timeout_secs: settings.poll_timeout_secs,
+            poll_timeout_seconds: settings.poll_timeout_seconds,
             poll_interval: Duration::from_millis(settings.poll_interval_ms),
             max_updates_per_poll: settings.max_updates_per_poll,
             max_inbound_text_chars: settings.max_inbound_text_chars,
@@ -435,7 +435,7 @@ struct TelegramChannelSettings {
     base_url: String,
     workspace_id: String,
     chat_ids: Vec<String>,
-    poll_timeout_secs: u64,
+    poll_timeout_seconds: u64,
     poll_interval_ms: u64,
     max_updates_per_poll: u8,
     max_inbound_text_chars: usize,
@@ -480,17 +480,17 @@ fn parse_settings(
         }
     };
 
-    let poll_timeout_secs = match settings.get("poll_timeout_secs") {
+    let poll_timeout_seconds = match settings.get("poll_timeout_seconds") {
         None => 30,
         Some(value) => {
             let timeout = value.as_u64().ok_or_else(|| {
                 anyhow!(
-                    "[telegram_config_invalid_poll_timeout] Telegram channel setting 'poll_timeout_secs' must be a non-negative integer"
+                    "[telegram_config_invalid_poll_timeout] Telegram channel setting 'poll_timeout_seconds' must be a non-negative integer"
                 )
             })?;
             if timeout > 50 {
                 anyhow::bail!(
-                    "[telegram_config_invalid_poll_timeout] Telegram channel setting 'poll_timeout_secs' must be <= 50"
+                    "[telegram_config_invalid_poll_timeout] Telegram channel setting 'poll_timeout_seconds' must be <= 50"
                 );
             }
             timeout
@@ -586,7 +586,7 @@ fn parse_settings(
             .transpose()?
             .unwrap_or_else(|| "telegram".to_string()),
         chat_ids,
-        poll_timeout_secs,
+        poll_timeout_seconds,
         poll_interval_ms,
         max_updates_per_poll,
         max_inbound_text_chars,
@@ -713,7 +713,7 @@ impl TelegramChannelDriver {
         shutdown_rx: watch::Receiver<bool>,
     ) -> Result<Self> {
         let channel_runtime_id = channel_runtime_id.into();
-        let timeout = Duration::from_secs(config.poll_timeout_secs.saturating_add(10).max(10));
+        let timeout = Duration::from_secs(config.poll_timeout_seconds.saturating_add(10).max(10));
         let client = reqwest::Client::builder()
             .user_agent("turin-channel-telegram/0.24.0")
             .timeout(timeout)
@@ -760,7 +760,7 @@ impl TelegramChannelDriver {
             .fetch_updates(
                 self.next_update_offset,
                 self.config.max_updates_per_poll,
-                self.config.poll_timeout_secs,
+                self.config.poll_timeout_seconds,
             )
             .await?;
         if updates.is_empty() {
@@ -802,12 +802,12 @@ impl TelegramChannelDriver {
         &self,
         offset: Option<i64>,
         limit: u8,
-        timeout_secs: u64,
+        timeout_seconds: u64,
     ) -> std::result::Result<Vec<TelegramUpdate>, TelegramApiError> {
         let payload = serde_json::json!({
             "offset": offset,
             "limit": limit,
-            "timeout": timeout_secs,
+            "timeout": timeout_seconds,
             "allowed_updates": ["message", "channel_post"]
         });
         self.request_with_retry("getUpdates", &payload).await
@@ -3456,7 +3456,7 @@ mod tests {
             chat_ids: vec!["-10012345".to_string()],
             accept_all_chats: false,
             token: "token".to_string(),
-            poll_timeout_secs: 30,
+            poll_timeout_seconds: 30,
             poll_interval: Duration::from_millis(250),
             max_updates_per_poll: 25,
             max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,
@@ -4187,7 +4187,7 @@ mod tests {
             chat_ids: vec!["498502840".to_string()],
             accept_all_chats: false,
             token: "token".to_string(),
-            poll_timeout_secs: 30,
+            poll_timeout_seconds: 30,
             poll_interval: Duration::from_millis(250),
             max_updates_per_poll: 25,
             max_inbound_text_chars: DEFAULT_MAX_INBOUND_TEXT_CHARS,

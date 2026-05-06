@@ -238,9 +238,9 @@ async fn wait_for_channel_state(
     daemon: &DaemonHarness,
     channel_id: &str,
     expected: &str,
-    timeout_secs: u64,
+    timeout_seconds: u64,
 ) -> Result<Value> {
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
     let mut last_state = None;
     loop {
         let response = daemon
@@ -278,9 +278,9 @@ async fn wait_for_channel_runtime_in_daemon_status(
     daemon: &DaemonHarness,
     channel_id: &str,
     expected: &str,
-    timeout_secs: u64,
+    timeout_seconds: u64,
 ) -> Result<Value> {
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
     loop {
         let daemon_status = result_value(
             daemon
@@ -2024,7 +2024,7 @@ async fn daemon_telegram_channel_management_round_trip_over_endpoint() -> Result
                     settings: Some(serde_json::json!({
                         "token_env": "TELEGRAM_BOT_TOKEN",
                         "chat_id": -100123456,
-                        "poll_timeout_secs": 10,
+                        "poll_timeout_seconds": 10,
                     })),
                 },
             ))
@@ -2250,7 +2250,7 @@ async fn daemon_telegram_channel_reports_failed_runtime_when_token_is_missing() 
                     settings: Some(serde_json::json!({
                         "token_env": "TELEGRAM_TOKEN_MISSING_FOR_TEST",
                         "chat_id": -100123456,
-                        "poll_timeout_secs": 0,
+                        "poll_timeout_seconds": 0,
                         "poll_interval_ms": 25,
                     })),
                 },

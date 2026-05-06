@@ -257,7 +257,7 @@ mod shell_exec_security {
         let start = std::time::Instant::now();
         let result: Result<_, ToolError> = tool
             .execute(
-                serde_json::json!({ "command": "sleep 60", "timeout_secs": 1 }),
+                serde_json::json!({ "command": "sleep 60", "timeout_seconds": 1 }),
                 &ctx,
             )
             .await;

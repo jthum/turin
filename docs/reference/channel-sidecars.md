@@ -128,8 +128,8 @@ Current flow display payloads can include:
 - `user_code`
 - `qr_text`
 - `pairing_code`
-- `expires_in_secs`
-- `poll_interval_secs`
+- `expires_in_seconds`
+- `poll_interval_seconds`
 
 Flow completion returns resolved target/value pairs that the manager applies like any other setup result.
 
