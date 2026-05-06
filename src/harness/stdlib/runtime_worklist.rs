@@ -817,13 +817,12 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                 })
                 .map_err(mlua::Error::runtime)?;
                 let out = lua.create_table()?;
-                let mut index = 1;
-                for row in rows
+                for (index, row) in rows
                     .into_iter()
                     .filter(|row| row.parent_item_id == Some(parent_id))
+                    .enumerate()
                 {
-                    out.set(index, item_proxy(lua, handle.clone(), row)?)?;
-                    index += 1;
+                    out.set(index + 1, item_proxy(lua, handle.clone(), row)?)?;
                 }
                 Ok(Value::Table(out))
             })?,
@@ -899,15 +898,14 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                 })
                 .map_err(mlua::Error::runtime)?;
                 let out = lua.create_table()?;
-                let mut index = 1;
-                for row in rows
+                for (index, row) in rows
                     .into_iter()
                     .filter(|row| row.parent_item_id == handle.parent_item_id)
                     .filter(|row| row_matches_where(row, where_map.as_ref()))
                     .take(limit.unwrap_or(usize::MAX))
+                    .enumerate()
                 {
-                    out.set(index, item_proxy(lua, handle.clone(), row)?)?;
-                    index += 1;
+                    out.set(index + 1, item_proxy(lua, handle.clone(), row)?)?;
                 }
                 Ok(Value::Table(out))
             })?,
@@ -930,8 +928,7 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     .map(|row| (public_id_string(&row.public_id), row.status.clone()))
                     .collect::<HashMap<_, _>>();
                 let out = lua.create_table()?;
-                let mut index = 1;
-                for row in rows
+                for (index, row) in rows
                     .into_iter()
                     .filter(|row| row.parent_item_id == handle.parent_item_id)
                     .filter(|row| row.status == "pending")
@@ -939,9 +936,9 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     .filter(|row| dependencies_satisfied(row, &status_map))
                     .filter(|row| row_matches_where(row, where_map.as_ref()))
                     .take(limit.unwrap_or(usize::MAX))
+                    .enumerate()
                 {
-                    out.set(index, item_proxy(lua, handle.clone(), row)?)?;
-                    index += 1;
+                    out.set(index + 1, item_proxy(lua, handle.clone(), row)?)?;
                 }
                 Ok(Value::Table(out))
             })?,
@@ -962,16 +959,15 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                 })
                 .map_err(mlua::Error::runtime)?;
                 let out = lua.create_table()?;
-                let mut index = 1;
-                for row in rows
+                for (index, row) in rows
                     .into_iter()
                     .filter(|row| row.parent_item_id == handle.parent_item_id)
                     .filter(|row| row_is_orphaned(row, stale_before))
                     .filter(|row| row_matches_where(row, where_map.as_ref()))
                     .take(limit.unwrap_or(usize::MAX))
+                    .enumerate()
                 {
-                    out.set(index, item_proxy(lua, handle.clone(), row)?)?;
-                    index += 1;
+                    out.set(index + 1, item_proxy(lua, handle.clone(), row)?)?;
                 }
                 Ok(Value::Table(out))
             })?,
@@ -1001,14 +997,12 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     .take(limit.unwrap_or(usize::MAX))
                     .collect::<Vec<_>>();
                 let out = lua.create_table()?;
-                let mut index = 1;
-                for row in candidates {
+                for (index, row) in candidates.into_iter().enumerate() {
                     let released = crate::harness::globals::block_on_current(async {
                         handle.store.release_work_item(row.id).await
                     })
                     .map_err(mlua::Error::runtime)?;
-                    out.set(index, item_proxy(lua, handle.clone(), released)?)?;
-                    index += 1;
+                    out.set(index + 1, item_proxy(lua, handle.clone(), released)?)?;
                 }
                 Ok(Value::Table(out))
             })?,
