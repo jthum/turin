@@ -251,6 +251,7 @@ Daemon/control-plane surfaces now also include store-targeted worklist inspectio
 - `worklist.list`
 - `worklist.get`
 - `worklist.items`
+- `workitem.get`
 
 Important boundary:
 
