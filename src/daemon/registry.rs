@@ -123,7 +123,7 @@ pub(crate) struct AgentFileConfig {
     pub thinking: Option<ThinkingConfig>,
     #[serde(default)]
     pub harness: Option<String>,
-    #[serde(default, alias = "runtime_idle_secs")]
+    #[serde(default)]
     pub idle_timeout_seconds: Option<u64>,
     #[serde(default)]
     pub tools: ToolsConfig,
@@ -141,7 +141,7 @@ pub(crate) struct ChannelFileConfig {
     pub enabled: bool,
     pub kind: String,
     pub agent_id: String,
-    #[serde(default, alias = "idle_ttl_secs")]
+    #[serde(default)]
     pub idle_timeout_seconds: Option<u64>,
     #[serde(default)]
     pub persistence: ContextPersistenceConfig,

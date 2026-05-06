@@ -98,7 +98,7 @@ pub struct AgentConfig {
     ///
     /// `Some(0)` hibernates immediately, `Some(n)` waits `n` idle seconds,
     /// and `None` keeps the runtime hot indefinitely.
-    #[serde(default = "default_idle_timeout_seconds", alias = "runtime_idle_secs")]
+    #[serde(default = "default_idle_timeout_seconds")]
     pub idle_timeout_seconds: Option<u64>,
     #[serde(default)]
     pub tools: ToolsConfig,
@@ -117,10 +117,7 @@ pub struct KernelConfig {
     #[serde(default = "default_max_turns")]
     pub max_turns: u32,
     /// Heartbeat interval in seconds
-    #[serde(
-        default = "default_heartbeat_interval",
-        alias = "heartbeat_interval_secs"
-    )]
+    #[serde(default = "default_heartbeat_interval")]
     pub heartbeat_interval_seconds: u32,
     /// Initial spawn depth (for recursive agents)
     #[serde(default)]
@@ -467,10 +464,7 @@ pub struct RemoteConfig {
     pub bind: String,
     #[serde(default = "default_remote_auth_token_env")]
     pub auth_token_env: String,
-    #[serde(
-        default = "default_remote_event_keepalive_seconds",
-        alias = "event_keepalive_secs"
-    )]
+    #[serde(default = "default_remote_event_keepalive_seconds")]
     pub event_keepalive_seconds: u64,
     #[serde(default)]
     pub allow_non_loopback: bool,
@@ -504,10 +498,8 @@ pub struct ProviderConfig {
     /// Optional max retry attempts for provider HTTP calls.
     pub max_retries: Option<u32>,
     /// Optional per-request timeout in seconds.
-    #[serde(alias = "request_timeout_secs")]
     pub request_timeout_seconds: Option<u64>,
     /// Optional total timeout budget in seconds (across retries).
-    #[serde(alias = "total_timeout_secs")]
     pub total_timeout_seconds: Option<u64>,
     /// Optional provider-level context window used for token budgeting and compaction.
     pub context_window_tokens: Option<u32>,

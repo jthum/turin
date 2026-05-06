@@ -136,20 +136,18 @@ impl RuntimePolicyManager {
     }
 
     pub async fn get(&self, key: &str, scope: &PolicyScope) -> Result<Option<Value>> {
-        let canonical_key = canonicalize_key(key);
-        validate_key(canonical_key)?;
-        Ok(self.snapshot(scope).await.get(canonical_key).cloned())
+        validate_key(key)?;
+        Ok(self.snapshot(scope).await.get(key).cloned())
     }
 
     pub async fn set(&self, key: &str, value: Value, scope: &PolicyScope) -> Result<()> {
-        let canonical_key = canonicalize_key(key);
-        validate_key(canonical_key)?;
-        validate_value(canonical_key, &value)?;
+        validate_key(key)?;
+        validate_value(key, &value)?;
 
         let mut state = self.state.write().await;
         match scope.scope.as_deref().unwrap_or("global") {
             "global" => {
-                state.global.insert(canonical_key.to_string(), value);
+                state.global.insert(key.to_string(), value);
             }
             "agent" => {
                 let agent_id = scope
@@ -160,7 +158,7 @@ impl RuntimePolicyManager {
                     .per_agent
                     .entry(agent_id.to_string())
                     .or_default()
-                    .insert(canonical_key.to_string(), value);
+                    .insert(key.to_string(), value);
             }
             "session" => {
                 let session_id = scope
@@ -171,7 +169,7 @@ impl RuntimePolicyManager {
                     .per_session
                     .entry(session_id.to_string())
                     .or_default()
-                    .insert(canonical_key.to_string(), value);
+                    .insert(key.to_string(), value);
             }
             "run" => {
                 let run_id = scope
@@ -182,7 +180,7 @@ impl RuntimePolicyManager {
                     .per_run
                     .entry(run_id.to_string())
                     .or_default()
-                    .insert(canonical_key.to_string(), value);
+                    .insert(key.to_string(), value);
             }
             other => return Err(anyhow!("Unsupported policy scope '{}'", other)),
         }
@@ -197,16 +195,8 @@ impl Default for RuntimePolicyManager {
     }
 }
 
-fn canonicalize_key(key: &str) -> &str {
-    match key {
-        "runtime.idle_secs" => "runtime.idle_timeout_seconds",
-        "db.idle_close_secs" => "db.idle_close_seconds",
-        _ => key,
-    }
-}
-
 fn validate_key(key: &str) -> Result<()> {
-    match canonicalize_key(key) {
+    match key {
         "spawn.enabled"
         | "spawn.max_depth"
         | "runtime.idle_timeout_seconds"
@@ -222,7 +212,7 @@ fn validate_key(key: &str) -> Result<()> {
 }
 
 fn validate_value(key: &str, value: &Value) -> Result<()> {
-    match canonicalize_key(key) {
+    match key {
         "spawn.enabled" | "db.allow_dynamic_open" | "tool.exec_enabled" => {
             if value.is_boolean() {
                 Ok(())
@@ -352,35 +342,6 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("informational, enforce_task, enforce_session")
-        );
-    }
-
-    #[tokio::test]
-    async fn policy_accepts_legacy_time_key_aliases() {
-        let mgr = RuntimePolicyManager::new();
-        let global_scope = PolicyScope {
-            scope: Some("global".to_string()),
-            ..PolicyScope::default()
-        };
-
-        mgr.set("runtime.idle_secs", Value::from(15u64), &global_scope)
-            .await
-            .unwrap();
-        mgr.set("db.idle_close_secs", Value::from(45u64), &global_scope)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            mgr.get("runtime.idle_timeout_seconds", &PolicyScope::default())
-                .await
-                .unwrap(),
-            Some(Value::from(15u64))
-        );
-        assert_eq!(
-            mgr.get("db.idle_close_seconds", &PolicyScope::default())
-                .await
-                .unwrap(),
-            Some(Value::from(45u64))
         );
     }
 }

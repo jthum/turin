@@ -44,7 +44,7 @@ struct RunArgs {
     bindings_path: PathBuf,
     #[arg(long)]
     access_state_path: PathBuf,
-    #[arg(long, alias = "idle-ttl-secs")]
+    #[arg(long)]
     idle_timeout_seconds: Option<u64>,
     #[arg(long)]
     settings_json: String,
