@@ -155,6 +155,50 @@ fn test_engine_load_nonexistent_dir() {
 }
 
 #[test]
+fn test_runtime_inference_available_reports_named_contexts() {
+    let mut app_data = test_app_data();
+    let mut config = crate::kernel::config::TurinConfig::default();
+    config.agent.id = "test-agent".to_string();
+    config.inference.contexts.insert(
+        "fast".to_string(),
+        crate::kernel::config::InferenceContextConfig {
+            provider: "mock".to_string(),
+            model: "mock-fast".to_string(),
+            fallback: None,
+            temperature: None,
+            max_tokens: None,
+            thinking_budget: None,
+        },
+    );
+    app_data.config = Arc::new(config);
+
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("inference_available.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                if not runtime.inference.available("fast") then
+                    error("expected fast inference context to be available")
+                end
+                if runtime.inference.available("missing") then
+                    error("missing inference context should not be available")
+                end
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(app_data).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+
+    let verdict = engine
+        .evaluate_userdata("on_turn_prepare", MockContext)
+        .unwrap();
+    assert!(verdict.is_allowed());
+}
+
+#[test]
 fn test_engine_allow_verdict() {
     let dir = TempDir::new().unwrap();
     std::fs::write(

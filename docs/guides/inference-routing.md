@@ -31,6 +31,37 @@ function on_turn_prepare(ctx)
 end
 ```
 
+For more maintainable routing, wrap that logic in a helper:
+
+```lua
+local function select_inference_context(ctx)
+  local prompt = string.lower(ctx.prompt or "")
+
+  if ctx.token_limit > 0 and (ctx.token_count / ctx.token_limit) > 0.85 then
+    return "fast"
+  end
+
+  if runtime.inference.available("reasoning")
+    and (prompt:find("debug", 1, true) or prompt:find("trace", 1, true))
+  then
+    return "reasoning"
+  end
+
+  return "default"
+end
+
+function on_turn_prepare(ctx)
+  local route = select_inference_context(ctx)
+  if route ~= "default" then
+    ctx.inference = route
+  end
+  return ALLOW
+end
+```
+
+`runtime.inference.available(name)` returns `true` when the named inference context is configured
+for the current agent and `false` otherwise.
+
 Resolution order for a turn is:
 
 - harness-selected `ctx.inference`

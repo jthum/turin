@@ -128,6 +128,7 @@ Reference:
 Namespaces under `runtime`:
 
 - `runtime.context.*`
+- `runtime.inference.*`
 - `runtime.memory.*`
 - `runtime.kv.*`
 - `runtime.code.*`

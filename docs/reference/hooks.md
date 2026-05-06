@@ -155,6 +155,11 @@ Last mutable checkpoint before Turin calls the provider.
 - `ctx.thinking_budget`
 - `ctx.request_options`
 
+Related runtime helper:
+
+- `runtime.inference.available(name) -> bool`
+  - checks whether a named inference context is configured for the current agent
+
 ### Mutable fields
 
 - `ctx.inference`

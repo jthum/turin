@@ -664,9 +664,30 @@ end
 ## 3. Context Engineering (`on_turn_prepare`)
 
 ```lua
+local function select_inference_context(ctx)
+  local prompt = string.lower(ctx.prompt or "")
+
+  if ctx.token_limit > 0 and (ctx.token_count / ctx.token_limit) > 0.85 then
+    return "fast"
+  end
+
+  if runtime.inference.available("reasoning")
+    and (prompt:find("debug", 1, true) or prompt:find("trace", 1, true))
+  then
+    return "reasoning"
+  end
+
+  return "default"
+end
+
 function on_turn_prepare(ctx)
   if ctx.is_first_turn_in_task then
     ctx.system_prompt = ctx.system_prompt .. "\n\nAlways explain your plan before editing files."
+  end
+
+  local selected = select_inference_context(ctx)
+  if selected ~= "default" then
+    ctx.inference = selected
   end
 
   -- Structured preflight classification

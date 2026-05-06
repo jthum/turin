@@ -15,6 +15,7 @@ pub mod runtime_data;
 pub mod runtime_db;
 pub mod runtime_governance;
 pub mod runtime_graph;
+pub mod runtime_inference;
 pub mod runtime_policy;
 pub mod runtime_schedule;
 pub mod runtime_worklist;

@@ -1282,6 +1282,26 @@ Notes:
 - branch-head graph refs should use the same simple UUID value exposed as `branch.branch_id`
 - validation for semantic meaning belongs in the harness/app layer; the runtime only validates what it must materialize safely
 
+## `runtime.inference`
+
+Inference-routing helper namespace.
+
+- `runtime.inference.available(name) -> bool`
+
+Checks whether a named inference context is configured for the current agent after applying any
+agent-level inference overrides.
+
+Example:
+
+```lua
+function on_turn_prepare(ctx)
+  if runtime.inference.available("reasoning") and (ctx.prompt or ""):find("debug", 1, true) then
+    ctx.inference = "reasoning"
+  end
+  return ALLOW
+end
+```
+
 ## `runtime.policy`
 
 Runtime policy storage API.
