@@ -390,6 +390,11 @@ Notes:
   - `agent.disable`
   - `channel.enable`
   - `channel.disable`
+- scheduler job detail now also exposes:
+  - `last_error_code`
+  - `failure_count`
+- missing harness-defined actions now surface as:
+  - `last_error_code = "schedule_action_missing_handler"`
 - custom scheduled action names may also be defined in the harness itself:
 
 ```lua

@@ -20,6 +20,25 @@ use crate::persistence::state::{ScheduledJobInsert, ScheduledJobUpdate};
 const SCHEDULED_JOB_BATCH_LIMIT: usize = 32;
 const SCHEDULED_JOB_FAILURE_RETRY_MS: i64 = 60_000;
 
+#[derive(Debug, Clone)]
+struct ScheduledJobFailure {
+    code: &'static str,
+    message: String,
+}
+
+impl ScheduledJobFailure {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+
+    fn status(&self) -> String {
+        format!("{}: {}", self.code, self.message)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScheduledJobOverlapPolicy {
@@ -546,12 +565,12 @@ impl DaemonState {
                             .await?;
                     }
                     Err(err) => {
-                        let message = format!("submit_failed: {}", err);
                         store
-                            .mark_scheduled_job_submit_failed(
+                            .mark_scheduled_job_failed(
                                 job.id,
                                 now_unix_ms + SCHEDULED_JOB_FAILURE_RETRY_MS,
-                                &message,
+                                "schedule_submit_failed",
+                                &format!("schedule_submit_failed: {}", err),
                             )
                             .await?;
                     }
@@ -579,12 +598,12 @@ impl DaemonState {
                             .await?;
                     }
                     Err(err) => {
-                        let message = format!("action_failed: {}", err);
                         store
-                            .mark_scheduled_job_submit_failed(
+                            .mark_scheduled_job_failed(
                                 job.id,
                                 now_unix_ms + SCHEDULED_JOB_FAILURE_RETRY_MS,
-                                &message,
+                                err.code,
+                                &err.status(),
                             )
                             .await?;
                     }
@@ -685,29 +704,54 @@ impl DaemonState {
         Ok(())
     }
 
-    async fn execute_scheduled_action(&mut self, job: &ScheduledJobRow) -> Result<String> {
-        let Some(action) = scheduled_job_action(job)? else {
-            anyhow::bail!("Action job '{}' is missing action payload", job.id);
+    async fn execute_scheduled_action(
+        &mut self,
+        job: &ScheduledJobRow,
+    ) -> std::result::Result<String, ScheduledJobFailure> {
+        let Some(action) = scheduled_job_action(job).map_err(|err| {
+            ScheduledJobFailure::new("schedule_action_invalid_payload", err.to_string())
+        })?
+        else {
+            return Err(ScheduledJobFailure::new(
+                "schedule_action_missing_payload",
+                format!("action job '{}' is missing action payload", job.id),
+            ));
         };
         match action.name.as_str() {
             "agent.enable" => {
-                let id = required_action_id(&action)?;
-                self.set_agent_enabled(&id, true).await?;
+                let id = required_action_id(&action).map_err(|err| {
+                    ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
+                })?;
+                self.set_agent_enabled(&id, true).await.map_err(|err| {
+                    ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
+                })?;
                 Ok("completed: agent enabled".to_string())
             }
             "agent.disable" => {
-                let id = required_action_id(&action)?;
-                self.set_agent_enabled(&id, false).await?;
+                let id = required_action_id(&action).map_err(|err| {
+                    ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
+                })?;
+                self.set_agent_enabled(&id, false).await.map_err(|err| {
+                    ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
+                })?;
                 Ok("completed: agent disabled".to_string())
             }
             "channel.enable" => {
-                let id = required_action_id(&action)?;
-                self.set_channel_enabled(&id, true).await?;
+                let id = required_action_id(&action).map_err(|err| {
+                    ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
+                })?;
+                self.set_channel_enabled(&id, true).await.map_err(|err| {
+                    ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
+                })?;
                 Ok("completed: channel enabled".to_string())
             }
             "channel.disable" => {
-                let id = required_action_id(&action)?;
-                self.set_channel_enabled(&id, false).await?;
+                let id = required_action_id(&action).map_err(|err| {
+                    ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
+                })?;
+                self.set_channel_enabled(&id, false).await.map_err(|err| {
+                    ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
+                })?;
                 Ok("completed: channel disabled".to_string())
             }
             _ => self.execute_harness_scheduled_action(&job.agent_id, &action),
@@ -718,14 +762,21 @@ impl DaemonState {
         &self,
         agent_id: &str,
         action: &ScheduleActionParams,
-    ) -> Result<String> {
+    ) -> std::result::Result<String, ScheduledJobFailure> {
         let runtime = self.kernel.runtime_for_agent(agent_id);
-        let instance = runtime.create_instance(self.kernel.harness_init_context())?;
+        let instance = runtime
+            .create_instance(self.kernel.harness_init_context())
+            .map_err(|err| {
+                ScheduledJobFailure::new("schedule_action_harness_load_failed", err.to_string())
+            })?;
         let result = instance.invoke_declared_action_for_agent(
             agent_id,
             &action.name,
             action.params.clone().unwrap_or(serde_json::Value::Null),
-        )?;
+        );
+        let result = result.map_err(|err| {
+            ScheduledJobFailure::new("schedule_action_handler_failed", err.to_string())
+        })?;
         match result {
             Some(serde_json::Value::String(message)) if !message.is_empty() => {
                 Ok(format!("completed: {}", message))
@@ -739,7 +790,13 @@ impl DaemonState {
                 Ok("completed".to_string())
             }
             Some(_) => Ok("completed".to_string()),
-            None => anyhow::bail!("Unsupported scheduled action '{}'", action.name),
+            None => Err(ScheduledJobFailure::new(
+                "schedule_action_missing_handler",
+                format!(
+                    "scheduled action '{}' is not defined in the target harness",
+                    action.name
+                ),
+            )),
         }
     }
 
@@ -805,6 +862,8 @@ fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {
         pending_rerun: row.pending_rerun,
         last_run_unix_ms: row.last_run_unix_ms,
         last_status: row.last_status,
+        last_error_code: row.last_error_code,
+        failure_count: row.failure_count,
         created_at: row.created_at,
         updated_at: row.updated_at,
     }

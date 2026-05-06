@@ -154,6 +154,11 @@ Notes:
   - `action.define("qa.run_smoke", function(params) ... end)`
 - `runtime.schedule.create(...)` / `update(...)` may also carry structured `content`, `tools`, and `conflict_policy` fields when a scheduled prompt needs richer task input than a bare string
 - `schedule.update(...)` changes only the fields you provide; it does not mutate the already-running attempt for a currently active job
+- job detail surfaces scheduler health fields:
+  - `last_error_code`
+  - `failure_count`
+- missing harness action handlers are reported as:
+  - `last_error_code = "schedule_action_missing_handler"`
 
 ## Graph Helpers
 

@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 23;
+pub(crate) const SCHEMA_VERSION: u32 = 24;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -200,6 +200,8 @@ CREATE TABLE IF NOT EXISTS scheduled_jobs (
     pending_rerun    INTEGER NOT NULL DEFAULT 0,
     last_run_unix_ms INTEGER,
     last_status      TEXT,
+    last_error_code  TEXT,
+    failure_count    INTEGER NOT NULL DEFAULT 0,
     created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -329,6 +331,8 @@ pub struct ScheduledJobRow {
     pub pending_rerun: bool,
     pub last_run_unix_ms: Option<i64>,
     pub last_status: Option<String>,
+    pub last_error_code: Option<String>,
+    pub failure_count: u64,
     pub created_at: String,
     pub updated_at: String,
 }

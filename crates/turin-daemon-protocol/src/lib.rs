@@ -310,6 +310,10 @@ pub struct ScheduleJobDetail {
     pub last_run_unix_ms: Option<i64>,
     #[serde(default)]
     pub last_status: Option<String>,
+    #[serde(default)]
+    pub last_error_code: Option<String>,
+    #[serde(default)]
+    pub failure_count: u64,
     pub created_at: String,
     pub updated_at: String,
 }

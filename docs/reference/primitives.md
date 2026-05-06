@@ -993,6 +993,9 @@ Rules:
 - `runtime.schedule.runs(public_id, opts?)` currently supports:
   - `{ active_only = true }`
   - `{ limit = 10 }`
+- job detail also includes:
+  - `last_error_code`
+  - `failure_count`
 
 Notes:
 
@@ -1002,6 +1005,7 @@ Notes:
 - this namespace is unavailable outside daemon-managed runtimes
 - updating a running job affects future scheduling metadata only; it does not rewrite the already-running task
 - run history is per scheduled job and reflects actual attempts from `scheduled_job_runs`
+- missing harness-defined actions surface as `last_error_code = "schedule_action_missing_handler"`
 
 ## `runtime.graph`
 

@@ -308,6 +308,8 @@ fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {
         pending_rerun: row.pending_rerun,
         last_run_unix_ms: row.last_run_unix_ms,
         last_status: row.last_status,
+        last_error_code: row.last_error_code,
+        failure_count: row.failure_count,
         created_at: row.created_at,
         updated_at: row.updated_at,
     }

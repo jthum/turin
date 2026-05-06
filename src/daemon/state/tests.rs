@@ -765,6 +765,8 @@ async fn scheduled_action_job_can_disable_agent() -> Result<()> {
         finished.last_status.as_deref(),
         Some("completed: agent disabled")
     );
+    assert_eq!(finished.last_error_code, None);
+    assert_eq!(finished.failure_count, 0);
     assert!(finished.running_task_id.is_none());
 
     Ok(())
@@ -860,6 +862,8 @@ provider = "noop"
         finished.last_status.as_deref(),
         Some("completed: queued followup")
     );
+    assert_eq!(finished.last_error_code, None);
+    assert_eq!(finished.failure_count, 0);
     let follow_up = jobs
         .iter()
         .find(|entry| entry.id != job.id)
@@ -869,6 +873,90 @@ provider = "noop"
         Some("Follow up from harness action")
     );
     assert!(follow_up.action.is_none());
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn scheduled_missing_harness_action_surfaces_error_code_and_failure_count() -> Result<()> {
+    let temp = tempdir()?;
+    std::fs::create_dir_all(temp.path().join("default-harness"))?;
+    std::fs::write(
+        temp.path().join("default-harness").join("main.lua"),
+        "-- no action handlers defined here\n",
+    )?;
+    let config_path = temp.path().join(".turin").join("config.toml");
+    std::fs::create_dir_all(config_path.parent().expect("config parent"))?;
+    std::fs::write(
+        &config_path,
+        r#"[agent]
+id = "default"
+system_prompt = "bootstrap"
+model = "mock-model"
+provider = "mock"
+
+[kernel]
+workspace_root = "."
+
+[persistence.state]
+path = "state.db"
+
+[harness]
+directory = "default-harness"
+fs_root = "."
+
+[providers.mock]
+type = "mock"
+
+[embeddings]
+provider = "noop"
+"#,
+    )?;
+
+    let mut state = DaemonState::load(&config_path).await?;
+    let now_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64;
+    let job = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: None,
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action: Some(ScheduleActionParams {
+                name: "ops.missing".to_string(),
+                params: Some(json!({ "message": "never handled" })),
+            }),
+            persistence: None,
+            next_run_unix_ms: now_unix_ms - 1,
+            interval_seconds: None,
+            recurring_pattern: None,
+            overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            work_key: None,
+            max_concurrency: None,
+            enabled: true,
+        })
+        .await?;
+
+    state.scheduler_tick().await?;
+    let jobs = state.list_scheduled_jobs().await?;
+    let failed = jobs
+        .iter()
+        .find(|entry| entry.id == job.id)
+        .expect("failed scheduled action job visible");
+    assert_eq!(
+        failed.last_error_code.as_deref(),
+        Some("schedule_action_missing_handler")
+    );
+    assert_eq!(failed.failure_count, 1);
+    assert!(
+        failed
+            .last_status
+            .as_deref()
+            .unwrap_or_default()
+            .contains("schedule_action_missing_handler")
+    );
 
     Ok(())
 }

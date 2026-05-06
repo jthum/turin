@@ -58,7 +58,7 @@ impl StateStore {
                        action_name, action_params, state_target, store_target,
                        next_run_unix_ms, interval_seconds, recurring_pattern,
                        overlap_policy, work_key, max_concurrency, enabled, running_task_id, active_run_count, pending_rerun,
-                       last_run_unix_ms, last_status, created_at, updated_at
+                       last_run_unix_ms, last_status, last_error_code, failure_count, created_at, updated_at
                 FROM scheduled_jobs
                 WHERE public_id = ?1
                 LIMIT 1
@@ -118,7 +118,7 @@ impl StateStore {
                        action_name, action_params, state_target, store_target,
                        next_run_unix_ms, interval_seconds, recurring_pattern,
                        overlap_policy, work_key, max_concurrency, enabled, running_task_id, active_run_count, pending_rerun,
-                       last_run_unix_ms, last_status, created_at, updated_at
+                       last_run_unix_ms, last_status, last_error_code, failure_count, created_at, updated_at
                 FROM scheduled_jobs
                 ORDER BY id ASC
                 "#,
@@ -145,7 +145,7 @@ impl StateStore {
                        action_name, action_params, state_target, store_target,
                        next_run_unix_ms, interval_seconds, recurring_pattern,
                        overlap_policy, work_key, max_concurrency, enabled, running_task_id, active_run_count, pending_rerun,
-                       last_run_unix_ms, last_status, created_at, updated_at
+                       last_run_unix_ms, last_status, last_error_code, failure_count, created_at, updated_at
                 FROM scheduled_jobs
                 WHERE enabled = 1 AND next_run_unix_ms <= ?1
                 ORDER BY next_run_unix_ms ASC, id ASC
@@ -185,7 +185,7 @@ impl StateStore {
                        action_name, action_params, state_target, store_target,
                        next_run_unix_ms, interval_seconds, recurring_pattern,
                        overlap_policy, work_key, max_concurrency, enabled, running_task_id, active_run_count, pending_rerun,
-                       last_run_unix_ms, last_status, created_at, updated_at
+                       last_run_unix_ms, last_status, last_error_code, failure_count, created_at, updated_at
                 FROM scheduled_jobs
                 WHERE active_run_count > 0
                 ORDER BY id ASC
@@ -324,7 +324,7 @@ impl StateStore {
                        action_name, action_params, state_target, store_target,
                        next_run_unix_ms, interval_seconds, recurring_pattern,
                        overlap_policy, work_key, max_concurrency, enabled, running_task_id, active_run_count, pending_rerun,
-                       last_run_unix_ms, last_status, created_at, updated_at
+                       last_run_unix_ms, last_status, last_error_code, failure_count, created_at, updated_at
                 FROM scheduled_jobs
                 WHERE id = ?1
                 LIMIT 1
@@ -522,6 +522,8 @@ impl StateStore {
                     SET running_task_id = NULL,
                         active_run_count = 0,
                         last_status = ?2,
+                        last_error_code = NULL,
+                        failure_count = 0,
                         next_run_unix_ms = ?3,
                         pending_rerun = ?4,
                         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -543,6 +545,8 @@ impl StateStore {
                     SET running_task_id = NULL,
                         active_run_count = 0,
                         last_status = ?2,
+                        last_error_code = NULL,
+                        failure_count = 0,
                         pending_rerun = ?3,
                         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                     WHERE id = ?1
@@ -568,6 +572,8 @@ impl StateStore {
             r#"
             UPDATE scheduled_jobs
             SET last_status = ?2,
+                last_error_code = NULL,
+                failure_count = 0,
                 next_run_unix_ms = ?3,
                 enabled = ?4,
                 last_run_unix_ms = ?5,
@@ -588,10 +594,11 @@ impl StateStore {
         Ok(())
     }
 
-    pub async fn mark_scheduled_job_submit_failed(
+    pub async fn mark_scheduled_job_failed(
         &self,
         id: i64,
         retry_at_unix_ms: i64,
+        last_error_code: &str,
         last_status: &str,
     ) -> Result<()> {
         let conn = self.connect().await?;
@@ -599,11 +606,13 @@ impl StateStore {
             r#"
             UPDATE scheduled_jobs
             SET last_status = ?2,
-                next_run_unix_ms = ?3,
+                last_error_code = ?3,
+                failure_count = failure_count + 1,
+                next_run_unix_ms = ?4,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             WHERE id = ?1
             "#,
-            turso::params![id, last_status, retry_at_unix_ms],
+            turso::params![id, last_status, last_error_code, retry_at_unix_ms],
         )
         .await
         .context("Failed to record scheduled job submit failure")?;
@@ -640,6 +649,7 @@ impl StateStore {
             SET next_run_unix_ms = ?2,
                 pending_rerun = ?3,
                 last_status = ?4,
+                last_error_code = NULL,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             WHERE id = ?1
             "#,
@@ -774,8 +784,10 @@ fn map_scheduled_job_row(row: &turso::Row) -> Result<ScheduledJobRow> {
         pending_rerun: row.get::<i64>(21)? != 0,
         last_run_unix_ms: row.get::<Option<i64>>(22)?,
         last_status: row.get::<Option<String>>(23)?,
-        created_at: row.get::<String>(24)?,
-        updated_at: row.get::<String>(25)?,
+        last_error_code: row.get::<Option<String>>(24)?,
+        failure_count: row.get::<i64>(25)? as u64,
+        created_at: row.get::<String>(26)?,
+        updated_at: row.get::<String>(27)?,
     })
 }
 
