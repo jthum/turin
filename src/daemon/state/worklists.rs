@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use serde_json::{Map as JsonMap, Value as JsonValue};
 use turin_daemon_protocol::{
     ContextPersistenceParams, ScheduleActionParams, StoreTargetParams, WorkItemDetail,
     WorkItemList, WorklistDetail,
@@ -12,6 +13,16 @@ use crate::kernel::config::ContextPersistenceConfig;
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{WorkItemRow, WorklistRow};
 use crate::persistence::state::StateStore;
+
+pub(crate) struct WorklistItemsQuery<'a> {
+    pub public_id: &'a str,
+    pub persistence: Option<&'a ContextPersistenceParams>,
+    pub status: Option<&'a str>,
+    pub parent_public_id: Option<&'a str>,
+    pub where_filter: Option<&'a JsonMap<String, JsonValue>>,
+    pub claimed_only: bool,
+    pub limit: Option<u32>,
+}
 
 impl DaemonState {
     pub async fn list_worklists(
@@ -45,23 +56,18 @@ impl DaemonState {
         Ok(Some(map_worklist_detail(row, persistence.cloned())))
     }
 
-    pub async fn worklist_items(
+    pub(crate) async fn worklist_items(
         &self,
-        public_id: &str,
-        persistence: Option<&ContextPersistenceParams>,
-        status: Option<&str>,
-        parent_public_id: Option<&str>,
-        claimed_only: bool,
-        limit: Option<u32>,
+        query: WorklistItemsQuery<'_>,
     ) -> Result<Option<WorkItemList>> {
-        let store = self.resolve_worklist_store(persistence).await?;
-        let public_id = uuid::Uuid::parse_str(public_id)
+        let store = self.resolve_worklist_store(query.persistence).await?;
+        let public_id = uuid::Uuid::parse_str(query.public_id)
             .map_err(|err| anyhow!("invalid worklist id: {}", err))?;
         let Some(worklist) = store.get_worklist_by_public_id(public_id).await? else {
             return Ok(None);
         };
         let rows = store.list_work_items(worklist.id).await?;
-        let parent_row_id = if let Some(parent_public_id) = parent_public_id {
+        let parent_row_id = if let Some(parent_public_id) = query.parent_public_id {
             let parent_uuid = uuid::Uuid::parse_str(parent_public_id)
                 .map_err(|err| anyhow!("invalid parent item id: {}", err))?;
             rows.iter()
@@ -76,14 +82,15 @@ impl DaemonState {
             .collect::<HashMap<_, _>>();
         let items = rows
             .into_iter()
-            .filter(|row| status.is_none_or(|value| row.status == value))
-            .filter(|row| !claimed_only || row.claim_execution_id.is_some())
-            .filter(|row| match (parent_public_id, parent_row_id) {
+            .filter(|row| query.status.is_none_or(|value| row.status == value))
+            .filter(|row| !query.claimed_only || row.claim_execution_id.is_some())
+            .filter(|row| match (query.parent_public_id, parent_row_id) {
                 (Some(_), Some(parent_row_id)) => row.parent_item_id == Some(parent_row_id),
                 (Some(_), None) => false,
                 (None, _) => true,
             })
-            .take(limit.unwrap_or(u32::MAX) as usize)
+            .filter(|row| work_item_matches_where(row, &public_ids, query.where_filter))
+            .take(query.limit.unwrap_or(u32::MAX) as usize)
             .map(|row| map_work_item_detail(row, &public_ids, &worklist))
             .collect();
         Ok(Some(WorkItemList {
@@ -234,5 +241,45 @@ fn parse_json<T: serde::de::DeserializeOwned>(value: Option<&str>) -> Result<Opt
     match value {
         Some(value) => Ok(Some(serde_json::from_str::<T>(value)?)),
         None => Ok(None),
+    }
+}
+
+fn work_item_matches_where(
+    row: &WorkItemRow,
+    public_ids: &HashMap<i64, String>,
+    where_filter: Option<&JsonMap<String, JsonValue>>,
+) -> bool {
+    let Some(where_filter) = where_filter else {
+        return true;
+    };
+    let metadata = row
+        .metadata
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<JsonValue>(raw).ok())
+        .unwrap_or(JsonValue::Null);
+    where_filter.iter().all(|(key, expected)| {
+        work_item_filter_value(row, public_ids, &metadata, key).as_ref() == Some(expected)
+    })
+}
+
+fn work_item_filter_value(
+    row: &WorkItemRow,
+    public_ids: &HashMap<i64, String>,
+    metadata: &JsonValue,
+    key: &str,
+) -> Option<JsonValue> {
+    match key {
+        "id" | "public_id" => Some(JsonValue::String(format_public_id(&row.public_id))),
+        "title" => Some(JsonValue::String(row.title.clone())),
+        "kind" => Some(JsonValue::String(row.item_kind.clone())),
+        "status" => Some(JsonValue::String(row.status.clone())),
+        "priority" => Some(JsonValue::Number(row.priority.into())),
+        "parent_id" => Some(
+            row.parent_item_id
+                .and_then(|id| public_ids.get(&id).cloned())
+                .map(JsonValue::String)
+                .unwrap_or(JsonValue::Null),
+        ),
+        _ => metadata.get(key).cloned(),
     }
 }

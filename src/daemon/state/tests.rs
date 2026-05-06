@@ -1,6 +1,7 @@
 use super::scheduled_jobs::{
     CreateScheduledJobInput, ScheduledJobOverlapPolicy, UpdateScheduledJobInput,
 };
+use super::worklists::WorklistItemsQuery;
 use super::*;
 use crate::kernel::event::TaskBranchOutcome;
 use crate::kernel::session_refs::parse_session_reference;
@@ -818,27 +819,32 @@ provider = "noop"
     assert_eq!(detail.public_id, worklists[0].public_id);
 
     let claimed_items = state
-        .worklist_items(
-            &worklists[0].public_id,
-            Some(&persistence),
-            Some("pending"),
-            Some("0196f8fe-6e6a-7e1a-8da5-3f774f1a8d48"),
-            true,
-            Some(10),
-        )
+        .worklist_items(WorklistItemsQuery {
+            public_id: &worklists[0].public_id,
+            persistence: Some(&persistence),
+            status: Some("pending"),
+            parent_public_id: Some("0196f8fe-6e6a-7e1a-8da5-3f774f1a8d48"),
+            where_filter: None,
+            claimed_only: true,
+            limit: Some(10),
+        })
         .await?
         .expect("claimed items result present");
     assert!(claimed_items.items.is_empty());
 
     let child_items = state
-        .worklist_items(
-            &worklists[0].public_id,
-            Some(&persistence),
-            Some("active"),
-            Some(&root_public_id),
-            true,
-            Some(10),
-        )
+        .worklist_items(WorklistItemsQuery {
+            public_id: &worklists[0].public_id,
+            persistence: Some(&persistence),
+            status: Some("active"),
+            parent_public_id: Some(&root_public_id),
+            where_filter: Some(&serde_json::Map::from_iter([(
+                "role".to_string(),
+                json!("browser"),
+            )])),
+            claimed_only: true,
+            limit: Some(10),
+        })
         .await?
         .expect("child items result present");
     assert_eq!(child_items.items.len(), 1);

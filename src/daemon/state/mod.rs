@@ -35,6 +35,7 @@ pub use types::{
     SessionEventDetail, SessionMessageDetail, SessionSearchHit, SessionSummary,
     SessionToolExecutionDetail,
 };
+pub(crate) use worklists::WorklistItemsQuery;
 
 #[derive(Debug, Clone)]
 pub struct DaemonWatchPaths {

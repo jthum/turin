@@ -294,6 +294,8 @@ pub struct WorklistItemsParams {
     #[serde(default)]
     pub parent_id: Option<String>,
     #[serde(default)]
+    pub r#where: Option<serde_json::Map<String, Value>>,
+    #[serde(default)]
     pub claimed_only: bool,
     #[serde(default)]
     pub limit: Option<u32>,
@@ -1188,6 +1190,10 @@ mod tests {
                 }),
                 status: Some("pending".to_string()),
                 parent_id: Some("0196f8fe-6e6a-7e1a-8da5-3f774f1a8d48".to_string()),
+                r#where: Some(serde_json::Map::from_iter([(
+                    "role".to_string(),
+                    json!("browser"),
+                )])),
                 claimed_only: true,
                 limit: Some(10),
             }),
@@ -1204,6 +1210,7 @@ mod tests {
             value["params"]["parent_id"],
             "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d48"
         );
+        assert_eq!(value["params"]["where"]["role"], "browser");
         assert_eq!(value["params"]["claimed_only"], true);
         assert_eq!(value["params"]["limit"], 10);
         assert_eq!(
@@ -1219,6 +1226,10 @@ mod tests {
                 assert_eq!(
                     params.parent_id.as_deref(),
                     Some("0196f8fe-6e6a-7e1a-8da5-3f774f1a8d48")
+                );
+                assert_eq!(
+                    params.r#where.as_ref().and_then(|value| value.get("role")),
+                    Some(&json!("browser"))
                 );
                 assert!(params.claimed_only);
                 assert_eq!(params.limit, Some(10));

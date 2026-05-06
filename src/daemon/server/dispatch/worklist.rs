@@ -2,6 +2,7 @@ use crate::daemon::protocol::{
     ErrorCode, ResponseEnvelope, WorkItemTargetParams, WorklistItemsParams, WorklistList,
     WorklistListParams, WorklistTargetParams,
 };
+use crate::daemon::state::WorklistItemsQuery;
 
 use super::{DispatchContext, not_found_error, serialize_response, validation_error};
 
@@ -51,14 +52,15 @@ pub(super) async fn items(
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
     match guard
-        .worklist_items(
-            &params.id,
-            params.persistence.as_ref(),
-            params.status.as_deref(),
-            params.parent_id.as_deref(),
-            params.claimed_only,
-            params.limit,
-        )
+        .worklist_items(WorklistItemsQuery {
+            public_id: &params.id,
+            persistence: params.persistence.as_ref(),
+            status: params.status.as_deref(),
+            parent_public_id: params.parent_id.as_deref(),
+            where_filter: params.r#where.as_ref(),
+            claimed_only: params.claimed_only,
+            limit: params.limit,
+        })
         .await
     {
         Ok(Some(items)) => serialize_response(id, items, "worklist items"),
