@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow};
 use tokio::sync::Notify;
 use turin_daemon_protocol::{
     ContextPersistenceParams, ScheduleActionParams, ScheduleCreateParams, ScheduleJobDetail,
-    ScheduleUpdateParams, StoreTargetParams,
+    ScheduleJobRunDetail, ScheduleJobRunList, ScheduleUpdateParams, StoreTargetParams,
 };
 
 use crate::persistence::schema::ScheduledJobRow;
@@ -99,6 +99,33 @@ impl HarnessSchedulerAccess {
             .get_scheduled_job_by_public_id(public_id)
             .await?
             .map(map_scheduled_job_detail))
+    }
+
+    pub async fn list_job_runs(
+        &self,
+        public_id: &str,
+        active_only: bool,
+        limit: Option<u32>,
+    ) -> Result<Option<ScheduleJobRunList>> {
+        let public_id = uuid::Uuid::parse_str(public_id)?;
+        let Some(row) = self
+            .jobs_store
+            .get_scheduled_job_by_public_id(public_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let public_id = uuid::Uuid::from_slice(&row.public_id)
+            .map(|id| id.to_string())
+            .unwrap_or_else(|_| format_uuid_bytes_simple(&row.public_id));
+        let runs = self
+            .jobs_store
+            .list_scheduled_job_runs(row.id, active_only, limit)
+            .await?
+            .into_iter()
+            .map(map_scheduled_job_run_detail)
+            .collect();
+        Ok(Some(ScheduleJobRunList { public_id, runs }))
     }
 
     pub async fn update_job(
@@ -236,7 +263,7 @@ impl HarnessSchedulerAccess {
         else {
             return Ok(None);
         };
-        if row.running_task_id.is_some() {
+        if row.active_run_count > 0 {
             anyhow::bail!(
                 "Cannot delete scheduled job '{}' while it has an active run",
                 public_id
@@ -281,6 +308,25 @@ fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {
         pending_rerun: row.pending_rerun,
         last_run_unix_ms: row.last_run_unix_ms,
         last_status: row.last_status,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    }
+}
+
+fn map_scheduled_job_run_detail(
+    row: crate::persistence::schema::ScheduledJobRunRow,
+) -> ScheduleJobRunDetail {
+    ScheduleJobRunDetail {
+        id: row.id,
+        task_id: row.task_id,
+        started_unix_ms: row.started_unix_ms,
+        finished_unix_ms: row.finished_unix_ms,
+        duration_ms: row
+            .finished_unix_ms
+            .and_then(|finished| finished.checked_sub(row.started_unix_ms))
+            .map(|duration| duration as u64),
+        last_status: row.last_status,
+        active: row.finished_unix_ms.is_none(),
         created_at: row.created_at,
         updated_at: row.updated_at,
     }

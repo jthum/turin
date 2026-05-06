@@ -103,6 +103,14 @@ struct LuaScheduleListOpts {
     agent: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct LuaScheduleRunsOpts {
+    #[serde(default)]
+    active_only: bool,
+    #[serde(default)]
+    limit: Option<u32>,
+}
+
 fn parse_store_target(value: serde_json::Value, field_name: &str) -> LuaResult<StoreTargetParams> {
     match value {
         serde_json::Value::String(value) => {
@@ -601,6 +609,43 @@ pub fn register_runtime_schedule_namespace(
                 });
                 match result {
                     Ok(Some(job)) => Ok(ok_value(lua.to_value(&job)?)),
+                    Ok(None) => nil_err(lua, "scheduled job not found"),
+                    Err(err) => nil_err(lua, &err),
+                }
+            })?,
+        )?;
+    }
+
+    {
+        let app_data = app_data.clone();
+        schedule_ns.set(
+            "runs",
+            lua.create_function(move |lua, (public_id, opts): (String, Option<Table>)| {
+                require_capability(&app_data, "runtime.schedule.runs")
+                    .map_err(mlua::Error::runtime)?;
+                let scheduler = match scheduler_access(&app_data) {
+                    Ok(scheduler) => scheduler,
+                    Err(err) => return nil_err(lua, &err),
+                };
+                let parsed = match opts {
+                    Some(opts) => lua
+                        .from_value::<LuaScheduleRunsOpts>(Value::Table(opts))
+                        .map_err(|e| {
+                            mlua::Error::runtime(format!(
+                                "invalid runtime.schedule.runs opts: {}",
+                                e
+                            ))
+                        })?,
+                    None => LuaScheduleRunsOpts::default(),
+                };
+                let result = bridge_async_result(async move {
+                    scheduler
+                        .list_job_runs(&public_id, parsed.active_only, parsed.limit)
+                        .await
+                        .map_err(|e| e.to_string())
+                });
+                match result {
+                    Ok(Some(runs)) => Ok(ok_value(lua.to_value(&runs)?)),
                     Ok(None) => nil_err(lua, "scheduled job not found"),
                     Err(err) => nil_err(lua, &err),
                 }

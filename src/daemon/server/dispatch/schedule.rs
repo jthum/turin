@@ -1,6 +1,6 @@
 use crate::daemon::protocol::{
     EntityIdParams, ErrorCode, NoParams, ResponseEnvelope, ScheduleCreateParams, ScheduleJobList,
-    ScheduleUpdateParams,
+    ScheduleRunsParams, ScheduleUpdateParams,
 };
 
 use super::{
@@ -157,6 +157,26 @@ pub(super) async fn disable(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     set_enabled(id, params.id, false, ctx).await
+}
+
+pub(super) async fn runs(
+    id: Option<String>,
+    params: ScheduleRunsParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard
+        .scheduled_job_runs(&params.id, params.active_only, params.limit)
+        .await
+    {
+        Ok(Some(runs)) => serialize_response(id, runs, "scheduled job runs"),
+        Ok(None) => not_found_error(
+            id,
+            ErrorCode::ScheduleNotFound,
+            format!("Scheduled job '{}' not found", params.id),
+        ),
+        Err(err) => validation_error(id, err),
+    }
 }
 
 async fn set_enabled(

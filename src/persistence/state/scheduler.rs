@@ -239,6 +239,63 @@ impl StateStore {
         Ok(result)
     }
 
+    pub async fn list_scheduled_job_runs(
+        &self,
+        scheduled_job_id: i64,
+        active_only: bool,
+        limit: Option<u32>,
+    ) -> Result<Vec<ScheduledJobRunRow>> {
+        let conn = self.connect().await?;
+        let query = match (active_only, limit) {
+            (true, Some(_)) => {
+                r#"
+                SELECT id, scheduled_job_id, task_id, started_unix_ms, finished_unix_ms, last_status, created_at, updated_at
+                FROM scheduled_job_runs
+                WHERE scheduled_job_id = ?1 AND finished_unix_ms IS NULL
+                ORDER BY id DESC
+                LIMIT ?2
+                "#
+            }
+            (true, None) => {
+                r#"
+                SELECT id, scheduled_job_id, task_id, started_unix_ms, finished_unix_ms, last_status, created_at, updated_at
+                FROM scheduled_job_runs
+                WHERE scheduled_job_id = ?1 AND finished_unix_ms IS NULL
+                ORDER BY id DESC
+                "#
+            }
+            (false, Some(_)) => {
+                r#"
+                SELECT id, scheduled_job_id, task_id, started_unix_ms, finished_unix_ms, last_status, created_at, updated_at
+                FROM scheduled_job_runs
+                WHERE scheduled_job_id = ?1
+                ORDER BY id DESC
+                LIMIT ?2
+                "#
+            }
+            (false, None) => {
+                r#"
+                SELECT id, scheduled_job_id, task_id, started_unix_ms, finished_unix_ms, last_status, created_at, updated_at
+                FROM scheduled_job_runs
+                WHERE scheduled_job_id = ?1
+                ORDER BY id DESC
+                "#
+            }
+        };
+        let mut rows = match limit {
+            Some(limit) => {
+                conn.query(query, turso::params![scheduled_job_id, limit as i64])
+                    .await?
+            }
+            None => conn.query(query, turso::params![scheduled_job_id]).await?,
+        };
+        let mut result = Vec::new();
+        while let Some(row) = rows.next().await? {
+            result.push(map_scheduled_job_run_row(&row)?);
+        }
+        Ok(result)
+    }
+
     pub async fn count_active_scheduled_job_runs(&self, scheduled_job_id: i64) -> Result<u32> {
         let conn = self.connect().await?;
         let mut rows = conn

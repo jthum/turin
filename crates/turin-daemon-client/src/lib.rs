@@ -10,7 +10,7 @@ use turin_daemon_protocol::{
     ChannelRunnerHeartbeatParams, ChannelRunnerHelloParams, DAEMON_PROTOCOL_VERSION,
     DaemonHandshake, DaemonRequest, EntityIdParams, EventEnvelope, NoParams, RequestEnvelope,
     ResponseEnvelope, RuntimeEventsSubscribeParams, ScheduleCreateParams, ScheduleJobDetail,
-    ScheduleJobList, ScheduleUpdateParams,
+    ScheduleJobList, ScheduleJobRunList, ScheduleRunsParams, ScheduleUpdateParams,
 };
 use turin_local_ipc::{
     LocalIpcReadHalf, connect as connect_local_ipc, current_transport_name,
@@ -296,6 +296,23 @@ impl DaemonClient {
             .request_ok(None, DaemonRequest::ScheduleList(NoParams::default()))
             .await?;
         Ok(response.jobs)
+    }
+
+    pub async fn schedule_runs(
+        &self,
+        id: impl Into<String>,
+        active_only: bool,
+        limit: Option<u32>,
+    ) -> Result<ScheduleJobRunList> {
+        self.request_ok(
+            None,
+            DaemonRequest::ScheduleRuns(ScheduleRunsParams {
+                id: id.into(),
+                active_only,
+                limit,
+            }),
+        )
+        .await
     }
 
     pub async fn schedule_enable(&self, id: impl Into<String>) -> Result<ScheduleJobDetail> {

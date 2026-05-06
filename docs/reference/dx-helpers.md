@@ -116,6 +116,7 @@ Preferred scheduler helpers:
 - `schedule.update(public_id, opts?)`
 - `schedule.get(public_id)`
 - `schedule.list(opts?)`
+- `schedule.runs(public_id, opts?)`
 - `schedule.enable(public_id)`
 - `schedule.disable(public_id)`
 - `schedule.delete(public_id)`
@@ -141,6 +142,9 @@ Notes:
   - `"skip"`
   - `"queue"`
   - `"parallel"`
+- `schedule.runs(public_id, opts?)` supports:
+  - `{ active_only = true }`
+  - `{ limit = 10 }`
 - built-in action payloads currently support:
   - `agent.enable`
   - `agent.disable`

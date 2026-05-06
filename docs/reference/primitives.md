@@ -134,6 +134,7 @@ These are layered on top of the existing scoped aliases.
 - `schedule.update(public_id, opts?) -> job`
 - `schedule.get(public_id) -> job`
 - `schedule.list(opts?) -> jobs`
+- `schedule.runs(public_id, opts?) -> run_list`
 - `schedule.enable(public_id) -> job`
 - `schedule.disable(public_id) -> job`
 - `schedule.delete(public_id) -> job`
@@ -885,6 +886,7 @@ Daemon-backed durable scheduler API.
 - `runtime.schedule.update(opts) -> job`
 - `runtime.schedule.get(public_id) -> job`
 - `runtime.schedule.list(opts?) -> jobs`
+- `runtime.schedule.runs(public_id, opts?) -> run_list`
 - `runtime.schedule.enable(public_id) -> job`
 - `runtime.schedule.disable(public_id) -> job`
 - `runtime.schedule.delete(public_id) -> job`
@@ -988,6 +990,9 @@ Rules:
 - other action names may be harness-defined, provided the target harness registered them with `action.define(...)`
 - `runtime.schedule.list(...)` currently supports:
   - `{ agent = "reviewer" }`
+- `runtime.schedule.runs(public_id, opts?)` currently supports:
+  - `{ active_only = true }`
+  - `{ limit = 10 }`
 
 Notes:
 
@@ -996,6 +1001,7 @@ Notes:
 - jobs may target arbitrary state/store contexts through `persistence`
 - this namespace is unavailable outside daemon-managed runtimes
 - updating a running job affects future scheduling metadata only; it does not rewrite the already-running task
+- run history is per scheduled job and reflects actual attempts from `scheduled_job_runs`
 
 ## `runtime.graph`
 

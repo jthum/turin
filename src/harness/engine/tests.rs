@@ -303,6 +303,17 @@ async fn test_schedule_dx_helpers_create_and_list_jobs() {
                     error("expected schedule.get to round-trip recurring job")
                 end
 
+                local empty_runs = schedule.runs(recurring.public_id, {
+                    active_only = true,
+                    limit = 5
+                })
+                if empty_runs.public_id ~= recurring.public_id then
+                    error("expected schedule.runs to target the requested job")
+                end
+                if #empty_runs.runs ~= 0 then
+                    error("expected no runs before scheduler tick")
+                end
+
                 local disabled = schedule.disable(recurring.public_id)
                 if disabled.enabled ~= false then
                     error("expected disable to clear enabled flag")

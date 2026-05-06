@@ -196,6 +196,7 @@ Current DX helper globals and helper-layer extensions:
 - `schedule.update(...)`
 - `schedule.get(...)`
 - `schedule.list(...)`
+- `schedule.runs(...)`
 - `schedule.enable(...)`
 - `schedule.disable(...)`
 - `schedule.delete(...)`

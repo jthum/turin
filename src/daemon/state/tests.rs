@@ -551,6 +551,14 @@ async fn scheduled_parallel_job_can_start_multiple_active_runs() -> Result<()> {
     assert_eq!(task_ids.len(), 2);
     assert_ne!(task_ids[0], task_ids[1]);
 
+    let active_history = state
+        .scheduled_job_runs(&job.public_id, true, Some(1))
+        .await?
+        .expect("parallel job run history visible");
+    assert_eq!(active_history.public_id, job.public_id);
+    assert_eq!(active_history.runs.len(), 1);
+    assert!(active_history.runs[0].active);
+
     state
         .set_scheduled_job_enabled(&job.public_id, false)
         .await?
@@ -568,6 +576,19 @@ async fn scheduled_parallel_job_can_start_multiple_active_runs() -> Result<()> {
         .find(|entry| entry.id == job.id)
         .expect("parallel scheduled job still visible");
     assert_eq!(settled.active_run_count, 0);
+
+    let history = state
+        .scheduled_job_runs(&job.public_id, false, None)
+        .await?
+        .expect("parallel job run history visible after completion");
+    assert_eq!(history.runs.len(), 2);
+    assert!(history.runs.iter().all(|run| !run.active));
+    assert!(
+        history
+            .runs
+            .iter()
+            .all(|run| run.finished_unix_ms.is_some())
+    );
 
     Ok(())
 }

@@ -4,7 +4,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Result, anyhow};
 use serde::Serialize;
 use turin_daemon_protocol::{
-    ContextPersistenceParams, ScheduleActionParams, ScheduleJobDetail, StoreTargetParams,
+    ContextPersistenceParams, ScheduleActionParams, ScheduleJobDetail, ScheduleJobRunDetail,
+    ScheduleJobRunList, StoreTargetParams,
 };
 use turin_types::{TaskInputContent, ToolsConfig};
 
@@ -372,6 +373,29 @@ impl DaemonState {
             .get_scheduled_job_by_public_id(public_id)
             .await?
             .map(map_scheduled_job_detail))
+    }
+
+    pub(crate) async fn scheduled_job_runs(
+        &self,
+        public_id: &str,
+        active_only: bool,
+        limit: Option<u32>,
+    ) -> Result<Option<ScheduleJobRunList>> {
+        let store = Arc::clone(&self.jobs_store);
+        let public_id = uuid::Uuid::parse_str(public_id)?;
+        let Some(row) = store.get_scheduled_job_by_public_id(public_id).await? else {
+            return Ok(None);
+        };
+        let public_id = uuid::Uuid::from_slice(&row.public_id)
+            .map(|id| id.to_string())
+            .unwrap_or_else(|_| super::helpers::format_uuid_bytes_simple(&row.public_id));
+        let runs = store
+            .list_scheduled_job_runs(row.id, active_only, limit)
+            .await?
+            .into_iter()
+            .map(map_scheduled_job_run_detail)
+            .collect();
+        Ok(Some(ScheduleJobRunList { public_id, runs }))
     }
 
     pub(crate) async fn delete_scheduled_job(
@@ -781,6 +805,23 @@ fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {
         pending_rerun: row.pending_rerun,
         last_run_unix_ms: row.last_run_unix_ms,
         last_status: row.last_status,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    }
+}
+
+fn map_scheduled_job_run_detail(row: ScheduledJobRunRow) -> ScheduleJobRunDetail {
+    ScheduleJobRunDetail {
+        id: row.id,
+        task_id: row.task_id,
+        started_unix_ms: row.started_unix_ms,
+        finished_unix_ms: row.finished_unix_ms,
+        duration_ms: row
+            .finished_unix_ms
+            .and_then(|finished| finished.checked_sub(row.started_unix_ms))
+            .map(|duration| duration as u64),
+        last_status: row.last_status,
+        active: row.finished_unix_ms.is_none(),
         created_at: row.created_at,
         updated_at: row.updated_at,
     }

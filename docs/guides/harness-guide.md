@@ -354,6 +354,8 @@ function on_turn_prepare(ctx)
 
   local fetched = schedule.get(nightly.public_id)
   if fetched and fetched.enabled then
+    local runs = schedule.runs(fetched.public_id, { limit = 5 })
+    session.set("scheduler_recent_runs", runs.runs)
     schedule.update(fetched.public_id, {
       interval_seconds = 7200,
       overlap = "queue",
@@ -381,6 +383,7 @@ Notes:
   - unix milliseconds
   - RFC3339 timestamps such as `"2030-01-02T03:04:05Z"`
   - local-time shorthand such as `"08:00"` or `"08:00:30"`
+- `schedule.runs(public_id, opts?)` returns recent attempt history for one job
 - `recurring = "daily"` or `recurring = "weekly"` may be combined with `schedule.at(...)`
 - built-in scheduled daemon actions currently include:
   - `agent.enable`

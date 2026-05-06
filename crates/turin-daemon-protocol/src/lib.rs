@@ -252,8 +252,23 @@ pub struct ScheduleUpdateParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ScheduleRunsParams {
+    pub id: String,
+    #[serde(default)]
+    pub active_only: bool,
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ScheduleJobList {
     pub jobs: Vec<ScheduleJobDetail>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ScheduleJobRunList {
+    pub public_id: String,
+    pub runs: Vec<ScheduleJobRunDetail>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -295,6 +310,22 @@ pub struct ScheduleJobDetail {
     pub last_run_unix_ms: Option<i64>,
     #[serde(default)]
     pub last_status: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ScheduleJobRunDetail {
+    pub id: i64,
+    pub task_id: String,
+    pub started_unix_ms: i64,
+    #[serde(default)]
+    pub finished_unix_ms: Option<i64>,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub last_status: Option<String>,
+    pub active: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -525,6 +556,8 @@ pub enum DaemonRequest {
     ScheduleGet(EntityIdParams),
     #[serde(rename = "schedule.list")]
     ScheduleList(NoParams),
+    #[serde(rename = "schedule.runs")]
+    ScheduleRuns(ScheduleRunsParams),
     #[serde(rename = "schedule.enable")]
     ScheduleEnable(EntityIdParams),
     #[serde(rename = "schedule.disable")]
@@ -981,6 +1014,37 @@ mod tests {
                     Some("project-alpha")
                 );
                 assert!(params.enabled);
+            }
+            other => panic!("unexpected request variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn schedule_runs_request_round_trips_typed_shape() {
+        let request = RequestEnvelope::new(
+            Some("req_sched_runs".to_string()),
+            DaemonRequest::ScheduleRuns(ScheduleRunsParams {
+                id: "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d47".to_string(),
+                active_only: true,
+                limit: Some(5),
+            }),
+        );
+
+        let value = serde_json::to_value(&request).expect("serialize request");
+        assert_eq!(value["op"], "schedule.runs");
+        assert_eq!(
+            value["params"]["id"],
+            "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d47"
+        );
+        assert_eq!(value["params"]["active_only"], true);
+        assert_eq!(value["params"]["limit"], 5);
+
+        let decoded: RequestEnvelope = serde_json::from_value(value).expect("deserialize request");
+        match decoded.request {
+            DaemonRequest::ScheduleRuns(params) => {
+                assert_eq!(params.id, "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d47");
+                assert!(params.active_only);
+                assert_eq!(params.limit, Some(5));
             }
             other => panic!("unexpected request variant: {other:?}"),
         }

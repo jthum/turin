@@ -77,6 +77,7 @@ pub fn register_schedule_dx(lua: &Lua) -> LuaResult<()> {
     let update_fn: Function = runtime_schedule.get("update")?;
     let get_fn: Function = runtime_schedule.get("get")?;
     let list_fn: Function = runtime_schedule.get("list")?;
+    let runs_fn: Function = runtime_schedule.get("runs")?;
     let enable_fn: Function = runtime_schedule.get("enable")?;
     let disable_fn: Function = runtime_schedule.get("disable")?;
     let delete_fn: Function = runtime_schedule.get("delete")?;
@@ -168,6 +169,16 @@ pub fn register_schedule_dx(lua: &Lua) -> LuaResult<()> {
             "get",
             lua.create_function(move |lua, public_id: String| {
                 call_and_raise_on_err(lua, &get_fn, public_id, "runtime.schedule.get")
+            })?,
+        )?;
+    }
+
+    {
+        let runs_fn = runs_fn.clone();
+        schedule.set(
+            "runs",
+            lua.create_function(move |lua, (public_id, opts): (String, Option<Table>)| {
+                call_and_raise_on_err(lua, &runs_fn, (public_id, opts), "runtime.schedule.runs")
             })?,
         )?;
     }

@@ -9,11 +9,12 @@ use turin_daemon_protocol::{
     ChannelAccessParams, ChannelAccessRoomParams, DaemonHandshake, DaemonRequest, EntityIdParams,
     EventEnvelope, LiveSessionTargetParams, NoParams, OpenSessionParams, PromoteTaskParams,
     RequestEnvelope, ResponseEnvelope, ResumeSessionParams, RuntimeEventsSubscribeParams,
-    ScheduleCreateParams, ScheduleJobDetail, ScheduleJobList, ScheduleUpdateParams,
-    SessionBranchCheckoutParams, SessionBranchCreateParams, SessionBranchSiblingsParams,
-    SessionIdParams, SessionListParams, SessionSearchHitKind, SessionSearchParams,
-    SessionSearchScope, SessionTitleParams, SidestepContextTargetParams, SidestepModeParams,
-    SidestepTaskParams, SubmitTaskParams, TaskIdParams, UpdateChannelParams, WaitTaskParams,
+    ScheduleCreateParams, ScheduleJobDetail, ScheduleJobList, ScheduleJobRunList,
+    ScheduleRunsParams, ScheduleUpdateParams, SessionBranchCheckoutParams,
+    SessionBranchCreateParams, SessionBranchSiblingsParams, SessionIdParams, SessionListParams,
+    SessionSearchHitKind, SessionSearchParams, SessionSearchScope, SessionTitleParams,
+    SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams, SubmitTaskParams,
+    TaskIdParams, UpdateChannelParams, WaitTaskParams,
 };
 use turin_remote_client::RemoteClient;
 
@@ -574,6 +575,23 @@ impl ControlClient {
             .request_ok(None, DaemonRequest::ScheduleList(NoParams::default()))
             .await?;
         Ok(response.jobs)
+    }
+
+    pub async fn list_schedule_runs(
+        &self,
+        id: impl Into<String>,
+        active_only: bool,
+        limit: Option<u32>,
+    ) -> Result<ScheduleJobRunList> {
+        self.request_ok(
+            None,
+            DaemonRequest::ScheduleRuns(ScheduleRunsParams {
+                id: id.into(),
+                active_only,
+                limit,
+            }),
+        )
+        .await
     }
 
     pub async fn enable_schedule(&self, id: impl Into<String>) -> Result<ScheduleJobDetail> {
