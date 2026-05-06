@@ -259,6 +259,29 @@ Important boundary:
 - worklists are not; they live in whichever state/store backend a harness chose
 - so control-plane worklist queries must carry or assume an explicit persistence target instead of pretending there is one global worklist namespace
 
+Example `worklist.items` request:
+
+```json
+{
+  "id": "req_work_items",
+  "op": "worklist.items",
+  "params": {
+    "id": "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d47",
+    "persistence": {
+      "state": { "alias": "project_alpha" }
+    },
+    "status": "active",
+    "where": {
+      "role": "browser"
+    },
+    "claimed_only": true,
+    "limit": 10
+  }
+}
+```
+
+This returns active claimed items in the targeted worklist whose metadata matches `role = "browser"`.
+
 Event stream example:
 
 ```json

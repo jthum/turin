@@ -172,6 +172,12 @@ Notes:
 
 - `worklist.*` / `workitem.get` control-plane queries are explicitly store-targeted because worklists live in arbitrary state/store backends, not in a daemon-owned global index like `jobs.db`
 - current `worklist.*` daemon operations are read-only inspection APIs; mutation still lives in the harness/runtime worklist surface
+- `worklist.items` currently supports:
+  - `status`
+  - `parent_id`
+  - metadata-aware `where = { ... }`
+  - `claimed_only`
+  - `limit`
 
 ### Top-Level Authoring Aliases
 
