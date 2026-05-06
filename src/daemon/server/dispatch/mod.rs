@@ -19,6 +19,7 @@ mod runtime;
 mod schedule;
 mod session;
 mod task;
+mod worklist;
 
 pub(super) struct DispatchContext {
     pub(super) state: Arc<RwLock<DaemonState>>,
@@ -90,6 +91,9 @@ pub(super) async fn dispatch(
         DaemonRequest::ScheduleEnable(params) => schedule::enable(id, params, &context).await,
         DaemonRequest::ScheduleDisable(params) => schedule::disable(id, params, &context).await,
         DaemonRequest::ScheduleDelete(params) => schedule::delete(id, params, &context).await,
+        DaemonRequest::WorklistList(params) => worklist::list(id, params, &context).await,
+        DaemonRequest::WorklistGet(params) => worklist::get(id, params, &context).await,
+        DaemonRequest::WorklistItems(params) => worklist::items(id, params, &context).await,
         DaemonRequest::SessionList(params) => session::list(id, params, &context).await,
         DaemonRequest::SessionListLive(params) => session::list_live(id, params, &context).await,
         DaemonRequest::SessionSearch(params) => session::search(id, params, &context).await,

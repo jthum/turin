@@ -37,6 +37,25 @@ pub struct WorkItemUpdate<'a> {
 }
 
 impl StateStore {
+    pub async fn list_worklists(&self) -> Result<Vec<WorklistRow>> {
+        let conn = self.connect().await?;
+        let mut rows = conn
+            .query(
+                r#"
+                SELECT id, public_id, name, scope_ref, metadata, created_at, updated_at
+                FROM worklists
+                ORDER BY updated_at DESC, id DESC
+                "#,
+                turso::params![],
+            )
+            .await?;
+        let mut result = Vec::new();
+        while let Some(row) = rows.next().await? {
+            result.push(map_worklist_row(&row)?);
+        }
+        Ok(result)
+    }
+
     pub async fn open_worklist(
         &self,
         name: &str,

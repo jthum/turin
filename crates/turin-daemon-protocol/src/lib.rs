@@ -261,6 +261,38 @@ pub struct ScheduleRunsParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WorklistListParams {
+    #[serde(default)]
+    pub persistence: Option<ContextPersistenceParams>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WorklistTargetParams {
+    pub id: String,
+    #[serde(default)]
+    pub persistence: Option<ContextPersistenceParams>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WorklistItemsParams {
+    pub id: String,
+    #[serde(default)]
+    pub persistence: Option<ContextPersistenceParams>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub claimed_only: bool,
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ScheduleJobList {
     pub jobs: Vec<ScheduleJobDetail>,
 }
@@ -269,6 +301,17 @@ pub struct ScheduleJobList {
 pub struct ScheduleJobRunList {
     pub public_id: String,
     pub runs: Vec<ScheduleJobRunDetail>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WorklistList {
+    pub worklists: Vec<WorklistDetail>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WorkItemList {
+    pub worklist_id: String,
+    pub items: Vec<WorkItemDetail>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -330,6 +373,63 @@ pub struct ScheduleJobRunDetail {
     #[serde(default)]
     pub last_status: Option<String>,
     pub active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WorklistDetail {
+    pub id: i64,
+    pub public_id: String,
+    pub name: String,
+    pub scope_ref: String,
+    #[serde(default)]
+    pub metadata: Option<Value>,
+    #[serde(default)]
+    pub persistence: Option<ContextPersistenceParams>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WorkItemDetail {
+    pub id: i64,
+    pub public_id: String,
+    pub worklist_id: String,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    pub title: String,
+    pub kind: String,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub content: Option<Vec<TaskInputContent>>,
+    #[serde(default)]
+    pub tools: Option<ToolsConfig>,
+    #[serde(default)]
+    pub conflict_policy: Option<String>,
+    #[serde(default)]
+    pub action: Option<ScheduleActionParams>,
+    pub status: String,
+    pub priority: i64,
+    #[serde(default)]
+    pub after: Option<Vec<String>>,
+    #[serde(default)]
+    pub metadata: Option<Value>,
+    #[serde(default)]
+    pub claim_agent_id: Option<String>,
+    #[serde(default)]
+    pub claim_session_id: Option<String>,
+    #[serde(default)]
+    pub claim_execution_id: Option<String>,
+    #[serde(default)]
+    pub claim_heartbeat_unix_ms: Option<i64>,
+    #[serde(default)]
+    pub claimed_at: Option<String>,
+    #[serde(default)]
+    pub completed_at: Option<String>,
+    #[serde(default)]
+    pub failure_reason: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -568,6 +668,12 @@ pub enum DaemonRequest {
     ScheduleDisable(EntityIdParams),
     #[serde(rename = "schedule.delete")]
     ScheduleDelete(EntityIdParams),
+    #[serde(rename = "worklist.list")]
+    WorklistList(WorklistListParams),
+    #[serde(rename = "worklist.get")]
+    WorklistGet(WorklistTargetParams),
+    #[serde(rename = "worklist.items")]
+    WorklistItems(WorklistItemsParams),
     #[serde(rename = "session.list")]
     SessionList(SessionListParams),
     #[serde(rename = "session.list_live")]
@@ -656,6 +762,7 @@ pub enum ErrorCode {
     AgentNotFound,
     TaskNotFound,
     ScheduleNotFound,
+    WorklistNotFound,
     SessionNotFound,
     HarnessNotFound,
     ChannelNotFound,
@@ -674,6 +781,7 @@ impl fmt::Display for ErrorCode {
             ErrorCode::AgentNotFound => "agent_not_found",
             ErrorCode::TaskNotFound => "task_not_found",
             ErrorCode::ScheduleNotFound => "schedule_not_found",
+            ErrorCode::WorklistNotFound => "worklist_not_found",
             ErrorCode::SessionNotFound => "session_not_found",
             ErrorCode::HarnessNotFound => "harness_not_found",
             ErrorCode::ChannelNotFound => "channel_not_found",
@@ -1049,6 +1157,68 @@ mod tests {
                 assert_eq!(params.id, "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d47");
                 assert!(params.active_only);
                 assert_eq!(params.limit, Some(5));
+            }
+            other => panic!("unexpected request variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn worklist_items_request_round_trips_typed_shape() {
+        let request = RequestEnvelope::new(
+            Some("req_worklist_items".to_string()),
+            DaemonRequest::WorklistItems(WorklistItemsParams {
+                id: "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d47".to_string(),
+                persistence: Some(ContextPersistenceParams {
+                    state: Some(StoreTargetParams {
+                        path: None,
+                        alias: Some("project_alpha".to_string()),
+                    }),
+                    store: None,
+                }),
+                status: Some("pending".to_string()),
+                parent_id: Some("0196f8fe-6e6a-7e1a-8da5-3f774f1a8d48".to_string()),
+                claimed_only: true,
+                limit: Some(10),
+            }),
+        );
+
+        let value = serde_json::to_value(&request).expect("serialize request");
+        assert_eq!(value["op"], "worklist.items");
+        assert_eq!(
+            value["params"]["id"],
+            "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d47"
+        );
+        assert_eq!(value["params"]["status"], "pending");
+        assert_eq!(
+            value["params"]["parent_id"],
+            "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d48"
+        );
+        assert_eq!(value["params"]["claimed_only"], true);
+        assert_eq!(value["params"]["limit"], 10);
+        assert_eq!(
+            value["params"]["persistence"]["state"]["alias"],
+            "project_alpha"
+        );
+
+        let decoded: RequestEnvelope = serde_json::from_value(value).expect("deserialize request");
+        match decoded.request {
+            DaemonRequest::WorklistItems(params) => {
+                assert_eq!(params.id, "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d47");
+                assert_eq!(params.status.as_deref(), Some("pending"));
+                assert_eq!(
+                    params.parent_id.as_deref(),
+                    Some("0196f8fe-6e6a-7e1a-8da5-3f774f1a8d48")
+                );
+                assert!(params.claimed_only);
+                assert_eq!(params.limit, Some(10));
+                assert_eq!(
+                    params
+                        .persistence
+                        .as_ref()
+                        .and_then(|p| p.state.as_ref())
+                        .and_then(|state| state.alias.as_deref()),
+                    Some("project_alpha")
+                );
             }
             other => panic!("unexpected request variant: {other:?}"),
         }

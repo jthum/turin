@@ -14,7 +14,8 @@ use turin_daemon_protocol::{
     SessionBranchCreateParams, SessionBranchSiblingsParams, SessionIdParams, SessionListParams,
     SessionSearchHitKind, SessionSearchParams, SessionSearchScope, SessionTitleParams,
     SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams, SubmitTaskParams,
-    TaskIdParams, UpdateChannelParams, WaitTaskParams,
+    TaskIdParams, UpdateChannelParams, WaitTaskParams, WorkItemList, WorklistDetail,
+    WorklistItemsParams, WorklistList, WorklistListParams, WorklistTargetParams,
 };
 use turin_remote_client::RemoteClient;
 
@@ -616,6 +617,33 @@ impl ControlClient {
             DaemonRequest::ScheduleDelete(EntityIdParams { id: id.into() }),
         )
         .await
+    }
+
+    pub async fn list_worklists(&self, params: WorklistListParams) -> Result<Vec<WorklistDetail>> {
+        let response: WorklistList = self
+            .request_ok(None, DaemonRequest::WorklistList(params))
+            .await?;
+        Ok(response.worklists)
+    }
+
+    pub async fn get_worklist(
+        &self,
+        id: impl Into<String>,
+        persistence: Option<turin_daemon_protocol::ContextPersistenceParams>,
+    ) -> Result<WorklistDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::WorklistGet(WorklistTargetParams {
+                id: id.into(),
+                persistence,
+            }),
+        )
+        .await
+    }
+
+    pub async fn list_worklist_items(&self, params: WorklistItemsParams) -> Result<WorkItemList> {
+        self.request_ok(None, DaemonRequest::WorklistItems(params))
+            .await
     }
 
     pub async fn list_sessions(&self, limit: usize, offset: usize) -> Result<Vec<SessionSummary>> {

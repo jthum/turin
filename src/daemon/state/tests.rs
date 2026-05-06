@@ -698,6 +698,176 @@ provider = "noop"
 }
 
 #[tokio::test]
+async fn worklist_queries_can_target_named_state_store_and_filter_items() -> Result<()> {
+    let temp = tempdir()?;
+    std::fs::create_dir_all(temp.path().join("default-harness"))?;
+    std::fs::write(
+        temp.path().join("default-harness").join("main.lua"),
+        "-- bootstrap\n",
+    )?;
+    let config_path = temp.path().join(".turin").join("config.toml");
+    std::fs::create_dir_all(config_path.parent().expect("config parent"))?;
+    std::fs::write(
+        &config_path,
+        r#"[agent]
+id = "default"
+system_prompt = "bootstrap"
+model = "mock-model"
+provider = "mock"
+
+[kernel]
+workspace_root = "."
+
+[persistence.state]
+path = "state.db"
+
+[persistence.states.project_alpha]
+path = "project-alpha.db"
+
+[harness]
+directory = "default-harness"
+fs_root = "."
+
+[providers.mock]
+type = "mock"
+
+[embeddings]
+provider = "noop"
+"#,
+    )?;
+
+    let state = DaemonState::load(&config_path).await?;
+    let project_store = state
+        .kernel
+        .store_manager()
+        .open(&StoreSelector::Alias("project_alpha".to_string()))
+        .await?;
+    let worklist = project_store
+        .open_worklist("qa", "project:web-app", Some(r#"{"lane":"qa"}"#))
+        .await?;
+
+    let root = project_store
+        .create_work_item(crate::persistence::state::WorkItemInsert {
+            public_id: uuid::Uuid::now_v7(),
+            worklist_id: worklist.id,
+            parent_item_id: None,
+            title: "Run smoke checks",
+            item_kind: "prompt",
+            prompt: Some("Run smoke checks"),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action_name: None,
+            action_params: None,
+            priority: 10,
+            after_ids: None,
+            metadata: Some(r#"{"role":"qa"}"#),
+        })
+        .await?;
+    let root_public_id = uuid::Uuid::from_slice(&root.public_id)?.to_string();
+
+    let child = project_store
+        .create_work_item(crate::persistence::state::WorkItemInsert {
+            public_id: uuid::Uuid::now_v7(),
+            worklist_id: worklist.id,
+            parent_item_id: Some(root.id),
+            title: "Capture browser screenshot",
+            item_kind: "action",
+            prompt: None,
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action_name: Some("qa.capture"),
+            action_params: Some(r#"{"browser":"chromium"}"#),
+            priority: 5,
+            after_ids: Some(&format!("[\"{}\"]", root_public_id)),
+            metadata: Some(r#"{"role":"browser"}"#),
+        })
+        .await?;
+    let claimed = project_store
+        .try_claim_work_item(
+            child.id,
+            "default",
+            Some("sess_qa"),
+            Some("exec_qa"),
+            1_700_000_000_000,
+        )
+        .await?;
+    assert!(claimed);
+
+    let persistence = ContextPersistenceParams {
+        state: Some(StoreTargetParams {
+            path: None,
+            alias: Some("project_alpha".to_string()),
+        }),
+        store: None,
+    };
+
+    let worklists = state
+        .list_worklists(Some(&persistence), Some("qa"), Some("project:web-app"))
+        .await?;
+    assert_eq!(worklists.len(), 1);
+    assert_eq!(worklists[0].name, "qa");
+    assert_eq!(worklists[0].scope_ref, "project:web-app");
+    assert_eq!(worklists[0].metadata, Some(json!({ "lane": "qa" })));
+
+    let detail = state
+        .worklist_detail(&worklists[0].public_id, Some(&persistence))
+        .await?
+        .expect("worklist detail present");
+    assert_eq!(detail.public_id, worklists[0].public_id);
+
+    let claimed_items = state
+        .worklist_items(
+            &worklists[0].public_id,
+            Some(&persistence),
+            Some("pending"),
+            Some("0196f8fe-6e6a-7e1a-8da5-3f774f1a8d48"),
+            true,
+            Some(10),
+        )
+        .await?
+        .expect("claimed items result present");
+    assert!(claimed_items.items.is_empty());
+
+    let child_items = state
+        .worklist_items(
+            &worklists[0].public_id,
+            Some(&persistence),
+            Some("active"),
+            Some(&root_public_id),
+            true,
+            Some(10),
+        )
+        .await?
+        .expect("child items result present");
+    assert_eq!(child_items.items.len(), 1);
+    assert_eq!(child_items.items[0].title, "Capture browser screenshot");
+    assert_eq!(child_items.items[0].kind, "action");
+    assert_eq!(
+        child_items.items[0].parent_id.as_deref(),
+        Some(root_public_id.as_str())
+    );
+    assert_eq!(
+        child_items.items[0]
+            .action
+            .as_ref()
+            .map(|action| action.name.as_str()),
+        Some("qa.capture")
+    );
+    assert_eq!(
+        child_items.items[0].metadata,
+        Some(json!({ "role": "browser" }))
+    );
+    assert_eq!(
+        child_items.items[0].claim_execution_id.as_deref(),
+        Some("exec_qa")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn scheduled_action_job_can_disable_agent() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;
