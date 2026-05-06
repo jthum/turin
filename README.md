@@ -420,7 +420,7 @@ Turin’s harness surface is split between **canonical runtime APIs** and **ergo
 - `runtime.agent`
   - `list`, `get_status`, `submit`, `await`
 - `runtime.schedule`
-  - `create`, `get`, `list`, `enable`, `disable`, `delete`
+  - `create`, `get`, `list`, `runs`, `update`, `enable`, `disable`, `delete`
 - `runtime.worklist`
   - `open`
 - `runtime.policy`

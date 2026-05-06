@@ -151,6 +151,21 @@ Notes:
   - `agent.disable`
   - `channel.enable`
   - `channel.disable`
+  - `worklist.dispatch_next`
+  - `worklist.release_stale`
+- worklist scheduled actions accept params such as:
+  - `name`
+  - `scope`
+  - `state`
+  - `store`
+  - `where`
+  - `limit`
+  - `stale_after_seconds`
+- `worklist.dispatch_next` opens the named worklist and dispatches the next eligible root item:
+  - prompt items become normal Turin tasks
+  - action items run through the same action registry as other scheduled actions
+- `worklist.release_stale` releases orphaned claimed root items back to pending state
+- nested `worklist.*` action items are rejected inside `worklist.dispatch_next`
 - custom action names may be defined at harness load time with:
   - `action.define("qa.run_smoke", function(params) ... end)`
 - `runtime.schedule.create(...)` / `update(...)` may also carry structured `content`, `tools`, and `conflict_policy` fields when a scheduled prompt needs richer task input than a bare string

@@ -332,6 +332,21 @@ Notes:
   - `agent.disable`
   - `channel.enable`
   - `channel.disable`
+  - `worklist.dispatch_next`
+  - `worklist.release_stale`
+- worklist scheduled action params may include:
+  - `name`
+  - `scope`
+  - `state`
+  - `store`
+  - `where`
+  - `limit`
+  - `stale_after_seconds`
+- `worklist.dispatch_next` opens the named worklist, claims the next eligible root item, and dispatches it:
+  - prompt items submit a normal Turin task
+  - action items execute through the same built-in or harness-defined action registry
+- `worklist.release_stale` releases orphaned claimed root items back to pending state
+- nested `worklist.*` action items are rejected inside `worklist.dispatch_next`
 - custom scheduled action names may be registered during harness load with:
 
 ```lua
@@ -1076,6 +1091,14 @@ Rules:
   - `agent.disable`
   - `channel.enable`
   - `channel.disable`
+  - `worklist.dispatch_next`
+  - `worklist.release_stale`
+- `worklist.dispatch_next` / `worklist.release_stale` accept:
+  - `name` (required)
+  - optional `scope`, `state`, `store`
+  - optional `where`, `limit`
+  - `stale_after_seconds` for stale-claim release
+- `worklist.dispatch_next` only considers eligible root items and rejects nested `worklist.*` recursion
 - other action names may be harness-defined, provided the target harness registered them with `action.define(...)`
 - `runtime.schedule.list(...)` currently supports:
   - `{ agent = "reviewer" }`

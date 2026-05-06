@@ -390,6 +390,20 @@ Notes:
   - `agent.disable`
   - `channel.enable`
   - `channel.disable`
+  - `worklist.dispatch_next`
+  - `worklist.release_stale`
+- worklist scheduled actions use the same payload table shape:
+  - `{ action = "worklist.dispatch_next", params = { name = "qa", where = { role = "browser" } } }`
+  - `{ action = "worklist.release_stale", params = { name = "qa", stale_after_seconds = 600 } }`
+- `worklist.dispatch_next`:
+  - opens the named worklist in the job's targeted state/store context
+  - claims the next eligible root item
+  - dispatches prompt items as normal Turin tasks
+  - dispatches action items through the same built-in or harness-defined action registry
+- `worklist.release_stale`:
+  - finds orphaned claimed root items in the named worklist
+  - releases them back to pending state
+- nested `worklist.*` action items are not recursively dispatched from `worklist.dispatch_next`
 - scheduler job detail now also exposes:
   - `last_error_code`
   - `failure_count`
