@@ -87,7 +87,7 @@ pub struct CreateAgentInput {
     pub system_prompt: Option<String>,
     pub thinking: Option<ThinkingConfig>,
     pub harness: Option<String>,
-    pub runtime_idle_secs: Option<u64>,
+    pub idle_timeout_seconds: Option<u64>,
     pub enabled: bool,
     pub tools: ToolsConfig,
 }
@@ -98,7 +98,7 @@ pub struct UpdateAgentInput {
     pub model: Option<String>,
     pub system_prompt: Option<String>,
     pub thinking: Option<ThinkingConfig>,
-    pub runtime_idle_secs: Option<u64>,
+    pub idle_timeout_seconds: Option<u64>,
     pub tools: Option<ToolsConfig>,
 }
 
@@ -107,7 +107,7 @@ pub struct CreateChannelInput {
     pub id: String,
     pub kind: String,
     pub agent_id: String,
-    pub idle_ttl_secs: Option<u64>,
+    pub idle_timeout_seconds: Option<u64>,
     pub enabled: bool,
     pub settings: serde_json::Value,
 }
@@ -116,7 +116,7 @@ pub struct CreateChannelInput {
 pub struct UpdateChannelInput {
     pub kind: Option<String>,
     pub agent_id: Option<String>,
-    pub idle_ttl_secs: Option<u64>,
+    pub idle_timeout_seconds: Option<u64>,
     pub settings: Option<serde_json::Value>,
 }
 

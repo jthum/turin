@@ -88,7 +88,7 @@ pub(super) async fn create(
             system_prompt: params.system_prompt,
             thinking: params.thinking,
             harness: params.harness,
-            runtime_idle_secs: params.runtime_idle_secs,
+            idle_timeout_seconds: params.idle_timeout_seconds,
             enabled: params.enabled,
             tools: params.tools,
         })
@@ -172,7 +172,7 @@ pub(super) async fn update(
                 model: params.model,
                 system_prompt: params.system_prompt,
                 thinking: params.thinking,
-                runtime_idle_secs: params.runtime_idle_secs,
+                idle_timeout_seconds: params.idle_timeout_seconds,
                 tools: params.tools,
             },
         )

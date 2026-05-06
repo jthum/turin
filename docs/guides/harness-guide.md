@@ -691,8 +691,8 @@ function on_turn_prepare(ctx)
   -- Request transport tuning for this turn
   ctx.request_options = {
     headers = { ["x-run-purpose"] = "interactive" },
-    request_timeout_secs = 45,
-    total_timeout_secs = 90,
+    request_timeout_seconds = 45,
+    total_timeout_seconds = 90,
   }
 
   return ALLOW

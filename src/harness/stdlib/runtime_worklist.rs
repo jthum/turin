@@ -67,7 +67,7 @@ fn runtime_store_settings(
         .unwrap_or(128)
         .clamp(1, u64::MAX) as usize;
     let idle_close_secs = snapshot
-        .get("db.idle_close_secs")
+        .get("db.idle_close_seconds")
         .and_then(|value| value.as_u64())
         .unwrap_or(300);
     Ok((path_scope, max_open_handles, idle_close_secs))

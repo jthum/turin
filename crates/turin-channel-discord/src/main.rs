@@ -42,8 +42,8 @@ struct RunArgs {
     bindings_path: PathBuf,
     #[arg(long)]
     access_state_path: PathBuf,
-    #[arg(long)]
-    idle_ttl_secs: Option<u64>,
+    #[arg(long, alias = "idle-ttl-secs")]
+    idle_timeout_seconds: Option<u64>,
     #[arg(long)]
     settings_json: String,
 }
@@ -93,7 +93,7 @@ async fn run(args: RunArgs) -> Result<()> {
             channel_id: args.channel_id.clone(),
             state_path: args.bindings_path,
             access_state_path: args.access_state_path,
-            idle_ttl: args.idle_ttl_secs.map(Duration::from_secs),
+            idle_ttl: args.idle_timeout_seconds.map(Duration::from_secs),
             access_policy,
             tools,
         },

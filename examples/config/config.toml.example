@@ -103,7 +103,7 @@ mode = "auto"                        # auto | stateful | stateless
 [kernel]
 workspace_root = "."
 max_turns = 50
-heartbeat_interval_secs = 30
+heartbeat_interval_seconds = 30
 initial_spawn_depth = 0
 
 [persistence.state]
@@ -167,8 +167,8 @@ api_key_env = "ANTHROPIC_API_KEY"
 # Anthropic-compatible proxies should usually include /v1
 # MiniMax example: "https://api.minimax.io/anthropic/v1"
 # max_retries = 2
-# request_timeout_secs = 60
-# total_timeout_secs = 120
+# request_timeout_seconds = 60
+# total_timeout_seconds = 120
 # [providers.anthropic.headers]
 # anthropic-beta = "output-128k-2025-02-19"
 
@@ -178,8 +178,8 @@ api_key_env = "OPENAI_API_KEY"
 # base_url = "https://api.openai.com/v1"
 # context_window_tokens = 128000
 # max_retries = 2
-# request_timeout_secs = 60
-# total_timeout_secs = 120
+# request_timeout_seconds = 60
+# total_timeout_seconds = 120
 # [providers.openai.headers]
 # x-foo = "bar"
 

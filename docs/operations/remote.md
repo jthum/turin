@@ -33,7 +33,7 @@ Add or review the `[remote]` section in `.turin/config.toml`:
 [remote]
 bind = "127.0.0.1:9324"
 auth_token_env = "TURIN_REMOTE_TOKEN"
-event_keepalive_secs = 15
+event_keepalive_seconds = 15
 allow_non_loopback = false
 ```
 
@@ -41,14 +41,14 @@ Setting notes:
 
 - `bind`: HTTP listen address for `turin-remote`
 - `auth_token_env`: env var that contains the bearer token required by remote clients
-- `event_keepalive_secs`: keepalive interval for SSE/WebSocket streams
+- `event_keepalive_seconds`: keepalive interval for SSE/WebSocket streams
 - `allow_non_loopback`: require explicit opt-in before binding to `0.0.0.0`, LAN, or public interfaces
 
 Defaults:
 
 - `bind = "127.0.0.1:9324"`
 - `auth_token_env = "TURIN_REMOTE_TOKEN"`
-- `event_keepalive_secs = 15`
+- `event_keepalive_seconds = 15`
 - `allow_non_loopback = false`
 
 ## Start The Remote Bridge
@@ -73,7 +73,7 @@ turin-remote \
   --bind 0.0.0.0:9324 \
   --allow-non-loopback \
   --auth-token-env TURIN_REMOTE_TOKEN \
-  --event-keepalive-secs 10
+  --event-keepalive-seconds 10
 ```
 
 You can also pass the token directly:

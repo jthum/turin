@@ -61,7 +61,7 @@ system_prompt = "Harness example test"
 [kernel]
 workspace_root = "{workspace_root}"
 max_turns = 4
-heartbeat_interval_secs = 30
+heartbeat_interval_seconds = 30
 initial_spawn_depth = 0
 
 [persistence.state]
@@ -331,7 +331,7 @@ async fn daemon_agent_crud_round_trip_over_endpoint() -> Result<()> {
                     system_prompt: Some("Review docs".to_string()),
                     thinking: None,
                     harness: None,
-                    runtime_idle_secs: Some(45),
+                    idle_timeout_seconds: Some(45),
                     enabled: true,
                     tools: Default::default(),
                 },
@@ -361,7 +361,7 @@ async fn daemon_agent_crud_round_trip_over_endpoint() -> Result<()> {
                     model: Some("mock-model-v2".to_string()),
                     system_prompt: Some("Review docs carefully".to_string()),
                     thinking: None,
-                    runtime_idle_secs: Some(60),
+                    idle_timeout_seconds: Some(60),
                     tools: None,
                 },
             ))
@@ -1136,7 +1136,7 @@ async fn daemon_event_subscription_receives_snapshot_and_mutation() -> Result<()
                 system_prompt: Some("Write".to_string()),
                 thinking: None,
                 harness: None,
-                runtime_idle_secs: None,
+                idle_timeout_seconds: None,
                 enabled: true,
                 tools: Default::default(),
             },
@@ -1189,7 +1189,7 @@ async fn daemon_managed_subscription_reconnects_after_restart() -> Result<()> {
                     system_prompt: Some("Before restart".to_string()),
                     thinking: None,
                     harness: None,
-                    runtime_idle_secs: None,
+                    idle_timeout_seconds: None,
                     enabled: true,
                     tools: Default::default(),
                 },
@@ -1237,7 +1237,7 @@ async fn daemon_managed_subscription_reconnects_after_restart() -> Result<()> {
                     system_prompt: Some("After restart".to_string()),
                     thinking: None,
                     harness: None,
-                    runtime_idle_secs: None,
+                    idle_timeout_seconds: None,
                     enabled: true,
                     tools: Default::default(),
                 },
@@ -1280,7 +1280,7 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
                 system_prompt: Some("Other".to_string()),
                 thinking: None,
                 harness: None,
-                runtime_idle_secs: None,
+                idle_timeout_seconds: None,
                 enabled: true,
                 tools: Default::default(),
             },
@@ -1297,7 +1297,7 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
                 system_prompt: Some("Write".to_string()),
                 thinking: None,
                 harness: None,
-                runtime_idle_secs: None,
+                idle_timeout_seconds: None,
                 enabled: true,
                 tools: Default::default(),
             },
@@ -1441,7 +1441,7 @@ async fn daemon_event_subscription_scopes_initial_snapshot_and_includes_channel_
                 system_prompt: Some("Write".to_string()),
                 thinking: None,
                 harness: None,
-                runtime_idle_secs: None,
+                idle_timeout_seconds: None,
                 enabled: true,
                 tools: Default::default(),
             },
@@ -1454,7 +1454,7 @@ async fn daemon_event_subscription_scopes_initial_snapshot_and_includes_channel_
                 id: "writer-fs".to_string(),
                 kind: "fs".to_string(),
                 agent_id: "writer".to_string(),
-                idle_ttl_secs: Some(600),
+                idle_timeout_seconds: Some(600),
                 enabled: true,
                 settings: Some(serde_json::json!({
                     "inbox_dir": "inbox",
@@ -1502,7 +1502,7 @@ async fn daemon_event_subscription_receives_channel_runtime_events() -> Result<(
                     id: "fs-events".to_string(),
                     kind: "fs".to_string(),
                     agent_id: "default".to_string(),
-                    idle_ttl_secs: Some(600),
+                    idle_timeout_seconds: Some(600),
                     enabled: true,
                     settings: Some(serde_json::json!({
                         "inbox_dir": "inbox",
@@ -1574,7 +1574,7 @@ async fn daemon_channel_registry_round_trip_over_endpoint() -> Result<()> {
 kind = "discord"
 agent_id = "default"
 enabled = true
-idle_ttl_secs = 600
+idle_timeout_seconds = 600
 token_env = "DISCORD_TOKEN"
 channel_id = "1234567890"
 "#,
@@ -1625,7 +1625,7 @@ async fn daemon_channel_management_round_trip_over_endpoint() -> Result<()> {
                     id: "discord".to_string(),
                     kind: "discord".to_string(),
                     agent_id: "default".to_string(),
-                    idle_ttl_secs: Some(600),
+                    idle_timeout_seconds: Some(600),
                     enabled: true,
                     settings: Some(serde_json::json!({
                         "token_env": "DISCORD_TOKEN",
@@ -1646,7 +1646,7 @@ async fn daemon_channel_management_round_trip_over_endpoint() -> Result<()> {
                     id: "discord".to_string(),
                     kind: None,
                     agent_id: None,
-                    idle_ttl_secs: Some(900),
+                    idle_timeout_seconds: Some(900),
                     settings: Some(serde_json::json!({
                         "token_env": "NEW_DISCORD_TOKEN",
                         "guild_id": "12345",
@@ -1655,7 +1655,7 @@ async fn daemon_channel_management_round_trip_over_endpoint() -> Result<()> {
             ))
             .await?,
     );
-    assert_eq!(updated["idle_ttl_secs"], 900);
+    assert_eq!(updated["idle_timeout_seconds"], 900);
     assert_eq!(updated["settings"]["token_env"], "NEW_DISCORD_TOKEN");
     assert_eq!(updated["settings"]["guild_id"], "12345");
     assert_eq!(updated["settings"]["channel_id"], "1234567890");
@@ -1716,7 +1716,7 @@ async fn daemon_channel_create_rejects_invalid_known_kind_settings() -> Result<(
                 id: "discord-bad".to_string(),
                 kind: "discord".to_string(),
                 agent_id: "default".to_string(),
-                idle_ttl_secs: Some(600),
+                idle_timeout_seconds: Some(600),
                 enabled: true,
                 settings: Some(serde_json::json!({
                     "token_env": "DISCORD_TOKEN_ONLY"
@@ -1751,7 +1751,7 @@ async fn daemon_fs_channel_runtime_processes_inbox_and_reports_runtime_status() 
                     id: "fs-local".to_string(),
                     kind: "fs".to_string(),
                     agent_id: "default".to_string(),
-                    idle_ttl_secs: Some(600),
+                    idle_timeout_seconds: Some(600),
                     enabled: true,
                     settings: Some(serde_json::json!({
                         "inbox_dir": "inbox",
@@ -1955,7 +1955,7 @@ async fn daemon_discord_channel_reports_failed_runtime_when_token_is_missing() -
                     id: "discord-local".to_string(),
                     kind: "discord".to_string(),
                     agent_id: "default".to_string(),
-                    idle_ttl_secs: Some(600),
+                    idle_timeout_seconds: Some(600),
                     enabled: true,
                     settings: Some(serde_json::json!({
                         "token_env": "DISCORD_TOKEN_MISSING_FOR_TEST",
@@ -2019,7 +2019,7 @@ async fn daemon_telegram_channel_management_round_trip_over_endpoint() -> Result
                     id: "telegram-local".to_string(),
                     kind: "telegram".to_string(),
                     agent_id: "default".to_string(),
-                    idle_ttl_secs: Some(600),
+                    idle_timeout_seconds: Some(600),
                     enabled: false,
                     settings: Some(serde_json::json!({
                         "token_env": "TELEGRAM_BOT_TOKEN",
@@ -2041,7 +2041,7 @@ async fn daemon_telegram_channel_management_round_trip_over_endpoint() -> Result
                     id: "telegram-local".to_string(),
                     kind: None,
                     agent_id: None,
-                    idle_ttl_secs: Some(900),
+                    idle_timeout_seconds: Some(900),
                     settings: Some(serde_json::json!({
                         "workspace_id": "ops",
                         "poll_interval_ms": 250,
@@ -2050,7 +2050,7 @@ async fn daemon_telegram_channel_management_round_trip_over_endpoint() -> Result
             ))
             .await?,
     );
-    assert_eq!(updated["idle_ttl_secs"], 900);
+    assert_eq!(updated["idle_timeout_seconds"], 900);
     assert_eq!(updated["settings"]["workspace_id"], "ops");
     assert_eq!(updated["settings"]["chat_id"], -100123456);
 
@@ -2107,7 +2107,7 @@ async fn daemon_channel_create_rejects_invalid_telegram_settings() -> Result<()>
                 id: "telegram-bad".to_string(),
                 kind: "telegram".to_string(),
                 agent_id: "default".to_string(),
-                idle_ttl_secs: Some(600),
+                idle_timeout_seconds: Some(600),
                 enabled: true,
                 settings: Some(serde_json::json!({
                     "token_env": "TELEGRAM_BOT_TOKEN",
@@ -2143,7 +2143,7 @@ async fn daemon_channel_create_accepts_multi_chat_telegram_settings() -> Result<
                     id: "telegram-multi".to_string(),
                     kind: "telegram".to_string(),
                     agent_id: "default".to_string(),
-                    idle_ttl_secs: Some(600),
+                    idle_timeout_seconds: Some(600),
                     enabled: false,
                     settings: Some(serde_json::json!({
                         "token_env": "TELEGRAM_BOT_TOKEN",
@@ -2175,7 +2175,7 @@ async fn daemon_channel_access_commands_manage_pairing_state() -> Result<()> {
                     id: "telegram-pairing".to_string(),
                     kind: "telegram".to_string(),
                     agent_id: "default".to_string(),
-                    idle_ttl_secs: Some(600),
+                    idle_timeout_seconds: Some(600),
                     enabled: false,
                     settings: Some(serde_json::json!({
                         "token_env": "TELEGRAM_BOT_TOKEN",
@@ -2245,7 +2245,7 @@ async fn daemon_telegram_channel_reports_failed_runtime_when_token_is_missing() 
                     id: "telegram-runtime".to_string(),
                     kind: "telegram".to_string(),
                     agent_id: "default".to_string(),
-                    idle_ttl_secs: Some(600),
+                    idle_timeout_seconds: Some(600),
                     enabled: true,
                     settings: Some(serde_json::json!({
                         "token_env": "TELEGRAM_TOKEN_MISSING_FOR_TEST",

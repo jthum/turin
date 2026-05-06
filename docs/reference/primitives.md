@@ -927,7 +927,7 @@ Blob values are encoded as:
 { __type = "blob", hex = "..." }
 ```
 
-Runtime policy influences DB behavior (`db.allow_dynamic_open`, `db.path_scope`, `db.max_open_handles`, `db.idle_close_secs`).
+Runtime policy influences DB behavior (`db.allow_dynamic_open`, `db.path_scope`, `db.max_open_handles`, `db.idle_close_seconds`).
 
 ## `runtime.agent`
 
@@ -1310,11 +1310,11 @@ Common runtime policy keys (current):
 
 - `spawn.enabled`
 - `spawn.max_depth`
-- `runtime.idle_secs`
+- `runtime.idle_timeout_seconds`
 - `db.allow_dynamic_open`
 - `db.path_scope`
 - `db.max_open_handles`
-- `db.idle_close_secs`
+- `db.idle_close_seconds`
 - `queue.max_depth`
 - `tool.exec_enabled`
 - `hook.token_usage.reject_mode` (`informational` | `enforce_task` | `enforce_session`)
@@ -1431,7 +1431,7 @@ Selector-derived scoped data aliases based on the active `RuntimeIdentity`.
 
 ### Runtime retention
 
-Use agent config or `runtime.policy.set("runtime.idle_secs", value, scope?)` to control
+Use agent config or `runtime.policy.set("runtime.idle_timeout_seconds", value, scope?)` to control
 when a runtime hibernates after a logical request completes.
 
 - `0` => hibernate immediately after the request finishes

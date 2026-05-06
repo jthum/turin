@@ -20,7 +20,7 @@ An external channel sidecar is expected to expose these CLI commands:
 
 - `describe`
 - `validate-settings --settings-json <json>`
-- `run --channel-id <id> --agent-id <id> --daemon-endpoint <path> --bindings-path <path> --access-state-path <path> --settings-json <json> [--idle-ttl-secs <secs>]`
+- `run --channel-id <id> --agent-id <id> --daemon-endpoint <path> --bindings-path <path> --access-state-path <path> --settings-json <json> [--idle-timeout-seconds <seconds>]`
 - `setup-auth-flow-start --request-json <json>`
 - `setup-auth-flow-poll --request-json <json>`
 

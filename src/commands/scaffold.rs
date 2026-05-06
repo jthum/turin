@@ -367,12 +367,12 @@ pub fn render_turin_toml(options: &InitOptions) -> String {
     ));
     toml.push_str(&format!("model = \"{}\"\n", options.model));
     toml.push_str(&format!("provider = \"{}\"\n", options.provider.alias()));
-    toml.push_str("runtime_idle_secs = 20\n\n");
+    toml.push_str("idle_timeout_seconds = 20\n\n");
 
     toml.push_str("[kernel]\n");
     toml.push_str("workspace_root = \".\"\n");
     toml.push_str("max_turns = 50\n");
-    toml.push_str("heartbeat_interval_secs = 30\n");
+    toml.push_str("heartbeat_interval_seconds = 30\n");
     toml.push_str("initial_spawn_depth = 0\n\n");
 
     toml.push_str("[persistence.state]\n");

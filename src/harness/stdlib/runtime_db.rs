@@ -27,7 +27,7 @@ fn db_runtime_settings(snapshot: &HashMap<String, serde_json::Value>) -> DbRunti
         path_scope: store_path_scope_from_snapshot(snapshot),
         max_open_handles: policy_u64(snapshot, "db.max_open_handles", 128).clamp(1, u64::MAX)
             as usize,
-        idle_close_secs: policy_u64(snapshot, "db.idle_close_secs", 300),
+        idle_close_secs: policy_u64(snapshot, "db.idle_close_seconds", 300),
     }
 }
 

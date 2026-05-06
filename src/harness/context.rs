@@ -18,8 +18,8 @@ pub struct RequestOptionsOverride {
     #[serde(default)]
     pub headers: HashMap<String, String>,
     pub max_retries: Option<u32>,
-    pub request_timeout_secs: Option<u64>,
-    pub total_timeout_secs: Option<u64>,
+    pub request_timeout_seconds: Option<u64>,
+    pub total_timeout_seconds: Option<u64>,
 }
 
 /// Inner state shareable between Rust and Lua
@@ -708,13 +708,13 @@ fn merge_request_option_override(
         options = options.with_max_retries(max_retries);
     }
 
-    if overrides.request_timeout_secs.is_some() || overrides.total_timeout_secs.is_some() {
+    if overrides.request_timeout_seconds.is_some() || overrides.total_timeout_seconds.is_some() {
         let mut timeout_policy = options.timeout_policy.clone().unwrap_or_default();
-        if let Some(request_timeout_secs) = overrides.request_timeout_secs {
-            timeout_policy.request_timeout = Some(Duration::from_secs(request_timeout_secs));
+        if let Some(request_timeout_seconds) = overrides.request_timeout_seconds {
+            timeout_policy.request_timeout = Some(Duration::from_secs(request_timeout_seconds));
         }
-        if let Some(total_timeout_secs) = overrides.total_timeout_secs {
-            timeout_policy.total_timeout = Some(Duration::from_secs(total_timeout_secs));
+        if let Some(total_timeout_seconds) = overrides.total_timeout_seconds {
+            timeout_policy.total_timeout = Some(Duration::from_secs(total_timeout_seconds));
         }
         options = options.with_timeout_policy(timeout_policy);
     }

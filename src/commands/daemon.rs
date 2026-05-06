@@ -109,7 +109,7 @@ struct AgentDetailView {
     model: String,
     system_prompt: Option<String>,
     harness: Option<String>,
-    runtime_idle_secs: Option<u64>,
+    idle_timeout_seconds: Option<u64>,
     has_local_harness: bool,
 }
 
@@ -129,7 +129,7 @@ struct ChannelDetailView {
     enabled: bool,
     kind: String,
     agent_id: String,
-    idle_ttl_secs: Option<u64>,
+    idle_timeout_seconds: Option<u64>,
     settings: Value,
     #[serde(default)]
     adapter: Option<ChannelAdapterManifest>,

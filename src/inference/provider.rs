@@ -350,17 +350,17 @@ pub fn build_request_options(provider_config: &ProviderConfig) -> Result<Request
         options = options.with_max_retries(max_retries);
     }
 
-    if provider_config.request_timeout_secs.is_some()
-        || provider_config.total_timeout_secs.is_some()
+    if provider_config.request_timeout_seconds.is_some()
+        || provider_config.total_timeout_seconds.is_some()
     {
         let mut timeout_policy = TimeoutPolicy::default();
-        if let Some(request_timeout_secs) = provider_config.request_timeout_secs {
+        if let Some(request_timeout_seconds) = provider_config.request_timeout_seconds {
             timeout_policy =
-                timeout_policy.with_request_timeout(Duration::from_secs(request_timeout_secs));
+                timeout_policy.with_request_timeout(Duration::from_secs(request_timeout_seconds));
         }
-        if let Some(total_timeout_secs) = provider_config.total_timeout_secs {
+        if let Some(total_timeout_seconds) = provider_config.total_timeout_seconds {
             timeout_policy =
-                timeout_policy.with_total_timeout(Duration::from_secs(total_timeout_secs));
+                timeout_policy.with_total_timeout(Duration::from_secs(total_timeout_seconds));
         }
         options = options.with_timeout_policy(timeout_policy);
     }

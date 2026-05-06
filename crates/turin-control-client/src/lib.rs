@@ -181,7 +181,7 @@ pub struct AgentDetail {
     pub model: String,
     pub system_prompt: Option<String>,
     pub harness: Option<String>,
-    pub runtime_idle_secs: Option<u64>,
+    pub idle_timeout_seconds: Option<u64>,
     pub has_local_harness: bool,
 }
 
@@ -192,7 +192,7 @@ pub struct ChannelDetail {
     pub enabled: bool,
     pub kind: String,
     pub agent_id: String,
-    pub idle_ttl_secs: Option<u64>,
+    pub idle_timeout_seconds: Option<u64>,
     pub settings: Value,
     #[serde(default)]
     pub adapter: Option<ChannelAdapterManifest>,
@@ -1060,7 +1060,7 @@ impl ControlClient {
                 id: channel_id.to_string(),
                 kind: None,
                 agent_id: None,
-                idle_ttl_secs: None,
+                idle_timeout_seconds: None,
                 settings: Some(settings),
             }),
         )

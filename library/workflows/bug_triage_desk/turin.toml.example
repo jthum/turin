@@ -8,7 +8,7 @@ mode = "auto"
 [kernel]
 workspace_root = "."
 max_turns = 50
-heartbeat_interval_secs = 30
+heartbeat_interval_seconds = 30
 initial_spawn_depth = 0
 
 [persistence.state]

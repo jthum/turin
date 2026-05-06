@@ -138,7 +138,7 @@ struct DesiredChannel {
     kind: String,
     agent_id: String,
     directory: PathBuf,
-    idle_ttl_secs: Option<u64>,
+    idle_timeout_seconds: Option<u64>,
     settings: serde_json::Value,
 }
 
@@ -149,7 +149,7 @@ impl DesiredChannel {
             self.kind,
             self.agent_id,
             self.directory.display(),
-            self.idle_ttl_secs
+            self.idle_timeout_seconds
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "none".to_string()),
             serde_json::to_string(&self.settings).unwrap_or_default()
@@ -216,7 +216,7 @@ impl ChannelRuntimeManager {
                 kind: channel.kind.clone(),
                 agent_id: channel.agent_id.clone(),
                 directory: channel.directory.clone(),
-                idle_ttl_secs: channel.idle_ttl_secs,
+                idle_timeout_seconds: channel.idle_timeout_seconds,
                 settings: serde_json::to_value(channel.extra.clone()).unwrap_or_default(),
             })
             .collect();
@@ -490,7 +490,7 @@ impl ChannelRuntimeManager {
                         channel_id: channel.id.clone(),
                         state_path: binding_state,
                         access_state_path: access_state,
-                        idle_ttl: channel.idle_ttl_secs.map(Duration::from_secs),
+                        idle_ttl: channel.idle_timeout_seconds.map(Duration::from_secs),
                         access_policy,
                         tools,
                     },
@@ -574,8 +574,10 @@ impl ChannelRuntimeManager {
                     .stdout(Stdio::inherit())
                     .stderr(Stdio::piped())
                     .kill_on_drop(true);
-                if let Some(idle_ttl_secs) = channel.idle_ttl_secs {
-                    child.arg("--idle-ttl-secs").arg(idle_ttl_secs.to_string());
+                if let Some(idle_timeout_seconds) = channel.idle_timeout_seconds {
+                    child
+                        .arg("--idle-timeout-seconds")
+                        .arg(idle_timeout_seconds.to_string());
                 }
 
                 let mut child = child.spawn().with_context(|| {
@@ -964,7 +966,7 @@ mod tests {
                     enabled: true,
                     kind: "telegram".to_string(),
                     agent_id: "default".to_string(),
-                    idle_ttl_secs: Some(60),
+                    idle_timeout_seconds: Some(60),
                     persistence: Default::default(),
                     inference: Default::default(),
                     extra: toml::Table::new(),
@@ -1035,7 +1037,7 @@ mod tests {
                     enabled: true,
                     kind: "telegram".to_string(),
                     agent_id: "default".to_string(),
-                    idle_ttl_secs: Some(60),
+                    idle_timeout_seconds: Some(60),
                     persistence: Default::default(),
                     inference: Default::default(),
                     extra: toml::Table::new(),
@@ -1114,7 +1116,7 @@ mod tests {
                     enabled: true,
                     kind: "telegram".to_string(),
                     agent_id: "default".to_string(),
-                    idle_ttl_secs: Some(60),
+                    idle_timeout_seconds: Some(60),
                     persistence: Default::default(),
                     inference: Default::default(),
                     extra: toml::Table::new(),

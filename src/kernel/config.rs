@@ -98,8 +98,8 @@ pub struct AgentConfig {
     ///
     /// `Some(0)` hibernates immediately, `Some(n)` waits `n` idle seconds,
     /// and `None` keeps the runtime hot indefinitely.
-    #[serde(default = "default_runtime_idle_secs")]
-    pub runtime_idle_secs: Option<u64>,
+    #[serde(default = "default_idle_timeout_seconds", alias = "runtime_idle_secs")]
+    pub idle_timeout_seconds: Option<u64>,
     #[serde(default)]
     pub tools: ToolsConfig,
     #[serde(default)]
@@ -117,8 +117,11 @@ pub struct KernelConfig {
     #[serde(default = "default_max_turns")]
     pub max_turns: u32,
     /// Heartbeat interval in seconds
-    #[serde(default = "default_heartbeat_interval")]
-    pub heartbeat_interval_secs: u32,
+    #[serde(
+        default = "default_heartbeat_interval",
+        alias = "heartbeat_interval_secs"
+    )]
+    pub heartbeat_interval_seconds: u32,
     /// Initial spawn depth (for recursive agents)
     #[serde(default)]
     pub initial_spawn_depth: u32,
@@ -129,7 +132,7 @@ impl Default for KernelConfig {
         Self {
             workspace_root: default_workspace_root(),
             max_turns: default_max_turns(),
-            heartbeat_interval_secs: default_heartbeat_interval(),
+            heartbeat_interval_seconds: default_heartbeat_interval(),
             initial_spawn_depth: 0,
         }
     }
@@ -464,8 +467,11 @@ pub struct RemoteConfig {
     pub bind: String,
     #[serde(default = "default_remote_auth_token_env")]
     pub auth_token_env: String,
-    #[serde(default = "default_remote_event_keepalive_secs")]
-    pub event_keepalive_secs: u64,
+    #[serde(
+        default = "default_remote_event_keepalive_seconds",
+        alias = "event_keepalive_secs"
+    )]
+    pub event_keepalive_seconds: u64,
     #[serde(default)]
     pub allow_non_loopback: bool,
 }
@@ -475,7 +481,7 @@ impl Default for RemoteConfig {
         Self {
             bind: default_remote_bind(),
             auth_token_env: default_remote_auth_token_env(),
-            event_keepalive_secs: default_remote_event_keepalive_secs(),
+            event_keepalive_seconds: default_remote_event_keepalive_seconds(),
             allow_non_loopback: false,
         }
     }
@@ -498,9 +504,11 @@ pub struct ProviderConfig {
     /// Optional max retry attempts for provider HTTP calls.
     pub max_retries: Option<u32>,
     /// Optional per-request timeout in seconds.
-    pub request_timeout_secs: Option<u64>,
+    #[serde(alias = "request_timeout_secs")]
+    pub request_timeout_seconds: Option<u64>,
     /// Optional total timeout budget in seconds (across retries).
-    pub total_timeout_secs: Option<u64>,
+    #[serde(alias = "total_timeout_secs")]
+    pub total_timeout_seconds: Option<u64>,
     /// Optional provider-level context window used for token budgeting and compaction.
     pub context_window_tokens: Option<u32>,
 }
@@ -895,7 +903,7 @@ impl Default for AgentConfig {
             provider: "mock".to_string(),
             thinking: None,
             harness: None,
-            runtime_idle_secs: default_runtime_idle_secs(),
+            idle_timeout_seconds: default_idle_timeout_seconds(),
             tools: ToolsConfig::default(),
             inference: InferenceOverrideConfig::default(),
             persistence: ContextPersistenceConfig::default(),

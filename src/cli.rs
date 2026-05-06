@@ -552,9 +552,9 @@ pub(crate) enum DaemonChannelCommands {
         /// Bound agent ID
         #[arg(long)]
         agent: String,
-        /// Optional idle session TTL in seconds
-        #[arg(long)]
-        idle_ttl_secs: Option<u64>,
+        /// Optional idle timeout in seconds
+        #[arg(long, alias = "idle-ttl-secs")]
+        idle_timeout_seconds: Option<u64>,
         /// Create the channel disabled
         #[arg(long)]
         disabled: bool,
@@ -609,9 +609,9 @@ pub(crate) enum DaemonChannelCommands {
         /// Optional replacement bound agent ID
         #[arg(long)]
         agent: Option<String>,
-        /// Optional replacement idle TTL in seconds
-        #[arg(long)]
-        idle_ttl_secs: Option<u64>,
+        /// Optional replacement idle timeout in seconds
+        #[arg(long, alias = "idle-ttl-secs")]
+        idle_timeout_seconds: Option<u64>,
         /// Replace channel-specific settings with the provided key=value entries
         #[arg(long = "setting", value_name = "KEY=VALUE")]
         settings: Vec<String>,

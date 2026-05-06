@@ -132,7 +132,7 @@ async fn create_disable_and_delete_agent_updates_filesystem_state() -> Result<()
             system_prompt: Some("Review docs".to_string()),
             thinking: None,
             harness: None,
-            runtime_idle_secs: None,
+            idle_timeout_seconds: None,
             enabled: true,
             tools: Default::default(),
         })
@@ -908,7 +908,7 @@ async fn scheduled_action_job_can_disable_agent() -> Result<()> {
             system_prompt: Some("QA".to_string()),
             thinking: None,
             harness: None,
-            runtime_idle_secs: None,
+            idle_timeout_seconds: None,
             enabled: true,
             tools: Default::default(),
         })
@@ -2390,7 +2390,7 @@ async fn harness_reload_and_validate_are_targeted() -> Result<()> {
             system_prompt: None,
             thinking: None,
             harness: Some("shared".to_string()),
-            runtime_idle_secs: None,
+            idle_timeout_seconds: None,
             enabled: true,
             tools: Default::default(),
         })
@@ -2469,7 +2469,7 @@ async fn channel_create_disable_update_and_delete_are_filesystem_backed() -> Res
             id: "discord".to_string(),
             kind: "discord".to_string(),
             agent_id: "default".to_string(),
-            idle_ttl_secs: Some(600),
+            idle_timeout_seconds: Some(600),
             enabled: true,
             settings: json!({
                 "token_env": "DISCORD_TOKEN",
@@ -2490,7 +2490,7 @@ async fn channel_create_disable_update_and_delete_are_filesystem_backed() -> Res
         .update_channel(
             "discord",
             UpdateChannelInput {
-                idle_ttl_secs: Some(900),
+                idle_timeout_seconds: Some(900),
                 settings: Some(json!({
                     "token_env": "NEW_TOKEN",
                     "guild_id": "123",
@@ -2499,7 +2499,7 @@ async fn channel_create_disable_update_and_delete_are_filesystem_backed() -> Res
             },
         )
         .await?;
-    assert_eq!(updated.idle_ttl_secs, Some(900));
+    assert_eq!(updated.idle_timeout_seconds, Some(900));
     assert_eq!(updated.settings["token_env"], "NEW_TOKEN");
     assert_eq!(updated.settings["guild_id"], "123");
     assert_eq!(updated.settings["channel_id"], "1234567890");
@@ -2536,7 +2536,7 @@ async fn channel_create_rejects_invalid_discord_settings() -> Result<()> {
             id: "discord".to_string(),
             kind: "discord".to_string(),
             agent_id: "default".to_string(),
-            idle_ttl_secs: Some(600),
+            idle_timeout_seconds: Some(600),
             enabled: true,
             settings: json!({
                 "channel_id": "1234567890"
@@ -2560,7 +2560,7 @@ async fn channel_update_rejects_invalid_fs_poll_interval() -> Result<()> {
             id: "fs-local".to_string(),
             kind: "fs".to_string(),
             agent_id: "default".to_string(),
-            idle_ttl_secs: Some(600),
+            idle_timeout_seconds: Some(600),
             enabled: true,
             settings: json!({
                 "inbox_dir": "inbox",
@@ -2613,7 +2613,7 @@ async fn channel_create_and_update_accept_valid_telegram_settings() -> Result<()
             id: "telegram".to_string(),
             kind: "telegram".to_string(),
             agent_id: "default".to_string(),
-            idle_ttl_secs: Some(600),
+            idle_timeout_seconds: Some(600),
             enabled: false,
             settings: json!({
                 "token_env": "TELEGRAM_BOT_TOKEN",
@@ -2630,7 +2630,7 @@ async fn channel_create_and_update_accept_valid_telegram_settings() -> Result<()
         .update_channel(
             "telegram",
             UpdateChannelInput {
-                idle_ttl_secs: Some(900),
+                idle_timeout_seconds: Some(900),
                 settings: Some(json!({
                     "workspace_id": "ops",
                     "poll_interval_ms": 250,
@@ -2639,7 +2639,7 @@ async fn channel_create_and_update_accept_valid_telegram_settings() -> Result<()
             },
         )
         .await?;
-    assert_eq!(updated.idle_ttl_secs, Some(900));
+    assert_eq!(updated.idle_timeout_seconds, Some(900));
     assert_eq!(updated.settings["workspace_id"], "ops");
     assert_eq!(updated.settings["chat_id"], -100123456);
 
@@ -2667,7 +2667,7 @@ async fn channel_create_accepts_multi_chat_telegram_settings() -> Result<()> {
             id: "telegram-multi".to_string(),
             kind: "telegram".to_string(),
             agent_id: "default".to_string(),
-            idle_ttl_secs: Some(600),
+            idle_timeout_seconds: Some(600),
             enabled: false,
             settings: json!({
                 "token_env": "TELEGRAM_BOT_TOKEN",
@@ -2698,7 +2698,7 @@ async fn channel_create_accepts_valid_rocketchat_settings() -> Result<()> {
             id: "rocketchat".to_string(),
             kind: "rocketchat".to_string(),
             agent_id: "default".to_string(),
-            idle_ttl_secs: Some(600),
+            idle_timeout_seconds: Some(600),
             enabled: false,
             settings: json!({
                 "token_env": "ROCKETCHAT_AUTH_TOKEN",
@@ -2728,7 +2728,7 @@ async fn channel_create_rejects_invalid_rocketchat_settings() -> Result<()> {
             id: "rocketchat".to_string(),
             kind: "rocketchat".to_string(),
             agent_id: "default".to_string(),
-            idle_ttl_secs: Some(600),
+            idle_timeout_seconds: Some(600),
             enabled: false,
             settings: json!({
                 "token_env": "ROCKETCHAT_AUTH_TOKEN",
@@ -2753,7 +2753,7 @@ async fn channel_access_snapshot_and_approval_are_filesystem_backed() -> Result<
             id: "telegram".to_string(),
             kind: "telegram".to_string(),
             agent_id: "default".to_string(),
-            idle_ttl_secs: Some(600),
+            idle_timeout_seconds: Some(600),
             enabled: true,
             settings: json!({
                 "token_env": "TELEGRAM_BOT_TOKEN",
@@ -2822,7 +2822,7 @@ async fn channel_create_rejects_invalid_telegram_settings() -> Result<()> {
             id: "telegram".to_string(),
             kind: "telegram".to_string(),
             agent_id: "default".to_string(),
-            idle_ttl_secs: Some(600),
+            idle_timeout_seconds: Some(600),
             enabled: true,
             settings: json!({
                 "token_env": "TELEGRAM_BOT_TOKEN",
@@ -2861,7 +2861,7 @@ async fn agent_can_bind_shared_harness_and_switch_back_to_local() -> Result<()> 
             system_prompt: None,
             thinking: None,
             harness: None,
-            runtime_idle_secs: None,
+            idle_timeout_seconds: None,
             enabled: true,
             tools: Default::default(),
         })
@@ -2967,7 +2967,7 @@ async fn bind_shared_harness_rejects_non_scaffold_local_harness() -> Result<()> 
             system_prompt: None,
             thinking: None,
             harness: None,
-            runtime_idle_secs: None,
+            idle_timeout_seconds: None,
             enabled: true,
             tools: Default::default(),
         })
@@ -3010,7 +3010,7 @@ async fn agent_runtime_status_reflects_live_runtime_state() -> Result<()> {
             system_prompt: None,
             thinking: None,
             harness: None,
-            runtime_idle_secs: None,
+            idle_timeout_seconds: None,
             enabled: false,
             tools: Default::default(),
         })

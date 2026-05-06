@@ -103,14 +103,14 @@ struct GeneratedAgentConfig {
     system_prompt: String,
     model: String,
     provider: String,
-    runtime_idle_secs: u64,
+    idle_timeout_seconds: u64,
 }
 
 #[derive(Debug, Serialize)]
 struct GeneratedKernelConfig {
     workspace_root: String,
     max_turns: u32,
-    heartbeat_interval_secs: u32,
+    heartbeat_interval_seconds: u32,
     initial_spawn_depth: u32,
 }
 
@@ -853,12 +853,12 @@ fn generate_turin_config(
             system_prompt: system_prompt.to_string(),
             model: model.to_string(),
             provider: provider.name().to_string(),
-            runtime_idle_secs: 20,
+            idle_timeout_seconds: 20,
         },
         kernel: GeneratedKernelConfig {
             workspace_root: ".".to_string(),
             max_turns: 50,
-            heartbeat_interval_secs: 30,
+            heartbeat_interval_seconds: 30,
             initial_spawn_depth: 0,
         },
         persistence: GeneratedPersistenceConfig {

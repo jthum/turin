@@ -229,8 +229,8 @@ Supported schema subset:
 {
   headers = { ["x-foo"] = "bar" },
   max_retries = 2,
-  request_timeout_secs = 30,
-  total_timeout_secs = 60,
+  request_timeout_seconds = 30,
+  total_timeout_seconds = 60,
 }
 ```
 

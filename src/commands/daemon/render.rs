@@ -222,10 +222,10 @@ pub(super) fn print_agent_detail(agent: AgentDetailView) {
     println!("  local_harness:     {}", yes_no(agent.has_local_harness));
     println!("  directory:         {}", agent.directory);
     let runtime_idle = agent
-        .runtime_idle_secs
+        .idle_timeout_seconds
         .map(|secs| secs.to_string())
         .unwrap_or_else(|| "never".to_string());
-    println!("  runtime_idle_secs: {}", runtime_idle);
+    println!("  idle_timeout_seconds: {}", runtime_idle);
     if let Some(system_prompt) = &agent.system_prompt {
         println!("  system_prompt:");
         print_indented(system_prompt);
@@ -332,8 +332,8 @@ pub(super) fn print_channel_detail(channel: ChannelDetailView) {
     println!("  agent:         {}", channel.agent_id);
     println!("  enabled:       {}", yes_no(channel.enabled));
     println!("  directory:     {}", channel.directory);
-    if let Some(idle_ttl_secs) = channel.idle_ttl_secs {
-        println!("  idle_ttl_secs: {}", idle_ttl_secs);
+    if let Some(idle_timeout_seconds) = channel.idle_timeout_seconds {
+        println!("  idle_timeout_seconds: {}", idle_timeout_seconds);
     }
     if let Some(adapter) = &channel.adapter {
         println!("  adapter:");

@@ -340,7 +340,7 @@ Example:
 enabled = true
 kind = "telegram"
 agent_id = "default"
-idle_ttl_secs = 600
+idle_timeout_seconds = 600
 token_env = "TELEGRAM_BOT_TOKEN"
 pairing_mode = "auto"
 pairing_users = ["498502840"]

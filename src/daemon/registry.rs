@@ -36,7 +36,7 @@ pub struct ChannelSummary {
     pub enabled: bool,
     pub kind: String,
     pub agent_id: String,
-    pub idle_ttl_secs: Option<u64>,
+    pub idle_timeout_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -46,7 +46,7 @@ pub struct AgentSummary {
     pub enabled: bool,
     pub provider: String,
     pub model: String,
-    pub runtime_idle_secs: Option<u64>,
+    pub idle_timeout_seconds: Option<u64>,
     pub harness_kind: String,
     pub harness_ref: String,
 }
@@ -92,7 +92,7 @@ pub struct DiscoveredChannel {
     pub enabled: bool,
     pub kind: String,
     pub agent_id: String,
-    pub idle_ttl_secs: Option<u64>,
+    pub idle_timeout_seconds: Option<u64>,
     pub persistence: ContextPersistenceConfig,
     pub inference: InferenceOverrideConfig,
     pub extra: toml::Table,
@@ -123,8 +123,8 @@ pub(crate) struct AgentFileConfig {
     pub thinking: Option<ThinkingConfig>,
     #[serde(default)]
     pub harness: Option<String>,
-    #[serde(default)]
-    pub runtime_idle_secs: Option<u64>,
+    #[serde(default, alias = "runtime_idle_secs")]
+    pub idle_timeout_seconds: Option<u64>,
     #[serde(default)]
     pub tools: ToolsConfig,
     #[serde(default)]
@@ -141,8 +141,8 @@ pub(crate) struct ChannelFileConfig {
     pub enabled: bool,
     pub kind: String,
     pub agent_id: String,
-    #[serde(default)]
-    pub idle_ttl_secs: Option<u64>,
+    #[serde(default, alias = "idle_ttl_secs")]
+    pub idle_timeout_seconds: Option<u64>,
     #[serde(default)]
     pub persistence: ContextPersistenceConfig,
     #[serde(default)]
@@ -449,9 +449,9 @@ fn scan_agent_dir(
         provider: parsed.provider,
         thinking: parsed.thinking,
         harness: Some(harness_id.clone()),
-        runtime_idle_secs: parsed
-            .runtime_idle_secs
-            .or(bootstrap.agent.runtime_idle_secs),
+        idle_timeout_seconds: parsed
+            .idle_timeout_seconds
+            .or(bootstrap.agent.idle_timeout_seconds),
         tools: parsed.tools,
         inference: parsed.inference,
         persistence: parsed.persistence,
@@ -548,7 +548,7 @@ fn scan_channel_dir(
         enabled: parsed.enabled,
         kind: parsed.kind,
         agent_id: parsed.agent_id,
-        idle_ttl_secs: parsed.idle_ttl_secs,
+        idle_timeout_seconds: parsed.idle_timeout_seconds,
         persistence: parsed.persistence,
         inference: parsed.inference,
         extra: parsed.extra,
@@ -650,7 +650,7 @@ pub fn snapshot(load: &RegistryLoad) -> RegistrySnapshot {
                 enabled: agent.enabled,
                 provider: agent.agent_config.provider.clone(),
                 model: agent.agent_config.model.clone(),
-                runtime_idle_secs: agent.agent_config.runtime_idle_secs,
+                idle_timeout_seconds: agent.agent_config.idle_timeout_seconds,
                 harness_kind: match agent.harness_kind {
                     HarnessKind::Local => "local".to_string(),
                     HarnessKind::Shared => "shared".to_string(),
@@ -675,7 +675,7 @@ pub fn snapshot(load: &RegistryLoad) -> RegistrySnapshot {
                 enabled: channel.enabled,
                 kind: channel.kind.clone(),
                 agent_id: channel.agent_id.clone(),
-                idle_ttl_secs: channel.idle_ttl_secs,
+                idle_timeout_seconds: channel.idle_timeout_seconds,
             })
             .collect(),
         issues: load.issues.clone(),

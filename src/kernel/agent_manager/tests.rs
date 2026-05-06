@@ -62,7 +62,7 @@ fn test_config(workspace_root: &std::path::Path, harness_dir: &std::path::Path) 
             system_prompt: "test".to_string(),
             thinking: None,
             harness: None,
-            runtime_idle_secs: None,
+            idle_timeout_seconds: None,
             inference: Default::default(),
             persistence: Default::default(),
         },
@@ -70,7 +70,7 @@ fn test_config(workspace_root: &std::path::Path, harness_dir: &std::path::Path) 
         kernel: KernelConfig {
             workspace_root: workspace_root.to_string_lossy().to_string(),
             max_turns: 4,
-            heartbeat_interval_secs: 30,
+            heartbeat_interval_seconds: 30,
             initial_spawn_depth: 0,
         },
         layout: LayoutConfig::default(),

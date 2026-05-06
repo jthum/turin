@@ -10,7 +10,7 @@ pub struct RemoteServeOptions {
     pub bind: Option<String>,
     pub auth_token: Option<String>,
     pub auth_token_env: Option<String>,
-    pub event_keepalive_secs: Option<u64>,
+    pub event_keepalive_seconds: Option<u64>,
     pub allow_non_loopback: Option<bool>,
 }
 
@@ -53,8 +53,8 @@ impl ResolvedRemoteConfig {
         }
 
         let keepalive_secs = options
-            .event_keepalive_secs
-            .unwrap_or(config.remote.event_keepalive_secs);
+            .event_keepalive_seconds
+            .unwrap_or(config.remote.event_keepalive_seconds);
         anyhow::ensure!(
             keepalive_secs > 0,
             "Remote event keepalive must be greater than 0"

@@ -109,7 +109,7 @@ pub(super) async fn create(
             id: params.id,
             kind: params.kind,
             agent_id: params.agent_id,
-            idle_ttl_secs: params.idle_ttl_secs,
+            idle_timeout_seconds: params.idle_timeout_seconds,
             enabled: params.enabled,
             settings: params.settings.unwrap_or_else(|| json!({})),
         })
@@ -191,7 +191,7 @@ pub(super) async fn update(
             UpdateChannelInput {
                 kind: params.kind,
                 agent_id: params.agent_id,
-                idle_ttl_secs: params.idle_ttl_secs,
+                idle_timeout_seconds: params.idle_timeout_seconds,
                 settings: params.settings,
             },
         )

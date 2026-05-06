@@ -49,7 +49,7 @@ system_prompt = "Control client integration"
 [kernel]
 workspace_root = "{workspace_root}"
 max_turns = 4
-heartbeat_interval_secs = 30
+heartbeat_interval_seconds = 30
 initial_spawn_depth = 0
 
 [persistence.state]
@@ -130,7 +130,7 @@ impl RemoteHarness {
                 bind: Some("127.0.0.1:0".to_string()),
                 auth_token: Some("test-token".to_string()),
                 auth_token_env: None,
-                event_keepalive_secs: Some(1),
+                event_keepalive_seconds: Some(1),
                 allow_non_loopback: Some(false),
             },
         )

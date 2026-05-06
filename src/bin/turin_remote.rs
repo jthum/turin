@@ -26,8 +26,8 @@ struct Cli {
     auth_token_env: Option<String>,
 
     /// Override the SSE/WebSocket keepalive interval in seconds
-    #[arg(long)]
-    event_keepalive_secs: Option<u64>,
+    #[arg(long, alias = "event-keepalive-secs")]
+    event_keepalive_seconds: Option<u64>,
 
     /// Allow binding turin-remote to a non-loopback address
     #[arg(long)]
@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
             bind: cli.bind,
             auth_token: cli.auth_token,
             auth_token_env: cli.auth_token_env,
-            event_keepalive_secs: cli.event_keepalive_secs,
+            event_keepalive_seconds: cli.event_keepalive_seconds,
             allow_non_loopback: Some(cli.allow_non_loopback),
         },
     )

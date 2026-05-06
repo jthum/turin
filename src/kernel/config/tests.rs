@@ -14,7 +14,7 @@ enabled = false
 [kernel]
 workspace_root = "."
 max_turns = 50
-heartbeat_interval_secs = 30
+heartbeat_interval_seconds = 30
 
 [persistence.state]
 path = ".turin/state.db"
@@ -577,8 +577,8 @@ provider = "anthropic"
 type = "anthropic"
 api_key_env = "ANTHROPIC_API_KEY"
 max_retries = 4
-request_timeout_secs = 20
-total_timeout_secs = 90
+request_timeout_seconds = 20
+total_timeout_seconds = 90
 
 [providers.anthropic.headers]
 anthropic-beta = "output-128k-2025-02-19"
@@ -588,8 +588,8 @@ x-request-tag = "turin-test"
     let config = TurinConfig::from_str(toml).unwrap();
     let provider = config.providers.get("anthropic").unwrap();
     assert_eq!(provider.max_retries, Some(4));
-    assert_eq!(provider.request_timeout_secs, Some(20));
-    assert_eq!(provider.total_timeout_secs, Some(90));
+    assert_eq!(provider.request_timeout_seconds, Some(20));
+    assert_eq!(provider.total_timeout_seconds, Some(90));
     assert_eq!(
         provider.headers.get("anthropic-beta").map(|s| s.as_str()),
         Some("output-128k-2025-02-19")
@@ -601,6 +601,48 @@ x-request-tag = "turin-test"
 }
 
 #[test]
+fn test_parse_legacy_timeout_and_keepalive_keys() {
+    let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+runtime_idle_secs = 30
+
+[kernel]
+heartbeat_interval_secs = 5
+
+[providers.openai]
+type = "openai"
+request_timeout_secs = 20
+total_timeout_secs = 90
+
+[remote]
+event_keepalive_secs = 10
+"#;
+
+    let config = TurinConfig::from_str(toml).unwrap();
+    assert_eq!(config.agent.idle_timeout_seconds, Some(30));
+    assert_eq!(config.kernel.heartbeat_interval_seconds, 5);
+    assert_eq!(
+        config
+            .providers
+            .get("openai")
+            .unwrap()
+            .request_timeout_seconds,
+        Some(20)
+    );
+    assert_eq!(
+        config
+            .providers
+            .get("openai")
+            .unwrap()
+            .total_timeout_seconds,
+        Some(90)
+    );
+    assert_eq!(config.remote.event_keepalive_seconds, 10);
+}
+
+#[test]
 fn test_validate_timeout_budget_order() {
     let toml = r#"
 [agent]
@@ -609,11 +651,11 @@ provider = "openai"
 
 [providers.openai]
 type = "openai"
-request_timeout_secs = 30
-total_timeout_secs = 10
+request_timeout_seconds = 30
+total_timeout_seconds = 10
 "#;
     let err = TurinConfig::from_str(toml).unwrap_err();
-    assert!(err.to_string().contains("total_timeout_secs"));
+    assert!(err.to_string().contains("total_timeout_seconds"));
 }
 
 #[test]
@@ -644,10 +686,10 @@ provider = "openai"
 type = "openai"
 
 [remote]
-event_keepalive_secs = 0
+event_keepalive_seconds = 0
 "#;
     let err = TurinConfig::from_str(toml).unwrap_err();
-    assert!(err.to_string().contains("remote.event_keepalive_secs"));
+    assert!(err.to_string().contains("remote.event_keepalive_seconds"));
 }
 
 #[test]

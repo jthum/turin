@@ -24,7 +24,7 @@ pub(super) fn default_heartbeat_interval() -> u32 {
     30
 }
 
-pub(super) fn default_runtime_idle_secs() -> Option<u64> {
+pub(super) fn default_idle_timeout_seconds() -> Option<u64> {
     Some(20)
 }
 
@@ -80,7 +80,7 @@ pub(super) fn default_remote_auth_token_env() -> String {
     "TURIN_REMOTE_TOKEN".to_string()
 }
 
-pub(super) fn default_remote_event_keepalive_secs() -> u64 {
+pub(super) fn default_remote_event_keepalive_seconds() -> u64 {
     15
 }
 

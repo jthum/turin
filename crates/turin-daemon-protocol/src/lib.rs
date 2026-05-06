@@ -52,8 +52,8 @@ pub struct CreateAgentParams {
     pub thinking: Option<ThinkingConfig>,
     #[serde(default)]
     pub harness: Option<String>,
-    #[serde(default)]
-    pub runtime_idle_secs: Option<u64>,
+    #[serde(default, alias = "runtime_idle_secs")]
+    pub idle_timeout_seconds: Option<u64>,
     #[serde(default)]
     pub tools: ToolsConfig,
     #[serde(default = "default_enabled")]
@@ -76,8 +76,8 @@ pub struct UpdateAgentParams {
     pub system_prompt: Option<String>,
     #[serde(default)]
     pub thinking: Option<ThinkingConfig>,
-    #[serde(default)]
-    pub runtime_idle_secs: Option<u64>,
+    #[serde(default, alias = "runtime_idle_secs")]
+    pub idle_timeout_seconds: Option<u64>,
     #[serde(default)]
     pub tools: Option<ToolsConfig>,
 }
@@ -87,8 +87,8 @@ pub struct CreateChannelParams {
     pub id: String,
     pub kind: String,
     pub agent_id: String,
-    #[serde(default)]
-    pub idle_ttl_secs: Option<u64>,
+    #[serde(default, alias = "idle_ttl_secs")]
+    pub idle_timeout_seconds: Option<u64>,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
     #[serde(default)]
@@ -102,8 +102,8 @@ pub struct UpdateChannelParams {
     pub kind: Option<String>,
     #[serde(default)]
     pub agent_id: Option<String>,
-    #[serde(default)]
-    pub idle_ttl_secs: Option<u64>,
+    #[serde(default, alias = "idle_ttl_secs")]
+    pub idle_timeout_seconds: Option<u64>,
     #[serde(default)]
     pub settings: Option<Value>,
 }

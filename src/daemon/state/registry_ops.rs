@@ -57,7 +57,7 @@ impl DaemonState {
             provider: input.provider,
             thinking: input.thinking,
             harness: input.harness,
-            runtime_idle_secs: input.runtime_idle_secs,
+            idle_timeout_seconds: input.idle_timeout_seconds,
             tools: input.tools,
             inference: Default::default(),
             persistence: ContextPersistenceConfig::default(),
@@ -104,8 +104,8 @@ impl DaemonState {
         if let Some(thinking) = input.thinking {
             file.thinking = Some(thinking);
         }
-        if let Some(runtime_idle_secs) = input.runtime_idle_secs {
-            file.runtime_idle_secs = Some(runtime_idle_secs);
+        if let Some(idle_timeout_seconds) = input.idle_timeout_seconds {
+            file.idle_timeout_seconds = Some(idle_timeout_seconds);
         }
         if let Some(tools) = input.tools {
             file.tools = tools;
@@ -208,7 +208,7 @@ impl DaemonState {
             model: file.model,
             system_prompt: file.system_prompt,
             harness: file.harness,
-            runtime_idle_secs: file.runtime_idle_secs,
+            idle_timeout_seconds: file.idle_timeout_seconds,
             has_local_harness: agent_dir.join("harness").is_dir(),
         }))
     }
@@ -333,7 +333,7 @@ impl DaemonState {
                 enabled: channel.enabled,
                 kind: channel.kind.clone(),
                 agent_id: channel.agent_id.clone(),
-                idle_ttl_secs: channel.idle_ttl_secs,
+                idle_timeout_seconds: channel.idle_timeout_seconds,
                 settings: serde_json::to_value(&channel.extra).unwrap_or_default(),
                 adapter: crate::daemon::channel_runners::builtin_channel_manifest(&channel.kind)
                     .or_else(|| {
@@ -468,7 +468,7 @@ impl DaemonState {
             enabled: input.enabled,
             kind: input.kind,
             agent_id: input.agent_id,
-            idle_ttl_secs: input.idle_ttl_secs,
+            idle_timeout_seconds: input.idle_timeout_seconds,
             persistence: ContextPersistenceConfig::default(),
             inference: Default::default(),
             extra: super::helpers::json_object_to_toml_table(input.settings)?,
@@ -514,8 +514,8 @@ impl DaemonState {
             self.ensure_channel_agent_exists(&agent_id)?;
             file.agent_id = agent_id;
         }
-        if let Some(idle_ttl_secs) = input.idle_ttl_secs {
-            file.idle_ttl_secs = Some(idle_ttl_secs);
+        if let Some(idle_timeout_seconds) = input.idle_timeout_seconds {
+            file.idle_timeout_seconds = Some(idle_timeout_seconds);
         }
         if let Some(settings) = input.settings {
             super::helpers::merge_json_object_into_toml_table(&mut file.extra, settings)?;

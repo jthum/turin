@@ -35,7 +35,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
             system_prompt: "You are a test assistant.".to_string(),
             thinking: None,
             harness: None,
-            runtime_idle_secs: None,
+            idle_timeout_seconds: None,
             inference: Default::default(),
             persistence: Default::default(),
         },
@@ -43,7 +43,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
         kernel: turin::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 5,
-            heartbeat_interval_secs: 30,
+            heartbeat_interval_seconds: 30,
             initial_spawn_depth: 0,
         },
         layout: Default::default(),

@@ -438,11 +438,11 @@ Runtime policy is intentionally flexible and can remain harness-mutable when you
 
 - `spawn.enabled`
 - `spawn.max_depth`
-- `runtime.idle_secs`
+- `runtime.idle_timeout_seconds`
 - `db.allow_dynamic_open`
 - `db.path_scope`
 - `db.max_open_handles`
-- `db.idle_close_secs`
+- `db.idle_close_seconds`
 - `queue.max_depth`
 - `tool.exec_enabled`
 - `hook.token_usage.reject_mode`

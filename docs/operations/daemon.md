@@ -449,7 +449,7 @@ turin daemon channel status fs-local
 turin daemon channel issues fs-local
 turin daemon channel enable fs-local
 turin daemon channel disable fs-local
-turin daemon channel update fs-local --idle-ttl-secs 900 --setting poll_interval_ms=50
+turin daemon channel update fs-local --idle-timeout-seconds 900 --setting poll_interval_ms=50
 turin daemon channel access telegram-ops
 turin daemon channel approve telegram-ops --workspace-id telegram --room-id -1001234567890 --thread-id -1001234567890
 turin daemon channel reject telegram-ops --workspace-id telegram --room-id -1001234567890 --thread-id -1001234567890

@@ -173,13 +173,13 @@ impl AgentManager {
                             break;
                         }
                     }
-                    let runtime_idle_secs = manager
-                        .resolve_runtime_idle_secs(
+                    let idle_timeout_seconds = manager
+                        .resolve_idle_timeout_seconds(
                             &agent_id_clone,
                             idle_control.current_session_id().as_deref(),
                         )
                         .await;
-                    if let Some(idle_secs) = runtime_idle_secs {
+                    if let Some(idle_secs) = idle_timeout_seconds {
                         let notified = tokio::time::timeout(
                             std::time::Duration::from_secs(idle_secs),
                             notify_bg.notified(),
@@ -189,7 +189,7 @@ impl AgentManager {
                             info!(
                                 agent_id = %agent_id_clone,
                                 slot_id = %slot_id_clone,
-                                runtime_idle_secs = idle_secs,
+                                idle_timeout_seconds = idle_secs,
                                 "Peer agent idle timeout reached; shutting down runtime"
                             );
                             break;
@@ -224,19 +224,19 @@ impl AgentManager {
         })
     }
 
-    async fn resolve_runtime_idle_secs(
+    async fn resolve_idle_timeout_seconds(
         &self,
         agent_id: &str,
         current_session_id: Option<&str>,
     ) -> Option<u64> {
         let mut effective = if agent_id == self.config.agent.id {
-            self.config.agent.runtime_idle_secs
+            self.config.agent.idle_timeout_seconds
         } else {
             self.config
                 .agents
                 .get(agent_id)
-                .map(|agent| agent.runtime_idle_secs)
-                .unwrap_or(self.config.agent.runtime_idle_secs)
+                .map(|agent| agent.idle_timeout_seconds)
+                .unwrap_or(self.config.agent.idle_timeout_seconds)
         };
 
         let session_public_id = current_session_id.and_then(|raw| {
@@ -253,7 +253,7 @@ impl AgentManager {
         if let Some(shared_runtime) = self.shared_runtime()
             && let Ok(Some(value)) = shared_runtime
                 .policy_manager
-                .get("runtime.idle_secs", &scope)
+                .get("runtime.idle_timeout_seconds", &scope)
                 .await
         {
             effective = match value {

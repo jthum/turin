@@ -20,8 +20,8 @@ impl TurinConfig {
             "kernel.max_turns must be greater than 0"
         );
         anyhow::ensure!(
-            self.kernel.heartbeat_interval_secs > 0,
-            "kernel.heartbeat_interval_secs must be greater than 0"
+            self.kernel.heartbeat_interval_seconds > 0,
+            "kernel.heartbeat_interval_seconds must be greater than 0"
         );
         if let Some(root) = self.layout.root.as_ref() {
             anyhow::ensure!(
@@ -103,8 +103,8 @@ impl TurinConfig {
             "remote.auth_token_env must not be empty"
         );
         anyhow::ensure!(
-            self.remote.event_keepalive_secs > 0,
-            "remote.event_keepalive_secs must be greater than 0"
+            self.remote.event_keepalive_seconds > 0,
+            "remote.event_keepalive_seconds must be greater than 0"
         );
         self.persistence.state.validate("persistence.state")?;
         if let Some(store) = &self.persistence.store {
@@ -207,18 +207,18 @@ impl TurinConfig {
         }
 
         for (provider_name, provider) in &self.providers {
-            if let Some(timeout_secs) = provider.request_timeout_secs {
+            if let Some(timeout_secs) = provider.request_timeout_seconds {
                 anyhow::ensure!(
                     timeout_secs > 0,
-                    "providers.{}.request_timeout_secs must be greater than 0",
+                    "providers.{}.request_timeout_seconds must be greater than 0",
                     provider_name
                 );
             }
 
-            if let Some(timeout_secs) = provider.total_timeout_secs {
+            if let Some(timeout_secs) = provider.total_timeout_seconds {
                 anyhow::ensure!(
                     timeout_secs > 0,
-                    "providers.{}.total_timeout_secs must be greater than 0",
+                    "providers.{}.total_timeout_seconds must be greater than 0",
                     provider_name
                 );
             }
@@ -231,12 +231,13 @@ impl TurinConfig {
                 );
             }
 
-            if let (Some(request_secs), Some(total_secs)) =
-                (provider.request_timeout_secs, provider.total_timeout_secs)
-            {
+            if let (Some(request_secs), Some(total_secs)) = (
+                provider.request_timeout_seconds,
+                provider.total_timeout_seconds,
+            ) {
                 anyhow::ensure!(
                     total_secs >= request_secs,
-                    "providers.{}.total_timeout_secs must be >= request_timeout_secs",
+                    "providers.{}.total_timeout_seconds must be >= request_timeout_seconds",
                     provider_name
                 );
             }

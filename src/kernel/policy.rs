@@ -63,7 +63,7 @@ impl RuntimePolicy {
             Value::from(self.db_max_open_handles as u64),
         );
         map.insert(
-            "db.idle_close_secs".to_string(),
+            "db.idle_close_seconds".to_string(),
             Value::from(self.db_idle_close_secs),
         );
         map.insert(
@@ -136,18 +136,20 @@ impl RuntimePolicyManager {
     }
 
     pub async fn get(&self, key: &str, scope: &PolicyScope) -> Result<Option<Value>> {
-        validate_key(key)?;
-        Ok(self.snapshot(scope).await.get(key).cloned())
+        let canonical_key = canonicalize_key(key);
+        validate_key(canonical_key)?;
+        Ok(self.snapshot(scope).await.get(canonical_key).cloned())
     }
 
     pub async fn set(&self, key: &str, value: Value, scope: &PolicyScope) -> Result<()> {
-        validate_key(key)?;
-        validate_value(key, &value)?;
+        let canonical_key = canonicalize_key(key);
+        validate_key(canonical_key)?;
+        validate_value(canonical_key, &value)?;
 
         let mut state = self.state.write().await;
         match scope.scope.as_deref().unwrap_or("global") {
             "global" => {
-                state.global.insert(key.to_string(), value);
+                state.global.insert(canonical_key.to_string(), value);
             }
             "agent" => {
                 let agent_id = scope
@@ -158,7 +160,7 @@ impl RuntimePolicyManager {
                     .per_agent
                     .entry(agent_id.to_string())
                     .or_default()
-                    .insert(key.to_string(), value);
+                    .insert(canonical_key.to_string(), value);
             }
             "session" => {
                 let session_id = scope
@@ -169,7 +171,7 @@ impl RuntimePolicyManager {
                     .per_session
                     .entry(session_id.to_string())
                     .or_default()
-                    .insert(key.to_string(), value);
+                    .insert(canonical_key.to_string(), value);
             }
             "run" => {
                 let run_id = scope
@@ -180,7 +182,7 @@ impl RuntimePolicyManager {
                     .per_run
                     .entry(run_id.to_string())
                     .or_default()
-                    .insert(key.to_string(), value);
+                    .insert(canonical_key.to_string(), value);
             }
             other => return Err(anyhow!("Unsupported policy scope '{}'", other)),
         }
@@ -195,15 +197,23 @@ impl Default for RuntimePolicyManager {
     }
 }
 
-fn validate_key(key: &str) -> Result<()> {
+fn canonicalize_key(key: &str) -> &str {
     match key {
+        "runtime.idle_secs" => "runtime.idle_timeout_seconds",
+        "db.idle_close_secs" => "db.idle_close_seconds",
+        _ => key,
+    }
+}
+
+fn validate_key(key: &str) -> Result<()> {
+    match canonicalize_key(key) {
         "spawn.enabled"
         | "spawn.max_depth"
-        | "runtime.idle_secs"
+        | "runtime.idle_timeout_seconds"
         | "db.allow_dynamic_open"
         | "db.path_scope"
         | "db.max_open_handles"
-        | "db.idle_close_secs"
+        | "db.idle_close_seconds"
         | "queue.max_depth"
         | "tool.exec_enabled"
         | "hook.token_usage.reject_mode" => Ok(()),
@@ -212,7 +222,7 @@ fn validate_key(key: &str) -> Result<()> {
 }
 
 fn validate_value(key: &str, value: &Value) -> Result<()> {
-    match key {
+    match canonicalize_key(key) {
         "spawn.enabled" | "db.allow_dynamic_open" | "tool.exec_enabled" => {
             if value.is_boolean() {
                 Ok(())
@@ -220,14 +230,14 @@ fn validate_value(key: &str, value: &Value) -> Result<()> {
                 Err(anyhow!("Policy '{}' expects boolean", key))
             }
         }
-        "spawn.max_depth" | "db.max_open_handles" | "db.idle_close_secs" | "queue.max_depth" => {
+        "spawn.max_depth" | "db.max_open_handles" | "db.idle_close_seconds" | "queue.max_depth" => {
             if value.as_u64().is_some() {
                 Ok(())
             } else {
                 Err(anyhow!("Policy '{}' expects non-negative integer", key))
             }
         }
-        "runtime.idle_secs" => {
+        "runtime.idle_timeout_seconds" => {
             if value.is_null() || value.as_u64().is_some() {
                 Ok(())
             } else {
@@ -342,6 +352,35 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("informational, enforce_task, enforce_session")
+        );
+    }
+
+    #[tokio::test]
+    async fn policy_accepts_legacy_time_key_aliases() {
+        let mgr = RuntimePolicyManager::new();
+        let global_scope = PolicyScope {
+            scope: Some("global".to_string()),
+            ..PolicyScope::default()
+        };
+
+        mgr.set("runtime.idle_secs", Value::from(15u64), &global_scope)
+            .await
+            .unwrap();
+        mgr.set("db.idle_close_secs", Value::from(45u64), &global_scope)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            mgr.get("runtime.idle_timeout_seconds", &PolicyScope::default())
+                .await
+                .unwrap(),
+            Some(Value::from(15u64))
+        );
+        assert_eq!(
+            mgr.get("db.idle_close_seconds", &PolicyScope::default())
+                .await
+                .unwrap(),
+            Some(Value::from(45u64))
         );
     }
 }
