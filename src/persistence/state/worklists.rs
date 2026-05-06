@@ -129,6 +129,25 @@ impl StateStore {
         Ok(None)
     }
 
+    pub async fn get_worklist_by_id(&self, id: i64) -> Result<Option<WorklistRow>> {
+        let conn = self.connect().await?;
+        let mut rows = conn
+            .query(
+                r#"
+                SELECT id, public_id, name, scope_ref, metadata, created_at, updated_at
+                FROM worklists
+                WHERE id = ?1
+                LIMIT 1
+                "#,
+                turso::params![id],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            return Ok(Some(map_worklist_row(&row)?));
+        }
+        Ok(None)
+    }
+
     pub async fn list_work_items(&self, worklist_id: i64) -> Result<Vec<WorkItemRow>> {
         let conn = self.connect().await?;
         let mut rows = conn

@@ -14,8 +14,9 @@ use turin_daemon_protocol::{
     SessionBranchCreateParams, SessionBranchSiblingsParams, SessionIdParams, SessionListParams,
     SessionSearchHitKind, SessionSearchParams, SessionSearchScope, SessionTitleParams,
     SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams, SubmitTaskParams,
-    TaskIdParams, UpdateChannelParams, WaitTaskParams, WorkItemList, WorklistDetail,
-    WorklistItemsParams, WorklistList, WorklistListParams, WorklistTargetParams,
+    TaskIdParams, UpdateChannelParams, WaitTaskParams, WorkItemDetail, WorkItemList,
+    WorkItemTargetParams, WorklistDetail, WorklistItemsParams, WorklistList, WorklistListParams,
+    WorklistTargetParams,
 };
 use turin_remote_client::RemoteClient;
 
@@ -644,6 +645,21 @@ impl ControlClient {
     pub async fn list_worklist_items(&self, params: WorklistItemsParams) -> Result<WorkItemList> {
         self.request_ok(None, DaemonRequest::WorklistItems(params))
             .await
+    }
+
+    pub async fn get_workitem(
+        &self,
+        id: impl Into<String>,
+        persistence: Option<turin_daemon_protocol::ContextPersistenceParams>,
+    ) -> Result<WorkItemDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::WorkItemGet(WorkItemTargetParams {
+                id: id.into(),
+                persistence,
+            }),
+        )
+        .await
     }
 
     pub async fn list_sessions(&self, limit: usize, offset: usize) -> Result<Vec<SessionSummary>> {

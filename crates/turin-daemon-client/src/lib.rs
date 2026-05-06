@@ -10,8 +10,9 @@ use turin_daemon_protocol::{
     ChannelRunnerHeartbeatParams, ChannelRunnerHelloParams, DAEMON_PROTOCOL_VERSION,
     DaemonHandshake, DaemonRequest, EntityIdParams, EventEnvelope, NoParams, RequestEnvelope,
     ResponseEnvelope, RuntimeEventsSubscribeParams, ScheduleCreateParams, ScheduleJobDetail,
-    ScheduleJobList, ScheduleJobRunList, ScheduleRunsParams, ScheduleUpdateParams, WorkItemList,
-    WorklistDetail, WorklistItemsParams, WorklistList, WorklistListParams, WorklistTargetParams,
+    ScheduleJobList, ScheduleJobRunList, ScheduleRunsParams, ScheduleUpdateParams, WorkItemDetail,
+    WorkItemList, WorkItemTargetParams, WorklistDetail, WorklistItemsParams, WorklistList,
+    WorklistListParams, WorklistTargetParams,
 };
 use turin_local_ipc::{
     LocalIpcReadHalf, connect as connect_local_ipc, current_transport_name,
@@ -365,6 +366,21 @@ impl DaemonClient {
     pub async fn worklist_items(&self, params: WorklistItemsParams) -> Result<WorkItemList> {
         self.request_ok(None, DaemonRequest::WorklistItems(params))
             .await
+    }
+
+    pub async fn workitem_get(
+        &self,
+        id: impl Into<String>,
+        persistence: Option<turin_daemon_protocol::ContextPersistenceParams>,
+    ) -> Result<WorkItemDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::WorkItemGet(WorkItemTargetParams {
+                id: id.into(),
+                persistence,
+            }),
+        )
+        .await
     }
 
     pub async fn wait_until_ready(

@@ -1,6 +1,6 @@
 use crate::daemon::protocol::{
-    ErrorCode, ResponseEnvelope, WorklistItemsParams, WorklistList, WorklistListParams,
-    WorklistTargetParams,
+    ErrorCode, ResponseEnvelope, WorkItemTargetParams, WorklistItemsParams, WorklistList,
+    WorklistListParams, WorklistTargetParams,
 };
 
 use super::{DispatchContext, not_found_error, serialize_response, validation_error};
@@ -66,6 +66,26 @@ pub(super) async fn items(
             id,
             ErrorCode::WorklistNotFound,
             format!("Worklist '{}' not found", params.id),
+        ),
+        Err(err) => validation_error(id, err),
+    }
+}
+
+pub(super) async fn item_get(
+    id: Option<String>,
+    params: WorkItemTargetParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard
+        .work_item_detail(&params.id, params.persistence.as_ref())
+        .await
+    {
+        Ok(Some(item)) => serialize_response(id, item, "work item detail"),
+        Ok(None) => not_found_error(
+            id,
+            ErrorCode::WorkItemNotFound,
+            format!("Work item '{}' not found", params.id),
         ),
         Err(err) => validation_error(id, err),
     }

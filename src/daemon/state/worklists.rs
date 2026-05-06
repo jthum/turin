@@ -92,6 +92,32 @@ impl DaemonState {
         }))
     }
 
+    pub async fn work_item_detail(
+        &self,
+        public_id: &str,
+        persistence: Option<&ContextPersistenceParams>,
+    ) -> Result<Option<WorkItemDetail>> {
+        let store = self.resolve_worklist_store(persistence).await?;
+        let public_id = uuid::Uuid::parse_str(public_id)
+            .map_err(|err| anyhow!("invalid work item id: {}", err))?;
+        let Some(row) = store.get_work_item_by_public_id(public_id).await? else {
+            return Ok(None);
+        };
+        let Some(worklist) = store.get_worklist_by_id(row.worklist_id).await? else {
+            return Err(anyhow!(
+                "work item {} references missing worklist {}",
+                format_public_id(&row.public_id),
+                row.worklist_id
+            ));
+        };
+        let rows = store.list_work_items(worklist.id).await?;
+        let public_ids = rows
+            .iter()
+            .map(|row| (row.id, format_public_id(&row.public_id)))
+            .collect::<HashMap<_, _>>();
+        Ok(Some(map_work_item_detail(row, &public_ids, &worklist)))
+    }
+
     async fn resolve_worklist_store(
         &self,
         persistence: Option<&ContextPersistenceParams>,

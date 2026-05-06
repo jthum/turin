@@ -864,6 +864,27 @@ provider = "noop"
         Some("exec_qa")
     );
 
+    let item_detail = state
+        .work_item_detail(
+            &uuid::Uuid::from_slice(&child.public_id)?.to_string(),
+            Some(&persistence),
+        )
+        .await?
+        .expect("work item detail present");
+    assert_eq!(item_detail.title, "Capture browser screenshot");
+    assert_eq!(item_detail.worklist_id, worklists[0].public_id);
+    assert_eq!(
+        item_detail.parent_id.as_deref(),
+        Some(root_public_id.as_str())
+    );
+    assert_eq!(
+        item_detail
+            .action
+            .as_ref()
+            .map(|action| action.name.as_str()),
+        Some("qa.capture")
+    );
+
     Ok(())
 }
 

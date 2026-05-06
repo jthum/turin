@@ -278,6 +278,13 @@ pub struct WorklistTargetParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WorkItemTargetParams {
+    pub id: String,
+    #[serde(default)]
+    pub persistence: Option<ContextPersistenceParams>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WorklistItemsParams {
     pub id: String,
     #[serde(default)]
@@ -674,6 +681,8 @@ pub enum DaemonRequest {
     WorklistGet(WorklistTargetParams),
     #[serde(rename = "worklist.items")]
     WorklistItems(WorklistItemsParams),
+    #[serde(rename = "workitem.get")]
+    WorkItemGet(WorkItemTargetParams),
     #[serde(rename = "session.list")]
     SessionList(SessionListParams),
     #[serde(rename = "session.list_live")]
@@ -763,6 +772,7 @@ pub enum ErrorCode {
     TaskNotFound,
     ScheduleNotFound,
     WorklistNotFound,
+    WorkItemNotFound,
     SessionNotFound,
     HarnessNotFound,
     ChannelNotFound,
@@ -782,6 +792,7 @@ impl fmt::Display for ErrorCode {
             ErrorCode::TaskNotFound => "task_not_found",
             ErrorCode::ScheduleNotFound => "schedule_not_found",
             ErrorCode::WorklistNotFound => "worklist_not_found",
+            ErrorCode::WorkItemNotFound => "workitem_not_found",
             ErrorCode::SessionNotFound => "session_not_found",
             ErrorCode::HarnessNotFound => "harness_not_found",
             ErrorCode::ChannelNotFound => "channel_not_found",
@@ -1211,6 +1222,50 @@ mod tests {
                 );
                 assert!(params.claimed_only);
                 assert_eq!(params.limit, Some(10));
+                assert_eq!(
+                    params
+                        .persistence
+                        .as_ref()
+                        .and_then(|p| p.state.as_ref())
+                        .and_then(|state| state.alias.as_deref()),
+                    Some("project_alpha")
+                );
+            }
+            other => panic!("unexpected request variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn workitem_get_request_round_trips_typed_shape() {
+        let request = RequestEnvelope::new(
+            Some("req_workitem_get".to_string()),
+            DaemonRequest::WorkItemGet(WorkItemTargetParams {
+                id: "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d49".to_string(),
+                persistence: Some(ContextPersistenceParams {
+                    state: Some(StoreTargetParams {
+                        path: None,
+                        alias: Some("project_alpha".to_string()),
+                    }),
+                    store: None,
+                }),
+            }),
+        );
+
+        let value = serde_json::to_value(&request).expect("serialize request");
+        assert_eq!(value["op"], "workitem.get");
+        assert_eq!(
+            value["params"]["id"],
+            "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d49"
+        );
+        assert_eq!(
+            value["params"]["persistence"]["state"]["alias"],
+            "project_alpha"
+        );
+
+        let decoded: RequestEnvelope = serde_json::from_value(value).expect("deserialize request");
+        match decoded.request {
+            DaemonRequest::WorkItemGet(params) => {
+                assert_eq!(params.id, "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d49");
                 assert_eq!(
                     params
                         .persistence

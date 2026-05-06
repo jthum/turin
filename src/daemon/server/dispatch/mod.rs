@@ -94,6 +94,7 @@ pub(super) async fn dispatch(
         DaemonRequest::WorklistList(params) => worklist::list(id, params, &context).await,
         DaemonRequest::WorklistGet(params) => worklist::get(id, params, &context).await,
         DaemonRequest::WorklistItems(params) => worklist::items(id, params, &context).await,
+        DaemonRequest::WorkItemGet(params) => worklist::item_get(id, params, &context).await,
         DaemonRequest::SessionList(params) => session::list(id, params, &context).await,
         DaemonRequest::SessionListLive(params) => session::list_live(id, params, &context).await,
         DaemonRequest::SessionSearch(params) => session::search(id, params, &context).await,
