@@ -51,6 +51,7 @@ end
 - `schedule.every(...)`
 - `schedule.at(...)`
 - `schedule.update(...)`
+- `worklist(...)`
 - `schedule.get(...)`
 - `schedule.enable(...)`
 - `schedule.disable(...)`
@@ -159,6 +160,59 @@ Notes:
   - `failure_count`
 - missing harness action handlers are reported as:
   - `last_error_code = "schedule_action_missing_handler"`
+
+### `worklist(...)`
+
+Preferred worklist helper:
+
+- `worklist(name, opts?) -> list_proxy`
+
+Common list methods:
+
+- `list:add(payload, opts?) -> item_proxy`
+- `list:all(opts?) -> items`
+- `list:pending(opts?) -> items`
+- `list:active() -> item|nil`
+- `list:next(opts?) -> item|nil`
+- `list:current(opts?) -> item|nil`
+- `list:find({ where = {...} }) -> item|nil`
+- `list:progress() -> { done = n, total = n }`
+- `list:empty() -> boolean`
+- `list:orphaned(opts?) -> items`
+- `list:release_stale(opts?) -> items`
+
+Common item methods:
+
+- `item:add(payload, opts?) -> item_proxy`
+- `item:children() -> items`
+- `item:claim() -> item|nil`
+- `item:heartbeat() -> item`
+- `item:done(meta?) -> item`
+- `item:fail(reason?) -> item`
+- `item:requeue() -> item`
+- `item:update(fields) -> item`
+
+Notes:
+
+- worklist items may hold either:
+  - prompt payloads
+  - named action payloads
+- prompt items may also carry structured:
+  - `content`
+  - `tools`
+  - `conflict_policy`
+- item proxies expose:
+  - direct fields such as `prompt`, `action`, `params`, `content`, `tools`
+  - and a normalized `payload` table
+- `opts.where` filters against:
+  - built-in fields like `title`, `kind`, `status`, `priority`
+  - metadata keys stored on the item
+- stale-claim helpers use `opts.stale_after_seconds` and default to 300 seconds
+- worklists are backed by state stores, so `opts` may also carry:
+  - `scope`
+  - `state`
+  - `store`
+  - `path`
 
 ## Graph Helpers
 

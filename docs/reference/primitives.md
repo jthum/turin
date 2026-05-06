@@ -138,6 +138,7 @@ These are layered on top of the existing scoped aliases.
 - `schedule.enable(public_id) -> job`
 - `schedule.disable(public_id) -> job`
 - `schedule.delete(public_id) -> job`
+- `worklist(name, opts?) -> list_proxy`
 - `code.find(query, opts?)`
 
 Notes:
@@ -341,6 +342,87 @@ end)
 
 - `schedule.delete(...)` rejects running jobs rather than orphaning active execution
 - `schedule.update(...)` only changes the fields you provide; running attempts continue with the task that was already submitted
+
+### DX `worklist`
+
+- `worklist(name, opts?) -> list_proxy`
+
+`opts` for `worklist(...)`:
+
+```lua
+{
+  scope = "project:alpha", -- or selector table
+  state = "ops",
+  store = { path = "./project.db" },
+  metadata = { lane = "qa" },
+}
+```
+
+`payload` for `list:add(...)` / `item:add(...)` may be:
+
+```lua
+"Fix login redirect"
+```
+
+or:
+
+```lua
+{
+  title = "Fix login redirect",
+  prompt = "Fix login redirect",
+  content = {
+    { type = "text", text = "Repro starts on /login" },
+  },
+  tools = {
+    allow = { "shell_exec" },
+  },
+  conflict_policy = "detached",
+}
+```
+
+or:
+
+```lua
+{
+  title = "Run checkout smoke test",
+  action = "qa.run_smoke",
+  params = { suite = "checkout" },
+}
+```
+
+Common `list_proxy` methods:
+
+- `list:add(payload, opts?) -> item_proxy`
+- `list:all(opts?) -> items`
+- `list:pending(opts?) -> items`
+- `list:active() -> item|nil`
+- `list:next(opts?) -> item|nil`
+- `list:current(opts?) -> item|nil`
+- `list:find({ where = {...} }) -> item|nil`
+- `list:progress() -> { done = n, total = n }`
+- `list:empty() -> boolean`
+- `list:orphaned(opts?) -> items`
+- `list:release_stale(opts?) -> items`
+
+Common `item_proxy` methods:
+
+- `item:add(payload, opts?) -> item_proxy`
+- `item:children() -> items`
+- `item:claim() -> item|nil`
+- `item:heartbeat() -> item`
+- `item:done(meta?) -> item`
+- `item:fail(reason?) -> item`
+- `item:requeue() -> item`
+- `item:update(fields) -> item`
+
+Notes:
+
+- worklist items may be prompt-based or action-based
+- prompt items may also carry `content`, `tools`, and `conflict_policy`
+- item proxies expose both direct fields and a normalized `payload` table
+- `opts.where` filters compare against built-in item fields and metadata keys
+- stale-claim helpers use `opts.stale_after_seconds` and default to 300 seconds
+- worklists are state-store backed, not daemon-scheduler backed
 
 ### DX `runtime.governance.grant(...)`
 
@@ -1006,6 +1088,72 @@ Notes:
 - updating a running job affects future scheduling metadata only; it does not rewrite the already-running task
 - run history is per scheduled job and reflects actual attempts from `scheduled_job_runs`
 - missing harness-defined actions surface as `last_error_code = "schedule_action_missing_handler"`
+
+## `runtime.worklist`
+
+State-store-backed durable work coordination API.
+
+- `runtime.worklist.open(opts) -> list_proxy`
+
+`runtime.worklist.open(opts)`:
+
+```lua
+{
+  name = "sprint",                  -- required
+  scope = "project:alpha",          -- optional string or selector table
+  state = "ops",
+  store = { path = "./project.db" },
+  metadata = { lane = "qa" },
+}
+```
+
+`list_proxy` methods:
+
+- `list:add(payload, opts?) -> item_proxy`
+- `list:all(opts?) -> items`
+- `list:pending(opts?) -> items`
+- `list:active() -> item|nil`
+- `list:next(opts?) -> item|nil`
+- `list:current(opts?) -> item|nil`
+- `list:find({ where = {...} }) -> item|nil`
+- `list:progress() -> { done = n, total = n }`
+- `list:empty() -> boolean`
+- `list:orphaned(opts?) -> items`
+- `list:release_stale(opts?) -> items`
+
+`item_proxy` methods:
+
+- `item:add(payload, opts?) -> item_proxy`
+- `item:children() -> items`
+- `item:claim() -> item|nil`
+- `item:heartbeat() -> item`
+- `item:done(meta?) -> item`
+- `item:fail(reason?) -> item`
+- `item:requeue() -> item`
+- `item:update(fields) -> item`
+
+Rules and notes:
+
+- worklist items may be nested; `item:add(...)` writes child items under that item
+- prompt items may be:
+  - bare strings
+  - or tables with `title`, `prompt`, optional `content`, `tools`, `conflict_policy`
+- action items are tables with:
+  - `action`
+  - optional `params`
+- both may also carry:
+  - `priority`
+  - `after`
+  - `metadata`
+- `opts.where` filters compare against:
+  - `id`, `public_id`, `title`, `kind`, `status`, `priority`, `parent_id`
+  - metadata keys
+- `item:heartbeat()` refreshes the active claim heartbeat for the current execution
+- `list:orphaned(...)` and `list:release_stale(...)` accept:
+  - `stale_after_seconds`
+  - optional `limit`
+  - optional `where`
+- item proxies expose a normalized `payload` table so prompt/action work mirrors scheduled job payloads
 
 ## `runtime.graph`
 

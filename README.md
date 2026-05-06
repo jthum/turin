@@ -16,6 +16,7 @@ Turin now ships a coherent, canonical runtime with:
 - **Multi-DB runtime** with dynamic DB handles (`runtime.db.open/query/exec/list/close`)
 - **Multi-agent runtime** with peer agent submit/await/status orchestration (`runtime.agent.*`)
 - **Daemon-backed durable scheduler** with harness-facing helpers, built-in or harness-defined action jobs, and daemon-owned `jobs.db` (`runtime.schedule.*`, `schedule.*`, including in-place job updates)
+- **Durable worklists** with hierarchical claimable items, prompt/action payloads, stale-claim recovery, and store/scope routing (`runtime.worklist.*`, `worklist(...)`)
 - **Memory v2 primitives** with lifecycle controls (`feedback`, `correct`, `purge`) and lexical/semantic/hybrid recall
 - **Code search primitives** backed by an optional `turin-map` indexing companion and direct runtime reads (`runtime.code.search.*`)
 - **Stable hook model** with explicit lifecycle hooks and typed event payloads
@@ -51,6 +52,7 @@ Simple things should be simple. Powerful things should be possible.
 - **Canonical stdlib API**:
   - `runtime.context`, `runtime.memory`, `runtime.code.search`, `runtime.kv`, `runtime.db`, `runtime.agent`, `runtime.policy`, `runtime.governance`
   - `runtime.schedule`
+  - `runtime.worklist`
 - **First-party DX layer**:
   - `verdict`, `allowed`, `needs`, `scope`, `graph`, `schedule`, `action`, `session`, `user`, `remember`, `recall`, `fs.summary`, `code.find`, callable `runtime.db(...)`, callable `runtime.agent(...)`
 - **Top-level ergonomic aliases**:
@@ -70,6 +72,7 @@ Simple things should be simple. Powerful things should be possible.
 - **Hybrid code search** with lexical, semantic, hybrid, and traceable fallback behavior
 - **Peer-agent orchestration** with status inspection and async submit/await result handling
 - **Scheduled task orchestration** with one-shot/recurring jobs, anchored `daily` / `weekly` recurrence, prompt or named action payloads, overlap policy, and cross-store execution targeting
+- **Durable work coordination** with reusable worklists, optional hierarchy, claim heartbeats, stale-claim recovery, and prompt/action payload parity
 - **Opt-in governance** with profiles/capabilities/import scoping/agent ceilings/grants
 - **Live provider smoke tooling** (manual/opt-in) for real endpoint validation
 
@@ -418,6 +421,8 @@ Turin’s harness surface is split between **canonical runtime APIs** and **ergo
   - `list`, `get_status`, `submit`, `await`
 - `runtime.schedule`
   - `create`, `get`, `list`, `enable`, `disable`, `delete`
+- `runtime.worklist`
+  - `open`
 - `runtime.policy`
   - `get`, `set`
 - `runtime.governance`
@@ -428,7 +433,7 @@ Turin’s harness surface is split between **canonical runtime APIs** and **ergo
 
 - `memory.*` / `kv.*` for default agent-scoped data
 - `memory.as(ctx)` / `kv.as(ctx)` for scoped proxies
-- `remember`, `recall`, `scope(...)`, `graph.*`, `schedule.*`, `fs.summary`, `code.find`
+- `remember`, `recall`, `scope(...)`, `graph.*`, `schedule.*`, `worklist(...)`, `fs.summary`, `code.find`
 - `session.memory/kv.*`, `user.memory/kv.*`
 - `agent.spawn`, `agent.ask`, `agent.send`, `agent.session.*`
 - `fs`, `json`, `time`, `log`, `import`, `import_scoped`, `use`, `use_scoped`, `watch`

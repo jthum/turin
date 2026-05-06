@@ -134,6 +134,7 @@ Namespaces under `runtime`:
 - `runtime.db.*`
 - `runtime.agent.*`
 - `runtime.schedule.*`
+- `runtime.worklist.*`
 - `runtime.graph.*`
 - `runtime.policy.*`
 - `runtime.governance.*`
@@ -200,6 +201,7 @@ Current DX helper globals and helper-layer extensions:
 - `schedule.enable(...)`
 - `schedule.disable(...)`
 - `schedule.delete(...)`
+- `worklist(...)`
 
 These are helper-layer conveniences over the canonical substrate and should be evaluated separately during DX review.
 

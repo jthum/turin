@@ -409,6 +409,76 @@ end)
 
 - when needed, `runtime.schedule.create(...)` / `update(...)` can also carry structured `content`, tool allowlists, and conflict policy just like `task.submit(...)`
 
+### Durable worklists
+
+```lua
+function on_turn_prepare(ctx)
+  local sprint = worklist("sprint", {
+    scope = "project:alpha",
+  })
+
+  local fix = sprint:add({
+    title = "Fix login redirect",
+    prompt = "Fix login redirect",
+    content = {
+      { type = "text", text = "Repro starts on /login" },
+    },
+    tools = {
+      allow = { "shell_exec" },
+    },
+    conflict_policy = "detached",
+  }, {
+    metadata = { role = "dev" },
+  })
+
+  local qa = sprint:add({
+    title = "Run checkout smoke test",
+    action = "qa.run_smoke",
+    params = { suite = "checkout" },
+    priority = 10,
+    metadata = { role = "qa" },
+  })
+
+  local claimed = sprint:next({
+    where = { role = "qa" },
+  })
+
+  if claimed then
+    claimed:done({ result = "queued" })
+  end
+
+  local progress = sprint:progress()
+  session.set("sprint_progress", progress)
+  return ALLOW
+end
+```
+
+Notes:
+
+- `worklist(name, opts?)` is DX sugar over `runtime.worklist.open(...)`
+- worklist items may carry either:
+  - prompt payloads
+  - named action payloads
+- prompt items may also carry structured `content`, `tools`, and `conflict_policy`
+- item proxies expose both direct fields and a normalized `payload` view
+- worklists may be partitioned either by:
+  - separate lists
+  - or `where = {...}` filters on one shared list
+- item proxies support nested work with the same helper surface via:
+  - `item:add(...)`
+  - `item:children()`
+  - `item:next()`
+- claim recovery helpers are available when an execution disappears without releasing work:
+  - `list:orphaned({ stale_after_seconds = ... })`
+  - `list:release_stale({ stale_after_seconds = ... })`
+  - `item:heartbeat()`
+- worklists are state-store backed, not daemon-scheduler backed:
+  - `scope = ...`
+  - `state = ...`
+  - `store = ...`
+  - `path = ...`
+  all affect where durable worklist state lives
+
 ### Grant wrapper
 
 ```lua
