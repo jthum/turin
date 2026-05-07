@@ -184,6 +184,11 @@ Notes:
 - `ctx:pause_for(seconds, opts?)` is the shorter form when the main intent is “pause and try again later”
 - `ctx:is_cancelled()` lets long-running actions cooperate with session/task cancellation without inventing their own flag
 - paused work items are skipped by ordinary `worklist.next()` / `dispatch_next()` until their pause window is due
+- `list:paused({ due_only = true })` is the explicit inspection helper when you want paused items whose resume window has already elapsed
+- `opts.where` may also match pause fields:
+  - `paused`
+  - `pause_reason`
+  - `pause_until_unix_ms`
 - `runtime.schedule.create(...)` / `update(...)` may also carry structured `content`, `tools`, and `conflict_policy` fields when a scheduled prompt needs richer task input than a bare string
 - `schedule.update(...)` changes only the fields you provide; it does not mutate the already-running attempt for a currently active job
 - job detail surfaces scheduler health fields:
@@ -203,6 +208,7 @@ Common list methods:
 - `list:add(payload, opts?) -> item_proxy`
 - `list:all(opts?) -> items`
 - `list:pending(opts?) -> items`
+- `list:paused(opts?) -> items`
 - `list:active() -> item|nil`
 - `list:next(opts?) -> item|nil`
 - `list:current(opts?) -> item|nil`

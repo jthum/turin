@@ -271,6 +271,8 @@ Example `worklist.items` request:
       "state": { "alias": "project_alpha" }
     },
     "status": "active",
+    "paused_only": false,
+    "due_only": false,
     "where": {
       "role": "browser"
     },
@@ -281,6 +283,16 @@ Example `worklist.items` request:
 ```
 
 This returns active claimed items in the targeted worklist whose metadata matches `role = "browser"`.
+
+For paused work inspection, `worklist.items` also accepts:
+
+- `paused_only`
+- `due_only`
+
+That lets control-plane tooling ask for:
+
+- all paused items
+- only paused items whose resume window is already due
 
 Event stream example:
 

@@ -437,6 +437,7 @@ Common `list_proxy` methods:
 - `list:add(payload, opts?) -> item_proxy`
 - `list:all(opts?) -> items`
 - `list:pending(opts?) -> items`
+- `list:paused(opts?) -> items`
 - `list:active() -> item|nil`
 - `list:next(opts?) -> item|nil`
 - `list:current(opts?) -> item|nil`
@@ -464,7 +465,12 @@ Notes:
 - worklist items may be prompt-based or action-based
 - prompt items may also carry `content`, `tools`, and `conflict_policy`
 - item proxies expose both direct fields and a normalized `payload` table
-- `opts.where` filters compare against built-in item fields and metadata keys
+- item proxies expose pause fields directly:
+  - `paused`
+  - `pause_reason`
+  - `pause_until_unix_ms`
+- `list:paused(opts?)` returns paused items; `opts.due_only = true` restricts that view to paused items whose resume window is already due
+- `opts.where` filters compare against built-in item fields, pause fields, and metadata keys
 - stale-claim helpers use `opts.stale_after_seconds` and default to 300 seconds
 - `item:dispatch(...)`:
   - enqueues prompt items onto the active session queue as normal Turin tasks
@@ -1169,6 +1175,7 @@ State-store-backed durable work coordination API.
 - `list:add(payload, opts?) -> item_proxy`
 - `list:all(opts?) -> items`
 - `list:pending(opts?) -> items`
+- `list:paused(opts?) -> items`
 - `list:active() -> item|nil`
 - `list:next(opts?) -> item|nil`
 - `list:current(opts?) -> item|nil`
@@ -1204,6 +1211,11 @@ Rules and notes:
   - `priority`
   - `after`
   - `metadata`
+- item proxies expose:
+  - `paused`
+  - `pause_reason`
+  - `pause_until_unix_ms`
+- `list:paused({ due_only = true })` returns only paused items whose pause window has elapsed
 - `opts.where` filters compare against:
   - `id`, `public_id`, `title`, `kind`, `status`, `priority`, `parent_id`
   - metadata keys

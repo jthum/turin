@@ -178,6 +178,8 @@ Notes:
   - `parent_id`
   - metadata-aware `where = { ... }`
   - `claimed_only`
+  - `paused_only`
+  - `due_only`
   - `limit`
 
 ### Top-Level Authoring Aliases

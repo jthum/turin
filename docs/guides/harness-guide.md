@@ -494,6 +494,10 @@ Notes:
 - dispatch does not auto-complete the item; the harness still decides whether to call:
   - `item:done(...)`
   - `item:fail(...)`
+- paused work can be inspected directly:
+  - `list:paused()`
+  - `list:paused({ due_only = true })`
+  - `list:find({ where = { paused = true, pause_reason = "..." } })`
 - claim recovery helpers are available when an execution disappears without releasing work:
   - `list:orphaned({ stale_after_seconds = ... })`
   - `list:release_stale({ stale_after_seconds = ... })`
