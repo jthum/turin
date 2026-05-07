@@ -842,6 +842,11 @@ async fn test_worklist_action_pause_updates_checkpoint_and_schedules_resume() {
                 if run.result.result.resume_in_seconds ~= 45 then
                     error("expected resume delay")
                 end
+                if tasks:dispatch_next({
+                    where = { role = "sync" }
+                }) ~= nil then
+                    error("paused item should not be redispatched before resume is due")
+                end
                 return ALLOW
             end
         "#,
@@ -895,6 +900,68 @@ async fn test_worklist_action_pause_updates_checkpoint_and_schedules_resume() {
                 .to_string()
         ))
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_worklist_dispatch_can_resume_due_paused_item() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            action.define("contacts.resume", function(ctx, params)
+                return ctx:complete({
+                    cursor = ctx.checkpoint:get("cursor", "start"),
+                })
+            end)
+        "#,
+    )
+    .unwrap();
+
+    let app_data = test_app_data_for_root(dir.path().to_path_buf());
+    let store = open_default_state_store(&app_data).await;
+    let list = store.open_worklist("dispatch", "", None).await.unwrap();
+    let paused_metadata = serde_json::json!({
+        "paused": true,
+        "pause_reason": "rate_limited",
+        "pause_until_unix_ms": 1,
+        "checkpoint": {
+            "cursor": "page-2"
+        }
+    });
+    store
+        .create_work_item(WorkItemInsert {
+            public_id: uuid::Uuid::now_v7(),
+            worklist_id: list.id,
+            parent_item_id: None,
+            title: "Resume due paused action",
+            item_kind: "action",
+            prompt: None,
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action_name: Some("contacts.resume"),
+            action_params: Some("{}"),
+            priority: 0,
+            after_ids: None,
+            metadata: Some(&paused_metadata.to_string()),
+        })
+        .await
+        .unwrap();
+
+    let mut engine = HarnessEngine::new(app_data).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let result = engine
+        .invoke_declared_action_for_agent(
+            "test-agent",
+            "worklist.dispatch_next",
+            serde_json::json!({ "name": "dispatch" }),
+        )
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(result["item"]["title"], "Resume due paused action");
+    assert_eq!(result["result"]["dispatched"], "action");
+    assert_eq!(result["result"]["result"]["result"]["cursor"], "page-2");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]

@@ -489,10 +489,20 @@ fn pause_action(invocation: &ActionInvocationContext, opts: JsonValue) -> Result
         if let Some(checkpoint) = checkpoint.clone() {
             patch.insert("checkpoint".to_string(), checkpoint);
         }
+        patch.insert("paused".to_string(), JsonValue::Bool(true));
+        let paused_at_unix_ms = now_unix_ms();
         patch.insert(
             "paused_at_unix_ms".to_string(),
-            JsonValue::from(now_unix_ms()),
+            JsonValue::from(paused_at_unix_ms),
         );
+        if let Some(after_seconds) = resume_in_seconds {
+            patch.insert(
+                "pause_until_unix_ms".to_string(),
+                JsonValue::from(
+                    paused_at_unix_ms.saturating_add((after_seconds.saturating_mul(1000)) as i64),
+                ),
+            );
+        }
         let metadata =
             merge_metadata_patch(item.row.metadata.as_deref(), JsonValue::Object(patch))?;
         crate::harness::globals::block_on_current(async {

@@ -827,6 +827,7 @@ impl DaemonState {
             .filter(|row| row.parent_item_id.is_none())
             .filter(|row| row.status == "pending")
             .filter(|row| row.claim_execution_id.is_none())
+            .filter(|row| !work_item_is_paused(row, now_unix_ms))
             .filter(|row| work_item_dependencies_satisfied(row, &status_map))
             .filter(|row| work_item_matches_where(row, params.where_filter.as_ref()))
             .take(params.limit.unwrap_or(usize::MAX))
@@ -1239,6 +1240,29 @@ fn work_item_is_orphaned(row: &WorkItemRow, stale_before_unix_ms: i64) -> bool {
             Some(heartbeat) => heartbeat <= stale_before_unix_ms,
             None => true,
         }
+}
+
+fn work_item_is_paused(row: &WorkItemRow, now_unix_ms: i64) -> bool {
+    let Some(metadata_raw) = row.metadata.as_deref() else {
+        return false;
+    };
+    let Ok(JsonValue::Object(map)) = serde_json::from_str::<JsonValue>(metadata_raw) else {
+        return false;
+    };
+    let paused = map
+        .get("paused")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    if !paused {
+        return false;
+    }
+    match map
+        .get("pause_until_unix_ms")
+        .and_then(|value| value.as_i64())
+    {
+        Some(pause_until_unix_ms) => pause_until_unix_ms > now_unix_ms,
+        None => true,
+    }
 }
 
 fn work_item_task(row: &WorkItemRow) -> Result<QueuedTask> {

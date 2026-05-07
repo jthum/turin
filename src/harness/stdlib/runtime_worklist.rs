@@ -429,6 +429,29 @@ fn row_is_orphaned(row: &WorkItemRow, stale_before_unix_ms: i64) -> bool {
         }
 }
 
+fn row_is_paused(row: &WorkItemRow, now_unix_ms: i64) -> bool {
+    let Some(metadata_raw) = row.metadata.as_deref() else {
+        return false;
+    };
+    let Ok(JsonValue::Object(map)) = serde_json::from_str::<JsonValue>(metadata_raw) else {
+        return false;
+    };
+    let paused = map
+        .get("paused")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    if !paused {
+        return false;
+    }
+    match map
+        .get("pause_until_unix_ms")
+        .and_then(|value| value.as_i64())
+    {
+        Some(pause_until_unix_ms) => pause_until_unix_ms > now_unix_ms,
+        None => true,
+    }
+}
+
 fn item_payload_value(lua: &Lua, row: &WorkItemRow) -> LuaResult<Value> {
     let payload = lua.create_table()?;
     payload.set("kind", row.item_kind.clone())?;
@@ -1048,12 +1071,14 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     .iter()
                     .map(|row| (public_id_string(&row.public_id), row.status.clone()))
                     .collect::<HashMap<_, _>>();
+                let now = now_unix_ms();
                 let out = lua.create_table()?;
                 for (index, row) in rows
                     .into_iter()
                     .filter(|row| row.parent_item_id == handle.parent_item_id)
                     .filter(|row| row.status == "pending")
                     .filter(|row| row.claim_execution_id.is_none())
+                    .filter(|row| !row_is_paused(row, now))
                     .filter(|row| dependencies_satisfied(row, &status_map))
                     .filter(|row| row_matches_where(row, where_map.as_ref()))
                     .take(limit.unwrap_or(usize::MAX))
@@ -1198,12 +1223,14 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     .iter()
                     .map(|row| (public_id_string(&row.public_id), row.status.clone()))
                     .collect::<HashMap<_, _>>();
+                let now = now_unix_ms();
                 let (agent_id, session_id, execution_id) = current_claim_identity(&handle.app_data);
                 for row in rows
                     .iter()
                     .filter(|row| row.parent_item_id == handle.parent_item_id)
                     .filter(|row| row.status == "pending")
                     .filter(|row| row.claim_execution_id.is_none())
+                    .filter(|row| !row_is_paused(row, now))
                     .filter(|row| dependencies_satisfied(row, &status_map))
                     .filter(|row| row_matches_where(row, where_map.as_ref()))
                 {
@@ -1313,10 +1340,12 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     .iter()
                     .map(|row| (public_id_string(&row.public_id), row.status.clone()))
                     .collect::<HashMap<_, _>>();
+                let now = now_unix_ms();
                 let has_pending = rows.iter().any(|row| {
                     row.parent_item_id == handle.parent_item_id
                         && row.status == "pending"
                         && row.claim_execution_id.is_none()
+                        && !row_is_paused(row, now)
                         && dependencies_satisfied(row, &status_map)
                 });
                 Ok(Value::Boolean(!has_pending))
