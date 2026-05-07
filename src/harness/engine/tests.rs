@@ -898,6 +898,59 @@ async fn test_worklist_action_pause_updates_checkpoint_and_schedules_resume() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_worklist_action_checkpoint_helpers_expose_saved_state() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            action.define("contacts.resume", function(ctx, params)
+                return ctx:complete({
+                    cursor = ctx.checkpoint:get("cursor", "start"),
+                    processed = ctx.checkpoint:get("processed", 0),
+                    raw = ctx.checkpoint:all(),
+                })
+            end)
+
+            function on_turn_prepare(_ctx)
+                local tasks = worklist("dispatch")
+                tasks:add({
+                    title = "Resume contacts sync",
+                    action = "contacts.resume",
+                    params = {},
+                    metadata = {
+                        checkpoint = {
+                            cursor = "page-7",
+                            processed = 42,
+                        }
+                    }
+                })
+
+                local run = tasks:dispatch_next()
+                if run == nil or run.result.dispatched ~= "action" then
+                    error("expected action dispatch result")
+                end
+                if run.result.result.result.cursor ~= "page-7" then
+                    error("expected checkpoint cursor")
+                end
+                if run.result.result.result.processed ~= 42 then
+                    error("expected checkpoint processed count")
+                end
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let app_data = test_app_data_for_root(dir.path().to_path_buf());
+    let mut engine = HarnessEngine::new(app_data.clone()).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_engine_invokes_builtin_worklist_dispatch_action() {
     let dir = TempDir::new().unwrap();
     std::fs::write(dir.path().join("main.lua"), "-- no custom actions needed\n").unwrap();

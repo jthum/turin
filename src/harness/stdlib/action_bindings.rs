@@ -115,7 +115,7 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
         .and_then(|raw| serde_json::from_str::<JsonValue>(raw).ok())
         .and_then(|value| value.get("checkpoint").cloned())
         .unwrap_or(JsonValue::Object(JsonMap::new()));
-    ctx.set("checkpoint", lua.to_value(&checkpoint)?)?;
+    ctx.set("checkpoint", checkpoint_proxy(lua, checkpoint)?)?;
 
     match invocation.work_item.as_ref() {
         Some(item) => {
@@ -217,6 +217,46 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
     }
 
     Ok(ctx)
+}
+
+fn checkpoint_proxy(lua: &Lua, checkpoint: JsonValue) -> LuaResult<Table> {
+    let table = match lua.to_value(&checkpoint)? {
+        Value::Table(table) => table,
+        _ => lua.create_table()?,
+    };
+    table.set("get", {
+        let checkpoint = checkpoint.clone();
+        lua.create_function(
+            move |lua, (_self, key, default): (Table, String, Option<Value>)| {
+                let value = checkpoint
+                    .as_object()
+                    .and_then(|map| map.get(&key))
+                    .cloned();
+                match value {
+                    Some(value) => lua.to_value(&value),
+                    None => Ok(default.unwrap_or(Value::Nil)),
+                }
+            },
+        )?
+    })?;
+    table.set(
+        "all",
+        lua.create_function(move |lua, self_tbl: Table| {
+            let out = lua.create_table()?;
+            for pair in self_tbl.pairs::<Value, Value>() {
+                let (key, value) = pair?;
+                if let Value::String(key_str) = &key {
+                    let name = key_str.to_str()?;
+                    if name == "get" || name == "all" {
+                        continue;
+                    }
+                }
+                out.set(key, value)?;
+            }
+            Ok(Value::Table(out))
+        })?,
+    )?;
+    Ok(table)
 }
 
 fn action_agent_id(app_data: &HarnessAppData) -> String {

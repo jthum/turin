@@ -364,6 +364,9 @@ end)
   - `ctx:complete(value?)`
   - `ctx:fail(value?)`
   - `ctx:cancel(value?)`
+- `ctx.checkpoint` is also a helper table:
+  - `ctx.checkpoint:get(key, default?)`
+  - `ctx.checkpoint:all()`
 - `ctx:pause(opts)` is the lightweight continuation helper:
   - persists checkpoint-style metadata on the current work item when available
   - releases the current work item back to `pending`

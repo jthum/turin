@@ -171,6 +171,8 @@ Notes:
 - declared action handlers receive a control-aware `ctx` table:
   - `ctx.params`
   - `ctx.checkpoint`
+  - `ctx.checkpoint:get(key, default?)`
+  - `ctx.checkpoint:all()`
   - `ctx.item`
   - `ctx:pause(...)`
   - `ctx:complete(...)`
