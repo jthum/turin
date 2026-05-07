@@ -420,6 +420,12 @@ pub struct WorkItemDetail {
     #[serde(default)]
     pub action: Option<ScheduleActionParams>,
     pub status: String,
+    #[serde(default)]
+    pub paused: bool,
+    #[serde(default)]
+    pub pause_reason: Option<String>,
+    #[serde(default)]
+    pub pause_until_unix_ms: Option<i64>,
     pub priority: i64,
     #[serde(default)]
     pub after: Option<Vec<String>>,

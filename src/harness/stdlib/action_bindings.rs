@@ -196,6 +196,14 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
     {
         let invocation = invocation.clone();
         ctx.set(
+            "is_cancelled",
+            lua.create_function(move |_lua, _self: Table| Ok(action_is_cancelled(&invocation)))?,
+        )?;
+    }
+
+    {
+        let invocation = invocation.clone();
+        ctx.set(
             "pause",
             lua.create_function(move |lua, (_self, value): (Table, Value)| {
                 let opts = match value {
@@ -300,6 +308,16 @@ fn action_agent_id(app_data: &HarnessAppData) -> String {
         .ok()
         .and_then(|lock| lock.agent_id.clone())
         .unwrap_or_else(|| app_data.config.agent.id.clone())
+}
+
+fn action_is_cancelled(invocation: &ActionInvocationContext) -> bool {
+    invocation
+        .app_data
+        .execution_ctx
+        .lock()
+        .ok()
+        .and_then(|lock| lock.cancel_token.clone())
+        .is_some_and(|token| token.is_cancelled())
 }
 
 fn merge_metadata_patch(existing: Option<&str>, patch: JsonValue) -> Result<Option<String>> {

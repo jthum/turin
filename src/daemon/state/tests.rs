@@ -869,6 +869,7 @@ provider = "noop"
         child_items.items[0].claim_execution_id.as_deref(),
         Some("exec_qa")
     );
+    assert!(!child_items.items[0].paused);
 
     let item_detail = state
         .work_item_detail(
@@ -890,6 +891,39 @@ provider = "noop"
             .map(|action| action.name.as_str()),
         Some("qa.capture")
     );
+    assert!(!item_detail.paused);
+
+    let paused = project_store
+        .create_work_item(crate::persistence::state::WorkItemInsert {
+            public_id: uuid::Uuid::now_v7(),
+            worklist_id: worklist.id,
+            parent_item_id: None,
+            title: "Resume sync after rate limit",
+            item_kind: "action",
+            prompt: None,
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action_name: Some("qa.resume"),
+            action_params: Some("{}"),
+            priority: 1,
+            after_ids: None,
+            metadata: Some(
+                r#"{"paused":true,"pause_reason":"rate_limited","pause_until_unix_ms":4102444800000,"checkpoint":{"cursor":"page-4"}}"#,
+            ),
+        })
+        .await?;
+
+    let paused_detail = state
+        .work_item_detail(
+            &uuid::Uuid::from_slice(&paused.public_id)?.to_string(),
+            Some(&persistence),
+        )
+        .await?
+        .expect("paused work item detail present");
+    assert!(paused_detail.paused);
+    assert_eq!(paused_detail.pause_reason.as_deref(), Some("rate_limited"));
+    assert_eq!(paused_detail.pause_until_unix_ms, Some(4_102_444_800_000));
 
     Ok(())
 }

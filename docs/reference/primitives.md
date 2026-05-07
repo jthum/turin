@@ -365,6 +365,7 @@ end)
   - `ctx:complete(value?)`
   - `ctx:fail(value?)`
   - `ctx:cancel(value?)`
+  - `ctx:is_cancelled()`
 - `ctx.checkpoint` is also a helper table:
   - `ctx.checkpoint:get(key, default?)`
   - `ctx.checkpoint:all()`
@@ -374,6 +375,7 @@ end)
   - optionally schedules a follow-up when `opts.resume_in_seconds` is provided
   - marks the item as paused so ordinary `worklist.next()` / `dispatch_next()` will skip it until the pause is due
 - `ctx:pause_for(seconds, opts?)` is shorthand for `ctx:pause(...)` with `resume_in_seconds = seconds`
+- `ctx:is_cancelled()` reflects the current cooperative session cancellation signal when the action is running inside a live task/session
 - `opts` for `ctx:pause(...)` may include:
   - `because`
   - `note`

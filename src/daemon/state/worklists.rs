@@ -194,6 +194,19 @@ fn map_work_item_detail(
     public_ids: &HashMap<i64, String>,
     worklist: &WorklistRow,
 ) -> WorkItemDetail {
+    let metadata = parse_json::<JsonValue>(row.metadata.as_deref())
+        .ok()
+        .flatten();
+    let paused = work_item_pause_flag(metadata.as_ref());
+    let pause_reason = metadata
+        .as_ref()
+        .and_then(|value| value.get("pause_reason"))
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string);
+    let pause_until_unix_ms = metadata
+        .as_ref()
+        .and_then(|value| value.get("pause_until_unix_ms"))
+        .and_then(|value| value.as_i64());
     WorkItemDetail {
         id: row.id,
         public_id: format_public_id(&row.public_id),
@@ -209,9 +222,12 @@ fn map_work_item_detail(
         conflict_policy: row.conflict_policy,
         action: scheduled_action(row.action_name, row.action_params),
         status: row.status,
+        paused,
+        pause_reason,
+        pause_until_unix_ms,
         priority: row.priority,
         after: parse_json(row.after_ids.as_deref()).ok().flatten(),
-        metadata: parse_json(row.metadata.as_deref()).ok().flatten(),
+        metadata,
         claim_agent_id: row.claim_agent_id,
         claim_session_id: row.claim_session_id,
         claim_execution_id: row.claim_execution_id,
@@ -222,6 +238,15 @@ fn map_work_item_detail(
         created_at: row.created_at,
         updated_at: row.updated_at,
     }
+}
+
+fn work_item_pause_flag(metadata: Option<&JsonValue>) -> bool {
+    let Some(JsonValue::Object(map)) = metadata else {
+        return false;
+    };
+    map.get("paused")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
 }
 
 fn scheduled_action(name: Option<String>, params: Option<String>) -> Option<ScheduleActionParams> {

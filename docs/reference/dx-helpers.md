@@ -179,8 +179,10 @@ Notes:
   - `ctx:complete(...)`
   - `ctx:fail(...)`
   - `ctx:cancel(...)`
+  - `ctx:is_cancelled()`
 - `ctx:pause(...)` is the preferred lightweight way to stop an action intentionally and continue later
 - `ctx:pause_for(seconds, opts?)` is the shorter form when the main intent is “pause and try again later”
+- `ctx:is_cancelled()` lets long-running actions cooperate with session/task cancellation without inventing their own flag
 - paused work items are skipped by ordinary `worklist.next()` / `dispatch_next()` until their pause window is due
 - `runtime.schedule.create(...)` / `update(...)` may also carry structured `content`, `tools`, and `conflict_policy` fields when a scheduled prompt needs richer task input than a bare string
 - `schedule.update(...)` changes only the fields you provide; it does not mutate the already-running attempt for a currently active job

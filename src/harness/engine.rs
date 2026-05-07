@@ -202,6 +202,7 @@ impl HarnessEngine {
             lock.trace_id = Some(binding.trace_id);
             lock.completed_task_results = Some(binding.completed_task_results);
             lock.event_context = Some(binding.event_context);
+            lock.cancel_token = Some(binding.cancel_token);
         }
     }
 
@@ -224,6 +225,7 @@ impl HarnessEngine {
             lock.trace_id = None;
             lock.completed_task_results = None;
             lock.event_context = None;
+            lock.cancel_token = None;
         }
     }
 

@@ -166,6 +166,7 @@ impl ExecutionHost {
                 event_tx: session.event_tx.clone(),
                 durability_tx: session.durability_tx.clone(),
             },
+            cancel_token: session.cancel_token.clone(),
         });
     }
 

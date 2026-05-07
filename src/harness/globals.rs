@@ -4,6 +4,7 @@ use mlua::{Function, Lua, MultiValue, Result as LuaResult, Table, Value};
 use std::future::Future;
 use std::path::PathBuf;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::harness::dx;
 use crate::harness::scheduler::HarnessSchedulerAccess;
@@ -63,6 +64,7 @@ pub struct HarnessExecutionBinding {
     pub trace_id: String,
     pub completed_task_results: CompletedLocalTaskResultsHandle,
     pub event_context: HarnessEventContext,
+    pub cancel_token: CancellationToken,
 }
 
 #[derive(Clone, Default)]
@@ -87,6 +89,7 @@ pub struct HarnessExecutionContext {
     pub governance_grant: Option<String>,
     pub event_context: Option<HarnessEventContext>,
     pub completed_task_results: Option<CompletedLocalTaskResultsHandle>,
+    pub cancel_token: Option<CancellationToken>,
 }
 
 pub type ActiveHarnessExecutionContext = Arc<std::sync::Mutex<HarnessExecutionContext>>;

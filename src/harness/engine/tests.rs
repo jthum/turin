@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 struct CountingTextProvider {
@@ -81,6 +82,7 @@ fn test_app_data_for_root_and_session(root: PathBuf, session_id: &str) -> Harnes
                 queue: Some(std::sync::Arc::new(tokio::sync::Mutex::new(
                     std::collections::VecDeque::new(),
                 ))),
+                cancel_token: Some(CancellationToken::new()),
                 ..Default::default()
             },
         )),
@@ -1334,6 +1336,42 @@ fn test_engine_invokes_declared_action_handler() {
         .unwrap();
 
     assert_eq!(result["status"], "queued checkout");
+}
+
+#[test]
+fn test_engine_action_context_reports_cancellation() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            action.define("ops.cancel_check", function(ctx, params)
+                return {
+                    cancelled = ctx:is_cancelled()
+                }
+            end)
+            "#,
+    )
+    .unwrap();
+
+    let app_data = test_app_data();
+    let cancel_token = app_data
+        .execution_ctx
+        .lock()
+        .unwrap()
+        .cancel_token
+        .clone()
+        .expect("cancel token");
+    cancel_token.cancel();
+
+    let mut engine = HarnessEngine::new(app_data).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+
+    let result = engine
+        .invoke_declared_action_for_agent("test-agent", "ops.cancel_check", serde_json::json!({}))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(result["cancelled"], true);
 }
 
 #[test]
