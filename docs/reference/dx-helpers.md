@@ -175,10 +175,12 @@ Notes:
   - `ctx.checkpoint:all()`
   - `ctx.item`
   - `ctx:pause(...)`
+  - `ctx:pause_for(seconds, opts?)`
   - `ctx:complete(...)`
   - `ctx:fail(...)`
   - `ctx:cancel(...)`
 - `ctx:pause(...)` is the preferred lightweight way to stop an action intentionally and continue later
+- `ctx:pause_for(seconds, opts?)` is the shorter form when the main intent is “pause and try again later”
 - `runtime.schedule.create(...)` / `update(...)` may also carry structured `content`, `tools`, and `conflict_policy` fields when a scheduled prompt needs richer task input than a bare string
 - `schedule.update(...)` changes only the fields you provide; it does not mutate the already-running attempt for a currently active job
 - job detail surfaces scheduler health fields:

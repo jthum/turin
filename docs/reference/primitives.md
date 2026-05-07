@@ -361,6 +361,7 @@ end)
   - `ctx.checkpoint`
   - `ctx.item`
   - `ctx:pause(opts)`
+  - `ctx:pause_for(seconds, opts?)`
   - `ctx:complete(value?)`
   - `ctx:fail(value?)`
   - `ctx:cancel(value?)`
@@ -371,6 +372,7 @@ end)
   - persists checkpoint-style metadata on the current work item when available
   - releases the current work item back to `pending`
   - optionally schedules a follow-up when `opts.resume_in_seconds` is provided
+- `ctx:pause_for(seconds, opts?)` is shorthand for `ctx:pause(...)` with `resume_in_seconds = seconds`
 - `opts` for `ctx:pause(...)` may include:
   - `because`
   - `note`

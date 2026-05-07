@@ -951,6 +951,51 @@ async fn test_worklist_action_checkpoint_helpers_expose_saved_state() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_worklist_action_pause_for_sets_resume_delay() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            action.define("contacts.sync", function(ctx, params)
+                return ctx:pause_for(90, {
+                    because = "rate_limited",
+                    checkpoint = {
+                        cursor = "page-9",
+                    }
+                })
+            end)
+
+            function on_turn_prepare(_ctx)
+                local tasks = worklist("dispatch")
+                tasks:add({
+                    title = "Pause with shorthand",
+                    action = "contacts.sync",
+                    params = {}
+                })
+
+                local run = tasks:dispatch_next()
+                if run == nil or run.result.dispatched ~= "action" then
+                    error("expected action dispatch result")
+                end
+                if run.result.result.resume_in_seconds ~= 90 then
+                    error("expected shorthand resume delay")
+                end
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let app_data = test_app_data_with_scheduler(dir.path().to_path_buf()).await;
+    let mut engine = HarnessEngine::new(app_data.clone()).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_engine_invokes_builtin_worklist_dispatch_action() {
     let dir = TempDir::new().unwrap();
     std::fs::write(dir.path().join("main.lua"), "-- no custom actions needed\n").unwrap();

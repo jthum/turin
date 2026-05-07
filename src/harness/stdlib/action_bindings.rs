@@ -216,6 +216,40 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
         )?;
     }
 
+    {
+        let invocation = invocation.clone();
+        ctx.set(
+            "pause_for",
+            lua.create_function(
+                move |lua, (_self, seconds, opts): (Table, u64, Option<Value>)| {
+                    let mut opts = match opts {
+                        None | Some(Value::Nil) => JsonMap::new(),
+                        Some(Value::Table(table)) => match lua
+                            .from_value::<JsonValue>(Value::Table(table))?
+                        {
+                            JsonValue::Object(map) => map,
+                            _ => {
+                                return Err(mlua::Error::runtime(
+                                    "ctx:pause_for opts must be an object-like table".to_string(),
+                                ));
+                            }
+                        },
+                        Some(other) => {
+                            return Err(mlua::Error::runtime(format!(
+                                "ctx:pause_for opts must be an object-like table, got {:?}",
+                                other
+                            )));
+                        }
+                    };
+                    opts.insert("resume_in_seconds".to_string(), JsonValue::from(seconds));
+                    let result = pause_action(&invocation, JsonValue::Object(opts))
+                        .map_err(mlua::Error::runtime)?;
+                    lua.to_value(&result)
+                },
+            )?,
+        )?;
+    }
+
     Ok(ctx)
 }
 
