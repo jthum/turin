@@ -412,7 +412,7 @@ Notes:
 - custom scheduled action names may also be defined in the harness itself:
 
 ```lua
-action.define("ops.enqueue_followup", function(params)
+action.define("ops.enqueue_followup", function(ctx, params)
   runtime.schedule.create({
     prompt = params.prompt or "Follow up",
     after_seconds = params.after_seconds or 30,
@@ -420,6 +420,9 @@ action.define("ops.enqueue_followup", function(params)
   return { status = "queued followup" }
 end)
 ```
+
+- declared action handlers receive `(ctx, params)`
+- `ctx:pause({...})` is the lightweight way to checkpoint progress and continue later without introducing a separate workflow subsystem
 
 - when needed, `runtime.schedule.create(...)` / `update(...)` can also carry structured `content`, tool allowlists, and conflict policy just like `task.submit(...)`
 

@@ -167,7 +167,16 @@ Notes:
 - `worklist.release_stale` releases orphaned claimed root items back to pending state
 - nested `worklist.*` action items are rejected inside `worklist.dispatch_next`
 - custom action names may be defined at harness load time with:
-  - `action.define("qa.run_smoke", function(params) ... end)`
+  - `action.define("qa.run_smoke", function(ctx, params) ... end)`
+- declared action handlers receive a control-aware `ctx` table:
+  - `ctx.params`
+  - `ctx.checkpoint`
+  - `ctx.item`
+  - `ctx:pause(...)`
+  - `ctx:complete(...)`
+  - `ctx:fail(...)`
+  - `ctx:cancel(...)`
+- `ctx:pause(...)` is the preferred lightweight way to stop an action intentionally and continue later
 - `runtime.schedule.create(...)` / `update(...)` may also carry structured `content`, `tools`, and `conflict_policy` fields when a scheduled prompt needs richer task input than a bare string
 - `schedule.update(...)` changes only the fields you provide; it does not mutate the already-running attempt for a currently active job
 - job detail surfaces scheduler health fields:

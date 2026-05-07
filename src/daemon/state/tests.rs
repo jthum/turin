@@ -976,7 +976,7 @@ async fn scheduled_harness_action_can_enqueue_followup_job() -> Result<()> {
     std::fs::write(
         temp.path().join("default-harness").join("main.lua"),
         r#"
-            action.define("ops.enqueue_followup", function(params)
+            action.define("ops.enqueue_followup", function(ctx, params)
                 runtime.schedule.create({
                     prompt = params.prompt or "Follow up",
                     after_seconds = params.after_seconds or 30
@@ -1070,6 +1070,118 @@ provider = "noop"
         Some("Follow up from harness action")
     );
     assert!(follow_up.action.is_none());
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn scheduled_harness_action_can_pause_and_reschedule_itself() -> Result<()> {
+    let temp = tempdir()?;
+    std::fs::create_dir_all(temp.path().join("default-harness"))?;
+    std::fs::write(
+        temp.path().join("default-harness").join("main.lua"),
+        r#"
+            action.define("ops.defer", function(ctx, params)
+                return ctx:pause({
+                    because = params.because or "later",
+                    resume_in_seconds = params.after_seconds or 30,
+                    checkpoint = {
+                        job = params.job or "unknown"
+                    },
+                    note = "Pausing scheduled operation"
+                })
+            end)
+        "#,
+    )?;
+    let config_path = temp.path().join(".turin").join("config.toml");
+    std::fs::create_dir_all(config_path.parent().expect("config parent"))?;
+    std::fs::write(
+        &config_path,
+        r#"[agent]
+id = "default"
+system_prompt = "bootstrap"
+model = "mock-model"
+provider = "mock"
+
+[kernel]
+workspace_root = "."
+
+[persistence.state]
+path = "state.db"
+
+[harness]
+directory = "default-harness"
+fs_root = "."
+
+[providers.mock]
+type = "mock"
+
+[embeddings]
+provider = "noop"
+"#,
+    )?;
+
+    let mut state = DaemonState::load(&config_path).await?;
+    let now_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64;
+    let job = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: None,
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action: Some(ScheduleActionParams {
+                name: "ops.defer".to_string(),
+                params: Some(json!({
+                    "after_seconds": 30,
+                    "because": "rate_limited",
+                    "job": "nightly-sync"
+                })),
+            }),
+            persistence: None,
+            next_run_unix_ms: now_unix_ms - 1,
+            interval_seconds: None,
+            recurring_pattern: None,
+            overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            work_key: None,
+            max_concurrency: None,
+            enabled: true,
+        })
+        .await?;
+
+    state.scheduler_tick().await?;
+    let jobs = state.list_scheduled_jobs().await?;
+    assert_eq!(
+        jobs.len(),
+        2,
+        "expected original action job plus resume job"
+    );
+    let finished = jobs
+        .iter()
+        .find(|entry| entry.id == job.id)
+        .expect("scheduled harness action should remain visible");
+    assert_eq!(finished.last_error_code, None);
+    assert_eq!(finished.failure_count, 0);
+    assert_eq!(finished.last_status.as_deref(), Some("completed: paused"));
+
+    let follow_up = jobs
+        .iter()
+        .find(|entry| entry.id != job.id)
+        .expect("resume job should exist");
+    assert_eq!(
+        follow_up.action.as_ref().map(|action| action.name.as_str()),
+        Some("ops.defer")
+    );
+    assert_eq!(
+        follow_up
+            .action
+            .as_ref()
+            .and_then(|action| action.params.as_ref())
+            .and_then(|params| params.get("job")),
+        Some(&json!("nightly-sync"))
+    );
 
     Ok(())
 }

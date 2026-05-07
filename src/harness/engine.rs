@@ -475,7 +475,22 @@ impl HarnessEngine {
                     .and_then(|lock| lock.agent_id.clone())
             });
         self.set_active_action_agent(Some(agent_id));
-        let result = action_bindings::invoke_declared_action(&self.lua, name, params);
+        let app_data = self
+            .lua
+            .app_data_ref::<HarnessAppData>()
+            .map(|app_data| app_data.clone())
+            .ok_or_else(|| anyhow::anyhow!("Harness app data missing"))?;
+        let result = action_bindings::invoke_declared_action(
+            &self.lua,
+            name,
+            params.clone(),
+            action_bindings::ActionInvocationContext {
+                app_data,
+                action_name: name.to_string(),
+                params,
+                work_item: None,
+            },
+        );
         self.set_active_action_agent(previous_agent.as_deref());
         result
     }

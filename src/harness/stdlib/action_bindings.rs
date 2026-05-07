@@ -1,9 +1,43 @@
-use anyhow::Result;
-use mlua::{Function, Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use anyhow::{Context, Result};
+use mlua::{Function, Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
+use serde_json::{Map as JsonMap, Value as JsonValue};
+use turin_daemon_protocol::{ScheduleActionParams, ScheduleCreateParams};
+
+use crate::harness::globals::HarnessAppData;
+use crate::harness::scheduler::HarnessSchedulerAccess;
+use crate::harness::stdlib::runtime_worklist::{build_work_item_proxy, public_id_string};
 use crate::harness::stdlib::system_globals::ensure_load_time;
+use crate::persistence::manager::StoreSelector;
+use crate::persistence::schema::{WorkItemRow, WorklistRow};
+use crate::persistence::state::{StateStore, WorkItemUpdate};
 
 const DECLARED_ACTION_REGISTRY_KEY: &str = "__harness_declared_actions";
+
+#[derive(Clone)]
+pub(crate) struct ActionInvocationContext {
+    pub app_data: HarnessAppData,
+    pub action_name: String,
+    pub params: JsonValue,
+    pub work_item: Option<ActionWorkItemContext>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ActionWorkItemContext {
+    pub store: Arc<StateStore>,
+    pub store_selector: StoreSelector,
+    pub worklist: WorklistRow,
+    pub row: WorkItemRow,
+}
+
+fn now_unix_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|_| Duration::from_secs(0))
+        .as_millis() as i64
+}
 
 pub fn register_action_globals(lua: &Lua) -> LuaResult<()> {
     let action_table = lua.create_table()?;
@@ -41,8 +75,9 @@ fn ensure_declared_action_registry(lua: &Lua) -> LuaResult<Table> {
 pub(crate) fn invoke_declared_action(
     lua: &Lua,
     name: &str,
-    params: serde_json::Value,
-) -> Result<Option<serde_json::Value>> {
+    params: JsonValue,
+    invocation: ActionInvocationContext,
+) -> Result<Option<JsonValue>> {
     let registry = ensure_declared_action_registry(lua)?;
     let handler = match registry.get::<Value>(name)? {
         Value::Nil => return invoke_builtin_action(lua, name, params),
@@ -54,9 +89,10 @@ pub(crate) fn invoke_declared_action(
         ),
     };
 
+    let ctx = build_action_context(lua, &invocation)?;
     let lua_args = lua.to_value(&params)?;
-    let result = handler.call::<Value>(lua_args)?;
-    let result = lua.from_value::<serde_json::Value>(result).map_err(|err| {
+    let result = handler.call::<Value>((ctx, lua_args))?;
+    let result = lua.from_value::<JsonValue>(result).map_err(|err| {
         anyhow::anyhow!(
             "declared action '{}' handler returned a non-JSON value: {}",
             name,
@@ -67,11 +103,477 @@ pub(crate) fn invoke_declared_action(
     Ok(Some(result))
 }
 
-fn invoke_builtin_action(
-    lua: &Lua,
-    name: &str,
-    params: serde_json::Value,
-) -> Result<Option<serde_json::Value>> {
+fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaResult<Table> {
+    let ctx = lua.create_table()?;
+    ctx.set("action", invocation.action_name.clone())?;
+    ctx.set("params", lua.to_value(&invocation.params)?)?;
+
+    let checkpoint = invocation
+        .work_item
+        .as_ref()
+        .and_then(|item| item.row.metadata.as_deref())
+        .and_then(|raw| serde_json::from_str::<JsonValue>(raw).ok())
+        .and_then(|value| value.get("checkpoint").cloned())
+        .unwrap_or(JsonValue::Object(JsonMap::new()));
+    ctx.set("checkpoint", lua.to_value(&checkpoint)?)?;
+
+    match invocation.work_item.as_ref() {
+        Some(item) => {
+            ctx.set(
+                "item",
+                build_work_item_proxy(
+                    lua,
+                    item.store.clone(),
+                    item.store_selector.clone(),
+                    item.worklist.clone(),
+                    item.row.clone(),
+                    invocation.app_data.clone(),
+                )?,
+            )?;
+        }
+        None => ctx.set("item", Value::Nil)?,
+    }
+
+    {
+        let invocation = invocation.clone();
+        ctx.set(
+            "complete",
+            lua.create_function(move |lua, (_self, value): (Table, Value)| {
+                let value_json = match value {
+                    Value::Nil => None,
+                    value => Some(
+                        lua.from_value::<JsonValue>(value)
+                            .map_err(anyhow::Error::from)
+                            .map_err(mlua::Error::runtime)?,
+                    ),
+                };
+                let result =
+                    complete_action(&invocation, value_json).map_err(mlua::Error::runtime)?;
+                lua.to_value(&result)
+            })?,
+        )?;
+    }
+
+    {
+        let invocation = invocation.clone();
+        ctx.set(
+            "fail",
+            lua.create_function(move |lua, (_self, value): (Table, Value)| {
+                let value_json = match value {
+                    Value::Nil => None,
+                    value => Some(
+                        lua.from_value::<JsonValue>(value)
+                            .map_err(anyhow::Error::from)
+                            .map_err(mlua::Error::runtime)?,
+                    ),
+                };
+                let result = fail_action(&invocation, value_json).map_err(mlua::Error::runtime)?;
+                lua.to_value(&result)
+            })?,
+        )?;
+    }
+
+    {
+        let invocation = invocation.clone();
+        ctx.set(
+            "cancel",
+            lua.create_function(move |lua, (_self, value): (Table, Value)| {
+                let value_json = match value {
+                    Value::Nil => None,
+                    value => Some(
+                        lua.from_value::<JsonValue>(value)
+                            .map_err(anyhow::Error::from)
+                            .map_err(mlua::Error::runtime)?,
+                    ),
+                };
+                let result =
+                    cancel_action(&invocation, value_json).map_err(mlua::Error::runtime)?;
+                lua.to_value(&result)
+            })?,
+        )?;
+    }
+
+    {
+        let invocation = invocation.clone();
+        ctx.set(
+            "pause",
+            lua.create_function(move |lua, (_self, value): (Table, Value)| {
+                let opts = match value {
+                    Value::Table(table) => lua
+                        .from_value::<JsonValue>(Value::Table(table))
+                        .map_err(anyhow::Error::from)
+                        .map_err(mlua::Error::runtime)?,
+                    other => {
+                        return Err(mlua::Error::runtime(format!(
+                            "ctx:pause requires an object-like table, got {:?}",
+                            other
+                        )));
+                    }
+                };
+                let result = pause_action(&invocation, opts).map_err(mlua::Error::runtime)?;
+                lua.to_value(&result)
+            })?,
+        )?;
+    }
+
+    Ok(ctx)
+}
+
+fn action_agent_id(app_data: &HarnessAppData) -> String {
+    app_data
+        .execution_ctx
+        .lock()
+        .ok()
+        .and_then(|lock| lock.agent_id.clone())
+        .unwrap_or_else(|| app_data.config.agent.id.clone())
+}
+
+fn merge_metadata_patch(existing: Option<&str>, patch: JsonValue) -> Result<Option<String>> {
+    if patch.is_null() {
+        return Ok(existing.map(ToString::to_string));
+    }
+    let merged = match (
+        existing.and_then(|raw| serde_json::from_str::<JsonValue>(raw).ok()),
+        patch,
+    ) {
+        (Some(JsonValue::Object(mut current)), JsonValue::Object(patch)) => {
+            for (key, value) in patch {
+                current.insert(key, value);
+            }
+            JsonValue::Object(current)
+        }
+        (_, patch) => patch,
+    };
+    Ok(Some(serde_json::to_string(&merged)?))
+}
+
+fn value_reason(value: Option<&JsonValue>) -> Option<String> {
+    match value {
+        Some(JsonValue::String(s)) if !s.is_empty() => Some(s.clone()),
+        Some(JsonValue::Object(map)) => map
+            .get("because")
+            .or_else(|| map.get("reason"))
+            .or_else(|| map.get("message"))
+            .and_then(|value| value.as_str())
+            .map(ToString::to_string),
+        _ => None,
+    }
+}
+
+fn complete_action(
+    invocation: &ActionInvocationContext,
+    value: Option<JsonValue>,
+) -> Result<JsonValue> {
+    if let Some(item) = invocation.work_item.as_ref() {
+        let metadata = value
+            .clone()
+            .map(|value| {
+                let mut map = JsonMap::new();
+                map.insert("output".to_string(), value);
+                JsonValue::Object(map)
+            })
+            .map(|patch| merge_metadata_patch(item.row.metadata.as_deref(), patch))
+            .transpose()?
+            .flatten();
+        crate::harness::globals::block_on_current(async {
+            item.store
+                .complete_work_item(item.row.id, metadata.as_deref())
+                .await
+        })?;
+    }
+
+    let mut out = JsonMap::new();
+    out.insert(
+        "status".to_string(),
+        JsonValue::String("completed".to_string()),
+    );
+    if let Some(value) = value {
+        out.insert("result".to_string(), value);
+    }
+    Ok(JsonValue::Object(out))
+}
+
+fn fail_action(
+    invocation: &ActionInvocationContext,
+    value: Option<JsonValue>,
+) -> Result<JsonValue> {
+    if let Some(item) = invocation.work_item.as_ref() {
+        let reason = value_reason(value.as_ref());
+        let metadata = value
+            .clone()
+            .map(|value| {
+                let mut map = JsonMap::new();
+                map.insert("failure".to_string(), value);
+                JsonValue::Object(map)
+            })
+            .map(|patch| merge_metadata_patch(item.row.metadata.as_deref(), patch))
+            .transpose()?
+            .flatten();
+        crate::harness::globals::block_on_current(async {
+            if let Some(metadata) = metadata.as_deref() {
+                item.store
+                    .update_work_item(WorkItemUpdate {
+                        id: item.row.id,
+                        metadata: Some(Some(metadata)),
+                        ..Default::default()
+                    })
+                    .await
+                    .context("failed to persist work item failure metadata")?;
+            }
+            item.store
+                .fail_work_item(item.row.id, reason.as_deref())
+                .await
+        })?;
+    }
+
+    let mut out = JsonMap::new();
+    out.insert(
+        "status".to_string(),
+        JsonValue::String("failed".to_string()),
+    );
+    if let Some(value) = value {
+        out.insert("error".to_string(), value);
+    }
+    Ok(JsonValue::Object(out))
+}
+
+fn cancel_action(
+    invocation: &ActionInvocationContext,
+    value: Option<JsonValue>,
+) -> Result<JsonValue> {
+    if let Some(item) = invocation.work_item.as_ref() {
+        let mut patch = match value.clone() {
+            Some(JsonValue::Object(map)) => map,
+            Some(other) => {
+                let mut map = JsonMap::new();
+                map.insert("cancel".to_string(), other);
+                map
+            }
+            None => JsonMap::new(),
+        };
+        patch.insert(
+            "cancelled_at_unix_ms".to_string(),
+            JsonValue::from(now_unix_ms()),
+        );
+        let metadata =
+            merge_metadata_patch(item.row.metadata.as_deref(), JsonValue::Object(patch))?;
+        crate::harness::globals::block_on_current(async {
+            item.store
+                .update_work_item(WorkItemUpdate {
+                    id: item.row.id,
+                    metadata: Some(metadata.as_deref()),
+                    ..Default::default()
+                })
+                .await
+                .context("failed to persist work item cancel metadata")?;
+            item.store.release_work_item(item.row.id).await
+        })?;
+    }
+
+    let mut out = JsonMap::new();
+    out.insert(
+        "status".to_string(),
+        JsonValue::String("cancelled".to_string()),
+    );
+    if let Some(value) = value {
+        out.insert("cancel".to_string(), value);
+    }
+    Ok(JsonValue::Object(out))
+}
+
+fn pause_action(invocation: &ActionInvocationContext, opts: JsonValue) -> Result<JsonValue> {
+    let opts = match opts {
+        JsonValue::Object(map) => map,
+        _ => anyhow::bail!("ctx:pause requires an object-like table"),
+    };
+
+    let reason = opts
+        .get("because")
+        .or_else(|| opts.get("reason"))
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string);
+    let note = opts
+        .get("note")
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string);
+    let resume_in_seconds = opts
+        .get("resume_in_seconds")
+        .and_then(|value| value.as_u64());
+    let checkpoint = opts.get("checkpoint").cloned();
+
+    let scheduled_job_id = if let Some(item) = invocation.work_item.as_ref() {
+        let mut patch = JsonMap::new();
+        if let Some(reason) = reason.as_ref() {
+            patch.insert(
+                "pause_reason".to_string(),
+                JsonValue::String(reason.clone()),
+            );
+        }
+        if let Some(note) = note.as_ref() {
+            patch.insert("pause_note".to_string(), JsonValue::String(note.clone()));
+        }
+        if let Some(checkpoint) = checkpoint.clone() {
+            patch.insert("checkpoint".to_string(), checkpoint);
+        }
+        patch.insert(
+            "paused_at_unix_ms".to_string(),
+            JsonValue::from(now_unix_ms()),
+        );
+        let metadata =
+            merge_metadata_patch(item.row.metadata.as_deref(), JsonValue::Object(patch))?;
+        crate::harness::globals::block_on_current(async {
+            item.store
+                .update_work_item(WorkItemUpdate {
+                    id: item.row.id,
+                    metadata: Some(metadata.as_deref()),
+                    ..Default::default()
+                })
+                .await
+                .context("failed to persist work item pause metadata")?;
+            item.store.release_work_item(item.row.id).await
+        })?;
+
+        match resume_in_seconds {
+            Some(after_seconds) => schedule_worklist_resume(
+                invocation.app_data.scheduler.as_ref(),
+                action_agent_id(&invocation.app_data),
+                item,
+                after_seconds,
+            )?,
+            None => None,
+        }
+    } else {
+        match resume_in_seconds {
+            Some(after_seconds) => schedule_action_resume(
+                invocation.app_data.scheduler.as_ref(),
+                action_agent_id(&invocation.app_data),
+                &invocation.action_name,
+                invocation.params.clone(),
+                after_seconds,
+            )?,
+            None => None,
+        }
+    };
+
+    let mut out = JsonMap::new();
+    out.insert(
+        "status".to_string(),
+        JsonValue::String("paused".to_string()),
+    );
+    if let Some(reason) = reason {
+        out.insert("reason".to_string(), JsonValue::String(reason));
+    }
+    if let Some(note) = note {
+        out.insert("note".to_string(), JsonValue::String(note));
+    }
+    if let Some(checkpoint) = checkpoint {
+        out.insert("checkpoint".to_string(), checkpoint);
+    }
+    if let Some(seconds) = resume_in_seconds {
+        out.insert("resume_in_seconds".to_string(), JsonValue::from(seconds));
+    }
+    if let Some(job_id) = scheduled_job_id {
+        out.insert("resume_job_id".to_string(), JsonValue::String(job_id));
+    }
+    Ok(JsonValue::Object(out))
+}
+
+fn schedule_action_resume(
+    scheduler: Option<&Arc<HarnessSchedulerAccess>>,
+    agent_id: String,
+    action_name: &str,
+    params: JsonValue,
+    after_seconds: u64,
+) -> Result<Option<String>> {
+    let Some(scheduler) = scheduler else {
+        return Ok(None);
+    };
+    let next_run_unix_ms =
+        now_unix_ms().saturating_add((after_seconds.saturating_mul(1000)) as i64);
+    let job = crate::harness::globals::block_on_current(async {
+        scheduler
+            .create_job(ScheduleCreateParams {
+                agent_id,
+                prompt: None,
+                content: None,
+                tools: None,
+                conflict_policy: None,
+                action: Some(ScheduleActionParams {
+                    name: action_name.to_string(),
+                    params: Some(params),
+                }),
+                persistence: None,
+                next_run_unix_ms,
+                interval_seconds: None,
+                recurring_pattern: None,
+                overlap_policy: Some("skip".to_string()),
+                work_key: None,
+                max_concurrency: None,
+                enabled: true,
+            })
+            .await
+    })?;
+    Ok(Some(job.public_id))
+}
+
+fn store_selector_json(selector: &StoreSelector) -> JsonValue {
+    match selector {
+        StoreSelector::Alias(alias) => JsonValue::String(alias.clone()),
+        StoreSelector::Path(path) => serde_json::json!({ "path": path }),
+        StoreSelector::Handle(handle) => serde_json::json!({ "store": handle }),
+    }
+}
+
+fn schedule_worklist_resume(
+    scheduler: Option<&Arc<HarnessSchedulerAccess>>,
+    agent_id: String,
+    item: &ActionWorkItemContext,
+    after_seconds: u64,
+) -> Result<Option<String>> {
+    let Some(scheduler) = scheduler else {
+        return Ok(None);
+    };
+    let next_run_unix_ms =
+        now_unix_ms().saturating_add((after_seconds.saturating_mul(1000)) as i64);
+    let scope = if item.worklist.scope_ref.is_empty() {
+        JsonValue::Null
+    } else {
+        JsonValue::String(item.worklist.scope_ref.clone())
+    };
+    let job = crate::harness::globals::block_on_current(async {
+        scheduler
+            .create_job(ScheduleCreateParams {
+                agent_id,
+                prompt: None,
+                content: None,
+                tools: None,
+                conflict_policy: None,
+                action: Some(ScheduleActionParams {
+                    name: "worklist.dispatch_next".to_string(),
+                    params: Some(serde_json::json!({
+                        "name": item.worklist.name,
+                        "scope": scope,
+                        "store": store_selector_json(&item.store_selector),
+                        "where": {
+                            "id": public_id_string(&item.row.public_id)
+                        }
+                    })),
+                }),
+                persistence: None,
+                next_run_unix_ms,
+                interval_seconds: None,
+                recurring_pattern: None,
+                overlap_policy: Some("skip".to_string()),
+                work_key: None,
+                max_concurrency: None,
+                enabled: true,
+            })
+            .await
+    })?;
+    Ok(Some(job.public_id))
+}
+
+fn invoke_builtin_action(lua: &Lua, name: &str, params: JsonValue) -> Result<Option<JsonValue>> {
     match name {
         "worklist.dispatch_next" => Ok(Some(invoke_builtin_worklist_method(
             lua,
@@ -90,8 +592,8 @@ fn invoke_builtin_action(
 fn invoke_builtin_worklist_method(
     lua: &Lua,
     method_name: &str,
-    params: serde_json::Value,
-) -> Result<serde_json::Value> {
+    params: JsonValue,
+) -> Result<JsonValue> {
     let params_value = lua.to_value(&params)?;
     let params_table = match params_value {
         Value::Nil => lua.create_table()?,
@@ -123,13 +625,13 @@ fn worklist_action_result_to_json(
     lua: &Lua,
     method_name: &str,
     result: Value,
-) -> Result<serde_json::Value> {
+) -> Result<JsonValue> {
     match method_name {
         "dispatch_next" => match result {
-            Value::Nil => Ok(serde_json::Value::Null),
+            Value::Nil => Ok(JsonValue::Null),
             Value::Table(table) => {
                 let item = summarize_worklist_item_table(&table.get::<Table>("item")?)?;
-                let dispatch_result = lua.from_value::<serde_json::Value>(table.get("result")?)?;
+                let dispatch_result = lua.from_value::<JsonValue>(table.get("result")?)?;
                 Ok(serde_json::json!({
                     "item": item,
                     "result": dispatch_result,
@@ -146,7 +648,7 @@ fn worklist_action_result_to_json(
                 for value in table.sequence_values::<Table>() {
                     items.push(summarize_worklist_item_table(&value?)?);
                 }
-                Ok(serde_json::Value::Array(items))
+                Ok(JsonValue::Array(items))
             }
             other => anyhow::bail!(
                 "built-in action 'worklist.release_stale' returned unexpected value {:?}",
@@ -157,7 +659,7 @@ fn worklist_action_result_to_json(
     }
 }
 
-fn summarize_worklist_item_table(table: &Table) -> Result<serde_json::Value> {
+fn summarize_worklist_item_table(table: &Table) -> Result<JsonValue> {
     Ok(serde_json::json!({
         "id": table.get::<Option<String>>("id")?,
         "title": table.get::<Option<String>>("title")?,

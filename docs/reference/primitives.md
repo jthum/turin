@@ -350,10 +350,29 @@ Notes:
 - custom scheduled action names may be registered during harness load with:
 
 ```lua
-action.define("qa.run_smoke", function(params)
+action.define("qa.run_smoke", function(ctx, params)
   return { status = "queued " .. tostring(params.suite) }
 end)
 ```
+
+- declared action handlers receive `(ctx, params)`
+- `ctx` currently exposes:
+  - `ctx.params`
+  - `ctx.checkpoint`
+  - `ctx.item`
+  - `ctx:pause(opts)`
+  - `ctx:complete(value?)`
+  - `ctx:fail(value?)`
+  - `ctx:cancel(value?)`
+- `ctx:pause(opts)` is the lightweight continuation helper:
+  - persists checkpoint-style metadata on the current work item when available
+  - releases the current work item back to `pending`
+  - optionally schedules a follow-up when `opts.resume_in_seconds` is provided
+- `opts` for `ctx:pause(...)` may include:
+  - `because`
+  - `note`
+  - `checkpoint`
+  - `resume_in_seconds`
 
 - `schedule.delete(...)` rejects running jobs rather than orphaning active execution
 - `schedule.update(...)` only changes the fields you provide; running attempts continue with the task that was already submitted

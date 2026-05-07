@@ -26,6 +26,7 @@ use crate::persistence::state::{StateStore, WorkItemInsert, WorkItemUpdate};
 struct WorklistHandle {
     app_data: HarnessAppData,
     store: Arc<StateStore>,
+    store_selector: StoreSelector,
     worklist: WorklistRow,
     parent_item_id: Option<i64>,
 }
@@ -348,7 +349,7 @@ fn parse_stale_after_ms(opts: Option<Table>) -> LuaResult<i64> {
     }
 }
 
-fn public_id_string(bytes: &[u8]) -> String {
+pub(crate) fn public_id_string(bytes: &[u8]) -> String {
     uuid::Uuid::from_slice(bytes)
         .map(|uuid| uuid.to_string())
         .unwrap_or_else(|_| {
@@ -370,7 +371,7 @@ where
         .map_err(anyhow::Error::from)
 }
 
-fn serialize_json_opt<T>(value: Option<&T>) -> anyhow::Result<Option<String>>
+pub(crate) fn serialize_json_opt<T>(value: Option<&T>) -> anyhow::Result<Option<String>>
 where
     T: serde::Serialize,
 {
@@ -507,15 +508,34 @@ fn dispatch_prompt_item(
     }))
 }
 
-fn dispatch_action_item(lua: &Lua, row: &WorkItemRow) -> anyhow::Result<serde_json::Value> {
+fn dispatch_action_item(
+    lua: &Lua,
+    row: &WorkItemRow,
+    handle: &WorklistHandle,
+) -> anyhow::Result<serde_json::Value> {
     let action_name = row
         .action_name
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("action work item '{}' is missing action", row.title))?;
     let params =
         parse_json_opt::<JsonValue>(row.action_params.as_deref())?.unwrap_or(JsonValue::Null);
-    let result = action_bindings::invoke_declared_action(lua, action_name, params)?
-        .ok_or_else(|| anyhow::anyhow!("declared action '{}' is not defined", action_name))?;
+    let result = action_bindings::invoke_declared_action(
+        lua,
+        action_name,
+        params.clone(),
+        action_bindings::ActionInvocationContext {
+            app_data: handle.app_data.clone(),
+            action_name: action_name.to_string(),
+            params,
+            work_item: Some(action_bindings::ActionWorkItemContext {
+                store: handle.store.clone(),
+                store_selector: handle.store_selector.clone(),
+                worklist: handle.worklist.clone(),
+                row: row.clone(),
+            }),
+        },
+    )?
+    .ok_or_else(|| anyhow::anyhow!("declared action '{}' is not defined", action_name))?;
     Ok(serde_json::json!({
         "dispatched": "action",
         "action": action_name,
@@ -523,14 +543,10 @@ fn dispatch_action_item(lua: &Lua, row: &WorkItemRow) -> anyhow::Result<serde_js
     }))
 }
 
-fn dispatch_item_result(
-    lua: &Lua,
-    row: &WorkItemRow,
-    app_data: &HarnessAppData,
-) -> LuaResult<Value> {
+fn dispatch_item_result(lua: &Lua, row: &WorkItemRow, handle: &WorklistHandle) -> LuaResult<Value> {
     let result = match row.item_kind.as_str() {
-        "action" => dispatch_action_item(lua, row),
-        _ => dispatch_prompt_item(row, app_data),
+        "action" => dispatch_action_item(lua, row, handle),
+        _ => dispatch_prompt_item(row, &handle.app_data),
     }
     .map_err(mlua::Error::runtime)?;
     lua.to_value(&result)
@@ -546,6 +562,27 @@ fn current_claim_identity(app_data: &HarnessAppData) -> (String, Option<String>,
         .or_else(|| session_id.clone())
         .or_else(|| Some(format!("agent:{}", agent_id)));
     (agent_id, session_id, execution_id)
+}
+
+pub(crate) fn build_work_item_proxy(
+    lua: &Lua,
+    store: Arc<StateStore>,
+    store_selector: StoreSelector,
+    worklist: WorklistRow,
+    row: WorkItemRow,
+    app_data: HarnessAppData,
+) -> LuaResult<Table> {
+    item_proxy(
+        lua,
+        WorklistHandle {
+            app_data,
+            store,
+            store_selector,
+            worklist,
+            parent_item_id: Some(row.id),
+        },
+        row,
+    )
 }
 
 fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<Table> {
@@ -703,7 +740,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                 })
                 .map_err(mlua::Error::runtime)?
                 .ok_or_else(|| mlua::Error::runtime("work item not found".to_string()))?;
-                dispatch_item_result(lua, &row, &handle.app_data)
+                dispatch_item_result(lua, &row, &handle)
             })?,
         )?;
     }
@@ -1325,6 +1362,7 @@ pub fn register_runtime_worklist_namespace(
                 let (path_scope, max_open_handles, idle_close_seconds) =
                     runtime_store_settings(&app_data)?;
                 let manager = app_data.store_manager.clone();
+                let store_selector = selector.clone();
                 let store = crate::harness::globals::block_on_current(async move {
                     open_store(
                         manager,
@@ -1353,6 +1391,7 @@ pub fn register_runtime_worklist_namespace(
                     WorklistHandle {
                         app_data: app_data.clone(),
                         store,
+                        store_selector,
                         worklist,
                         parent_item_id: None,
                     },

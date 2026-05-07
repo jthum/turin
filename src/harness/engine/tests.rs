@@ -731,7 +731,7 @@ async fn test_worklist_dispatches_prompt_and_action_payloads() {
     std::fs::write(
         dir.path().join("main.lua"),
         r#"
-            action.define("qa.run_smoke", function(params)
+            action.define("qa.run_smoke", function(ctx, params)
                 return {
                     status = "queued " .. tostring(params.suite)
                 }
@@ -798,6 +798,103 @@ async fn test_worklist_dispatches_prompt_and_action_payloads() {
     assert_eq!(queued.len(), 1);
     assert_eq!(queued[0].prompt, "Review latest failures");
     assert_eq!(queued[0].title.as_deref(), Some("Review latest failures"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_worklist_action_pause_updates_checkpoint_and_schedules_resume() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            action.define("contacts.sync", function(ctx, params)
+                return ctx:pause({
+                    because = "rate_limited",
+                    checkpoint = {
+                        cursor = params.cursor or "page-1",
+                        processed = 12,
+                    },
+                    resume_in_seconds = 45,
+                    note = "Paused due to API rate limit",
+                })
+            end)
+
+            function on_turn_prepare(_ctx)
+                local tasks = worklist("dispatch")
+                tasks:add({
+                    title = "Sync contacts",
+                    action = "contacts.sync",
+                    params = { cursor = "page-1" },
+                    metadata = { role = "sync" }
+                })
+
+                local run = tasks:dispatch_next({
+                    where = { role = "sync" }
+                })
+                if run == nil or run.result.dispatched ~= "action" then
+                    error("expected action dispatch result")
+                end
+                if run.result.result.status ~= "paused" then
+                    error("expected paused action result")
+                end
+                if run.result.result.reason ~= "rate_limited" then
+                    error("expected pause reason")
+                end
+                if run.result.result.resume_in_seconds ~= 45 then
+                    error("expected resume delay")
+                end
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let app_data = test_app_data_with_scheduler(dir.path().to_path_buf()).await;
+    let default_store = open_default_state_store(&app_data).await;
+    let mut engine = HarnessEngine::new(app_data.clone()).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+
+    let worklist = default_store
+        .open_worklist("dispatch", "", None)
+        .await
+        .unwrap();
+    let rows = default_store.list_work_items(worklist.id).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, "pending");
+    let metadata: serde_json::Value =
+        serde_json::from_str(rows[0].metadata.as_deref().expect("metadata")).unwrap();
+    assert_eq!(metadata["pause_reason"], "rate_limited");
+    assert_eq!(metadata["checkpoint"]["cursor"], "page-1");
+    assert_eq!(metadata["checkpoint"]["processed"], 12);
+
+    let jobs = app_data
+        .scheduler
+        .as_ref()
+        .expect("scheduler")
+        .list_jobs()
+        .await
+        .unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(
+        jobs[0].action.as_ref().map(|action| action.name.as_str()),
+        Some("worklist.dispatch_next")
+    );
+    assert_eq!(
+        jobs[0]
+            .action
+            .as_ref()
+            .and_then(|action| action.params.as_ref())
+            .and_then(|params| params.get("where"))
+            .and_then(|where_map| where_map.get("id")),
+        Some(&serde_json::Value::String(
+            uuid::Uuid::from_slice(&rows[0].public_id)
+                .unwrap()
+                .to_string()
+        ))
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -1050,7 +1147,7 @@ fn test_engine_invokes_declared_action_handler() {
     std::fs::write(
         dir.path().join("main.lua"),
         r#"
-            action.define("qa.run_smoke", function(params)
+            action.define("qa.run_smoke", function(ctx, params)
                 return {
                     status = "queued " .. tostring(params.suite)
                 }
