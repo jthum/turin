@@ -59,6 +59,8 @@ pub(super) async fn items(
             parent_public_id: params.parent_id.as_deref(),
             where_filter: params.r#where.as_ref(),
             claimed_only: params.claimed_only,
+            paused_only: params.paused_only,
+            due_only: params.due_only,
             limit: params.limit,
         })
         .await

@@ -826,6 +826,8 @@ provider = "noop"
             parent_public_id: Some("0196f8fe-6e6a-7e1a-8da5-3f774f1a8d48"),
             where_filter: None,
             claimed_only: true,
+            paused_only: false,
+            due_only: false,
             limit: Some(10),
         })
         .await?
@@ -843,6 +845,8 @@ provider = "noop"
                 json!("browser"),
             )])),
             claimed_only: true,
+            paused_only: false,
+            due_only: false,
             limit: Some(10),
         })
         .await?
@@ -924,6 +928,64 @@ provider = "noop"
     assert!(paused_detail.paused);
     assert_eq!(paused_detail.pause_reason.as_deref(), Some("rate_limited"));
     assert_eq!(paused_detail.pause_until_unix_ms, Some(4_102_444_800_000));
+
+    let paused_items = state
+        .worklist_items(WorklistItemsQuery {
+            public_id: &worklists[0].public_id,
+            persistence: Some(&persistence),
+            status: None,
+            parent_public_id: None,
+            where_filter: None,
+            claimed_only: false,
+            paused_only: true,
+            due_only: false,
+            limit: Some(10),
+        })
+        .await?
+        .expect("paused items result present");
+    assert_eq!(paused_items.items.len(), 1);
+    assert_eq!(paused_items.items[0].title, "Resume sync after rate limit");
+
+    let due_paused = project_store
+        .create_work_item(crate::persistence::state::WorkItemInsert {
+            public_id: uuid::Uuid::now_v7(),
+            worklist_id: worklist.id,
+            parent_item_id: None,
+            title: "Resume sync immediately",
+            item_kind: "action",
+            prompt: None,
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action_name: Some("qa.resume"),
+            action_params: Some("{}"),
+            priority: 1,
+            after_ids: None,
+            metadata: Some(
+                r#"{"paused":true,"pause_reason":"awaiting_reauth","pause_until_unix_ms":1,"checkpoint":{"cursor":"page-1"}}"#,
+            ),
+        })
+        .await?;
+
+    let due_items = state
+        .worklist_items(WorklistItemsQuery {
+            public_id: &worklists[0].public_id,
+            persistence: Some(&persistence),
+            status: None,
+            parent_public_id: None,
+            where_filter: None,
+            claimed_only: false,
+            paused_only: true,
+            due_only: true,
+            limit: Some(10),
+        })
+        .await?
+        .expect("due paused items result present");
+    assert_eq!(due_items.items.len(), 1);
+    assert_eq!(
+        due_items.items[0].public_id,
+        uuid::Uuid::from_slice(&due_paused.public_id)?.to_string()
+    );
 
     Ok(())
 }

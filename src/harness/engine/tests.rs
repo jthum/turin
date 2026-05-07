@@ -967,6 +967,84 @@ async fn test_worklist_dispatch_can_resume_due_paused_item() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_worklist_paused_query_helpers_surface_due_and_not_due_items() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            function on_turn_prepare(_ctx)
+                local tasks = worklist("dispatch")
+
+                tasks:add({
+                    title = "Paused later",
+                    prompt = "later",
+                    metadata = {
+                        paused = true,
+                        pause_reason = "rate_limited",
+                        pause_until_unix_ms = 4102444800000,
+                        checkpoint = { cursor = "page-8" }
+                    }
+                })
+
+                tasks:add({
+                    title = "Paused and due",
+                    prompt = "due",
+                    metadata = {
+                        paused = true,
+                        pause_reason = "awaiting_reauth",
+                        pause_until_unix_ms = 1,
+                        checkpoint = { cursor = "page-9" }
+                    }
+                })
+
+                local paused = tasks:paused()
+                if #paused ~= 2 then
+                    error("expected paused() to return both paused items")
+                end
+
+                if paused[1].paused ~= true then
+                    error("expected paused field on item")
+                end
+
+                local due = tasks:paused({ due_only = true })
+                if #due ~= 1 then
+                    error("expected one due paused item")
+                end
+
+                if due[1].title ~= "Paused and due" then
+                    error("expected due paused item")
+                end
+
+                local by_reason = tasks:paused({
+                    where = { pause_reason = "awaiting_reauth" }
+                })
+                if #by_reason ~= 1 or by_reason[1].title ~= "Paused and due" then
+                    error("expected pause_reason filter to match due item")
+                end
+
+                local by_flag = tasks:find({
+                    where = { paused = true, pause_reason = "rate_limited" }
+                })
+                if by_flag == nil or by_flag.title ~= "Paused later" then
+                    error("expected find(where=paused) to match paused item")
+                end
+
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let app_data = test_app_data_for_root(dir.path().to_path_buf());
+    let mut engine = HarnessEngine::new(app_data.clone()).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_worklist_action_checkpoint_helpers_expose_saved_state() {
     let dir = TempDir::new().unwrap();
     std::fs::write(

@@ -349,6 +349,20 @@ fn parse_stale_after_ms(opts: Option<Table>) -> LuaResult<i64> {
     }
 }
 
+fn parse_bool_flag(opts: Option<Table>, key: &str) -> LuaResult<bool> {
+    let Some(opts) = opts else {
+        return Ok(false);
+    };
+    match opts.get::<Value>(key)? {
+        Value::Nil => Ok(false),
+        Value::Boolean(value) => Ok(value),
+        other => Err(mlua::Error::runtime(format!(
+            "worklist {} must be a boolean, got {:?}",
+            key, other
+        ))),
+    }
+}
+
 pub(crate) fn public_id_string(bytes: &[u8]) -> String {
     uuid::Uuid::from_slice(bytes)
         .map(|uuid| uuid.to_string())
@@ -393,6 +407,11 @@ fn row_filter_value(row: &WorkItemRow, metadata: &JsonValue, key: &str) -> Optio
                 .map(|v| JsonValue::Number(v.into()))
                 .unwrap_or(JsonValue::Null),
         ),
+        "paused" => Some(JsonValue::Bool(row_pause_flag(Some(metadata)))),
+        "pause_reason" => row_pause_reason(Some(metadata)).map(JsonValue::String),
+        "pause_until_unix_ms" => {
+            row_pause_until_unix_ms(Some(metadata)).map(|value| JsonValue::Number(value.into()))
+        }
         _ => metadata.get(key).cloned(),
     }
 }
@@ -430,25 +449,56 @@ fn row_is_orphaned(row: &WorkItemRow, stale_before_unix_ms: i64) -> bool {
 }
 
 fn row_is_paused(row: &WorkItemRow, now_unix_ms: i64) -> bool {
-    let Some(metadata_raw) = row.metadata.as_deref() else {
-        return false;
-    };
-    let Ok(JsonValue::Object(map)) = serde_json::from_str::<JsonValue>(metadata_raw) else {
-        return false;
-    };
-    let paused = map
-        .get("paused")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false);
-    if !paused {
+    let metadata = row_metadata(row);
+    if !row_pause_flag(metadata.as_ref()) {
         return false;
     }
-    match map
-        .get("pause_until_unix_ms")
-        .and_then(|value| value.as_i64())
-    {
+    match row_pause_until_unix_ms(metadata.as_ref()) {
         Some(pause_until_unix_ms) => pause_until_unix_ms > now_unix_ms,
         None => true,
+    }
+}
+
+fn row_metadata(row: &WorkItemRow) -> Option<JsonValue> {
+    row.metadata
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<JsonValue>(raw).ok())
+}
+
+fn row_pause_flag(metadata: Option<&JsonValue>) -> bool {
+    let Some(JsonValue::Object(map)) = metadata else {
+        return false;
+    };
+    map.get("paused")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+fn row_pause_reason(metadata: Option<&JsonValue>) -> Option<String> {
+    let Some(JsonValue::Object(map)) = metadata else {
+        return None;
+    };
+    map.get("pause_reason")
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
+}
+
+fn row_pause_until_unix_ms(metadata: Option<&JsonValue>) -> Option<i64> {
+    let Some(JsonValue::Object(map)) = metadata else {
+        return None;
+    };
+    map.get("pause_until_unix_ms")
+        .and_then(|value| value.as_i64())
+}
+
+fn row_pause_due(row: &WorkItemRow, now_unix_ms: i64) -> bool {
+    let metadata = row_metadata(row);
+    if !row_pause_flag(metadata.as_ref()) {
+        return false;
+    }
+    match row_pause_until_unix_ms(metadata.as_ref()) {
+        Some(pause_until_unix_ms) => pause_until_unix_ms <= now_unix_ms,
+        None => false,
     }
 }
 
@@ -616,6 +666,9 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
             ..handle.clone()
         },
     )?;
+    let metadata_json = parse_json_opt::<JsonValue>(row.metadata.as_deref())
+        .ok()
+        .flatten();
     proxy.set("id", public_id_string(&row.public_id))?;
     proxy.set("internal_id", row.id)?;
     proxy.set("title", row.title.clone())?;
@@ -658,13 +711,16 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
     )?;
     proxy.set(
         "metadata",
-        match parse_json_opt::<JsonValue>(row.metadata.as_deref())
-            .ok()
-            .flatten()
-        {
+        match metadata_json.clone() {
             Some(value) => lua.to_value(&value)?,
             None => Value::Nil,
         },
+    )?;
+    proxy.set("paused", row_pause_flag(metadata_json.as_ref()))?;
+    proxy.set("pause_reason", row_pause_reason(metadata_json.as_ref()))?;
+    proxy.set(
+        "pause_until_unix_ms",
+        row_pause_until_unix_ms(metadata_json.as_ref()),
     )?;
     proxy.set(
         "after",
@@ -1178,6 +1234,36 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                 let out = lua.create_table()?;
                 out.set("item", item_table)?;
                 out.set("result", result)?;
+                Ok(Value::Table(out))
+            })?,
+        )?;
+    }
+
+    {
+        let handle = handle.clone();
+        proxy.set(
+            "paused",
+            lua.create_function(move |lua, (_self, opts): (Table, Option<Table>)| {
+                let limit = parse_limit(opts.clone())?;
+                let due_only = parse_bool_flag(opts.clone(), "due_only")?;
+                let where_map = parse_where_map(lua, opts)?;
+                let rows = crate::harness::globals::block_on_current(async {
+                    handle.store.list_work_items(handle.worklist.id).await
+                })
+                .map_err(mlua::Error::runtime)?;
+                let now = now_unix_ms();
+                let out = lua.create_table()?;
+                for (index, row) in rows
+                    .into_iter()
+                    .filter(|row| row.parent_item_id == handle.parent_item_id)
+                    .filter(|row| row_pause_flag(row_metadata(row).as_ref()))
+                    .filter(|row| !due_only || row_pause_due(row, now))
+                    .filter(|row| row_matches_where(row, where_map.as_ref()))
+                    .take(limit.unwrap_or(usize::MAX))
+                    .enumerate()
+                {
+                    out.set(index + 1, item_proxy(lua, handle.clone(), row)?)?;
+                }
                 Ok(Value::Table(out))
             })?,
         )?;

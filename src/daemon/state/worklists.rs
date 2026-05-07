@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, anyhow};
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -21,6 +22,8 @@ pub(crate) struct WorklistItemsQuery<'a> {
     pub parent_public_id: Option<&'a str>,
     pub where_filter: Option<&'a JsonMap<String, JsonValue>>,
     pub claimed_only: bool,
+    pub paused_only: bool,
+    pub due_only: bool,
     pub limit: Option<u32>,
 }
 
@@ -80,10 +83,21 @@ impl DaemonState {
             .iter()
             .map(|row| (row.id, format_public_id(&row.public_id)))
             .collect::<HashMap<_, _>>();
+        let now_unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_else(|_| Duration::from_secs(0))
+            .as_millis() as i64;
         let items = rows
             .into_iter()
             .filter(|row| query.status.is_none_or(|value| row.status == value))
             .filter(|row| !query.claimed_only || row.claim_execution_id.is_some())
+            .filter(|row| {
+                !query.paused_only || work_item_pause_flag(row_pause_metadata(row).as_ref())
+            })
+            .filter(|row| {
+                !query.due_only
+                    || work_item_pause_due(row_pause_metadata(row).as_ref(), now_unix_ms)
+            })
             .filter(|row| match (query.parent_public_id, parent_row_id) {
                 (Some(_), Some(parent_row_id)) => row.parent_item_id == Some(parent_row_id),
                 (Some(_), None) => false,
@@ -197,16 +211,10 @@ fn map_work_item_detail(
     let metadata = parse_json::<JsonValue>(row.metadata.as_deref())
         .ok()
         .flatten();
-    let paused = work_item_pause_flag(metadata.as_ref());
-    let pause_reason = metadata
-        .as_ref()
-        .and_then(|value| value.get("pause_reason"))
-        .and_then(|value| value.as_str())
-        .map(ToString::to_string);
-    let pause_until_unix_ms = metadata
-        .as_ref()
-        .and_then(|value| value.get("pause_until_unix_ms"))
-        .and_then(|value| value.as_i64());
+    let pause_metadata = metadata.as_ref();
+    let paused = work_item_pause_flag(pause_metadata);
+    let pause_reason = work_item_pause_reason(pause_metadata);
+    let pause_until_unix_ms = work_item_pause_until_unix_ms(pause_metadata);
     WorkItemDetail {
         id: row.id,
         public_id: format_public_id(&row.public_id),
@@ -247,6 +255,39 @@ fn work_item_pause_flag(metadata: Option<&JsonValue>) -> bool {
     map.get("paused")
         .and_then(|value| value.as_bool())
         .unwrap_or(false)
+}
+
+fn work_item_pause_reason(metadata: Option<&JsonValue>) -> Option<String> {
+    let Some(JsonValue::Object(map)) = metadata else {
+        return None;
+    };
+    map.get("pause_reason")
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
+}
+
+fn work_item_pause_until_unix_ms(metadata: Option<&JsonValue>) -> Option<i64> {
+    let Some(JsonValue::Object(map)) = metadata else {
+        return None;
+    };
+    map.get("pause_until_unix_ms")
+        .and_then(|value| value.as_i64())
+}
+
+fn work_item_pause_due(metadata: Option<&JsonValue>, now_unix_ms: i64) -> bool {
+    if !work_item_pause_flag(metadata) {
+        return false;
+    }
+    match work_item_pause_until_unix_ms(metadata) {
+        Some(unix_ms) => unix_ms <= now_unix_ms,
+        None => false,
+    }
+}
+
+fn row_pause_metadata(row: &WorkItemRow) -> Option<JsonValue> {
+    parse_json::<JsonValue>(row.metadata.as_deref())
+        .ok()
+        .flatten()
 }
 
 fn scheduled_action(name: Option<String>, params: Option<String>) -> Option<ScheduleActionParams> {
@@ -298,6 +339,9 @@ fn work_item_filter_value(
         "title" => Some(JsonValue::String(row.title.clone())),
         "kind" => Some(JsonValue::String(row.item_kind.clone())),
         "status" => Some(JsonValue::String(row.status.clone())),
+        "paused" => Some(JsonValue::Bool(work_item_pause_flag(Some(metadata)))),
+        "pause_reason" => work_item_pause_reason(Some(metadata)).map(JsonValue::String),
+        "pause_until_unix_ms" => work_item_pause_until_unix_ms(Some(metadata)).map(JsonValue::from),
         "priority" => Some(JsonValue::Number(row.priority.into())),
         "parent_id" => Some(
             row.parent_item_id

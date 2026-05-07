@@ -298,6 +298,10 @@ pub struct WorklistItemsParams {
     #[serde(default)]
     pub claimed_only: bool,
     #[serde(default)]
+    pub paused_only: bool,
+    #[serde(default)]
+    pub due_only: bool,
+    #[serde(default)]
     pub limit: Option<u32>,
 }
 
@@ -1201,6 +1205,8 @@ mod tests {
                     json!("browser"),
                 )])),
                 claimed_only: true,
+                paused_only: false,
+                due_only: false,
                 limit: Some(10),
             }),
         );
