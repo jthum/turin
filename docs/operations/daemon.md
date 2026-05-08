@@ -286,6 +286,7 @@ This returns active claimed items in the targeted worklist whose metadata matche
 
 For paused work inspection, `worklist.items` also accepts:
 
+- `status = "paused"`
 - `paused_only`
 - `due_only`
 

@@ -498,6 +498,7 @@ Notes:
   - `list:paused()`
   - `list:paused({ due_only = true })`
   - `list:find({ where = { paused = true, pause_reason = "..." } })`
+- `ctx:pause(...)` stores checkpoint metadata and moves the current work item into primary `paused` state; `item:requeue()` is the explicit path back to ordinary `pending`
 - claim recovery helpers are available when an execution disappears without releasing work:
   - `list:orphaned({ stale_after_seconds = ... })`
   - `list:release_stale({ stale_after_seconds = ... })`

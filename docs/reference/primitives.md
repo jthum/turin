@@ -371,7 +371,7 @@ end)
   - `ctx.checkpoint:all()`
 - `ctx:pause(opts)` is the lightweight continuation helper:
   - persists checkpoint-style metadata on the current work item when available
-  - releases the current work item back to `pending`
+  - transitions the current work item into primary `paused` state
   - optionally schedules a follow-up when `opts.resume_in_seconds` is provided
   - marks the item as paused so ordinary `worklist.next()` / `dispatch_next()` will skip it until the pause is due
 - `ctx:pause_for(seconds, opts?)` is shorthand for `ctx:pause(...)` with `resume_in_seconds = seconds`
@@ -470,6 +470,7 @@ Notes:
   - `pause_reason`
   - `pause_until_unix_ms`
 - `list:paused(opts?)` returns paused items; `opts.due_only = true` restricts that view to paused items whose resume window is already due
+- `item:requeue()` clears pause markers and moves the item back to ordinary `pending`
 - `opts.where` filters compare against built-in item fields, pause fields, and metadata keys
 - stale-claim helpers use `opts.stale_after_seconds` and default to 300 seconds
 - `item:dispatch(...)`:
@@ -1216,6 +1217,7 @@ Rules and notes:
   - `pause_reason`
   - `pause_until_unix_ms`
 - `list:paused({ due_only = true })` returns only paused items whose pause window has elapsed
+- `item:requeue()` moves a paused item back to ordinary `pending`
 - `opts.where` filters compare against:
   - `id`, `public_id`, `title`, `kind`, `status`, `priority`, `parent_id`
   - metadata keys

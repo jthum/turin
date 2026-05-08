@@ -175,6 +175,7 @@ Notes:
 - current `worklist.*` daemon operations are read-only inspection APIs; mutation still lives in the harness/runtime worklist surface
 - `worklist.items` currently supports:
   - `status`
+  - `status = "paused"` for primary paused work items
   - `parent_id`
   - metadata-aware `where = { ... }`
   - `claimed_only`

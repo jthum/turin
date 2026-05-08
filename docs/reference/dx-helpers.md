@@ -181,10 +181,12 @@ Notes:
   - `ctx:cancel(...)`
   - `ctx:is_cancelled()`
 - `ctx:pause(...)` is the preferred lightweight way to stop an action intentionally and continue later
+- `ctx:pause(...)` now puts the current work item into primary `paused` state rather than treating it as ordinary `pending`
 - `ctx:pause_for(seconds, opts?)` is the shorter form when the main intent is “pause and try again later”
 - `ctx:is_cancelled()` lets long-running actions cooperate with session/task cancellation without inventing their own flag
 - paused work items are skipped by ordinary `worklist.next()` / `dispatch_next()` until their pause window is due
 - `list:paused({ due_only = true })` is the explicit inspection helper when you want paused items whose resume window has already elapsed
+- `item:requeue()` is the explicit way to move paused work back to ordinary `pending`
 - `opts.where` may also match pause fields:
   - `paused`
   - `pause_reason`
