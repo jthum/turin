@@ -917,6 +917,13 @@ provider = "noop"
             ),
         })
         .await?;
+    let paused = project_store
+        .update_work_item(crate::persistence::state::WorkItemUpdate {
+            id: paused.id,
+            status: Some("paused"),
+            ..Default::default()
+        })
+        .await?;
 
     let paused_detail = state
         .work_item_detail(
@@ -964,6 +971,13 @@ provider = "noop"
             metadata: Some(
                 r#"{"paused":true,"pause_reason":"awaiting_reauth","pause_until_unix_ms":1,"checkpoint":{"cursor":"page-1"}}"#,
             ),
+        })
+        .await?;
+    let due_paused = project_store
+        .update_work_item(crate::persistence::state::WorkItemUpdate {
+            id: due_paused.id,
+            status: Some("paused"),
+            ..Default::default()
         })
         .await?;
 

@@ -92,7 +92,7 @@ impl DaemonState {
             .filter(|row| query.status.is_none_or(|value| row.status == value))
             .filter(|row| !query.claimed_only || row.claim_execution_id.is_some())
             .filter(|row| {
-                !query.paused_only || work_item_pause_flag(row_pause_metadata(row).as_ref())
+                !query.paused_only || work_item_paused(row, row_pause_metadata(row).as_ref())
             })
             .filter(|row| {
                 !query.due_only
@@ -212,7 +212,7 @@ fn map_work_item_detail(
         .ok()
         .flatten();
     let pause_metadata = metadata.as_ref();
-    let paused = work_item_pause_flag(pause_metadata);
+    let paused = work_item_paused(&row, pause_metadata);
     let pause_reason = work_item_pause_reason(pause_metadata);
     let pause_until_unix_ms = work_item_pause_until_unix_ms(pause_metadata);
     WorkItemDetail {
@@ -255,6 +255,10 @@ fn work_item_pause_flag(metadata: Option<&JsonValue>) -> bool {
     map.get("paused")
         .and_then(|value| value.as_bool())
         .unwrap_or(false)
+}
+
+fn work_item_paused(row: &WorkItemRow, metadata: Option<&JsonValue>) -> bool {
+    row.status == "paused" || (row.status == "pending" && work_item_pause_flag(metadata))
 }
 
 fn work_item_pause_reason(metadata: Option<&JsonValue>) -> Option<String> {
@@ -339,7 +343,7 @@ fn work_item_filter_value(
         "title" => Some(JsonValue::String(row.title.clone())),
         "kind" => Some(JsonValue::String(row.item_kind.clone())),
         "status" => Some(JsonValue::String(row.status.clone())),
-        "paused" => Some(JsonValue::Bool(work_item_pause_flag(Some(metadata)))),
+        "paused" => Some(JsonValue::Bool(work_item_paused(row, Some(metadata)))),
         "pause_reason" => work_item_pause_reason(Some(metadata)).map(JsonValue::String),
         "pause_until_unix_ms" => work_item_pause_until_unix_ms(Some(metadata)).map(JsonValue::from),
         "priority" => Some(JsonValue::Number(row.priority.into())),

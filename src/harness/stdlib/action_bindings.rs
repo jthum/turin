@@ -525,14 +525,9 @@ fn pause_action(invocation: &ActionInvocationContext, opts: JsonValue) -> Result
             merge_metadata_patch(item.row.metadata.as_deref(), JsonValue::Object(patch))?;
         crate::harness::globals::block_on_current(async {
             item.store
-                .update_work_item(WorkItemUpdate {
-                    id: item.row.id,
-                    metadata: Some(metadata.as_deref()),
-                    ..Default::default()
-                })
+                .pause_work_item(item.row.id, metadata.as_deref())
                 .await
-                .context("failed to persist work item pause metadata")?;
-            item.store.release_work_item(item.row.id).await
+                .context("failed to persist paused work item state")
         })?;
 
         match resume_in_seconds {

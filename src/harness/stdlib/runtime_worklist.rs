@@ -407,7 +407,7 @@ fn row_filter_value(row: &WorkItemRow, metadata: &JsonValue, key: &str) -> Optio
                 .map(|v| JsonValue::Number(v.into()))
                 .unwrap_or(JsonValue::Null),
         ),
-        "paused" => Some(JsonValue::Bool(row_pause_flag(Some(metadata)))),
+        "paused" => Some(JsonValue::Bool(row_paused(row, Some(metadata)))),
         "pause_reason" => row_pause_reason(Some(metadata)).map(JsonValue::String),
         "pause_until_unix_ms" => {
             row_pause_until_unix_ms(Some(metadata)).map(|value| JsonValue::Number(value.into()))
@@ -450,7 +450,7 @@ fn row_is_orphaned(row: &WorkItemRow, stale_before_unix_ms: i64) -> bool {
 
 fn row_is_paused(row: &WorkItemRow, now_unix_ms: i64) -> bool {
     let metadata = row_metadata(row);
-    if !row_pause_flag(metadata.as_ref()) {
+    if !row_paused(row, metadata.as_ref()) {
         return false;
     }
     match row_pause_until_unix_ms(metadata.as_ref()) {
@@ -474,6 +474,10 @@ fn row_pause_flag(metadata: Option<&JsonValue>) -> bool {
         .unwrap_or(false)
 }
 
+fn row_paused(row: &WorkItemRow, metadata: Option<&JsonValue>) -> bool {
+    row.status == "paused" || (row.status == "pending" && row_pause_flag(metadata))
+}
+
 fn row_pause_reason(metadata: Option<&JsonValue>) -> Option<String> {
     let Some(JsonValue::Object(map)) = metadata else {
         return None;
@@ -493,12 +497,20 @@ fn row_pause_until_unix_ms(metadata: Option<&JsonValue>) -> Option<i64> {
 
 fn row_pause_due(row: &WorkItemRow, now_unix_ms: i64) -> bool {
     let metadata = row_metadata(row);
-    if !row_pause_flag(metadata.as_ref()) {
+    if !row_paused(row, metadata.as_ref()) {
         return false;
     }
     match row_pause_until_unix_ms(metadata.as_ref()) {
         Some(pause_until_unix_ms) => pause_until_unix_ms <= now_unix_ms,
         None => false,
+    }
+}
+
+fn row_claimable_now(row: &WorkItemRow, now_unix_ms: i64) -> bool {
+    match row.status.as_str() {
+        "pending" => !row_is_paused(row, now_unix_ms),
+        "paused" => row_pause_due(row, now_unix_ms),
+        _ => false,
     }
 }
 
@@ -716,7 +728,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
             None => Value::Nil,
         },
     )?;
-    proxy.set("paused", row_pause_flag(metadata_json.as_ref()))?;
+    proxy.set("paused", row_paused(&row, metadata_json.as_ref()))?;
     proxy.set("pause_reason", row_pause_reason(metadata_json.as_ref()))?;
     proxy.set(
         "pause_until_unix_ms",
@@ -1127,14 +1139,12 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     .iter()
                     .map(|row| (public_id_string(&row.public_id), row.status.clone()))
                     .collect::<HashMap<_, _>>();
-                let now = now_unix_ms();
                 let out = lua.create_table()?;
                 for (index, row) in rows
                     .into_iter()
                     .filter(|row| row.parent_item_id == handle.parent_item_id)
                     .filter(|row| row.status == "pending")
                     .filter(|row| row.claim_execution_id.is_none())
-                    .filter(|row| !row_is_paused(row, now))
                     .filter(|row| dependencies_satisfied(row, &status_map))
                     .filter(|row| row_matches_where(row, where_map.as_ref()))
                     .take(limit.unwrap_or(usize::MAX))
@@ -1256,7 +1266,7 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                 for (index, row) in rows
                     .into_iter()
                     .filter(|row| row.parent_item_id == handle.parent_item_id)
-                    .filter(|row| row_pause_flag(row_metadata(row).as_ref()))
+                    .filter(|row| row_paused(row, row_metadata(row).as_ref()))
                     .filter(|row| !due_only || row_pause_due(row, now))
                     .filter(|row| row_matches_where(row, where_map.as_ref()))
                     .take(limit.unwrap_or(usize::MAX))
@@ -1314,9 +1324,8 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                 for row in rows
                     .iter()
                     .filter(|row| row.parent_item_id == handle.parent_item_id)
-                    .filter(|row| row.status == "pending")
                     .filter(|row| row.claim_execution_id.is_none())
-                    .filter(|row| !row_is_paused(row, now))
+                    .filter(|row| row_claimable_now(row, now))
                     .filter(|row| dependencies_satisfied(row, &status_map))
                     .filter(|row| row_matches_where(row, where_map.as_ref()))
                 {
@@ -1429,9 +1438,8 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                 let now = now_unix_ms();
                 let has_pending = rows.iter().any(|row| {
                     row.parent_item_id == handle.parent_item_id
-                        && row.status == "pending"
+                        && row_claimable_now(row, now)
                         && row.claim_execution_id.is_none()
-                        && !row_is_paused(row, now)
                         && dependencies_satisfied(row, &status_map)
                 });
                 Ok(Value::Boolean(!has_pending))

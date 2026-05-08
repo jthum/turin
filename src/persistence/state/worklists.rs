@@ -325,10 +325,11 @@ impl StateStore {
                     claim_execution_id = ?4,
                     claim_heartbeat_unix_ms = ?5,
                     claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                    completed_at = NULL,
                     failure_reason = NULL,
                     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                 WHERE id = ?1
-                  AND status = 'pending'
+                  AND status IN ('pending', 'paused')
                   AND claim_execution_id IS NULL
                 "#,
                 turso::params![
@@ -345,26 +346,64 @@ impl StateStore {
     }
 
     pub async fn release_work_item(&self, id: i64) -> Result<WorkItemRow> {
+        let current = self
+            .get_work_item_by_id(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Work item {} not found", id))?;
+        let metadata = clear_pause_metadata(current.metadata.as_deref())?;
         let conn = self.connect().await?;
         conn.execute(
             r#"
             UPDATE work_items
             SET status = 'pending',
+                metadata = ?2,
                 claim_agent_id = NULL,
                 claim_session_id = NULL,
                 claim_execution_id = NULL,
                 claim_heartbeat_unix_ms = NULL,
                 claimed_at = NULL,
+                completed_at = NULL,
+                failure_reason = NULL,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             WHERE id = ?1
             "#,
-            turso::params![id],
+            turso::params![id, metadata],
         )
         .await
         .context("Failed to release work item")?;
         self.get_work_item_by_id(id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Work item {} released but not visible", id))
+    }
+
+    pub async fn pause_work_item(&self, id: i64, metadata: Option<&str>) -> Result<WorkItemRow> {
+        let current = self
+            .get_work_item_by_id(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Work item {} not found", id))?;
+        let conn = self.connect().await?;
+        conn.execute(
+            r#"
+            UPDATE work_items
+            SET status = 'paused',
+                metadata = ?2,
+                claim_agent_id = NULL,
+                claim_session_id = NULL,
+                claim_execution_id = NULL,
+                claim_heartbeat_unix_ms = NULL,
+                claimed_at = NULL,
+                completed_at = NULL,
+                failure_reason = NULL,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?1
+            "#,
+            turso::params![id, metadata.or(current.metadata.as_deref())],
+        )
+        .await
+        .context("Failed to pause work item")?;
+        self.get_work_item_by_id(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Work item {} paused but not visible", id))
     }
 
     pub async fn heartbeat_work_item_claim(
@@ -448,6 +487,26 @@ impl StateStore {
             .await?
             .ok_or_else(|| anyhow::anyhow!("Work item {} failed but not visible", id))
     }
+}
+
+fn clear_pause_metadata(metadata: Option<&str>) -> Result<Option<String>> {
+    let Some(metadata) = metadata else {
+        return Ok(None);
+    };
+    let mut value: serde_json::Value = serde_json::from_str(metadata)
+        .context("Failed to parse work item metadata while clearing pause state")?;
+    let serde_json::Value::Object(map) = &mut value else {
+        return Ok(Some(metadata.to_string()));
+    };
+    map.remove("paused");
+    map.remove("pause_reason");
+    map.remove("pause_note");
+    map.remove("pause_until_unix_ms");
+    map.remove("paused_at_unix_ms");
+    if map.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::to_string(&value)?))
 }
 
 fn map_worklist_row(row: &turso::Row) -> Result<WorklistRow> {

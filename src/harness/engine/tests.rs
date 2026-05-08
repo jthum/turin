@@ -870,7 +870,7 @@ async fn test_worklist_action_pause_updates_checkpoint_and_schedules_resume() {
         .unwrap();
     let rows = default_store.list_work_items(worklist.id).await.unwrap();
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].status, "pending");
+    assert_eq!(rows[0].status, "paused");
     let metadata: serde_json::Value =
         serde_json::from_str(rows[0].metadata.as_deref().expect("metadata")).unwrap();
     assert_eq!(metadata["pause_reason"], "rate_limited");
