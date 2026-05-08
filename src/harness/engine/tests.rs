@@ -1516,6 +1516,133 @@ fn test_engine_event_listener_can_run_declared_action() {
     assert_eq!(verdict, Verdict::Allow);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_engine_registered_callbacks_preserve_imported_module_subject_context() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join("plugins")).unwrap();
+    std::fs::write(
+        dir.path().join("plugins").join("callbacks.lua"),
+        r#"
+            return {
+                register = function()
+                    action.define("subject.report", function(ctx, params)
+                        return runtime.governance.check("runtime.db.query")
+                    end)
+
+                    on("qa.failed", function(_ctx, payload)
+                        local decision = runtime.governance.check("runtime.db.query")
+                        session.set("event_subject_module", decision.subject_module_name)
+                        session.set("event_subject_root", decision.subject_root_name)
+                    end)
+                end
+            }
+            "#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            local callbacks = import("plugins/callbacks")
+            callbacks.register()
+
+            function on_turn_prepare(_ctx)
+                local action_subject = action.run("subject.report", {})
+                if action_subject.subject_module_name ~= "plugins/callbacks" then
+                    error("expected action subject module from imported callback")
+                end
+                if action_subject.subject_root_name ~= "plugins" then
+                    error("expected action subject root from imported callback")
+                end
+
+                emit("qa.failed", {})
+                local event_subject_module = session.get("event_subject_module")
+                local event_subject_root = session.get("event_subject_root")
+                if event_subject_module == nil or event_subject_root == nil then
+                    error("missing event subject")
+                end
+                if event_subject_module ~= "plugins/callbacks" then
+                    error("expected event subject module from imported callback")
+                end
+                if event_subject_root ~= "plugins" then
+                    error("expected event subject root from imported callback")
+                end
+
+                return ALLOW
+            end
+            "#,
+    )
+    .unwrap();
+
+    let mut app_data = test_app_data_for_root(dir.path().to_path_buf());
+    let mut config = crate::kernel::config::TurinConfig::default();
+    config.governance.roots.insert(
+        "plugins".to_string(),
+        crate::kernel::config::GovernanceRootConfig {
+            path: "plugins".to_string(),
+            writable_hint: false,
+            default_profile: None,
+            max_capabilities: Default::default(),
+        },
+    );
+    app_data.config = Arc::new(config.clone());
+    app_data.governance_manager = Arc::new(crate::kernel::governance::GovernanceManager::new(
+        config.governance.clone(),
+    ));
+
+    let mut engine = HarnessEngine::new(app_data).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+}
+
+#[test]
+fn test_engine_emit_propagates_listener_failure_and_stops_dispatch() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            local seen = {}
+
+            on("qa.failed", function(_ctx, payload)
+                table.insert(seen, "first")
+                error("listener sentinel")
+            end)
+
+            on("qa.failed", function(_ctx, payload)
+                table.insert(seen, "second")
+            end)
+
+            function on_turn_prepare(_ctx)
+                local ok, err = pcall(function()
+                    emit("qa.failed", {})
+                end)
+
+                if ok then
+                    error("emit should surface listener failure")
+                end
+                if not tostring(err):find("listener sentinel", 1, true) then
+                    error("unexpected emit error: " .. tostring(err))
+                end
+                if #seen ~= 1 or seen[1] ~= "first" then
+                    error("emit should stop dispatch after listener failure")
+                end
+
+                return ALLOW
+            end
+            "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+}
+
 #[test]
 fn test_engine_on_registration_is_load_time_only() {
     let dir = TempDir::new().unwrap();
