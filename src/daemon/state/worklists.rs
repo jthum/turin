@@ -257,8 +257,8 @@ fn work_item_pause_flag(metadata: Option<&JsonValue>) -> bool {
         .unwrap_or(false)
 }
 
-fn work_item_paused(row: &WorkItemRow, metadata: Option<&JsonValue>) -> bool {
-    row.status == "paused" || (row.status == "pending" && work_item_pause_flag(metadata))
+fn work_item_paused(row: &WorkItemRow, _metadata: Option<&JsonValue>) -> bool {
+    row.status == "paused"
 }
 
 fn work_item_pause_reason(metadata: Option<&JsonValue>) -> Option<String> {

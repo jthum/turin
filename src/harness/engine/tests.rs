@@ -6,7 +6,7 @@ use crate::inference::provider::{
 };
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::persistence::manager::{StoreManager, StorePathScope, StoreSelector};
-use crate::persistence::state::{StateStore, WorkItemInsert};
+use crate::persistence::state::{StateStore, WorkItemInsert, WorkItemUpdate};
 use futures::future::BoxFuture;
 use futures::stream;
 use std::path::{Path, PathBuf};
@@ -949,6 +949,19 @@ async fn test_worklist_dispatch_can_resume_due_paused_item() {
         })
         .await
         .unwrap();
+    let rows = store.list_work_items(list.id).await.unwrap();
+    let paused_row = rows
+        .into_iter()
+        .find(|row| row.title == "Resume due paused action")
+        .unwrap();
+    store
+        .update_work_item(WorkItemUpdate {
+            id: paused_row.id,
+            status: Some("paused"),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
 
     let mut engine = HarnessEngine::new(app_data).unwrap();
     engine.load_dir(dir.path()).unwrap();
@@ -975,27 +988,27 @@ async fn test_worklist_paused_query_helpers_surface_due_and_not_due_items() {
             function on_turn_prepare(_ctx)
                 local tasks = worklist("dispatch")
 
-                tasks:add({
+                local later = tasks:add({
                     title = "Paused later",
                     prompt = "later",
                     metadata = {
-                        paused = true,
                         pause_reason = "rate_limited",
                         pause_until_unix_ms = 4102444800000,
                         checkpoint = { cursor = "page-8" }
                     }
                 })
+                later:update({ status = "paused" })
 
-                tasks:add({
+                local due_item = tasks:add({
                     title = "Paused and due",
                     prompt = "due",
                     metadata = {
-                        paused = true,
                         pause_reason = "awaiting_reauth",
                         pause_until_unix_ms = 1,
                         checkpoint = { cursor = "page-9" }
                     }
                 })
+                due_item:update({ status = "paused" })
 
                 local paused = tasks:paused()
                 if #paused ~= 2 then

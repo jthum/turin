@@ -1260,20 +1260,8 @@ fn work_item_is_paused(row: &WorkItemRow, now_unix_ms: i64) -> bool {
     }
 }
 
-fn work_item_pause_flag(row: &WorkItemRow) -> bool {
-    let Some(metadata_raw) = row.metadata.as_deref() else {
-        return false;
-    };
-    let Ok(JsonValue::Object(map)) = serde_json::from_str::<JsonValue>(metadata_raw) else {
-        return false;
-    };
-    map.get("paused")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false)
-}
-
 fn work_item_paused(row: &WorkItemRow) -> bool {
-    row.status == "paused" || (row.status == "pending" && work_item_pause_flag(row))
+    row.status == "paused"
 }
 
 fn work_item_claimable_now(row: &WorkItemRow, now_unix_ms: i64) -> bool {

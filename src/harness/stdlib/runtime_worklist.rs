@@ -465,17 +465,8 @@ fn row_metadata(row: &WorkItemRow) -> Option<JsonValue> {
         .and_then(|raw| serde_json::from_str::<JsonValue>(raw).ok())
 }
 
-fn row_pause_flag(metadata: Option<&JsonValue>) -> bool {
-    let Some(JsonValue::Object(map)) = metadata else {
-        return false;
-    };
-    map.get("paused")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false)
-}
-
-fn row_paused(row: &WorkItemRow, metadata: Option<&JsonValue>) -> bool {
-    row.status == "paused" || (row.status == "pending" && row_pause_flag(metadata))
+fn row_paused(row: &WorkItemRow, _metadata: Option<&JsonValue>) -> bool {
+    row.status == "paused"
 }
 
 fn row_pause_reason(metadata: Option<&JsonValue>) -> Option<String> {
