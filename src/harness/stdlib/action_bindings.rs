@@ -8,6 +8,7 @@ use turin_daemon_protocol::{ScheduleActionParams, ScheduleCreateParams};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::scheduler::HarnessSchedulerAccess;
+use crate::harness::stdlib::binding_common::wrap_registered_callback;
 use crate::harness::stdlib::runtime_worklist::{build_work_item_proxy, public_id_string};
 use crate::harness::stdlib::system_globals::ensure_load_time;
 use crate::persistence::manager::StoreSelector;
@@ -55,8 +56,43 @@ pub fn register_action_globals(lua: &Lua) -> LuaResult<()> {
                 )));
             }
 
-            registry.set(name, handler)?;
+            registry.set(name, wrap_registered_callback(lua, handler)?)?;
             Ok(())
+        })?,
+    )?;
+
+    action_table.set(
+        "run",
+        lua.create_function(|lua, (name, params): (String, Option<Value>)| {
+            let params = match params {
+                None | Some(Value::Nil) => JsonValue::Object(JsonMap::new()),
+                Some(value) => lua
+                    .from_value::<JsonValue>(value)
+                    .map_err(|err| mlua::Error::runtime(err.to_string()))?,
+            };
+
+            let app_data = lua
+                .app_data_ref::<HarnessAppData>()
+                .map(|app_data| app_data.clone())
+                .ok_or_else(|| mlua::Error::runtime("Harness app data missing"))?;
+            let action_name = name.clone();
+            let result = invoke_declared_action(
+                lua,
+                &name,
+                params.clone(),
+                ActionInvocationContext {
+                    app_data,
+                    action_name,
+                    params,
+                    work_item: None,
+                },
+            )
+            .map_err(mlua::Error::runtime)?;
+
+            match result {
+                Some(value) => lua.to_value(&value),
+                None => Ok(Value::Nil),
+            }
         })?,
     )?;
 

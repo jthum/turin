@@ -128,6 +128,9 @@ These are layered on top of the existing scoped aliases.
 - `graph.turn(id_or_row) -> graph_ref`
 - `graph.ref(kind, id_or_row) -> graph_ref`
 - `action.define(name, fn) -> nil`
+- `action.run(name, params?) -> value|nil`
+- `on(name, fn) -> nil`
+- `emit(name, payload?) -> integer`
 - `schedule.after(seconds, payload, opts?) -> job`
 - `schedule.every(seconds, payload, opts?) -> job`
 - `schedule.at(timestamp, payload, opts?) -> job`
@@ -146,6 +149,10 @@ Notes:
 - `remember(...)` / `recall(...)` use the same default agent-scoped memory as `memory.*`
 - `code.find(...)` is a thin wrapper over `runtime.code.search.hybrid(...)`
 - `code.find(...)` defaults to the Turin workspace root and accepts `opts.root` / `opts.index_path` overrides
+- `action.define(...)` and `on(...)` are load-time only registration helpers
+- `action.run(...)` invokes a built-in or harness-defined action immediately in the current execution context
+- `emit(...)` performs synchronous in-process listener dispatch and returns the number of listeners invoked
+- custom events are local additive signals; they are distinct from system `on_*` hooks and distinct from any future durable signaling layer
 
 Example:
 

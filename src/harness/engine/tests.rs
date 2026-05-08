@@ -1430,6 +1430,121 @@ fn test_engine_invokes_declared_action_handler() {
 }
 
 #[test]
+fn test_engine_custom_events_dispatch_in_order_and_return_count() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            local seen = {}
+
+            on("qa.failed", function(ctx, payload)
+                table.insert(seen, ctx.name .. ":" .. payload.suite)
+            end)
+
+            on("qa.failed", function(ctx, payload)
+                table.insert(seen, "second:" .. payload.suite)
+            end)
+
+            function on_turn_prepare(_ctx)
+                local handled = emit("qa.failed", { suite = "checkout" })
+                if handled ~= 2 then
+                    error("expected two listeners")
+                end
+
+                if #seen ~= 2 then
+                    error("expected two recorded listeners")
+                end
+
+                if seen[1] ~= "qa.failed:checkout" or seen[2] ~= "second:checkout" then
+                    error("expected listeners to run in registration order")
+                end
+
+                local missing = emit("qa.passed", { suite = "checkout" })
+                if missing ~= 0 then
+                    error("expected emit without listeners to return 0")
+                end
+
+                return ALLOW
+            end
+            "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+}
+
+#[test]
+fn test_engine_event_listener_can_run_declared_action() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            local observed = nil
+
+            action.define("bugs.create", function(ctx, params)
+                return {
+                    id = "bug-" .. tostring(params.code)
+                }
+            end)
+
+            on("qa.failed", function(_ctx, payload)
+                local result = action.run("bugs.create", payload)
+                observed = result.id
+            end)
+
+            function on_turn_prepare(_ctx)
+                emit("qa.failed", { code = "123" })
+                if observed ~= "bug-123" then
+                    error("expected event listener to call declared action")
+                end
+                return ALLOW
+            end
+            "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+}
+
+#[test]
+fn test_engine_on_registration_is_load_time_only() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            function on_turn_prepare(_ctx)
+                on("qa.failed", function() end)
+                return ALLOW
+            end
+            "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let err = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("load-time")
+            || message.contains("only during harness load")
+            || message.contains("during harness load"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
 fn test_engine_action_context_reports_cancellation() {
     let dir = TempDir::new().unwrap();
     std::fs::write(

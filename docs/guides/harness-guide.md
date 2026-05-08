@@ -423,6 +423,30 @@ end)
 
 - declared action handlers receive `(ctx, params)`
 - `ctx:pause({...})` is the lightweight way to checkpoint progress and continue later without introducing a separate workflow subsystem
+- local custom composition points may be expressed with:
+  - `on("event.name", function(ctx, payload) ... end)`
+  - `emit("event.name", payload)`
+  - `action.run("name", payload)`
+
+```lua
+action.define("bugs.create", function(ctx, params)
+  return { id = "bug-" .. tostring(params.code) }
+end)
+
+on("qa.failed", function(_ctx, payload)
+  local created = action.run("bugs.create", payload)
+  session.set("last_bug_id", created.id)
+end)
+
+function on_turn_prepare(ctx)
+  emit("qa.failed", { code = "checkout-smoke" })
+  return ALLOW
+end
+```
+
+- `on(...)` listeners are local, synchronous, and additive
+- `emit(...)` returns the number of listeners invoked
+- system lifecycle hooks remain the explicit `on_*` functions; custom events are separate
 
 - when needed, `runtime.schedule.create(...)` / `update(...)` can also carry structured `content`, tool allowlists, and conflict policy just like `task.submit(...)`
 

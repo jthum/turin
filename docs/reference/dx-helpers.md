@@ -168,6 +168,11 @@ Notes:
 - nested `worklist.*` action items are rejected inside `worklist.dispatch_next`
 - custom action names may be defined at harness load time with:
   - `action.define("qa.run_smoke", function(ctx, params) ... end)`
+- declared actions may also be invoked directly with:
+  - `action.run("qa.run_smoke", { suite = "checkout" })`
+- local custom events use:
+  - `on("qa.failed", function(ctx, payload) ... end)`
+  - `emit("qa.failed", { suite = "checkout" })`
 - declared action handlers receive a control-aware `ctx` table:
   - `ctx.params`
   - `ctx.checkpoint`
@@ -184,6 +189,9 @@ Notes:
 - `ctx:pause(...)` now puts the current work item into primary `paused` state rather than treating it as ordinary `pending`
 - `ctx:pause_for(seconds, opts?)` is the shorter form when the main intent is “pause and try again later”
 - `ctx:is_cancelled()` lets long-running actions cooperate with session/task cancellation without inventing their own flag
+- `on(...)` is load-time only and registers additive local listeners in registration order
+- `emit(...)` dispatches those listeners synchronously in-process and returns the number of listeners invoked
+- local event listeners are intended to react by mutating state, calling `action.run(...)`, or scheduling/worklisting follow-up work
 - paused work items are skipped by ordinary `worklist.next()` / `dispatch_next()` until their pause window is due
 - `list:paused({ due_only = true })` is the explicit inspection helper when you want paused items whose resume window has already elapsed
 - `item:requeue()` is the explicit way to move paused work back to ordinary `pending`

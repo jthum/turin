@@ -1,7 +1,8 @@
+use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::future::Future;
 
-use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
+use mlua::{Function, Lua, LuaSerdeExt, MultiValue, Result as LuaResult, Table, Value};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -19,6 +20,13 @@ use crate::harness::stdlib::scoped_data_backend::{
 use crate::kernel::identity::ContextSelector;
 use crate::kernel::session_refs::parse_session_reference;
 use crate::persistence::manager::{StorePathScope, StoreSelector};
+
+#[derive(Clone, Default)]
+pub struct RegisteredCallbackContext {
+    pub harness_module: Option<String>,
+    pub harness_root: Option<String>,
+    pub import_capabilities: Option<BTreeMap<String, bool>>,
+}
 
 pub fn bridge_async<F>(fut: F) -> F::Output
 where
@@ -93,6 +101,43 @@ pub fn metadata_json_or_empty(lua: &Lua, metadata: Option<Table>) -> LuaResult<s
             .map_err(|e| mlua::Error::runtime(format!("invalid metadata table: {}", e)))
     } else {
         Ok(serde_json::json!({}))
+    }
+}
+
+pub fn active_registered_callback_context(lua: &Lua) -> RegisteredCallbackContext {
+    lua.app_data_ref::<HarnessAppData>()
+        .and_then(|app_data| {
+            app_data
+                .execution_ctx
+                .lock()
+                .ok()
+                .map(|ctx| RegisteredCallbackContext {
+                    harness_module: ctx.harness_module.clone(),
+                    harness_root: ctx.harness_root.clone(),
+                    import_capabilities: ctx.import_capabilities.clone(),
+                })
+        })
+        .unwrap_or_default()
+}
+
+pub fn wrap_registered_callback(lua: &Lua, func: Function) -> LuaResult<Function> {
+    let registered_ctx = active_registered_callback_context(lua);
+    lua.create_function(move |lua, args: MultiValue| {
+        let prev_ctx = active_registered_callback_context(lua);
+        set_active_registered_callback_context(lua, &registered_ctx);
+        let result = func.call::<MultiValue>(args);
+        set_active_registered_callback_context(lua, &prev_ctx);
+        result
+    })
+}
+
+fn set_active_registered_callback_context(lua: &Lua, ctx: &RegisteredCallbackContext) {
+    if let Some(app_data) = lua.app_data_ref::<HarnessAppData>()
+        && let Ok(mut lock) = app_data.execution_ctx.lock()
+    {
+        lock.harness_module = ctx.harness_module.clone();
+        lock.harness_root = ctx.harness_root.clone();
+        lock.import_capabilities = ctx.import_capabilities.clone();
     }
 }
 

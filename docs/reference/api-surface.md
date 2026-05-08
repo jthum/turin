@@ -212,6 +212,9 @@ Current DX helper globals and helper-layer extensions:
 - `graph.*`
 - `schedule.*`
 - `action.define(...)`
+- `action.run(...)`
+- `on(...)`
+- `emit(...)`
 - `session.remember(...)`
 - `session.recall(...)`
 - `session.get(...)`
