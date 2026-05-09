@@ -1,4 +1,5 @@
 use mlua::{Function, Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
+use serde::Deserialize;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::harness::globals::HarnessAppData;
@@ -13,11 +14,27 @@ use crate::persistence::state::SignalInsert;
 const RUNTIME_SIGNAL_LISTENER_REGISTRY_KEY: &str = "__harness_runtime_signal_listeners";
 const RUNTIME_SIGNAL_TOPIC_REGISTRY_KEY: &str = "__harness_runtime_signal_topics";
 
+#[derive(Debug, Deserialize, Default)]
+struct LuaRuntimeSignalListOpts {
+    #[serde(default)]
+    topic: Option<String>,
+    #[serde(default)]
+    source_agent: Option<String>,
+    #[serde(default)]
+    target_agent: Option<String>,
+    #[serde(default)]
+    agent: Option<String>,
+    #[serde(default)]
+    limit: Option<u32>,
+}
+
 pub fn register_runtime_signal_namespace(
     lua: &Lua,
     runtime_table: &Table,
     app_data: &HarnessAppData,
 ) -> LuaResult<()> {
+    let signals_ns = lua.create_table()?;
+
     runtime_table.set(
         "on",
         lua.create_function(|lua, (topic, handler): (String, Function)| {
@@ -96,6 +113,82 @@ pub fn register_runtime_signal_namespace(
         )?;
     }
 
+    {
+        let app_data = app_data.clone();
+        signals_ns.set(
+            "subscribers",
+            lua.create_function(move |lua, topic: String| {
+                require_capability(&app_data, "runtime.db.query").map_err(mlua::Error::runtime)?;
+
+                let Some(runtime_scheduler) = app_data.scheduler.clone() else {
+                    return Err(mlua::Error::runtime(
+                        "runtime.signals.subscribers requires daemon runtime coordination"
+                            .to_string(),
+                    ));
+                };
+
+                let runtime_store = runtime_scheduler.runtime_store();
+                let rows = bridge_async_display_err(async move {
+                    runtime_store
+                        .list_signal_subscriber_agent_ids(&topic)
+                        .await
+                        .map_err(|e| e.to_string())
+                })
+                .map_err(mlua::Error::runtime)?;
+
+                lua.to_value(&rows)
+            })?,
+        )?;
+    }
+
+    {
+        let app_data = app_data.clone();
+        signals_ns.set(
+            "list",
+            lua.create_function(move |lua, opts: Option<Table>| {
+                require_capability(&app_data, "runtime.db.query").map_err(mlua::Error::runtime)?;
+
+                let Some(runtime_scheduler) = app_data.scheduler.clone() else {
+                    return Err(mlua::Error::runtime(
+                        "runtime.signals.list requires daemon runtime coordination".to_string(),
+                    ));
+                };
+
+                let parsed = match opts {
+                    Some(opts) => lua
+                        .from_value::<LuaRuntimeSignalListOpts>(Value::Table(opts))
+                        .map_err(|e| {
+                            mlua::Error::runtime(format!(
+                                "invalid runtime.signals.list opts: {}",
+                                e
+                            ))
+                        })?,
+                    None => LuaRuntimeSignalListOpts::default(),
+                };
+
+                let target_agent = parsed.target_agent.or(parsed.agent);
+                let limit = parsed.limit.unwrap_or(100) as usize;
+                let runtime_store = runtime_scheduler.runtime_store();
+                let rows = bridge_async_display_err(async move {
+                    runtime_store
+                        .list_signals(
+                            parsed.topic.as_deref(),
+                            parsed.source_agent.as_deref(),
+                            target_agent.as_deref(),
+                            limit,
+                        )
+                        .await
+                        .map_err(|e| e.to_string())
+                })
+                .map_err(mlua::Error::runtime)?;
+
+                let out: Vec<JsonValue> = rows.iter().map(signal_row_to_json).collect();
+                lua.to_value(&out)
+            })?,
+        )?;
+    }
+
+    runtime_table.set("signals", signals_ns)?;
     Ok(())
 }
 
@@ -220,4 +313,53 @@ fn build_runtime_signal_event_payload(lua: &Lua, signal: &SignalRow) -> Result<V
         JsonValue::String(signal.created_at.clone()),
     );
     lua.to_value(&JsonValue::Object(base))
+}
+
+fn signal_row_to_json(signal: &SignalRow) -> JsonValue {
+    let payload = serde_json::from_str::<JsonValue>(&signal.payload)
+        .unwrap_or(JsonValue::String(signal.payload.clone()));
+    JsonValue::Object(JsonMap::from_iter([
+        (
+            "signal_id".to_string(),
+            JsonValue::String(
+                uuid::Uuid::from_slice(&signal.public_id)
+                    .map(|uuid| uuid.to_string())
+                    .unwrap_or_else(|_| "<invalid>".to_string()),
+            ),
+        ),
+        ("topic".to_string(), JsonValue::String(signal.topic.clone())),
+        (
+            "source_agent_id".to_string(),
+            JsonValue::String(signal.source_agent_id.clone()),
+        ),
+        (
+            "target_agent_id".to_string(),
+            JsonValue::String(signal.target_agent_id.clone()),
+        ),
+        ("payload".to_string(), payload),
+        (
+            "attempt_count".to_string(),
+            JsonValue::Number(serde_json::Number::from(signal.attempt_count)),
+        ),
+        (
+            "last_attempted_at".to_string(),
+            signal
+                .last_attempted_at
+                .clone()
+                .map(JsonValue::String)
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "last_error".to_string(),
+            signal
+                .last_error
+                .clone()
+                .map(JsonValue::String)
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "created_at".to_string(),
+            JsonValue::String(signal.created_at.clone()),
+        ),
+    ]))
 }

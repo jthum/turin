@@ -198,6 +198,8 @@ Notes:
 - `runtime.on(...)` is load-time only and declares that the current harness should receive durable cross-agent signals for that topic
 - those declared topics are mirrored into a durable `runtime.db` subscription index on harness init/reload so cold agents remain discoverable
 - `runtime.emit(...)` persists pending deliveries for subscribed agents, wakes their peer runtimes, and returns the number of target agents
+- `runtime.signals.subscribers(topic)` is the cheap inspection helper for current durable topic subscribers
+- `runtime.signals.list(opts?)` is the cheap inspection helper for pending cross-agent signal rows
 - `runtime.emit(...)` requires daemon/runtime coordination; it is intentionally separate from purely local `emit(...)`
 - cross-agent signal handlers still run locally inside the target harness after that harness boots, so they are best used to mutate state, schedule work, or call `action.run(...)`
 - local `emit(...)` and cross-agent `runtime.emit(...)` are intentionally separate: one is synchronous in-process composition, the other is durable agent-to-agent signaling

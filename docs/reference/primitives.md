@@ -133,6 +133,8 @@ These are layered on top of the existing scoped aliases.
 - `emit(name, payload?) -> integer`
 - `runtime.on(name, fn) -> nil`
 - `runtime.emit(name, payload?) -> integer`
+- `runtime.signals.subscribers(topic) -> {agent_id...}`
+- `runtime.signals.list(opts?) -> {signal_row...}`
 - `schedule.after(seconds, payload, opts?) -> job`
 - `schedule.every(seconds, payload, opts?) -> job`
 - `schedule.at(timestamp, payload, opts?) -> job`
@@ -159,6 +161,8 @@ Notes:
 - `runtime.on(...)` also contributes the current harness topics to the durable subscription index in daemon-owned `runtime.db`
 - `runtime.emit(...)` creates durable pending signal deliveries for subscribed agents, wakes their peer runtimes, and returns the number of target agents
 - `runtime.emit(...)` requires daemon/runtime coordination to be available; it is not a purely local harness primitive
+- `runtime.signals.subscribers(...)` lists the current durable subscribers for a topic from `runtime.db`
+- `runtime.signals.list(...)` lists pending cross-agent signal rows from `runtime.db`
 - cold agents remain routable because subscriber lookup comes from the durable topic index rather than only from currently loaded runtimes
 - there is still no durable handler registry; once the target harness loads, its local `runtime.on(...)` handlers determine which functions run
 - delivered cross-agent signals are deleted on success; failed deliveries remain visible with attempt metadata rather than becoming a replay log

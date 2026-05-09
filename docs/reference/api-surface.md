@@ -141,6 +141,7 @@ Namespaces under `runtime`:
 - `runtime.governance.*`
 - `runtime.on(...)`
 - `runtime.emit(...)`
+- `runtime.signals.*`
 
 Reference:
 

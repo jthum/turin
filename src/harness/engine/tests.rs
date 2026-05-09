@@ -323,6 +323,47 @@ async fn test_runtime_schedule_requires_daemon_managed_runtime() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_runtime_signals_requires_daemon_managed_runtime() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            function on_turn_prepare(_ctx)
+                local ok_list, err_list = pcall(function()
+                    return runtime.signals.list()
+                end)
+                if ok_list then
+                    error("expected runtime.signals.list to fail without daemon scheduler")
+                end
+                if not string.find(tostring(err_list), "daemon runtime coordination") then
+                    error("unexpected list error: " .. tostring(err_list))
+                end
+
+                local ok_subs, err_subs = pcall(function()
+                    return runtime.signals.subscribers("code.ready")
+                end)
+                if ok_subs then
+                    error("expected runtime.signals.subscribers to fail without daemon scheduler")
+                end
+                if not string.find(tostring(err_subs), "daemon runtime coordination") then
+                    error("unexpected subscribers error: " .. tostring(err_subs))
+                end
+
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_schedule_dx_helpers_create_and_list_jobs() {
     let dir = TempDir::new().unwrap();
     std::fs::write(
@@ -478,6 +519,93 @@ async fn test_schedule_dx_helpers_create_and_list_jobs() {
         .evaluate("on_turn_prepare", serde_json::json!({}))
         .unwrap();
     assert_eq!(verdict, Verdict::Allow);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_runtime_signals_list_and_subscribers_helpers() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            runtime.on("code.ready", function(_ctx, _event) end)
+
+            action.define("signals.inspect", function(ctx, params)
+                return {
+                    subscribers = runtime.signals.subscribers(params.topic),
+                    signals = runtime.signals.list({
+                        topic = params.topic,
+                        target_agent = params.target_agent,
+                    }),
+                }
+            end)
+        "#,
+    )
+    .unwrap();
+
+    let app_data = test_app_data_with_scheduler(dir.path().to_path_buf()).await;
+    let runtime_store = app_data
+        .scheduler
+        .clone()
+        .expect("scheduler")
+        .runtime_store();
+    runtime_store
+        .replace_signal_subscriptions_for_agents(
+            &["test-agent".to_string()],
+            &[("test-agent".to_string(), "code.ready".to_string())],
+        )
+        .await
+        .unwrap();
+    runtime_store
+        .insert_signal(crate::persistence::state::SignalInsert {
+            public_id: uuid::Uuid::now_v7().into_bytes().to_vec(),
+            topic: "code.ready".to_string(),
+            source_agent_id: "publisher".to_string(),
+            target_agent_id: "test-agent".to_string(),
+            payload: serde_json::json!({ "branch": "feature-x" }).to_string(),
+        })
+        .await
+        .unwrap();
+
+    let mut engine = HarnessEngine::new(app_data).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let result = engine
+        .invoke_declared_action_for_agent(
+            "test-agent",
+            "signals.inspect",
+            serde_json::json!({
+                "topic": "code.ready",
+                "target_agent": "test-agent"
+            }),
+        )
+        .unwrap()
+        .expect("declared action result");
+
+    assert_eq!(
+        result.get("subscribers"),
+        Some(&serde_json::json!(["test-agent"]))
+    );
+
+    let signals = result
+        .get("signals")
+        .and_then(|value| value.as_array())
+        .expect("signals array");
+    assert_eq!(signals.len(), 1);
+    assert_eq!(
+        signals[0].get("topic"),
+        Some(&serde_json::json!("code.ready"))
+    );
+    assert_eq!(
+        signals[0].get("source_agent_id"),
+        Some(&serde_json::json!("publisher"))
+    );
+    assert_eq!(
+        signals[0].get("target_agent_id"),
+        Some(&serde_json::json!("test-agent"))
+    );
+    assert_eq!(
+        signals[0].get("payload"),
+        Some(&serde_json::json!({ "branch": "feature-x" }))
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]

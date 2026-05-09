@@ -457,6 +457,7 @@ end
   - cold agents are still routable because subscriber discovery does not depend on them already being loaded in memory
   - success deletes the delivery; failures remain visible for inspection/retry policy
   - durable coordination lives in daemon-owned `runtime.db`, not in harness `state`
+  - `runtime.signals.subscribers(topic)` and `runtime.signals.list(opts?)` are the lightweight inspection helpers for that runtime coordination state
 
 Example:
 
