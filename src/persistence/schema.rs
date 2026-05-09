@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 28;
+pub(crate) const SCHEMA_VERSION: u32 = 29;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -287,14 +287,14 @@ CREATE TABLE IF NOT EXISTS signals (
 CREATE INDEX IF NOT EXISTS idx_signals_target ON signals(target_agent_id, id ASC);
 CREATE INDEX IF NOT EXISTS idx_signals_topic ON signals(topic, id ASC);
 
-CREATE TABLE IF NOT EXISTS signal_subscriptions (
+CREATE TABLE IF NOT EXISTS subscriptions (
     agent_id   TEXT NOT NULL,
     topic      TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     PRIMARY KEY (agent_id, topic)
 );
 
-CREATE INDEX IF NOT EXISTS idx_signal_subscriptions_topic ON signal_subscriptions(topic, agent_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_topic ON subscriptions(topic, agent_id);
 
 "#;
 

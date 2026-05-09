@@ -209,7 +209,7 @@ Key fields:
 
 Signals are short-lived coordination rows:
 
-### `signal_subscriptions`
+### `subscriptions`
 
 Daemon-owned durable topic subscriptions for cross-agent signaling.
 

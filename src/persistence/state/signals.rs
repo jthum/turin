@@ -13,15 +13,25 @@ pub struct SignalInsert {
 }
 
 impl StateStore {
-    pub async fn replace_signal_subscriptions(
+    pub async fn replace_signal_subscriptions_for_agents(
         &self,
+        agent_ids: &[String],
         subscriptions: &[(String, String)],
     ) -> Result<()> {
+        if agent_ids.is_empty() {
+            return Ok(());
+        }
         let conn = self.connect().await?;
-        conn.execute("DELETE FROM signal_subscriptions", ()).await?;
+        for agent_id in agent_ids {
+            conn.execute(
+                "DELETE FROM subscriptions WHERE agent_id = ?1",
+                [agent_id.as_str()],
+            )
+            .await?;
+        }
         for (agent_id, topic) in subscriptions {
             conn.execute(
-                "INSERT INTO signal_subscriptions (agent_id, topic) VALUES (?1, ?2)",
+                "INSERT INTO subscriptions (agent_id, topic) VALUES (?1, ?2)",
                 (agent_id.as_str(), topic.as_str()),
             )
             .await?;
@@ -34,7 +44,7 @@ impl StateStore {
         let mut rows = conn
             .query(
                 "SELECT agent_id
-                 FROM signal_subscriptions
+                 FROM subscriptions
                  WHERE topic = ?1
                  ORDER BY agent_id ASC",
                 [topic],

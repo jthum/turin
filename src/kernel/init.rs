@@ -18,14 +18,35 @@ use crate::inference::provider::{self, ProviderClient};
 
 impl ExecutionHost {
     pub(crate) async fn sync_runtime_signal_subscriptions(&self) -> Result<()> {
+        if self.scheduler.is_none() {
+            return Ok(());
+        }
+
+        let harness_ids: Vec<_> = self
+            .harness_manager
+            .runtime_entries()
+            .map(|(harness_id, _)| harness_id.clone())
+            .collect();
+        self.sync_runtime_signal_subscriptions_for_harnesses(&harness_ids)
+            .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn sync_runtime_signal_subscriptions_for_harnesses(
+        &self,
+        harness_ids: &[String],
+    ) -> Result<()> {
         let Some(scheduler) = self.scheduler.as_ref() else {
             return Ok(());
         };
 
-        let subscriptions = self.harness_manager.signal_subscriptions();
+        let agent_ids = self.harness_manager.agent_ids_for_harnesses(harness_ids);
+        let subscriptions = self
+            .harness_manager
+            .signal_subscriptions_for_harnesses(harness_ids);
         scheduler
             .runtime_store()
-            .replace_signal_subscriptions(&subscriptions)
+            .replace_signal_subscriptions_for_agents(&agent_ids, &subscriptions)
             .await
     }
 
@@ -158,7 +179,8 @@ impl ExecutionHost {
             .ok_or_else(|| anyhow::anyhow!("Unknown harness '{}'", harness_id))?;
         info!(harness_id = %harness_id, "Reloading named harness");
         runtime.reload(self.harness_init_context())?;
-        self.sync_runtime_signal_subscriptions().await?;
+        self.sync_runtime_signal_subscriptions_for_harnesses(&[harness_id.to_string()])
+            .await?;
         Ok(())
     }
 
@@ -224,10 +246,12 @@ impl Kernel {
                 }
 
                 if let Some(scheduler) = ctx.scheduler.as_ref() {
-                    let subscriptions = harness_manager.signal_subscriptions();
+                    let agent_ids = harness_manager.agent_ids_for_harnesses(&harness_ids);
+                    let subscriptions =
+                        harness_manager.signal_subscriptions_for_harnesses(&harness_ids);
                     if let Err(err) = scheduler
                         .runtime_store()
-                        .replace_signal_subscriptions(&subscriptions)
+                        .replace_signal_subscriptions_for_agents(&agent_ids, &subscriptions)
                         .await
                     {
                         error!(error = %err, "Failed to sync durable runtime signal subscriptions");

@@ -113,13 +113,31 @@ impl HarnessManager {
         self.runtimes.get(harness_id)
     }
 
-    pub(crate) fn signal_subscriptions(&self) -> Vec<(String, String)> {
+    pub(crate) fn signal_subscriptions_for_harnesses(
+        &self,
+        harness_ids: &[String],
+    ) -> Vec<(String, String)> {
         let mut out = Vec::new();
         for (agent_id, harness_id) in &self.agent_bindings {
+            if !harness_ids.iter().any(|candidate| candidate == harness_id) {
+                continue;
+            }
             if let Some(runtime) = self.runtimes.get(harness_id) {
                 for topic in runtime.runtime_signal_topics() {
                     out.push((agent_id.clone(), topic));
                 }
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    pub(crate) fn agent_ids_for_harnesses(&self, harness_ids: &[String]) -> Vec<String> {
+        let mut out = Vec::new();
+        for (agent_id, harness_id) in &self.agent_bindings {
+            if harness_ids.iter().any(|candidate| candidate == harness_id) {
+                out.push(agent_id.clone());
             }
         }
         out.sort();
