@@ -131,6 +131,8 @@ These are layered on top of the existing scoped aliases.
 - `action.run(name, params?) -> value|nil`
 - `on(name, fn) -> nil`
 - `emit(name, payload?) -> integer`
+- `runtime.on(name, fn) -> nil`
+- `runtime.emit(name, payload?) -> integer`
 - `schedule.after(seconds, payload, opts?) -> job`
 - `schedule.every(seconds, payload, opts?) -> job`
 - `schedule.at(timestamp, payload, opts?) -> job`
@@ -153,6 +155,11 @@ Notes:
 - `action.run(...)` invokes a built-in or harness-defined action immediately in the current execution context
 - `emit(...)` performs synchronous in-process listener dispatch and returns the number of listeners invoked
 - custom events are local additive signals; they are distinct from system `on_*` hooks and distinct from any future durable signaling layer
+- `runtime.on(...)` is load-time only and registers cross-agent signal handlers for the current harness
+- `runtime.emit(...)` creates durable pending signal deliveries for subscribed agents, wakes their peer runtimes, and returns the number of target agents
+- cross-agent signal subscriptions are derived from loaded harness definitions; there is no separate durable handler registry
+- delivered cross-agent signals are deleted on success; failed deliveries remain visible with attempt metadata rather than becoming a replay log
+- cross-agent signals are agent-scoped and asynchronous relative to the emitter; they are distinct from local `emit(...)`
 
 Example:
 

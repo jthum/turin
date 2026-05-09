@@ -139,6 +139,8 @@ Namespaces under `runtime`:
 - `runtime.graph.*`
 - `runtime.policy.*`
 - `runtime.governance.*`
+- `runtime.on(...)`
+- `runtime.emit(...)`
 
 Reference:
 

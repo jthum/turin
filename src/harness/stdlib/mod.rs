@@ -19,6 +19,7 @@ pub mod runtime_graph;
 pub mod runtime_inference;
 pub mod runtime_policy;
 pub mod runtime_schedule;
+pub mod runtime_signal;
 pub mod runtime_worklist;
 pub mod scoped_data_backend;
 pub mod session_user_aliases;

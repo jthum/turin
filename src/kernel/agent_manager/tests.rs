@@ -92,6 +92,38 @@ fn test_config(workspace_root: &std::path::Path, harness_dir: &std::path::Path) 
     }
 }
 
+fn signal_test_config(
+    workspace_root: &std::path::Path,
+    publisher_harness_dir: &std::path::Path,
+    reviewer_harness_dir: &std::path::Path,
+) -> TurinConfig {
+    let mut config = test_config(workspace_root, publisher_harness_dir);
+    config.agents.insert(
+        "reviewer".to_string(),
+        AgentConfig {
+            tools: Default::default(),
+            id: "reviewer".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "reviewer".to_string(),
+            thinking: None,
+            harness: Some("reviewer".to_string()),
+            idle_timeout_seconds: Some(30),
+            inference: Default::default(),
+            persistence: Default::default(),
+        },
+    );
+    config.harnesses.insert(
+        "reviewer".to_string(),
+        HarnessConfig {
+            directory: reviewer_harness_dir.to_string_lossy().to_string(),
+            fs_root: ".".to_string(),
+            memory_limit_mb: 32,
+        },
+    );
+    config
+}
+
 async fn abort_all_runtime_slots(manager: &Arc<AgentManager>) {
     let handles: Vec<_> = manager
         .runtimes
@@ -621,5 +653,89 @@ async fn live_session_snapshots_expose_effective_conflict_policy() -> anyhow::Re
     assert_eq!(live[0].execution.execution_id, "ex_live_conflict");
     assert_eq!(live[0].conflict_policy, ExecutionConflictPolicy::Detached);
 
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runtime_signals_can_wake_subscribed_agent_and_dispatch_to_worklist() -> anyhow::Result<()>
+{
+    let tmp = tempdir()?;
+    let publisher_harness = tmp.path().join("publisher-harness");
+    let reviewer_harness = tmp.path().join("reviewer-harness");
+    std::fs::create_dir_all(&publisher_harness)?;
+    std::fs::create_dir_all(&reviewer_harness)?;
+
+    std::fs::write(
+        publisher_harness.join("main.lua"),
+        r#"
+            action.define("signals.publish", function(ctx, params)
+                return {
+                    delivered = runtime.emit(params.topic, params.payload)
+                }
+            end)
+        "#,
+    )?;
+    std::fs::write(
+        reviewer_harness.join("main.lua"),
+        r#"
+            runtime.on("code.ready", function(ctx, event)
+                worklist("reviews"):add({
+                    title = "Review " .. event.branch,
+                    prompt = "Review " .. event.branch
+                })
+            end)
+        "#,
+    )?;
+
+    let mut kernel = Kernel::builder(signal_test_config(
+        tmp.path(),
+        &publisher_harness,
+        &reviewer_harness,
+    ))
+    .build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let instance = kernel
+        .runtime_for_agent("default")
+        .create_instance(kernel.harness_init_context())?;
+    let result = instance.invoke_declared_action_for_agent(
+        "default",
+        "signals.publish",
+        json!({
+            "topic": "code.ready",
+            "payload": { "branch": "feature-x" }
+        }),
+    )?;
+
+    assert_eq!(
+        result.as_ref().and_then(|value| value.get("delivered")),
+        Some(&json!(1))
+    );
+
+    let store = kernel
+        .store_manager()
+        .open(&crate::persistence::manager::StoreSelector::Alias(
+            "state".to_string(),
+        ))
+        .await?;
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let list = store.open_worklist("reviews", "", None).await?;
+        let rows = store.list_work_items(list.id).await?;
+        if rows.iter().any(|row| row.title == "Review feature-x") {
+            break;
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            anyhow::bail!("timed out waiting for runtime signal delivery");
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    abort_all_runtime_slots(kernel.agent_manager()).await;
     Ok(())
 }

@@ -112,6 +112,20 @@ impl HarnessManager {
     pub(crate) fn runtime_by_id(&self, harness_id: &str) -> Option<&Arc<HarnessRuntime>> {
         self.runtimes.get(harness_id)
     }
+
+    pub(crate) fn agent_ids_for_runtime_signal_topic(&self, topic: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for (agent_id, harness_id) in &self.agent_bindings {
+            if let Some(runtime) = self.runtimes.get(harness_id)
+                && runtime.runtime_signal_topics().iter().any(|t| t == topic)
+            {
+                out.push(agent_id.clone());
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
 }
 
 #[cfg(test)]

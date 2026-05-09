@@ -69,6 +69,12 @@ fn intended_task_execution_snapshot(
 }
 
 impl AgentManager {
+    pub async fn wake_agent(self: &Arc<Self>, agent_id: &str) -> Result<()> {
+        let handle = self.ensure_runtime(agent_id).await?;
+        handle.notify.notify_one();
+        Ok(())
+    }
+
     /// Dispatch a task to an agent by ID. If the agent isn't running, it will be started automatically.
     pub async fn send(
         self: &Arc<Self>,

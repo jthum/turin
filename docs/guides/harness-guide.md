@@ -424,9 +424,11 @@ end)
 - declared action handlers receive `(ctx, params)`
 - `ctx:pause({...})` is the lightweight way to checkpoint progress and continue later without introducing a separate workflow subsystem
 - local custom composition points may be expressed with:
-  - `on("event.name", function(ctx, payload) ... end)`
-  - `emit("event.name", payload)`
-  - `action.run("name", payload)`
+- `on("event.name", function(ctx, payload) ... end)`
+- `emit("event.name", payload)`
+- `action.run("name", payload)`
+- `runtime.on("event.name", function(ctx, payload) ... end)`
+- `runtime.emit("event.name", payload)`
 
 ```lua
 action.define("bugs.create", function(ctx, params)
@@ -447,6 +449,32 @@ end
 - `on(...)` listeners are local, synchronous, and additive
 - `emit(...)` returns the number of listeners invoked
 - system lifecycle hooks remain the explicit `on_*` functions; custom events are separate
+- `runtime.on(...)` / `runtime.emit(...)` are the durable cross-agent variant:
+  - handlers are declared at harness load time
+  - emits create pending deliveries for subscribed agents
+  - target agent peer runtimes wake and dispatch those handlers locally
+  - success deletes the delivery; failures remain visible for inspection/retry policy
+
+Example:
+
+```lua
+-- reviewer harness
+runtime.on("code.ready", function(ctx, event)
+  worklist("reviews"):add({
+    title = "Review " .. event.branch,
+    prompt = "Review " .. event.branch
+  })
+end)
+
+-- publisher harness
+action.define("signals.publish", function(ctx, params)
+  return {
+    delivered = runtime.emit("code.ready", {
+      branch = params.branch
+    })
+  }
+end)
+```
 
 - when needed, `runtime.schedule.create(...)` / `update(...)` can also carry structured `content`, tool allowlists, and conflict policy just like `task.submit(...)`
 

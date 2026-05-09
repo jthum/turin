@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use tracing::error;
 
 use crate::harness::globals::{self, HarnessAppData, HarnessExecutionBinding};
-use crate::harness::stdlib::{action_bindings, tool_bindings};
+use crate::harness::stdlib::{action_bindings, runtime_signal, tool_bindings};
 use crate::harness::verdict::{Verdict, compose_verdicts};
 use crate::harness::virtual_tools::{
     DeclaredVirtualTool, VirtualToolPlan, VirtualToolResultResolution,
@@ -456,6 +456,10 @@ impl HarnessEngine {
         explicit_watch_roots(&self.lua)
     }
 
+    pub fn runtime_signal_topics(&self) -> Result<Vec<String>> {
+        runtime_signal::runtime_signal_topics(&self.lua).map_err(anyhow::Error::from)
+    }
+
     pub fn declared_virtual_tools(&self) -> Result<Vec<DeclaredVirtualTool>> {
         tool_bindings::declared_virtual_tools(&self.lua)
     }
@@ -503,6 +507,13 @@ impl HarnessEngine {
         args: serde_json::Value,
     ) -> Result<Option<VirtualToolPlan>> {
         tool_bindings::invoke_declared_virtual_tool(&self.lua, name, args)
+    }
+
+    pub fn dispatch_runtime_signal(
+        &self,
+        delivery: &crate::persistence::schema::SignalDeliveryRow,
+    ) -> Result<usize> {
+        runtime_signal::dispatch_runtime_signal(&self.lua, delivery).map_err(anyhow::Error::from)
     }
 
     pub fn invoke_virtual_tool_result_handler(

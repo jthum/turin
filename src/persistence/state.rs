@@ -22,6 +22,7 @@ mod kv;
 mod messages;
 mod scheduler;
 mod sessions;
+mod signals;
 #[cfg(test)]
 mod tests;
 mod tools;
@@ -29,6 +30,7 @@ mod turns;
 mod worklists;
 
 pub use scheduler::{ScheduledJobInsert, ScheduledJobUpdate};
+pub use signals::SignalDeliveryInsert;
 pub use worklists::{WorkItemInsert, WorkItemUpdate};
 
 /// The state store manages all Turin persistence.

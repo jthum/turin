@@ -173,6 +173,18 @@ impl AgentManager {
                             break;
                         }
                     }
+                    match runtime.process_pending_signal_deliveries().await {
+                        Ok(processed) if processed > 0 => continue,
+                        Ok(_) => {}
+                        Err(err) => {
+                            error!(
+                                agent_id = %agent_id_clone,
+                                slot_id = %slot_id_clone,
+                                error = %err,
+                                "Peer agent failed to process pending signal deliveries"
+                            );
+                        }
+                    }
                     let idle_timeout_seconds = manager
                         .resolve_idle_timeout_seconds(
                             &agent_id_clone,

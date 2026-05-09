@@ -53,6 +53,10 @@ impl HarnessInstance {
         self.engine.explicit_watch_roots()
     }
 
+    pub(crate) fn runtime_signal_topics(&self) -> Vec<String> {
+        self.engine.runtime_signal_topics().unwrap_or_default()
+    }
+
     pub(crate) fn load_script_str(&mut self, script: &str) -> Result<()> {
         self.engine.load_script_str(script)
     }
@@ -76,6 +80,7 @@ impl DerefMut for HarnessInstance {
 struct HarnessLoadedState {
     loaded_scripts: Vec<String>,
     explicit_watch_roots: Vec<PathBuf>,
+    runtime_signal_topics: Vec<String>,
 }
 
 // Despite the legacy name, this is the shared harness definition and metadata cache.
@@ -183,10 +188,19 @@ impl HarnessRuntime {
             .clone()
     }
 
+    pub(crate) fn runtime_signal_topics(&self) -> Vec<String> {
+        self.loaded_state
+            .lock()
+            .expect("harness loaded-state mutex poisoned")
+            .runtime_signal_topics
+            .clone()
+    }
+
     pub(crate) fn init(&self, ctx: HarnessRuntimeInitContext) -> Result<usize> {
         let instance = self.create_instance(ctx)?;
         let loaded_scripts = instance.loaded_scripts();
         let explicit_watch_roots = instance.explicit_watch_roots();
+        let runtime_signal_topics = instance.runtime_signal_topics();
         let script_count = loaded_scripts.len();
         if script_count > 0 {
             info!(
@@ -212,6 +226,7 @@ impl HarnessRuntime {
             .expect("harness loaded-state mutex poisoned");
         state.loaded_scripts = loaded_scripts;
         state.explicit_watch_roots = explicit_watch_roots;
+        state.runtime_signal_topics = runtime_signal_topics;
         self.generation.fetch_add(1, Ordering::Relaxed);
         Ok(script_count)
     }

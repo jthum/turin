@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 25;
+pub(crate) const SCHEMA_VERSION: u32 = 26;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -271,6 +271,22 @@ CREATE INDEX IF NOT EXISTS idx_work_items_worklist_status ON work_items(worklist
 CREATE INDEX IF NOT EXISTS idx_work_items_parent ON work_items(parent_item_id);
 CREATE INDEX IF NOT EXISTS idx_work_items_claim ON work_items(worklist_id, claim_execution_id);
 
+CREATE TABLE IF NOT EXISTS signal_deliveries (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_id         BLOB(16) UNIQUE NOT NULL,
+    topic             TEXT NOT NULL,
+    source_agent_id   TEXT NOT NULL,
+    target_agent_id   TEXT NOT NULL,
+    payload           TEXT NOT NULL,
+    attempt_count     INTEGER NOT NULL DEFAULT 0,
+    last_attempted_at TEXT,
+    last_error        TEXT,
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_signal_deliveries_target ON signal_deliveries(target_agent_id, id ASC);
+CREATE INDEX IF NOT EXISTS idx_signal_deliveries_topic ON signal_deliveries(topic, id ASC);
+
 "#;
 
 /// Native Turso FTS schema
@@ -435,6 +451,20 @@ pub struct WorkItemRow {
     pub failure_reason: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SignalDeliveryRow {
+    pub id: i64,
+    pub public_id: Vec<u8>,
+    pub topic: String,
+    pub source_agent_id: String,
+    pub target_agent_id: String,
+    pub payload: String,
+    pub attempt_count: u64,
+    pub last_attempted_at: Option<String>,
+    pub last_error: Option<String>,
+    pub created_at: String,
 }
 
 impl BranchProvenance {

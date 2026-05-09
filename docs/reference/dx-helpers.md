@@ -173,6 +173,9 @@ Notes:
 - local custom events use:
   - `on("qa.failed", function(ctx, payload) ... end)`
   - `emit("qa.failed", { suite = "checkout" })`
+- cross-agent signals use:
+  - `runtime.on("code.ready", function(ctx, event) ... end)`
+  - `runtime.emit("code.ready", { branch = "feature-x" })`
 - declared action handlers receive a control-aware `ctx` table:
   - `ctx.params`
   - `ctx.checkpoint`
@@ -192,6 +195,10 @@ Notes:
 - `on(...)` is load-time only and registers additive local listeners in registration order
 - `emit(...)` dispatches those listeners synchronously in-process and returns the number of listeners invoked
 - local event listeners are intended to react by mutating state, calling `action.run(...)`, or scheduling/worklisting follow-up work
+- `runtime.on(...)` is load-time only and declares that the current harness should receive durable cross-agent signals for that topic
+- `runtime.emit(...)` persists pending deliveries for subscribed agents, wakes their peer runtimes, and returns the number of target agents
+- cross-agent signal handlers still run locally inside the target harness, so they are best used to mutate state, schedule work, or call `action.run(...)`
+- local `emit(...)` and cross-agent `runtime.emit(...)` are intentionally separate: one is synchronous in-process composition, the other is durable agent-to-agent signaling
 - paused work items are skipped by ordinary `worklist.next()` / `dispatch_next()` until their pause window is due
 - `list:paused({ due_only = true })` is the explicit inspection helper when you want paused items whose resume window has already elapsed
 - `item:requeue()` is the explicit way to move paused work back to ordinary `pending`
