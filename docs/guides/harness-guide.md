@@ -451,8 +451,10 @@ end
 - system lifecycle hooks remain the explicit `on_*` functions; custom events are separate
 - `runtime.on(...)` / `runtime.emit(...)` are the durable cross-agent variant:
   - handlers are declared at harness load time
+  - declared topics are synced into a durable subscription index in daemon-owned `runtime.db`
   - emits create pending deliveries for subscribed agents
   - target agent peer runtimes wake and dispatch those handlers locally
+  - cold agents are still routable because subscriber discovery does not depend on them already being loaded in memory
   - success deletes the delivery; failures remain visible for inspection/retry policy
   - durable coordination lives in daemon-owned `runtime.db`, not in harness `state`
 

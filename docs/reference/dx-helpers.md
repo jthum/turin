@@ -196,9 +196,10 @@ Notes:
 - `emit(...)` dispatches those listeners synchronously in-process and returns the number of listeners invoked
 - local event listeners are intended to react by mutating state, calling `action.run(...)`, or scheduling/worklisting follow-up work
 - `runtime.on(...)` is load-time only and declares that the current harness should receive durable cross-agent signals for that topic
+- those declared topics are mirrored into a durable `runtime.db` subscription index on harness init/reload so cold agents remain discoverable
 - `runtime.emit(...)` persists pending deliveries for subscribed agents, wakes their peer runtimes, and returns the number of target agents
 - `runtime.emit(...)` requires daemon/runtime coordination; it is intentionally separate from purely local `emit(...)`
-- cross-agent signal handlers still run locally inside the target harness, so they are best used to mutate state, schedule work, or call `action.run(...)`
+- cross-agent signal handlers still run locally inside the target harness after that harness boots, so they are best used to mutate state, schedule work, or call `action.run(...)`
 - local `emit(...)` and cross-agent `runtime.emit(...)` are intentionally separate: one is synchronous in-process composition, the other is durable agent-to-agent signaling
 - paused work items are skipped by ordinary `worklist.next()` / `dispatch_next()` until their pause window is due
 - `list:paused({ due_only = true })` is the explicit inspection helper when you want paused items whose resume window has already elapsed

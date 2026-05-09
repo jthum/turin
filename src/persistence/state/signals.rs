@@ -13,6 +13,41 @@ pub struct SignalInsert {
 }
 
 impl StateStore {
+    pub async fn replace_signal_subscriptions(
+        &self,
+        subscriptions: &[(String, String)],
+    ) -> Result<()> {
+        let conn = self.connect().await?;
+        conn.execute("DELETE FROM signal_subscriptions", ()).await?;
+        for (agent_id, topic) in subscriptions {
+            conn.execute(
+                "INSERT INTO signal_subscriptions (agent_id, topic) VALUES (?1, ?2)",
+                (agent_id.as_str(), topic.as_str()),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn list_signal_subscriber_agent_ids(&self, topic: &str) -> Result<Vec<String>> {
+        let conn = self.connect().await?;
+        let mut rows = conn
+            .query(
+                "SELECT agent_id
+                 FROM signal_subscriptions
+                 WHERE topic = ?1
+                 ORDER BY agent_id ASC",
+                [topic],
+            )
+            .await?;
+
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(row.get(0)?);
+        }
+        Ok(out)
+    }
+
     pub async fn insert_signal(&self, insert: SignalInsert) -> Result<()> {
         let conn = self.connect().await?;
         conn.execute(

@@ -209,6 +209,22 @@ Key fields:
 
 Signals are short-lived coordination rows:
 
+### `signal_subscriptions`
+
+Daemon-owned durable topic subscriptions for cross-agent signaling.
+
+Key fields:
+
+- `agent_id`
+- `topic`
+- `updated_at`
+
+These rows answer only:
+
+- which agents subscribe to a topic?
+
+They do not store callback identities or handler refs. Once a target agent wakes and loads its harness, the harness-local `runtime.on(...)` handlers determine which functions run for that topic.
+
 - success deletes the row
 - failure leaves it visible with attempt/error metadata
 - this is a pending-delivery queue, not a replay/event-history log

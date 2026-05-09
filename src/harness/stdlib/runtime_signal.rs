@@ -42,16 +42,22 @@ pub fn register_runtime_signal_namespace(
                         .map_err(|err| mlua::Error::runtime(err.to_string()))?,
                 };
 
-                let Some(shared_runtime) = app_data.agent_manager.shared_runtime() else {
+                let source_agent_id = current_agent_id(&app_data);
+
+                let Some(runtime_scheduler) = app_data.scheduler.clone() else {
                     return Err(mlua::Error::runtime(
-                        "runtime.emit requires a live kernel runtime context".to_string(),
+                        "runtime.emit requires daemon runtime coordination".to_string(),
                     ));
                 };
-
-                let subscribers = shared_runtime
-                    .harness_manager
-                    .agent_ids_for_runtime_signal_topic(&topic);
-                let source_agent_id = current_agent_id(&app_data);
+                let runtime_store = runtime_scheduler.runtime_store();
+                let subscriber_topic = topic.clone();
+                let subscribers = bridge_async_display_err(async move {
+                    runtime_store
+                        .list_signal_subscriber_agent_ids(&subscriber_topic)
+                        .await
+                        .map_err(|e| e.to_string())
+                })
+                .map_err(mlua::Error::runtime)?;
 
                 let mut eligible = Vec::new();
                 for agent_id in subscribers {
@@ -61,11 +67,6 @@ pub fn register_runtime_signal_namespace(
                     eligible.push(agent_id);
                 }
 
-                let Some(runtime_scheduler) = app_data.scheduler.clone() else {
-                    return Err(mlua::Error::runtime(
-                        "runtime.emit requires daemon runtime coordination".to_string(),
-                    ));
-                };
                 let agent_manager = app_data.agent_manager.clone();
                 let emitted_count = bridge_async_display_err(async move {
                     let store = runtime_scheduler.runtime_store();

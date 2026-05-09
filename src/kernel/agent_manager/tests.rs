@@ -749,3 +749,85 @@ async fn runtime_signals_can_wake_subscribed_agent_and_dispatch_to_worklist() ->
     abort_all_runtime_slots(kernel.agent_manager()).await;
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runtime_signal_subscriptions_sync_on_harness_reload() -> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    let publisher_harness = tmp.path().join("publisher-harness");
+    let reviewer_harness = tmp.path().join("reviewer-harness");
+    std::fs::create_dir_all(&publisher_harness)?;
+    std::fs::create_dir_all(&reviewer_harness)?;
+
+    std::fs::write(
+        publisher_harness.join("main.lua"),
+        r#"
+            action.define("signals.publish", function(ctx, params)
+                return {
+                    delivered = runtime.emit(params.topic, params.payload)
+                }
+            end)
+        "#,
+    )?;
+    std::fs::write(
+        reviewer_harness.join("main.lua"),
+        r#"
+            runtime.on("code.ready", function(_ctx, _event) end)
+        "#,
+    )?;
+
+    let mut kernel = Kernel::builder(signal_test_config(
+        tmp.path(),
+        &publisher_harness,
+        &reviewer_harness,
+    ))
+    .build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    let runtime_store = Arc::new(StateStore::open_memory().await?);
+    kernel.host.scheduler = Some(Arc::new(HarnessSchedulerAccess::new(
+        Arc::clone(&runtime_store),
+        None,
+    )));
+    kernel
+        .agent_manager()
+        .bind_scheduler_access(kernel.host.scheduler.clone());
+    kernel.init_harness().await?;
+
+    assert_eq!(
+        runtime_store
+            .list_signal_subscriber_agent_ids("code.ready")
+            .await?,
+        vec!["reviewer".to_string()]
+    );
+    assert!(
+        runtime_store
+            .list_signal_subscriber_agent_ids("review.ready")
+            .await?
+            .is_empty()
+    );
+
+    std::fs::write(
+        reviewer_harness.join("main.lua"),
+        r#"
+            runtime.on("review.ready", function(_ctx, _event) end)
+        "#,
+    )?;
+
+    kernel.reload_named_harness("reviewer").await?;
+
+    assert!(
+        runtime_store
+            .list_signal_subscriber_agent_ids("code.ready")
+            .await?
+            .is_empty()
+    );
+    assert_eq!(
+        runtime_store
+            .list_signal_subscriber_agent_ids("review.ready")
+            .await?,
+        vec!["reviewer".to_string()]
+    );
+
+    abort_all_runtime_slots(kernel.agent_manager()).await;
+    Ok(())
+}

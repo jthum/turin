@@ -17,6 +17,18 @@ use super::harness_runtime::{HarnessRuntime, HarnessRuntimeInitContext};
 use crate::inference::provider::{self, ProviderClient};
 
 impl ExecutionHost {
+    pub(crate) async fn sync_runtime_signal_subscriptions(&self) -> Result<()> {
+        let Some(scheduler) = self.scheduler.as_ref() else {
+            return Ok(());
+        };
+
+        let subscriptions = self.harness_manager.signal_subscriptions();
+        scheduler
+            .runtime_store()
+            .replace_signal_subscriptions(&subscriptions)
+            .await
+    }
+
     pub(crate) fn harness_init_context(&self) -> HarnessRuntimeInitContext {
         HarnessRuntimeInitContext {
             config: self.config.clone(),
@@ -124,6 +136,7 @@ impl ExecutionHost {
         for runtime in self.harness_manager.runtimes() {
             runtime.init(self.harness_init_context())?;
         }
+        self.sync_runtime_signal_subscriptions().await?;
         Ok(())
     }
 
@@ -134,6 +147,7 @@ impl ExecutionHost {
         for runtime in self.harness_manager.runtimes() {
             runtime.reload(self.harness_init_context())?;
         }
+        self.sync_runtime_signal_subscriptions().await?;
         Ok(())
     }
 
@@ -144,6 +158,7 @@ impl ExecutionHost {
             .ok_or_else(|| anyhow::anyhow!("Unknown harness '{}'", harness_id))?;
         info!(harness_id = %harness_id, "Reloading named harness");
         runtime.reload(self.harness_init_context())?;
+        self.sync_runtime_signal_subscriptions().await?;
         Ok(())
     }
 
@@ -165,6 +180,7 @@ impl Kernel {
         let runtimes: Vec<_> = self.harness_manager.runtimes().cloned().collect();
         let task_runtimes = runtimes.clone();
         let init_ctx = self.harness_init_context();
+        let harness_manager = Arc::clone(&self.harness_manager);
         let watcher_slot = Arc::clone(&self.check_watcher);
 
         // We use an async channel to debounce events
@@ -204,6 +220,17 @@ impl Kernel {
                             error = %err,
                             "Harness hot-reload failed"
                         );
+                    }
+                }
+
+                if let Some(scheduler) = ctx.scheduler.as_ref() {
+                    let subscriptions = harness_manager.signal_subscriptions();
+                    if let Err(err) = scheduler
+                        .runtime_store()
+                        .replace_signal_subscriptions(&subscriptions)
+                        .await
+                    {
+                        error!(error = %err, "Failed to sync durable runtime signal subscriptions");
                     }
                 }
 
