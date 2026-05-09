@@ -12,13 +12,20 @@ use crate::persistence::state::{ScheduledJobInsert, ScheduledJobUpdate, StateSto
 
 #[derive(Clone)]
 pub struct HarnessSchedulerAccess {
-    jobs_store: Arc<StateStore>,
+    runtime_store: Arc<StateStore>,
     wake: Option<Arc<Notify>>,
 }
 
 impl HarnessSchedulerAccess {
-    pub fn new(jobs_store: Arc<StateStore>, wake: Option<Arc<Notify>>) -> Self {
-        Self { jobs_store, wake }
+    pub fn new(runtime_store: Arc<StateStore>, wake: Option<Arc<Notify>>) -> Self {
+        Self {
+            runtime_store,
+            wake,
+        }
+    }
+
+    pub fn runtime_store(&self) -> Arc<StateStore> {
+        Arc::clone(&self.runtime_store)
     }
 
     pub async fn create_job(&self, params: ScheduleCreateParams) -> Result<ScheduleJobDetail> {
@@ -47,7 +54,7 @@ impl HarnessSchedulerAccess {
                 .and_then(|persistence| persistence.store.as_ref()),
         )?;
         let id = self
-            .jobs_store
+            .runtime_store
             .create_scheduled_job(ScheduledJobInsert {
                 public_id,
                 agent_id: &params.agent_id,
@@ -73,7 +80,7 @@ impl HarnessSchedulerAccess {
             wake.notify_one();
         }
         let job = self
-            .jobs_store
+            .runtime_store
             .list_scheduled_jobs()
             .await?
             .into_iter()
@@ -84,7 +91,7 @@ impl HarnessSchedulerAccess {
 
     pub async fn list_jobs(&self) -> Result<Vec<ScheduleJobDetail>> {
         Ok(self
-            .jobs_store
+            .runtime_store
             .list_scheduled_jobs()
             .await?
             .into_iter()
@@ -95,7 +102,7 @@ impl HarnessSchedulerAccess {
     pub async fn get_job(&self, public_id: &str) -> Result<Option<ScheduleJobDetail>> {
         let public_id = uuid::Uuid::parse_str(public_id)?;
         Ok(self
-            .jobs_store
+            .runtime_store
             .get_scheduled_job_by_public_id(public_id)
             .await?
             .map(map_scheduled_job_detail))
@@ -109,7 +116,7 @@ impl HarnessSchedulerAccess {
     ) -> Result<Option<ScheduleJobRunList>> {
         let public_id = uuid::Uuid::parse_str(public_id)?;
         let Some(row) = self
-            .jobs_store
+            .runtime_store
             .get_scheduled_job_by_public_id(public_id)
             .await?
         else {
@@ -119,7 +126,7 @@ impl HarnessSchedulerAccess {
             .map(|id| id.to_string())
             .unwrap_or_else(|_| format_uuid_bytes_simple(&row.public_id));
         let runs = self
-            .jobs_store
+            .runtime_store
             .list_scheduled_job_runs(row.id, active_only, limit)
             .await?
             .into_iter()
@@ -134,7 +141,7 @@ impl HarnessSchedulerAccess {
     ) -> Result<Option<ScheduleJobDetail>> {
         let public_id = uuid::Uuid::parse_str(&params.id)?;
         let Some(row) = self
-            .jobs_store
+            .runtime_store
             .get_scheduled_job_by_public_id(public_id)
             .await?
         else {
@@ -190,7 +197,7 @@ impl HarnessSchedulerAccess {
                 .as_ref()
                 .and_then(|persistence| persistence.store.as_ref()),
         )?;
-        self.jobs_store
+        self.runtime_store
             .update_scheduled_job(ScheduledJobUpdate {
                 id: row.id,
                 agent_id: params.agent_id.as_deref().unwrap_or(&row.agent_id),
@@ -222,7 +229,7 @@ impl HarnessSchedulerAccess {
             wake.notify_one();
         }
         Ok(self
-            .jobs_store
+            .runtime_store
             .get_scheduled_job_by_public_id(public_id)
             .await?
             .map(map_scheduled_job_detail))
@@ -235,20 +242,20 @@ impl HarnessSchedulerAccess {
     ) -> Result<Option<ScheduleJobDetail>> {
         let public_id = uuid::Uuid::parse_str(public_id)?;
         let Some(row) = self
-            .jobs_store
+            .runtime_store
             .get_scheduled_job_by_public_id(public_id)
             .await?
         else {
             return Ok(None);
         };
-        self.jobs_store
+        self.runtime_store
             .set_scheduled_job_enabled(row.id, enabled)
             .await?;
         if let Some(wake) = &self.wake {
             wake.notify_one();
         }
         Ok(self
-            .jobs_store
+            .runtime_store
             .get_scheduled_job_by_public_id(public_id)
             .await?
             .map(map_scheduled_job_detail))
@@ -257,7 +264,7 @@ impl HarnessSchedulerAccess {
     pub async fn delete_job(&self, public_id: &str) -> Result<Option<ScheduleJobDetail>> {
         let public_id = uuid::Uuid::parse_str(public_id)?;
         let Some(row) = self
-            .jobs_store
+            .runtime_store
             .get_scheduled_job_by_public_id(public_id)
             .await?
         else {
@@ -270,7 +277,7 @@ impl HarnessSchedulerAccess {
             );
         }
         let detail = map_scheduled_job_detail(row.clone());
-        self.jobs_store.delete_scheduled_job(row.id).await?;
+        self.runtime_store.delete_scheduled_job(row.id).await?;
         if let Some(wake) = &self.wake {
             wake.notify_one();
         }

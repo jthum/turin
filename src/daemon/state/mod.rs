@@ -75,7 +75,7 @@ pub struct DaemonState {
     endpoint: PathBuf,
     pub(super) registry_load: RegistryLoad,
     pub(super) kernel: Kernel,
-    pub(super) jobs_store: Arc<StateStore>,
+    pub(super) runtime_store: Arc<StateStore>,
     pub(super) scheduler_wake: Option<Arc<Notify>>,
 }
 
@@ -135,14 +135,15 @@ impl DaemonState {
         let registry_load = scan_registry(&bootstrap_config, &config_base)?;
         let effective_config = build_effective_config(&bootstrap_config, &registry_load)?;
         let endpoint = bootstrap_config.resolve_daemon_endpoint(&config_base);
-        let jobs_db_path = bootstrap_config.resolve_daemon_jobs_db(&config_base);
-        let jobs_store = Arc::new(StateStore::open(&jobs_db_path.display().to_string()).await?);
+        let runtime_db_path = bootstrap_config.resolve_daemon_runtime_db(&config_base);
+        let runtime_store =
+            Arc::new(StateStore::open(&runtime_db_path.display().to_string()).await?);
 
         let mut kernel = Kernel::builder(effective_config).build()?;
         kernel.init_state().await?;
         kernel.init_clients()?;
         kernel.host.scheduler = Some(Arc::new(HarnessSchedulerAccess::new(
-            Arc::clone(&jobs_store),
+            Arc::clone(&runtime_store),
             None,
         )));
         kernel
@@ -158,7 +159,7 @@ impl DaemonState {
             endpoint,
             registry_load,
             kernel,
-            jobs_store,
+            runtime_store,
             scheduler_wake: None,
         })
     }
@@ -208,14 +209,15 @@ impl DaemonState {
 
         let registry_load = scan_registry(&bootstrap_config, &self.config_base)?;
         let effective_config = build_effective_config(&bootstrap_config, &registry_load)?;
-        let jobs_db_path = bootstrap_config.resolve_daemon_jobs_db(&self.config_base);
-        let jobs_store = Arc::new(StateStore::open(&jobs_db_path.display().to_string()).await?);
+        let runtime_db_path = bootstrap_config.resolve_daemon_runtime_db(&self.config_base);
+        let runtime_store =
+            Arc::new(StateStore::open(&runtime_db_path.display().to_string()).await?);
 
         let mut new_kernel = Kernel::builder(effective_config).build()?;
         new_kernel.init_state().await?;
         new_kernel.init_clients()?;
         new_kernel.host.scheduler = Some(Arc::new(HarnessSchedulerAccess::new(
-            Arc::clone(&jobs_store),
+            Arc::clone(&runtime_store),
             self.scheduler_wake.clone(),
         )));
         new_kernel
@@ -227,7 +229,7 @@ impl DaemonState {
         let old_kernel = std::mem::replace(&mut self.kernel, new_kernel);
         self.bootstrap_config = bootstrap_config;
         self.registry_load = registry_load;
-        self.jobs_store = jobs_store;
+        self.runtime_store = runtime_store;
 
         tokio::spawn(async move {
             let mut kernel = old_kernel;

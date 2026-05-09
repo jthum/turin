@@ -173,7 +173,7 @@ Current typed daemon/control-plane surfaces include:
 
 Notes:
 
-- `worklist.*` / `workitem.get` control-plane queries are explicitly store-targeted because worklists live in arbitrary state/store backends, not in a daemon-owned global index like `jobs.db`
+- `worklist.*` / `workitem.get` control-plane queries are explicitly store-targeted because worklists live in arbitrary state/store backends, not in a daemon-owned runtime coordination DB like `runtime.db`
 - current `worklist.*` daemon operations are read-only inspection APIs; mutation still lives in the harness/runtime worklist surface
 - `worklist.items` currently supports:
   - `status`

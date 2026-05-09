@@ -173,7 +173,7 @@ impl AgentManager {
                             break;
                         }
                     }
-                    match runtime.process_pending_signal_deliveries().await {
+                    match runtime.process_pending_signals().await {
                         Ok(processed) if processed > 0 => continue,
                         Ok(_) => {}
                         Err(err) => {

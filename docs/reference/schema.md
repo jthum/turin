@@ -4,7 +4,7 @@ This document summarizes Turin's current state-store schema at a conceptual leve
 
 The authoritative schema lives in `src/persistence/schema.rs`. This reference exists so contributors can reason about the durable model without reading the full SQL string every time.
 
-Current schema version: `16`
+Current schema version: `27`
 
 Turin currently does not provide an in-place migration path for incompatible state DB versions. Existing DBs with an older `schema_info.version` are rejected and must be recreated.
 
@@ -25,6 +25,8 @@ The important split is:
 - Structural facts live in turn/branch tables.
 - Branch birth context lives in branch provenance columns.
 - Optional semantic relationships live in the sparse graph overlay.
+
+The same SQLite schema type is also reused for daemon-owned runtime coordination stores such as `runtime.db`, which hold durable scheduler and signaling rows alongside the session/state primitives they need.
 
 Normal serial execution should not create graph overlay rows unless a harness/app/runtime explicitly records a meaningful relationship.
 
@@ -180,6 +182,36 @@ Key fields:
 - `created_at`
 
 Events may be attached to a turn or session-wide.
+
+## Runtime Coordination
+
+### `scheduled_jobs` / `scheduled_job_runs`
+
+Daemon-owned durable scheduler state.
+
+These rows live in `runtime.db`, not in context-local harness `state` stores.
+
+### `signals`
+
+Daemon-owned durable cross-agent signal queue.
+
+Key fields:
+
+- `public_id`
+- `topic`
+- `source_agent_id`
+- `target_agent_id`
+- `payload`
+- `attempt_count`
+- `last_attempted_at`
+- `last_error`
+- `created_at`
+
+Signals are short-lived coordination rows:
+
+- success deletes the row
+- failure leaves it visible with attempt/error metadata
+- this is a pending-delivery queue, not a replay/event-history log
 
 ## Scoped State
 

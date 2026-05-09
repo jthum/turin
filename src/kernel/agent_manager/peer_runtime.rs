@@ -10,7 +10,7 @@ use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
 use crate::kernel::execution_host::{ExecutionHost, TaskRunAttempt};
 use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreSelector;
-use crate::persistence::schema::SignalDeliveryRow;
+use crate::persistence::schema::SignalRow;
 use turin_types::TaskInputContent;
 
 use super::{
@@ -497,32 +497,27 @@ impl PeerRuntime {
         Ok(true)
     }
 
-    pub(super) async fn process_pending_signal_deliveries(&mut self) -> Result<usize> {
-        let store = self
-            .host
-            .store_manager
-            .open(&StoreSelector::Alias("state".to_string()))
-            .await?;
-        let deliveries = store
-            .list_signal_deliveries_for_agent(&self.agent_id, 64)
-            .await?;
-        if deliveries.is_empty() {
+    pub(super) async fn process_pending_signals(&mut self) -> Result<usize> {
+        let Some(runtime_scheduler) = self.host.scheduler.as_ref() else {
+            return Ok(0);
+        };
+        let store = runtime_scheduler.runtime_store();
+        let signals = store.list_signals_for_agent(&self.agent_id, 64).await?;
+        if signals.is_empty() {
             return Ok(0);
         }
 
         let mut processed = 0usize;
-        for delivery in deliveries {
-            store.record_signal_delivery_attempt(delivery.id).await?;
-            match self.dispatch_signal_delivery(&delivery).await {
+        for signal in signals {
+            store.record_signal_attempt(signal.id).await?;
+            match self.dispatch_signal(&signal).await {
                 Ok(_) => {
-                    store.delete_signal_delivery(delivery.id).await?;
+                    store.delete_signal(signal.id).await?;
                     processed += 1;
                 }
                 Err(err) => {
                     let error_message = err.to_string();
-                    store
-                        .set_signal_delivery_error(delivery.id, &error_message)
-                        .await?;
+                    store.set_signal_error(signal.id, &error_message).await?;
                     return Err(err);
                 }
             }
@@ -593,9 +588,9 @@ impl PeerRuntime {
             .set_current_conflict_policy(self.session.effective_conflict_policy());
     }
 
-    async fn dispatch_signal_delivery(&mut self, delivery: &SignalDeliveryRow) -> Result<usize> {
+    async fn dispatch_signal(&mut self, signal: &SignalRow) -> Result<usize> {
         self.host.ensure_session_harness_engine(&mut self.session)?;
-        let trace_task = QueuedTask::ad_hoc(format!("signal:{}", delivery.topic));
+        let trace_task = QueuedTask::ad_hoc(format!("signal:{}", signal.topic));
         self.host
             .bind_harness_execution_context(&self.session, &trace_task);
         let result = {
@@ -604,7 +599,7 @@ impl PeerRuntime {
                 .session_harness_engine(&self.session)
                 .expect("session harness engine should be present after ensure");
             let engine = harness.lock().expect("session harness mutex poisoned");
-            engine.dispatch_runtime_signal(delivery)
+            engine.dispatch_runtime_signal(signal)
         };
         self.host.unbind_harness_execution_context(&self.session);
         result

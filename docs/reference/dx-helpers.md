@@ -125,7 +125,7 @@ Preferred scheduler helpers:
 Notes:
 
 - this is a daemon-backed surface and requires a daemon-managed runtime
-- scheduled jobs live in daemon-owned `jobs.db`
+- scheduled jobs and durable cross-agent signals live in daemon-owned `runtime.db`
 - jobs may still target different `state` / `store` persistence contexts
 - `opts.work_key` lets related jobs share a concurrency lane
 - `opts.max_concurrency` bounds how many prompt jobs in that lane may run at once
@@ -197,6 +197,7 @@ Notes:
 - local event listeners are intended to react by mutating state, calling `action.run(...)`, or scheduling/worklisting follow-up work
 - `runtime.on(...)` is load-time only and declares that the current harness should receive durable cross-agent signals for that topic
 - `runtime.emit(...)` persists pending deliveries for subscribed agents, wakes their peer runtimes, and returns the number of target agents
+- `runtime.emit(...)` requires daemon/runtime coordination; it is intentionally separate from purely local `emit(...)`
 - cross-agent signal handlers still run locally inside the target harness, so they are best used to mutate state, schedule work, or call `action.run(...)`
 - local `emit(...)` and cross-agent `runtime.emit(...)` are intentionally separate: one is synchronous in-process composition, the other is durable agent-to-agent signaling
 - paused work items are skipped by ordinary `worklist.next()` / `dispatch_next()` until their pause window is due

@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 26;
+pub(crate) const SCHEMA_VERSION: u32 = 27;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -271,7 +271,7 @@ CREATE INDEX IF NOT EXISTS idx_work_items_worklist_status ON work_items(worklist
 CREATE INDEX IF NOT EXISTS idx_work_items_parent ON work_items(parent_item_id);
 CREATE INDEX IF NOT EXISTS idx_work_items_claim ON work_items(worklist_id, claim_execution_id);
 
-CREATE TABLE IF NOT EXISTS signal_deliveries (
+CREATE TABLE IF NOT EXISTS signals (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     public_id         BLOB(16) UNIQUE NOT NULL,
     topic             TEXT NOT NULL,
@@ -284,8 +284,8 @@ CREATE TABLE IF NOT EXISTS signal_deliveries (
     created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_signal_deliveries_target ON signal_deliveries(target_agent_id, id ASC);
-CREATE INDEX IF NOT EXISTS idx_signal_deliveries_topic ON signal_deliveries(topic, id ASC);
+CREATE INDEX IF NOT EXISTS idx_signals_target ON signals(target_agent_id, id ASC);
+CREATE INDEX IF NOT EXISTS idx_signals_topic ON signals(topic, id ASC);
 
 "#;
 
@@ -454,7 +454,7 @@ pub struct WorkItemRow {
 }
 
 #[derive(Debug, Clone)]
-pub struct SignalDeliveryRow {
+pub struct SignalRow {
     pub id: i64,
     pub public_id: Vec<u8>,
     pub topic: String,

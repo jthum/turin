@@ -1,10 +1,10 @@
 use anyhow::Result;
 
 use super::StateStore;
-use crate::persistence::schema::SignalDeliveryRow;
+use crate::persistence::schema::SignalRow;
 
 #[derive(Debug, Clone)]
-pub struct SignalDeliveryInsert {
+pub struct SignalInsert {
     pub public_id: Vec<u8>,
     pub topic: String,
     pub source_agent_id: String,
@@ -13,10 +13,10 @@ pub struct SignalDeliveryInsert {
 }
 
 impl StateStore {
-    pub async fn insert_signal_delivery(&self, insert: SignalDeliveryInsert) -> Result<()> {
+    pub async fn insert_signal(&self, insert: SignalInsert) -> Result<()> {
         let conn = self.connect().await?;
         conn.execute(
-            "INSERT INTO signal_deliveries (public_id, topic, source_agent_id, target_agent_id, payload) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO signals (public_id, topic, source_agent_id, target_agent_id, payload) VALUES (?1, ?2, ?3, ?4, ?5)",
             (
                 insert.public_id,
                 insert.topic,
@@ -29,16 +29,16 @@ impl StateStore {
         Ok(())
     }
 
-    pub async fn list_signal_deliveries_for_agent(
+    pub async fn list_signals_for_agent(
         &self,
         agent_id: &str,
         limit: usize,
-    ) -> Result<Vec<SignalDeliveryRow>> {
+    ) -> Result<Vec<SignalRow>> {
         let conn = self.connect().await?;
         let mut rows = conn
             .query(
                 "SELECT id, public_id, topic, source_agent_id, target_agent_id, payload, attempt_count, last_attempted_at, last_error, created_at
-                 FROM signal_deliveries
+                 FROM signals
                  WHERE target_agent_id = ?1
                  ORDER BY id ASC
                  LIMIT ?2",
@@ -48,7 +48,7 @@ impl StateStore {
 
         let mut out = Vec::new();
         while let Some(row) = rows.next().await? {
-            out.push(SignalDeliveryRow {
+            out.push(SignalRow {
                 id: row.get(0)?,
                 public_id: row.get(1)?,
                 topic: row.get(2)?,
@@ -65,10 +65,10 @@ impl StateStore {
         Ok(out)
     }
 
-    pub async fn record_signal_delivery_attempt(&self, id: i64) -> Result<()> {
+    pub async fn record_signal_attempt(&self, id: i64) -> Result<()> {
         let conn = self.connect().await?;
         conn.execute(
-            "UPDATE signal_deliveries
+            "UPDATE signals
              SET attempt_count = attempt_count + 1,
                  last_attempted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
                  last_error = NULL
@@ -79,10 +79,10 @@ impl StateStore {
         Ok(())
     }
 
-    pub async fn set_signal_delivery_error(&self, id: i64, last_error: &str) -> Result<()> {
+    pub async fn set_signal_error(&self, id: i64, last_error: &str) -> Result<()> {
         let conn = self.connect().await?;
         conn.execute(
-            "UPDATE signal_deliveries
+            "UPDATE signals
              SET last_error = ?2
              WHERE id = ?1",
             (id, last_error),
@@ -91,9 +91,9 @@ impl StateStore {
         Ok(())
     }
 
-    pub async fn delete_signal_delivery(&self, id: i64) -> Result<()> {
+    pub async fn delete_signal(&self, id: i64) -> Result<()> {
         let conn = self.connect().await?;
-        conn.execute("DELETE FROM signal_deliveries WHERE id = ?1", [id])
+        conn.execute("DELETE FROM signals WHERE id = ?1", [id])
             .await?;
         Ok(())
     }

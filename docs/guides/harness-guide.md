@@ -454,6 +454,7 @@ end
   - emits create pending deliveries for subscribed agents
   - target agent peer runtimes wake and dispatch those handlers locally
   - success deletes the delivery; failures remain visible for inspection/retry policy
+  - durable coordination lives in daemon-owned `runtime.db`, not in harness `state`
 
 Example:
 

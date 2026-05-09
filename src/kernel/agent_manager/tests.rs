@@ -1,9 +1,11 @@
 use super::*;
+use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::kernel::Kernel;
 use crate::kernel::config::{
     AgentConfig, EmbeddingConfig, GovernanceConfig, HarnessConfig, InferenceConfig, KernelConfig,
     LayoutConfig, PersistenceConfig, ProviderConfig, TurinConfig,
 };
+use crate::persistence::state::StateStore;
 use crate::tools::{Tool, ToolContext, ToolEffect, ToolError};
 use async_trait::async_trait;
 use serde_json::json;
@@ -695,6 +697,14 @@ async fn runtime_signals_can_wake_subscribed_agent_and_dispatch_to_worklist() ->
     .build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
+    let runtime_store = Arc::new(StateStore::open_memory().await?);
+    kernel.host.scheduler = Some(Arc::new(HarnessSchedulerAccess::new(
+        Arc::clone(&runtime_store),
+        None,
+    )));
+    kernel
+        .agent_manager()
+        .bind_scheduler_access(kernel.host.scheduler.clone());
     kernel.init_harness().await?;
 
     let instance = kernel

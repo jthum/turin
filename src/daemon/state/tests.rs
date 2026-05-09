@@ -292,7 +292,7 @@ async fn scheduled_one_shot_job_submits_and_disables_after_completion() -> Resul
         default_state_store.list_scheduled_jobs().await?.is_empty(),
         "scheduled jobs should not be stored in the primary session state DB"
     );
-    assert_eq!(state.jobs_store.list_scheduled_jobs().await?.len(), 1);
+    assert_eq!(state.runtime_store.list_scheduled_jobs().await?.len(), 1);
 
     let next_sleep = state.scheduler_tick().await?;
     assert!(next_sleep.is_none());
@@ -543,7 +543,7 @@ async fn scheduled_parallel_job_can_start_multiple_active_runs() -> Result<()> {
     assert_eq!(running.active_run_count, 2);
     assert!(running.running_task_id.is_some());
 
-    let active_runs = state.jobs_store.list_active_scheduled_job_runs().await?;
+    let active_runs = state.runtime_store.list_active_scheduled_job_runs().await?;
     let task_ids: Vec<_> = active_runs
         .into_iter()
         .filter(|run| run.scheduled_job_id == job.id)

@@ -53,6 +53,7 @@ Daemon-related bootstrap settings live under `[daemon]` in `.turin/config.toml`:
 [daemon]
 agents_dir = "runtime/agents"
 harnesses_dir = "harnesses"
+runtime_db = "data/runtime.db"
 endpoint = "daemon.sock"
 ```
 
@@ -255,7 +256,7 @@ Daemon/control-plane surfaces now also include store-targeted worklist inspectio
 
 Important boundary:
 
-- scheduled jobs are globally indexed in daemon-owned `jobs.db`
+- scheduled jobs and runtime coordination records are globally indexed in daemon-owned `runtime.db`
 - worklists are not; they live in whichever state/store backend a harness chose
 - so control-plane worklist queries must carry or assume an explicit persistence target instead of pretending there is one global worklist namespace
 

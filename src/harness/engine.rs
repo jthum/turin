@@ -511,9 +511,9 @@ impl HarnessEngine {
 
     pub fn dispatch_runtime_signal(
         &self,
-        delivery: &crate::persistence::schema::SignalDeliveryRow,
+        signal: &crate::persistence::schema::SignalRow,
     ) -> Result<usize> {
-        runtime_signal::dispatch_runtime_signal(&self.lua, delivery).map_err(anyhow::Error::from)
+        runtime_signal::dispatch_runtime_signal(&self.lua, signal).map_err(anyhow::Error::from)
     }
 
     pub fn invoke_virtual_tool_result_handler(

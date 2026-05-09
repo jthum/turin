@@ -440,8 +440,8 @@ pub struct DaemonConfig {
     pub harnesses_dir: String,
     #[serde(default = "default_daemon_channels_dir")]
     pub channels_dir: String,
-    #[serde(default = "default_daemon_jobs_db")]
-    pub jobs_db: String,
+    #[serde(default = "default_daemon_runtime_db")]
+    pub runtime_db: String,
     #[serde(default = "default_daemon_endpoint")]
     pub endpoint: String,
 }
@@ -452,7 +452,7 @@ impl Default for DaemonConfig {
             agents_dir: default_daemon_agents_dir(),
             harnesses_dir: default_daemon_harnesses_dir(),
             channels_dir: default_daemon_channels_dir(),
-            jobs_db: default_daemon_jobs_db(),
+            runtime_db: default_daemon_runtime_db(),
             endpoint: default_daemon_endpoint(),
         }
     }
@@ -717,14 +717,14 @@ impl TurinConfig {
         )
     }
 
-    pub fn resolve_daemon_jobs_db(&self, base: &Path) -> PathBuf {
+    pub fn resolve_daemon_runtime_db(&self, base: &Path) -> PathBuf {
         let layout = self.resolved_layout(base);
         resolve_runtime_path(
             base,
             &self.kernel.workspace_root,
-            &self.daemon.jobs_db,
-            default_daemon_jobs_db().as_str(),
-            &layout.data_dir.join("jobs.db"),
+            &self.daemon.runtime_db,
+            default_daemon_runtime_db().as_str(),
+            &layout.data_dir.join("runtime.db"),
         )
     }
 
@@ -795,11 +795,11 @@ impl TurinConfig {
                 .display()
                 .to_string();
         }
-        if self.daemon.jobs_db == default_daemon_jobs_db() {
-            self.daemon.jobs_db = layout.data_dir.join("jobs.db").display().to_string();
-        } else if Path::new(&self.daemon.jobs_db).is_relative() {
-            self.daemon.jobs_db = workspace_root
-                .join(&self.daemon.jobs_db)
+        if self.daemon.runtime_db == default_daemon_runtime_db() {
+            self.daemon.runtime_db = layout.data_dir.join("runtime.db").display().to_string();
+        } else if Path::new(&self.daemon.runtime_db).is_relative() {
+            self.daemon.runtime_db = workspace_root
+                .join(&self.daemon.runtime_db)
                 .display()
                 .to_string();
         }

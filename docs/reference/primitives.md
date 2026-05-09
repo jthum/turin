@@ -154,9 +154,10 @@ Notes:
 - `action.define(...)` and `on(...)` are load-time only registration helpers
 - `action.run(...)` invokes a built-in or harness-defined action immediately in the current execution context
 - `emit(...)` performs synchronous in-process listener dispatch and returns the number of listeners invoked
-- custom events are local additive signals; they are distinct from system `on_*` hooks and distinct from any future durable signaling layer
+- custom events are local additive signals; they are distinct from system `on_*` hooks and from durable cross-agent signaling
 - `runtime.on(...)` is load-time only and registers cross-agent signal handlers for the current harness
 - `runtime.emit(...)` creates durable pending signal deliveries for subscribed agents, wakes their peer runtimes, and returns the number of target agents
+- `runtime.emit(...)` requires daemon/runtime coordination to be available; it is not a purely local harness primitive
 - cross-agent signal subscriptions are derived from loaded harness definitions; there is no separate durable handler registry
 - delivered cross-agent signals are deleted on success; failed deliveries remain visible with attempt metadata rather than becoming a replay log
 - cross-agent signals are agent-scoped and asynchronous relative to the emitter; they are distinct from local `emit(...)`
@@ -1159,7 +1160,7 @@ Rules:
 
 Notes:
 
-- scheduler metadata lives in the daemon-owned `jobs.db`
+- scheduler metadata and durable cross-agent signals live in the daemon-owned `runtime.db`
 - scheduled execution still runs through Turin’s normal task path
 - jobs may target arbitrary state/store contexts through `persistence`
 - this namespace is unavailable outside daemon-managed runtimes

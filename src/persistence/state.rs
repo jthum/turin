@@ -30,7 +30,7 @@ mod turns;
 mod worklists;
 
 pub use scheduler::{ScheduledJobInsert, ScheduledJobUpdate};
-pub use signals::SignalDeliveryInsert;
+pub use signals::SignalInsert;
 pub use worklists::{WorkItemInsert, WorkItemUpdate};
 
 /// The state store manages all Turin persistence.

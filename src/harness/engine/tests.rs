@@ -111,9 +111,9 @@ async fn test_app_data_with_scheduler(root: PathBuf) -> HarnessAppData {
         },
         ..crate::kernel::config::TurinConfig::default()
     });
-    let jobs_store = Arc::new(StateStore::open_memory().await.expect("open jobs store"));
+    let runtime_store = Arc::new(StateStore::open_memory().await.expect("open runtime store"));
     app_data.scheduler = Some(Arc::new(HarnessSchedulerAccess::new(
-        jobs_store,
+        runtime_store,
         Some(Arc::new(Notify::new())),
     )));
     app_data

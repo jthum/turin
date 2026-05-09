@@ -68,8 +68,8 @@ pub(super) fn default_daemon_endpoint() -> String {
     DEFAULT_LAYOUT_DAEMON_SOCKET.to_string()
 }
 
-pub(super) fn default_daemon_jobs_db() -> String {
-    format!("{DEFAULT_LAYOUT_DATA_DIR}/jobs.db")
+pub(super) fn default_daemon_runtime_db() -> String {
+    format!("{DEFAULT_LAYOUT_DATA_DIR}/runtime.db")
 }
 
 pub(super) fn default_remote_bind() -> String {

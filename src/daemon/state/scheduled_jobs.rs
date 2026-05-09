@@ -166,7 +166,7 @@ impl DaemonState {
         self.scheduler_wake = Some(std::sync::Arc::clone(&wake));
         self.kernel.host.scheduler = Some(std::sync::Arc::new(
             crate::harness::scheduler::HarnessSchedulerAccess::new(
-                std::sync::Arc::clone(&self.jobs_store),
+                std::sync::Arc::clone(&self.runtime_store),
                 Some(wake),
             ),
         ));
@@ -187,7 +187,7 @@ impl DaemonState {
             input.recurring_pattern.as_deref(),
         )?;
         let _ = self.resolve_scheduled_job_persistence(input.persistence.as_ref())?;
-        let store = Arc::clone(&self.jobs_store);
+        let store = Arc::clone(&self.runtime_store);
         let public_id = uuid::Uuid::now_v7();
         let content = serialize_json(input.content.as_ref())?;
         let tools = serialize_json(input.tools.as_ref())?;
@@ -245,7 +245,7 @@ impl DaemonState {
     }
 
     pub(crate) async fn list_scheduled_jobs(&self) -> Result<Vec<ScheduleJobDetail>> {
-        let store = Arc::clone(&self.jobs_store);
+        let store = Arc::clone(&self.runtime_store);
         Ok(store
             .list_scheduled_jobs()
             .await?
@@ -259,7 +259,7 @@ impl DaemonState {
         public_id: &str,
         input: UpdateScheduledJobInput,
     ) -> Result<Option<ScheduleJobDetail>> {
-        let store = Arc::clone(&self.jobs_store);
+        let store = Arc::clone(&self.runtime_store);
         let public_id = uuid::Uuid::parse_str(public_id)?;
         let Some(row) = store.get_scheduled_job_by_public_id(public_id).await? else {
             return Ok(None);
@@ -367,7 +367,7 @@ impl DaemonState {
         &self,
         public_id: &str,
     ) -> Result<Option<ScheduleJobDetail>> {
-        let store = Arc::clone(&self.jobs_store);
+        let store = Arc::clone(&self.runtime_store);
         let public_id = uuid::Uuid::parse_str(public_id)?;
         Ok(store
             .get_scheduled_job_by_public_id(public_id)
@@ -380,7 +380,7 @@ impl DaemonState {
         public_id: &str,
         enabled: bool,
     ) -> Result<Option<ScheduleJobDetail>> {
-        let store = Arc::clone(&self.jobs_store);
+        let store = Arc::clone(&self.runtime_store);
         let public_id = uuid::Uuid::parse_str(public_id)?;
         let Some(row) = store.get_scheduled_job_by_public_id(public_id).await? else {
             return Ok(None);
@@ -401,7 +401,7 @@ impl DaemonState {
         active_only: bool,
         limit: Option<u32>,
     ) -> Result<Option<ScheduleJobRunList>> {
-        let store = Arc::clone(&self.jobs_store);
+        let store = Arc::clone(&self.runtime_store);
         let public_id = uuid::Uuid::parse_str(public_id)?;
         let Some(row) = store.get_scheduled_job_by_public_id(public_id).await? else {
             return Ok(None);
@@ -422,7 +422,7 @@ impl DaemonState {
         &self,
         public_id: &str,
     ) -> Result<Option<ScheduleJobDetail>> {
-        let store = Arc::clone(&self.jobs_store);
+        let store = Arc::clone(&self.runtime_store);
         let public_id = uuid::Uuid::parse_str(public_id)?;
         let Some(row) = store.get_scheduled_job_by_public_id(public_id).await? else {
             return Ok(None);
@@ -442,7 +442,7 @@ impl DaemonState {
     }
 
     pub(crate) async fn scheduler_tick(&mut self) -> Result<Option<Duration>> {
-        let store = Arc::clone(&self.jobs_store);
+        let store = Arc::clone(&self.runtime_store);
         let now = now_unix_ms();
 
         let running_runs = store.list_active_scheduled_job_runs().await?;
