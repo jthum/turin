@@ -6,6 +6,21 @@ This document defines Turin’s current harness hook lifecycle and hook contract
 
 Turin evaluates harness hooks in Luau and expects a verdict result.
 
+## Recommended Parameter Naming
+
+Turin examples prefer naming hook parameters after what they are.
+
+Recommended defaults:
+
+- `on_session_start(session)`
+- `on_task_start(task)`
+- `on_turn_prepare(turn)`
+- `on_tool_call(call)`
+- `on_tool_result(result)`
+- `on_token_usage(usage)`
+
+This is a docs/example convention, not a runtime rule.
+
 ### Verdict constants
 
 Hooks return one of the global constants:
@@ -28,15 +43,15 @@ return MODIFY, { ... }
 
 Typical session/task flow:
 
-1. `on_session_start(event)`
-2. `on_task_start(event)`
+1. `on_session_start(session)`
+2. `on_task_start(task)`
 3. `on_turn_start(event)`
-4. `on_turn_prepare(ctx)`
+4. `on_turn_prepare(turn)`
 5. stream/audit observations via `on_kernel_event(event)`
 6. `on_tool_call(call)` (per tool request)
 7. `on_tool_result(result)` (per tool result, before reinjection)
 8. `on_turn_end(event)`
-9. `on_token_usage(event)`
+9. `on_token_usage(usage)`
 10. `on_task_complete(event)`
 11. `on_plan_complete(event)` (when a plan finishes)
 12. `on_all_tasks_complete(event)` (queue drained)
@@ -48,7 +63,7 @@ Error path:
 
 ## Hook Reference
 
-## `on_session_start(event)`
+## `on_session_start(session)`
 
 Fires once per session after `session_start` is persisted.
 
@@ -61,8 +76,8 @@ Payload:
 Example:
 
 ```lua
-function on_session_start(event)
-  log("session start: " .. event.session_id)
+function on_session_start(session)
+  log("session start: " .. session.session_id)
   return ALLOW
 end
 ```
@@ -79,7 +94,7 @@ Payload:
 - `event.total_input_tokens`
 - `event.total_output_tokens`
 
-## `on_task_start(event)`
+## `on_task_start(task)`
 
 Fires before a queued task runs.
 
@@ -103,8 +118,8 @@ Verdicts:
 Example:
 
 ```lua
-function on_task_start(event)
-  if event.queue_depth > 100 then
+function on_task_start(task)
+  if task.queue_depth > 100 then
     return REJECT, "queue too deep"
   end
   return ALLOW
@@ -129,11 +144,11 @@ Verdicts:
 - `REJECT` / `ESCALATE`: turn is skipped (task may continue next turn depending on surrounding logic)
 - `MODIFY`: currently ignored for this hook
 
-## `on_turn_prepare(ctx)`
+## `on_turn_prepare(turn)`
 
 Last mutable checkpoint before Turin calls the provider.
 
-`ctx` is a userdata object with property access and mutation support.
+The runtime passes a userdata object with property access and mutation support. Turin examples often name it `turn` because it represents the current turn context.
 
 ### Readable fields
 
@@ -242,13 +257,13 @@ Supported schema subset:
 Example:
 
 ```lua
-function on_turn_prepare(ctx)
-  if ctx.is_first_turn_in_task then
-    ctx.system_prompt = ctx.system_prompt .. "\n\nBe concise and explicit about file edits."
+function on_turn_prepare(turn)
+  if turn.is_first_turn_in_task then
+    turn.system_prompt = turn.system_prompt .. "\n\nBe concise and explicit about file edits."
   end
 
-  local triage = ctx:structured({
-    prompt = ctx.prompt or "",
+  local triage = turn:structured({
+    prompt = turn.prompt or "",
     inference = "fast",
     name = "triage_result",
     schema = {
@@ -262,11 +277,11 @@ function on_turn_prepare(ctx)
   })
 
   if triage.priority == "high" then
-    ctx.inference = "reasoning"
+    turn.inference = "reasoning"
   end
 
-  if ctx.task_turn_index > 2 then
-    ctx.thinking_budget = 0
+  if turn.task_turn_index > 2 then
+    turn.thinking_budget = 0
   end
 
   return ALLOW
@@ -360,7 +375,7 @@ Notes:
 - In immutable audit mode (or `persist_before_hooks=true`), protected audit events are persisted before this hook runs; `REJECT` becomes observational-only for those events.
 - `MODIFY` is currently ignored for generic kernel events.
 
-## `on_token_usage(event)`
+## `on_token_usage(usage)`
 
 Fires after token usage updates are emitted.
 

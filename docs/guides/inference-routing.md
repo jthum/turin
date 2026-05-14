@@ -1,7 +1,7 @@
 # Inference Routing And Compaction
 
 Turin supports named inference profiles under `[inference.contexts.<name>]`.
-Harness code can select them per turn with `ctx.inference = "<name>"`.
+Harness code can select them per turn with `turn.inference = "<name>"`.
 
 Example:
 
@@ -23,9 +23,9 @@ fallback = "default"
 ```
 
 ```lua
-function on_turn_prepare(ctx)
-    if ctx.token_count > 80000 then
-        ctx.inference = "fast"
+function on_turn_prepare(turn)
+    if turn.token_count > 80000 then
+        turn.inference = "fast"
     end
     return ALLOW
 end
@@ -34,10 +34,10 @@ end
 For more maintainable routing, wrap that logic in a helper:
 
 ```lua
-local function select_inference_context(ctx)
-  local prompt = string.lower(ctx.prompt or "")
+local function select_inference_context(turn)
+  local prompt = string.lower(turn.prompt or "")
 
-  if ctx.token_limit > 0 and (ctx.token_count / ctx.token_limit) > 0.85 then
+  if turn.token_limit > 0 and (turn.token_count / turn.token_limit) > 0.85 then
     return "fast"
   end
 
@@ -50,10 +50,10 @@ local function select_inference_context(ctx)
   return "default"
 end
 
-function on_turn_prepare(ctx)
-  local route = select_inference_context(ctx)
+function on_turn_prepare(turn)
+  local route = select_inference_context(turn)
   if route ~= "default" then
-    ctx.inference = route
+    turn.inference = route
   end
   return ALLOW
 end
@@ -64,7 +64,7 @@ for the current agent and `false` otherwise.
 
 Resolution order for a turn is:
 
-- harness-selected `ctx.inference`
+- harness-selected `turn.inference`
 - configured fallback chain for that named profile
 - configured default inference profile
 - base `[agent]` provider/model
@@ -83,7 +83,7 @@ context_window_tokens = 200000
 
 Turin uses that estimate to:
 
-- expose `ctx.token_count` and `ctx.token_limit` during `on_turn_prepare`
+- expose `turn.token_count` and `turn.token_limit` during `on_turn_prepare`
 - reserve output headroom
 - compact older history when a turn would exceed the provider budget
 

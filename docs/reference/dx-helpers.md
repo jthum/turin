@@ -18,7 +18,7 @@ Preferred style:
 Examples:
 
 ```lua
-function on_turn_prepare(ctx)
+function on_turn_prepare(turn)
   local reviewer = runtime.agent("reviewer")
   local spec = fs.summary("SPEC.md")
 
@@ -34,11 +34,52 @@ function on_turn_prepare(ctx)
 end
 ```
 
+## Callback Naming Convention
+
+Turin examples prefer naming callback parameters after what they are.
+
+Recommended defaults:
+
+- `on_turn_prepare(turn)`
+- `on_tool_call(call)`
+- `on_tool_result(result)`
+- `on_session_start(session)`
+- `on_task_start(task)`
+- `on_token_usage(usage)`
+- `action.define("name", function(this, params) ... end)`
+
+For local events and cross-agent signals:
+
+- callbacks receive domain data first and optional metadata second
+- name the first argument after what it is when obvious:
+  - `deploy`
+  - `review`
+  - `decision`
+- when the payload is generic, `data` is the preferred fallback
+- use `meta` for the second argument only when you actually need delivery/event details
+
+Examples:
+
+```lua
+on("qa.failed", function(failure)
+  log.info("QA failed: " .. tostring(failure.suite))
+end)
+
+runtime.on("code.ready", function(ready, meta)
+  log.info("Ready branch: " .. tostring(ready.branch))
+  log.info("From: " .. tostring(meta.source_agent_id))
+end)
+```
+
 ## Main Helpers
 
 - `allowed(capability[, opts])`
 - `needs(capability[, opts])`
 - `scope(kind, key, opts?)`
+- `ref(proxy)`
+- `target.scope(name?)`
+- `target.worklist(name?)`
+- `target.workitem(name?)`
 - `remember(...)`
 - `recall(...)`
 - `fs.summary(path, opts?)`
@@ -83,6 +124,79 @@ Important boundary:
 - `import_scoped(...)` and `use_scoped(...)` capability ceilings still use canonical strings such as `runtime.db.query`
 
 ## Callable Proxies
+
+### Reference-aware object payloads
+
+Scope, worklist, and work item proxies are reference-aware. They still cross action,
+event, signal, and schedule boundaries as JSON, but the runtime includes a reserved
+`_ref` identity marker and hydrates recognized references back into proxies on the
+receiving side.
+
+```lua
+local project = scope("project", "alpha")
+local sprint = worklist("sprint", { scope = project })
+local task = sprint:add("Review checkout")
+
+task.title = "Review checkout smoke flow"
+action.run("review.enqueue", { task = task })
+
+runtime.emit("review.ready", {
+  project = ref(project),
+  task = ref(task),
+})
+```
+
+Notes:
+
+- passing a proxy directly sends its public fields plus `_ref`; the receiver hydrates the proxy and overlays the sent fields
+- `ref(proxy)` sends only `_ref`, so the receiver hydrates the current stored state
+- plain JSON tables still behave as ordinary JSON
+- malformed or unknown `_ref` objects stay plain data
+- recognized `_ref` objects whose backing record no longer exists raise an error
+- overlay fields may not replace proxy methods such as `action`, `done`, or `set`
+- work item proxies expose the stored action name as `item.action_name`; `item.action` is the contextual action method
+
+Contextual actions can be run without spelling the fully qualified action name:
+
+```lua
+action.define("project.elaborate", function(this, params)
+  local project = params.subject
+  project:set("summary", params.params.summary)
+  return project
+end)
+
+local project = scope("project", "alpha")
+project:action("elaborate", { summary = "Ready for review" })
+```
+
+Use `action.define_on(...)` when the action should attach as a method on matching
+runtime proxies:
+
+```lua
+action.define_on("project", "elaborate", function(this, project, params)
+  project:set("summary", params.summary)
+  return project
+end)
+
+action.define_on(target.workitem("tickets"), "classify", function(this, item)
+  item:update({ metadata = { class = "bug" } })
+  return item
+end)
+
+action.define_on(target.workitem(), "escalate", function(this, item)
+  return item:update({ priority = 100 })
+end)
+```
+
+Targets:
+
+- `"project"` is shorthand for `target.scope("project")`
+- `target.scope()` matches all scope proxies
+- `target.worklist("tickets")` matches the `tickets` worklist proxy
+- `target.worklist()` matches all worklist proxies
+- `target.workitem("tickets")` matches items in the `tickets` worklist
+- `target.workitem()` matches all work item proxies
+- when both generic and specific methods exist with the same name, the more specific target wins
 
 ### `runtime.agent(agent_id)`
 
@@ -167,31 +281,31 @@ Notes:
 - `worklist.release_stale` releases orphaned claimed root items back to pending state
 - nested `worklist.*` action items are rejected inside `worklist.dispatch_next`
 - custom action names may be defined at harness load time with:
-  - `action.define("qa.run_smoke", function(ctx, params) ... end)`
+  - `action.define("qa.run_smoke", function(this, params) ... end)`
 - declared actions may also be invoked directly with:
   - `action.run("qa.run_smoke", { suite = "checkout" })`
 - local custom events use:
-  - `on("qa.failed", function(ctx, payload) ... end)`
+  - `on("qa.failed", function(data, meta) ... end)`
   - `emit("qa.failed", { suite = "checkout" })`
 - cross-agent signals use:
-  - `runtime.on("code.ready", function(ctx, event) ... end)`
+  - `runtime.on("code.ready", function(data, meta) ... end)`
   - `runtime.emit("code.ready", { branch = "feature-x" })`
-- declared action handlers receive a control-aware `ctx` table:
-  - `ctx.params`
-  - `ctx.checkpoint`
-  - `ctx.checkpoint:get(key, default?)`
-  - `ctx.checkpoint:all()`
-  - `ctx.item`
-  - `ctx:pause(...)`
-  - `ctx:pause_for(seconds, opts?)`
-  - `ctx:complete(...)`
-  - `ctx:fail(...)`
-  - `ctx:cancel(...)`
-  - `ctx:is_cancelled()`
-- `ctx:pause(...)` is the preferred lightweight way to stop an action intentionally and continue later
-- `ctx:pause(...)` now puts the current work item into primary `paused` state rather than treating it as ordinary `pending`
-- `ctx:pause_for(seconds, opts?)` is the shorter form when the main intent is “pause and try again later”
-- `ctx:is_cancelled()` lets long-running actions cooperate with session/task cancellation without inventing their own flag
+- declared action handlers receive a control-aware first parameter; Turin docs/examples conventionally name it `this`
+  - `this.params`
+  - `this.checkpoint`
+  - `this.checkpoint:get(key, default?)`
+  - `this.checkpoint:all()`
+  - `this.item`
+  - `this:pause(...)`
+  - `this:pause_for(seconds, opts?)`
+  - `this:complete(...)`
+  - `this:fail(...)`
+  - `this:cancel(...)`
+  - `this:is_cancelled()`
+- `this:pause(...)` is the preferred lightweight way to stop an action intentionally and continue later
+- `this:pause(...)` now puts the current work item into primary `paused` state rather than treating it as ordinary `pending`
+- `this:pause_for(seconds, opts?)` is the shorter form when the main intent is “pause and try again later”
+- `this:is_cancelled()` lets long-running actions cooperate with session/task cancellation without inventing their own flag
 - `on(...)` is load-time only and registers additive local listeners in registration order
 - `emit(...)` dispatches those listeners synchronously in-process and returns the number of listeners invoked
 - local event listeners are intended to react by mutating state, calling `action.run(...)`, or scheduling/worklisting follow-up work
@@ -262,7 +376,7 @@ Notes:
   - `tools`
   - `conflict_policy`
 - item proxies expose:
-  - direct fields such as `prompt`, `action`, `params`, `content`, `tools`
+  - direct fields such as `prompt`, `action_name`, `params`, `content`, `tools`
   - and a normalized `payload` table
 - `opts.where` filters against:
   - built-in fields like `title`, `kind`, `status`, `priority`

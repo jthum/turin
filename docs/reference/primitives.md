@@ -157,7 +157,9 @@ Notes:
 - `action.run(...)` invokes a built-in or harness-defined action immediately in the current execution context
 - `emit(...)` performs synchronous in-process listener dispatch and returns the number of listeners invoked
 - custom events are local additive signals; they are distinct from system `on_*` hooks and from durable cross-agent signaling
+- `on(...)` listeners receive domain data first and optional event metadata second
 - `runtime.on(...)` is load-time only and registers cross-agent signal handlers for the current harness
+- `runtime.on(...)` listeners receive domain data first and optional delivery metadata second
 - `runtime.on(...)` also contributes the current harness topics to the durable subscription index in daemon-owned `runtime.db`
 - `runtime.emit(...)` creates durable pending signal deliveries for subscribed agents, wakes their peer runtimes, and returns the number of target agents
 - `runtime.emit(...)` requires daemon/runtime coordination to be available; it is not a purely local harness primitive
@@ -371,37 +373,117 @@ Notes:
 - custom scheduled action names may be registered during harness load with:
 
 ```lua
-action.define("qa.run_smoke", function(ctx, params)
+action.define("qa.run_smoke", function(this, params)
   return { status = "queued " .. tostring(params.suite) }
 end)
 ```
 
-- declared action handlers receive `(ctx, params)`
-- `ctx` currently exposes:
-  - `ctx.params`
-  - `ctx.checkpoint`
-  - `ctx.item`
-  - `ctx:pause(opts)`
-  - `ctx:pause_for(seconds, opts?)`
-  - `ctx:complete(value?)`
-  - `ctx:fail(value?)`
-  - `ctx:cancel(value?)`
-  - `ctx:is_cancelled()`
-- `ctx.checkpoint` is also a helper table:
-  - `ctx.checkpoint:get(key, default?)`
-  - `ctx.checkpoint:all()`
-- `ctx:pause(opts)` is the lightweight continuation helper:
+- declared action handlers receive `(control, params)`
+- examples in Turin docs now conventionally name that first parameter `this`:
+  - `action.define("name", function(this, params) ... end)`
+- that action control object currently exposes:
+  - `this.params`
+  - `this.checkpoint`
+  - `this.item`
+  - `this:pause(opts)`
+  - `this:pause_for(seconds, opts?)`
+  - `this:complete(value?)`
+  - `this:fail(value?)`
+  - `this:cancel(value?)`
+  - `this:is_cancelled()`
+- `this.checkpoint` is also a helper table:
+  - `this.checkpoint:get(key, default?)`
+  - `this.checkpoint:all()`
+- `this:pause(opts)` is the lightweight continuation helper:
   - persists checkpoint-style metadata on the current work item when available
   - transitions the current work item into primary `paused` state
   - optionally schedules a follow-up when `opts.resume_in_seconds` is provided
   - marks the item as paused so ordinary `worklist.next()` / `dispatch_next()` will skip it until the pause is due
-- `ctx:pause_for(seconds, opts?)` is shorthand for `ctx:pause(...)` with `resume_in_seconds = seconds`
-- `ctx:is_cancelled()` reflects the current cooperative session cancellation signal when the action is running inside a live task/session
-- `opts` for `ctx:pause(...)` may include:
+- `this:pause_for(seconds, opts?)` is shorthand for `this:pause(...)` with `resume_in_seconds = seconds`
+- `this:is_cancelled()` reflects the current cooperative session cancellation signal when the action is running inside a live task/session
+- `opts` for `this:pause(...)` may include:
   - `because`
   - `note`
   - `checkpoint`
   - `resume_in_seconds`
+
+### Reference-aware proxy payloads
+
+Scope, worklist, and work item proxies can be passed through JSON payload
+boundaries. The runtime encodes recognized proxies with a reserved `_ref` object
+and decodes recognized references back into proxies.
+
+This applies to declared action params/results, local events, durable runtime
+signals, schedule create/update payloads, work item params/metadata, and
+sidestep graph relation metadata.
+
+```lua
+local project = scope("project", "alpha")
+local tickets = worklist("tickets", { scope = project })
+local item = tickets:add({
+  title = "Classify signup bug",
+  action = "ticket.classify",
+  params = { source = "smoke" },
+})
+
+item.priority = 50
+action.run("ticket.enrich", { item = item })
+runtime.emit("ticket.ready", { item = ref(item) })
+```
+
+Rules:
+
+- `ref(proxy)` encodes only the reference identity and requires a reference-aware runtime proxy
+- passing a proxy directly encodes `_ref` plus serializable public fields
+- the receiver hydrates the reference first and then overlays the sent fields
+- plain JSON without `_ref` remains plain JSON
+- malformed or unknown `_ref` remains plain data
+- recognized `_ref` whose backing object is missing raises an error
+- overlay fields may not replace proxy methods
+- runtime-internal proxy marker fields are not included in public payloads
+- function, thread, userdata, vector, buffer, and error values are not JSON-serializable payload values
+
+Reference-aware proxies also expose contextual action helpers:
+
+```lua
+action.define("project.archive", function(this, params)
+  local project = params.subject
+  project:set("status", "archived")
+  return project
+end)
+
+local project = scope("project", "alpha")
+project:action("archive")
+```
+
+`action.define_on(target, method, handler)` defines an action and attaches a
+method to matching proxies:
+
+```lua
+action.define_on("project", "review", function(this, project, params)
+  project:set("review_status", params.status or "queued")
+  return project
+end)
+
+action.define_on(target.worklist("tickets"), "stats", function(this, list)
+  return list:progress()
+end)
+
+action.define_on(target.workitem(), "requeue_with_note", function(this, item, params)
+  item:update({ metadata = { note = params.note } })
+  return item:requeue()
+end)
+```
+
+Target forms:
+
+- string shorthand: `"project"` means `target.scope("project")`
+- `target.scope(name?)`
+- `target.worklist(name?)`
+- `target.workitem(name?)`
+
+Specific targets override wildcard targets for the same method name. For
+example, `target.workitem("tickets")` is more specific than `target.workitem()`.
 
 - `schedule.delete(...)` rejects running jobs rather than orphaning active execution
 - `schedule.update(...)` only changes the fields you provide; running attempts continue with the task that was already submitted
@@ -564,8 +646,8 @@ Notes:
   - `fs.stat(...)`
   - `fs.read(...)`
   - session KV-backed invalidation
-  - the active `ctx:summarize(...)` capability during `on_turn_prepare(ctx)`
-- `fs.summary(...)` currently requires an active `on_turn_prepare(ctx)` context and raises outside that hook.
+  - the active `turn:summarize(...)` capability during `on_turn_prepare(turn)`
+- `fs.summary(...)` currently requires an active `on_turn_prepare(turn)` context and raises outside that hook.
 - the cache key varies by file hash and summary prompt.
 - these wrap `fs.read/write` and `json.decode/encode`
 - existing `fs.read` / `fs.write` governance checks still apply
@@ -652,7 +734,7 @@ Filesystem helpers scoped to `harness.fs_root` (default: workspace root).
 - `fs.read(path) -> string`
 - `fs.write(path, content) -> bool`
 - `fs.stat(path) -> stat_table` (raises on failure)
-- `fs.summary(path, opts?) -> string` (raises on failure; only during `on_turn_prepare(ctx)`)
+- `fs.summary(path, opts?) -> string` (raises on failure; only during `on_turn_prepare(turn)`)
 - `fs.exists(path) -> bool`
 - `fs.is_safe_path(path) -> bool`
 
@@ -708,7 +790,7 @@ Notes:
   - current file hash
   - summary prompt variant
 - `opts.force = true` bypasses the cached summary and refreshes it.
-- this helper currently depends on the active `on_turn_prepare(ctx)` hook context because it reuses `ctx:summarize(...)` underneath.
+- this helper currently depends on the active `on_turn_prepare(turn)` hook context because it reuses `turn:summarize(...)` underneath.
 
 ## `hash`
 
@@ -1237,6 +1319,7 @@ Rules and notes:
   - `paused`
   - `pause_reason`
   - `pause_until_unix_ms`
+- action item proxies expose the stored action name as `action_name`; `action` is reserved for the contextual action method
 - `list:paused({ due_only = true })` returns only paused items whose pause window has elapsed
 - `item:requeue()` moves a paused item back to ordinary `pending`
 - `opts.where` filters compare against:
@@ -1356,9 +1439,9 @@ agent-level inference overrides.
 Example:
 
 ```lua
-function on_turn_prepare(ctx)
-  if runtime.inference.available("reasoning") and (ctx.prompt or ""):find("debug", 1, true) then
-    ctx.inference = "reasoning"
+function on_turn_prepare(turn)
+  if runtime.inference.available("reasoning") and (turn.prompt or ""):find("debug", 1, true) then
+    turn.inference = "reasoning"
   end
   return ALLOW
 end

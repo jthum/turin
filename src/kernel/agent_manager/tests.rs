@@ -680,10 +680,10 @@ async fn runtime_signals_can_wake_subscribed_agent_and_dispatch_to_worklist() ->
     std::fs::write(
         reviewer_harness.join("main.lua"),
         r#"
-            runtime.on("code.ready", function(ctx, event)
+            runtime.on("code.ready", function(ready, _meta)
                 worklist("reviews"):add({
-                    title = "Review " .. event.branch,
-                    prompt = "Review " .. event.branch
+                    title = "Review " .. ready.branch,
+                    prompt = "Review " .. ready.branch
                 })
             end)
         "#,
@@ -771,7 +771,7 @@ async fn runtime_signal_subscriptions_sync_on_harness_reload() -> anyhow::Result
     std::fs::write(
         reviewer_harness.join("main.lua"),
         r#"
-            runtime.on("code.ready", function(_ctx, _event) end)
+            runtime.on("code.ready", function(_data, _meta) end)
         "#,
     )?;
 
@@ -809,7 +809,7 @@ async fn runtime_signal_subscriptions_sync_on_harness_reload() -> anyhow::Result
     std::fs::write(
         reviewer_harness.join("main.lua"),
         r#"
-            runtime.on("review.ready", function(_ctx, _event) end)
+            runtime.on("review.ready", function(_data, _meta) end)
         "#,
     )?;
 

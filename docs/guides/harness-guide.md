@@ -226,7 +226,7 @@ end
 ### Access helpers
 
 ```lua
-function on_turn_prepare(ctx)
+function on_turn_prepare(turn)
   if not allowed("db.exec") then
     return verdict.reject("No DB exec capability")
   end
@@ -255,7 +255,7 @@ File capabilities remain `fs.read` / `fs.write`.
 ### Session and user helpers
 
 ```lua
-function on_session_start(ev)
+function on_session_start(session)
   session.remember("User prefers concise answers")
   user.set("timezone", "UTC")
   session.incr("session_starts")
@@ -266,7 +266,7 @@ end
 ### Top-level shortcuts
 
 ```lua
-function on_turn_prepare(ctx)
+function on_turn_prepare(turn)
   remember("Build failures should stay concise")
 
   local spec = try(fs.read, "SPEC.md")
@@ -288,7 +288,7 @@ Notes:
 ### Fluent DB access
 
 ```lua
-function on_turn_prepare(ctx)
+function on_turn_prepare(turn)
   runtime.db.with("state", function(db)
     db:exec("CREATE TABLE IF NOT EXISTS notes(id INTEGER PRIMARY KEY, text TEXT)")
     db:exec("INSERT INTO notes(text) VALUES (?)", { "hello" })
@@ -311,7 +311,7 @@ Notes:
 ### Fluent peer-agent access
 
 ```lua
-function on_turn_prepare(ctx)
+function on_turn_prepare(turn)
   local reviewer = runtime.agent("reviewer")
   local summary = reviewer:ask("Summarize the diff in 3 bullets")
   session.set("review_summary", summary)
@@ -322,7 +322,7 @@ end
 Canonical equivalent:
 
 ```lua
-function on_turn_prepare(ctx)
+function on_turn_prepare(turn)
   local summary = runtime.agent.ask("reviewer", "Summarize the diff in 3 bullets")
   session.set("review_summary", summary)
   return ALLOW
@@ -332,7 +332,7 @@ end
 ### Durable scheduling
 
 ```lua
-function on_turn_prepare(ctx)
+function on_turn_prepare(turn)
   local nightly = schedule.every(3600, "Review the workspace and continue useful work", {
     overlap = "skip",
     state = "ops",
@@ -412,7 +412,7 @@ Notes:
 - custom scheduled action names may also be defined in the harness itself:
 
 ```lua
-action.define("ops.enqueue_followup", function(ctx, params)
+action.define("ops.enqueue_followup", function(this, params)
   runtime.schedule.create({
     prompt = params.prompt or "Follow up",
     after_seconds = params.after_seconds or 30,
@@ -421,26 +421,26 @@ action.define("ops.enqueue_followup", function(ctx, params)
 end)
 ```
 
-- declared action handlers receive `(ctx, params)`
-- `ctx:pause({...})` is the lightweight way to checkpoint progress and continue later without introducing a separate workflow subsystem
+- declared action handlers receive a control-aware first parameter; Turin docs/examples conventionally name it `this`
+- `this:pause({...})` is the lightweight way to checkpoint progress and continue later without introducing a separate workflow subsystem
 - local custom composition points may be expressed with:
-- `on("event.name", function(ctx, payload) ... end)`
+- `on("event.name", function(data, meta) ... end)`
 - `emit("event.name", payload)`
 - `action.run("name", payload)`
-- `runtime.on("event.name", function(ctx, payload) ... end)`
+- `runtime.on("event.name", function(data, meta) ... end)`
 - `runtime.emit("event.name", payload)`
 
 ```lua
-action.define("bugs.create", function(ctx, params)
+action.define("bugs.create", function(this, params)
   return { id = "bug-" .. tostring(params.code) }
 end)
 
-on("qa.failed", function(_ctx, payload)
-  local created = action.run("bugs.create", payload)
+on("qa.failed", function(failure)
+  local created = action.run("bugs.create", failure)
   session.set("last_bug_id", created.id)
 end)
 
-function on_turn_prepare(ctx)
+function on_turn_prepare(turn)
   emit("qa.failed", { code = "checkout-smoke" })
   return ALLOW
 end
@@ -463,20 +463,22 @@ Example:
 
 ```lua
 -- reviewer harness
-runtime.on("code.ready", function(ctx, event)
+runtime.on("code.ready", function(ready)
   worklist("reviews"):add({
-    title = "Review " .. event.branch,
-    prompt = "Review " .. event.branch
+    title = "Review " .. ready.branch,
+    prompt = "Review " .. ready.branch
   })
 end)
 
 -- publisher harness
-action.define("signals.publish", function(ctx, params)
-  return {
-    delivered = runtime.emit("code.ready", {
-      branch = params.branch
-    })
-  }
+action.define("signals.publish", function(this, params)
+  local delivered = runtime.emit("code.ready", {
+    branch = params.branch
+  })
+
+  return this:complete({
+    delivered = delivered
+  })
 end)
 ```
 
@@ -485,7 +487,7 @@ end)
 ### Durable worklists
 
 ```lua
-function on_turn_prepare(ctx)
+function on_turn_prepare(turn)
   local sprint = worklist("sprint", {
     scope = "project:alpha",
   })
@@ -534,6 +536,7 @@ Notes:
   - named action payloads
 - prompt items may also carry structured `content`, `tools`, and `conflict_policy`
 - item proxies expose both direct fields and a normalized `payload` view
+- action item proxies expose the stored action name as `action_name`; `action` is the contextual action method
 - worklists may be partitioned either by:
   - separate lists
   - or `where = {...}` filters on one shared list
@@ -554,7 +557,7 @@ Notes:
   - `list:paused()`
   - `list:paused({ due_only = true })`
   - `list:find({ where = { paused = true, pause_reason = "..." } })`
-- `ctx:pause(...)` stores checkpoint metadata and moves the current work item into primary `paused` state; `item:requeue()` is the explicit path back to ordinary `pending`
+- `this:pause(...)` stores checkpoint metadata and moves the current work item into primary `paused` state; `item:requeue()` is the explicit path back to ordinary `pending`
 - claim recovery helpers are available when an execution disappears without releasing work:
   - `list:orphaned({ stale_after_seconds = ... })`
   - `list:release_stale({ stale_after_seconds = ... })`
@@ -566,10 +569,35 @@ Notes:
   - `path = ...`
   all affect where durable worklist state lives
 
+Reference-aware proxies can move through payload boundaries:
+
+```lua
+action.define_on("project", "review", function(this, project, params)
+  local reviews = worklist("reviews", { scope = project })
+  return reviews:add({
+    title = "Review " .. tostring(params.branch),
+    action = "review.branch",
+    params = {
+      project = ref(project),
+      branch = params.branch,
+    },
+  })
+end)
+
+function on_turn_prepare(turn)
+  local project = scope("project", "alpha")
+  project:review({ branch = "feature-x" })
+  return ALLOW
+end
+```
+
+Passing a proxy directly sends `_ref` plus serializable public fields. `ref(proxy)`
+sends only `_ref`, so receivers hydrate the current stored state.
+
 ### Grant wrapper
 
 ```lua
-function on_turn_prepare(ctx)
+function on_turn_prepare(turn)
   local result = runtime.governance.grant({
     ttl_ms = 5000,
     capabilities = {
@@ -588,7 +616,7 @@ end
 ### Time and JSON helpers
 
 ```lua
-function on_turn_prepare(ctx)
+function on_turn_prepare(turn)
   local started = session.get("started_at")
   if started and time.after(started, 300) then
     return verdict.escalate("Session has been running for more than 5 minutes")
@@ -728,10 +756,10 @@ end
 ## 3. Context Engineering (`on_turn_prepare`)
 
 ```lua
-local function select_inference_context(ctx)
-  local prompt = string.lower(ctx.prompt or "")
+local function select_inference_context(turn)
+  local prompt = string.lower(turn.prompt or "")
 
-  if ctx.token_limit > 0 and (ctx.token_count / ctx.token_limit) > 0.85 then
+  if turn.token_limit > 0 and (turn.token_count / turn.token_limit) > 0.85 then
     return "fast"
   end
 
@@ -744,19 +772,19 @@ local function select_inference_context(ctx)
   return "default"
 end
 
-function on_turn_prepare(ctx)
-  if ctx.is_first_turn_in_task then
-    ctx.system_prompt = ctx.system_prompt .. "\n\nAlways explain your plan before editing files."
+function on_turn_prepare(turn)
+  if turn.is_first_turn_in_task then
+    turn.system_prompt = turn.system_prompt .. "\n\nAlways explain your plan before editing files."
   end
 
-  local selected = select_inference_context(ctx)
+  local selected = select_inference_context(turn)
   if selected ~= "default" then
-    ctx.inference = selected
+    turn.inference = selected
   end
 
   -- Structured preflight classification
-  local route = ctx:structured({
-    prompt = ctx.prompt or "",
+  local route = turn:structured({
+    prompt = turn.prompt or "",
     inference = "fast",
     name = "routing_decision",
     schema = {
@@ -770,11 +798,11 @@ function on_turn_prepare(ctx)
   })
 
   if route.inference ~= "default" then
-    ctx.inference = route.inference
+    turn.inference = route.inference
   end
 
   -- Request transport tuning for this turn
-  ctx.request_options = {
+  turn.request_options = {
     headers = { ["x-run-purpose"] = "interactive" },
     request_timeout_seconds = 45,
     total_timeout_seconds = 90,
@@ -784,9 +812,9 @@ function on_turn_prepare(ctx)
 end
 ```
 
-Note: `ctx.inference`, `ctx.provider`, and other mutable fields are part of the `ContextWrapper` contract. `ctx.model` is currently readable but not writable. `ctx:structured(...)` is opt-in and does not change normal plain-text turn behavior unless you call it. See `docs/reference/hooks.md` for exact semantics.
+Note: `turn.inference`, `turn.provider`, and other mutable fields are part of the `ContextWrapper` contract. `turn.model` is currently readable but not writable. `turn:structured(...)` is opt-in and does not change normal plain-text turn behavior unless you call it. See `docs/reference/hooks.md` for exact semantics.
 
-If the latest user message includes attachments, inspect `ctx.messages` directly. `ctx.prompt` remains text-only and preserves image/file parts when you rewrite it.
+If the latest user message includes attachments, inspect `turn.messages` directly. `turn.prompt` remains text-only and preserves image/file parts when you rewrite it.
 
 ## 4. Plan Review (`on_plan_submit`)
 

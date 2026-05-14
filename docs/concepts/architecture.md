@@ -166,7 +166,7 @@ The tool execution path is split into dedicated `kernel::turn` submodules and in
 - `src/harness/globals.rs`
   - thin registration entrypoint + shared app state (`HarnessAppData`)
 - `src/harness/context.rs`
-  - `on_turn_prepare(ctx)` userdata wrapper and request overrides
+  - `on_turn_prepare(turn)` userdata wrapper and request overrides
 - `src/harness/stdlib/*`
   - canonical stdlib modules and shared binding helpers
 

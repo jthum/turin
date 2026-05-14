@@ -71,15 +71,15 @@ Primary reference:
 
 Defined lifecycle hooks:
 
-- `on_session_start(event)`
+- `on_session_start(session)`
 - `on_session_end(event)`
-- `on_task_start(event)`
+- `on_task_start(task)`
 - `on_turn_start(event)`
-- `on_turn_prepare(ctx)`
+- `on_turn_prepare(turn)`
 - `on_tool_call(call)`
 - `on_tool_result(result)`
 - `on_kernel_event(event)`
-- `on_token_usage(event)`
+- `on_token_usage(usage)`
 - `on_plan_submit(event)`
 - `on_task_complete(event)`
 - `on_plan_complete(event)`
