@@ -751,6 +751,136 @@ async fn runtime_signals_can_wake_subscribed_agent_and_dispatch_to_worklist() ->
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runtime_signals_hydrate_reference_payloads_in_subscribed_agent() -> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    let publisher_harness = tmp.path().join("publisher-harness");
+    let reviewer_harness = tmp.path().join("reviewer-harness");
+    std::fs::create_dir_all(&publisher_harness)?;
+    std::fs::create_dir_all(&reviewer_harness)?;
+
+    std::fs::write(
+        publisher_harness.join("main.lua"),
+        r#"
+            action.define("signals.publish_ref", function(this, params)
+                local project = scope("project", "alpha")
+                project:set("status", "ready")
+
+                local tickets = worklist("tickets")
+                local item = tickets:add({
+                    title = "Classify checkout",
+                    action = "ticket.classify",
+                    params = {
+                        project = ref(project),
+                    },
+                })
+
+                return {
+                    item_id = item.id,
+                    delivered = runtime.emit("ticket.ready", {
+                        project = ref(project),
+                        item = ref(item),
+                    })
+                }
+            end)
+        "#,
+    )?;
+    std::fs::write(
+        reviewer_harness.join("main.lua"),
+        r#"
+            runtime.on("ticket.ready", function(ready, meta)
+                if ready.project:get("status") ~= "ready" then
+                    error("expected project ref to hydrate")
+                end
+                if ready.item.title ~= "Classify checkout" then
+                    error("expected work item ref to hydrate")
+                end
+                if type(ready.item.done) ~= "function" then
+                    error("expected hydrated work item methods")
+                end
+
+                ready.item:done({
+                    reviewer = meta.target_agent_id,
+                    project_status = ready.project:get("status"),
+                })
+
+                worklist("reviews"):add({
+                    title = "Reviewed " .. ready.item.title,
+                    prompt = "Reviewed " .. ready.item.title,
+                    metadata = {
+                        item_id = ready.item.id,
+                        source = meta.source_agent_id,
+                    },
+                })
+            end)
+        "#,
+    )?;
+
+    let mut kernel = Kernel::builder(signal_test_config(
+        tmp.path(),
+        &publisher_harness,
+        &reviewer_harness,
+    ))
+    .build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    let runtime_store = Arc::new(StateStore::open_memory().await?);
+    kernel.host.scheduler = Some(Arc::new(HarnessSchedulerAccess::new(
+        Arc::clone(&runtime_store),
+        None,
+    )));
+    kernel
+        .agent_manager()
+        .bind_scheduler_access(kernel.host.scheduler.clone());
+    kernel.init_harness().await?;
+
+    let instance = kernel
+        .runtime_for_agent("default")
+        .create_instance(kernel.harness_init_context())?;
+    let result =
+        instance.invoke_declared_action_for_agent("default", "signals.publish_ref", json!({}))?;
+
+    assert_eq!(
+        result.as_ref().and_then(|value| value.get("delivered")),
+        Some(&json!(1))
+    );
+
+    let store = kernel
+        .store_manager()
+        .open(&crate::persistence::manager::StoreSelector::Alias(
+            "state".to_string(),
+        ))
+        .await?;
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let tickets = store.open_worklist("tickets", "", None).await?;
+        let ticket_rows = store.list_work_items(tickets.id).await?;
+        let ticket_done = ticket_rows
+            .iter()
+            .any(|row| row.title == "Classify checkout" && row.status == "done");
+
+        let reviews = store.open_worklist("reviews", "", None).await?;
+        let review_rows = store.list_work_items(reviews.id).await?;
+        let review_created = review_rows
+            .iter()
+            .any(|row| row.title == "Reviewed Classify checkout");
+
+        if ticket_done && review_created {
+            break;
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            anyhow::bail!("timed out waiting for hydrated runtime signal delivery");
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    abort_all_runtime_slots(kernel.agent_manager()).await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn runtime_signal_subscriptions_sync_on_harness_reload() -> anyhow::Result<()> {
     let tmp = tempdir()?;
     let publisher_harness = tmp.path().join("publisher-harness");
