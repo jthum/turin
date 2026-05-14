@@ -137,6 +137,7 @@ pub fn register_globals(lua: &Lua, app_data: HarnessAppData) -> LuaResult<()> {
     session_user_aliases::register_session_user_aliases(lua, &app_data)?;
     agent_bindings::register_agent_bindings(lua, &app_data)?;
     action_bindings::register_action_globals(lua)?;
+    crate::harness::stdlib::object_refs::register_ref_and_target_globals(lua)?;
     event_bindings::register_event_globals(lua)?;
     tool_bindings::register_tool_globals(lua)?;
     system_globals::register_import_global(lua)?;

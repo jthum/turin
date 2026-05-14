@@ -11,6 +11,7 @@ use turin_types::{TaskInputContent, ToolsConfig};
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{bridge_async_result, nil_err, ok_value};
 use crate::harness::stdlib::governance_support::{current_agent_id, require_capability};
+use crate::harness::stdlib::object_refs;
 
 #[derive(Debug, Deserialize)]
 struct LuaScheduleCreateOpts {
@@ -351,11 +352,10 @@ fn schedule_create_params(
     app_data: &HarnessAppData,
     opts: Table,
 ) -> LuaResult<ScheduleCreateParams> {
-    let parsed = lua
-        .from_value::<LuaScheduleCreateOpts>(Value::Table(opts))
-        .map_err(|e| {
-            mlua::Error::runtime(format!("invalid runtime.schedule.create opts: {}", e))
-        })?;
+    let encoded = object_refs::encode_lua_payload(lua, Value::Table(opts))?;
+    let parsed = serde_json::from_value::<LuaScheduleCreateOpts>(encoded).map_err(|e| {
+        mlua::Error::runtime(format!("invalid runtime.schedule.create opts: {}", e))
+    })?;
 
     let recurring_pattern = parse_recurring_pattern(parsed.recurring)?;
     let explicit_next_run = parse_next_run_value(
@@ -410,11 +410,10 @@ fn schedule_create_params(
 }
 
 fn schedule_update_params(lua: &Lua, opts: Table) -> LuaResult<ScheduleUpdateParams> {
-    let parsed = lua
-        .from_value::<LuaScheduleUpdateOpts>(Value::Table(opts))
-        .map_err(|e| {
-            mlua::Error::runtime(format!("invalid runtime.schedule.update opts: {}", e))
-        })?;
+    let encoded = object_refs::encode_lua_payload(lua, Value::Table(opts))?;
+    let parsed = serde_json::from_value::<LuaScheduleUpdateOpts>(encoded).map_err(|e| {
+        mlua::Error::runtime(format!("invalid runtime.schedule.update opts: {}", e))
+    })?;
 
     let recurring_pattern = parse_recurring_pattern(parsed.recurring)?;
     let explicit_next_run = parse_next_run_value(

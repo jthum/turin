@@ -2,13 +2,14 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use mlua::{Function, Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
+use mlua::{Function, Lua, Result as LuaResult, Table, Value};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use turin_daemon_protocol::{ScheduleActionParams, ScheduleCreateParams};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::harness::stdlib::binding_common::wrap_registered_callback;
+use crate::harness::stdlib::object_refs;
 use crate::harness::stdlib::runtime_worklist::{build_work_item_proxy, public_id_string};
 use crate::harness::stdlib::system_globals::ensure_load_time;
 use crate::persistence::manager::StoreSelector;
@@ -62,13 +63,64 @@ pub fn register_action_globals(lua: &Lua) -> LuaResult<()> {
     )?;
 
     action_table.set(
+        "define_on",
+        lua.create_function(
+            |lua, (target_value, method, handler): (Value, String, Function)| {
+                ensure_load_time(lua, "action.define_on")?;
+                let target = object_refs::parse_target(target_value)?;
+                let action_name = action_name_for_target_method(&target, &method);
+
+                let registry = ensure_declared_action_registry(lua)?;
+                if registry.contains_key(action_name.clone())? {
+                    return Err(mlua::Error::runtime(format!(
+                        "action.define_on('{}', '{}') conflicts with existing action '{}'",
+                        target.key(),
+                        method,
+                        action_name
+                    )));
+                }
+
+                let handler = wrap_registered_callback(lua, handler)?;
+                let method_name = method.clone();
+                let action_name_for_error = action_name.clone();
+                let wrapper =
+                    lua.create_function(move |_lua, (ctx, envelope): (Table, Value)| {
+                        let (subject, params) = match envelope {
+                            Value::Table(table) if table.contains_key("subject")? => {
+                                let subject = table.get::<Value>("subject")?;
+                                let params = table.get::<Value>("params")?;
+                                (subject, params)
+                            }
+                            Value::Nil => {
+                                return Err(mlua::Error::runtime(format!(
+                                    "action '{}' requires a subject",
+                                    action_name_for_error
+                                )));
+                            }
+                            other => (other, Value::Nil),
+                        };
+                        if matches!(subject, Value::Nil) {
+                            return Err(mlua::Error::runtime(format!(
+                                "action '{}' requires a subject",
+                                action_name_for_error
+                            )));
+                        }
+                        handler.call::<Value>((ctx, subject, params))
+                    })?;
+
+                registry.set(action_name.clone(), wrapper)?;
+                object_refs::register_proxy_method(lua, target, &method_name, &action_name)?;
+                Ok(())
+            },
+        )?,
+    )?;
+
+    action_table.set(
         "run",
         lua.create_function(|lua, (name, params): (String, Option<Value>)| {
             let params = match params {
                 None | Some(Value::Nil) => JsonValue::Object(JsonMap::new()),
-                Some(value) => lua
-                    .from_value::<JsonValue>(value)
-                    .map_err(|err| mlua::Error::runtime(err.to_string()))?,
+                Some(value) => object_refs::encode_lua_payload(lua, value)?,
             };
 
             let app_data = lua
@@ -90,7 +142,7 @@ pub fn register_action_globals(lua: &Lua) -> LuaResult<()> {
             .map_err(mlua::Error::runtime)?;
 
             match result {
-                Some(value) => lua.to_value(&value),
+                Some(value) => object_refs::decode_json_payload(lua, &value),
                 None => Ok(Value::Nil),
             }
         })?,
@@ -98,6 +150,27 @@ pub fn register_action_globals(lua: &Lua) -> LuaResult<()> {
 
     lua.globals().set("action", action_table)?;
     Ok(())
+}
+
+fn action_name_for_target_method(target: &object_refs::ProxyTarget, method: &str) -> String {
+    match target.kind.as_str() {
+        "scope" => target
+            .name
+            .as_ref()
+            .map(|kind| format!("{kind}.{method}"))
+            .unwrap_or_else(|| format!("scope.{method}")),
+        "worklist" => target
+            .name
+            .as_ref()
+            .map(|name| format!("worklist.{name}.{method}"))
+            .unwrap_or_else(|| format!("worklist.{method}")),
+        "workitem" => target
+            .name
+            .as_ref()
+            .map(|name| format!("workitem.{name}.{method}"))
+            .unwrap_or_else(|| format!("workitem.{method}")),
+        _ => method.to_string(),
+    }
 }
 
 fn ensure_declared_action_registry(lua: &Lua) -> LuaResult<Table> {
@@ -126,11 +199,11 @@ pub(crate) fn invoke_declared_action(
     };
 
     let ctx = build_action_context(lua, &invocation)?;
-    let lua_args = lua.to_value(&params)?;
+    let lua_args = object_refs::decode_json_payload(lua, &params)?;
     let result = handler.call::<Value>((ctx, lua_args))?;
-    let result = lua.from_value::<JsonValue>(result).map_err(|err| {
+    let result = object_refs::encode_lua_payload(lua, result).map_err(|err| {
         anyhow::anyhow!(
-            "declared action '{}' handler returned a non-JSON value: {}",
+            "declared action '{}' handler returned invalid value: {}",
             name,
             err
         )
@@ -142,7 +215,10 @@ pub(crate) fn invoke_declared_action(
 fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaResult<Table> {
     let ctx = lua.create_table()?;
     ctx.set("action", invocation.action_name.clone())?;
-    ctx.set("params", lua.to_value(&invocation.params)?)?;
+    ctx.set(
+        "params",
+        object_refs::decode_json_payload(lua, &invocation.params)?,
+    )?;
 
     let checkpoint = invocation
         .work_item
@@ -178,14 +254,13 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
                 let value_json = match value {
                     Value::Nil => None,
                     value => Some(
-                        lua.from_value::<JsonValue>(value)
-                            .map_err(anyhow::Error::from)
+                        object_refs::encode_lua_payload(lua, value)
                             .map_err(mlua::Error::runtime)?,
                     ),
                 };
                 let result =
                     complete_action(&invocation, value_json).map_err(mlua::Error::runtime)?;
-                lua.to_value(&result)
+                object_refs::decode_json_payload(lua, &result)
             })?,
         )?;
     }
@@ -198,13 +273,12 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
                 let value_json = match value {
                     Value::Nil => None,
                     value => Some(
-                        lua.from_value::<JsonValue>(value)
-                            .map_err(anyhow::Error::from)
+                        object_refs::encode_lua_payload(lua, value)
                             .map_err(mlua::Error::runtime)?,
                     ),
                 };
                 let result = fail_action(&invocation, value_json).map_err(mlua::Error::runtime)?;
-                lua.to_value(&result)
+                object_refs::decode_json_payload(lua, &result)
             })?,
         )?;
     }
@@ -217,14 +291,13 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
                 let value_json = match value {
                     Value::Nil => None,
                     value => Some(
-                        lua.from_value::<JsonValue>(value)
-                            .map_err(anyhow::Error::from)
+                        object_refs::encode_lua_payload(lua, value)
                             .map_err(mlua::Error::runtime)?,
                     ),
                 };
                 let result =
                     cancel_action(&invocation, value_json).map_err(mlua::Error::runtime)?;
-                lua.to_value(&result)
+                object_refs::decode_json_payload(lua, &result)
             })?,
         )?;
     }
@@ -243,10 +316,9 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
             "pause",
             lua.create_function(move |lua, (_self, value): (Table, Value)| {
                 let opts = match value {
-                    Value::Table(table) => lua
-                        .from_value::<JsonValue>(Value::Table(table))
-                        .map_err(anyhow::Error::from)
-                        .map_err(mlua::Error::runtime)?,
+                    Value::Table(table) => {
+                        object_refs::encode_lua_payload(lua, Value::Table(table))?
+                    }
                     other => {
                         return Err(mlua::Error::runtime(format!(
                             "ctx:pause requires an object-like table, got {:?}",
@@ -255,7 +327,7 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
                     }
                 };
                 let result = pause_action(&invocation, opts).map_err(mlua::Error::runtime)?;
-                lua.to_value(&result)
+                object_refs::decode_json_payload(lua, &result)
             })?,
         )?;
     }
@@ -268,16 +340,17 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
                 move |lua, (_self, seconds, opts): (Table, u64, Option<Value>)| {
                     let mut opts = match opts {
                         None | Some(Value::Nil) => JsonMap::new(),
-                        Some(Value::Table(table)) => match lua
-                            .from_value::<JsonValue>(Value::Table(table))?
-                        {
-                            JsonValue::Object(map) => map,
-                            _ => {
-                                return Err(mlua::Error::runtime(
-                                    "ctx:pause_for opts must be an object-like table".to_string(),
-                                ));
+                        Some(Value::Table(table)) => {
+                            match object_refs::encode_lua_payload(lua, Value::Table(table))? {
+                                JsonValue::Object(map) => map,
+                                _ => {
+                                    return Err(mlua::Error::runtime(
+                                        "ctx:pause_for opts must be an object-like table"
+                                            .to_string(),
+                                    ));
+                                }
                             }
-                        },
+                        }
                         Some(other) => {
                             return Err(mlua::Error::runtime(format!(
                                 "ctx:pause_for opts must be an object-like table, got {:?}",
@@ -288,7 +361,7 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
                     opts.insert("resume_in_seconds".to_string(), JsonValue::from(seconds));
                     let result = pause_action(&invocation, JsonValue::Object(opts))
                         .map_err(mlua::Error::runtime)?;
-                    lua.to_value(&result)
+                    object_refs::decode_json_payload(lua, &result)
                 },
             )?,
         )?;
@@ -298,7 +371,7 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
 }
 
 fn checkpoint_proxy(lua: &Lua, checkpoint: JsonValue) -> LuaResult<Table> {
-    let table = match lua.to_value(&checkpoint)? {
+    let table = match object_refs::decode_json_payload(lua, &checkpoint)? {
         Value::Table(table) => table,
         _ => lua.create_table()?,
     };
@@ -311,7 +384,7 @@ fn checkpoint_proxy(lua: &Lua, checkpoint: JsonValue) -> LuaResult<Table> {
                     .and_then(|map| map.get(&key))
                     .cloned();
                 match value {
-                    Some(value) => lua.to_value(&value),
+                    Some(value) => object_refs::decode_json_payload(lua, &value),
                     None => Ok(default.unwrap_or(Value::Nil)),
                 }
             },
@@ -727,7 +800,7 @@ fn invoke_builtin_worklist_method(
     method_name: &str,
     params: JsonValue,
 ) -> Result<JsonValue> {
-    let params_value = lua.to_value(&params)?;
+    let params_value = object_refs::decode_json_payload(lua, &params)?;
     let params_table = match params_value {
         Value::Nil => lua.create_table()?,
         Value::Table(table) => table,
@@ -764,7 +837,7 @@ fn worklist_action_result_to_json(
             Value::Nil => Ok(JsonValue::Null),
             Value::Table(table) => {
                 let item = summarize_worklist_item_table(&table.get::<Table>("item")?)?;
-                let dispatch_result = lua.from_value::<JsonValue>(table.get("result")?)?;
+                let dispatch_result = object_refs::encode_lua_payload(lua, table.get("result")?)?;
                 Ok(serde_json::json!({
                     "item": item,
                     "result": dispatch_result,
@@ -788,7 +861,7 @@ fn worklist_action_result_to_json(
                 other
             ),
         },
-        _ => lua.from_value(result).map_err(Into::into),
+        _ => object_refs::encode_lua_payload(lua, result).map_err(Into::into),
     }
 }
 
@@ -800,7 +873,7 @@ fn summarize_worklist_item_table(table: &Table) -> Result<JsonValue> {
         "status": table.get::<Option<String>>("status")?,
         "priority": table.get::<Option<i64>>("priority")?,
         "prompt": table.get::<Option<String>>("prompt")?,
-        "action": table.get::<Option<String>>("action")?,
+        "action": table.get::<Option<String>>("action_name")?,
         "claim_execution_id": table.get::<Option<String>>("claim_execution_id")?,
         "failure_reason": table.get::<Option<String>>("failure_reason")?,
     }))

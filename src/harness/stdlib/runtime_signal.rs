@@ -7,6 +7,7 @@ use crate::harness::stdlib::binding_common::{bridge_async_display_err, wrap_regi
 use crate::harness::stdlib::governance_support::{
     current_agent_id, require_capability, require_child_agent,
 };
+use crate::harness::stdlib::object_refs;
 use crate::harness::stdlib::system_globals::ensure_load_time;
 use crate::persistence::schema::SignalRow;
 use crate::persistence::state::SignalInsert;
@@ -54,9 +55,7 @@ pub fn register_runtime_signal_namespace(
 
                 let payload = match payload {
                     None | Some(Value::Nil) => JsonValue::Object(JsonMap::new()),
-                    Some(value) => lua
-                        .from_value::<JsonValue>(value)
-                        .map_err(|err| mlua::Error::runtime(err.to_string()))?,
+                    Some(value) => object_refs::encode_lua_payload(lua, value)?,
                 };
 
                 let source_agent_id = current_agent_id(&app_data);
@@ -235,7 +234,7 @@ pub(crate) fn dispatch_runtime_signal(lua: &Lua, signal: &SignalRow) -> Result<u
     let count = listeners.raw_len();
     for index in 1..=count {
         let listener: Function = listeners.raw_get(index)?;
-        listener.call::<()>((event_ctx.clone(), event_payload.clone()))?;
+        listener.call::<()>((event_payload.clone(), event_ctx.clone()))?;
     }
     Ok(count)
 }
@@ -312,7 +311,7 @@ fn build_runtime_signal_event_payload(lua: &Lua, signal: &SignalRow) -> Result<V
         "emitted_at".to_string(),
         JsonValue::String(signal.created_at.clone()),
     );
-    lua.to_value(&JsonValue::Object(base))
+    object_refs::decode_json_payload(lua, &JsonValue::Object(base))
 }
 
 fn signal_row_to_json(signal: &SignalRow) -> JsonValue {

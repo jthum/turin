@@ -7,6 +7,7 @@ pub mod event_bindings;
 pub mod governance_support;
 pub mod identity_support;
 pub mod memory_kv_bindings;
+pub mod object_refs;
 pub mod policy_support;
 pub mod runtime_agent;
 pub mod runtime_bindings;

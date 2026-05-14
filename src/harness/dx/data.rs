@@ -1,7 +1,10 @@
-use mlua::{Function, Lua, Result as LuaResult, Table, Value};
+use mlua::{Function, Lua, Result as LuaResult, Table, Value, Variadic};
 
 use crate::harness::dx::common::call_and_raise_on_err;
-use crate::harness::stdlib::context_selectors::{normalize_selector, selector_to_lua_table};
+use crate::harness::stdlib::context_selectors::{
+    normalize_selector, selector_to_lua_table, table_to_selector,
+};
+use crate::harness::stdlib::object_refs::PROXY_TYPE_KEY;
 use crate::kernel::identity::ContextSelector;
 
 fn parse_counter_value(value: Value) -> LuaResult<i64> {
@@ -52,7 +55,10 @@ fn attach_scope_methods(
         let op_name = format!("{op_prefix}.remember");
         target.set(
             "remember",
-            lua.create_function(move |lua, (content, metadata): (String, Option<Table>)| {
+            lua.create_function(move |lua, args: Variadic<Value>| {
+                let args = scope_method_args(args)?;
+                let content = scope_string_arg(lua, &args, 0, "content")?;
+                let metadata = scope_table_opt_arg(&args, 1, "metadata")?;
                 call_and_raise_on_err(
                     lua,
                     &memory_store,
@@ -68,7 +74,10 @@ fn attach_scope_methods(
         let op_name = format!("{op_prefix}.recall");
         target.set(
             "recall",
-            lua.create_function(move |lua, (query, opts): (String, Option<Value>)| {
+            lua.create_function(move |lua, args: Variadic<Value>| {
+                let args = scope_method_args(args)?;
+                let query = scope_string_arg(lua, &args, 0, "query")?;
+                let opts = scope_value_opt_arg(&args, 1);
                 call_and_raise_on_err(lua, &memory_search, (query, opts), &op_name)
             })?,
         )?;
@@ -79,7 +88,9 @@ fn attach_scope_methods(
         let op_name = format!("{op_prefix}.get");
         target.set(
             "get",
-            lua.create_function(move |lua, key: String| {
+            lua.create_function(move |lua, args: Variadic<Value>| {
+                let args = scope_method_args(args)?;
+                let key = scope_string_arg(lua, &args, 0, "key")?;
                 call_and_raise_on_err(lua, &kv_get, key, &op_name)
             })?,
         )?;
@@ -90,7 +101,10 @@ fn attach_scope_methods(
         let op_name = format!("{op_prefix}.set");
         target.set(
             "set",
-            lua.create_function(move |lua, (key, value): (String, String)| {
+            lua.create_function(move |lua, args: Variadic<Value>| {
+                let args = scope_method_args(args)?;
+                let key = scope_string_arg(lua, &args, 0, "key")?;
+                let value = scope_string_arg(lua, &args, 1, "value")?;
                 call_and_raise_on_err(lua, &kv_set, (key, value), &op_name)
             })?,
         )?;
@@ -101,7 +115,9 @@ fn attach_scope_methods(
         let op_name = format!("{op_prefix}.del");
         target.set(
             "del",
-            lua.create_function(move |lua, key: String| {
+            lua.create_function(move |lua, args: Variadic<Value>| {
+                let args = scope_method_args(args)?;
+                let key = scope_string_arg(lua, &args, 0, "key")?;
                 call_and_raise_on_err(lua, &kv_delete, key, &op_name)
             })?,
         )?;
@@ -114,7 +130,13 @@ fn attach_scope_methods(
         let op_set = format!("{op_prefix}.incr.set");
         target.set(
             "incr",
-            lua.create_function(move |lua, (key, by): (String, Option<i64>)| {
+            lua.create_function(move |lua, args: Variadic<Value>| {
+                let args = scope_method_args(args)?;
+                let key = scope_string_arg(lua, &args, 0, "key")?;
+                let by = match args.get(1) {
+                    Some(Value::Nil) | None => None,
+                    Some(value) => Some(parse_counter_value(value.clone())?),
+                };
                 let current = call_and_raise_on_err(lua, &kv_get, key.clone(), &op_get)?;
                 let base = parse_counter_value(current)?;
                 let delta = by.unwrap_or(1);
@@ -130,6 +152,46 @@ fn attach_scope_methods(
     Ok(())
 }
 
+fn scope_method_args(args: Variadic<Value>) -> LuaResult<Vec<Value>> {
+    let mut args: Vec<Value> = args.into_iter().collect();
+    if let Some(Value::Table(table)) = args.first()
+        && table.contains_key(PROXY_TYPE_KEY)?
+    {
+        args.remove(0);
+    }
+    Ok(args)
+}
+
+fn scope_string_arg(lua: &Lua, args: &[Value], index: usize, name: &str) -> LuaResult<String> {
+    let value = args
+        .get(index)
+        .ok_or_else(|| mlua::Error::runtime(format!("scope method missing {name}")))?;
+    let Some(value) = lua.coerce_string(value.clone())? else {
+        return Err(mlua::Error::runtime(format!(
+            "scope method {name} must be a string-compatible value"
+        )));
+    };
+    Ok(value.to_str()?.to_string())
+}
+
+fn scope_table_opt_arg(args: &[Value], index: usize, name: &str) -> LuaResult<Option<Table>> {
+    match args.get(index) {
+        None | Some(Value::Nil) => Ok(None),
+        Some(Value::Table(table)) => Ok(Some(table.clone())),
+        Some(other) => Err(mlua::Error::runtime(format!(
+            "scope method {name} must be a table, got {:?}",
+            other
+        ))),
+    }
+}
+
+fn scope_value_opt_arg(args: &[Value], index: usize) -> Option<Value> {
+    match args.get(index) {
+        None | Some(Value::Nil) => None,
+        Some(value) => Some(value.clone()),
+    }
+}
+
 fn register_scope_helpers(lua: &Lua, scope: &str) -> LuaResult<()> {
     let globals = lua.globals();
     let scope_table: Table = globals.get(scope)?;
@@ -137,6 +199,57 @@ fn register_scope_helpers(lua: &Lua, scope: &str) -> LuaResult<()> {
     let kv: Table = scope_table.get("kv")?;
 
     attach_scope_methods(lua, &scope_table, scope, &memory, &kv)
+}
+
+pub(crate) fn scope_kind_from_selector(selector: &ContextSelector) -> Option<String> {
+    selector
+        .tags
+        .first()
+        .and_then(|tag| tag.split_once(':').map(|(kind, _)| kind.to_string()))
+}
+
+pub(crate) fn build_scope_proxy(
+    lua: &Lua,
+    selector: &ContextSelector,
+    scope_kind: Option<&str>,
+) -> LuaResult<Table> {
+    let globals = lua.globals();
+    let memory: Table = globals.get("memory")?;
+    let memory_as: Function = memory.get("as")?;
+    let kv: Table = globals.get("kv")?;
+    let kv_as: Function = kv.get("as")?;
+
+    let selector_table = selector_to_lua_table(lua, selector)?;
+    let memory_proxy = call_and_raise_on_err(lua, &memory_as, selector_table.clone(), "memory.as")?;
+    let memory_proxy = match memory_proxy {
+        Value::Table(table) => table,
+        other => {
+            return Err(mlua::Error::runtime(format!(
+                "[scope] expected table from memory.as, got {:?}",
+                other
+            )));
+        }
+    };
+
+    let kv_proxy = call_and_raise_on_err(lua, &kv_as, selector_table, "kv.as")?;
+    let kv_proxy = match kv_proxy {
+        Value::Table(table) => table,
+        other => {
+            return Err(mlua::Error::runtime(format!(
+                "[scope] expected table from kv.as, got {:?}",
+                other
+            )));
+        }
+    };
+
+    let proxy = lua.create_table()?;
+    attach_scope_methods(lua, &proxy, "scope", &memory_proxy, &kv_proxy)?;
+    crate::harness::stdlib::object_refs::annotate_scope_proxy(lua, &proxy, selector, scope_kind)?;
+    let target = crate::harness::stdlib::object_refs::ProxyTarget::scope(
+        scope_kind.map(ToString::to_string),
+    );
+    crate::harness::stdlib::object_refs::attach_proxy_action(lua, &proxy, target)?;
+    Ok(proxy)
 }
 
 fn scope_selector_table(
@@ -195,10 +308,6 @@ pub fn register_data_globals(lua: &Lua) -> LuaResult<()> {
     let memory: Table = globals.get("memory")?;
     let memory_store: Function = memory.get("store")?;
     let memory_search: Function = memory.get("search")?;
-    let memory_as: Function = memory.get("as")?;
-    let kv: Table = globals.get("kv")?;
-    let kv_as: Function = kv.get("as")?;
-
     {
         let memory_store = memory_store.clone();
         globals.set(
@@ -225,39 +334,18 @@ pub fn register_data_globals(lua: &Lua) -> LuaResult<()> {
     register_scope_helpers(lua, "user")?;
 
     {
-        let memory_as = memory_as.clone();
-        let kv_as = kv_as.clone();
         globals.set(
             "scope",
             lua.create_function(
                 move |lua, (kind, key_or_opts, opts): (String, Value, Option<Table>)| {
                     let selector = scope_selector_table(lua, kind, key_or_opts, opts)?;
-                    let memory_proxy =
-                        call_and_raise_on_err(lua, &memory_as, selector.clone(), "memory.as")?;
-                    let memory_proxy = match memory_proxy {
-                        Value::Table(table) => table,
-                        other => {
-                            return Err(mlua::Error::runtime(format!(
-                                "[scope] expected table from memory.as, got {:?}",
-                                other
-                            )));
-                        }
-                    };
-
-                    let kv_proxy = call_and_raise_on_err(lua, &kv_as, selector.clone(), "kv.as")?;
-                    let kv_proxy = match kv_proxy {
-                        Value::Table(table) => table,
-                        other => {
-                            return Err(mlua::Error::runtime(format!(
-                                "[scope] expected table from kv.as, got {:?}",
-                                other
-                            )));
-                        }
-                    };
-
-                    let proxy = lua.create_table()?;
-                    attach_scope_methods(lua, &proxy, "scope", &memory_proxy, &kv_proxy)?;
-                    Ok(Value::Table(proxy))
+                    let selector = table_to_selector(selector)?;
+                    let scope_kind = scope_kind_from_selector(&selector);
+                    Ok(Value::Table(build_scope_proxy(
+                        lua,
+                        &selector,
+                        scope_kind.as_deref(),
+                    )?))
                 },
             )?,
         )?;

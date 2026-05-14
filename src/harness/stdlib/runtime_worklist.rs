@@ -15,6 +15,7 @@ use crate::harness::stdlib::db_support::{
     selector_denied_by_dynamic_open, store_path_scope_from_snapshot, store_selector_from_fields,
 };
 use crate::harness::stdlib::governance_support::{current_agent_id, require_capability};
+use crate::harness::stdlib::object_refs;
 use crate::harness::stdlib::policy_support::runtime_policy_snapshot;
 use crate::kernel::identity::ContextSelector;
 use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask};
@@ -91,7 +92,12 @@ fn parse_scope_value(value: Value) -> LuaResult<Option<ScopeValue>> {
     match value {
         Value::Nil => Ok(None),
         Value::String(s) => Ok(Some(ScopeValue::Ref(s.to_str()?.to_string()))),
-        Value::Table(table) => Ok(Some(ScopeValue::Selector(table_to_selector(table)?))),
+        Value::Table(table) => {
+            if let Value::Table(selector) = table.get::<Value>(object_refs::SCOPE_SELECTOR_KEY)? {
+                return Ok(Some(ScopeValue::Selector(table_to_selector(selector)?)));
+            }
+            Ok(Some(ScopeValue::Selector(table_to_selector(table)?)))
+        }
         other => Err(mlua::Error::runtime(format!(
             "runtime.worklist scope must be string or selector table, got {:?}",
             other
@@ -215,12 +221,12 @@ fn parse_payload(lua: &Lua, payload: Value, opts: Option<Table>) -> LuaResult<Pa
                 };
             action_params = match table.get::<Value>("params")? {
                 Value::Nil => None,
-                value => Some(lua.from_value(value)?),
+                value => Some(object_refs::encode_lua_payload(lua, value)?),
             };
             after_ids = parse_json_array_strings(table.get::<Value>("after")?, "after")?;
             metadata = match table.get::<Value>("metadata")? {
                 Value::Nil => None,
-                value => Some(lua.from_value(value)?),
+                value => Some(object_refs::encode_lua_payload(lua, value)?),
             };
         }
         other => {
@@ -241,7 +247,7 @@ fn parse_payload(lua: &Lua, payload: Value, opts: Option<Table>) -> LuaResult<Pa
         if metadata.is_none() {
             metadata = match opts.get::<Value>("metadata")? {
                 Value::Nil => None,
-                value => Some(lua.from_value(value)?),
+                value => Some(object_refs::encode_lua_payload(lua, value)?),
             };
         }
     }
@@ -669,10 +675,12 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
             ..handle.clone()
         },
     )?;
+    let item_public_id = public_id_string(&row.public_id);
+    object_refs::annotate_workitem_proxy(&proxy, &item_public_id)?;
     let metadata_json = parse_json_opt::<JsonValue>(row.metadata.as_deref())
         .ok()
         .flatten();
-    proxy.set("id", public_id_string(&row.public_id))?;
+    proxy.set("id", item_public_id)?;
     proxy.set("internal_id", row.id)?;
     proxy.set("title", row.title.clone())?;
     proxy.set("kind", row.item_kind.clone())?;
@@ -701,21 +709,21 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
         },
     )?;
     proxy.set("conflict_policy", row.conflict_policy.clone())?;
-    proxy.set("action", row.action_name.clone())?;
+    proxy.set("action_name", row.action_name.clone())?;
     proxy.set(
         "params",
         match parse_json_opt::<JsonValue>(row.action_params.as_deref())
             .ok()
             .flatten()
         {
-            Some(value) => lua.to_value(&value)?,
+            Some(value) => object_refs::decode_json_payload(lua, &value)?,
             None => Value::Nil,
         },
     )?;
     proxy.set(
         "metadata",
         match metadata_json.clone() {
-            Some(value) => lua.to_value(&value)?,
+            Some(value) => object_refs::decode_json_payload(lua, &value)?,
             None => Value::Nil,
         },
     )?;
@@ -740,6 +748,11 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
     proxy.set("claim_execution_id", row.claim_execution_id.clone())?;
     proxy.set("failure_reason", row.failure_reason.clone())?;
     proxy.set("payload", item_payload_value(lua, &row)?)?;
+    object_refs::attach_proxy_action(
+        lua,
+        &proxy,
+        object_refs::ProxyTarget::workitem(Some(handle.worklist.name.clone())),
+    )?;
 
     {
         let handle = handle.clone();
@@ -837,7 +850,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                     .map_err(mlua::Error::runtime)?;
                 let metadata_json = match meta {
                     Some(Value::Nil) | None => None,
-                    Some(value) => Some(lua.from_value::<JsonValue>(value)?),
+                    Some(value) => Some(object_refs::encode_lua_payload(lua, value)?),
                 };
                 let metadata_raw =
                     serialize_json_opt(metadata_json.as_ref()).map_err(mlua::Error::runtime)?;
@@ -917,7 +930,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                 let action_params = if fields.contains_key("params")? {
                     Some(match fields.get::<Value>("params")? {
                         Value::Nil => None,
-                        value => Some(lua.from_value::<JsonValue>(value)?),
+                        value => Some(object_refs::encode_lua_payload(lua, value)?),
                     })
                 } else {
                     None
@@ -926,7 +939,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                     Some(match fields.get::<Value>("content")? {
                         Value::Nil => None,
                         value => Some(
-                            serde_json::to_string(&lua.from_value::<JsonValue>(value)?)
+                            serde_json::to_string(&object_refs::encode_lua_payload(lua, value)?)
                                 .map_err(mlua::Error::runtime)?,
                         ),
                     })
@@ -937,7 +950,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                     Some(match fields.get::<Value>("tools")? {
                         Value::Nil => None,
                         value => Some(
-                            serde_json::to_string(&lua.from_value::<JsonValue>(value)?)
+                            serde_json::to_string(&object_refs::encode_lua_payload(lua, value)?)
                                 .map_err(mlua::Error::runtime)?,
                         ),
                     })
@@ -948,7 +961,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                     Some(match fields.get::<Value>("metadata")? {
                         Value::Nil => None,
                         value => Some(
-                            serde_json::to_string(&lua.from_value::<JsonValue>(value)?)
+                            serde_json::to_string(&object_refs::encode_lua_payload(lua, value)?)
                                 .map_err(mlua::Error::runtime)?,
                         ),
                     })
@@ -1037,10 +1050,24 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
 
 fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
     let proxy = lua.create_table()?;
+    let public_id = public_id_string(&handle.worklist.public_id);
     proxy.set("name", handle.worklist.name.clone())?;
     proxy.set("scope_ref", handle.worklist.scope_ref.clone())?;
-    proxy.set("id", public_id_string(&handle.worklist.public_id))?;
+    proxy.set("id", public_id.clone())?;
     proxy.set("internal_id", handle.worklist.id)?;
+    object_refs::annotate_worklist_proxy(
+        lua,
+        &proxy,
+        &handle.store_selector,
+        &handle.worklist.name,
+        &handle.worklist.scope_ref,
+        &public_id,
+    )?;
+    object_refs::attach_proxy_action(
+        lua,
+        &proxy,
+        object_refs::ProxyTarget::worklist(Some(handle.worklist.name.clone())),
+    )?;
 
     {
         let handle = handle.clone();
@@ -1490,7 +1517,7 @@ pub fn register_runtime_worklist_namespace(
                 .map_err(mlua::Error::runtime)?;
                 let metadata_json = match opts.get::<Value>("metadata")? {
                     Value::Nil => None,
-                    value => Some(lua.from_value::<JsonValue>(value)?),
+                    value => Some(object_refs::encode_lua_payload(lua, value)?),
                 };
                 let metadata_raw =
                     serialize_json_opt(metadata_json.as_ref()).map_err(mlua::Error::runtime)?;
@@ -1516,4 +1543,101 @@ pub fn register_runtime_worklist_namespace(
 
     runtime_table.set("worklist", runtime_worklist)?;
     Ok(())
+}
+
+pub(crate) fn hydrate_worklist_ref(
+    lua: &Lua,
+    app_data: &HarnessAppData,
+    ref_obj: &JsonMap<String, JsonValue>,
+) -> anyhow::Result<Table> {
+    let selector = object_refs::store_selector_from_json(ref_obj.get("store"));
+    let (path_scope, max_open_handles, idle_close_seconds) =
+        runtime_store_settings(app_data).map_err(anyhow::Error::msg)?;
+    let store = crate::harness::globals::block_on_current(async {
+        open_store(
+            app_data.store_manager.clone(),
+            selector.clone(),
+            path_scope,
+            max_open_handles,
+            idle_close_seconds,
+        )
+        .await
+    })?;
+
+    let row = if let Some(id) = ref_obj.get("id").and_then(|value| value.as_str()) {
+        let uuid = uuid::Uuid::parse_str(id)?;
+        crate::harness::globals::block_on_current(async {
+            store.get_worklist_by_public_id(uuid).await
+        })?
+        .ok_or_else(|| anyhow::anyhow!("worklist ref '{}' not found", id))?
+    } else {
+        let name = ref_obj
+            .get("name")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow::anyhow!("worklist ref requires id or name"))?;
+        let scope_ref = ref_obj
+            .get("scope_ref")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        crate::harness::globals::block_on_current(async {
+            store.open_worklist(name, scope_ref, None).await
+        })?
+    };
+
+    worklist_proxy(
+        lua,
+        WorklistHandle {
+            app_data: app_data.clone(),
+            store,
+            store_selector: selector,
+            worklist: row,
+            parent_item_id: None,
+        },
+    )
+    .map_err(anyhow::Error::from)
+}
+
+pub(crate) fn hydrate_workitem_ref(
+    lua: &Lua,
+    app_data: &HarnessAppData,
+    ref_obj: &JsonMap<String, JsonValue>,
+) -> anyhow::Result<Table> {
+    let selector = object_refs::store_selector_from_json(ref_obj.get("store"));
+    let (path_scope, max_open_handles, idle_close_seconds) =
+        runtime_store_settings(app_data).map_err(anyhow::Error::msg)?;
+    let store = crate::harness::globals::block_on_current(async {
+        open_store(
+            app_data.store_manager.clone(),
+            selector.clone(),
+            path_scope,
+            max_open_handles,
+            idle_close_seconds,
+        )
+        .await
+    })?;
+    let id = ref_obj
+        .get("id")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| anyhow::anyhow!("workitem ref requires id"))?;
+    let uuid = uuid::Uuid::parse_str(id)?;
+    let row = crate::harness::globals::block_on_current(async {
+        store.get_work_item_by_public_id(uuid).await
+    })?
+    .ok_or_else(|| anyhow::anyhow!("workitem ref '{}' not found", id))?;
+    let worklist = crate::harness::globals::block_on_current(async {
+        store.get_worklist_by_id(row.worklist_id).await
+    })?
+    .ok_or_else(|| anyhow::anyhow!("worklist for workitem ref '{}' not found", id))?;
+    item_proxy(
+        lua,
+        WorklistHandle {
+            app_data: app_data.clone(),
+            store,
+            store_selector: selector,
+            worklist,
+            parent_item_id: row.parent_item_id,
+        },
+        row,
+    )
+    .map_err(anyhow::Error::from)
 }

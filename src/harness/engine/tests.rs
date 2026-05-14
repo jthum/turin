@@ -527,7 +527,7 @@ async fn test_runtime_signals_list_and_subscribers_helpers() {
     std::fs::write(
         dir.path().join("main.lua"),
         r#"
-            runtime.on("code.ready", function(_ctx, _event) end)
+            runtime.on("code.ready", function(_data, _meta) end)
 
             action.define("signals.inspect", function(ctx, params)
                 return {
@@ -652,7 +652,7 @@ async fn test_worklist_dx_helpers_support_prompt_and_action_items() {
                     priority = 10,
                     metadata = { role = "qa" }
                 })
-                if qa.kind ~= "action" or qa.action ~= "qa.run_smoke" then
+                if qa.kind ~= "action" or qa.action_name ~= "qa.run_smoke" then
                     error("expected action item to round-trip")
                 end
                 if qa.params == nil or qa.params.suite ~= "checkout" then
@@ -706,6 +706,171 @@ async fn test_worklist_dx_helpers_support_prompt_and_action_items() {
 
                 if tasks:empty() ~= true then
                     error("expected worklist to be empty after all items complete")
+                end
+
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_reference_aware_action_round_trips_workitem_snapshot_and_ref_only() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            action.define("tasks.inspect", function(ctx, params)
+                local item = params.item
+                if item.title ~= "Overlay title" then
+                    error("expected overlay title in action payload")
+                end
+                if item.metadata == nil or item.metadata.role ~= "dev" then
+                    error("expected metadata overlay to round-trip")
+                end
+                item:done({ seen = item.title })
+                return item
+            end)
+
+            action.define("tasks.echo", function(ctx, params)
+                return params
+            end)
+
+            function on_turn_prepare(ctx)
+                local tasks = worklist("tasks")
+                local item = tasks:add({
+                    title = "Original title",
+                    prompt = "Do it",
+                    metadata = { role = "dev" }
+                })
+
+                item.title = "Overlay title"
+                local returned = action.run("tasks.inspect", { item = item })
+                if returned.title ~= "Overlay title" then
+                    error("expected returned work item to preserve overlay")
+                end
+                if type(returned.done) ~= "function" then
+                    error("expected returned work item to remain a proxy")
+                end
+
+                local fresh = tasks:find({ where = { id = item.id } })
+                if fresh.status ~= "done" then
+                    error("expected action handler to operate on hydrated proxy")
+                end
+
+                local canonical = action.run("tasks.echo", ref(item))
+                if canonical.title ~= "Original title" then
+                    error("expected ref(item) to pass a lightweight canonical shell")
+                end
+                if canonical.status ~= "done" then
+                    error("expected ref(item) to hydrate current stored state")
+                end
+
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_contextual_action_runs_object_scoped_action() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            action.define("project.describe", function(ctx, params)
+                local project = params.subject
+                project:set("description", params.params.text)
+                return project
+            end)
+
+            function on_turn_prepare(ctx)
+                local project = scope("project", "turin")
+                local returned = project:action("describe", { text = "Reference aware DX" })
+                if returned:get("description") ~= "Reference aware DX" then
+                    error("expected contextual action to use project.describe")
+                end
+                if type(returned.action) ~= "function" then
+                    error("expected contextual action result to stay hydrated")
+                end
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_action_define_on_attaches_methods_by_target_specificity() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            action.define_on("project", "mark", function(ctx, project, params)
+                project:set("mark", params.value)
+                return project
+            end)
+
+            action.define_on(target.workitem(), "label", function(ctx, item, params)
+                return { source = "generic", title = item.title }
+            end)
+
+            action.define_on(target.workitem("tickets"), "label", function(ctx, item, params)
+                return { source = "tickets", title = item.title }
+            end)
+
+            action.define_on(target.worklist(), "stats", function(ctx, list, params)
+                return list:progress()
+            end)
+
+            function on_turn_prepare(ctx)
+                local project = scope("project", "turin")
+                project:mark({ value = "ok" })
+                if project:get("mark") ~= "ok" then
+                    error("expected scope method to mutate scoped state")
+                end
+
+                local tickets = worklist("tickets")
+                local bugs = worklist("bugs")
+                local ticket = tickets:add("Ticket one")
+                local bug = bugs:add("Bug one")
+
+                local ticket_label = ticket:label()
+                if ticket_label.source ~= "tickets" or ticket_label.title ~= "Ticket one" then
+                    error("expected specific work item method to override generic method")
+                end
+
+                local bug_label = bug:label()
+                if bug_label.source ~= "generic" or bug_label.title ~= "Bug one" then
+                    error("expected generic work item method for other lists")
+                end
+
+                local stats = tickets:stats()
+                if stats.total ~= 1 or stats.done ~= 0 then
+                    error("expected generic worklist method to attach")
                 end
 
                 return ALLOW
@@ -1565,11 +1730,11 @@ fn test_engine_custom_events_dispatch_in_order_and_return_count() {
         r#"
             local seen = {}
 
-            on("qa.failed", function(ctx, payload)
-                table.insert(seen, ctx.name .. ":" .. payload.suite)
+            on("qa.failed", function(payload, meta)
+                table.insert(seen, meta.name .. ":" .. payload.suite)
             end)
 
-            on("qa.failed", function(ctx, payload)
+            on("qa.failed", function(payload, _meta)
                 table.insert(seen, "second:" .. payload.suite)
             end)
 
@@ -1620,7 +1785,7 @@ fn test_engine_event_listener_can_run_declared_action() {
                 }
             end)
 
-            on("qa.failed", function(_ctx, payload)
+            on("qa.failed", function(payload)
                 local result = action.run("bugs.create", payload)
                 observed = result.id
             end)
@@ -1657,7 +1822,7 @@ async fn test_engine_registered_callbacks_preserve_imported_module_subject_conte
                         return runtime.governance.check("runtime.db.query")
                     end)
 
-                    on("qa.failed", function(_ctx, payload)
+                    on("qa.failed", function(payload)
                         local decision = runtime.governance.check("runtime.db.query")
                         session.set("event_subject_module", decision.subject_module_name)
                         session.set("event_subject_root", decision.subject_root_name)
@@ -1733,12 +1898,12 @@ fn test_engine_emit_propagates_listener_failure_and_stops_dispatch() {
         r#"
             local seen = {}
 
-            on("qa.failed", function(_ctx, payload)
+            on("qa.failed", function(_payload)
                 table.insert(seen, "first")
                 error("listener sentinel")
             end)
 
-            on("qa.failed", function(_ctx, payload)
+            on("qa.failed", function(_payload)
                 table.insert(seen, "second")
             end)
 

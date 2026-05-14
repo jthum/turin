@@ -16,6 +16,8 @@ mod time;
 mod verdict;
 mod worklist;
 
+pub(crate) use data::build_scope_proxy;
+
 pub fn register_dx_globals(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
     verdict::register_verdict_globals(lua)?;
     access::register_access_globals(lua, app_data)?;

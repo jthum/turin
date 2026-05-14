@@ -13,6 +13,7 @@ use crate::harness::stdlib::governance_support::{
 use crate::harness::stdlib::identity_support::{
     get_active_identity, identity_to_lua_table, session_row_to_lua_table,
 };
+use crate::harness::stdlib::object_refs;
 use crate::harness::stdlib::policy_support::{policy_bool, policy_u64, runtime_policy_snapshot};
 use crate::kernel::event::TaskBranchOutcome;
 use crate::kernel::prepare_persisted_session_sidestep;
@@ -315,10 +316,9 @@ fn opt_sidestep_graph_relation(
         .unwrap_or_else(|| "contains".to_string());
     let metadata = match graph.get::<Value>("metadata") {
         Ok(Value::Nil) | Err(_) => None,
-        Ok(value) => Some(
-            lua.from_value::<serde_json::Value>(value)
-                .map_err(|err| err.to_string())?,
-        ),
+        Ok(value) => {
+            Some(object_refs::encode_lua_payload(lua, value).map_err(|err| err.to_string())?)
+        }
     };
     Ok(Some(SidestepGraphRelation {
         source,

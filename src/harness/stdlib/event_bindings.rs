@@ -1,7 +1,8 @@
-use mlua::{Function, Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
+use mlua::{Function, Lua, Result as LuaResult, Table, Value};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::harness::stdlib::binding_common::wrap_registered_callback;
+use crate::harness::stdlib::object_refs;
 use crate::harness::stdlib::system_globals::ensure_load_time;
 
 const EVENT_LISTENER_REGISTRY_KEY: &str = "__harness_event_listeners";
@@ -51,9 +52,7 @@ pub fn register_event_globals(lua: &Lua) -> LuaResult<()> {
 
             let payload = match payload {
                 None | Some(Value::Nil) => JsonValue::Object(JsonMap::new()),
-                Some(value) => lua
-                    .from_value::<JsonValue>(value)
-                    .map_err(|err| mlua::Error::runtime(err.to_string()))?,
+                Some(value) => object_refs::encode_lua_payload(lua, value)?,
             };
 
             let event_ctx = lua.create_table()?;
@@ -62,8 +61,8 @@ pub fn register_event_globals(lua: &Lua) -> LuaResult<()> {
             let count = listeners.raw_len();
             for index in 1..=count {
                 let listener: Function = listeners.raw_get(index)?;
-                let payload_value = lua.to_value(&payload)?;
-                listener.call::<()>((event_ctx.clone(), payload_value))?;
+                let payload_value = object_refs::decode_json_payload(lua, &payload)?;
+                listener.call::<()>((payload_value, event_ctx.clone()))?;
             }
 
             Ok(count)
