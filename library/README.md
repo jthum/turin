@@ -39,3 +39,8 @@ Current highlighted entries:
 - `library/blocks/governed_peer_review/` — temporary-grant peer review
 - `library/blocks/delegated_peer_capabilities/` — delegated-capability peer completion
 - `library/blocks/durable_journal/` — durable runtime DB journaling
+
+For smaller focused DX examples, including reference-aware proxy passing and
+object-scoped actions, see:
+
+- `examples/harnesses/`

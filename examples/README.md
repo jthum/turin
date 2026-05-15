@@ -5,7 +5,7 @@ This directory is reserved for smaller examples, snippets, and instructional mat
 Folders:
 
 - `examples/config/` — bootstrap runtime config, UI client config, and channel config examples
-- `examples/harnesses/` — reserved for small instructional harness examples
+- `examples/harnesses/` — small instructional harness examples
 
 The serious, ready-to-use harnesses now live in:
 
@@ -15,4 +15,4 @@ The serious, ready-to-use harnesses now live in:
 See:
 
 - `library/README.md`
-- `docs/HARNESS_LIBRARY.md`
+- `docs/guides/harness-library.md`

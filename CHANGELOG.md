@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-05-15
+
+### Added
+- **Reference-Aware Runtime Objects**
+  - Added `_ref`-aware payload encoding and hydration for runtime-owned proxies such as scopes, worklists, and work items.
+  - Added `ref(proxy)` for identity-only payload passing when callers want the receiver to hydrate current canonical state without sending overlay fields.
+  - Added contextual object actions and `action.define_on(...)`, so matching proxies can expose harness-defined methods such as `project:review(...)` or `item:label(...)`.
+- **Instructional DX Example**
+  - Added a small committed harness example for reference-aware proxy passing and object-scoped actions under `examples/harnesses/reference_aware_objects/`.
+
+### Changed
+- **Harness Event DX**
+  - Local `on(...)` listeners and durable `runtime.on(...)` listeners now receive domain data first and optional metadata second.
+- **Examples And Guides**
+  - Refreshed harness guides and committed examples to reflect the current `this`/semantic callback naming conventions and the new reference-aware object DX.
+- **Turso**
+  - Upgraded workspace Turso dependencies from `0.5` to `0.6.0` without changing Turin's current database feature posture yet.
+
 ## [0.28.1] - 2026-04-24
 
 ### Added
