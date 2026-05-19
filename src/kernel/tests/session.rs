@@ -1,4 +1,5 @@
 use super::*;
+use crate::inference::provider::{InferenceContent, InferenceRole};
 
 #[test]
 fn tool_rate_limit_caps_reserved_calls_within_window() {
@@ -183,107 +184,6 @@ fn task_execution_override_rejects_branch_advancing_non_branch_targets() {
 }
 
 #[test]
-fn hot_history_prunes_old_messages_and_tracks_offset() {
-    let mut session = SessionState::new();
-    for idx in 0..6 {
-        session.history.push(InferenceMessage {
-            role: InferenceRole::User,
-            content: vec![InferenceContent::Text {
-                text: format!("message {idx}"),
-            }],
-            tool_call_id: None,
-        });
-    }
-
-    let report = session
-        .prune_hot_history(Some(3))
-        .expect("history should be pruned");
-
-    assert_eq!(report.dropped_messages, 3);
-    assert_eq!(report.retained_messages, 3);
-    assert_eq!(report.retained_offset, 3);
-    assert_eq!(session.history_message_offset, 3);
-    assert_eq!(session.history.len(), 3);
-    assert_eq!(session.history[0].role, InferenceRole::User);
-}
-
-#[test]
-fn hot_history_preserves_tool_result_adjacency_at_boundary() {
-    let mut session = SessionState::new();
-    session.history.push(InferenceMessage {
-        role: InferenceRole::User,
-        content: vec![InferenceContent::Text {
-            text: "old".to_string(),
-        }],
-        tool_call_id: None,
-    });
-    session.history.push(InferenceMessage {
-        role: InferenceRole::Assistant,
-        content: vec![InferenceContent::ToolUse {
-            id: "call-1".to_string(),
-            name: "read_file".to_string(),
-            input: serde_json::json!({"path": "README.md"}),
-        }],
-        tool_call_id: None,
-    });
-    session.history.push(InferenceMessage {
-        role: InferenceRole::Tool,
-        content: vec![InferenceContent::ToolResult {
-            tool_use_id: "call-1".to_string(),
-            content: "result".to_string(),
-            is_error: false,
-        }],
-        tool_call_id: None,
-    });
-
-    let report = session
-        .prune_hot_history(Some(1))
-        .expect("history should be pruned");
-
-    assert_eq!(report.dropped_messages, 1);
-    assert_eq!(session.history_message_offset, 1);
-    assert_eq!(session.history.len(), 2);
-    assert_eq!(session.history[0].role, InferenceRole::Assistant);
-    assert_eq!(session.history[1].role, InferenceRole::Tool);
-}
-
-#[test]
-fn hot_history_trims_old_large_tool_results_but_keeps_recent_payloads() {
-    let mut session = SessionState::new();
-    for idx in 0..10 {
-        session.history.push(InferenceMessage {
-            role: InferenceRole::Tool,
-            content: vec![InferenceContent::ToolResult {
-                tool_use_id: format!("call-{idx}"),
-                content: "x".repeat(256),
-                is_error: false,
-            }],
-            tool_call_id: None,
-        });
-    }
-
-    let report = session
-        .trim_hot_history_payloads(Some(64))
-        .expect("older large tool results should be trimmed");
-
-    assert_eq!(report.trimmed_tool_results, 2);
-    assert!(report.dropped_bytes > 0);
-    match &session.history[0].content[0] {
-        InferenceContent::ToolResult { content, .. } => {
-            assert!(content.contains("full content remains in persisted session history"));
-            assert!(content.contains("original_bytes=256"));
-        }
-        other => panic!("expected tool result, got {other:?}"),
-    }
-    match &session.history[9].content[0] {
-        InferenceContent::ToolResult { content, .. } => {
-            assert_eq!(content.len(), 256);
-        }
-        other => panic!("expected tool result, got {other:?}"),
-    }
-}
-
-#[test]
 fn replacing_full_history_resets_hot_window_offset() {
     let mut session = SessionState::new();
     for idx in 0..4 {
@@ -295,7 +195,7 @@ fn replacing_full_history_resets_hot_window_offset() {
             tool_call_id: None,
         });
     }
-    session.prune_hot_history(Some(2));
+    crate::kernel::hot_history::prune(&mut session, Some(2));
 
     session.replace_full_history(vec![InferenceMessage {
         role: InferenceRole::User,

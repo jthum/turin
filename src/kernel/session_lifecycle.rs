@@ -259,8 +259,11 @@ impl ExecutionHost {
             return;
         }
         let hot_history = &self.config.inference.hot_history;
-        let _ = session.prune_hot_history(hot_history.effective_max_messages());
-        let _ = session.trim_hot_history_payloads(hot_history.effective_max_tool_result_bytes());
+        let _ = crate::kernel::hot_history::prune(session, hot_history.effective_max_messages());
+        let _ = crate::kernel::hot_history::trim_payloads(
+            session,
+            hot_history.effective_max_tool_result_bytes(),
+        );
     }
 
     pub async fn select_session_branch_by_name_local(

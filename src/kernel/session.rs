@@ -5,7 +5,7 @@ use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
+use crate::inference::provider::InferenceMessage;
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::KernelEvent;
 use crate::kernel::event::TaskBranchOutcome;
@@ -21,9 +21,6 @@ pub type SessionHarnessEngine = Arc<std::sync::Mutex<HarnessInstance>>;
 pub type CompletedLocalTaskResultsHandle = Arc<RwLock<CompletedLocalTaskResults>>;
 
 const MAX_COMPLETED_LOCAL_TASK_RESULTS: usize = 128;
-const HOT_HISTORY_RECENT_PAYLOAD_MESSAGES: usize = 8;
-const HOT_HISTORY_TRUNCATED_TOOL_RESULT_MARKER: &str = "[older tool result omitted from hot memory; full content remains in persisted session history]";
-
 /// Transient per-task execution state that is reset when a task completes.
 #[derive(Debug, Default)]
 pub struct ActiveTaskState {
@@ -625,85 +622,6 @@ impl SessionState {
         self.history_message_offset = 0;
     }
 
-    pub fn prune_hot_history(&mut self, max_messages: Option<usize>) -> Option<HotHistoryPrune> {
-        let max_messages = max_messages?;
-        if self.history.len() <= max_messages {
-            return None;
-        }
-
-        let mut retain_from = self.history.len().saturating_sub(max_messages);
-        while retain_from > 0
-            && history_boundary_requires_previous(
-                &self.history[retain_from - 1],
-                &self.history[retain_from],
-            )
-        {
-            retain_from -= 1;
-        }
-
-        if retain_from == 0 {
-            return None;
-        }
-
-        self.history.drain(0..retain_from);
-        self.history.shrink_to_fit();
-        self.history_message_offset = self.history_message_offset.saturating_add(retain_from);
-        Some(HotHistoryPrune {
-            dropped_messages: retain_from,
-            retained_messages: self.history.len(),
-            retained_offset: self.history_message_offset,
-        })
-    }
-
-    pub fn trim_hot_history_payloads(
-        &mut self,
-        max_tool_result_bytes: Option<usize>,
-    ) -> Option<HotHistoryPayloadTrim> {
-        let max_tool_result_bytes = max_tool_result_bytes?;
-        let trim_before = self
-            .history
-            .len()
-            .saturating_sub(HOT_HISTORY_RECENT_PAYLOAD_MESSAGES);
-        let mut trimmed_tool_results = 0usize;
-        let mut dropped_bytes = 0usize;
-
-        for message in self.history.iter_mut().take(trim_before) {
-            for part in &mut message.content {
-                let InferenceContent::ToolResult {
-                    content,
-                    is_error: false,
-                    ..
-                } = part
-                else {
-                    continue;
-                };
-                if content.len() <= max_tool_result_bytes
-                    || content.starts_with(HOT_HISTORY_TRUNCATED_TOOL_RESULT_MARKER)
-                {
-                    continue;
-                }
-
-                let original_len = content.len();
-                *content = format!(
-                    "{HOT_HISTORY_TRUNCATED_TOOL_RESULT_MARKER} original_bytes={original_len}"
-                );
-                content.shrink_to_fit();
-                trimmed_tool_results = trimmed_tool_results.saturating_add(1);
-                dropped_bytes =
-                    dropped_bytes.saturating_add(original_len.saturating_sub(content.len()));
-            }
-        }
-
-        if trimmed_tool_results == 0 {
-            return None;
-        }
-
-        Some(HotHistoryPayloadTrim {
-            trimmed_tool_results,
-            dropped_bytes,
-        })
-    }
-
     pub fn execution_id(&self) -> &str {
         &self.execution.execution_id
     }
@@ -883,31 +801,6 @@ impl SessionState {
         self.active_task = ActiveTaskState::default();
         should_refresh
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HotHistoryPrune {
-    pub dropped_messages: usize,
-    pub retained_messages: usize,
-    pub retained_offset: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HotHistoryPayloadTrim {
-    pub trimmed_tool_results: usize,
-    pub dropped_bytes: usize,
-}
-
-fn history_boundary_requires_previous(
-    previous: &InferenceMessage,
-    next: &InferenceMessage,
-) -> bool {
-    next.role == InferenceRole::Tool
-        && (previous.role == InferenceRole::Assistant
-            || previous
-                .content
-                .iter()
-                .any(|content| matches!(content, InferenceContent::ToolUse { .. })))
 }
 
 impl ExecutionStatusSnapshot {

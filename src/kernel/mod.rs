@@ -8,6 +8,7 @@ pub mod governance;
 mod harness_hooks;
 mod harness_manager;
 pub(crate) mod harness_runtime;
+mod hot_history;
 pub mod identity;
 mod init;
 mod mcp_runtime;
