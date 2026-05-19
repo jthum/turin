@@ -65,12 +65,16 @@ struct TelegramMockState {
 
 impl DaemonHarness {
     async fn start() -> Result<Self> {
+        Self::start_with_mock_response("PONG").await
+    }
+
+    async fn start_with_mock_response(mock_response: &str) -> Result<Self> {
         let tempdir = Arc::new(tempfile::tempdir()?);
         let workspace_root = tempdir.path().join("workspace");
         let config_path = support::write_mock_runtime_config(
             &workspace_root,
             "Telegram channel integration",
-            "PONG",
+            mock_response,
         )?;
         std::fs::create_dir_all(support::channel_runtime_dir(&workspace_root, "telegram"))?;
         let endpoint = support::workspace_daemon_socket(&workspace_root);
@@ -1075,7 +1079,9 @@ async fn telegram_channel_driver_retries_transient_poll_and_send_failures() -> R
 
 #[tokio::test(flavor = "multi_thread")]
 async fn telegram_channel_driver_streams_progress_before_final_message() -> Result<()> {
-    let daemon = DaemonHarness::start().await?;
+    let response_text = "PONG with enough streamed text to force a preview before the final reply.";
+    let daemon =
+        DaemonHarness::start_with_mock_response(&format!("delay_ms=150;{response_text}")).await?;
     let runner = daemon.runner();
     let server = TelegramMockServer::start_with_responses(
         vec![json!({
@@ -1129,6 +1135,15 @@ async fn telegram_channel_driver_streams_progress_before_final_message() -> Resu
     let mut run =
         tokio::spawn(async move { runner.run_driver("default", &mut driver, Some(5_000)).await });
 
+    wait_for_telegram_requests(
+        &server,
+        &mut run,
+        |methods| methods.iter().any(|method| method == "getUpdates"),
+        "telegram inbound update poll",
+    )
+    .await?;
+    let _ = shutdown_tx.send(true);
+
     let methods = wait_for_telegram_requests(
         &server,
         &mut run,
@@ -1164,17 +1179,35 @@ async fn telegram_channel_driver_streams_progress_before_final_message() -> Resu
         .find(|request| request.method == "sendMessageDraft" || request.method == "editMessageText")
         .cloned()
         .context("expected draft or edit request")?;
+    let request_log = server
+        .requests
+        .lock()
+        .expect("telegram mock requests lock poisoned")
+        .clone();
+    let preview_index = request_log
+        .iter()
+        .position(|request| {
+            request.method == "sendMessageDraft" || request.method == "editMessageText"
+        })
+        .context("expected draft or edit request")?;
+    let final_index = request_log
+        .iter()
+        .position(|request| request.method == "sendMessage")
+        .context("expected final sendMessage request")?;
+    assert!(
+        preview_index < final_index,
+        "expected streaming preview before final sendMessage; request log: {request_log:?}"
+    );
     assert!(
         draft_or_edit
             .body
             .get("text")
             .and_then(|value| value.as_str())
-            .is_some_and(|text| text.contains("PONG")),
+            .is_some_and(|text| text.contains(response_text)),
         "expected streamed preview text in request body: {:?}",
         draft_or_edit.body
     );
 
-    let _ = shutdown_tx.send(true);
     let _ = timeout(Duration::from_secs(5), run)
         .await
         .context("timed out waiting for telegram channel runner shutdown")??;
