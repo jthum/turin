@@ -24,7 +24,8 @@ mod access;
 mod bindings;
 
 pub use access::{
-    ApprovedRoomView, ChannelAccessSnapshot, ChannelRoomRef, FileAccessStateStore, PendingRoomView,
+    ApprovedRoomView, ChannelAccessPolicy, ChannelAccessSnapshot, ChannelRoomRef,
+    FileAccessStateStore, PairingMode, PendingRoomView,
 };
 pub use bindings::FileBindingStore;
 
@@ -94,81 +95,6 @@ pub struct RunnerConfig {
     pub idle_ttl: Option<Duration>,
     pub access_policy: ChannelAccessPolicy,
     pub tools: ToolsConfig,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PairingMode {
-    Off,
-    Pending,
-    Auto,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChannelAccessPolicy {
-    pub pairing_mode: PairingMode,
-    pub pairing_users: HashSet<String>,
-    pub allowed_users: HashSet<String>,
-    pub banned_users: HashSet<String>,
-}
-
-impl Default for ChannelAccessPolicy {
-    fn default() -> Self {
-        Self {
-            pairing_mode: PairingMode::Off,
-            pairing_users: HashSet::new(),
-            allowed_users: HashSet::new(),
-            banned_users: HashSet::new(),
-        }
-    }
-}
-
-impl ChannelAccessPolicy {
-    pub fn from_settings(settings: &Value) -> Result<Self> {
-        let map = settings
-            .as_object()
-            .ok_or_else(|| anyhow::anyhow!("Channel settings must be a JSON object"))?;
-        let pairing_mode = parse_pairing_mode(map.get("pairing_mode"))?;
-        Ok(Self {
-            pairing_mode,
-            pairing_users: parse_string_set(map.get("pairing_users"), "pairing_users")?,
-            allowed_users: parse_string_set(map.get("allowed_users"), "allowed_users")?,
-            banned_users: parse_string_set(map.get("banned_users"), "banned_users")?,
-        })
-    }
-
-    pub fn validate_settings(settings: &Value) -> Result<()> {
-        Self::from_settings(settings).map(|_| ())
-    }
-
-    pub fn requires_unconfigured_inbound(&self) -> bool {
-        !matches!(self.pairing_mode, PairingMode::Off)
-    }
-
-    fn matches_any<D: ChannelDriver>(
-        &self,
-        driver: &D,
-        selectors: &HashSet<String>,
-        user: &ChannelUser,
-    ) -> bool {
-        selectors
-            .iter()
-            .any(|selector| driver.user_matches_selector(selector, user))
-    }
-
-    fn is_banned<D: ChannelDriver>(&self, driver: &D, user: &ChannelUser) -> bool {
-        !self.banned_users.is_empty() && self.matches_any(driver, &self.banned_users, user)
-    }
-
-    fn allows_pairing<D: ChannelDriver>(&self, driver: &D, user: &ChannelUser) -> bool {
-        self.pairing_users.is_empty() || self.matches_any(driver, &self.pairing_users, user)
-    }
-
-    fn allows_interaction<D: ChannelDriver>(&self, driver: &D, user: &ChannelUser) -> bool {
-        if self.is_banned(driver, user) {
-            return false;
-        }
-        self.allowed_users.is_empty() || self.matches_any(driver, &self.allowed_users, user)
-    }
 }
 
 pub fn task_timeout_ms_from_settings(settings: &Value) -> Result<Option<u64>> {
@@ -537,7 +463,12 @@ impl ChannelRunner {
     ) -> Result<EventAccessDecision> {
         if matches!(self.access_policy.pairing_mode, PairingMode::Off) {
             return Ok(
-                if self.access_policy.allows_interaction(driver, &event.user) {
+                if self
+                    .access_policy
+                    .allows_interaction(&event.user, |selector, user| {
+                        driver.user_matches_selector(selector, user)
+                    })
+                {
                     EventAccessDecision::Allow
                 } else {
                     EventAccessDecision::Ignore
@@ -550,7 +481,12 @@ impl ChannelRunner {
         let mut state = self.access_state.load().await?;
         if state.approved_rooms.contains_key(&room_key) {
             return Ok(
-                if self.access_policy.allows_interaction(driver, &event.user) {
+                if self
+                    .access_policy
+                    .allows_interaction(&event.user, |selector, user| {
+                        driver.user_matches_selector(selector, user)
+                    })
+                {
                     EventAccessDecision::Allow
                 } else {
                     EventAccessDecision::Ignore
@@ -558,11 +494,18 @@ impl ChannelRunner {
             );
         }
 
-        if self.access_policy.is_banned(driver, &event.user) {
+        if self.access_policy.is_banned(&event.user, |selector, user| {
+            driver.user_matches_selector(selector, user)
+        }) {
             return Ok(EventAccessDecision::Ignore);
         }
 
-        if !self.access_policy.allows_pairing(driver, &event.user) {
+        if !self
+            .access_policy
+            .allows_pairing(&event.user, |selector, user| {
+                driver.user_matches_selector(selector, user)
+            })
+        {
             return Ok(EventAccessDecision::Ignore);
         }
 
@@ -1094,21 +1037,6 @@ impl ChannelRunner {
     }
 }
 
-fn parse_pairing_mode(value: Option<&Value>) -> Result<PairingMode> {
-    let Some(value) = value else {
-        return Ok(PairingMode::Off);
-    };
-    let mode = value
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("channel setting 'pairing_mode' must be a string"))?;
-    match mode.trim().to_ascii_lowercase().as_str() {
-        "off" => Ok(PairingMode::Off),
-        "pending" => Ok(PairingMode::Pending),
-        "auto" => Ok(PairingMode::Auto),
-        _ => anyhow::bail!("channel setting 'pairing_mode' must be one of: off, pending, auto"),
-    }
-}
-
 fn read_task_timeout_ms(value: Option<&Value>) -> Result<Option<u64>> {
     let Some(value) = value else {
         return Ok(None);
@@ -1120,58 +1048,6 @@ fn read_task_timeout_ms(value: Option<&Value>) -> Result<Option<u64>> {
         Ok(None)
     } else {
         Ok(Some(timeout_ms))
-    }
-}
-
-fn parse_string_set(value: Option<&Value>, key: &str) -> Result<HashSet<String>> {
-    let mut out = HashSet::new();
-    let Some(value) = value else {
-        return Ok(out);
-    };
-
-    match value {
-        Value::Array(values) => {
-            for item in values {
-                let text = item.as_str().ok_or_else(|| {
-                    anyhow::anyhow!("channel setting '{}' must be an array of strings", key)
-                })?;
-                let normalized = normalize_string_item(text).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "channel setting '{}' must not contain empty string values",
-                        key
-                    )
-                })?;
-                out.insert(normalized);
-            }
-        }
-        Value::String(text) => {
-            for item in text.split(',') {
-                let normalized = normalize_string_item(item).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "channel setting '{}' must not contain empty string values",
-                        key
-                    )
-                })?;
-                out.insert(normalized);
-            }
-        }
-        _ => {
-            anyhow::bail!(
-                "channel setting '{}' must be a string or array of strings",
-                key
-            );
-        }
-    }
-
-    Ok(out)
-}
-
-fn normalize_string_item(text: &str) -> Option<String> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
     }
 }
 

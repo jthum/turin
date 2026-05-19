@@ -1,9 +1,96 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use turin_channel_core::{ChannelConversationKey, ChannelKind};
+use turin_channel_core::{ChannelConversationKey, ChannelKind, ChannelUser};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PairingMode {
+    Off,
+    Pending,
+    Auto,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelAccessPolicy {
+    pub pairing_mode: PairingMode,
+    pub pairing_users: HashSet<String>,
+    pub allowed_users: HashSet<String>,
+    pub banned_users: HashSet<String>,
+}
+
+impl Default for ChannelAccessPolicy {
+    fn default() -> Self {
+        Self {
+            pairing_mode: PairingMode::Off,
+            pairing_users: HashSet::new(),
+            allowed_users: HashSet::new(),
+            banned_users: HashSet::new(),
+        }
+    }
+}
+
+impl ChannelAccessPolicy {
+    pub fn from_settings(settings: &Value) -> Result<Self> {
+        let map = settings
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("Channel settings must be a JSON object"))?;
+        let pairing_mode = parse_pairing_mode(map.get("pairing_mode"))?;
+        Ok(Self {
+            pairing_mode,
+            pairing_users: parse_string_set(map.get("pairing_users"), "pairing_users")?,
+            allowed_users: parse_string_set(map.get("allowed_users"), "allowed_users")?,
+            banned_users: parse_string_set(map.get("banned_users"), "banned_users")?,
+        })
+    }
+
+    pub fn validate_settings(settings: &Value) -> Result<()> {
+        Self::from_settings(settings).map(|_| ())
+    }
+
+    pub fn requires_unconfigured_inbound(&self) -> bool {
+        !matches!(self.pairing_mode, PairingMode::Off)
+    }
+
+    pub(crate) fn is_banned(
+        &self,
+        user: &ChannelUser,
+        matches_selector: impl FnMut(&str, &ChannelUser) -> bool,
+    ) -> bool {
+        !self.banned_users.is_empty() && matches_any(&self.banned_users, user, matches_selector)
+    }
+
+    pub(crate) fn allows_pairing(
+        &self,
+        user: &ChannelUser,
+        matches_selector: impl FnMut(&str, &ChannelUser) -> bool,
+    ) -> bool {
+        self.pairing_users.is_empty() || matches_any(&self.pairing_users, user, matches_selector)
+    }
+
+    pub(crate) fn allows_interaction(
+        &self,
+        user: &ChannelUser,
+        mut matches_selector: impl FnMut(&str, &ChannelUser) -> bool,
+    ) -> bool {
+        if self.is_banned(user, &mut matches_selector) {
+            return false;
+        }
+        self.allowed_users.is_empty() || matches_any(&self.allowed_users, user, matches_selector)
+    }
+}
+
+fn matches_any(
+    selectors: &HashSet<String>,
+    user: &ChannelUser,
+    mut matches_selector: impl FnMut(&str, &ChannelUser) -> bool,
+) -> bool {
+    selectors
+        .iter()
+        .any(|selector| matches_selector(selector, user))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChannelRoomRef {
@@ -233,4 +320,71 @@ pub(crate) fn unix_seconds(time: SystemTime) -> u64 {
     time.duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+fn parse_pairing_mode(value: Option<&Value>) -> Result<PairingMode> {
+    let Some(value) = value else {
+        return Ok(PairingMode::Off);
+    };
+    let mode = value
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("channel setting 'pairing_mode' must be a string"))?;
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "off" => Ok(PairingMode::Off),
+        "pending" => Ok(PairingMode::Pending),
+        "auto" => Ok(PairingMode::Auto),
+        _ => anyhow::bail!("channel setting 'pairing_mode' must be one of: off, pending, auto"),
+    }
+}
+
+fn parse_string_set(value: Option<&Value>, key: &str) -> Result<HashSet<String>> {
+    let mut out = HashSet::new();
+    let Some(value) = value else {
+        return Ok(out);
+    };
+
+    match value {
+        Value::Array(values) => {
+            for item in values {
+                let text = item.as_str().ok_or_else(|| {
+                    anyhow::anyhow!("channel setting '{}' must be an array of strings", key)
+                })?;
+                let normalized = normalize_string_item(text).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "channel setting '{}' must not contain empty string values",
+                        key
+                    )
+                })?;
+                out.insert(normalized);
+            }
+        }
+        Value::String(text) => {
+            for item in text.split(',') {
+                let normalized = normalize_string_item(item).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "channel setting '{}' must not contain empty string values",
+                        key
+                    )
+                })?;
+                out.insert(normalized);
+            }
+        }
+        _ => {
+            anyhow::bail!(
+                "channel setting '{}' must be a string or array of strings",
+                key
+            );
+        }
+    }
+
+    Ok(out)
+}
+
+fn normalize_string_item(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
