@@ -6,7 +6,7 @@ use turin_channel_core::{
 
 use crate::{
     TelegramChannelDriver, TelegramChannelDriverConfig, TelegramRespondMode,
-    attachment_kind_from_content_type, infer_audio_name,
+    outbound::{attachment_kind_from_content_type, infer_audio_name},
 };
 
 #[derive(Debug, Clone, Default, Deserialize)]
