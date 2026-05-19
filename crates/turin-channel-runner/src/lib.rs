@@ -1,25 +1,25 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::{Instant, MissedTickBehavior};
 use turin_channel_core::{
-    ChannelAdapterManifest, ChannelCapabilities, ChannelConversationKey, ChannelKind, ChannelUser,
-    ConversationBinding, InboundEvent, OutboundMessage, RoutingDecision, decide_routing,
+    ChannelCapabilities, ChannelConversationKey, ChannelKind, ChannelUser, ConversationBinding,
+    InboundEvent, OutboundMessage, RoutingDecision, decide_routing,
 };
 use turin_daemon_client::DaemonClient;
 use turin_daemon_protocol::{
-    ChannelRunnerHeartbeatParams, ChannelRunnerHelloParams, OpenSessionParams, ResumeSessionParams,
-    RuntimeEventsSubscribeParams, SubmitTaskParams, WaitTaskParams,
+    OpenSessionParams, ResumeSessionParams, RuntimeEventsSubscribeParams, SubmitTaskParams,
+    WaitTaskParams,
 };
 use turin_types::ToolsConfig;
 
 mod access;
 mod bindings;
+mod config;
+mod presence;
 mod stream;
 mod task_payloads;
 
@@ -28,6 +28,8 @@ pub use access::{
     FileAccessStateStore, PairingMode, PendingRoomView,
 };
 pub use bindings::FileBindingStore;
+pub use config::{RunnerConfig, task_timeout_ms_from_settings, tools_config_from_settings};
+pub use presence::{RunnerPresence, announce_runner_presence, spawn_runner_heartbeat};
 pub use stream::{ChannelProgressUpdate, ChannelStreamMode};
 pub use task_payloads::TaskSnapshot;
 
@@ -44,84 +46,6 @@ pub(crate) use stream::{
 pub(crate) use task_payloads::{
     task_input_content_from_event, task_prompt_for_submission, task_to_outbound,
 };
-
-const RUNNER_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
-
-#[derive(Debug, Clone)]
-pub struct RunnerPresence {
-    pub manifest: ChannelAdapterManifest,
-    pub runner_binary: Option<String>,
-    pub runner_version: Option<String>,
-    pub pid: Option<u32>,
-}
-
-pub async fn announce_runner_presence(
-    daemon: &DaemonClient,
-    channel_id: &str,
-    presence: RunnerPresence,
-) -> Result<()> {
-    daemon
-        .channel_runner_hello(ChannelRunnerHelloParams {
-            channel_id: channel_id.to_string(),
-            manifest: presence.manifest,
-            runner_binary: presence.runner_binary,
-            runner_version: presence.runner_version,
-            pid: presence.pid,
-        })
-        .await
-}
-
-pub fn spawn_runner_heartbeat(
-    daemon: DaemonClient,
-    channel_id: String,
-    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(RUNNER_HEARTBEAT_INTERVAL);
-        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        loop {
-            tokio::select! {
-                changed = shutdown_rx.changed() => {
-                    if changed.is_err() || *shutdown_rx.borrow() {
-                        break;
-                    }
-                }
-                _ = interval.tick() => {
-                    let _ = daemon.channel_runner_heartbeat(ChannelRunnerHeartbeatParams {
-                        channel_id: channel_id.clone(),
-                    }).await;
-                }
-            }
-        }
-    })
-}
-
-#[derive(Debug, Clone)]
-pub struct RunnerConfig {
-    pub channel_id: String,
-    pub state_path: PathBuf,
-    pub access_state_path: PathBuf,
-    pub idle_ttl: Option<Duration>,
-    pub access_policy: ChannelAccessPolicy,
-    pub tools: ToolsConfig,
-}
-
-pub fn task_timeout_ms_from_settings(settings: &Value) -> Result<Option<u64>> {
-    let map = settings
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("Channel settings must be a JSON object"))?;
-    read_task_timeout_ms(map.get("task_timeout_ms"))
-}
-
-pub fn tools_config_from_settings(settings: &Value) -> Result<ToolsConfig> {
-    let map = settings
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("Channel settings must be a JSON object"))?;
-    let Some(tools) = map.get("tools") else {
-        return Ok(ToolsConfig::default());
-    };
-    serde_json::from_value(tools.clone()).context("failed to parse 'tools' settings")
-}
 
 enum EventAccessDecision {
     Allow,
@@ -970,20 +894,6 @@ impl ChannelRunner {
         let now = SystemTime::now();
         bindings.retain(|_, binding| !binding.is_expired(now, ttl));
         self.bindings.save(&bindings).await
-    }
-}
-
-fn read_task_timeout_ms(value: Option<&Value>) -> Result<Option<u64>> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let timeout_ms = value.as_u64().ok_or_else(|| {
-        anyhow::anyhow!("channel setting 'task_timeout_ms' must be a non-negative integer")
-    })?;
-    if timeout_ms == 0 {
-        Ok(None)
-    } else {
-        Ok(Some(timeout_ms))
     }
 }
 
