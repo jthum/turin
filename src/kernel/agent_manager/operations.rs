@@ -260,24 +260,36 @@ impl AgentManager {
         };
 
         let handle = if let Some(handle) = existing {
-            if handle.active_tasks.load(Ordering::Relaxed) > 0
-                || handle.queued_tasks.load(Ordering::Relaxed) > 0
-            {
-                anyhow::bail!(
-                    "Runtime slot '{}' for agent '{}' is busy",
-                    runtime_key.slot_id,
-                    runtime_key.agent_id
+            if handle.is_running() {
+                if handle.active_tasks.load(Ordering::Relaxed) > 0
+                    || handle.queued_tasks.load(Ordering::Relaxed) > 0
+                {
+                    anyhow::bail!(
+                        "Runtime slot '{}' for agent '{}' is busy",
+                        runtime_key.slot_id,
+                        runtime_key.agent_id
+                    );
+                }
+                handle.control.request_session_resume(
+                    session_id.to_string(),
+                    super::SessionContextOverrides {
+                        channel_id,
+                        inference: initial_inference,
+                    },
                 );
+                handle.notify.notify_one();
+                handle
+            } else {
+                self.ensure_runtime_slot_resumed(
+                    runtime_key.clone(),
+                    session_id.to_string(),
+                    super::SessionContextOverrides {
+                        channel_id,
+                        inference: initial_inference,
+                    },
+                )
+                .await?
             }
-            handle.control.request_session_resume(
-                session_id.to_string(),
-                super::SessionContextOverrides {
-                    channel_id,
-                    inference: initial_inference,
-                },
-            );
-            handle.notify.notify_one();
-            handle
         } else {
             self.ensure_runtime_slot_resumed(
                 runtime_key.clone(),

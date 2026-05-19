@@ -474,6 +474,63 @@ async fn kill_session_marks_running_and_queued_work_killed() -> anyhow::Result<(
 }
 
 #[tokio::test]
+async fn resume_session_restarts_dead_requested_slot() -> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+
+    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let manager = kernel.agent_manager();
+    let slot_id = "chan-stale";
+    let opened = manager
+        .open_session(
+            "default",
+            Some(slot_id),
+            None,
+            None,
+            Some("telegram-ops".to_string()),
+            InferenceOverrideConfig::default(),
+        )
+        .await?;
+    let session_id = opened.session_id.clone();
+
+    manager.kill_session(&session_id, Some(slot_id)).await?;
+
+    let control = Arc::new(RuntimeControl::default());
+    control.set_current_session_id(Some(session_id.clone()));
+
+    manager.runtimes.write().await.insert(
+        RuntimeSlotKey {
+            agent_id: "default".to_string(),
+            slot_id: slot_id.to_string(),
+        },
+        Arc::new(AgentRuntimeHandle {
+            queue: Arc::new(Mutex::new(VecDeque::new())),
+            notify: Arc::new(Notify::new()),
+            control,
+            task: None,
+            queued_tasks: Arc::new(AtomicUsize::new(0)),
+            active_tasks: Arc::new(AtomicUsize::new(0)),
+        }),
+    );
+
+    let resumed = manager
+        .resume_session(
+            &session_id,
+            Some(slot_id),
+            Some("telegram-ops".to_string()),
+            InferenceOverrideConfig::default(),
+        )
+        .await?;
+
+    assert_eq!(resumed.slot_id, slot_id);
+    assert_eq!(resumed.session_id, session_id);
+    assert_eq!(resumed.agent_id, "default");
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn explicit_runtime_slots_allow_multiple_live_runtimes_for_one_session() -> anyhow::Result<()>
 {
     let tmp = tempdir()?;

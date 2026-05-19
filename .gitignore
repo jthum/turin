@@ -1,5 +1,6 @@
 # Rust / Cargo
 /target/
+/tools/perf-suite/target/
 **/*.rs.bk
 Cargo.lock
 /.cargo/
