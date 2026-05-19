@@ -3,6 +3,7 @@ use tempfile::tempdir;
 use turin_channel_core::{
     ChannelKind, ChannelMessageRef, ChannelSessionScope, ChannelUser, MessageBlock,
 };
+use turin_types::TaskInputContent;
 
 #[test]
 fn stream_mode_parse_normalizes_known_values() {
