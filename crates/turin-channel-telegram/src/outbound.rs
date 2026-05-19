@@ -3,7 +3,7 @@ use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use std::path::{Path, PathBuf};
 use turin_channel_core::{ChannelAttachment, MessageBlock, OutboundMessage};
 
-use crate::{TelegramAttachmentKind, TelegramAudio};
+use crate::inbound::{TelegramAttachmentKind, TelegramAudio};
 
 pub(crate) const TELEGRAM_MESSAGE_MAX_LEN: usize = 4_096;
 
