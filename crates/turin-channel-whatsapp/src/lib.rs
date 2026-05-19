@@ -38,7 +38,9 @@ use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust_tokio_transport::TokioWebSocketTransportFactory;
 use whatsapp_rust_ureq_http_client::UreqHttpClient;
 
+mod render;
 mod settings;
+use render::render_whatsapp_message;
 pub(crate) use settings::{
     WhatsAppAccountMode, optional_nonempty_string, parse_settings, resolve_auth_store_path,
     sanitize_component, settings_object, validate_pair_code_fields,
@@ -1193,32 +1195,6 @@ fn tighten_path_permissions(path: &Path, mode: u32) -> Result<()> {
 #[cfg(not(unix))]
 fn tighten_path_permissions(_path: &Path, _mode: u32) -> Result<()> {
     Ok(())
-}
-
-fn render_whatsapp_message(message: &OutboundMessage) -> String {
-    let mut parts = Vec::new();
-    for block in &message.blocks {
-        match block {
-            turin_channel_core::MessageBlock::Text { text } => {
-                if !text.trim().is_empty() {
-                    parts.push(text.trim().to_string());
-                }
-            }
-            turin_channel_core::MessageBlock::CodeBlock { language, code } => {
-                let mut fenced = String::from("```");
-                if let Some(language) = language.as_deref()
-                    && !language.trim().is_empty()
-                {
-                    fenced.push_str(language.trim());
-                }
-                fenced.push('\n');
-                fenced.push_str(code.trim_end());
-                fenced.push_str("\n```");
-                parts.push(fenced);
-            }
-        }
-    }
-    parts.join("\n\n")
 }
 
 fn image_name(message: &wa::message::ImageMessage, message_id: &str) -> String {
