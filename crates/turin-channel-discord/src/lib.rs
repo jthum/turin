@@ -429,13 +429,13 @@ fn read_discord_session_scope(value: Option<&serde_json::Value>) -> Result<Chann
             "[discord_config_invalid_session_scope] Discord channel setting 'session_scope' must be a string"
         )
     })?;
-    match scope.trim().to_ascii_lowercase().as_str() {
-        "user" => Ok(ChannelSessionScope::User),
-        "thread" => Ok(ChannelSessionScope::Thread),
-        _ => anyhow::bail!(
+    ChannelSessionScope::parse(scope)
+        .filter(|scope| scope.is_allowed_by(&[ChannelSessionScope::User, ChannelSessionScope::Thread]))
+        .ok_or_else(|| {
+            anyhow!(
             "[discord_config_invalid_session_scope] Discord channel setting 'session_scope' must be one of: user, thread"
-        ),
-    }
+        )
+        })
 }
 
 type DiscordWsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;

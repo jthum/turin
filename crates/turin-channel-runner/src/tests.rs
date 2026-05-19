@@ -4,6 +4,27 @@ use turin_channel_core::{
     ChannelKind, ChannelMessageRef, ChannelSessionScope, ChannelUser, MessageBlock,
 };
 
+#[test]
+fn stream_mode_parse_normalizes_known_values() {
+    assert_eq!(
+        ChannelStreamMode::parse("off"),
+        Some(ChannelStreamMode::Off)
+    );
+    assert_eq!(
+        ChannelStreamMode::parse(" Typing "),
+        Some(ChannelStreamMode::Typing)
+    );
+    assert_eq!(
+        ChannelStreamMode::parse("DRAFT"),
+        Some(ChannelStreamMode::Draft)
+    );
+    assert_eq!(
+        ChannelStreamMode::parse("block"),
+        Some(ChannelStreamMode::Block)
+    );
+    assert_eq!(ChannelStreamMode::parse("partial"), None);
+}
+
 struct TestDriver;
 
 #[async_trait::async_trait]

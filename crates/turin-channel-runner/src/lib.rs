@@ -300,6 +300,29 @@ pub enum ChannelStreamMode {
 }
 
 impl ChannelStreamMode {
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "off" => Some(Self::Off),
+            "typing" => Some(Self::Typing),
+            "draft" => Some(Self::Draft),
+            "block" => Some(Self::Block),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Typing => "typing",
+            Self::Draft => "draft",
+            Self::Block => "block",
+        }
+    }
+
+    pub fn is_allowed_by(self, allowed: &[Self]) -> bool {
+        allowed.contains(&self)
+    }
+
     pub fn sends_typing(self) -> bool {
         matches!(self, Self::Typing | Self::Draft | Self::Block)
     }

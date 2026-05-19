@@ -2768,13 +2768,13 @@ fn read_stream_mode(value: Option<&serde_json::Value>) -> Result<ChannelStreamMo
             )
         })?,
     };
-    match raw {
-        "off" => Ok(ChannelStreamMode::Off),
-        "typing" => Ok(ChannelStreamMode::Typing),
-        _ => anyhow::bail!(
+    let mode = ChannelStreamMode::parse(raw)
+        .filter(|mode| mode.is_allowed_by(&[ChannelStreamMode::Off, ChannelStreamMode::Typing]));
+    mode.ok_or_else(|| {
+        anyhow!(
             "[rocketchat_config_invalid_stream_mode] Rocket.Chat channel setting 'stream_mode' must be one of: off, typing"
-        ),
-    }
+        )
+    })
 }
 
 fn read_session_scope(value: Option<&serde_json::Value>) -> Result<ChannelSessionScope> {
@@ -2786,14 +2786,11 @@ fn read_session_scope(value: Option<&serde_json::Value>) -> Result<ChannelSessio
             )
         })?,
     };
-    match raw {
-        "user" => Ok(ChannelSessionScope::User),
-        "thread" => Ok(ChannelSessionScope::Thread),
-        "room" => Ok(ChannelSessionScope::Room),
-        _ => anyhow::bail!(
+    ChannelSessionScope::parse(raw).ok_or_else(|| {
+        anyhow!(
             "[rocketchat_config_invalid_session_scope] Rocket.Chat channel setting 'session_scope' must be one of: user, thread, room"
-        ),
-    }
+        )
+    })
 }
 
 fn read_optional_session_scope(
@@ -2809,15 +2806,12 @@ fn read_optional_session_scope(
             key
         )
     })?;
-    match scope {
-        "user" => Ok(Some(ChannelSessionScope::User)),
-        "thread" => Ok(Some(ChannelSessionScope::Thread)),
-        "room" => Ok(Some(ChannelSessionScope::Room)),
-        _ => anyhow::bail!(
+    ChannelSessionScope::parse(scope).map(Some).ok_or_else(|| {
+        anyhow!(
             "[rocketchat_config_invalid_session_scope] Rocket.Chat channel setting '{}' must be one of: user, thread, room",
             key
-        ),
-    }
+        )
+    })
 }
 
 fn reject_deprecated_session_scope_keys(

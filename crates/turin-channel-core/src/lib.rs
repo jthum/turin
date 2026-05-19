@@ -93,6 +93,27 @@ pub enum ChannelSessionScope {
 }
 
 impl ChannelSessionScope {
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "user" => Some(Self::User),
+            "thread" => Some(Self::Thread),
+            "room" => Some(Self::Room),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Thread => "thread",
+            Self::Room => "room",
+        }
+    }
+
+    pub fn is_allowed_by(self, allowed: &[Self]) -> bool {
+        allowed.contains(&self)
+    }
+
     pub fn is_shared(self) -> bool {
         !matches!(self, Self::User)
     }

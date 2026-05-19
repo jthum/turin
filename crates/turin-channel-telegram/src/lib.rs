@@ -2364,14 +2364,11 @@ fn read_telegram_session_scope(value: Option<&serde_json::Value>) -> Result<Chan
             "[telegram_config_invalid_session_scope] Telegram channel setting 'session_scope' must be a string"
         )
     })?;
-    match scope.trim().to_ascii_lowercase().as_str() {
-        "user" => Ok(ChannelSessionScope::User),
-        "thread" => Ok(ChannelSessionScope::Thread),
-        "room" => Ok(ChannelSessionScope::Room),
-        _ => anyhow::bail!(
+    ChannelSessionScope::parse(scope).ok_or_else(|| {
+        anyhow!(
             "[telegram_config_invalid_session_scope] Telegram channel setting 'session_scope' must be one of: user, thread, room"
-        ),
-    }
+        )
+    })
 }
 
 fn read_optional_telegram_session_scope(
@@ -2387,15 +2384,12 @@ fn read_optional_telegram_session_scope(
             key
         )
     })?;
-    match scope.trim().to_ascii_lowercase().as_str() {
-        "user" => Ok(Some(ChannelSessionScope::User)),
-        "thread" => Ok(Some(ChannelSessionScope::Thread)),
-        "room" => Ok(Some(ChannelSessionScope::Room)),
-        _ => anyhow::bail!(
+    ChannelSessionScope::parse(scope).map(Some).ok_or_else(|| {
+        anyhow!(
             "[telegram_config_invalid_session_scope] Telegram channel setting '{}' must be one of: user, thread, room",
             key
-        ),
-    }
+        )
+    })
 }
 
 fn reject_deprecated_session_scope_keys(
@@ -2438,15 +2432,11 @@ fn read_stream_mode(value: Option<&serde_json::Value>) -> Result<ChannelStreamMo
             "[telegram_config_invalid_stream_mode] Telegram channel setting 'stream_mode' must be a string"
         )
     })?;
-    match mode.trim().to_ascii_lowercase().as_str() {
-        "off" => Ok(ChannelStreamMode::Off),
-        "typing" => Ok(ChannelStreamMode::Typing),
-        "draft" => Ok(ChannelStreamMode::Draft),
-        "block" => Ok(ChannelStreamMode::Block),
-        _ => anyhow::bail!(
+    ChannelStreamMode::parse(mode).ok_or_else(|| {
+        anyhow!(
             "[telegram_config_invalid_stream_mode] Telegram channel setting 'stream_mode' must be one of: off, typing, draft, block"
-        ),
-    }
+        )
+    })
 }
 
 fn progress_key(conversation: &ChannelConversationKey) -> Result<String> {

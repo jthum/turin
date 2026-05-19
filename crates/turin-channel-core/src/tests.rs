@@ -1,5 +1,22 @@
 use super::*;
 
+#[test]
+fn session_scope_parse_normalizes_known_values() {
+    assert_eq!(
+        ChannelSessionScope::parse("user"),
+        Some(ChannelSessionScope::User)
+    );
+    assert_eq!(
+        ChannelSessionScope::parse(" Thread "),
+        Some(ChannelSessionScope::Thread)
+    );
+    assert_eq!(
+        ChannelSessionScope::parse("ROOM"),
+        Some(ChannelSessionScope::Room)
+    );
+    assert_eq!(ChannelSessionScope::parse("guild"), None);
+}
+
 fn key() -> ChannelConversationKey {
     ChannelConversationKey {
         channel: ChannelKind::new("discord"),
