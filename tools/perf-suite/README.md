@@ -46,7 +46,7 @@ cargo run --release --manifest-path tools/perf-suite/Cargo.toml -- \
 
 - process RSS from `/proc`
 - process PSS from `/proc/self/smaps_rollup` when available
-- state DB size, including WAL/SHM siblings
+- state DB size, split into main DB, WAL, SHM, and total bytes
 - session history length
 - turn count
 - elapsed wall time

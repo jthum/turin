@@ -145,6 +145,9 @@ struct Snapshot {
     elapsed_ms: u128,
     rss_kb: Option<u64>,
     pss_kb: Option<u64>,
+    state_db_main_bytes: u64,
+    state_db_wal_bytes: u64,
+    state_db_shm_bytes: u64,
     state_db_bytes: u64,
     turn_index: Option<u32>,
     history_len: Option<usize>,
@@ -157,6 +160,19 @@ struct Snapshot {
 struct ProcessMemory {
     rss_kb: Option<u64>,
     pss_kb: Option<u64>,
+}
+
+#[derive(Debug)]
+struct StateStoreSize {
+    main_bytes: u64,
+    wal_bytes: u64,
+    shm_bytes: u64,
+}
+
+impl StateStoreSize {
+    fn total_bytes(&self) -> u64 {
+        self.main_bytes + self.wal_bytes + self.shm_bytes
+    }
 }
 
 struct SequencePerfProvider {
@@ -786,12 +802,16 @@ fn snapshot(
     messages_per_session: Option<usize>,
 ) -> Snapshot {
     let memory = read_process_memory();
+    let state_store_size = state_store_size(state_db_path);
     Snapshot {
         label: label.to_string(),
         elapsed_ms: start.elapsed().as_millis(),
         rss_kb: memory.rss_kb,
         pss_kb: memory.pss_kb,
-        state_db_bytes: state_store_bytes(state_db_path),
+        state_db_main_bytes: state_store_size.main_bytes,
+        state_db_wal_bytes: state_store_size.wal_bytes,
+        state_db_shm_bytes: state_store_size.shm_bytes,
+        state_db_bytes: state_store_size.total_bytes(),
         turn_index,
         history_len,
         outbound_messages,
@@ -856,13 +876,17 @@ fn parse_kb_line(line: &str, key: &str) -> Option<u64> {
         .ok()
 }
 
-fn state_store_bytes(state_db_path: &Path) -> u64 {
-    let mut total = file_len(state_db_path);
-    for suffix in ["-wal", "-shm"] {
-        let sibling = PathBuf::from(format!("{}{}", state_db_path.display(), suffix));
-        total += file_len(&sibling);
+fn state_store_size(state_db_path: &Path) -> StateStoreSize {
+    StateStoreSize {
+        main_bytes: file_len(state_db_path),
+        wal_bytes: sibling_len(state_db_path, "-wal"),
+        shm_bytes: sibling_len(state_db_path, "-shm"),
     }
-    total
+}
+
+fn sibling_len(path: &Path, suffix: &str) -> u64 {
+    let sibling = PathBuf::from(format!("{}{}", path.display(), suffix));
+    file_len(&sibling)
 }
 
 fn file_len(path: &Path) -> u64 {
@@ -893,16 +917,19 @@ fn markdown_report(report: &PerfReport) -> String {
     out.push_str(&format!("- workspace_root: `{}`\n", report.workspace_root));
     out.push_str(&format!("- state_db_path: `{}`\n\n", report.state_db_path));
     out.push_str(
-        "| label | elapsed_ms | rss_kb | pss_kb | state_db_bytes | turn_index | history_len | outbound_messages | active_sessions | messages_per_session |\n",
+        "| label | elapsed_ms | rss_kb | pss_kb | state_db_main_bytes | state_db_wal_bytes | state_db_shm_bytes | state_db_bytes | turn_index | history_len | outbound_messages | active_sessions | messages_per_session |\n",
     );
-    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     for snapshot in &report.snapshots {
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             snapshot.label,
             snapshot.elapsed_ms,
             display_option(snapshot.rss_kb),
             display_option(snapshot.pss_kb),
+            snapshot.state_db_main_bytes,
+            snapshot.state_db_wal_bytes,
+            snapshot.state_db_shm_bytes,
             snapshot.state_db_bytes,
             display_u32_option(snapshot.turn_index),
             display_usize_option(snapshot.history_len),
