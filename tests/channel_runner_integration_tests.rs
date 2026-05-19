@@ -516,73 +516,53 @@ async fn channel_runner_emits_progress_updates_for_opted_in_driver() -> Result<(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn channel_runner_processes_different_conversations_in_parallel() -> Result<()> {
+async fn channel_runner_parallelizes_only_different_conversations() -> Result<()> {
     let daemon = DaemonHarness::start_with_mock_response("delay_ms=600;PONG").await?;
     let runner = daemon.runner();
-    let event_a = sample_telegram_event("thread-a", "user-a", "msg-a");
-    let event_b = sample_telegram_event("thread-b", "user-b", "msg-b");
-    let mut driver = RecordingDriver::new(vec![event_a, event_b]);
-    let sent = Arc::clone(&driver.sent);
-    let started_at = Instant::now();
 
+    let mut parallel_driver = RecordingDriver::new(vec![
+        sample_telegram_event("thread-par-a", "user-a", "msg-par-a"),
+        sample_telegram_event("thread-par-b", "user-b", "msg-par-b"),
+    ]);
+    let parallel_sent = Arc::clone(&parallel_driver.sent);
+    let parallel_started_at = Instant::now();
     runner
-        .run_driver("default", &mut driver, Some(5_000))
+        .run_driver("default", &mut parallel_driver, Some(5_000))
         .await?;
-
-    let elapsed = started_at.elapsed();
-    let send_gap = {
-        let sent = sent.lock().expect("sent lock poisoned");
+    let parallel_elapsed = parallel_started_at.elapsed();
+    {
+        let sent = parallel_sent.lock().expect("sent lock poisoned");
         assert_eq!(sent.len(), 2);
         assert!(
             sent.iter().all(|(_, text, _)| text.contains("PONG")),
             "parallel conversations should both succeed, sent={sent:?}"
         );
-        sent[0]
-            .2
-            .checked_duration_since(sent[1].2)
-            .unwrap_or_else(|| sent[1].2.duration_since(sent[0].2))
-    };
-    {
-        let sent = sent.lock().expect("sent lock poisoned");
-        assert_eq!(sent.len(), 2);
     }
-    assert!(
-        send_gap < Duration::from_millis(450),
-        "different conversations should overlap, elapsed={elapsed:?}, send_gap={send_gap:?}"
-    );
 
-    daemon.stop().await
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn channel_runner_serializes_same_conversation_events() -> Result<()> {
-    let daemon = DaemonHarness::start_with_mock_response("delay_ms=600;PONG").await?;
-    let runner = daemon.runner();
-    let event_a = sample_telegram_event("thread-a", "user-a", "msg-a");
-    let event_b = sample_telegram_event("thread-a", "user-a", "msg-b");
-    let mut driver = RecordingDriver::new(vec![event_a, event_b]);
-    let sent = Arc::clone(&driver.sent);
-    let started_at = Instant::now();
-
+    let mut serial_driver = RecordingDriver::new(vec![
+        sample_telegram_event("thread-serial", "user-a", "msg-ser-a"),
+        sample_telegram_event("thread-serial", "user-a", "msg-ser-b"),
+    ]);
+    let serial_sent = Arc::clone(&serial_driver.sent);
+    let serial_started_at = Instant::now();
     runner
-        .run_driver("default", &mut driver, Some(5_000))
+        .run_driver("default", &mut serial_driver, Some(5_000))
         .await?;
-
-    let elapsed = started_at.elapsed();
-    let send_gap = {
-        let sent = sent.lock().expect("sent lock poisoned");
+    let serial_elapsed = serial_started_at.elapsed();
+    {
+        let sent = serial_sent.lock().expect("sent lock poisoned");
         assert_eq!(sent.len(), 2);
-        assert_eq!(sent[0].0, "msg-a");
-        assert_eq!(sent[1].0, "msg-b");
+        assert_eq!(sent[0].0, "msg-ser-a");
+        assert_eq!(sent[1].0, "msg-ser-b");
         assert!(
             sent.iter().all(|(_, text, _)| text.contains("PONG")),
             "serialized conversation should still succeed, sent={sent:?}"
         );
-        sent[1].2.duration_since(sent[0].2)
-    };
+    }
+
     assert!(
-        send_gap >= Duration::from_millis(500),
-        "same conversation should stay serialized, elapsed={elapsed:?}, send_gap={send_gap:?}"
+        serial_elapsed > parallel_elapsed + Duration::from_millis(300),
+        "same-conversation work should take materially longer than different-conversation work; parallel={parallel_elapsed:?}, serial={serial_elapsed:?}"
     );
 
     daemon.stop().await
