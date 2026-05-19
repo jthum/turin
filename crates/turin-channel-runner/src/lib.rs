@@ -22,12 +22,14 @@ use turin_types::{TaskInputContent, ToolsConfig};
 
 mod access;
 mod bindings;
+mod stream;
 
 pub use access::{
     ApprovedRoomView, ChannelAccessPolicy, ChannelAccessSnapshot, ChannelRoomRef,
     FileAccessStateStore, PairingMode, PendingRoomView,
 };
 pub use bindings::FileBindingStore;
+pub use stream::{ChannelProgressUpdate, ChannelStreamMode};
 
 #[cfg(test)]
 pub(crate) use access::AccessStateFile;
@@ -35,6 +37,10 @@ pub(crate) use access::{
     ApprovedRoom, ChannelRoomKey, PendingRoom, serialize_room_key, unix_seconds,
 };
 pub(crate) use bindings::serialize_binding_key;
+pub(crate) use stream::{
+    WorkerStreamConfig, attach_final_thinking, preview_char_count, preview_thinking,
+    should_flush_preview, should_subscribe_to_session_events,
+};
 
 const RUNNER_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 
@@ -130,56 +136,6 @@ pub struct TaskSnapshot {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChannelStreamMode {
-    Off,
-    Typing,
-    Draft,
-    Block,
-}
-
-impl ChannelStreamMode {
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "off" => Some(Self::Off),
-            "typing" => Some(Self::Typing),
-            "draft" => Some(Self::Draft),
-            "block" => Some(Self::Block),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Typing => "typing",
-            Self::Draft => "draft",
-            Self::Block => "block",
-        }
-    }
-
-    pub fn is_allowed_by(self, allowed: &[Self]) -> bool {
-        allowed.contains(&self)
-    }
-
-    pub fn sends_typing(self) -> bool {
-        matches!(self, Self::Typing | Self::Draft | Self::Block)
-    }
-
-    pub fn streams_text(self) -> bool {
-        matches!(self, Self::Draft | Self::Block)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ChannelProgressUpdate {
-    Typing,
-    StreamingPreview {
-        text: String,
-        thinking: Option<String>,
-    },
-}
-
 enum EventAccessDecision {
     Allow,
     Pending { notify: bool },
@@ -245,13 +201,6 @@ pub struct ChannelRunner {
     idle_ttl: Option<Duration>,
     access_policy: ChannelAccessPolicy,
     tools: ToolsConfig,
-}
-
-#[derive(Debug, Clone)]
-struct WorkerStreamConfig {
-    mode: ChannelStreamMode,
-    stream_thinking: bool,
-    persist_thinking: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1129,68 +1078,6 @@ async fn next_managed_event(
 ) -> Result<turin_daemon_protocol::EventEnvelope> {
     let stream = stream.context("managed event stream missing")?;
     stream.next_event().await
-}
-
-fn should_flush_preview(
-    stream_mode: ChannelStreamMode,
-    text_preview: &str,
-    thinking_preview: Option<&str>,
-    last_flushed_chars: usize,
-    last_flush_at: Instant,
-) -> bool {
-    let current_chars = preview_char_count(text_preview, thinking_preview);
-    if current_chars <= last_flushed_chars {
-        return false;
-    }
-
-    let new_chars = current_chars.saturating_sub(last_flushed_chars);
-    match stream_mode {
-        ChannelStreamMode::Draft => {
-            new_chars >= 32 || last_flush_at.elapsed() >= Duration::from_millis(800)
-        }
-        ChannelStreamMode::Block => {
-            new_chars >= 160
-                || (new_chars >= 64
-                    && last_flush_at.elapsed() >= Duration::from_millis(1500)
-                    && (text_preview.ends_with('\n') || text_preview.ends_with(". ")))
-        }
-        _ => false,
-    }
-}
-
-fn preview_char_count(text_preview: &str, thinking_preview: Option<&str>) -> usize {
-    text_preview.chars().count()
-        + thinking_preview
-            .map(|thinking| thinking.chars().count())
-            .unwrap_or_default()
-}
-
-fn preview_thinking(include_thinking: bool, thinking_preview: &str) -> Option<String> {
-    if !include_thinking || thinking_preview.trim().is_empty() {
-        return None;
-    }
-    Some(thinking_preview.to_string())
-}
-
-fn should_subscribe_to_session_events(stream: &WorkerStreamConfig) -> bool {
-    stream.mode.streams_text() || stream.stream_thinking || stream.persist_thinking
-}
-
-fn attach_final_thinking(
-    mut outbound: OutboundMessage,
-    thinking: Option<String>,
-) -> OutboundMessage {
-    let Some(thinking) = thinking.map(|value| value.trim().to_string()) else {
-        return outbound;
-    };
-    if thinking.is_empty() {
-        return outbound;
-    }
-    outbound.metadata.insert(
-        "channel_final_thinking".to_string(),
-        Value::String(thinking),
-    );
-    outbound
 }
 
 #[derive(Debug, Clone, Deserialize)]
