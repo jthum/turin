@@ -248,6 +248,42 @@ fn hot_history_preserves_tool_result_adjacency_at_boundary() {
 }
 
 #[test]
+fn hot_history_trims_old_large_tool_results_but_keeps_recent_payloads() {
+    let mut session = SessionState::new();
+    for idx in 0..10 {
+        session.history.push(InferenceMessage {
+            role: InferenceRole::Tool,
+            content: vec![InferenceContent::ToolResult {
+                tool_use_id: format!("call-{idx}"),
+                content: "x".repeat(256),
+                is_error: false,
+            }],
+            tool_call_id: None,
+        });
+    }
+
+    let report = session
+        .trim_hot_history_payloads(Some(64))
+        .expect("older large tool results should be trimmed");
+
+    assert_eq!(report.trimmed_tool_results, 2);
+    assert!(report.dropped_bytes > 0);
+    match &session.history[0].content[0] {
+        InferenceContent::ToolResult { content, .. } => {
+            assert!(content.contains("full content remains in persisted session history"));
+            assert!(content.contains("original_bytes=256"));
+        }
+        other => panic!("expected tool result, got {other:?}"),
+    }
+    match &session.history[9].content[0] {
+        InferenceContent::ToolResult { content, .. } => {
+            assert_eq!(content.len(), 256);
+        }
+        other => panic!("expected tool result, got {other:?}"),
+    }
+}
+
+#[test]
 fn replacing_full_history_resets_hot_window_offset() {
     let mut session = SessionState::new();
     for idx in 0..4 {

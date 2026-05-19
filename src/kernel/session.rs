@@ -21,6 +21,8 @@ pub type SessionHarnessEngine = Arc<std::sync::Mutex<HarnessInstance>>;
 pub type CompletedLocalTaskResultsHandle = Arc<RwLock<CompletedLocalTaskResults>>;
 
 const MAX_COMPLETED_LOCAL_TASK_RESULTS: usize = 128;
+const HOT_HISTORY_RECENT_PAYLOAD_MESSAGES: usize = 8;
+const HOT_HISTORY_TRUNCATED_TOOL_RESULT_MARKER: &str = "[older tool result omitted from hot memory; full content remains in persisted session history]";
 
 /// Transient per-task execution state that is reset when a task completes.
 #[derive(Debug, Default)]
@@ -653,6 +655,55 @@ impl SessionState {
         })
     }
 
+    pub fn trim_hot_history_payloads(
+        &mut self,
+        max_tool_result_bytes: Option<usize>,
+    ) -> Option<HotHistoryPayloadTrim> {
+        let max_tool_result_bytes = max_tool_result_bytes?;
+        let trim_before = self
+            .history
+            .len()
+            .saturating_sub(HOT_HISTORY_RECENT_PAYLOAD_MESSAGES);
+        let mut trimmed_tool_results = 0usize;
+        let mut dropped_bytes = 0usize;
+
+        for message in self.history.iter_mut().take(trim_before) {
+            for part in &mut message.content {
+                let InferenceContent::ToolResult {
+                    content,
+                    is_error: false,
+                    ..
+                } = part
+                else {
+                    continue;
+                };
+                if content.len() <= max_tool_result_bytes
+                    || content.starts_with(HOT_HISTORY_TRUNCATED_TOOL_RESULT_MARKER)
+                {
+                    continue;
+                }
+
+                let original_len = content.len();
+                *content = format!(
+                    "{HOT_HISTORY_TRUNCATED_TOOL_RESULT_MARKER} original_bytes={original_len}"
+                );
+                content.shrink_to_fit();
+                trimmed_tool_results = trimmed_tool_results.saturating_add(1);
+                dropped_bytes =
+                    dropped_bytes.saturating_add(original_len.saturating_sub(content.len()));
+            }
+        }
+
+        if trimmed_tool_results == 0 {
+            return None;
+        }
+
+        Some(HotHistoryPayloadTrim {
+            trimmed_tool_results,
+            dropped_bytes,
+        })
+    }
+
     pub fn execution_id(&self) -> &str {
         &self.execution.execution_id
     }
@@ -839,6 +890,12 @@ pub struct HotHistoryPrune {
     pub dropped_messages: usize,
     pub retained_messages: usize,
     pub retained_offset: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HotHistoryPayloadTrim {
+    pub trimmed_tool_results: usize,
+    pub dropped_bytes: usize,
 }
 
 fn history_boundary_requires_previous(

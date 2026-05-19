@@ -259,6 +259,12 @@ impl TurinConfig {
                 "inference.hot_history.max_messages must be greater than 0"
             );
         }
+        if let Some(max_tool_result_bytes) = self.inference.hot_history.max_tool_result_bytes {
+            anyhow::ensure!(
+                max_tool_result_bytes > 0,
+                "inference.hot_history.max_tool_result_bytes must be greater than 0"
+            );
+        }
 
         if let Some(ttl_ms) = self.governance.grants.max_ttl_ms {
             anyhow::ensure!(

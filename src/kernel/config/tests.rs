@@ -216,6 +216,7 @@ type = "openai"
 [inference.hot_history]
 profile = "performance"
 max_messages = 128
+max_tool_result_bytes = 4096
 "#;
 
     let config = TurinConfig::from_str(toml).unwrap();
@@ -226,6 +227,13 @@ max_messages = 128
     assert_eq!(
         config.inference.hot_history.effective_max_messages(),
         Some(128)
+    );
+    assert_eq!(
+        config
+            .inference
+            .hot_history
+            .effective_max_tool_result_bytes(),
+        Some(4096)
     );
 }
 
@@ -241,6 +249,23 @@ type = "openai"
 
 [inference.hot_history]
 max_messages = 0
+"#;
+
+    assert!(TurinConfig::from_str(toml).is_err());
+}
+
+#[test]
+fn test_validate_invalid_hot_history_max_tool_result_bytes() {
+    let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[inference.hot_history]
+max_tool_result_bytes = 0
 "#;
 
     assert!(TurinConfig::from_str(toml).is_err());

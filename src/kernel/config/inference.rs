@@ -26,6 +26,8 @@ pub struct HotHistoryConfig {
     pub profile: HotHistoryProfile,
     #[serde(default)]
     pub max_messages: Option<usize>,
+    #[serde(default)]
+    pub max_tool_result_bytes: Option<usize>,
 }
 
 impl Default for HotHistoryConfig {
@@ -33,6 +35,7 @@ impl Default for HotHistoryConfig {
         Self {
             profile: HotHistoryProfile::Default,
             max_messages: None,
+            max_tool_result_bytes: None,
         }
     }
 }
@@ -41,6 +44,11 @@ impl HotHistoryConfig {
     pub fn effective_max_messages(&self) -> Option<usize> {
         self.max_messages
             .or_else(|| self.profile.default_max_messages())
+    }
+
+    pub fn effective_max_tool_result_bytes(&self) -> Option<usize> {
+        self.max_tool_result_bytes
+            .or_else(|| self.profile.default_max_tool_result_bytes())
     }
 }
 
@@ -58,6 +66,14 @@ impl HotHistoryProfile {
         match self {
             Self::Default => Some(64),
             Self::Performance => Some(256),
+            Self::Debug => None,
+        }
+    }
+
+    fn default_max_tool_result_bytes(self) -> Option<usize> {
+        match self {
+            Self::Default => Some(64 * 1024),
+            Self::Performance => Some(256 * 1024),
             Self::Debug => None,
         }
     }
