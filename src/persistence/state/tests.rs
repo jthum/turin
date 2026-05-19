@@ -85,6 +85,203 @@ async fn test_events_isolated_by_session() {
 }
 
 #[tokio::test]
+async fn test_scheduled_job_run_bookkeeping_tracks_parallel_active_runs() {
+    let store = StateStore::open_memory().await.unwrap();
+    let job_id = store
+        .create_scheduled_job(ScheduledJobInsert {
+            public_id: uuid::Uuid::now_v7(),
+            agent_id: "default",
+            job_kind: "prompt",
+            prompt: Some("Run maintenance"),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action_name: None,
+            action_params: None,
+            state_target: None,
+            store_target: None,
+            next_run_unix_ms: 1_700_000_000_000,
+            interval_seconds: Some(60),
+            recurring_pattern: None,
+            overlap_policy: "parallel",
+            work_key: Some("maintenance"),
+            max_concurrency: Some(2),
+            enabled: true,
+        })
+        .await
+        .unwrap();
+
+    store
+        .mark_scheduled_job_started(job_id, "task-a", 1_700_000_060_000, true, 1_700_000_000_000)
+        .await
+        .unwrap();
+    store
+        .mark_scheduled_job_started(job_id, "task-b", 1_700_000_120_000, true, 1_700_000_060_000)
+        .await
+        .unwrap();
+
+    let running = store
+        .get_scheduled_job_by_id(job_id)
+        .await
+        .unwrap()
+        .expect("scheduled job visible");
+    assert_eq!(running.running_task_id.as_deref(), Some("task-a"));
+    assert_eq!(running.active_run_count, 2);
+    assert_eq!(
+        store.count_active_scheduled_job_runs(job_id).await.unwrap(),
+        2
+    );
+
+    store
+        .finish_scheduled_job_run(
+            job_id,
+            "task-a",
+            1_700_000_070_000,
+            Some("completed: first"),
+        )
+        .await
+        .unwrap();
+    let after_first = store
+        .get_scheduled_job_by_id(job_id)
+        .await
+        .unwrap()
+        .expect("scheduled job visible after first finish");
+    assert_eq!(after_first.running_task_id.as_deref(), Some("task-b"));
+    assert_eq!(after_first.active_run_count, 1);
+    assert_eq!(after_first.last_status.as_deref(), Some("completed: first"));
+
+    store
+        .finish_scheduled_job_run(
+            job_id,
+            "task-b",
+            1_700_000_130_000,
+            Some("completed: second"),
+        )
+        .await
+        .unwrap();
+    let settled = store
+        .get_scheduled_job_by_id(job_id)
+        .await
+        .unwrap()
+        .expect("scheduled job visible after all finishes");
+    assert_eq!(settled.running_task_id, None);
+    assert_eq!(settled.active_run_count, 0);
+    assert_eq!(settled.last_status.as_deref(), Some("completed: second"));
+
+    let run_history = store
+        .list_scheduled_job_runs(job_id, false, None)
+        .await
+        .unwrap();
+    assert_eq!(run_history.len(), 2);
+    assert!(run_history.iter().all(|run| run.finished_unix_ms.is_some()));
+}
+
+#[tokio::test]
+async fn test_work_item_claim_pause_and_complete_lifecycle() {
+    let store = StateStore::open_memory().await.unwrap();
+    let worklist = store
+        .open_worklist("reviews", "project:alpha", Some(r#"{"lane":"qa"}"#))
+        .await
+        .unwrap();
+    let item = store
+        .create_work_item(WorkItemInsert {
+            public_id: uuid::Uuid::now_v7(),
+            worklist_id: worklist.id,
+            parent_item_id: None,
+            title: "Review release notes",
+            item_kind: "prompt",
+            prompt: Some("Review release notes"),
+            content: None,
+            tools: None,
+            conflict_policy: Some("queue"),
+            action_name: None,
+            action_params: None,
+            priority: 10,
+            after_ids: None,
+            metadata: Some(r#"{"paused":true,"pause_reason":"seed","role":"review"}"#),
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        store
+            .try_claim_work_item(
+                item.id,
+                "reviewer",
+                Some("session-a"),
+                Some("exec-a"),
+                1_700_000_000_000
+            )
+            .await
+            .unwrap()
+    );
+    assert!(
+        !store
+            .try_claim_work_item(
+                item.id,
+                "reviewer",
+                Some("session-b"),
+                Some("exec-b"),
+                1_700_000_001_000
+            )
+            .await
+            .unwrap(),
+        "an already active work item must not be double-claimed"
+    );
+    assert!(
+        store
+            .heartbeat_work_item_claim(item.id, "wrong-exec", 1_700_000_002_000)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let heartbeat = store
+        .heartbeat_work_item_claim(item.id, "exec-a", 1_700_000_003_000)
+        .await
+        .unwrap()
+        .expect("matching claim should heartbeat");
+    assert_eq!(heartbeat.claim_heartbeat_unix_ms, Some(1_700_000_003_000));
+
+    let paused = store
+        .pause_work_item(
+            item.id,
+            Some(
+                r#"{"paused":true,"pause_reason":"awaiting_input","pause_until_unix_ms":4102444800000,"role":"review"}"#,
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(paused.status, "paused");
+    assert_eq!(paused.claim_execution_id, None);
+    assert!(
+        store
+            .try_claim_work_item(
+                item.id,
+                "reviewer",
+                Some("session-c"),
+                Some("exec-c"),
+                1_700_000_004_000
+            )
+            .await
+            .unwrap(),
+        "paused items should be claimable when work resumes"
+    );
+
+    let completed = store
+        .complete_work_item(item.id, Some(r#"{"role":"review","result":"ok"}"#))
+        .await
+        .unwrap();
+    assert_eq!(completed.status, "done");
+    assert_eq!(completed.claim_agent_id, None);
+    assert_eq!(completed.claim_execution_id, None);
+    assert!(completed.completed_at.is_some());
+    assert_eq!(
+        completed.metadata.as_deref(),
+        Some(r#"{"role":"review","result":"ok"}"#)
+    );
+}
+
+#[tokio::test]
 async fn test_insert_and_get_messages() {
     let store = StateStore::open_memory().await.unwrap();
     let session = store
