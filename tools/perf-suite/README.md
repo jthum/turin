@@ -27,7 +27,9 @@ The fake channel scenario starts the real daemon, uses the channel runner with a
 ```bash
 cargo run --manifest-path tools/perf-suite/Cargo.toml -- \
   fake-channel \
-  --messages 25
+  --messages 25 \
+  --message-bytes 512 \
+  --response-bytes 1024
 ```
 
 The channel scale scenario measures daemon/channel footprint at cumulative message checkpoints across one or more logical sessions:
@@ -41,6 +43,10 @@ cargo run --release --manifest-path tools/perf-suite/Cargo.toml -- \
   --message-bytes 512 \
   --response-bytes 1024
 ```
+
+Channel scenarios default to 256-byte inbound messages and 1 KiB mocked assistant
+responses. To isolate mostly metadata overhead, make both values intentionally
+small, for example `--message-bytes 16 --response-bytes 4`.
 
 ## What It Measures
 

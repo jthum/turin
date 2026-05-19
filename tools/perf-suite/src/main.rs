@@ -82,9 +82,9 @@ struct FakeChannelArgs {
     #[arg(long, default_value = "PONG")]
     mock_response: String,
 
-    /// Optional target byte size for each mocked assistant response.
-    #[arg(long)]
-    response_bytes: Option<usize>,
+    /// Target byte size for each mocked assistant response.
+    #[arg(long, default_value_t = 1024)]
+    response_bytes: usize,
 
     /// Optional persistent workspace. If omitted, an ephemeral temp dir is used.
     #[arg(long)]
@@ -117,9 +117,9 @@ struct ChannelScaleArgs {
     #[arg(long, default_value = "PONG")]
     mock_response: String,
 
-    /// Optional target byte size for each mocked assistant response.
-    #[arg(long)]
-    response_bytes: Option<usize>,
+    /// Target byte size for each mocked assistant response.
+    #[arg(long, default_value_t = 1024)]
+    response_bytes: usize,
 
     /// Optional persistent workspace. If omitted, an ephemeral temp dir is used.
     #[arg(long)]
@@ -343,7 +343,7 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
         None,
     )];
 
-    let mock_response = sized_text(&args.mock_response, args.response_bytes);
+    let mock_response = synthetic_text(&args.mock_response, args.response_bytes);
     let daemon =
         ChannelDaemonHarness::start(workspace_root.clone(), &state_db_path, &mock_response).await?;
     snapshots.push(snapshot(
@@ -431,7 +431,7 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
         Some(0),
     )]));
 
-    let mock_response = sized_text(&args.mock_response, args.response_bytes);
+    let mock_response = synthetic_text(&args.mock_response, args.response_bytes);
     let daemon =
         ChannelDaemonHarness::start(workspace_root.clone(), &state_db_path, &mock_response).await?;
     snapshots
@@ -1092,13 +1092,6 @@ fn sample_event_for_session(
         ),
         attachments: vec![],
         metadata: Default::default(),
-    }
-}
-
-fn sized_text(seed: &str, target_bytes: Option<usize>) -> String {
-    match target_bytes {
-        Some(bytes) => synthetic_text(seed, bytes),
-        None => seed.to_string(),
     }
 }
 

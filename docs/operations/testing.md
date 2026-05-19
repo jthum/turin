@@ -63,6 +63,16 @@ iteration's log on first error.
 
 Live tests are never run automatically by Turin’s standard cargo commands.
 
+### 3. Performance and footprint baselines (manual / local)
+
+- `tools/perf-suite` hot-history scenarios
+- `tools/perf-suite` fake-channel and channel-scale scenarios
+- release binary size snapshots from `target/release/turin`
+
+These are not pass/fail tests yet. Treat them as baseline reports to compare
+before and after runtime refactors, especially bounded hot history, daemon
+session management, and channel-runner changes.
+
 ## Core Local Validation Commands
 
 ## Fast iteration
@@ -85,6 +95,39 @@ cargo build --release
 stat -c '%s' target/release/turin
 file target/release/turin
 ```
+
+## Performance and Footprint Baselines
+
+The repo-local perf suite uses mocked inference so it can stress Turin without
+spending provider tokens.
+
+Use the shared target directory to avoid creating a second large
+`tools/perf-suite/target` tree:
+
+```bash
+CARGO_TARGET_DIR=target cargo run --manifest-path tools/perf-suite/Cargo.toml -- \
+  channel-scale \
+  --sessions 2 \
+  --messages-per-session 1000 \
+  --checkpoints 10,100,200,1000 \
+  --message-bytes 512 \
+  --response-bytes 1024
+```
+
+For mostly metadata overhead, deliberately shrink payloads:
+
+```bash
+CARGO_TARGET_DIR=target cargo run --manifest-path tools/perf-suite/Cargo.toml -- \
+  channel-scale \
+  --sessions 1 \
+  --messages-per-session 2000 \
+  --message-bytes 16 \
+  --response-bytes 4
+```
+
+Reports are written to `.workspace/perf-reports/`. Capture one report before a
+runtime refactor and another after the change, then compare RSS/PSS, DB main
+file, WAL, SHM, total state bytes, and elapsed time at the same checkpoints.
 
 ## Running Turin Manually
 
