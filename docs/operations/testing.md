@@ -2,6 +2,10 @@
 
 This document covers Turin’s testing strategy and the commands used to validate changes locally.
 
+For major runtime/subsystem refactors, use `docs/operations/refactor-guardrails.md`
+alongside this page. That page defines the capability inventory, characterization
+tests, and perf baselines expected before each refactor phase.
+
 ## Test Layers
 
 Turin validation is layered on purpose.
