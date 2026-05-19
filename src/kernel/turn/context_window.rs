@@ -72,9 +72,10 @@ pub(crate) fn estimate_request_input_tokens(
     estimate_support_tokens(system_prompt, tools) + estimate_messages_tokens(messages)
 }
 
-pub(crate) fn effective_request_context(
+pub(crate) fn effective_request_context_from_window(
     system_prompt: &str,
     messages: &[InferenceMessage],
+    message_offset: usize,
     checkpoint: Option<&ContextCompactionCheckpoint>,
 ) -> EffectiveRequestContext {
     let Some(checkpoint) = checkpoint else {
@@ -84,7 +85,10 @@ pub(crate) fn effective_request_context(
         };
     };
 
-    let covered_message_count = checkpoint.covered_message_count.min(messages.len());
+    let covered_message_count = checkpoint
+        .covered_message_count
+        .saturating_sub(message_offset)
+        .min(messages.len());
     let mut effective_system_prompt = String::with_capacity(
         system_prompt.len() + checkpoint.summary.len() + CONTEXT_SUMMARY_OPEN_TAG.len() + 64,
     );

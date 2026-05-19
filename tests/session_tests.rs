@@ -1285,6 +1285,70 @@ async fn test_long_history_is_compacted_before_inference_request() -> Result<()>
 }
 
 #[tokio::test]
+async fn test_pruned_hot_history_is_used_without_plain_turn_rematerialization() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut config = make_config(tmp.path());
+    config.agent.provider = "capture".to_string();
+    config.agent.model = "capture-model".to_string();
+    config.providers.insert(
+        "capture".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+
+    let seen_messages = Arc::new(Mutex::new(Vec::new()));
+    kernel.add_client(
+        "capture".to_string(),
+        ProviderClient::new(
+            "capture",
+            Arc::new(CaptureMessagesProvider {
+                seen_messages: Arc::clone(&seen_messages),
+            }),
+        ),
+    );
+
+    let mut session = kernel.create_session().await;
+    session.history_message_offset = 12;
+    session
+        .history
+        .push(turin::inference::provider::InferenceMessage {
+            role: turin::inference::provider::InferenceRole::User,
+            content: vec![turin::inference::provider::InferenceContent::Text {
+                text: "hot context should stay resident".to_string(),
+            }],
+            tool_call_id: None,
+        });
+
+    kernel
+        .run(&mut session, Some("current prompt".to_string()))
+        .await?;
+
+    let seen = seen_messages
+        .lock()
+        .expect("capture messages mutex poisoned")
+        .clone();
+    let rendered = format!("{seen:?}");
+    assert!(
+        rendered.contains("hot context should stay resident"),
+        "plain preflight should not rematerialize and discard the hot history window"
+    );
+    assert!(
+        rendered.contains("current prompt"),
+        "expected latest prompt to remain in the inference request"
+    );
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_auto_compaction_creates_and_restores_context_checkpoint() -> Result<()> {
     let tmp = tempdir()?;
     let mut config = make_config(tmp.path());

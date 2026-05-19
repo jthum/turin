@@ -92,7 +92,8 @@ fn effective_request_context_injects_checkpoint_and_drops_covered_history() {
         model: "mock-model".to_string(),
     };
 
-    let effective = effective_request_context("base system", &messages, Some(&checkpoint));
+    let effective =
+        effective_request_context_from_window("base system", &messages, 0, Some(&checkpoint));
 
     assert!(
         effective
@@ -102,6 +103,36 @@ fn effective_request_context_injects_checkpoint_and_drops_covered_history() {
     assert_eq!(effective.messages.len(), 1);
     match &effective.messages[0].content[0] {
         InferenceContent::Text { text } => assert_eq!(text, "recent"),
+        other => panic!("expected recent text message, got {other:?}"),
+    }
+}
+
+#[test]
+fn effective_request_context_applies_checkpoint_to_hot_window_offset() {
+    let messages = vec![
+        text_message(InferenceRole::User, "covered hot message"),
+        text_message(InferenceRole::Assistant, "recent answer"),
+        text_message(InferenceRole::User, "current prompt"),
+    ];
+    let checkpoint = ContextCompactionCheckpoint {
+        summary: "durable context before the hot window".to_string(),
+        covered_message_count: 6,
+        generated_at_turn_index: 4,
+        provider_name: "mock".to_string(),
+        model: "mock-model".to_string(),
+    };
+
+    let effective =
+        effective_request_context_from_window("base system", &messages, 5, Some(&checkpoint));
+
+    assert!(
+        effective
+            .system_prompt
+            .contains("durable context before the hot window")
+    );
+    assert_eq!(effective.messages.len(), 2);
+    match &effective.messages[0].content[0] {
+        InferenceContent::Text { text } => assert_eq!(text, "recent answer"),
         other => panic!("expected recent text message, got {other:?}"),
     }
 }

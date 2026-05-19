@@ -183,6 +183,24 @@ impl HarnessEngine {
         Ok(compose_verdicts(&verdicts))
     }
 
+    pub fn has_hook(&self, hook_name: &str) -> bool {
+        let modules: Value = self
+            .lua
+            .globals()
+            .get("__harness_modules")
+            .unwrap_or(Value::Nil);
+        let Value::Table(modules_table) = modules else {
+            return false;
+        };
+
+        active_module_names(&self.lua).into_iter().any(|name| {
+            modules_table
+                .get::<Table>(name.as_str())
+                .and_then(|module| module.get::<Function>(hook_name))
+                .is_ok()
+        })
+    }
+
     /// Bind the full active execution context for the current task.
     pub fn bind_execution_context(&self, binding: HarnessExecutionBinding) {
         if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()

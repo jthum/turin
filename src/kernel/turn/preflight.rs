@@ -16,8 +16,9 @@ use crate::kernel::event::AuditEvent;
 use crate::kernel::session::SessionState;
 use crate::kernel::turn::context_window::{
     build_checkpoint_summary_request, compact_messages_for_input_budget,
-    effective_input_budget_tokens, effective_request_context, estimate_history_input_tokens,
-    estimate_request_input_tokens, resolve_context_window_tokens, target_checkpoint_coverage,
+    effective_input_budget_tokens, effective_request_context_from_window,
+    estimate_history_input_tokens, estimate_request_input_tokens, resolve_context_window_tokens,
+    target_checkpoint_coverage,
 };
 
 use super::super::event::{KernelEvent, LifecycleEvent};
@@ -51,14 +52,16 @@ impl ExecutionHost {
         session: &mut SessionState,
         turn_ctx: &TurnContext,
     ) -> Result<TurnPreflight> {
-        self.ensure_full_history_materialized(session).await?;
         let mut req = self.default_turn_request_state(session)?;
 
         if self.emit_turn_start_and_gate(session, turn_ctx) {
             return Ok(TurnPreflight::Rejected);
         }
 
-        if self.emit_turn_prepare_and_apply_hook(session, turn_ctx, &mut req)? {
+        if self
+            .emit_turn_prepare_and_apply_hook(session, turn_ctx, &mut req)
+            .await?
+        {
             return Ok(TurnPreflight::Rejected);
         }
 
@@ -166,7 +169,7 @@ impl ExecutionHost {
         false
     }
 
-    fn emit_turn_prepare_and_apply_hook(
+    async fn emit_turn_prepare_and_apply_hook(
         &mut self,
         session: &mut SessionState,
         turn_ctx: &TurnContext,
@@ -183,10 +186,19 @@ impl ExecutionHost {
             }),
         );
 
-        let token_count = estimate_history_input_tokens(&req.system_prompt, &session.history);
-        let token_limit = self.estimate_turn_context_window_tokens(session, req)?;
+        let has_prepare_hook = self.session_harness_engine(session).is_some_and(|harness| {
+            harness
+                .lock()
+                .expect("session harness mutex poisoned")
+                .has_hook("on_turn_prepare")
+        });
+        if has_prepare_hook {
+            self.ensure_full_history_materialized(session).await?;
+        }
 
-        if let Some(harness) = self.session_harness_engine(session) {
+        if has_prepare_hook && let Some(harness) = self.session_harness_engine(session) {
+            let token_count = estimate_history_input_tokens(&req.system_prompt, &session.history);
+            let token_limit = self.estimate_turn_context_window_tokens(session, req)?;
             let engine = harness.lock().expect("session harness mutex poisoned");
             let ctx = ContextWrapper::new(
                 req.inference_context.clone(),
@@ -225,7 +237,7 @@ impl ExecutionHost {
             }
 
             let state = ctx.get_state();
-            session.history = state.messages;
+            session.replace_full_history(state.messages);
             req.inference_context = state.inference;
             req.system_prompt = state.system_prompt;
             req.model = state.model;
@@ -306,9 +318,10 @@ impl ExecutionHost {
             candidate.max_tokens,
             candidate.thinking_budget,
         );
-        let effective = effective_request_context(
+        let effective = effective_request_context_from_window(
             &req.system_prompt,
             &session.history,
+            session.history_message_offset,
             session.context_checkpoint.as_ref(),
         );
         let effective_input_tokens =
@@ -420,9 +433,10 @@ impl ExecutionHost {
         compaction_mode: &InferenceCompactionMode,
     ) -> crate::kernel::turn::context_window::EffectiveRequestContext {
         let effective = if compaction_mode.uses_summary() {
-            effective_request_context(
+            effective_request_context_from_window(
                 system_prompt,
                 &session.history,
+                session.history_message_offset,
                 session.context_checkpoint.as_ref(),
             )
         } else {

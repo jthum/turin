@@ -44,7 +44,6 @@ impl ExecutionHost {
         }
 
         self.begin_turn_persistence(session, Some(task)).await?;
-        self.ensure_full_history_materialized(session).await?;
         self.append_task_user_message(session, &user_content);
 
         let effective_tools = crate::tools::policy::resolve_effective_tools_config(
