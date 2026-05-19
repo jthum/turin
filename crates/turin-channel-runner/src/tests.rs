@@ -1,4 +1,6 @@
 use super::*;
+use crate::stream::{WorkerStreamConfig, should_subscribe_to_session_events};
+use std::collections::{HashMap, HashSet};
 use tempfile::tempdir;
 use turin_channel_core::{
     ChannelKind, ChannelMessageRef, ChannelSessionScope, ChannelUser, MessageBlock,
