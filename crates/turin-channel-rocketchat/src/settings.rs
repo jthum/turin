@@ -1,6 +1,9 @@
 use anyhow::{Result, anyhow};
 use std::time::Duration;
-use turin_channel_core::{ChannelSessionScope, DEFAULT_MAX_INBOUND_TEXT_CHARS};
+use turin_channel_core::{
+    ChannelSessionScope, DEFAULT_MAX_INBOUND_TEXT_CHARS, optional_bool_setting,
+    optional_non_empty_setting, required_non_empty_setting, u64_setting_with_min,
+};
 use turin_channel_runner::ChannelStreamMode;
 
 use crate::{
@@ -116,27 +119,27 @@ pub(crate) fn parse_settings(
         .ok_or_else(|| anyhow!("Rocket.Chat channel settings must be a JSON object"))?;
     reject_deprecated_session_scope_keys(settings)?;
 
-    let token_env = read_required_non_empty_string(
+    let token_env = required_non_empty_setting(
         settings,
         "token_env",
         "[rocketchat_config_missing_token_env] Rocket.Chat channel setting 'token_env' is required",
         "[rocketchat_config_invalid_token_env] Rocket.Chat channel setting 'token_env' must not be empty",
     )?
     .to_string();
-    let user_id = read_required_non_empty_string(
+    let user_id = required_non_empty_setting(
         settings,
         "user_id",
         "[rocketchat_config_missing_user_id] Rocket.Chat channel setting 'user_id' is required",
         "[rocketchat_config_invalid_user_id] Rocket.Chat channel setting 'user_id' must not be empty",
     )?
     .to_string();
-    let room_id = read_optional_non_empty_string(
+    let room_id = optional_non_empty_setting(
         settings,
         "room_id",
         "[rocketchat_config_invalid_room_id] Rocket.Chat channel setting 'room_id' must not be empty",
     )?
     .map(ToString::to_string);
-    let room_name = read_optional_non_empty_string(
+    let room_name = optional_non_empty_setting(
         settings,
         "room_name",
         "[rocketchat_config_invalid_room_name] Rocket.Chat channel setting 'room_name' must not be empty",
@@ -151,7 +154,7 @@ pub(crate) fn parse_settings(
         );
     }
 
-    let base_url = read_optional_non_empty_string(
+    let base_url = optional_non_empty_setting(
         settings,
         "base_url",
         "[rocketchat_config_invalid_base_url] Rocket.Chat channel setting 'base_url' must not be empty",
@@ -159,7 +162,7 @@ pub(crate) fn parse_settings(
     .unwrap_or(DEFAULT_BASE_URL)
     .trim_end_matches('/')
     .to_string();
-    let websocket_url = read_optional_non_empty_string(
+    let websocket_url = optional_non_empty_setting(
         settings,
         "websocket_url",
         "[rocketchat_config_invalid_websocket_url] Rocket.Chat channel setting 'websocket_url' must not be empty",
@@ -167,14 +170,14 @@ pub(crate) fn parse_settings(
     .map(ToString::to_string)
     .unwrap_or_else(|| default_websocket_url(&base_url));
 
-    let poll_interval_ms = read_u64_with_min(
+    let poll_interval_ms = u64_setting_with_min(
         settings.get("poll_interval_ms"),
         DEFAULT_POLL_INTERVAL_MS,
         100,
         "[rocketchat_config_invalid_poll_interval] Rocket.Chat channel setting 'poll_interval_ms' must be a positive integer >= 100",
     )?;
 
-    let max_messages_per_poll = read_u64_with_min(
+    let max_messages_per_poll = u64_setting_with_min(
         settings.get("max_messages_per_poll"),
         DEFAULT_MAX_MESSAGES_PER_POLL as u64,
         1,
@@ -186,7 +189,7 @@ pub(crate) fn parse_settings(
         );
     }
 
-    let max_inbound_text_chars = read_u64_with_min(
+    let max_inbound_text_chars = u64_setting_with_min(
         settings.get("max_inbound_text_chars"),
         DEFAULT_MAX_INBOUND_TEXT_CHARS as u64,
         1,
@@ -203,7 +206,7 @@ pub(crate) fn parse_settings(
         base_url,
         websocket_url,
         transport_mode: read_transport_mode(settings.get("transport_mode"))?,
-        workspace_id: read_optional_non_empty_string(
+        workspace_id: optional_non_empty_setting(
             settings,
             "workspace_id",
             "[rocketchat_config_invalid_workspace_id] Rocket.Chat channel setting 'workspace_id' must not be empty",
@@ -247,68 +250,16 @@ pub(crate) fn parse_settings(
     })
 }
 
-fn read_required_non_empty_string<'a>(
-    settings: &'a serde_json::Map<String, serde_json::Value>,
-    key: &str,
-    missing_message: &str,
-    invalid_message: &str,
-) -> Result<&'a str> {
-    let value = settings
-        .get(key)
-        .ok_or_else(|| anyhow!("{missing_message}"))?
-        .as_str()
-        .ok_or_else(|| anyhow!("{invalid_message}"))?;
-    if value.trim().is_empty() {
-        anyhow::bail!("{invalid_message}");
-    }
-    Ok(value)
-}
-
-fn read_optional_non_empty_string<'a>(
-    settings: &'a serde_json::Map<String, serde_json::Value>,
-    key: &str,
-    invalid_message: &str,
-) -> Result<Option<&'a str>> {
-    match settings.get(key) {
-        None => Ok(None),
-        Some(value) => {
-            let value = value.as_str().ok_or_else(|| anyhow!("{invalid_message}"))?;
-            if value.trim().is_empty() {
-                anyhow::bail!("{invalid_message}");
-            }
-            Ok(Some(value))
-        }
-    }
-}
-
-fn read_u64_with_min(
-    value: Option<&serde_json::Value>,
-    default: u64,
-    min: u64,
-    invalid_message: &str,
-) -> Result<u64> {
-    match value {
-        None => Ok(default),
-        Some(value) => {
-            let parsed = value.as_u64().ok_or_else(|| anyhow!("{invalid_message}"))?;
-            if parsed < min {
-                anyhow::bail!("{invalid_message}");
-            }
-            Ok(parsed)
-        }
-    }
-}
-
 fn read_bool(value: Option<&serde_json::Value>, default: bool, key: &str) -> Result<bool> {
-    match value {
-        None => Ok(default),
-        Some(value) => value.as_bool().ok_or_else(|| {
-            anyhow!(
-                "[rocketchat_config_invalid_bool] Rocket.Chat channel setting '{}' must be true or false",
-                key
-            )
-        }),
-    }
+    optional_bool_setting(
+        value,
+        default,
+        format!(
+            "[rocketchat_config_invalid_bool] Rocket.Chat channel setting '{}' must be true or false",
+            key
+        ),
+    )
+    .map_err(Into::into)
 }
 
 fn read_respond_mode(value: Option<&serde_json::Value>) -> Result<RocketChatRespondMode> {

@@ -219,3 +219,41 @@ fn manifest_helpers_build_common_channel_setting_shapes() {
         Some("max_inbound_text_chars")
     );
 }
+
+#[test]
+fn setting_helpers_parse_reused_json_shapes() {
+    let settings = serde_json::json!({
+        "token_env": "TOKEN",
+        "poll_interval_ms": 250,
+        "enabled": true,
+        "limit": 42
+    });
+    let settings = settings.as_object().expect("object");
+
+    assert_eq!(
+        required_non_empty_setting(settings, "token_env", "missing", "invalid").unwrap(),
+        "TOKEN"
+    );
+    assert_eq!(
+        optional_non_empty_setting(settings, "missing_optional", "invalid").unwrap(),
+        None
+    );
+    assert_eq!(
+        u64_setting_with_min(settings.get("poll_interval_ms"), 1_000, 100, "invalid").unwrap(),
+        250
+    );
+    assert!(
+        u64_setting_with_min(settings.get("poll_interval_ms"), 1_000, 500, "too small").is_err()
+    );
+    assert!(optional_bool_setting(settings.get("enabled"), false, "invalid").unwrap());
+    assert_eq!(
+        positive_usize_setting(
+            settings.get("limit"),
+            DEFAULT_MAX_INBOUND_TEXT_CHARS,
+            "invalid",
+            "large"
+        )
+        .unwrap(),
+        42
+    );
+}

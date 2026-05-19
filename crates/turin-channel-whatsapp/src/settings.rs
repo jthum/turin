@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Map, Value};
-use turin_channel_core::{ChannelSessionScope, DEFAULT_MAX_INBOUND_TEXT_CHARS};
+use turin_channel_core::{
+    ChannelSessionScope, DEFAULT_MAX_INBOUND_TEXT_CHARS, positive_usize_setting,
+};
 
 use crate::{
     DEFAULT_PERSONAL_TRIGGER_PREFIX, DEFAULT_RUNTIME_STORE_BASENAME, DEFAULT_WORKSPACE_ID,
@@ -67,27 +69,12 @@ pub(crate) fn parse_settings(
             }),
     };
 
-    let max_inbound_text_chars = match map.get("max_inbound_text_chars") {
-        None => DEFAULT_MAX_INBOUND_TEXT_CHARS,
-        Some(value) => {
-            let max = value.as_u64().ok_or_else(|| {
-                anyhow!(
-                    "[whatsapp_config_invalid_max_inbound_text_chars] WhatsApp channel setting 'max_inbound_text_chars' must be a positive integer"
-                )
-            })?;
-            let max = usize::try_from(max).map_err(|_| {
-                anyhow!(
-                    "[whatsapp_config_invalid_max_inbound_text_chars] WhatsApp channel setting 'max_inbound_text_chars' is too large"
-                )
-            })?;
-            if max == 0 {
-                bail!(
-                    "[whatsapp_config_invalid_max_inbound_text_chars] WhatsApp channel setting 'max_inbound_text_chars' must be > 0"
-                );
-            }
-            max
-        }
-    };
+    let max_inbound_text_chars = positive_usize_setting(
+        map.get("max_inbound_text_chars"),
+        DEFAULT_MAX_INBOUND_TEXT_CHARS,
+        "[whatsapp_config_invalid_max_inbound_text_chars] WhatsApp channel setting 'max_inbound_text_chars' must be a positive integer",
+        "[whatsapp_config_invalid_max_inbound_text_chars] WhatsApp channel setting 'max_inbound_text_chars' is too large",
+    )?;
 
     Ok(WhatsAppChannelDriverConfig {
         workspace_id: workspace_id.clone(),

@@ -1,7 +1,10 @@
 use anyhow::{Result, anyhow};
 use std::collections::HashSet;
 use std::time::Duration;
-use turin_channel_core::{ChannelSessionScope, DEFAULT_MAX_INBOUND_TEXT_CHARS};
+use turin_channel_core::{
+    ChannelSessionScope, DEFAULT_MAX_INBOUND_TEXT_CHARS, optional_bool_setting,
+    positive_usize_setting, required_non_empty_setting, u64_setting_with_min,
+};
 use turin_channel_runner::ChannelStreamMode;
 
 use crate::TelegramRespondMode;
@@ -119,7 +122,7 @@ fn parse_settings(
         .ok_or_else(|| anyhow!("Telegram channel settings must be a JSON object"))?;
     reject_deprecated_session_scope_keys(settings)?;
 
-    let token_env = read_required_string(
+    let token_env = required_non_empty_setting(
         settings,
         "token_env",
         "[telegram_config_missing_token_env] Telegram channel setting 'token_env' is required",
@@ -155,22 +158,12 @@ fn parse_settings(
         }
     };
 
-    let poll_interval_ms = match settings.get("poll_interval_ms") {
-        None => 250,
-        Some(value) => {
-            let interval = value.as_u64().ok_or_else(|| {
-                anyhow!(
-                    "[telegram_config_invalid_poll_interval] Telegram channel setting 'poll_interval_ms' must be a positive integer"
-                )
-            })?;
-            if interval < 25 {
-                anyhow::bail!(
-                    "[telegram_config_invalid_poll_interval] Telegram channel setting 'poll_interval_ms' must be >= 25"
-                );
-            }
-            interval
-        }
-    };
+    let poll_interval_ms = u64_setting_with_min(
+        settings.get("poll_interval_ms"),
+        250,
+        25,
+        "[telegram_config_invalid_poll_interval] Telegram channel setting 'poll_interval_ms' must be >= 25",
+    )?;
 
     let max_updates_per_poll = match settings.get("max_updates_per_poll") {
         None => 25,
@@ -189,27 +182,12 @@ fn parse_settings(
         }
     };
 
-    let max_inbound_text_chars = match settings.get("max_inbound_text_chars") {
-        None => DEFAULT_MAX_INBOUND_TEXT_CHARS,
-        Some(value) => {
-            let max = value.as_u64().ok_or_else(|| {
-                anyhow!(
-                    "[telegram_config_invalid_max_inbound_text_chars] Telegram channel setting 'max_inbound_text_chars' must be a positive integer"
-                )
-            })?;
-            let max = usize::try_from(max).map_err(|_| {
-                anyhow!(
-                    "[telegram_config_invalid_max_inbound_text_chars] Telegram channel setting 'max_inbound_text_chars' is too large"
-                )
-            })?;
-            if max == 0 {
-                anyhow::bail!(
-                    "[telegram_config_invalid_max_inbound_text_chars] Telegram channel setting 'max_inbound_text_chars' must be > 0"
-                );
-            }
-            max
-        }
-    };
+    let max_inbound_text_chars = positive_usize_setting(
+        settings.get("max_inbound_text_chars"),
+        DEFAULT_MAX_INBOUND_TEXT_CHARS,
+        "[telegram_config_invalid_max_inbound_text_chars] Telegram channel setting 'max_inbound_text_chars' must be a positive integer",
+        "[telegram_config_invalid_max_inbound_text_chars] Telegram channel setting 'max_inbound_text_chars' is too large",
+    )?;
 
     Ok(TelegramChannelSettings {
         token_env,
@@ -248,28 +226,16 @@ fn parse_settings(
         poll_interval_ms,
         max_updates_per_poll,
         max_inbound_text_chars,
-        start_from_latest: settings
-            .get("start_from_latest")
-            .map(|value| {
-                value.as_bool().ok_or_else(|| {
-                    anyhow!(
-                        "[telegram_config_invalid_start_from_latest] Telegram channel setting 'start_from_latest' must be a boolean"
-                    )
-                })
-            })
-            .transpose()?
-            .unwrap_or(true),
-        ignore_bot_messages: settings
-            .get("ignore_bot_messages")
-            .map(|value| {
-                value.as_bool().ok_or_else(|| {
-                    anyhow!(
-                        "[telegram_config_invalid_ignore_bot_messages] Telegram channel setting 'ignore_bot_messages' must be a boolean"
-                    )
-                })
-            })
-            .transpose()?
-            .unwrap_or(true),
+        start_from_latest: optional_bool_setting(
+            settings.get("start_from_latest"),
+            true,
+            "[telegram_config_invalid_start_from_latest] Telegram channel setting 'start_from_latest' must be a boolean",
+        )?,
+        ignore_bot_messages: optional_bool_setting(
+            settings.get("ignore_bot_messages"),
+            true,
+            "[telegram_config_invalid_ignore_bot_messages] Telegram channel setting 'ignore_bot_messages' must be a boolean",
+        )?,
         respond_mode: read_respond_mode(settings.get("respond_mode"))?,
         session_scope: read_telegram_session_scope(settings.get("session_scope"))?,
         session_scope_dm: read_optional_telegram_session_scope(
@@ -285,46 +251,18 @@ fn parse_settings(
             "session_scope_channel",
         )?,
         stream_mode: read_stream_mode(settings.get("stream_mode"))?,
-        stream_thinking: settings
-            .get("stream_thinking")
-            .map(|value| {
-                value.as_bool().ok_or_else(|| {
-                    anyhow!(
-                        "[telegram_config_invalid_stream_thinking] Telegram channel setting 'stream_thinking' must be a boolean"
-                    )
-                })
-            })
-            .transpose()?
-            .unwrap_or(false),
-        persist_thinking: settings
-            .get("persist_thinking")
-            .map(|value| {
-                value.as_bool().ok_or_else(|| {
-                    anyhow!(
-                        "[telegram_config_invalid_persist_thinking] Telegram channel setting 'persist_thinking' must be a boolean"
-                    )
-                })
-            })
-            .transpose()?
-            .unwrap_or(false),
+        stream_thinking: optional_bool_setting(
+            settings.get("stream_thinking"),
+            false,
+            "[telegram_config_invalid_stream_thinking] Telegram channel setting 'stream_thinking' must be a boolean",
+        )?,
+        persist_thinking: optional_bool_setting(
+            settings.get("persist_thinking"),
+            false,
+            "[telegram_config_invalid_persist_thinking] Telegram channel setting 'persist_thinking' must be a boolean",
+        )?,
         accept_all_chats: allow_unconfigured_chats,
     })
-}
-
-fn read_required_string<'a>(
-    settings: &'a serde_json::Map<String, serde_json::Value>,
-    key: &str,
-    missing_message: &str,
-    empty_message: &str,
-) -> Result<&'a str> {
-    let value = settings
-        .get(key)
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| anyhow!(missing_message.to_string()))?;
-    if value.trim().is_empty() {
-        anyhow::bail!(empty_message.to_string());
-    }
-    Ok(value)
 }
 
 fn read_chat_id(value: Option<&serde_json::Value>) -> Result<String> {
