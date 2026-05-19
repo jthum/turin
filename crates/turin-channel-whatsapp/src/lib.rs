@@ -1,53 +1,49 @@
 use std::fs;
 use std::io::Cursor;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use serde_json::json;
 use serde_json::{Map, Value};
 use tokio::sync::{mpsc, watch};
-use tracing::{info, warn};
 #[cfg(test)]
 use turin_channel_core::DEFAULT_MAX_INBOUND_TEXT_CHARS;
 use turin_channel_core::{
-    ChannelAttachment, ChannelAuthFlowDisplay, ChannelAuthFlowPollRequest,
-    ChannelAuthFlowPollResponse, ChannelAuthFlowResolvedValue, ChannelAuthFlowStartRequest,
-    ChannelAuthFlowStartResponse, ChannelCapabilities, ChannelConfigTarget,
-    ChannelConfigTargetKind, ChannelConversationKey, ChannelKind, ChannelMessageRef,
+    ChannelAttachment, ChannelCapabilities, ChannelConversationKey, ChannelKind, ChannelMessageRef,
     ChannelSessionScope, ChannelUser, InboundEvent, OutboundMessage, bound_inbound_text,
+};
+#[cfg(test)]
+use turin_channel_core::{
+    ChannelAuthFlowDisplay, ChannelAuthFlowPollRequest, ChannelAuthFlowPollResponse,
 };
 use turin_channel_runner::ChannelDriver;
 use uuid::Uuid;
 use whatsapp_rust::Jid;
-use whatsapp_rust::TokioRuntime;
-use whatsapp_rust::bot::{Bot, BotHandle};
+use whatsapp_rust::bot::BotHandle;
 use whatsapp_rust::download::{Downloadable, MediaType};
-use whatsapp_rust::pair_code::PairCodeOptions;
 use whatsapp_rust::proto_helpers::MessageExt;
-use whatsapp_rust::store::SqliteStore;
-use whatsapp_rust::types::events::Event;
 use whatsapp_rust::types::message::MessageInfo;
 use whatsapp_rust::waproto::whatsapp as wa;
-use whatsapp_rust_tokio_transport::TokioWebSocketTransportFactory;
-use whatsapp_rust_ureq_http_client::UreqHttpClient;
 
+mod auth;
+mod bot;
 mod manifest;
 mod render;
 mod settings;
+#[cfg(test)]
+use auth::{AuthStateWriter, WhatsAppAuthPhase, WhatsAppAuthSession, WhatsAppAuthState};
+pub use auth::{poll_auth_flow, run_auth_flow_worker, start_auth_flow};
+use bot::{DriverEvent, build_bot};
 pub use manifest::adapter_manifest;
 use render::render_whatsapp_message;
-pub(crate) use settings::{
-    WhatsAppAccountMode, optional_nonempty_string, parse_settings, resolve_auth_store_path,
-    sanitize_component, settings_object, validate_pair_code_fields,
-};
+#[cfg(test)]
+pub(crate) use settings::validate_pair_code_fields;
+pub(crate) use settings::{WhatsAppAccountMode, parse_settings, sanitize_component};
 pub use settings::{WhatsAppChannelDriverConfig, validate_settings};
 
 const DEFAULT_WORKSPACE_ID: &str = "whatsapp";
@@ -63,244 +59,6 @@ pub struct WhatsAppChannelDriver {
     client: Arc<whatsapp_rust::Client>,
     bot_handle: BotHandle,
     event_rx: mpsc::UnboundedReceiver<DriverEvent>,
-}
-
-enum DriverEvent {
-    Message(Box<wa::Message>, Box<MessageInfo>),
-    LoggedOut(String),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct WhatsAppAuthSession {
-    ticket: String,
-    state_path: PathBuf,
-    store_path: PathBuf,
-    phone_number: Option<String>,
-    custom_code: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum WhatsAppAuthPhase {
-    Pending,
-    Complete,
-    Failed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct WhatsAppAuthState {
-    phase: WhatsAppAuthPhase,
-    display: ChannelAuthFlowDisplay,
-    message: Option<String>,
-}
-
-#[derive(Clone)]
-struct AuthStateWriter {
-    path: PathBuf,
-    lock: Arc<Mutex<()>>,
-}
-
-impl AuthStateWriter {
-    fn new(path: PathBuf) -> Self {
-        Self {
-            path,
-            lock: Arc::new(Mutex::new(())),
-        }
-    }
-
-    fn load(&self) -> Result<WhatsAppAuthState> {
-        let bytes = fs::read(&self.path)
-            .with_context(|| format!("Failed to read auth flow state '{}'", self.path.display()))?;
-        serde_json::from_slice(&bytes).context("Failed to decode WhatsApp auth flow state")
-    }
-
-    fn write(&self, state: &WhatsAppAuthState) -> Result<()> {
-        let _guard = self
-            .lock
-            .lock()
-            .map_err(|_| anyhow!("WhatsApp auth flow state lock was poisoned"))?;
-        let body = serde_json::to_vec_pretty(state).context("Failed to encode auth flow state")?;
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "Failed to create auth flow state directory '{}'",
-                    parent.display()
-                )
-            })?;
-        }
-        fs::write(&self.path, body)
-            .with_context(|| format!("Failed to write auth flow state '{}'", self.path.display()))
-    }
-}
-pub fn start_auth_flow(
-    request: &ChannelAuthFlowStartRequest,
-) -> Result<ChannelAuthFlowStartResponse> {
-    if request.flow_id != DEFAULT_AUTH_FLOW_ID {
-        bail!("Unsupported WhatsApp auth flow '{}'", request.flow_id);
-    }
-
-    let settings = settings_object(&request.current_settings)?;
-    let store_path = resolve_auth_store_path(settings)?;
-    let phone_number = optional_nonempty_string(settings, "pair_code_phone_number")?;
-    let custom_code = optional_nonempty_string(settings, "pair_code_custom_code")?;
-    validate_pair_code_fields(phone_number.as_deref(), custom_code.as_deref())?;
-
-    let session = WhatsAppAuthSession {
-        ticket: Uuid::new_v4().to_string(),
-        state_path: std::env::temp_dir()
-            .join("turin-whatsapp-auth")
-            .join(Uuid::new_v4().to_string())
-            .join("state.json"),
-        store_path,
-        phone_number,
-        custom_code,
-    };
-    let writer = AuthStateWriter::new(session.state_path.clone());
-    writer.write(&WhatsAppAuthState {
-        phase: WhatsAppAuthPhase::Pending,
-        display: ChannelAuthFlowDisplay {
-            message: Some("Starting WhatsApp pairing...".to_string()),
-            poll_interval_seconds: Some(DEFAULT_AUTH_POLL_INTERVAL_SECONDS),
-            ..ChannelAuthFlowDisplay::default()
-        },
-        message: None,
-    })?;
-    spawn_auth_flow_worker(&session)?;
-
-    let display = writer
-        .load()
-        .map(|state| state.display)
-        .unwrap_or(ChannelAuthFlowDisplay {
-            message: Some("Starting WhatsApp pairing...".to_string()),
-            poll_interval_seconds: Some(DEFAULT_AUTH_POLL_INTERVAL_SECONDS),
-            ..ChannelAuthFlowDisplay::default()
-        });
-
-    Ok(ChannelAuthFlowStartResponse {
-        session: serde_json::to_value(session).context("Failed to encode auth flow session")?,
-        display,
-    })
-}
-
-pub fn poll_auth_flow(request: &ChannelAuthFlowPollRequest) -> Result<ChannelAuthFlowPollResponse> {
-    if request.flow_id != DEFAULT_AUTH_FLOW_ID {
-        bail!("Unsupported WhatsApp auth flow '{}'", request.flow_id);
-    }
-
-    let session: WhatsAppAuthSession = serde_json::from_value(request.session.clone())
-        .context("Failed to decode WhatsApp auth flow session")?;
-    let writer = AuthStateWriter::new(session.state_path.clone());
-    let state = writer.load()?;
-
-    Ok(match state.phase {
-        WhatsAppAuthPhase::Pending => ChannelAuthFlowPollResponse::Pending {
-            display: state.display,
-        },
-        WhatsAppAuthPhase::Complete => ChannelAuthFlowPollResponse::Complete {
-            values: vec![
-                ChannelAuthFlowResolvedValue {
-                    target: ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "session_store_path".to_string(),
-                    },
-                    value: Value::String(session.store_path.display().to_string()),
-                },
-                ChannelAuthFlowResolvedValue {
-                    target: ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "pair_code_phone_number".to_string(),
-                    },
-                    value: Value::Null,
-                },
-                ChannelAuthFlowResolvedValue {
-                    target: ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "pair_code_custom_code".to_string(),
-                    },
-                    value: Value::Null,
-                },
-            ],
-            message: state.message,
-        },
-        WhatsAppAuthPhase::Failed => ChannelAuthFlowPollResponse::Failed {
-            message: state
-                .message
-                .unwrap_or_else(|| "WhatsApp pairing failed".to_string()),
-        },
-    })
-}
-
-pub async fn run_auth_flow_worker(session_json: &str) -> Result<()> {
-    let session: WhatsAppAuthSession =
-        serde_json::from_str(session_json).context("Failed to parse auth flow worker session")?;
-    let writer = AuthStateWriter::new(session.state_path.clone());
-    let (client, mut bot) = build_bot(
-        &session.store_path,
-        session.phone_number.clone(),
-        session.custom_code.clone(),
-        Some(writer.clone()),
-        None,
-    )
-    .await
-    .with_context(|| {
-        format!(
-            "Failed to initialize WhatsApp pairing worker using store '{}'",
-            session.store_path.display()
-        )
-    })?;
-    let mut bot_handle = bot.run().await.context("Failed to start WhatsApp bot")?;
-    let deadline = Instant::now() + Duration::from_secs(DEFAULT_AUTH_TIMEOUT_SECONDS);
-
-    loop {
-        if client.is_logged_in() {
-            writer.write(&WhatsAppAuthState {
-                phase: WhatsAppAuthPhase::Complete,
-                display: ChannelAuthFlowDisplay {
-                    message: Some("WhatsApp pairing complete.".to_string()),
-                    poll_interval_seconds: Some(DEFAULT_AUTH_POLL_INTERVAL_SECONDS),
-                    ..ChannelAuthFlowDisplay::default()
-                },
-                message: Some(format!(
-                    "WhatsApp pairing complete. Session store: {}",
-                    session.store_path.display()
-                )),
-            })?;
-            break;
-        }
-
-        if Instant::now() >= deadline {
-            writer.write(&WhatsAppAuthState {
-                phase: WhatsAppAuthPhase::Failed,
-                display: ChannelAuthFlowDisplay::default(),
-                message: Some("WhatsApp pairing timed out before the session linked.".to_string()),
-            })?;
-            break;
-        }
-
-        tokio::select! {
-            result = &mut bot_handle => {
-                if let Err(err) = result {
-                    writer.write(&WhatsAppAuthState {
-                        phase: WhatsAppAuthPhase::Failed,
-                        display: ChannelAuthFlowDisplay::default(),
-                        message: Some(format!("WhatsApp pairing worker was cancelled: {err}")),
-                    })?;
-                } else if !client.is_logged_in() {
-                    writer.write(&WhatsAppAuthState {
-                        phase: WhatsAppAuthPhase::Failed,
-                        display: ChannelAuthFlowDisplay::default(),
-                        message: Some("WhatsApp pairing worker exited before pairing completed.".to_string()),
-                    })?;
-                }
-                break;
-            }
-            _ = tokio::time::sleep(Duration::from_secs(1)) => {}
-        }
-    }
-
-    client.disconnect().await;
-    bot_handle.abort();
-    Ok(())
 }
 
 impl WhatsAppChannelDriver {
@@ -681,189 +439,6 @@ impl ChannelDriver for WhatsAppChannelDriver {
     }
 }
 
-async fn build_bot(
-    session_store_path: &Path,
-    phone_number: Option<String>,
-    custom_code: Option<String>,
-    auth_state_writer: Option<AuthStateWriter>,
-    driver_event_tx: Option<mpsc::UnboundedSender<DriverEvent>>,
-) -> Result<(Arc<whatsapp_rust::Client>, Bot)> {
-    if let Some(parent) = session_store_path.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!(
-                "Failed to create WhatsApp session store directory '{}'",
-                parent.display()
-            )
-        })?;
-        tighten_path_permissions(parent, 0o700)
-            .with_context(|| format!("Failed to harden permissions for '{}'", parent.display()))?;
-    }
-
-    let database_url = session_store_path.to_string_lossy().to_string();
-    let backend = Arc::new(SqliteStore::new(&database_url).await.with_context(|| {
-        format!(
-            "Failed to open WhatsApp session store '{}'",
-            session_store_path.display()
-        )
-    })?);
-    tighten_path_permissions(session_store_path, 0o600).with_context(|| {
-        format!(
-            "Failed to harden permissions for WhatsApp session store '{}'",
-            session_store_path.display()
-        )
-    })?;
-    let transport_factory = TokioWebSocketTransportFactory::new();
-    let http_client = UreqHttpClient::new();
-
-    let mut builder = Bot::builder()
-        .with_backend(backend)
-        .with_transport_factory(transport_factory)
-        .with_http_client(http_client)
-        .with_runtime(TokioRuntime);
-
-    if let Some(phone_number) = phone_number {
-        builder = builder.with_pair_code(PairCodeOptions {
-            phone_number,
-            custom_code,
-            ..Default::default()
-        });
-    }
-
-    let writer_for_callback = auth_state_writer.clone();
-    let driver_event_tx = driver_event_tx.clone();
-    let store_path_for_display = session_store_path.display().to_string();
-    let bot = builder
-        .on_event(move |event, _client| {
-            let writer_for_callback = writer_for_callback.clone();
-            let driver_event_tx = driver_event_tx.clone();
-            let store_path_for_display = store_path_for_display.clone();
-            async move {
-                match event {
-                    Event::Message(message, info) => {
-                        if let Some(driver_event_tx) = driver_event_tx.as_ref()
-                            && !info.source.is_from_me
-                        {
-                            let _ = driver_event_tx.send(DriverEvent::Message(message, Box::new(info)));
-                        }
-                    }
-                    Event::LoggedOut(reason) => {
-                        if let Some(driver_event_tx) = driver_event_tx.as_ref() {
-                            let _ = driver_event_tx.send(DriverEvent::LoggedOut(format!("{reason:?}")));
-                        }
-                        if let Some(writer) = writer_for_callback.as_ref() {
-                            let _ = writer.write(&WhatsAppAuthState {
-                                phase: WhatsAppAuthPhase::Failed,
-                                display: ChannelAuthFlowDisplay::default(),
-                                message: Some(format!(
-                                    "WhatsApp session logged out during pairing: {reason:?}"
-                                )),
-                            });
-                        }
-                    }
-                    Event::PairingQrCode { code, timeout } => {
-                        if driver_event_tx.is_some() {
-                            warn!(
-                                expires_in_seconds = timeout.as_secs(),
-                                "WhatsApp runtime requested QR pairing; pair the session through setup before using the channel"
-                            );
-                        }
-                        let Some(writer) = writer_for_callback.as_ref() else {
-                            return;
-                        };
-                        let _ = writer.write(&WhatsAppAuthState {
-                            phase: WhatsAppAuthPhase::Pending,
-                            display: ChannelAuthFlowDisplay {
-                                message: Some(
-                                    "Scan this QR code in WhatsApp > Linked Devices.".to_string(),
-                                ),
-                                qr_text: Some(code),
-                                expires_in_seconds: Some(timeout.as_secs()),
-                                poll_interval_seconds: Some(DEFAULT_AUTH_POLL_INTERVAL_SECONDS),
-                                ..ChannelAuthFlowDisplay::default()
-                            },
-                            message: None,
-                        });
-                    }
-                    Event::PairingCode { code, timeout } => {
-                        if driver_event_tx.is_some() {
-                            warn!(
-                                expires_in_seconds = timeout.as_secs(),
-                                "WhatsApp runtime requested a pairing code; pair the session through setup before using the channel"
-                            );
-                        }
-                        let Some(writer) = writer_for_callback.as_ref() else {
-                            return;
-                        };
-                        let _ = writer.write(&WhatsAppAuthState {
-                            phase: WhatsAppAuthPhase::Pending,
-                            display: ChannelAuthFlowDisplay {
-                                message: Some(
-                                    "Enter this pairing code in WhatsApp > Linked Devices > Link with phone number instead.".to_string(),
-                                ),
-                                pairing_code: Some(code),
-                                expires_in_seconds: Some(timeout.as_secs()),
-                                poll_interval_seconds: Some(DEFAULT_AUTH_POLL_INTERVAL_SECONDS),
-                                ..ChannelAuthFlowDisplay::default()
-                            },
-                            message: None,
-                        });
-                    }
-                    Event::PairSuccess(_) | Event::Connected(_) => {
-                        if driver_event_tx.is_some() {
-                            info!("WhatsApp channel connected");
-                        }
-                        let Some(writer) = writer_for_callback.as_ref() else {
-                            return;
-                        };
-                        let _ = writer.write(&WhatsAppAuthState {
-                            phase: WhatsAppAuthPhase::Complete,
-                            display: ChannelAuthFlowDisplay {
-                                message: Some("WhatsApp pairing complete.".to_string()),
-                                poll_interval_seconds: Some(DEFAULT_AUTH_POLL_INTERVAL_SECONDS),
-                                ..ChannelAuthFlowDisplay::default()
-                            },
-                            message: Some(format!(
-                                "WhatsApp pairing complete. Session store: {store_path_for_display}"
-                            )),
-                        });
-                    }
-                    Event::PairError(err) => {
-                        let Some(writer) = writer_for_callback.as_ref() else {
-                            return;
-                        };
-                        let _ = writer.write(&WhatsAppAuthState {
-                            phase: WhatsAppAuthPhase::Failed,
-                            display: ChannelAuthFlowDisplay::default(),
-                            message: Some(format!("WhatsApp pairing failed: {err:?}")),
-                        });
-                    }
-                    _ => {}
-                }
-            }
-        })
-        .build()
-        .await
-        .context("Failed to build WhatsApp bot")?;
-    let client = bot.client();
-    Ok((client, bot))
-}
-
-#[cfg(unix)]
-fn tighten_path_permissions(path: &Path, mode: u32) -> Result<()> {
-    if !path.exists() {
-        return Ok(());
-    }
-    let mut permissions = fs::metadata(path)?.permissions();
-    permissions.set_mode(mode);
-    fs::set_permissions(path, permissions)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn tighten_path_permissions(_path: &Path, _mode: u32) -> Result<()> {
-    Ok(())
-}
-
 fn image_name(message: &wa::message::ImageMessage, message_id: &str) -> String {
     let extension = content_type_extension(message.mimetype.as_deref()).unwrap_or("jpg");
     format!("image-{message_id}.{extension}")
@@ -971,23 +546,6 @@ fn chat_selector_matches(selector: &str, chat_jid: &str) -> bool {
             .strip_prefix('@')
             .is_some_and(|value| value.eq_ignore_ascii_case(chat_jid))
         || selector.eq_ignore_ascii_case(chat_jid.split('@').next().unwrap_or(chat_jid))
-}
-
-fn spawn_auth_flow_worker(session: &WhatsAppAuthSession) -> Result<()> {
-    let current_exe =
-        std::env::current_exe().context("Failed to resolve WhatsApp runner executable")?;
-    let session_json =
-        serde_json::to_string(session).context("Failed to encode WhatsApp auth flow session")?;
-    Command::new(current_exe)
-        .arg("auth-flow-worker")
-        .arg("--session-json")
-        .arg(session_json)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("Failed to spawn WhatsApp auth flow worker")?;
-    Ok(())
 }
 
 #[cfg(test)]
