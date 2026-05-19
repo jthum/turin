@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tempfile::tempdir;
 use turin::inference::provider::{
-    InferenceEvent, InferenceProvider, InferenceRequest, InferenceResponseFormat, InferenceResult,
-    InferenceStream, ProviderClient, RequestOptions, SdkError, Usage,
+    InferenceEvent, InferenceMessage, InferenceProvider, InferenceRequest, InferenceResponseFormat,
+    InferenceResult, InferenceStream, ProviderClient, RequestOptions, SdkError, Usage,
 };
 use turin::kernel::Kernel;
 use turin::kernel::config::{
@@ -160,6 +160,58 @@ struct StructuredOutputProvider {
 struct PromptStructuredFallbackProvider {
     seen_system_prompt: Arc<Mutex<Option<String>>>,
     seen_response_format: Arc<Mutex<Option<InferenceResponseFormat>>>,
+}
+
+struct SequenceCaptureProvider {
+    responses: Arc<Mutex<Vec<Vec<InferenceEvent>>>>,
+    seen_messages: Arc<Mutex<Vec<Vec<InferenceMessage>>>>,
+}
+
+#[async_trait]
+impl InferenceProvider for SequenceCaptureProvider {
+    fn stream<'a>(
+        &'a self,
+        request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+        {
+            let mut seen = self
+                .seen_messages
+                .lock()
+                .expect("sequence capture messages mutex poisoned");
+            seen.push(request.messages.clone());
+        }
+
+        let responses = Arc::clone(&self.responses);
+        Box::pin(async move {
+            let events = {
+                let mut guard = responses
+                    .lock()
+                    .expect("sequence capture responses mutex poisoned");
+                if guard.is_empty() {
+                    vec![
+                        InferenceEvent::MessageStart {
+                            role: "assistant".to_string(),
+                            model: "sequence-model".to_string(),
+                            provider_id: "sequence".to_string(),
+                        },
+                        InferenceEvent::MessageDelta {
+                            content: "SEQUENCE FALLBACK".to_string(),
+                        },
+                        InferenceEvent::MessageEnd {
+                            input_tokens: 1,
+                            output_tokens: 1,
+                            stop_reason: None,
+                        },
+                    ]
+                } else {
+                    guard.remove(0)
+                }
+            };
+            let stream = futures::stream::iter(events.into_iter().map(Ok));
+            Ok(Box::pin(stream) as InferenceStream)
+        })
+    }
 }
 
 #[async_trait]
@@ -1480,6 +1532,162 @@ async fn test_multimodal_task_content_persists_and_restores() -> Result<()> {
         } if name == "spec.pdf" && path == &captured_file_path
     ));
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_tool_transcript_restores_and_continues_after_cold_resume() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut kernel = make_kernel(tmp.path()).await?;
+    std::fs::write(tmp.path().join("test.txt"), "tool transcript body")?;
+
+    let responses = Arc::new(Mutex::new(vec![
+        vec![
+            InferenceEvent::MessageStart {
+                role: "assistant".to_string(),
+                model: "sequence-model".to_string(),
+                provider_id: "sequence".to_string(),
+            },
+            InferenceEvent::ToolCallStart {
+                id: "call_read_1".to_string(),
+                name: "read_file".to_string(),
+            },
+            InferenceEvent::ToolCallDelta {
+                delta: serde_json::json!({"path": "test.txt"}).to_string(),
+            },
+            InferenceEvent::MessageEnd {
+                input_tokens: 10,
+                output_tokens: 4,
+                stop_reason: None,
+            },
+        ],
+        vec![
+            InferenceEvent::MessageStart {
+                role: "assistant".to_string(),
+                model: "sequence-model".to_string(),
+                provider_id: "sequence".to_string(),
+            },
+            InferenceEvent::MessageDelta {
+                content: "I read it.".to_string(),
+            },
+            InferenceEvent::MessageEnd {
+                input_tokens: 8,
+                output_tokens: 3,
+                stop_reason: None,
+            },
+        ],
+        vec![
+            InferenceEvent::MessageStart {
+                role: "assistant".to_string(),
+                model: "sequence-model".to_string(),
+                provider_id: "sequence".to_string(),
+            },
+            InferenceEvent::MessageDelta {
+                content: "Continued after resume.".to_string(),
+            },
+            InferenceEvent::MessageEnd {
+                input_tokens: 12,
+                output_tokens: 4,
+                stop_reason: None,
+            },
+        ],
+    ]));
+    let seen_messages = Arc::new(Mutex::new(Vec::new()));
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(
+            "mock",
+            Arc::new(SequenceCaptureProvider {
+                responses: Arc::clone(&responses),
+                seen_messages: Arc::clone(&seen_messages),
+            }),
+        ),
+    );
+
+    let mut session = kernel.create_session().await;
+    let session_id = session.identity.session_id().to_string();
+    kernel
+        .run(&mut session, Some("Read test.txt".to_string()))
+        .await?;
+
+    assert!(
+        session.history.iter().any(|message| {
+            message.content.iter().any(|content| {
+                matches!(
+                    content,
+                    turin::inference::provider::InferenceContent::ToolUse { name, .. }
+                    if name == "read_file"
+                )
+            })
+        }),
+        "initial run should record the assistant tool call in memory"
+    );
+    assert!(
+        session.history.iter().any(|message| {
+            message.content.iter().any(|content| {
+                matches!(
+                    content,
+                    turin::inference::provider::InferenceContent::ToolResult { content, .. }
+                    if content.contains("tool transcript body")
+                )
+            })
+        }),
+        "initial run should record the tool result in memory"
+    );
+
+    kernel.end_session(&mut session).await?;
+
+    let mut resumed = kernel
+        .resume_session_for_agent("default", &session_id)
+        .await?;
+    assert!(resumed.restored_from_persistence);
+    assert!(
+        resumed.history.iter().any(|message| {
+            message.content.iter().any(|content| {
+                matches!(
+                    content,
+                    turin::inference::provider::InferenceContent::ToolUse { name, .. }
+                    if name == "read_file"
+                )
+            })
+        }),
+        "cold resume should restore the assistant tool call"
+    );
+    assert!(
+        resumed.history.iter().any(|message| {
+            message.content.iter().any(|content| {
+                matches!(
+                    content,
+                    turin::inference::provider::InferenceContent::ToolResult { content, .. }
+                    if content.contains("tool transcript body")
+                )
+            })
+        }),
+        "cold resume should restore the tool result"
+    );
+
+    kernel
+        .run(
+            &mut resumed,
+            Some("Continue from restored history".to_string()),
+        )
+        .await?;
+
+    let seen = seen_messages
+        .lock()
+        .expect("sequence capture messages mutex poisoned")
+        .clone();
+    let final_request = seen
+        .last()
+        .expect("expected resumed continuation inference request");
+    let rendered = format!("{final_request:?}");
+    assert!(rendered.contains("Read test.txt"));
+    assert!(rendered.contains("read_file"));
+    assert!(rendered.contains("tool transcript body"));
+    assert!(rendered.contains("I read it."));
+    assert!(rendered.contains("Continue from restored history"));
+
+    kernel.end_session(&mut resumed).await?;
     Ok(())
 }
 
