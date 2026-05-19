@@ -337,6 +337,37 @@ fn sample_telegram_event(thread_id: &str, user_id: &str, message_id: &str) -> In
     }
 }
 
+fn sample_scoped_event(
+    thread_id: &str,
+    user_id: &str,
+    message_id: &str,
+    session_scope: ChannelSessionScope,
+) -> InboundEvent {
+    let conversation = ChannelConversationKey {
+        channel: ChannelKind::new("telegram"),
+        workspace_id: "telegram".into(),
+        room_id: Some("group-1".into()),
+        thread_id: thread_id.into(),
+        user_id: matches!(session_scope, ChannelSessionScope::User).then(|| user_id.into()),
+    };
+    InboundEvent {
+        message: ChannelMessageRef {
+            conversation: conversation.clone(),
+            message_id: message_id.into(),
+        },
+        conversation,
+        user: ChannelUser {
+            id: user_id.into(),
+            display_name: Some(format!("User {user_id}")),
+            username: Some(format!("user_{user_id}")),
+        },
+        session_scope,
+        text: "Say pong".into(),
+        attachments: vec![],
+        metadata: Default::default(),
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn channel_runner_drives_daemon_and_emits_outbound_messages() -> Result<()> {
     let daemon = DaemonHarness::start().await?;
@@ -356,6 +387,40 @@ async fn channel_runner_drives_daemon_and_emits_outbound_messages() -> Result<()
     };
     assert!(rendered.contains("PONG"));
     assert!(*shutdown_called.lock().expect("shutdown lock poisoned"));
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn channel_runner_session_scope_controls_conversation_sharing() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+    let runner = daemon.runner();
+
+    let user_a = sample_scoped_event("thread-a", "user-a", "msg-a", ChannelSessionScope::User);
+    let user_b = sample_scoped_event("thread-a", "user-b", "msg-b", ChannelSessionScope::User);
+    let user_a_binding = runner
+        .ensure_session("default", &user_a.conversation, false)
+        .await?;
+    let user_b_binding = runner
+        .ensure_session("default", &user_b.conversation, false)
+        .await?;
+    assert_ne!(
+        user_a_binding.session_id, user_b_binding.session_id,
+        "user-scoped channel conversations should isolate users in the same thread"
+    );
+
+    let shared_a = sample_scoped_event("thread-b", "user-a", "msg-c", ChannelSessionScope::Thread);
+    let shared_b = sample_scoped_event("thread-b", "user-b", "msg-d", ChannelSessionScope::Thread);
+    let shared_a_binding = runner
+        .ensure_session("default", &shared_a.conversation, false)
+        .await?;
+    let shared_b_binding = runner
+        .ensure_session("default", &shared_b.conversation, false)
+        .await?;
+    assert_eq!(
+        shared_a_binding.session_id, shared_b_binding.session_id,
+        "thread-scoped channel conversations should reuse one session across users"
+    );
 
     daemon.stop().await
 }
