@@ -3,12 +3,13 @@ use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::collections::{HashSet, VecDeque};
-use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+#[cfg(test)]
+use turin_channel_core::MessageBlock;
 use turin_channel_core::{
     ChannelAdapterManifest, ChannelAttachment, ChannelAuthFlowPollRequest,
     ChannelAuthFlowPollResponse, ChannelAuthFlowStartRequest, ChannelAuthFlowStartResponse,
@@ -16,12 +17,17 @@ use turin_channel_core::{
     ChannelConfigTargetKind, ChannelConversationKey, ChannelEnumSetting, ChannelIdentitySelectors,
     ChannelInstallManifest, ChannelKind, ChannelMessageRef, ChannelRuntimeCapabilities,
     ChannelRuntimeManifest, ChannelSecretRequirement, ChannelSessionScope, ChannelSetupManifest,
-    ChannelUser, DEFAULT_MAX_INBOUND_TEXT_CHARS, InboundEvent, MessageBlock, OutboundMessage,
-    bound_inbound_text,
+    ChannelUser, DEFAULT_MAX_INBOUND_TEXT_CHARS, InboundEvent, OutboundMessage, bound_inbound_text,
 };
 use turin_channel_runner::ChannelDriver;
 
+mod render;
 mod settings;
+#[cfg(test)]
+use render::DISCORD_CONTENT_MAX_LEN;
+use render::{
+    DiscordSendMessage, LocalAttachmentRef, discord_payload_from_message, render_outbound_messages,
+};
 pub use settings::{DiscordChannelDriverConfig, validate_settings};
 #[cfg(test)]
 pub(crate) use settings::{parse_settings, parse_transport_mode};
@@ -29,9 +35,6 @@ pub(crate) use settings::{parse_settings, parse_transport_mode};
 const DEFAULT_BASE_URL: &str = "https://discord.com/api/v10";
 const DEFAULT_GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=10&encoding=json";
 const DEFAULT_GATEWAY_INTENTS: u64 = (1 << 9) | (1 << 12) | (1 << 15);
-const DISCORD_CONTENT_MAX_LEN: usize = 2_000;
-const DISCORD_EMBEDS_MAX: usize = 10;
-const DISCORD_FILES_MAX: usize = 10;
 const SEEN_MESSAGE_IDS_LIMIT: usize = 1_024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -928,25 +931,10 @@ struct GatewayReady {
 }
 
 #[derive(Debug, Clone)]
-struct LocalAttachmentRef {
-    name: String,
-    path: PathBuf,
-    content_type: Option<String>,
-}
-
-#[derive(Debug, Clone)]
 struct PreparedLocalFile {
     name: String,
     content_type: Option<String>,
     bytes: Vec<u8>,
-}
-
-#[derive(Debug, Clone)]
-struct DiscordSendMessage {
-    content: Option<String>,
-    embeds: Vec<serde_json::Value>,
-    components: Vec<serde_json::Value>,
-    files: Vec<LocalAttachmentRef>,
 }
 
 fn decode_gateway_payload(message: WsMessage) -> Result<Option<GatewayPayload>> {
@@ -977,221 +965,6 @@ fn is_newer_snowflake(candidate: &str, current: &str) -> bool {
         (Some(candidate), Some(current)) => candidate > current,
         _ => candidate > current,
     }
-}
-
-fn render_outbound_messages(message: OutboundMessage) -> Vec<DiscordSendMessage> {
-    let mut text_chunks = split_for_discord_content(render_text_blocks(&message.blocks));
-    let mut embeds = message.embeds;
-    if embeds.is_empty() {
-        embeds = extract_embeds_from_metadata(&message.metadata);
-    }
-    let mut components = extract_components_from_metadata(&message.metadata);
-    if components.is_empty() {
-        components = message.components;
-    }
-
-    let mut local_files = Vec::new();
-    let mut remote_attachment_urls = Vec::new();
-    for attachment in message.attachments {
-        if let Some(local_path) = attachment.local_path {
-            local_files.push(LocalAttachmentRef {
-                name: attachment.name,
-                path: PathBuf::from(local_path),
-                content_type: attachment.content_type,
-            });
-            continue;
-        }
-        if let Some(url) = attachment.url {
-            remote_attachment_urls.push(url);
-        }
-    }
-    if !remote_attachment_urls.is_empty() {
-        let urls = remote_attachment_urls.join("\n");
-        if !urls.trim().is_empty() {
-            text_chunks.extend(split_for_discord_content(urls));
-        }
-    }
-
-    let mut embed_queue: VecDeque<serde_json::Value> = embeds.into_iter().collect();
-    let mut file_queue: VecDeque<LocalAttachmentRef> = local_files.into_iter().collect();
-    let mut text_queue: VecDeque<String> = text_chunks.into_iter().collect();
-    let mut output = Vec::new();
-    let mut first = true;
-
-    while !text_queue.is_empty() || !embed_queue.is_empty() || !file_queue.is_empty() || first {
-        let content = text_queue.pop_front();
-        let mut embeds_for_message = Vec::new();
-        while embeds_for_message.len() < DISCORD_EMBEDS_MAX {
-            let Some(embed) = embed_queue.pop_front() else {
-                break;
-            };
-            embeds_for_message.push(embed);
-        }
-
-        let mut files_for_message = Vec::new();
-        while files_for_message.len() < DISCORD_FILES_MAX {
-            let Some(file) = file_queue.pop_front() else {
-                break;
-            };
-            files_for_message.push(file);
-        }
-
-        let components_for_message = if first {
-            components.clone()
-        } else {
-            Vec::new()
-        };
-
-        if content.is_none()
-            && embeds_for_message.is_empty()
-            && files_for_message.is_empty()
-            && components_for_message.is_empty()
-        {
-            break;
-        }
-
-        output.push(DiscordSendMessage {
-            content,
-            embeds: embeds_for_message,
-            components: components_for_message,
-            files: files_for_message,
-        });
-        first = false;
-    }
-
-    if output.is_empty() {
-        output.push(DiscordSendMessage {
-            content: Some("(no output)".to_string()),
-            embeds: Vec::new(),
-            components: Vec::new(),
-            files: Vec::new(),
-        });
-    }
-
-    output
-}
-
-fn render_text_blocks(blocks: &[MessageBlock]) -> String {
-    let mut chunks = Vec::new();
-    for block in blocks {
-        match block {
-            MessageBlock::Text { text } => {
-                if !text.trim().is_empty() {
-                    chunks.push(text.clone());
-                }
-            }
-            MessageBlock::CodeBlock { language, code } => {
-                let prefix = language.clone().unwrap_or_default();
-                chunks.push(format!("```{}\n{}\n```", prefix, code));
-            }
-        }
-    }
-    chunks.join("\n\n")
-}
-
-fn split_for_discord_content(content: String) -> Vec<String> {
-    let mut out = Vec::new();
-    let trimmed = content.trim();
-    if trimmed.is_empty() {
-        return out;
-    }
-
-    let mut current = String::new();
-    for line in trimmed.lines() {
-        if line.chars().count() > DISCORD_CONTENT_MAX_LEN {
-            if !current.is_empty() {
-                out.push(current.clone());
-                current.clear();
-            }
-            let mut segment = String::new();
-            for ch in line.chars() {
-                segment.push(ch);
-                if segment.chars().count() >= DISCORD_CONTENT_MAX_LEN {
-                    out.push(segment.clone());
-                    segment.clear();
-                }
-            }
-            if !segment.is_empty() {
-                out.push(segment);
-            }
-            continue;
-        }
-
-        let tentative = if current.is_empty() {
-            line.to_string()
-        } else {
-            format!("{current}\n{line}")
-        };
-        if tentative.chars().count() > DISCORD_CONTENT_MAX_LEN {
-            if !current.is_empty() {
-                out.push(current.clone());
-            }
-            current = line.to_string();
-        } else {
-            current = tentative;
-        }
-    }
-    if !current.is_empty() {
-        out.push(current);
-    }
-    out
-}
-
-fn extract_embeds_from_metadata(
-    metadata: &serde_json::Map<String, serde_json::Value>,
-) -> Vec<serde_json::Value> {
-    metadata
-        .get("discord_embeds")
-        .or_else(|| metadata.get("embeds"))
-        .and_then(|value| value.as_array())
-        .map(|entries| {
-            entries
-                .iter()
-                .filter(|entry| entry.is_object())
-                .cloned()
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn extract_components_from_metadata(
-    metadata: &serde_json::Map<String, serde_json::Value>,
-) -> Vec<serde_json::Value> {
-    metadata
-        .get("discord_components")
-        .or_else(|| metadata.get("components"))
-        .and_then(|value| value.as_array())
-        .map(|entries| {
-            entries
-                .iter()
-                .filter(|entry| entry.is_object())
-                .cloned()
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn discord_payload_from_message(message: &DiscordSendMessage) -> serde_json::Value {
-    let mut payload = serde_json::Map::new();
-    if let Some(content) = &message.content {
-        payload.insert(
-            "content".to_string(),
-            serde_json::Value::String(content.clone()),
-        );
-    }
-    if !message.embeds.is_empty() {
-        payload.insert(
-            "embeds".to_string(),
-            serde_json::Value::Array(message.embeds.clone()),
-        );
-    }
-    if !message.components.is_empty() {
-        payload.insert(
-            "components".to_string(),
-            serde_json::Value::Array(message.components.clone()),
-        );
-    }
-    serde_json::Value::Object(payload)
 }
 
 async fn prepare_local_files(files: &[LocalAttachmentRef]) -> Result<Vec<PreparedLocalFile>> {
