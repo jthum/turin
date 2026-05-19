@@ -57,6 +57,32 @@ mod read_file_security {
         assert!(matches!(err, ToolError::PermissionDenied(_)));
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rejects_symlink_escape() {
+        let dir = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "secret").unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.txt"),
+            dir.path().join("link.txt"),
+        )
+        .unwrap();
+
+        let tool = ReadFileTool;
+        let ctx = make_ctx(dir.path());
+
+        let result: Result<_, ToolError> = tool
+            .execute(serde_json::json!({ "path": "link.txt" }), &ctx)
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ToolError::PermissionDenied(_)
+        ));
+    }
+
     #[tokio::test]
     async fn allows_nested_relative_path() {
         let dir = TempDir::new().unwrap();
@@ -133,6 +159,31 @@ mod write_file_security {
         ));
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rejects_symlinked_directory_escape() {
+        let dir = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("external")).unwrap();
+
+        let tool = WriteFileTool;
+        let ctx = make_ctx(dir.path());
+
+        let result: Result<_, ToolError> = tool
+            .execute(
+                serde_json::json!({ "path": "external/evil.txt", "content": "pwned" }),
+                &ctx,
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ToolError::PermissionDenied(_)
+        ));
+        assert!(!outside.path().join("evil.txt").exists());
+    }
+
     #[tokio::test]
     async fn writes_within_workspace() {
         let dir = TempDir::new().unwrap();
@@ -178,6 +229,40 @@ mod edit_file_security {
             result.unwrap_err(),
             ToolError::PermissionDenied(_)
         ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rejects_symlink_escape() {
+        let dir = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let outside_file = outside.path().join("secret.txt");
+        std::fs::write(&outside_file, "do not edit").unwrap();
+        std::os::unix::fs::symlink(&outside_file, dir.path().join("link.txt")).unwrap();
+
+        let tool = EditFileTool;
+        let ctx = make_ctx(dir.path());
+
+        let result: Result<_, ToolError> = tool
+            .execute(
+                serde_json::json!({
+                    "path": "link.txt",
+                    "old_text": "do not",
+                    "new_text": "please"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ToolError::PermissionDenied(_)
+        ));
+        assert_eq!(
+            std::fs::read_to_string(outside_file).unwrap(),
+            "do not edit"
+        );
     }
 
     #[tokio::test]

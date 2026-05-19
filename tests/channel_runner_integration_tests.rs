@@ -1,6 +1,6 @@
 mod support;
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -15,7 +15,8 @@ use turin_channel_core::{
     InboundEvent, MessageBlock, OutboundMessage,
 };
 use turin_channel_runner::{
-    ChannelDriver, ChannelProgressUpdate, ChannelRunner, ChannelStreamMode, RunnerConfig,
+    ChannelAccessPolicy, ChannelDriver, ChannelProgressUpdate, ChannelRunner, ChannelStreamMode,
+    RunnerConfig,
 };
 
 struct DaemonHarness {
@@ -423,6 +424,47 @@ async fn channel_runner_session_scope_controls_conversation_sharing() -> Result<
     );
 
     daemon.stop().await
+}
+
+#[tokio::test]
+async fn channel_runner_ignores_disallowed_user_without_opening_session() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let runner = ChannelRunner::new(
+        turin_daemon_client::DaemonClient::new(tempdir.path().join("missing.sock")),
+        RunnerConfig {
+            channel_id: "mock".to_string(),
+            state_path: tempdir.path().join("bindings.json"),
+            access_state_path: tempdir.path().join("access.json"),
+            idle_ttl: Some(Duration::from_secs(600)),
+            access_policy: ChannelAccessPolicy {
+                allowed_users: HashSet::from(["user-a".to_string()]),
+                ..Default::default()
+            },
+            tools: Default::default(),
+        },
+    );
+    let mut driver = MockDriver::new(vec![sample_scoped_event(
+        "thread-a",
+        "user-b",
+        "msg-b",
+        ChannelSessionScope::User,
+    )]);
+    let sent = Arc::clone(&driver.sent);
+    let shutdown_called = Arc::clone(&driver.shutdown_called);
+
+    runner.run_driver("default", &mut driver, Some(100)).await?;
+
+    assert!(
+        sent.lock().expect("sent lock poisoned").is_empty(),
+        "disallowed users should not receive task output or error output"
+    );
+    assert!(*shutdown_called.lock().expect("shutdown lock poisoned"));
+    assert!(
+        !tempdir.path().join("bindings.json").exists(),
+        "ignored channel events should not create session bindings"
+    );
+
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread")]
