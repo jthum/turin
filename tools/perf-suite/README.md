@@ -8,7 +8,9 @@ The first scenario stresses hot session history and large tool outputs without u
 cargo run --manifest-path tools/perf-suite/Cargo.toml -- \
   hot-history \
   --turns 50 \
-  --payload-bytes 262144
+  --payload-bytes 262144 \
+  --response-bytes 4096 \
+  --tool-every 4
 ```
 
 For a small smoke run:
@@ -17,8 +19,15 @@ For a small smoke run:
 cargo run --manifest-path tools/perf-suite/Cargo.toml -- \
   hot-history \
   --turns 2 \
-  --payload-bytes 1024
+  --payload-bytes 1024 \
+  --response-bytes 512
 ```
+
+`hot-history` defaults to one large `read_file` tool call every four prompts.
+That keeps the scenario below Turin's built-in 32-tool-call safety window during
+fast local runs while still measuring large persisted tool results. Set
+`--tool-every 1` only when you intentionally want to exercise rate limiting, or
+`--tool-every 0` to measure message payloads without native tool calls.
 
 Reports are written to `.workspace/perf-reports/` by default as JSON and Markdown.
 
@@ -54,6 +63,8 @@ small, for example `--message-bytes 16 --response-bytes 4`.
 - process PSS from `/proc/self/smaps_rollup` when available
 - state DB size, split into main DB, WAL, SHM, and total bytes
 - session history length
+- approximate resident history payload bytes
+- hot-window tool result count and tool-result error count
 - turn count
 - elapsed wall time
 - fake channel outbound count, for channel scenarios

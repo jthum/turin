@@ -13,8 +13,8 @@ use tempfile::TempDir;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant as TokioInstant, sleep, timeout};
 use turin::inference::provider::{
-    InferenceEvent, InferenceProvider, InferenceRequest, InferenceStream, ProviderClient,
-    RequestOptions, SdkError,
+    InferenceContent, InferenceEvent, InferenceMessage, InferenceProvider, InferenceRequest,
+    InferenceStream, ProviderClient, RequestOptions, SdkError,
 };
 use turin::kernel::Kernel;
 use turin::kernel::config::{
@@ -54,6 +54,14 @@ struct HotHistoryArgs {
     /// Bytes written to each synthetic file read by the tool call.
     #[arg(long, default_value_t = 256 * 1024)]
     payload_bytes: usize,
+
+    /// Target byte size for each mocked assistant response.
+    #[arg(long, default_value_t = 1024)]
+    response_bytes: usize,
+
+    /// Request a large read_file tool call every N prompts. Use 0 to disable tool calls.
+    #[arg(long, default_value_t = 4)]
+    tool_every: usize,
 
     /// Capture a snapshot every N turns.
     #[arg(long, default_value_t = 5)]
@@ -154,6 +162,9 @@ struct Snapshot {
     outbound_messages: Option<usize>,
     active_sessions: Option<usize>,
     messages_per_session: Option<usize>,
+    history_payload_bytes: Option<usize>,
+    tool_results: Option<usize>,
+    tool_result_errors: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -212,7 +223,7 @@ impl InferenceProvider for SequencePerfProvider {
                 .lock()
                 .expect("perf provider response lock poisoned")
                 .pop_front()
-                .unwrap_or_else(final_events)
+                .unwrap_or_else(|| final_events(0, "Recorded.".len()))
                 .into_iter()
                 .map(Ok);
             Ok(Box::pin(stream::iter(events)) as InferenceStream)
@@ -245,7 +256,7 @@ async fn run_hot_history(args: HotHistoryArgs) -> Result<()> {
     fs::create_dir_all(&payload_dir)?;
     fs::write(harness_dir.join("main.lua"), "-- perf harness\n")?;
 
-    for index in 0..args.turns {
+    for index in tool_payload_indices(args.turns, args.tool_every) {
         fs::write(
             payload_dir.join(format!("payload-{index}.txt")),
             synthetic_payload(index, args.payload_bytes),
@@ -253,7 +264,11 @@ async fn run_hot_history(args: HotHistoryArgs) -> Result<()> {
     }
 
     let config = build_config(&workspace_root, &harness_dir, &state_db_path, args.turns)?;
-    let responses = Arc::new(Mutex::new(build_responses(args.turns)));
+    let responses = Arc::new(Mutex::new(build_responses(
+        args.turns,
+        args.tool_every,
+        args.response_bytes,
+    )));
     let provider = Arc::new(SequencePerfProvider { responses });
 
     let mut kernel = Kernel::builder(config).build()?;
@@ -263,47 +278,36 @@ async fn run_hot_history(args: HotHistoryArgs) -> Result<()> {
 
     let mut session = kernel.create_session().await;
     let start = Instant::now();
-    let mut snapshots = vec![snapshot(
+    let expected_tool_calls = tool_call_count(args.turns, args.tool_every);
+    let mut snapshots = vec![hot_history_snapshot(
         "start",
         start,
         &state_db_path,
-        Some(session.turn_index),
-        Some(session.history.len()),
-        None,
-        None,
-        None,
+        &session,
     )];
 
     for index in 0..args.turns {
         kernel
-            .run(&mut session, Some(format!("Read payload {index}.")))
+            .run(&mut session, Some(format!("Process payload {index}.")))
             .await
             .with_context(|| format!("hot-history turn {index} failed"))?;
 
         if (index + 1) % args.sample_every == 0 || index + 1 == args.turns {
-            snapshots.push(snapshot(
+            snapshots.push(hot_history_snapshot(
                 &format!("after-turn-{}", index + 1),
                 start,
                 &state_db_path,
-                Some(session.turn_index),
-                Some(session.history.len()),
-                None,
-                None,
-                None,
+                &session,
             ));
         }
     }
 
     kernel.end_session(&mut session).await?;
-    snapshots.push(snapshot(
+    snapshots.push(hot_history_snapshot(
         "after-end-session",
         start,
         &state_db_path,
-        Some(session.turn_index),
-        Some(session.history.len()),
-        None,
-        None,
-        None,
+        &session,
     ));
 
     let report = PerfReport {
@@ -311,6 +315,9 @@ async fn run_hot_history(args: HotHistoryArgs) -> Result<()> {
         config: serde_json::json!({
             "turns": args.turns,
             "payload_bytes": args.payload_bytes,
+            "response_bytes": args.response_bytes,
+            "tool_every": args.tool_every,
+            "expected_tool_calls": expected_tool_calls,
             "sample_every": args.sample_every,
         }),
         workspace_root: workspace_root.display().to_string(),
@@ -733,37 +740,44 @@ fn build_config(
     })
 }
 
-fn build_responses(turns: usize) -> VecDeque<Vec<InferenceEvent>> {
-    let mut responses = VecDeque::with_capacity(turns * 2);
+fn build_responses(
+    turns: usize,
+    tool_every: usize,
+    response_bytes: usize,
+) -> VecDeque<Vec<InferenceEvent>> {
+    let mut responses =
+        VecDeque::with_capacity(turns.saturating_add(tool_call_count(turns, tool_every)));
     for index in 0..turns {
-        responses.push_back(vec![
-            message_start(),
-            InferenceEvent::ToolCallStart {
-                id: format!("call_{index}"),
-                name: "read_file".to_string(),
-            },
-            InferenceEvent::ToolCallDelta {
-                delta: serde_json::json!({
-                    "path": format!("payloads/payload-{index}.txt")
-                })
-                .to_string(),
-            },
-            InferenceEvent::MessageEnd {
-                input_tokens: 10,
-                output_tokens: 5,
-                stop_reason: None,
-            },
-        ]);
-        responses.push_back(final_events());
+        if should_call_tool(index, tool_every) {
+            responses.push_back(vec![
+                message_start(),
+                InferenceEvent::ToolCallStart {
+                    id: format!("call_{index}"),
+                    name: "read_file".to_string(),
+                },
+                InferenceEvent::ToolCallDelta {
+                    delta: serde_json::json!({
+                        "path": format!("payloads/payload-{index}.txt")
+                    })
+                    .to_string(),
+                },
+                InferenceEvent::MessageEnd {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                    stop_reason: None,
+                },
+            ]);
+        }
+        responses.push_back(final_events(index, response_bytes));
     }
     responses
 }
 
-fn final_events() -> Vec<InferenceEvent> {
+fn final_events(index: usize, response_bytes: usize) -> Vec<InferenceEvent> {
     vec![
         message_start(),
         InferenceEvent::MessageDelta {
-            content: "Recorded.".to_string(),
+            content: synthetic_text(&format!("Recorded payload {index}."), response_bytes),
         },
         InferenceEvent::MessageEnd {
             input_tokens: 5,
@@ -779,6 +793,18 @@ fn message_start() -> InferenceEvent {
         model: "mock-model".to_string(),
         provider_id: "mock".to_string(),
     }
+}
+
+fn should_call_tool(index: usize, tool_every: usize) -> bool {
+    tool_every > 0 && index % tool_every == 0
+}
+
+fn tool_call_count(turns: usize, tool_every: usize) -> usize {
+    tool_payload_indices(turns, tool_every).count()
+}
+
+fn tool_payload_indices(turns: usize, tool_every: usize) -> impl Iterator<Item = usize> {
+    (0..turns).filter(move |index| should_call_tool(*index, tool_every))
 }
 
 fn synthetic_payload(index: usize, bytes: usize) -> Vec<u8> {
@@ -817,7 +843,106 @@ fn snapshot(
         outbound_messages,
         active_sessions,
         messages_per_session,
+        history_payload_bytes: None,
+        tool_results: None,
+        tool_result_errors: None,
     }
+}
+
+fn hot_history_snapshot(
+    label: &str,
+    start: Instant,
+    state_db_path: &Path,
+    session: &turin::kernel::session::SessionState,
+) -> Snapshot {
+    let mut snapshot = snapshot(
+        label,
+        start,
+        state_db_path,
+        Some(session.turn_index),
+        Some(session.history.len()),
+        None,
+        None,
+        None,
+    );
+    let metrics = history_metrics(&session.history);
+    snapshot.history_payload_bytes = Some(metrics.payload_bytes);
+    snapshot.tool_results = Some(metrics.tool_results);
+    snapshot.tool_result_errors = Some(metrics.tool_result_errors);
+    snapshot
+}
+
+#[derive(Debug, Default)]
+struct HistoryMetrics {
+    payload_bytes: usize,
+    tool_results: usize,
+    tool_result_errors: usize,
+}
+
+fn history_metrics(messages: &[InferenceMessage]) -> HistoryMetrics {
+    let mut metrics = HistoryMetrics::default();
+    for message in messages {
+        for content in &message.content {
+            match content {
+                InferenceContent::Text { text } => {
+                    metrics.payload_bytes = metrics.payload_bytes.saturating_add(text.len());
+                }
+                InferenceContent::Image {
+                    name,
+                    content_type,
+                    url,
+                    local_path,
+                    ..
+                }
+                | InferenceContent::File {
+                    name,
+                    content_type,
+                    url,
+                    local_path,
+                    ..
+                } => {
+                    metrics.payload_bytes = metrics
+                        .payload_bytes
+                        .saturating_add(optional_len(name.as_deref()))
+                        .saturating_add(optional_len(content_type.as_deref()))
+                        .saturating_add(optional_len(url.as_deref()))
+                        .saturating_add(optional_len(local_path.as_deref()));
+                }
+                InferenceContent::ToolUse { id, name, input } => {
+                    metrics.payload_bytes = metrics
+                        .payload_bytes
+                        .saturating_add(id.len())
+                        .saturating_add(name.len())
+                        .saturating_add(serde_json::to_string(input).map_or(0, |json| json.len()));
+                }
+                InferenceContent::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                } => {
+                    metrics.tool_results = metrics.tool_results.saturating_add(1);
+                    if *is_error {
+                        metrics.tool_result_errors = metrics.tool_result_errors.saturating_add(1);
+                    }
+                    metrics.payload_bytes = metrics
+                        .payload_bytes
+                        .saturating_add(tool_use_id.len())
+                        .saturating_add(content.len());
+                }
+                InferenceContent::Thinking { content, signature } => {
+                    metrics.payload_bytes = metrics
+                        .payload_bytes
+                        .saturating_add(content.len())
+                        .saturating_add(optional_len(signature.as_deref()));
+                }
+            }
+        }
+    }
+    metrics
+}
+
+fn optional_len(value: Option<&str>) -> usize {
+    value.map_or(0, str::len)
 }
 
 impl ScaleRecorder {
@@ -917,12 +1042,12 @@ fn markdown_report(report: &PerfReport) -> String {
     out.push_str(&format!("- workspace_root: `{}`\n", report.workspace_root));
     out.push_str(&format!("- state_db_path: `{}`\n\n", report.state_db_path));
     out.push_str(
-        "| label | elapsed_ms | rss_kb | pss_kb | state_db_main_bytes | state_db_wal_bytes | state_db_shm_bytes | state_db_bytes | turn_index | history_len | outbound_messages | active_sessions | messages_per_session |\n",
+        "| label | elapsed_ms | rss_kb | pss_kb | state_db_main_bytes | state_db_wal_bytes | state_db_shm_bytes | state_db_bytes | turn_index | history_len | history_payload_bytes | tool_results | tool_result_errors | outbound_messages | active_sessions | messages_per_session |\n",
     );
-    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     for snapshot in &report.snapshots {
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             snapshot.label,
             snapshot.elapsed_ms,
             display_option(snapshot.rss_kb),
@@ -933,6 +1058,9 @@ fn markdown_report(report: &PerfReport) -> String {
             snapshot.state_db_bytes,
             display_u32_option(snapshot.turn_index),
             display_usize_option(snapshot.history_len),
+            display_usize_option(snapshot.history_payload_bytes),
+            display_usize_option(snapshot.tool_results),
+            display_usize_option(snapshot.tool_result_errors),
             display_usize_option(snapshot.outbound_messages),
             display_usize_option(snapshot.active_sessions),
             display_usize_option(snapshot.messages_per_session)
