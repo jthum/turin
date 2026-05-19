@@ -181,3 +181,95 @@ fn task_execution_override_rejects_branch_advancing_non_branch_targets() {
     assert!(error.contains("advance_branch_head"));
     assert!(session.active_task.execution_restore.is_none());
 }
+
+#[test]
+fn hot_history_prunes_old_messages_and_tracks_offset() {
+    let mut session = SessionState::new();
+    for idx in 0..6 {
+        session.history.push(InferenceMessage {
+            role: InferenceRole::User,
+            content: vec![InferenceContent::Text {
+                text: format!("message {idx}"),
+            }],
+            tool_call_id: None,
+        });
+    }
+
+    let report = session
+        .prune_hot_history(Some(3))
+        .expect("history should be pruned");
+
+    assert_eq!(report.dropped_messages, 3);
+    assert_eq!(report.retained_messages, 3);
+    assert_eq!(report.retained_offset, 3);
+    assert_eq!(session.history_message_offset, 3);
+    assert_eq!(session.history.len(), 3);
+    assert_eq!(session.history[0].role, InferenceRole::User);
+}
+
+#[test]
+fn hot_history_preserves_tool_result_adjacency_at_boundary() {
+    let mut session = SessionState::new();
+    session.history.push(InferenceMessage {
+        role: InferenceRole::User,
+        content: vec![InferenceContent::Text {
+            text: "old".to_string(),
+        }],
+        tool_call_id: None,
+    });
+    session.history.push(InferenceMessage {
+        role: InferenceRole::Assistant,
+        content: vec![InferenceContent::ToolUse {
+            id: "call-1".to_string(),
+            name: "read_file".to_string(),
+            input: serde_json::json!({"path": "README.md"}),
+        }],
+        tool_call_id: None,
+    });
+    session.history.push(InferenceMessage {
+        role: InferenceRole::Tool,
+        content: vec![InferenceContent::ToolResult {
+            tool_use_id: "call-1".to_string(),
+            content: "result".to_string(),
+            is_error: false,
+        }],
+        tool_call_id: None,
+    });
+
+    let report = session
+        .prune_hot_history(Some(1))
+        .expect("history should be pruned");
+
+    assert_eq!(report.dropped_messages, 1);
+    assert_eq!(session.history_message_offset, 1);
+    assert_eq!(session.history.len(), 2);
+    assert_eq!(session.history[0].role, InferenceRole::Assistant);
+    assert_eq!(session.history[1].role, InferenceRole::Tool);
+}
+
+#[test]
+fn replacing_full_history_resets_hot_window_offset() {
+    let mut session = SessionState::new();
+    for idx in 0..4 {
+        session.history.push(InferenceMessage {
+            role: InferenceRole::User,
+            content: vec![InferenceContent::Text {
+                text: format!("message {idx}"),
+            }],
+            tool_call_id: None,
+        });
+    }
+    session.prune_hot_history(Some(2));
+
+    session.replace_full_history(vec![InferenceMessage {
+        role: InferenceRole::User,
+        content: vec![InferenceContent::Text {
+            text: "rehydrated".to_string(),
+        }],
+        tool_call_id: None,
+    }]);
+
+    assert_eq!(session.history_message_offset, 0);
+    assert!(!session.history_is_pruned());
+    assert_eq!(session.history.len(), 1);
+}

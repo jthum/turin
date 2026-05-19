@@ -253,6 +253,12 @@ impl TurinConfig {
 
         self.inference
             .validate_complete(&self.providers, "inference")?;
+        if let Some(max_messages) = self.inference.hot_history.max_messages {
+            anyhow::ensure!(
+                max_messages > 0,
+                "inference.hot_history.max_messages must be greater than 0"
+            );
+        }
 
         if let Some(ttl_ms) = self.governance.grants.max_ttl_ms {
             anyhow::ensure!(

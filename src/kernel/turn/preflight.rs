@@ -51,6 +51,7 @@ impl ExecutionHost {
         session: &mut SessionState,
         turn_ctx: &TurnContext,
     ) -> Result<TurnPreflight> {
+        self.ensure_full_history_materialized(session).await?;
         let mut req = self.default_turn_request_state(session)?;
 
         if self.emit_turn_start_and_gate(session, turn_ctx) {

@@ -204,6 +204,49 @@ trigger_ratio = 1.5
 }
 
 #[test]
+fn test_parse_inference_hot_history_policy() {
+    let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[inference.hot_history]
+profile = "performance"
+max_messages = 128
+"#;
+
+    let config = TurinConfig::from_str(toml).unwrap();
+    assert_eq!(
+        config.inference.hot_history.profile,
+        crate::kernel::config::HotHistoryProfile::Performance
+    );
+    assert_eq!(
+        config.inference.hot_history.effective_max_messages(),
+        Some(128)
+    );
+}
+
+#[test]
+fn test_validate_invalid_hot_history_max_messages() {
+    let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[inference.hot_history]
+max_messages = 0
+"#;
+
+    assert!(TurinConfig::from_str(toml).is_err());
+}
+
+#[test]
 fn test_resolve_inference_route_uses_requested_context_then_fallback_then_base() {
     let toml = r#"
 [agent]

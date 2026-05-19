@@ -44,6 +44,7 @@ impl ExecutionHost {
         }
 
         self.begin_turn_persistence(session, Some(task)).await?;
+        self.ensure_full_history_materialized(session).await?;
         self.append_task_user_message(session, &user_content);
 
         let effective_tools = crate::tools::policy::resolve_effective_tools_config(
@@ -184,6 +185,7 @@ impl ExecutionHost {
             let token_usage_action = self.evaluate_token_usage(session).await;
             session.turn_index += 1;
             task_turn_count += 1;
+            self.prune_session_hot_history(session);
 
             match token_usage_action {
                 TokenUsageHookAction::Continue => {}

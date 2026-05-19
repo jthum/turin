@@ -5,7 +5,7 @@ use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::inference::provider::InferenceMessage;
+use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::KernelEvent;
 use crate::kernel::event::TaskBranchOutcome;
@@ -529,6 +529,8 @@ pub struct SessionState {
     pub inference: InferenceOverrideConfig,
     pub context_checkpoint: Option<ContextCompactionCheckpoint>,
     pub history: Vec<InferenceMessage>,
+    /// Number of persisted messages that precede `history` when the hot window is pruned.
+    pub history_message_offset: usize,
     pub execution: ExecutionContext,
     pub active_task: ActiveTaskState,
     pub selected_branch_head_cursor: Option<BranchHeadCursor>,
@@ -577,6 +579,7 @@ impl SessionState {
             inference: InferenceOverrideConfig::default(),
             context_checkpoint: None,
             history: Vec::new(),
+            history_message_offset: 0,
             execution: ExecutionContext::new(),
             active_task: ActiveTaskState::default(),
             selected_branch_head_cursor: None,
@@ -609,6 +612,45 @@ impl SessionState {
         window: Duration,
     ) -> usize {
         self.tool_rate_limit.reserve(requested, max_calls, window)
+    }
+
+    pub fn history_is_pruned(&self) -> bool {
+        self.history_message_offset > 0
+    }
+
+    pub fn replace_full_history(&mut self, history: Vec<InferenceMessage>) {
+        self.history = history;
+        self.history_message_offset = 0;
+    }
+
+    pub fn prune_hot_history(&mut self, max_messages: Option<usize>) -> Option<HotHistoryPrune> {
+        let max_messages = max_messages?;
+        if self.history.len() <= max_messages {
+            return None;
+        }
+
+        let mut retain_from = self.history.len().saturating_sub(max_messages);
+        while retain_from > 0
+            && history_boundary_requires_previous(
+                &self.history[retain_from - 1],
+                &self.history[retain_from],
+            )
+        {
+            retain_from -= 1;
+        }
+
+        if retain_from == 0 {
+            return None;
+        }
+
+        self.history.drain(0..retain_from);
+        self.history.shrink_to_fit();
+        self.history_message_offset = self.history_message_offset.saturating_add(retain_from);
+        Some(HotHistoryPrune {
+            dropped_messages: retain_from,
+            retained_messages: self.history.len(),
+            retained_offset: self.history_message_offset,
+        })
     }
 
     pub fn execution_id(&self) -> &str {
@@ -790,6 +832,25 @@ impl SessionState {
         self.active_task = ActiveTaskState::default();
         should_refresh
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HotHistoryPrune {
+    pub dropped_messages: usize,
+    pub retained_messages: usize,
+    pub retained_offset: usize,
+}
+
+fn history_boundary_requires_previous(
+    previous: &InferenceMessage,
+    next: &InferenceMessage,
+) -> bool {
+    next.role == InferenceRole::Tool
+        && (previous.role == InferenceRole::Assistant
+            || previous
+                .content
+                .iter()
+                .any(|content| matches!(content, InferenceContent::ToolUse { .. })))
 }
 
 impl ExecutionStatusSnapshot {

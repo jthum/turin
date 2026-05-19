@@ -146,7 +146,7 @@ impl ExecutionHost {
             session_default_store_selector_from_metadata(row.metadata.as_deref());
         session.inference = inference;
         session.context_checkpoint = rebuild_context_checkpoint(&materialized.active_events);
-        session.history = history;
+        session.replace_full_history(history);
         session.replace_context_target_preserving_policy(context_target);
         session.set_selected_branch_head_cursor(
             materialized.branch_head_turn_id,
@@ -158,6 +158,7 @@ impl ExecutionHost {
         session.next_task_id = next_task_id;
         session.next_plan_id = next_plan_id;
         session.restored_from_persistence = true;
+        self.prune_session_hot_history(&mut session);
         self.attach_session_persistence(&mut session, false).await;
         Ok(session)
     }
@@ -198,7 +199,7 @@ impl ExecutionHost {
             .identity
             .set_channel_id(session_channel_id_from_metadata(row.metadata.as_deref()));
         session.context_checkpoint = rebuild_context_checkpoint(&materialized.active_events);
-        session.history = history;
+        session.replace_full_history(history);
         session.set_context_target(context_target);
         session.set_selected_branch_head_cursor(
             materialized.branch_head_turn_id,
@@ -210,7 +211,55 @@ impl ExecutionHost {
         session.next_task_id = next_task_id;
         session.next_plan_id = next_plan_id;
         session.restored_from_persistence = true;
+        self.prune_session_hot_history(session);
         Ok(())
+    }
+
+    pub(crate) async fn ensure_full_history_materialized(
+        &self,
+        session: &mut SessionState,
+    ) -> Result<()> {
+        if !session.history_is_pruned() {
+            return Ok(());
+        }
+        let internal_id = session
+            .internal_id
+            .ok_or_else(|| anyhow!("Session has no internal persistence id"))?;
+        let store = self
+            .store_manager
+            .open(&session.store_selector)
+            .await
+            .context(
+                "Session history materialization requires a configured persistent state store",
+            )?;
+        let row = store.get_session_row(internal_id).await?.ok_or_else(|| {
+            anyhow!(
+                "Persisted session '{}' not found",
+                session.identity.session_id()
+            )
+        })?;
+        let context_target = resolved_execution_context_target(session.context_target(), &row);
+        let materialized = materialize_execution_target(
+            self,
+            &store,
+            &session.store_selector,
+            &row,
+            &context_target,
+        )
+        .await?;
+        let (history, _) = rebuild_history(&materialized.messages)?;
+        session.replace_full_history(history);
+        Ok(())
+    }
+
+    pub(crate) fn prune_session_hot_history(&self, session: &mut SessionState) {
+        if session.internal_id.is_none()
+            || session.effective_write_policy() != ExecutionWritePolicy::AdvanceBranchHead
+        {
+            return;
+        }
+        let _ =
+            session.prune_hot_history(self.config.inference.hot_history.effective_max_messages());
     }
 
     pub async fn select_session_branch_by_name_local(

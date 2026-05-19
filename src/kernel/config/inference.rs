@@ -16,6 +16,51 @@ pub struct InferenceConfig {
     pub contexts: HashMap<String, InferenceContextConfig>,
     #[serde(default)]
     pub compaction: InferenceCompactionConfig,
+    #[serde(default)]
+    pub hot_history: HotHistoryConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct HotHistoryConfig {
+    #[serde(default)]
+    pub profile: HotHistoryProfile,
+    #[serde(default)]
+    pub max_messages: Option<usize>,
+}
+
+impl Default for HotHistoryConfig {
+    fn default() -> Self {
+        Self {
+            profile: HotHistoryProfile::Default,
+            max_messages: None,
+        }
+    }
+}
+
+impl HotHistoryConfig {
+    pub fn effective_max_messages(&self) -> Option<usize> {
+        self.max_messages
+            .or_else(|| self.profile.default_max_messages())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HotHistoryProfile {
+    #[default]
+    Default,
+    Performance,
+    Debug,
+}
+
+impl HotHistoryProfile {
+    fn default_max_messages(self) -> Option<usize> {
+        match self {
+            Self::Default => Some(64),
+            Self::Performance => Some(256),
+            Self::Debug => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
