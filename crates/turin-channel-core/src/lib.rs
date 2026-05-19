@@ -428,6 +428,63 @@ pub struct ChannelFieldVisibilityRule {
     pub equals: serde_json::Value,
 }
 
+pub fn channel_enum_setting<I, S>(key: impl Into<String>, options: I) -> ChannelEnumSetting
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    ChannelEnumSetting {
+        key: key.into(),
+        options: options.into_iter().map(Into::into).collect(),
+    }
+}
+
+pub fn channel_setting_target(name: impl Into<String>) -> ChannelConfigTarget {
+    ChannelConfigTarget {
+        kind: ChannelConfigTargetKind::ChannelSetting,
+        name: name.into(),
+    }
+}
+
+pub fn channel_setting_target_opt(name: impl Into<String>) -> Option<ChannelConfigTarget> {
+    Some(channel_setting_target(name))
+}
+
+pub fn config_field_option(
+    value: impl Into<String>,
+    label: impl Into<String>,
+) -> ChannelConfigFieldOption {
+    ChannelConfigFieldOption {
+        value: value.into(),
+        label: Some(label.into()),
+    }
+}
+
+pub fn config_field_options<I, V, L>(options: I) -> Vec<ChannelConfigFieldOption>
+where
+    I: IntoIterator<Item = (V, L)>,
+    V: Into<String>,
+    L: Into<String>,
+{
+    options
+        .into_iter()
+        .map(|(value, label)| config_field_option(value, label))
+        .collect()
+}
+
+pub fn max_inbound_text_chars_field(help: impl Into<String>) -> ChannelConfigField {
+    ChannelConfigField {
+        key: "max_inbound_text_chars".to_string(),
+        label: Some("Max Inbound Text Chars".to_string()),
+        field_type: "number".to_string(),
+        help: Some(help.into()),
+        default: Some(serde_json::json!(DEFAULT_MAX_INBOUND_TEXT_CHARS)),
+        advanced: true,
+        target: channel_setting_target_opt("max_inbound_text_chars"),
+        ..ChannelConfigField::default()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelAuthFlowKind {

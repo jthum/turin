@@ -2,10 +2,10 @@ use anyhow::Result;
 use turin_channel_core::{
     ChannelAdapterManifest, ChannelAuthFlowPollRequest, ChannelAuthFlowPollResponse,
     ChannelAuthFlowStartRequest, ChannelAuthFlowStartResponse, ChannelConfigField,
-    ChannelConfigFieldOption, ChannelConfigTarget, ChannelConfigTargetKind, ChannelEnumSetting,
-    ChannelIdentitySelectors, ChannelInstallManifest, ChannelRuntimeCapabilities,
-    ChannelRuntimeManifest, ChannelSecretRequirement, ChannelSetupManifest,
-    DEFAULT_MAX_INBOUND_TEXT_CHARS,
+    ChannelConfigFieldOption, ChannelIdentitySelectors, ChannelInstallManifest,
+    ChannelRuntimeCapabilities, ChannelRuntimeManifest, ChannelSecretRequirement,
+    ChannelSetupManifest, channel_enum_setting, channel_setting_target_opt,
+    max_inbound_text_chars_field,
 };
 
 use crate::{
@@ -32,42 +32,14 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
         runtime: ChannelRuntimeManifest {
             session_scopes: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
             enum_settings: vec![
-                ChannelEnumSetting {
-                    key: "transport_mode".to_string(),
-                    options: vec!["realtime".to_string(), "polling".to_string()],
-                },
-                ChannelEnumSetting {
-                    key: "respond_mode".to_string(),
-                    options: vec!["all".to_string(), "mentions".to_string()],
-                },
-                ChannelEnumSetting {
-                    key: "session_scope".to_string(),
-                    options: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
-                },
-                ChannelEnumSetting {
-                    key: "session_scope_dm".to_string(),
-                    options: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
-                },
-                ChannelEnumSetting {
-                    key: "session_scope_group".to_string(),
-                    options: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
-                },
-                ChannelEnumSetting {
-                    key: "session_scope_channel".to_string(),
-                    options: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
-                },
-                ChannelEnumSetting {
-                    key: "reply_mode".to_string(),
-                    options: vec![
-                        "thread".to_string(),
-                        "channel".to_string(),
-                        "thread_and_channel".to_string(),
-                    ],
-                },
-                ChannelEnumSetting {
-                    key: "stream_mode".to_string(),
-                    options: vec!["off".to_string(), "typing".to_string()],
-                },
+                channel_enum_setting("transport_mode", ["realtime", "polling"]),
+                channel_enum_setting("respond_mode", ["all", "mentions"]),
+                channel_enum_setting("session_scope", ["user", "thread", "room"]),
+                channel_enum_setting("session_scope_dm", ["user", "thread", "room"]),
+                channel_enum_setting("session_scope_group", ["user", "thread", "room"]),
+                channel_enum_setting("session_scope_channel", ["user", "thread", "room"]),
+                channel_enum_setting("reply_mode", ["thread", "channel", "thread_and_channel"]),
+                channel_enum_setting("stream_mode", ["off", "typing"]),
             ],
             capabilities: ChannelRuntimeCapabilities {
                 dm: true,
@@ -95,10 +67,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                 ),
                 optional: false,
                 hints: vec!["Looks like RScctEHSmLGZGywfIhWyRpyofhKOiMoUIpimhvheU3f".to_string()],
-                target: Some(ChannelConfigTarget {
-                    kind: ChannelConfigTargetKind::ChannelSetting,
-                    name: "token_env".to_string(),
-                }),
+                target: channel_setting_target_opt("token_env"),
                 validate: None,
             }],
             instructions: Some(
@@ -115,10 +84,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     prompt: Some("Rocket.Chat workspace base URL".to_string()),
                     help: Some("Example: https://chat.example.com".to_string()),
                     default: Some(serde_json::json!(DEFAULT_BASE_URL)),
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "base_url".to_string(),
-                    }),
+                    target: channel_setting_target_opt("base_url"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -132,10 +98,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     ),
                     required: true,
                     hint: Some("Looks like rbAXPnMktTFbNpwtJ".to_string()),
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "user_id".to_string(),
-                    }),
+                    target: channel_setting_target_opt("user_id"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -145,10 +108,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     help: Some("Defaults to 'rocketchat' and is usually fine to leave alone.".to_string()),
                     default: Some(serde_json::json!("rocketchat")),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "workspace_id".to_string(),
-                    }),
+                    target: channel_setting_target_opt("workspace_id"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -172,10 +132,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("Disable pairing".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "pairing_mode".to_string(),
-                    }),
+                    target: channel_setting_target_opt("pairing_mode"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -185,10 +142,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     prompt: Some("Optional usernames or IDs allowed to pair new Rocket.Chat rooms".to_string()),
                     help: Some("Leave empty to allow any sender to trigger room pairing.".to_string()),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "pairing_users".to_string(),
-                    }),
+                    target: channel_setting_target_opt("pairing_users"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -209,10 +163,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("REST polling".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "transport_mode".to_string(),
-                    }),
+                    target: channel_setting_target_opt("transport_mode"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -222,10 +173,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     prompt: Some("Optional Rocket.Chat websocket URL override".to_string()),
                     help: Some("Leave empty to derive it automatically from the server URL as ws(s)://.../websocket.".to_string()),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "websocket_url".to_string(),
-                    }),
+                    target: channel_setting_target_opt("websocket_url"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -238,10 +186,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             .to_string(),
                     ),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "room_id".to_string(),
-                    }),
+                    target: channel_setting_target_opt("room_id"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -254,10 +199,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             .to_string(),
                     ),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "room_name".to_string(),
-                    }),
+                    target: channel_setting_target_opt("room_name"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -277,10 +219,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("Mentions only".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "respond_mode".to_string(),
-                    }),
+                    target: channel_setting_target_opt("respond_mode"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -304,10 +243,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("Channel only".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "reply_mode".to_string(),
-                    }),
+                    target: channel_setting_target_opt("reply_mode"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -331,10 +267,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("Per room".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "session_scope".to_string(),
-                    }),
+                    target: channel_setting_target_opt("session_scope"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -358,10 +291,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("Per room".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "session_scope_dm".to_string(),
-                    }),
+                    target: channel_setting_target_opt("session_scope_dm"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -385,10 +315,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("Per room".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "session_scope_group".to_string(),
-                    }),
+                    target: channel_setting_target_opt("session_scope_group"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -412,10 +339,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("Per room".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "session_scope_channel".to_string(),
-                    }),
+                    target: channel_setting_target_opt("session_scope_channel"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -435,10 +359,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("Typing indicator".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "stream_mode".to_string(),
-                    }),
+                    target: channel_setting_target_opt("stream_mode"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -448,10 +369,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     help: Some("When enabled, Turin prepends the model's final thinking to the posted reply.".to_string()),
                     default: Some(serde_json::json!(false)),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "persist_thinking".to_string(),
-                    }),
+                    target: channel_setting_target_opt("persist_thinking"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -461,10 +379,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     prompt: Some("Optional usernames or IDs allowed to interact".to_string()),
                     help: Some("Leave empty to allow any user in approved rooms.".to_string()),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "allowed_users".to_string(),
-                    }),
+                    target: channel_setting_target_opt("allowed_users"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -473,10 +388,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     field_type: "string_list".to_string(),
                     prompt: Some("Optional usernames or IDs that should always be denied".to_string()),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "banned_users".to_string(),
-                    }),
+                    target: channel_setting_target_opt("banned_users"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -485,10 +397,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     field_type: "number".to_string(),
                     default: Some(serde_json::json!(DEFAULT_POLL_INTERVAL_MS)),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "poll_interval_ms".to_string(),
-                    }),
+                    target: channel_setting_target_opt("poll_interval_ms"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -498,10 +407,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     help: Some("Skip older room history and only process new messages from now on.".to_string()),
                     default: Some(serde_json::json!(true)),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "start_from_latest".to_string(),
-                    }),
+                    target: channel_setting_target_opt("start_from_latest"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -510,28 +416,12 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     field_type: "boolean".to_string(),
                     default: Some(serde_json::json!(true)),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "ignore_bot_messages".to_string(),
-                    }),
+                    target: channel_setting_target_opt("ignore_bot_messages"),
                     ..ChannelConfigField::default()
                 },
-                ChannelConfigField {
-                    key: "max_inbound_text_chars".to_string(),
-                    label: Some("Max Inbound Text Chars".to_string()),
-                    field_type: "number".to_string(),
-                    help: Some(
-                        "Safety cap for inbound Rocket.Chat text retained before Turin truncates it."
-                            .to_string(),
-                    ),
-                    default: Some(serde_json::json!(DEFAULT_MAX_INBOUND_TEXT_CHARS)),
-                    advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "max_inbound_text_chars".to_string(),
-                    }),
-                    ..ChannelConfigField::default()
-                },
+                max_inbound_text_chars_field(
+                    "Safety cap for inbound Rocket.Chat text retained before Turin truncates it.",
+                ),
             ],
             auth_flows: vec![],
         }),

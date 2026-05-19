@@ -2,10 +2,9 @@ use anyhow::Result;
 use turin_channel_core::{
     ChannelAdapterManifest, ChannelAuthFlowPollRequest, ChannelAuthFlowPollResponse,
     ChannelAuthFlowStartRequest, ChannelAuthFlowStartResponse, ChannelConfigField,
-    ChannelConfigFieldOption, ChannelConfigTarget, ChannelConfigTargetKind, ChannelEnumSetting,
     ChannelIdentitySelectors, ChannelInstallManifest, ChannelRuntimeCapabilities,
-    ChannelRuntimeManifest, ChannelSecretRequirement, ChannelSetupManifest,
-    DEFAULT_MAX_INBOUND_TEXT_CHARS,
+    ChannelRuntimeManifest, ChannelSecretRequirement, ChannelSetupManifest, channel_enum_setting,
+    channel_setting_target_opt, config_field_options, max_inbound_text_chars_field,
 };
 
 pub fn start_auth_flow(
@@ -27,10 +26,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
         display_name: "Discord".to_string(),
         runtime: ChannelRuntimeManifest {
             session_scopes: vec!["user".to_string(), "thread".to_string()],
-            enum_settings: vec![ChannelEnumSetting {
-                key: "session_scope".to_string(),
-                options: vec!["user".to_string(), "thread".to_string()],
-            }],
+            enum_settings: vec![channel_enum_setting("session_scope", ["user", "thread"])],
             capabilities: ChannelRuntimeCapabilities {
                 dm: true,
                 groups: true,
@@ -53,10 +49,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                 ),
                 optional: false,
                 hints: vec!["Usually a long bot token string issued by Discord.".to_string()],
-                target: Some(ChannelConfigTarget {
-                    kind: ChannelConfigTargetKind::ChannelSetting,
-                    name: "token_env".to_string(),
-                }),
+                target: channel_setting_target_opt("token_env"),
                 validate: None,
             }],
             instructions: Some("Create a Discord application, add a bot, enable the intents you need, and invite it to the target server.".to_string()),
@@ -70,10 +63,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     prompt: Some("Discord channel ID to connect Turin to".to_string()),
                     help: Some("Enable developer mode in Discord to copy the channel ID.".to_string()),
                     required: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "channel_id".to_string(),
-                    }),
+                    target: channel_setting_target_opt("channel_id"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -81,10 +71,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     label: Some("Workspace ID".to_string()),
                     field_type: "text".to_string(),
                     default: Some(serde_json::json!("discord")),
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "workspace_id".to_string(),
-                    }),
+                    target: channel_setting_target_opt("workspace_id"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -92,38 +79,13 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     label: Some("Session Scope".to_string()),
                     field_type: "select".to_string(),
                     default: Some(serde_json::json!("thread")),
-                    options: vec![
-                        ChannelConfigFieldOption {
-                            value: "user".to_string(),
-                            label: Some("Per user".to_string()),
-                        },
-                        ChannelConfigFieldOption {
-                            value: "thread".to_string(),
-                            label: Some("Per thread".to_string()),
-                        },
-                    ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "session_scope".to_string(),
-                    }),
+                    options: config_field_options([("user", "Per user"), ("thread", "Per thread")]),
+                    target: channel_setting_target_opt("session_scope"),
                     ..ChannelConfigField::default()
                 },
-                ChannelConfigField {
-                    key: "max_inbound_text_chars".to_string(),
-                    label: Some("Max Inbound Text Chars".to_string()),
-                    field_type: "number".to_string(),
-                    help: Some(
-                        "Safety cap for inbound text retained from Discord before Turin truncates it."
-                            .to_string(),
-                    ),
-                    default: Some(serde_json::json!(DEFAULT_MAX_INBOUND_TEXT_CHARS)),
-                    advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "max_inbound_text_chars".to_string(),
-                    }),
-                    ..ChannelConfigField::default()
-                },
+                max_inbound_text_chars_field(
+                    "Safety cap for inbound text retained from Discord before Turin truncates it.",
+                ),
             ],
             auth_flows: vec![],
         }),

@@ -2,10 +2,10 @@ use anyhow::Result;
 use turin_channel_core::{
     ChannelAdapterManifest, ChannelAuthFlowPollRequest, ChannelAuthFlowPollResponse,
     ChannelAuthFlowStartRequest, ChannelAuthFlowStartResponse, ChannelConfigField,
-    ChannelConfigFieldOption, ChannelConfigTarget, ChannelConfigTargetKind, ChannelEnumSetting,
-    ChannelIdentitySelectors, ChannelInstallManifest, ChannelRuntimeCapabilities,
-    ChannelRuntimeManifest, ChannelSecretRequirement, ChannelSetupManifest, ChannelValidationCheck,
-    DEFAULT_MAX_INBOUND_TEXT_CHARS,
+    ChannelConfigFieldOption, ChannelIdentitySelectors, ChannelInstallManifest,
+    ChannelRuntimeCapabilities, ChannelRuntimeManifest, ChannelSecretRequirement,
+    ChannelSetupManifest, ChannelValidationCheck, channel_enum_setting, channel_setting_target_opt,
+    max_inbound_text_chars_field,
 };
 
 pub fn start_auth_flow(
@@ -28,31 +28,14 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
         runtime: ChannelRuntimeManifest {
             session_scopes: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
             enum_settings: vec![
-                ChannelEnumSetting {
-                    key: "respond_mode".to_string(),
-                    options: vec![
-                        "all".to_string(),
-                        "mentions".to_string(),
-                        "replies".to_string(),
-                        "mentions_or_replies".to_string(),
-                    ],
-                },
-                ChannelEnumSetting {
-                    key: "session_scope".to_string(),
-                    options: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
-                },
-                ChannelEnumSetting {
-                    key: "session_scope_dm".to_string(),
-                    options: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
-                },
-                ChannelEnumSetting {
-                    key: "session_scope_group".to_string(),
-                    options: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
-                },
-                ChannelEnumSetting {
-                    key: "session_scope_channel".to_string(),
-                    options: vec!["user".to_string(), "thread".to_string(), "room".to_string()],
-                },
+                channel_enum_setting(
+                    "respond_mode",
+                    ["all", "mentions", "replies", "mentions_or_replies"],
+                ),
+                channel_enum_setting("session_scope", ["user", "thread", "room"]),
+                channel_enum_setting("session_scope_dm", ["user", "thread", "room"]),
+                channel_enum_setting("session_scope_group", ["user", "thread", "room"]),
+                channel_enum_setting("session_scope_channel", ["user", "thread", "room"]),
             ],
             capabilities: ChannelRuntimeCapabilities {
                 dm: true,
@@ -74,10 +57,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                 help: Some("Get this from @BotFather on Telegram.".to_string()),
                 optional: false,
                 hints: vec!["Looks like 123456789:AABBccDDeeFFgg...".to_string()],
-                target: Some(ChannelConfigTarget {
-                    kind: ChannelConfigTargetKind::ChannelSetting,
-                    name: "token_env".to_string(),
-                }),
+                target: channel_setting_target_opt("token_env"),
                 validate: Some(ChannelValidationCheck {
                     kind: "http_get".to_string(),
                     url_template: Some(
@@ -99,10 +79,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     prompt: Some("Workspace identifier used when routing Telegram conversations into Turin".to_string()),
                     help: Some("Defaults to 'telegram' and is usually fine to leave alone.".to_string()),
                     default: Some(serde_json::json!("telegram")),
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "workspace_id".to_string(),
-                    }),
+                    target: channel_setting_target_opt("workspace_id"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -126,10 +103,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("Disable pairing".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "pairing_mode".to_string(),
-                    }),
+                    target: channel_setting_target_opt("pairing_mode"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -157,10 +131,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("Mentions or replies".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "respond_mode".to_string(),
-                    }),
+                    target: channel_setting_target_opt("respond_mode"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -184,10 +155,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("Per room".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "session_scope".to_string(),
-                    }),
+                    target: channel_setting_target_opt("session_scope"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -211,10 +179,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("Per room".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "session_scope_dm".to_string(),
-                    }),
+                    target: channel_setting_target_opt("session_scope_dm"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -238,10 +203,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("Per room".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "session_scope_group".to_string(),
-                    }),
+                    target: channel_setting_target_opt("session_scope_group"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -265,10 +227,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("Per room".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "session_scope_channel".to_string(),
-                    }),
+                    target: channel_setting_target_opt("session_scope_channel"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -278,10 +237,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     prompt: Some("Optional usernames or IDs allowed to pair new rooms".to_string()),
                     help: Some("Leave empty to allow any sender to trigger pairing.".to_string()),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "pairing_users".to_string(),
-                    }),
+                    target: channel_setting_target_opt("pairing_users"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -291,10 +247,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     prompt: Some("Optional usernames or IDs allowed to interact after approval".to_string()),
                     help: Some("Leave empty to allow any user in approved rooms.".to_string()),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "allowed_users".to_string(),
-                    }),
+                    target: channel_setting_target_opt("allowed_users"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -303,28 +256,12 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     field_type: "string_list".to_string(),
                     prompt: Some("Optional usernames or IDs that should always be denied".to_string()),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "banned_users".to_string(),
-                    }),
+                    target: channel_setting_target_opt("banned_users"),
                     ..ChannelConfigField::default()
                 },
-                ChannelConfigField {
-                    key: "max_inbound_text_chars".to_string(),
-                    label: Some("Max Inbound Text Chars".to_string()),
-                    field_type: "number".to_string(),
-                    help: Some(
-                        "Safety cap for inbound Telegram text retained before Turin truncates it."
-                            .to_string(),
-                    ),
-                    default: Some(serde_json::json!(DEFAULT_MAX_INBOUND_TEXT_CHARS)),
-                    advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "max_inbound_text_chars".to_string(),
-                    }),
-                    ..ChannelConfigField::default()
-                },
+                max_inbound_text_chars_field(
+                    "Safety cap for inbound Telegram text retained before Turin truncates it.",
+                ),
             ],
             auth_flows: vec![],
         }),

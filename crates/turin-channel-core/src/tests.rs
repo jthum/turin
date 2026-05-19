@@ -195,3 +195,27 @@ fn manifest_validation_rejects_duplicate_auth_flows() {
     let err = manifest.validate().expect_err("duplicate auth flow");
     assert!(err.contains("duplicate auth flow"));
 }
+
+#[test]
+fn manifest_helpers_build_common_channel_setting_shapes() {
+    let setting = channel_enum_setting("session_scope", ["user", "thread"]);
+    assert_eq!(setting.key, "session_scope");
+    assert_eq!(setting.options, vec!["user", "thread"]);
+
+    let target = channel_setting_target("workspace_id");
+    assert_eq!(target.kind, ChannelConfigTargetKind::ChannelSetting);
+    assert_eq!(target.name, "workspace_id");
+
+    let options = config_field_options([("auto", "Auto approve"), ("pending", "Pending")]);
+    assert_eq!(options[0].value, "auto");
+    assert_eq!(options[1].label.as_deref(), Some("Pending"));
+
+    let field = max_inbound_text_chars_field("cap inbound text");
+    assert_eq!(field.key, "max_inbound_text_chars");
+    assert_eq!(field.field_type, "number");
+    assert!(field.advanced);
+    assert_eq!(
+        field.target.as_ref().map(|target| target.name.as_str()),
+        Some("max_inbound_text_chars")
+    );
+}

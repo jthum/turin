@@ -1,10 +1,10 @@
 use serde_json::json;
 use turin_channel_core::{
     ChannelAdapterManifest, ChannelAuthFlow, ChannelAuthFlowKind, ChannelConfigField,
-    ChannelConfigFieldOption, ChannelConfigTarget, ChannelConfigTargetKind,
-    ChannelFieldVisibilityRule, ChannelIdentitySelectors, ChannelInstallManifest,
-    ChannelRuntimeCapabilities, ChannelRuntimeManifest, ChannelSetupManifest,
-    DEFAULT_MAX_INBOUND_TEXT_CHARS,
+    ChannelConfigFieldOption, ChannelFieldVisibilityRule, ChannelIdentitySelectors,
+    ChannelInstallManifest, ChannelRuntimeCapabilities, ChannelRuntimeManifest,
+    ChannelSetupManifest, channel_enum_setting, channel_setting_target_opt,
+    max_inbound_text_chars_field,
 };
 
 use crate::{DEFAULT_AUTH_FLOW_ID, DEFAULT_PERSONAL_TRIGGER_PREFIX, DEFAULT_WORKSPACE_ID};
@@ -16,10 +16,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
         display_name: "WhatsApp".to_string(),
         runtime: ChannelRuntimeManifest {
             session_scopes: vec!["user".to_string(), "room".to_string()],
-            enum_settings: vec![turin_channel_core::ChannelEnumSetting {
-                key: "session_scope".to_string(),
-                options: vec!["user".to_string(), "room".to_string()],
-            }],
+            enum_settings: vec![channel_enum_setting("session_scope", ["user", "room"])],
             capabilities: ChannelRuntimeCapabilities {
                 dm: true,
                 groups: true,
@@ -65,10 +62,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("Dedicated agent number".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "account_mode".to_string(),
-                    }),
+                    target: channel_setting_target_opt("account_mode"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -83,10 +77,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                         "Defaults to 'whatsapp' and is usually fine to leave alone.".to_string(),
                     ),
                     default: Some(json!(DEFAULT_WORKSPACE_ID)),
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "workspace_id".to_string(),
-                    }),
+                    target: channel_setting_target_opt("workspace_id"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -113,10 +104,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("Disable pairing".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "pairing_mode".to_string(),
-                    }),
+                    target: channel_setting_target_opt("pairing_mode"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -139,10 +127,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             label: Some("Per chat".to_string()),
                         },
                     ],
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "session_scope".to_string(),
-                    }),
+                    target: channel_setting_target_opt("session_scope"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -158,32 +143,16 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             .to_string(),
                     ),
                     default: Some(json!(DEFAULT_PERSONAL_TRIGGER_PREFIX)),
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "trigger_prefix".to_string(),
-                    }),
+                    target: channel_setting_target_opt("trigger_prefix"),
                     visible_if: Some(ChannelFieldVisibilityRule {
                         key: "account_mode".to_string(),
                         equals: json!("personal"),
                     }),
                     ..ChannelConfigField::default()
                 },
-                ChannelConfigField {
-                    key: "max_inbound_text_chars".to_string(),
-                    label: Some("Max Inbound Text Chars".to_string()),
-                    field_type: "number".to_string(),
-                    help: Some(
-                        "Safety cap for inbound WhatsApp text retained before Turin truncates it."
-                            .to_string(),
-                    ),
-                    default: Some(json!(DEFAULT_MAX_INBOUND_TEXT_CHARS)),
-                    advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "max_inbound_text_chars".to_string(),
-                    }),
-                    ..ChannelConfigField::default()
-                },
+                max_inbound_text_chars_field(
+                    "Safety cap for inbound WhatsApp text retained before Turin truncates it.",
+                ),
                 ChannelConfigField {
                     key: "pairing_users".to_string(),
                     label: Some("Pairing Users".to_string()),
@@ -193,10 +162,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     ),
                     help: Some("Leave empty to allow any sender to trigger pairing.".to_string()),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "pairing_users".to_string(),
-                    }),
+                    target: channel_setting_target_opt("pairing_users"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -209,10 +175,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                     ),
                     help: Some("Leave empty to allow any user in approved chats.".to_string()),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "allowed_users".to_string(),
-                    }),
+                    target: channel_setting_target_opt("allowed_users"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -223,10 +186,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                         "Optional phone numbers or JIDs that should always be denied".to_string(),
                     ),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "banned_users".to_string(),
-                    }),
+                    target: channel_setting_target_opt("banned_users"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -240,10 +200,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                         "Use full JIDs like '15551234567@s.whatsapp.net' or group IDs. Leave empty to allow any chat not explicitly banned.".to_string(),
                     ),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "allowed_chats".to_string(),
-                    }),
+                    target: channel_setting_target_opt("allowed_chats"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -257,10 +214,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                         "Banned chats override allowed chats. Use this to keep personal or administrative chats out of the agent.".to_string(),
                     ),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "banned_chats".to_string(),
-                    }),
+                    target: channel_setting_target_opt("banned_chats"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -275,10 +229,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             .to_string(),
                     ),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "session_store_path".to_string(),
-                    }),
+                    target: channel_setting_target_opt("session_store_path"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -294,10 +245,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             .to_string(),
                     ),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "pair_code_phone_number".to_string(),
-                    }),
+                    target: channel_setting_target_opt("pair_code_phone_number"),
                     ..ChannelConfigField::default()
                 },
                 ChannelConfigField {
@@ -312,10 +260,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                             .to_string(),
                     ),
                     advanced: true,
-                    target: Some(ChannelConfigTarget {
-                        kind: ChannelConfigTargetKind::ChannelSetting,
-                        name: "pair_code_custom_code".to_string(),
-                    }),
+                    target: channel_setting_target_opt("pair_code_custom_code"),
                     ..ChannelConfigField::default()
                 },
             ],
