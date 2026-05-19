@@ -3,7 +3,7 @@ use std::time::Duration;
 use turin_channel_core::{
     ChannelSessionScope, DEFAULT_MAX_INBOUND_TEXT_CHARS, optional_bool_setting,
     optional_non_empty_setting, positive_usize_setting, required_non_empty_setting,
-    u64_setting_with_min,
+    session_scope_setting, u64_setting_with_min,
 };
 
 use crate::{DEFAULT_BASE_URL, DEFAULT_GATEWAY_INTENTS, DEFAULT_GATEWAY_URL, DiscordTransportMode};
@@ -220,21 +220,14 @@ fn read_optional_bool(
 }
 
 fn read_discord_session_scope(value: Option<&serde_json::Value>) -> Result<ChannelSessionScope> {
-    let Some(value) = value else {
-        return Ok(ChannelSessionScope::User);
-    };
-    let scope = value.as_str().ok_or_else(|| {
-        anyhow!(
-            "[discord_config_invalid_session_scope] Discord channel setting 'session_scope' must be a string"
-        )
-    })?;
-    ChannelSessionScope::parse(scope)
-        .filter(|scope| scope.is_allowed_by(&[ChannelSessionScope::User, ChannelSessionScope::Thread]))
-        .ok_or_else(|| {
-            anyhow!(
-            "[discord_config_invalid_session_scope] Discord channel setting 'session_scope' must be one of: user, thread"
-        )
-        })
+    session_scope_setting(
+        value,
+        ChannelSessionScope::User,
+        &[ChannelSessionScope::User, ChannelSessionScope::Thread],
+        "[discord_config_invalid_session_scope] Discord channel setting 'session_scope' must be a string",
+        "[discord_config_invalid_session_scope] Discord channel setting 'session_scope' must be one of: user, thread",
+    )
+    .map_err(Into::into)
 }
 
 pub(crate) fn parse_transport_mode(raw: Option<&str>) -> Result<DiscordTransportMode> {

@@ -3,7 +3,8 @@ use std::collections::HashSet;
 use std::time::Duration;
 use turin_channel_core::{
     ChannelSessionScope, DEFAULT_MAX_INBOUND_TEXT_CHARS, optional_bool_setting,
-    positive_usize_setting, required_non_empty_setting, u64_setting_with_min,
+    optional_session_scope_setting, positive_usize_setting, required_non_empty_setting,
+    session_scope_setting, u64_setting_with_min,
 };
 use turin_channel_runner::ChannelStreamMode;
 
@@ -356,40 +357,41 @@ fn read_respond_mode(value: Option<&serde_json::Value>) -> Result<TelegramRespon
 }
 
 fn read_telegram_session_scope(value: Option<&serde_json::Value>) -> Result<ChannelSessionScope> {
-    let Some(value) = value else {
-        return Ok(ChannelSessionScope::User);
-    };
-    let scope = value.as_str().ok_or_else(|| {
-        anyhow!(
-            "[telegram_config_invalid_session_scope] Telegram channel setting 'session_scope' must be a string"
-        )
-    })?;
-    ChannelSessionScope::parse(scope).ok_or_else(|| {
-        anyhow!(
-            "[telegram_config_invalid_session_scope] Telegram channel setting 'session_scope' must be one of: user, thread, room"
-        )
-    })
+    session_scope_setting(
+        value,
+        ChannelSessionScope::User,
+        &[
+            ChannelSessionScope::User,
+            ChannelSessionScope::Thread,
+            ChannelSessionScope::Room,
+        ],
+        "[telegram_config_invalid_session_scope] Telegram channel setting 'session_scope' must be a string",
+        "[telegram_config_invalid_session_scope] Telegram channel setting 'session_scope' must be one of: user, thread, room",
+    )
+    .map_err(Into::into)
 }
 
 fn read_optional_telegram_session_scope(
     value: Option<&serde_json::Value>,
     key: &str,
 ) -> Result<Option<ChannelSessionScope>> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let scope = value.as_str().ok_or_else(|| {
-        anyhow!(
+    optional_session_scope_setting(
+        value,
+        &[
+            ChannelSessionScope::User,
+            ChannelSessionScope::Thread,
+            ChannelSessionScope::Room,
+        ],
+        format!(
             "[telegram_config_invalid_session_scope] Telegram channel setting '{}' must be a string",
             key
-        )
-    })?;
-    ChannelSessionScope::parse(scope).map(Some).ok_or_else(|| {
-        anyhow!(
+        ),
+        format!(
             "[telegram_config_invalid_session_scope] Telegram channel setting '{}' must be one of: user, thread, room",
             key
-        )
-    })
+        ),
+    )
+    .map_err(Into::into)
 }
 
 fn reject_deprecated_session_scope_keys(

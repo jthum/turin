@@ -589,6 +589,42 @@ pub fn positive_usize_setting(
     Ok(max)
 }
 
+pub fn session_scope_setting(
+    value: Option<&serde_json::Value>,
+    default: ChannelSessionScope,
+    allowed: &[ChannelSessionScope],
+    invalid_type_message: impl Into<String>,
+    invalid_value_message: impl Into<String>,
+) -> Result<ChannelSessionScope, ChannelConfigError> {
+    let Some(value) = value else {
+        return Ok(default);
+    };
+    let scope = value
+        .as_str()
+        .ok_or_else(|| ChannelConfigError::new(invalid_type_message))?;
+    ChannelSessionScope::parse(scope)
+        .filter(|scope| scope.is_allowed_by(allowed))
+        .ok_or_else(|| ChannelConfigError::new(invalid_value_message))
+}
+
+pub fn optional_session_scope_setting(
+    value: Option<&serde_json::Value>,
+    allowed: &[ChannelSessionScope],
+    invalid_type_message: impl Into<String>,
+    invalid_value_message: impl Into<String>,
+) -> Result<Option<ChannelSessionScope>, ChannelConfigError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let scope = value
+        .as_str()
+        .ok_or_else(|| ChannelConfigError::new(invalid_type_message))?;
+    ChannelSessionScope::parse(scope)
+        .filter(|scope| scope.is_allowed_by(allowed))
+        .map(Some)
+        .ok_or_else(|| ChannelConfigError::new(invalid_value_message))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelAuthFlowKind {

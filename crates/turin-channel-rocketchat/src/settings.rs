@@ -2,7 +2,8 @@ use anyhow::{Result, anyhow};
 use std::time::Duration;
 use turin_channel_core::{
     ChannelSessionScope, DEFAULT_MAX_INBOUND_TEXT_CHARS, optional_bool_setting,
-    optional_non_empty_setting, required_non_empty_setting, u64_setting_with_min,
+    optional_non_empty_setting, optional_session_scope_setting, required_non_empty_setting,
+    session_scope_setting, u64_setting_with_min,
 };
 use turin_channel_runner::ChannelStreamMode;
 
@@ -336,40 +337,41 @@ fn read_stream_mode(value: Option<&serde_json::Value>) -> Result<ChannelStreamMo
 }
 
 fn read_session_scope(value: Option<&serde_json::Value>) -> Result<ChannelSessionScope> {
-    let raw = match value {
-        None => return Ok(ChannelSessionScope::Thread),
-        Some(value) => value.as_str().ok_or_else(|| {
-            anyhow!(
-                "[rocketchat_config_invalid_session_scope] Rocket.Chat channel setting 'session_scope' must be a string"
-            )
-        })?,
-    };
-    ChannelSessionScope::parse(raw).ok_or_else(|| {
-        anyhow!(
-            "[rocketchat_config_invalid_session_scope] Rocket.Chat channel setting 'session_scope' must be one of: user, thread, room"
-        )
-    })
+    session_scope_setting(
+        value,
+        ChannelSessionScope::Thread,
+        &[
+            ChannelSessionScope::User,
+            ChannelSessionScope::Thread,
+            ChannelSessionScope::Room,
+        ],
+        "[rocketchat_config_invalid_session_scope] Rocket.Chat channel setting 'session_scope' must be a string",
+        "[rocketchat_config_invalid_session_scope] Rocket.Chat channel setting 'session_scope' must be one of: user, thread, room",
+    )
+    .map_err(Into::into)
 }
 
 fn read_optional_session_scope(
     value: Option<&serde_json::Value>,
     key: &str,
 ) -> Result<Option<ChannelSessionScope>> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let scope = value.as_str().ok_or_else(|| {
-        anyhow!(
+    optional_session_scope_setting(
+        value,
+        &[
+            ChannelSessionScope::User,
+            ChannelSessionScope::Thread,
+            ChannelSessionScope::Room,
+        ],
+        format!(
             "[rocketchat_config_invalid_session_scope] Rocket.Chat channel setting '{}' must be a string",
             key
-        )
-    })?;
-    ChannelSessionScope::parse(scope).map(Some).ok_or_else(|| {
-        anyhow!(
+        ),
+        format!(
             "[rocketchat_config_invalid_session_scope] Rocket.Chat channel setting '{}' must be one of: user, thread, room",
             key
-        )
-    })
+        ),
+    )
+    .map_err(Into::into)
 }
 
 fn reject_deprecated_session_scope_keys(

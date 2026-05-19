@@ -256,4 +256,35 @@ fn setting_helpers_parse_reused_json_shapes() {
         .unwrap(),
         42
     );
+    assert_eq!(
+        session_scope_setting(
+            Some(&serde_json::json!("thread")),
+            ChannelSessionScope::User,
+            &[ChannelSessionScope::User, ChannelSessionScope::Thread],
+            "invalid type",
+            "invalid value"
+        )
+        .unwrap(),
+        ChannelSessionScope::Thread
+    );
+    assert!(
+        session_scope_setting(
+            Some(&serde_json::json!("room")),
+            ChannelSessionScope::User,
+            &[ChannelSessionScope::User, ChannelSessionScope::Thread],
+            "invalid type",
+            "invalid value"
+        )
+        .is_err()
+    );
+    assert_eq!(
+        optional_session_scope_setting(
+            None,
+            &[ChannelSessionScope::User, ChannelSessionScope::Room],
+            "invalid type",
+            "invalid value"
+        )
+        .unwrap(),
+        None
+    );
 }
