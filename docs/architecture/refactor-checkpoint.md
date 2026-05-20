@@ -25,9 +25,11 @@ These areas have been structurally reviewed, lightly refactored, tested, and map
 - MCP integration
 - Memory and scoped data
 - Runtime DB and graph
+- Runtime schedule bindings
 - Scheduler and worklists
 - Session context and hot history
 - Session lifecycle
+- Turn tool execution
 
 Read the matching files under `docs/architecture/maps/` before editing any of those areas.
 
@@ -47,12 +49,6 @@ This was the right correction. Several later passes were deliberately small beca
 
 These are worth future passes, but each needs a fresh local read before editing:
 
-- `src/harness/stdlib/runtime_schedule.rs`
-  - Repeated Lua binding shape around scheduler operations.
-  - Likely safe if helpers reduce result handling without hiding per-operation policy.
-- `src/kernel/turn/tool_execution.rs`
-  - Central tool execution behavior. Potential duplication, but high behavior risk.
-  - Needs focused tool execution tests before edits.
 - `src/kernel/turn/preflight.rs`
   - Context preparation and compaction routing. Large and important for memory/performance.
   - Treat as a logic-quality/performance pass, not a file split.
@@ -81,4 +77,4 @@ These large files are not part of the current runtime-core refactor pass:
 
 The codebase no longer reads like an unreviewed generated blob in the areas covered by this pass. It still has large files, and not every pass reduced LOC, but the major runtime surfaces now have clearer boundaries, maps, focused tests, and less duplicated decision logic.
 
-The remaining work should be paced as module-specific quality passes, not a second broad sweep. The next best target is probably `runtime_schedule.rs`, because it is still in the harness stdlib family and appears to have repeated binding/result handling.
+The remaining work should be paced as module-specific quality passes, not a second broad sweep. The next best target is probably `src/kernel/turn/preflight.rs`, because it is still central to memory/performance behavior and context assembly.

@@ -1,9 +1,10 @@
 mod plan_submission;
 mod result_hooks;
+mod virtual_tools;
 
 use anyhow::Result;
 use futures::stream::{self, StreamExt};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
@@ -11,9 +12,7 @@ use tracing::{info, warn};
 
 use crate::display;
 use crate::harness::verdict::Verdict;
-use crate::harness::virtual_tools::{
-    VirtualToolNestedResult, VirtualToolPlan, VirtualToolResultOutput, VirtualToolResultResolution,
-};
+use crate::harness::virtual_tools::VirtualToolPlan;
 use crate::inference::content::encode_content_json;
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::execution_host::ExecutionHost;
@@ -416,74 +415,18 @@ impl ExecutionHost {
                         &next_virtual_stack,
                     ) {
                         Ok(pending_virtual_calls) => {
-                            let nested_records = self
-                                .execute_tool_calls_hidden(
+                            let (next_content, next_is_error) = self
+                                .execute_expanded_virtual_calls(
                                     session,
                                     tool_ctx,
+                                    tc.id.clone(),
                                     pending_virtual_calls,
-                                    next_virtual_stack.clone(),
+                                    next_virtual_stack,
+                                    result_handler_key,
                                 )
                                 .await;
-                            if session.cancel_token.is_cancelled() {
-                                if let Some(ref key) = result_handler_key {
-                                    self.discard_virtual_result_handler(session, key);
-                                }
-                                content = "Virtual tool execution cancelled".to_string();
-                                is_error = true;
-                            } else {
-                                let nested_results =
-                                    self.virtual_tool_nested_results(&nested_records);
-                                let nested_error =
-                                    nested_results.iter().any(|record| record.is_error);
-                                let default_output = if let Some(ref key) = result_handler_key {
-                                    match self.invoke_virtual_result_handler(
-                                        session,
-                                        key,
-                                        &nested_results,
-                                        nested_error,
-                                    ) {
-                                        Ok(resolution) => match resolution {
-                                            VirtualToolResultResolution::Output(output) => {
-                                                Ok(output)
-                                            }
-                                            VirtualToolResultResolution::Plan(next_plan) => {
-                                                Err(next_plan)
-                                            }
-                                        },
-                                        Err(err) => Ok(VirtualToolResultOutput {
-                                            content: format!("Error: {}", err),
-                                            is_error: true,
-                                        }),
-                                    }
-                                } else {
-                                    let (aggregated, nested_error) =
-                                        self.aggregate_virtual_tool_records(&nested_records);
-                                    Ok(VirtualToolResultOutput {
-                                        content: aggregated,
-                                        is_error: is_error || nested_error,
-                                    })
-                                };
-
-                                match default_output {
-                                    Ok(output) => {
-                                        content = output.content;
-                                        is_error = output.is_error;
-                                    }
-                                    Err(next_plan) => {
-                                        let (next_content, next_is_error) = self
-                                            .execute_virtual_plan_hidden(
-                                                session,
-                                                tool_ctx,
-                                                format!("{}::cb", tc.id),
-                                                next_virtual_stack,
-                                                next_plan,
-                                            )
-                                            .await;
-                                        content = next_content;
-                                        is_error = next_is_error;
-                                    }
-                                }
-                            }
+                            content = next_content;
+                            is_error = next_is_error;
                         }
                         Err(err) => {
                             if let Some(ref key) = result_handler_key {
@@ -513,204 +456,6 @@ impl ExecutionHost {
         }
 
         final_by_id
-    }
-
-    fn build_virtual_pending_tool_calls(
-        &self,
-        session: &SessionState,
-        parent_tool_call_id: &str,
-        plan: VirtualToolPlan,
-        current_virtual_stack: &[String],
-    ) -> Result<Vec<PendingToolCall>> {
-        let declared_tool_names: BTreeSet<String> = {
-            if let Some(harness) = self.session_harness_engine(session) {
-                let engine = harness.lock().expect("session harness mutex poisoned");
-                engine
-                    .declared_virtual_tools()?
-                    .into_iter()
-                    .map(|tool| tool.name)
-                    .collect()
-            } else {
-                BTreeSet::new()
-            }
-        };
-
-        let mut out = Vec::with_capacity(plan.calls.len());
-        for (index, call) in plan.calls.into_iter().enumerate() {
-            if declared_tool_names.contains(&call.name) {
-                if current_virtual_stack.iter().any(|name| name == &call.name) {
-                    let mut chain = current_virtual_stack.to_vec();
-                    chain.push(call.name.clone());
-                    anyhow::bail!("virtual tool recursion detected: {}", chain.join(" -> "));
-                }
-                if current_virtual_stack.len() >= MAX_VIRTUAL_TOOL_DEPTH {
-                    let mut chain = current_virtual_stack.to_vec();
-                    chain.push(call.name.clone());
-                    anyhow::bail!(
-                        "virtual tool nesting depth exceeded (max {}): {}",
-                        MAX_VIRTUAL_TOOL_DEPTH,
-                        chain.join(" -> ")
-                    );
-                }
-            }
-
-            out.push(PendingToolCall {
-                id: format!("{}::vt{}", parent_tool_call_id, index + 1),
-                name: call.name,
-                args: call.args,
-            });
-        }
-        Ok(out)
-    }
-
-    fn aggregate_virtual_tool_records(&self, records: &[FinalToolRecord]) -> (String, bool) {
-        if records.is_empty() {
-            return (
-                "Virtual tool completed without producing any nested tool output.".to_string(),
-                false,
-            );
-        }
-
-        let any_error = records.iter().any(|record| record.is_error);
-        if records.len() == 1 {
-            return (records[0].content.clone(), any_error);
-        }
-
-        let combined = records
-            .iter()
-            .enumerate()
-            .map(|(index, record)| {
-                let status = if record.is_error { "error" } else { "ok" };
-                format!(
-                    "Call {}: {} [{}]\n{}",
-                    index + 1,
-                    record.name,
-                    status,
-                    record.content
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
-
-        (combined, any_error)
-    }
-
-    fn virtual_tool_nested_results(
-        &self,
-        records: &[FinalToolRecord],
-    ) -> Vec<VirtualToolNestedResult> {
-        records
-            .iter()
-            .map(|record| VirtualToolNestedResult {
-                id: record.id.clone(),
-                name: record.name.clone(),
-                args: record.args.clone(),
-                verdict: record.verdict.clone(),
-                duration_ms: record.duration_ms,
-                content: record.content.clone(),
-                is_error: record.is_error,
-            })
-            .collect()
-    }
-
-    fn invoke_virtual_result_handler(
-        &self,
-        session: &SessionState,
-        key: &str,
-        nested_results: &[VirtualToolNestedResult],
-        nested_error: bool,
-    ) -> Result<VirtualToolResultResolution> {
-        let payload = if nested_results.len() == 1 {
-            serde_json::to_value(&nested_results[0])?
-        } else {
-            serde_json::to_value(nested_results)?
-        };
-        if let Some(harness) = self.session_harness_engine(session) {
-            let engine = harness.lock().expect("session harness mutex poisoned");
-            engine.invoke_virtual_tool_result_handler(key, payload, nested_error)
-        } else {
-            anyhow::bail!(
-                "virtual tool result handler '{}' could not access harness engine",
-                key
-            );
-        }
-    }
-
-    fn execute_virtual_plan_hidden<'a>(
-        &'a mut self,
-        session: &'a mut SessionState,
-        tool_ctx: &'a ToolContext,
-        tool_call_path: String,
-        current_virtual_stack: Vec<String>,
-        plan: VirtualToolPlan,
-    ) -> Pin<Box<dyn Future<Output = (String, bool)> + Send + 'a>> {
-        Box::pin(async move {
-            let result_handler_key = plan.result_handler_key.clone();
-            match self.build_virtual_pending_tool_calls(
-                session,
-                &tool_call_path,
-                plan,
-                &current_virtual_stack,
-            ) {
-                Ok(pending_virtual_calls) => {
-                    let nested_records = self
-                        .execute_tool_calls_hidden(
-                            session,
-                            tool_ctx,
-                            pending_virtual_calls,
-                            current_virtual_stack.clone(),
-                        )
-                        .await;
-                    if session.cancel_token.is_cancelled() {
-                        if let Some(ref key) = result_handler_key {
-                            self.discard_virtual_result_handler(session, key);
-                        }
-                        return ("Virtual tool execution cancelled".to_string(), true);
-                    }
-
-                    let nested_results = self.virtual_tool_nested_results(&nested_records);
-                    let nested_error = nested_results.iter().any(|record| record.is_error);
-                    if let Some(ref key) = result_handler_key {
-                        match self.invoke_virtual_result_handler(
-                            session,
-                            key,
-                            &nested_results,
-                            nested_error,
-                        ) {
-                            Ok(VirtualToolResultResolution::Output(output)) => {
-                                (output.content, output.is_error)
-                            }
-                            Ok(VirtualToolResultResolution::Plan(next_plan)) => {
-                                self.execute_virtual_plan_hidden(
-                                    session,
-                                    tool_ctx,
-                                    format!("{}::cb", tool_call_path),
-                                    current_virtual_stack,
-                                    next_plan,
-                                )
-                                .await
-                            }
-                            Err(err) => (format!("Error: {}", err), true),
-                        }
-                    } else {
-                        self.aggregate_virtual_tool_records(&nested_records)
-                    }
-                }
-                Err(err) => {
-                    if let Some(ref key) = result_handler_key {
-                        self.discard_virtual_result_handler(session, key);
-                    }
-                    (format!("Error: {}", err), true)
-                }
-            }
-        })
-    }
-
-    fn discard_virtual_result_handler(&self, session: &SessionState, key: &str) {
-        if let Some(harness) = self.session_harness_engine(session) {
-            let engine = harness.lock().expect("session harness mutex poisoned");
-            let _ = engine.discard_virtual_tool_result_handler(key);
-        }
     }
 
     async fn finalize_tool_records(
