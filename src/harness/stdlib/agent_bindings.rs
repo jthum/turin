@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{ActiveHarnessExecutionContext, HarnessAppData};
@@ -25,8 +27,11 @@ use crate::kernel::session_refs::{
     SessionReference, format_session_reference, parse_session_reference,
 };
 use crate::kernel::task_promotion::promote_task_result;
-use crate::persistence::manager::StoreSelector;
-use crate::persistence::schema::{GraphEdgeCreate, GraphProvenance, GraphRef};
+use crate::persistence::manager::{StoreManager, StoreSelector};
+use crate::persistence::schema::{
+    BranchHeadRow, GraphEdgeCreate, GraphProvenance, GraphRef, SessionRow,
+};
+use crate::persistence::state::StateStore;
 
 #[derive(Debug, Clone)]
 struct SidestepGraphRelation {
@@ -37,6 +42,32 @@ struct SidestepGraphRelation {
     origin_task_id: Option<String>,
     origin_execution_id: Option<String>,
     metadata: Option<serde_json::Value>,
+}
+
+struct SessionStoreLookup {
+    session_ref: SessionReference,
+    selector: StoreSelector,
+    store: Arc<StateStore>,
+    row: Option<SessionRow>,
+}
+
+impl SessionStoreLookup {
+    fn require_row(self) -> Result<ResolvedSessionStore, String> {
+        let row = self.row.ok_or_else(|| "Session not found".to_string())?;
+        Ok(ResolvedSessionStore {
+            session_ref: self.session_ref,
+            selector: self.selector,
+            store: self.store,
+            row,
+        })
+    }
+}
+
+struct ResolvedSessionStore {
+    session_ref: SessionReference,
+    selector: StoreSelector,
+    store: Arc<StateStore>,
+    row: SessionRow,
 }
 
 fn ensure_local_task_id(task: &mut QueuedTask) -> String {
@@ -56,6 +87,20 @@ pub(crate) fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
 
 pub(crate) fn queue_max(snapshot: &std::collections::HashMap<String, serde_json::Value>) -> usize {
     policy_u64(snapshot, "queue.max_depth", 1024) as usize
+}
+
+fn lua_string_result(lua: &Lua, result: Result<String, String>) -> LuaResult<(Value, Value)> {
+    match result {
+        Ok(value) => string_ok(lua, &value),
+        Err(err) => nil_err(lua, &err),
+    }
+}
+
+fn lua_bool_result<T>(lua: &Lua, result: Result<T, String>) -> LuaResult<(Value, Value)> {
+    match result {
+        Ok(_) => Ok(ok_bool()),
+        Err(err) => bool_err(lua, &err),
+    }
 }
 
 pub(crate) async fn queue_push_one(
@@ -178,6 +223,43 @@ fn current_session_matches(
             Some(slot_id) => current_slot_id.as_deref() == Some(slot_id),
             None => true,
         })
+}
+
+async fn lookup_session_store(
+    store_manager: &Arc<StoreManager>,
+    execution_ctx: &ActiveHarnessExecutionContext,
+    requested: Option<String>,
+) -> Result<SessionStoreLookup, String> {
+    let session_ref = resolve_session_reference(execution_ctx, requested)?;
+    let selector = session_ref
+        .store_selector
+        .clone()
+        .ok_or_else(|| "Session reference store could not be resolved".to_string())?;
+    let store = store_manager
+        .open(&selector)
+        .await
+        .map_err(|err| err.to_string())?;
+    let uuid = uuid::Uuid::parse_str(&session_ref.public_id).map_err(|err| err.to_string())?;
+    let row = store
+        .get_session_row_by_public_id(uuid)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(SessionStoreLookup {
+        session_ref,
+        selector,
+        store,
+        row,
+    })
+}
+
+async fn require_session_store(
+    store_manager: &Arc<StoreManager>,
+    execution_ctx: &ActiveHarnessExecutionContext,
+    requested: Option<String>,
+) -> Result<ResolvedSessionStore, String> {
+    lookup_session_store(store_manager, execution_ctx, requested)
+        .await?
+        .require_row()
 }
 
 fn opt_session_id(opts: Option<&Table>) -> Option<String> {
@@ -344,7 +426,7 @@ fn opt_sidestep_graph_relation(
 }
 
 async fn attach_sidestep_graph_relation(
-    store_manager: &std::sync::Arc<crate::persistence::manager::StoreManager>,
+    store_manager: &Arc<StoreManager>,
     session_id: &str,
     branch_outcome: &TaskBranchOutcome,
     relation: SidestepGraphRelation,
@@ -402,11 +484,7 @@ fn bytes_to_simple_uuid(bytes: &[u8]) -> String {
         })
 }
 
-fn branch_row_to_lua_table(
-    lua: &Lua,
-    row: &crate::persistence::schema::BranchHeadRow,
-    deferred: bool,
-) -> LuaResult<Table> {
+fn branch_row_to_lua_table(lua: &Lua, row: &BranchHeadRow, deferred: bool) -> LuaResult<Table> {
     let table = lua.create_table()?;
     table.set("branch_id", bytes_to_simple_uuid(&row.public_id))?;
     table.set("name", row.name.clone())?;
@@ -439,6 +517,14 @@ fn branch_row_to_lua_table(
     table.set("deferred", deferred)?;
     table.set("created_at", row.created_at.clone())?;
     Ok(table)
+}
+
+fn branch_rows_to_lua_table(lua: &Lua, rows: &[BranchHeadRow]) -> LuaResult<Table> {
+    let out = lua.create_table()?;
+    for (i, row) in rows.iter().enumerate() {
+        out.set(i + 1, branch_row_to_lua_table(lua, row, false)?)?;
+    }
+    Ok(out)
 }
 
 pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
@@ -491,10 +577,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 )
                 .await
             });
-            match enqueue_res {
-                Ok(task_id) => string_ok(lua, &task_id),
-                Err(err) => nil_err(lua, &err),
-            }
+            lua_string_result(lua, enqueue_res)
         })?,
     )?;
 
@@ -586,10 +669,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 task.title = title;
                 queue_push_one(&sidestep_q, task, queue_max, false).await
             });
-            match enqueue_res {
-                Ok(task_id) => string_ok(lua, &task_id),
-                Err(err) => nil_err(lua, &err),
-            }
+            lua_string_result(lua, enqueue_res)
         })?,
     )?;
 
@@ -809,10 +889,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 )
                 .await
             });
-            match res {
-                Ok(_) => Ok(ok_bool()),
-                Err(err) => bool_err(lua, &err),
-            }
+            lua_bool_result(lua, res)
         })?,
     )?;
 
@@ -836,10 +913,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 )
                 .await
             });
-            match res {
-                Ok(_) => Ok(ok_bool()),
-                Err(err) => bool_err(lua, &err),
-            }
+            lua_bool_result(lua, res)
         })?,
     )?;
 
@@ -864,10 +938,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 .collect::<Vec<_>>();
             let res =
                 bridge_async_result(async move { queue_push_many(&aq, tasks, queue_max).await });
-            match res {
-                Ok(_) => Ok(ok_bool()),
-                Err(err) => bool_err(lua, &err),
-            }
+            lua_bool_result(lua, res)
         })?,
     )?;
 
@@ -881,18 +952,9 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 let manager = manager.clone();
                 let execution_ctx = execution_ctx.clone();
                 let result = bridge_async_result(async move {
-                    let session_ref = resolve_session_reference(&execution_ctx, Some(session_id))?;
-                    let selector = session_ref.store_selector.clone().ok_or_else(|| {
-                        "Session reference store could not be resolved".to_string()
-                    })?;
-                    let store = manager.open(&selector).await.map_err(|e| e.to_string())?;
-                    let uuid =
-                        uuid::Uuid::parse_str(&session_ref.public_id).map_err(|e| e.to_string())?;
-                    let row = store
-                        .get_session_row_by_public_id(uuid)
+                    lookup_session_store(&manager, &execution_ctx, Some(session_id))
                         .await
-                        .map_err(|e| e.to_string())?;
-                    Ok::<_, String>(row)
+                        .map(|lookup| lookup.row)
                 });
                 match result {
                     Ok(Some(row)) => {
@@ -916,31 +978,18 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 let execution_ctx = execution_ctx.clone();
                 let requested_session = opt_session_id(opts.as_ref());
                 let result = bridge_async_result(async move {
-                    let session_ref = resolve_session_reference(&execution_ctx, requested_session)?;
-                    let selector = session_ref.store_selector.clone().ok_or_else(|| {
-                        "Session reference store could not be resolved".to_string()
-                    })?;
-                    let store = manager.open(&selector).await.map_err(|e| e.to_string())?;
-                    let uuid =
-                        uuid::Uuid::parse_str(&session_ref.public_id).map_err(|e| e.to_string())?;
-                    let row = store
-                        .get_session_row_by_public_id(uuid)
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .ok_or_else(|| "Session not found".to_string())?;
-                    store
-                        .list_branch_heads(row.id)
+                    let session =
+                        require_session_store(&manager, &execution_ctx, requested_session).await?;
+                    session
+                        .store
+                        .list_branch_heads(session.row.id)
                         .await
                         .map_err(|e| e.to_string())
                 });
                 match result {
-                    Ok(rows) => {
-                        let out = lua.create_table()?;
-                        for (i, row) in rows.iter().enumerate() {
-                            out.set(i + 1, branch_row_to_lua_table(lua, row, false)?)?;
-                        }
-                        Ok(ok_value(Value::Table(out)))
-                    }
+                    Ok(rows) => Ok(ok_value(Value::Table(branch_rows_to_lua_table(
+                        lua, &rows,
+                    )?))),
                     Err(err) => nil_err(lua, &err),
                 }
             })?,
@@ -963,26 +1012,17 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 let from_turn_index = opt_from_turn_index(opts.as_ref());
                 let activate = opt_activate(opts.as_ref(), false);
                 let result = bridge_async_result(async move {
-                    let session_ref = resolve_session_reference(&execution_ctx, requested_session)?;
+                    let session =
+                        require_session_store(&manager, &execution_ctx, requested_session).await?;
                     let is_current_session = current_session_matches(
                         &execution_ctx,
-                        &session_ref,
+                        &session.session_ref,
                         requested_slot.as_deref(),
                     )?;
-                    let selector = session_ref.store_selector.clone().ok_or_else(|| {
-                        "Session reference store could not be resolved".to_string()
-                    })?;
-                    let store = manager.open(&selector).await.map_err(|e| e.to_string())?;
-                    let uuid =
-                        uuid::Uuid::parse_str(&session_ref.public_id).map_err(|e| e.to_string())?;
-                    let row = store
-                        .get_session_row_by_public_id(uuid)
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .ok_or_else(|| "Session not found".to_string())?;
-                    let branch = store
+                    let branch = session
+                        .store
                         .create_branch_head_from_turn_index(
-                            row.id,
+                            session.row.id,
                             &name,
                             from_turn_index,
                             activate && !is_current_session,
@@ -994,8 +1034,10 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                             lock.pending_branch_checkout = Some(name.clone());
                         }
                     } else if activate {
-                        let session_ref_str =
-                            format_session_reference(&session_ref.public_id, &selector);
+                        let session_ref_str = format_session_reference(
+                            &session.session_ref.public_id,
+                            &session.selector,
+                        );
                         let _ = agent_manager
                             .reload_session_if_live(&session_ref_str, requested_slot.as_deref())
                             .await
@@ -1024,31 +1066,18 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 let execution_ctx = execution_ctx.clone();
                 let requested_session = opt_session_id(opts.as_ref());
                 let result = bridge_async_result(async move {
-                    let session_ref = resolve_session_reference(&execution_ctx, requested_session)?;
-                    let selector = session_ref.store_selector.clone().ok_or_else(|| {
-                        "Session reference store could not be resolved".to_string()
-                    })?;
-                    let store = manager.open(&selector).await.map_err(|e| e.to_string())?;
-                    let uuid =
-                        uuid::Uuid::parse_str(&session_ref.public_id).map_err(|e| e.to_string())?;
-                    let row = store
-                        .get_session_row_by_public_id(uuid)
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .ok_or_else(|| "Session not found".to_string())?;
-                    store
-                        .list_branch_heads_from_source_turn(row.id, source_turn_id)
+                    let session =
+                        require_session_store(&manager, &execution_ctx, requested_session).await?;
+                    session
+                        .store
+                        .list_branch_heads_from_source_turn(session.row.id, source_turn_id)
                         .await
                         .map_err(|e| e.to_string())
                 });
                 match result {
-                    Ok(rows) => {
-                        let out = lua.create_table()?;
-                        for (i, row) in rows.iter().enumerate() {
-                            out.set(i + 1, branch_row_to_lua_table(lua, row, false)?)?;
-                        }
-                        Ok(ok_value(Value::Table(out)))
-                    }
+                    Ok(rows) => Ok(ok_value(Value::Table(branch_rows_to_lua_table(
+                        lua, &rows,
+                    )?))),
                     Err(err) => nil_err(lua, &err),
                 }
             })?,
@@ -1069,26 +1098,17 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 let requested_session = opt_session_id(opts.as_ref());
                 let requested_slot = opt_slot_id(opts.as_ref());
                 let result = bridge_async_result(async move {
-                    let session_ref = resolve_session_reference(&execution_ctx, requested_session)?;
+                    let session =
+                        require_session_store(&manager, &execution_ctx, requested_session).await?;
                     let is_current_session = current_session_matches(
                         &execution_ctx,
-                        &session_ref,
+                        &session.session_ref,
                         requested_slot.as_deref(),
                     )?;
-                    let selector = session_ref.store_selector.clone().ok_or_else(|| {
-                        "Session reference store could not be resolved".to_string()
-                    })?;
-                    let store = manager.open(&selector).await.map_err(|e| e.to_string())?;
-                    let uuid =
-                        uuid::Uuid::parse_str(&session_ref.public_id).map_err(|e| e.to_string())?;
-                    let row = store
-                        .get_session_row_by_public_id(uuid)
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .ok_or_else(|| "Session not found".to_string())?;
                     if is_current_session {
-                        let branch_row = store
-                            .list_branch_heads(row.id)
+                        let branch_row = session
+                            .store
+                            .list_branch_heads(session.row.id)
                             .await
                             .map_err(|e| e.to_string())?
                             .into_iter()
@@ -1100,13 +1120,14 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                         return Ok::<_, String>((branch_row, true));
                     }
 
-                    let branch_row = store
-                        .checkout_branch_head_by_name(row.id, &branch)
+                    let branch_row = session
+                        .store
+                        .checkout_branch_head_by_name(session.row.id, &branch)
                         .await
                         .map_err(|e| e.to_string())?
                         .ok_or_else(|| format!("Branch '{}' not found", branch))?;
                     let session_ref_str =
-                        format_session_reference(&session_ref.public_id, &selector);
+                        format_session_reference(&session.session_ref.public_id, &session.selector);
                     let _ = agent_manager
                         .reload_session_if_live(&session_ref_str, requested_slot.as_deref())
                         .await

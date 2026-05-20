@@ -7,6 +7,7 @@ Keep maps concise. They should explain how to work safely in a subsystem, not li
 Maps:
 
 - [Channels](./channels.md)
+- [Agent Session Bindings](./agent-session-bindings.md)
 - [Code Search](./code-search.md)
 - [MCP Integration](./mcp.md)
 - [Memory and Scoped Data](./memory-scoped-data.md)

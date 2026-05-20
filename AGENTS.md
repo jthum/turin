@@ -12,6 +12,7 @@ Key rules:
 
 Important maps:
 
+- Agent session bindings: `docs/architecture/maps/agent-session-bindings.md`
 - Scheduler and worklists: `docs/architecture/maps/scheduler-worklists.md`
 - Channels: `docs/architecture/maps/channels.md`
 - Code search: `docs/architecture/maps/code-search.md`
