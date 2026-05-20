@@ -23,6 +23,8 @@ This subsystem should preserve two guarantees:
   - Shared row-level work item domain helpers: public id formatting, pause/claimability/orphan checks, dependency checks, where filtering, and `WorkItemRow` to `QueuedTask` conversion.
 - `src/harness/stdlib/runtime_worklist.rs`
   - Harness runtime worklist API exposed to Lua.
+- `src/harness/stdlib/runtime_worklist_selection.rs`
+  - Shared runtime work item selection rules for pending, orphaned, paused, active, next, empty, progress, and child queries.
 - `src/harness/stdlib/action_bindings.rs`
   - Built-in action bridge for worklist actions invoked from harness code.
 - `src/persistence/state/scheduler.rs`
@@ -94,8 +96,9 @@ Change overlap or recurrence behavior:
 Change work item eligibility:
 
 1. Prefer changing shared helpers in `src/work_items.rs`.
-2. Check runtime worklist and scheduled worklist behavior together.
-3. Run `cargo test -p turin worklist --lib` and `cargo test -p turin schedule --lib`.
+2. If the rule is only about runtime list/next/progress views, update `runtime_worklist_selection.rs`.
+3. Check runtime worklist and scheduled worklist behavior together.
+4. Run `cargo test -p turin worklist --lib` and `cargo test -p turin schedule --lib`.
 
 Change `WorkItemRow` task mapping:
 
@@ -132,3 +135,5 @@ The current module split is deliberate:
 - `scheduled_execution.rs` answers "what is due and how does a scheduled job run?"
 - `scheduled_worklist_actions.rs` answers "how do scheduled jobs operate on worklists?"
 - `work_items.rs` answers "what are the shared row-level work item rules?"
+- `runtime_worklist_selection.rs` answers "which runtime-visible work items match this proxy method?"
+- `runtime_worklist.rs` answers "how is the Lua worklist API registered and converted to/from proxies?"
