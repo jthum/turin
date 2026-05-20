@@ -14,6 +14,11 @@ use crate::kernel::config::ContextPersistenceConfig;
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{WorkItemRow, WorklistRow};
 use crate::persistence::state::StateStore;
+use crate::work_items::{
+    WorkItemParentId, public_id_string as format_public_id, work_item_matches_where,
+    work_item_metadata, work_item_metadata_pause_due, work_item_pause_reason,
+    work_item_pause_until_unix_ms, work_item_paused,
+};
 
 pub(crate) struct WorklistItemsQuery<'a> {
     pub public_id: &'a str,
@@ -91,19 +96,23 @@ impl DaemonState {
             .into_iter()
             .filter(|row| query.status.is_none_or(|value| row.status == value))
             .filter(|row| !query.claimed_only || row.claim_execution_id.is_some())
-            .filter(|row| {
-                !query.paused_only || work_item_paused(row, row_pause_metadata(row).as_ref())
-            })
+            .filter(|row| !query.paused_only || work_item_paused(row))
             .filter(|row| {
                 !query.due_only
-                    || work_item_pause_due(row_pause_metadata(row).as_ref(), now_unix_ms)
+                    || work_item_metadata_pause_due(work_item_metadata(row).as_ref(), now_unix_ms)
             })
             .filter(|row| match (query.parent_public_id, parent_row_id) {
                 (Some(_), Some(parent_row_id)) => row.parent_item_id == Some(parent_row_id),
                 (Some(_), None) => false,
                 (None, _) => true,
             })
-            .filter(|row| work_item_matches_where(row, &public_ids, query.where_filter))
+            .filter(|row| {
+                work_item_matches_where(
+                    row,
+                    query.where_filter,
+                    WorkItemParentId::PublicId(&public_ids),
+                )
+            })
             .take(query.limit.unwrap_or(u32::MAX) as usize)
             .map(|row| map_work_item_detail(row, &public_ids, &worklist))
             .collect();
@@ -208,11 +217,9 @@ fn map_work_item_detail(
     public_ids: &HashMap<i64, String>,
     worklist: &WorklistRow,
 ) -> WorkItemDetail {
-    let metadata = parse_json::<JsonValue>(row.metadata.as_deref())
-        .ok()
-        .flatten();
+    let metadata = work_item_metadata(&row);
     let pause_metadata = metadata.as_ref();
-    let paused = work_item_paused(&row, pause_metadata);
+    let paused = work_item_paused(&row);
     let pause_reason = work_item_pause_reason(pause_metadata);
     let pause_until_unix_ms = work_item_pause_until_unix_ms(pause_metadata);
     WorkItemDetail {
@@ -248,52 +255,6 @@ fn map_work_item_detail(
     }
 }
 
-fn work_item_pause_flag(metadata: Option<&JsonValue>) -> bool {
-    let Some(JsonValue::Object(map)) = metadata else {
-        return false;
-    };
-    map.get("paused")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false)
-}
-
-fn work_item_paused(row: &WorkItemRow, _metadata: Option<&JsonValue>) -> bool {
-    row.status == "paused"
-}
-
-fn work_item_pause_reason(metadata: Option<&JsonValue>) -> Option<String> {
-    let Some(JsonValue::Object(map)) = metadata else {
-        return None;
-    };
-    map.get("pause_reason")
-        .and_then(|value| value.as_str())
-        .map(ToString::to_string)
-}
-
-fn work_item_pause_until_unix_ms(metadata: Option<&JsonValue>) -> Option<i64> {
-    let Some(JsonValue::Object(map)) = metadata else {
-        return None;
-    };
-    map.get("pause_until_unix_ms")
-        .and_then(|value| value.as_i64())
-}
-
-fn work_item_pause_due(metadata: Option<&JsonValue>, now_unix_ms: i64) -> bool {
-    if !work_item_pause_flag(metadata) {
-        return false;
-    }
-    match work_item_pause_until_unix_ms(metadata) {
-        Some(unix_ms) => unix_ms <= now_unix_ms,
-        None => false,
-    }
-}
-
-fn row_pause_metadata(row: &WorkItemRow) -> Option<JsonValue> {
-    parse_json::<JsonValue>(row.metadata.as_deref())
-        .ok()
-        .flatten()
-}
-
 fn scheduled_action(name: Option<String>, params: Option<String>) -> Option<ScheduleActionParams> {
     name.map(|name| ScheduleActionParams {
         name,
@@ -301,58 +262,9 @@ fn scheduled_action(name: Option<String>, params: Option<String>) -> Option<Sche
     })
 }
 
-fn format_public_id(bytes: &[u8]) -> String {
-    uuid::Uuid::from_slice(bytes)
-        .map(|id| id.to_string())
-        .unwrap_or_else(|_| super::helpers::format_uuid_bytes_simple(bytes))
-}
-
 fn parse_json<T: serde::de::DeserializeOwned>(value: Option<&str>) -> Result<Option<T>> {
     match value {
         Some(value) => Ok(Some(serde_json::from_str::<T>(value)?)),
         None => Ok(None),
-    }
-}
-
-fn work_item_matches_where(
-    row: &WorkItemRow,
-    public_ids: &HashMap<i64, String>,
-    where_filter: Option<&JsonMap<String, JsonValue>>,
-) -> bool {
-    let Some(where_filter) = where_filter else {
-        return true;
-    };
-    let metadata = row
-        .metadata
-        .as_deref()
-        .and_then(|raw| serde_json::from_str::<JsonValue>(raw).ok())
-        .unwrap_or(JsonValue::Null);
-    where_filter.iter().all(|(key, expected)| {
-        work_item_filter_value(row, public_ids, &metadata, key).as_ref() == Some(expected)
-    })
-}
-
-fn work_item_filter_value(
-    row: &WorkItemRow,
-    public_ids: &HashMap<i64, String>,
-    metadata: &JsonValue,
-    key: &str,
-) -> Option<JsonValue> {
-    match key {
-        "id" | "public_id" => Some(JsonValue::String(format_public_id(&row.public_id))),
-        "title" => Some(JsonValue::String(row.title.clone())),
-        "kind" => Some(JsonValue::String(row.item_kind.clone())),
-        "status" => Some(JsonValue::String(row.status.clone())),
-        "paused" => Some(JsonValue::Bool(work_item_paused(row, Some(metadata)))),
-        "pause_reason" => work_item_pause_reason(Some(metadata)).map(JsonValue::String),
-        "pause_until_unix_ms" => work_item_pause_until_unix_ms(Some(metadata)).map(JsonValue::from),
-        "priority" => Some(JsonValue::Number(row.priority.into())),
-        "parent_id" => Some(
-            row.parent_item_id
-                .and_then(|id| public_ids.get(&id).cloned())
-                .map(JsonValue::String)
-                .unwrap_or(JsonValue::Null),
-        ),
-        _ => metadata.get(key).cloned(),
     }
 }

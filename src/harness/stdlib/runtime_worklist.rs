@@ -22,6 +22,14 @@ use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask};
 use crate::persistence::manager::{StoreManager, StoreSelector};
 use crate::persistence::schema::{WorkItemRow, WorklistRow};
 use crate::persistence::state::{StateStore, WorkItemInsert, WorkItemUpdate};
+pub(crate) use crate::work_items::public_id_string;
+use crate::work_items::{
+    WorkItemParentId, work_item_claimable_now as row_claimable_now,
+    work_item_dependencies_satisfied as dependencies_satisfied,
+    work_item_is_orphaned as row_is_orphaned, work_item_matches_where as shared_row_matches_where,
+    work_item_pause_due as row_pause_due, work_item_pause_reason as row_pause_reason,
+    work_item_pause_until_unix_ms as row_pause_until_unix_ms, work_item_paused as row_paused,
+};
 
 #[derive(Clone)]
 struct WorklistHandle {
@@ -369,19 +377,6 @@ fn parse_bool_flag(opts: Option<Table>, key: &str) -> LuaResult<bool> {
     }
 }
 
-pub(crate) fn public_id_string(bytes: &[u8]) -> String {
-    uuid::Uuid::from_slice(bytes)
-        .map(|uuid| uuid.to_string())
-        .unwrap_or_else(|_| {
-            let mut out = String::with_capacity(bytes.len() * 2);
-            for byte in bytes {
-                use std::fmt::Write as _;
-                let _ = write!(&mut out, "{:02x}", byte);
-            }
-            out
-        })
-}
-
 fn parse_json_opt<T>(raw: Option<&str>) -> anyhow::Result<Option<T>>
 where
     T: serde::de::DeserializeOwned,
@@ -401,114 +396,8 @@ where
         .map_err(anyhow::Error::from)
 }
 
-fn row_filter_value(row: &WorkItemRow, metadata: &JsonValue, key: &str) -> Option<JsonValue> {
-    match key {
-        "id" | "public_id" => Some(JsonValue::String(public_id_string(&row.public_id))),
-        "title" => Some(JsonValue::String(row.title.clone())),
-        "kind" => Some(JsonValue::String(row.item_kind.clone())),
-        "status" => Some(JsonValue::String(row.status.clone())),
-        "priority" => Some(JsonValue::Number(row.priority.into())),
-        "parent_id" => Some(
-            row.parent_item_id
-                .map(|v| JsonValue::Number(v.into()))
-                .unwrap_or(JsonValue::Null),
-        ),
-        "paused" => Some(JsonValue::Bool(row_paused(row, Some(metadata)))),
-        "pause_reason" => row_pause_reason(Some(metadata)).map(JsonValue::String),
-        "pause_until_unix_ms" => {
-            row_pause_until_unix_ms(Some(metadata)).map(|value| JsonValue::Number(value.into()))
-        }
-        _ => metadata.get(key).cloned(),
-    }
-}
-
 fn row_matches_where(row: &WorkItemRow, where_map: Option<&JsonMap<String, JsonValue>>) -> bool {
-    let Some(where_map) = where_map else {
-        return true;
-    };
-    let metadata = row
-        .metadata
-        .as_deref()
-        .and_then(|raw| serde_json::from_str::<JsonValue>(raw).ok())
-        .unwrap_or(JsonValue::Null);
-    where_map
-        .iter()
-        .all(|(key, expected)| row_filter_value(row, &metadata, key).as_ref() == Some(expected))
-}
-
-fn dependencies_satisfied(row: &WorkItemRow, status_map: &HashMap<String, String>) -> bool {
-    let deps = row
-        .after_ids
-        .as_deref()
-        .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok())
-        .unwrap_or_default();
-    deps.into_iter()
-        .all(|dep| status_map.get(&dep).is_some_and(|status| status == "done"))
-}
-
-fn row_is_orphaned(row: &WorkItemRow, stale_before_unix_ms: i64) -> bool {
-    row.status == "active"
-        && match row.claim_heartbeat_unix_ms {
-            Some(heartbeat) => heartbeat <= stale_before_unix_ms,
-            None => true,
-        }
-}
-
-fn row_is_paused(row: &WorkItemRow, now_unix_ms: i64) -> bool {
-    let metadata = row_metadata(row);
-    if !row_paused(row, metadata.as_ref()) {
-        return false;
-    }
-    match row_pause_until_unix_ms(metadata.as_ref()) {
-        Some(pause_until_unix_ms) => pause_until_unix_ms > now_unix_ms,
-        None => true,
-    }
-}
-
-fn row_metadata(row: &WorkItemRow) -> Option<JsonValue> {
-    row.metadata
-        .as_deref()
-        .and_then(|raw| serde_json::from_str::<JsonValue>(raw).ok())
-}
-
-fn row_paused(row: &WorkItemRow, _metadata: Option<&JsonValue>) -> bool {
-    row.status == "paused"
-}
-
-fn row_pause_reason(metadata: Option<&JsonValue>) -> Option<String> {
-    let Some(JsonValue::Object(map)) = metadata else {
-        return None;
-    };
-    map.get("pause_reason")
-        .and_then(|value| value.as_str())
-        .map(ToString::to_string)
-}
-
-fn row_pause_until_unix_ms(metadata: Option<&JsonValue>) -> Option<i64> {
-    let Some(JsonValue::Object(map)) = metadata else {
-        return None;
-    };
-    map.get("pause_until_unix_ms")
-        .and_then(|value| value.as_i64())
-}
-
-fn row_pause_due(row: &WorkItemRow, now_unix_ms: i64) -> bool {
-    let metadata = row_metadata(row);
-    if !row_paused(row, metadata.as_ref()) {
-        return false;
-    }
-    match row_pause_until_unix_ms(metadata.as_ref()) {
-        Some(pause_until_unix_ms) => pause_until_unix_ms <= now_unix_ms,
-        None => false,
-    }
-}
-
-fn row_claimable_now(row: &WorkItemRow, now_unix_ms: i64) -> bool {
-    match row.status.as_str() {
-        "pending" => !row_is_paused(row, now_unix_ms),
-        "paused" => row_pause_due(row, now_unix_ms),
-        _ => false,
-    }
+    shared_row_matches_where(row, where_map, WorkItemParentId::DatabaseId)
 }
 
 fn item_payload_value(lua: &Lua, row: &WorkItemRow) -> LuaResult<Value> {
@@ -727,7 +616,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
             None => Value::Nil,
         },
     )?;
-    proxy.set("paused", row_paused(&row, metadata_json.as_ref()))?;
+    proxy.set("paused", row_paused(&row))?;
     proxy.set("pause_reason", row_pause_reason(metadata_json.as_ref()))?;
     proxy.set(
         "pause_until_unix_ms",
@@ -1284,7 +1173,7 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                 for (index, row) in rows
                     .into_iter()
                     .filter(|row| row.parent_item_id == handle.parent_item_id)
-                    .filter(|row| row_paused(row, row_metadata(row).as_ref()))
+                    .filter(row_paused)
                     .filter(|row| !due_only || row_pause_due(row, now))
                     .filter(|row| row_matches_where(row, where_map.as_ref()))
                     .take(limit.unwrap_or(usize::MAX))

@@ -17,6 +17,10 @@ use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask};
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{ScheduledJobRow, ScheduledJobRunRow, WorkItemRow};
 use crate::persistence::state::{ScheduledJobInsert, ScheduledJobUpdate};
+use crate::work_items::{
+    WorkItemParentId, public_id_string as format_work_item_public_id, work_item_claimable_now,
+    work_item_dependencies_satisfied, work_item_is_orphaned, work_item_matches_where,
+};
 
 const SCHEDULED_JOB_BATCH_LIMIT: usize = 32;
 const SCHEDULED_JOB_FAILURE_RETRY_MS: i64 = 60_000;
@@ -828,7 +832,13 @@ impl DaemonState {
             .filter(|row| row.claim_execution_id.is_none())
             .filter(|row| work_item_claimable_now(row, now_unix_ms))
             .filter(|row| work_item_dependencies_satisfied(row, &status_map))
-            .filter(|row| work_item_matches_where(row, params.where_filter.as_ref()))
+            .filter(|row| {
+                work_item_matches_where(
+                    row,
+                    params.where_filter.as_ref(),
+                    WorkItemParentId::DatabaseId,
+                )
+            })
             .take(params.limit.unwrap_or(usize::MAX))
         {
             let claimed = store
@@ -963,7 +973,13 @@ impl DaemonState {
             .into_iter()
             .filter(|row| row.parent_item_id.is_none())
             .filter(|row| work_item_is_orphaned(row, stale_before))
-            .filter(|row| work_item_matches_where(row, params.where_filter.as_ref()))
+            .filter(|row| {
+                work_item_matches_where(
+                    row,
+                    params.where_filter.as_ref(),
+                    WorkItemParentId::DatabaseId,
+                )
+            })
             .take(params.limit.unwrap_or(usize::MAX))
             .collect::<Vec<_>>();
         let mut released = 0usize;
@@ -1177,117 +1193,6 @@ fn parse_store_selector_string(s: &str) -> StoreSelector {
         StoreSelector::Path(s.to_string())
     } else {
         StoreSelector::Alias(s.to_string())
-    }
-}
-
-fn format_work_item_public_id(bytes: &[u8]) -> String {
-    uuid::Uuid::from_slice(bytes)
-        .map(|uuid| uuid.to_string())
-        .unwrap_or_else(|_| super::helpers::format_uuid_bytes_simple(bytes))
-}
-
-fn work_item_filter_value(row: &WorkItemRow, metadata: &JsonValue, key: &str) -> Option<JsonValue> {
-    match key {
-        "id" | "public_id" => Some(JsonValue::String(format_work_item_public_id(
-            &row.public_id,
-        ))),
-        "title" => Some(JsonValue::String(row.title.clone())),
-        "kind" => Some(JsonValue::String(row.item_kind.clone())),
-        "status" => Some(JsonValue::String(row.status.clone())),
-        "priority" => Some(JsonValue::Number(row.priority.into())),
-        "parent_id" => Some(
-            row.parent_item_id
-                .map(|value| JsonValue::Number(value.into()))
-                .unwrap_or(JsonValue::Null),
-        ),
-        _ => metadata.get(key).cloned(),
-    }
-}
-
-fn work_item_matches_where(
-    row: &WorkItemRow,
-    where_map: Option<&JsonMap<String, JsonValue>>,
-) -> bool {
-    let Some(where_map) = where_map else {
-        return true;
-    };
-    let metadata = row
-        .metadata
-        .as_deref()
-        .and_then(|raw| serde_json::from_str::<JsonValue>(raw).ok())
-        .unwrap_or(JsonValue::Null);
-    where_map.iter().all(|(key, expected)| {
-        work_item_filter_value(row, &metadata, key).as_ref() == Some(expected)
-    })
-}
-
-fn work_item_dependencies_satisfied(
-    row: &WorkItemRow,
-    status_map: &std::collections::HashMap<String, String>,
-) -> bool {
-    row.after_ids
-        .as_deref()
-        .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok())
-        .unwrap_or_default()
-        .into_iter()
-        .all(|dep| status_map.get(&dep).is_some_and(|status| status == "done"))
-}
-
-fn work_item_is_orphaned(row: &WorkItemRow, stale_before_unix_ms: i64) -> bool {
-    row.status == "active"
-        && match row.claim_heartbeat_unix_ms {
-            Some(heartbeat) => heartbeat <= stale_before_unix_ms,
-            None => true,
-        }
-}
-
-fn work_item_is_paused(row: &WorkItemRow, now_unix_ms: i64) -> bool {
-    let Some(metadata_raw) = row.metadata.as_deref() else {
-        return false;
-    };
-    let Ok(JsonValue::Object(map)) = serde_json::from_str::<JsonValue>(metadata_raw) else {
-        return false;
-    };
-    if !work_item_paused(row) {
-        return false;
-    }
-    match map
-        .get("pause_until_unix_ms")
-        .and_then(|value| value.as_i64())
-    {
-        Some(pause_until_unix_ms) => pause_until_unix_ms > now_unix_ms,
-        None => true,
-    }
-}
-
-fn work_item_paused(row: &WorkItemRow) -> bool {
-    row.status == "paused"
-}
-
-fn work_item_claimable_now(row: &WorkItemRow, now_unix_ms: i64) -> bool {
-    match row.status.as_str() {
-        "pending" => !work_item_is_paused(row, now_unix_ms),
-        "paused" => work_item_pause_due(row, now_unix_ms),
-        _ => false,
-    }
-}
-
-fn work_item_pause_due(row: &WorkItemRow, now_unix_ms: i64) -> bool {
-    if !work_item_paused(row) {
-        return false;
-    }
-    let Some(metadata_raw) = row.metadata.as_deref() else {
-        return false;
-    };
-    let Ok(JsonValue::Object(map)) = serde_json::from_str::<JsonValue>(metadata_raw) else {
-        return false;
-    };
-    match map
-        .get("pause_until_unix_ms")
-        .and_then(|value| value.as_i64())
-    {
-        Some(pause_until_unix_ms) => pause_until_unix_ms <= now_unix_ms,
-        None => false,
     }
 }
 

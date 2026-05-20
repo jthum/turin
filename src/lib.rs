@@ -9,5 +9,6 @@ pub mod remote;
 pub(crate) mod test_support;
 pub mod tools;
 pub mod tracing_support;
+pub(crate) mod work_items;
 
 pub use turin_code_index::code_index_reader;
