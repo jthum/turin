@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -17,16 +16,14 @@ use crate::harness::stdlib::db_support::{
 use crate::harness::stdlib::governance_support::{current_agent_id, require_capability};
 use crate::harness::stdlib::object_refs;
 use crate::harness::stdlib::policy_support::runtime_policy_snapshot;
+use crate::harness::stdlib::runtime_worklist_selection as selection;
 use crate::kernel::identity::ContextSelector;
 use crate::persistence::manager::{StoreManager, StoreSelector};
 use crate::persistence::schema::{WorkItemRow, WorklistRow};
 use crate::persistence::state::{StateStore, WorkItemInsert, WorkItemUpdate};
 pub(crate) use crate::work_items::public_id_string;
 use crate::work_items::{
-    WorkItemParentId, work_item_claimable_now as row_claimable_now,
-    work_item_dependencies_satisfied as dependencies_satisfied,
-    work_item_is_orphaned as row_is_orphaned, work_item_matches_where as shared_row_matches_where,
-    work_item_pause_due as row_pause_due, work_item_pause_reason as row_pause_reason,
+    work_item_pause_reason as row_pause_reason,
     work_item_pause_until_unix_ms as row_pause_until_unix_ms, work_item_paused as row_paused,
     work_item_prompt_task,
 };
@@ -394,10 +391,6 @@ where
         .map(serde_json::to_string)
         .transpose()
         .map_err(anyhow::Error::from)
-}
-
-fn row_matches_where(row: &WorkItemRow, where_map: Option<&JsonMap<String, JsonValue>>) -> bool {
-    shared_row_matches_where(row, where_map, WorkItemParentId::DatabaseId)
 }
 
 fn item_payload_value(lua: &Lua, row: &WorkItemRow) -> LuaResult<Value> {
@@ -909,11 +902,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                 })
                 .map_err(mlua::Error::runtime)?;
                 let out = lua.create_table()?;
-                for (index, row) in rows
-                    .into_iter()
-                    .filter(|row| row.parent_item_id == Some(parent_id))
-                    .enumerate()
-                {
+                for (index, row) in selection::children(rows, parent_id).into_iter().enumerate() {
                     out.set(index + 1, item_proxy(lua, handle.clone(), row)?)?;
                 }
                 Ok(Value::Table(out))
@@ -1004,13 +993,12 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                 })
                 .map_err(mlua::Error::runtime)?;
                 let out = lua.create_table()?;
-                for (index, row) in rows
-                    .into_iter()
-                    .filter(|row| row.parent_item_id == handle.parent_item_id)
-                    .filter(|row| row_matches_where(row, where_map.as_ref()))
-                    .take(limit.unwrap_or(usize::MAX))
-                    .enumerate()
-                {
+                let selection = selection::WorkItemSelection::new(
+                    handle.parent_item_id,
+                    where_map.as_ref(),
+                    limit,
+                );
+                for (index, row) in selection::all_rows(rows, selection).into_iter().enumerate() {
                     out.set(index + 1, item_proxy(lua, handle.clone(), row)?)?;
                 }
                 Ok(Value::Table(out))
@@ -1029,19 +1017,14 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     handle.store.list_work_items(handle.worklist.id).await
                 })
                 .map_err(mlua::Error::runtime)?;
-                let status_map = rows
-                    .iter()
-                    .map(|row| (public_id_string(&row.public_id), row.status.clone()))
-                    .collect::<HashMap<_, _>>();
                 let out = lua.create_table()?;
-                for (index, row) in rows
+                let selection = selection::WorkItemSelection::new(
+                    handle.parent_item_id,
+                    where_map.as_ref(),
+                    limit,
+                );
+                for (index, row) in selection::pending_rows(rows, selection)
                     .into_iter()
-                    .filter(|row| row.parent_item_id == handle.parent_item_id)
-                    .filter(|row| row.status == "pending")
-                    .filter(|row| row.claim_execution_id.is_none())
-                    .filter(|row| dependencies_satisfied(row, &status_map))
-                    .filter(|row| row_matches_where(row, where_map.as_ref()))
-                    .take(limit.unwrap_or(usize::MAX))
                     .enumerate()
                 {
                     out.set(index + 1, item_proxy(lua, handle.clone(), row)?)?;
@@ -1065,12 +1048,13 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                 })
                 .map_err(mlua::Error::runtime)?;
                 let out = lua.create_table()?;
-                for (index, row) in rows
+                let selection = selection::WorkItemSelection::new(
+                    handle.parent_item_id,
+                    where_map.as_ref(),
+                    limit,
+                );
+                for (index, row) in selection::orphaned_rows(rows, selection, stale_before)
                     .into_iter()
-                    .filter(|row| row.parent_item_id == handle.parent_item_id)
-                    .filter(|row| row_is_orphaned(row, stale_before))
-                    .filter(|row| row_matches_where(row, where_map.as_ref()))
-                    .take(limit.unwrap_or(usize::MAX))
                     .enumerate()
                 {
                     out.set(index + 1, item_proxy(lua, handle.clone(), row)?)?;
@@ -1095,13 +1079,12 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     handle.store.list_work_items(handle.worklist.id).await
                 })
                 .map_err(mlua::Error::runtime)?;
-                let candidates = rows
-                    .into_iter()
-                    .filter(|row| row.parent_item_id == handle.parent_item_id)
-                    .filter(|row| row_is_orphaned(row, stale_before))
-                    .filter(|row| row_matches_where(row, where_map.as_ref()))
-                    .take(limit.unwrap_or(usize::MAX))
-                    .collect::<Vec<_>>();
+                let selection = selection::WorkItemSelection::new(
+                    handle.parent_item_id,
+                    where_map.as_ref(),
+                    limit,
+                );
+                let candidates = selection::orphaned_rows(rows, selection, stale_before);
                 let out = lua.create_table()?;
                 for (index, row) in candidates.into_iter().enumerate() {
                     let released = crate::harness::globals::block_on_current(async {
@@ -1157,13 +1140,13 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                 .map_err(mlua::Error::runtime)?;
                 let now = now_unix_ms();
                 let out = lua.create_table()?;
-                for (index, row) in rows
+                let selection = selection::WorkItemSelection::new(
+                    handle.parent_item_id,
+                    where_map.as_ref(),
+                    limit,
+                );
+                for (index, row) in selection::paused_rows(rows, selection, due_only, now)
                     .into_iter()
-                    .filter(|row| row.parent_item_id == handle.parent_item_id)
-                    .filter(row_paused)
-                    .filter(|row| !due_only || row_pause_due(row, now))
-                    .filter(|row| row_matches_where(row, where_map.as_ref()))
-                    .take(limit.unwrap_or(usize::MAX))
                     .enumerate()
                 {
                     out.set(index + 1, item_proxy(lua, handle.clone(), row)?)?;
@@ -1183,13 +1166,12 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     handle.store.list_work_items(handle.worklist.id).await
                 })
                 .map_err(mlua::Error::runtime)?;
-                let row = rows.into_iter().find(|row| {
-                    row.parent_item_id == handle.parent_item_id
-                        && row.status == "active"
-                        && (row.claim_execution_id.as_deref() == execution_id.as_deref()
-                            || row.claim_session_id.as_deref() == session_id.as_deref())
-                });
-                match row {
+                match selection::active_for_current_claim(
+                    rows,
+                    handle.parent_item_id,
+                    session_id.as_deref(),
+                    execution_id.as_deref(),
+                ) {
                     Some(row) => Ok(Value::Table(item_proxy(lua, handle.clone(), row)?)),
                     None => Ok(Value::Nil),
                 }
@@ -1209,20 +1191,14 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     handle.store.list_work_items(handle.worklist.id).await
                 })
                 .map_err(mlua::Error::runtime)?;
-                let status_map = rows
-                    .iter()
-                    .map(|row| (public_id_string(&row.public_id), row.status.clone()))
-                    .collect::<HashMap<_, _>>();
                 let now = now_unix_ms();
                 let (agent_id, session_id, execution_id) = current_claim_identity(&handle.app_data);
-                for row in rows
-                    .iter()
-                    .filter(|row| row.parent_item_id == handle.parent_item_id)
-                    .filter(|row| row.claim_execution_id.is_none())
-                    .filter(|row| row_claimable_now(row, now))
-                    .filter(|row| dependencies_satisfied(row, &status_map))
-                    .filter(|row| row_matches_where(row, where_map.as_ref()))
-                {
+                for row in selection::next_candidates(
+                    &rows,
+                    handle.parent_item_id,
+                    where_map.as_ref(),
+                    now,
+                ) {
                     let claimed = crate::harness::globals::block_on_current(async {
                         handle
                             .store
@@ -1277,11 +1253,7 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     handle.store.list_work_items(handle.worklist.id).await
                 })
                 .map_err(mlua::Error::runtime)?;
-                match rows
-                    .into_iter()
-                    .filter(|row| row.parent_item_id == handle.parent_item_id)
-                    .find(|row| row_matches_where(row, Some(&where_map)))
-                {
+                match selection::find_matching(rows, handle.parent_item_id, &where_map) {
                     Some(row) => Ok(Value::Table(item_proxy(lua, handle.clone(), row)?)),
                     None => Ok(Value::Nil),
                 }
@@ -1298,16 +1270,7 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     handle.store.list_work_items(handle.worklist.id).await
                 })
                 .map_err(mlua::Error::runtime)?;
-                let total = rows
-                    .iter()
-                    .filter(|row| row.parent_item_id == handle.parent_item_id)
-                    .count();
-                let done = rows
-                    .iter()
-                    .filter(|row| {
-                        row.parent_item_id == handle.parent_item_id && row.status == "done"
-                    })
-                    .count();
+                let (done, total) = selection::progress_counts(&rows, handle.parent_item_id);
                 let out = lua.create_table()?;
                 out.set("done", done)?;
                 out.set("total", total)?;
@@ -1325,17 +1288,8 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     handle.store.list_work_items(handle.worklist.id).await
                 })
                 .map_err(mlua::Error::runtime)?;
-                let status_map = rows
-                    .iter()
-                    .map(|row| (public_id_string(&row.public_id), row.status.clone()))
-                    .collect::<HashMap<_, _>>();
                 let now = now_unix_ms();
-                let has_pending = rows.iter().any(|row| {
-                    row.parent_item_id == handle.parent_item_id
-                        && row_claimable_now(row, now)
-                        && row.claim_execution_id.is_none()
-                        && dependencies_satisfied(row, &status_map)
-                });
+                let has_pending = selection::has_pending_work(&rows, handle.parent_item_id, now);
                 Ok(Value::Boolean(!has_pending))
             })?,
         )?;
