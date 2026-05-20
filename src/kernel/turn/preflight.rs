@@ -10,7 +10,8 @@ use crate::harness::context::{ContextWrapper, RequestOptionsOverride};
 use crate::harness::verdict::Verdict;
 use crate::inference::provider;
 use crate::kernel::config::{
-    InferenceCompactionMode, InferenceConfig, ResolvedInferenceCandidate, ResolvedInferenceRoute,
+    InferenceCompactionMode, InferenceConfig, ProviderConfig, ResolvedInferenceCandidate,
+    ResolvedInferenceRoute,
 };
 use crate::kernel::event::AuditEvent;
 use crate::kernel::session::SessionState;
@@ -44,6 +45,39 @@ struct TurnRequestState {
     system_prompt: String,
     thinking_budget: u32,
     request_options_override: RequestOptionsOverride,
+}
+
+fn requested_context_label(route: &ResolvedInferenceRoute) -> &str {
+    route.requested_context.as_deref().unwrap_or("<unset>")
+}
+
+fn resolved_context_label(candidate: &ResolvedInferenceCandidate) -> &str {
+    candidate.context_name.as_deref().unwrap_or("<base>")
+}
+
+fn warn_candidate_fallback(
+    requested_context: &str,
+    candidate: &ResolvedInferenceCandidate,
+    err: &anyhow::Error,
+    message: &'static str,
+) {
+    warn!(
+        requested_context,
+        resolved_context = resolved_context_label(candidate),
+        provider = %candidate.provider_name,
+        model = %candidate.model,
+        error = %err,
+        "{}",
+        message
+    );
+}
+
+fn build_candidate_request_options(
+    provider_config: &ProviderConfig,
+    overrides: &RequestOptionsOverride,
+) -> Result<provider::RequestOptions> {
+    let options = provider::build_request_options(provider_config)?;
+    merge_request_option_overrides(options, overrides)
 }
 
 impl ExecutionHost {
@@ -517,9 +551,10 @@ impl ExecutionHost {
             req.thinking_budget,
             req.inference_context.as_deref(),
         );
+        let requested_context = requested_context_label(&route).to_string();
         for warning in &route.warnings {
             warn!(
-                requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),
+                requested_context = requested_context.as_str(),
                 warning = %warning,
                 "Inference route warning"
             );
@@ -530,13 +565,11 @@ impl ExecutionHost {
         let mut last_error: Option<anyhow::Error> = None;
         for candidate in route.candidates {
             if let Err(err) = self.ensure_turn_provider_client(&candidate.provider_name) {
-                warn!(
-                    requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),
-                    resolved_context = candidate.context_name.as_deref().unwrap_or("<base>"),
-                    provider = %candidate.provider_name,
-                    model = %candidate.model,
-                    error = %err,
-                    "Inference route failed during provider initialization; trying fallback"
+                warn_candidate_fallback(
+                    &requested_context,
+                    &candidate,
+                    &err,
+                    "Inference route failed during provider initialization; trying fallback",
                 );
                 last_error = Some(err);
                 continue;
@@ -547,13 +580,11 @@ impl ExecutionHost {
                     "Provider '{}' was initialized but no client is available",
                     candidate.provider_name
                 );
-                warn!(
-                    requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),
-                    resolved_context = candidate.context_name.as_deref().unwrap_or("<base>"),
-                    provider = %candidate.provider_name,
-                    model = %candidate.model,
-                    error = %err,
-                    "Inference route failed after provider initialization; trying fallback"
+                warn_candidate_fallback(
+                    &requested_context,
+                    &candidate,
+                    &err,
+                    "Inference route failed after provider initialization; trying fallback",
                 );
                 last_error = Some(err);
                 continue;
@@ -563,44 +594,27 @@ impl ExecutionHost {
                     "Provider '{}' not found in configuration",
                     candidate.provider_name
                 );
-                warn!(
-                    requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),
-                    resolved_context = candidate.context_name.as_deref().unwrap_or("<base>"),
-                    provider = %candidate.provider_name,
-                    model = %candidate.model,
-                    error = %err,
-                    "Inference route failed because provider config is missing; trying fallback"
+                warn_candidate_fallback(
+                    &requested_context,
+                    &candidate,
+                    &err,
+                    "Inference route failed because provider config is missing; trying fallback",
                 );
                 last_error = Some(err);
                 continue;
             };
 
-            let request_options = match provider::build_request_options(provider_config) {
-                Ok(options) => {
-                    match merge_request_option_overrides(options, &req.request_options_override) {
-                        Ok(options) => options,
-                        Err(err) => {
-                            warn!(
-                                requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),
-                                resolved_context = candidate.context_name.as_deref().unwrap_or("<base>"),
-                                provider = %candidate.provider_name,
-                                model = %candidate.model,
-                                error = %err,
-                                "Inference route failed while building request options; trying fallback"
-                            );
-                            last_error = Some(err);
-                            continue;
-                        }
-                    }
-                }
+            let request_options = match build_candidate_request_options(
+                provider_config,
+                &req.request_options_override,
+            ) {
+                Ok(options) => options,
                 Err(err) => {
-                    warn!(
-                        requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),
-                        resolved_context = candidate.context_name.as_deref().unwrap_or("<base>"),
-                        provider = %candidate.provider_name,
-                        model = %candidate.model,
-                        error = %err,
-                        "Inference route failed while preparing provider options; trying fallback"
+                    warn_candidate_fallback(
+                        &requested_context,
+                        &candidate,
+                        &err,
+                        "Inference route failed while preparing request options; trying fallback",
                     );
                     last_error = Some(err);
                     continue;
@@ -634,8 +648,8 @@ impl ExecutionHost {
             {
                 Ok(stream) => {
                     debug!(
-                        requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),
-                        resolved_context = candidate.context_name.as_deref().unwrap_or("<base>"),
+                        requested_context = requested_context.as_str(),
+                        resolved_context = resolved_context_label(&candidate),
                         provider = %candidate.provider_name,
                         model = %candidate.model,
                         "Prepared provider stream"
@@ -651,13 +665,11 @@ impl ExecutionHost {
                         "failed to start inference stream (provider='{}', model='{}')",
                         candidate.provider_name, candidate.model
                     ));
-                    warn!(
-                        requested_context = route.requested_context.as_deref().unwrap_or("<unset>"),
-                        resolved_context = candidate.context_name.as_deref().unwrap_or("<base>"),
-                        provider = %candidate.provider_name,
-                        model = %candidate.model,
-                        error = %err,
-                        "Inference route failed to start stream; trying fallback"
+                    warn_candidate_fallback(
+                        &requested_context,
+                        &candidate,
+                        &err,
+                        "Inference route failed to start stream; trying fallback",
                     );
                     last_error = Some(err);
                 }

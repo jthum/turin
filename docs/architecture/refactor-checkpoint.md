@@ -29,6 +29,7 @@ These areas have been structurally reviewed, lightly refactored, tested, and map
 - Scheduler and worklists
 - Session context and hot history
 - Session lifecycle
+- Turn preflight
 - Turn tool execution
 
 Read the matching files under `docs/architecture/maps/` before editing any of those areas.
@@ -49,9 +50,6 @@ This was the right correction. Several later passes were deliberately small beca
 
 These are worth future passes, but each needs a fresh local read before editing:
 
-- `src/kernel/turn/preflight.rs`
-  - Context preparation and compaction routing. Large and important for memory/performance.
-  - Treat as a logic-quality/performance pass, not a file split.
 - `src/kernel/agent_manager/operations.rs`
   - Peer/runtime operation orchestration. Could have repeated reload/status/error handling.
   - Needs agent-manager tests.
@@ -77,4 +75,4 @@ These large files are not part of the current runtime-core refactor pass:
 
 The codebase no longer reads like an unreviewed generated blob in the areas covered by this pass. It still has large files, and not every pass reduced LOC, but the major runtime surfaces now have clearer boundaries, maps, focused tests, and less duplicated decision logic.
 
-The remaining work should be paced as module-specific quality passes, not a second broad sweep. The next best target is probably `src/kernel/turn/preflight.rs`, because it is still central to memory/performance behavior and context assembly.
+The remaining work should be paced as module-specific quality passes, not a second broad sweep. The next best target is probably `src/kernel/agent_manager/operations.rs`, because peer/runtime operation orchestration may still have repeated reload/status/error handling.

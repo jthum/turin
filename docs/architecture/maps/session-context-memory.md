@@ -53,6 +53,7 @@ Turn preflight:
 2. Context checkpoint refresh estimates the effective request size and may ask a compaction provider to summarize older history.
 3. Provider request context is built from the hot window plus any checkpoint summary.
 4. Structural request compaction can still truncate old tool results and slide the request window to fit provider limits.
+5. Inference route candidate fallback keeps a common log shape for requested context, resolved context, provider, model, and error.
 
 Full materialization:
 
@@ -123,7 +124,7 @@ The current module split is deliberate:
 
 - `hot_history.rs` answers "what stays hot in resident session memory?"
 - `context_window.rs` answers "what fits into this provider request?"
-- `preflight.rs` answers "when do we refresh summaries and build request context?"
+- `preflight.rs` answers "when do we refresh summaries, build request context, and try provider route candidates?"
 - `session_lifecycle.rs` answers "when do we restore, materialize, and re-prune persisted history?"
 
 Likely future cleanup areas:
