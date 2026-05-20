@@ -36,6 +36,43 @@ fn live_execution_snapshot(handle: &Arc<AgentRuntimeHandle>) -> ExecutionStatusS
         })
 }
 
+fn live_session_snapshot(
+    runtime_key: &RuntimeSlotKey,
+    handle: &Arc<AgentRuntimeHandle>,
+    session_id: String,
+) -> LiveSessionSnapshot {
+    LiveSessionSnapshot {
+        agent_id: runtime_key.agent_id.clone(),
+        slot_id: runtime_key.slot_id.clone(),
+        session_id,
+        running: handle.is_running(),
+        active_tasks: handle.active_tasks.load(Ordering::Relaxed),
+        queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
+        current_request_id: handle.control.current_request_id(),
+        execution: live_execution_snapshot(handle),
+        conflict_policy: handle.control.current_conflict_policy(),
+    }
+}
+
+fn runtime_slot_is_busy(handle: &Arc<AgentRuntimeHandle>) -> bool {
+    handle.active_tasks.load(Ordering::Relaxed) > 0
+        || handle.queued_tasks.load(Ordering::Relaxed) > 0
+}
+
+fn ensure_runtime_slot_idle(
+    runtime_key: &RuntimeSlotKey,
+    handle: &Arc<AgentRuntimeHandle>,
+) -> Result<()> {
+    if runtime_slot_is_busy(handle) {
+        anyhow::bail!(
+            "Runtime slot '{}' for agent '{}' is busy",
+            runtime_key.slot_id,
+            runtime_key.agent_id
+        );
+    }
+    Ok(())
+}
+
 fn intended_task_execution_snapshot(
     handle: &Arc<AgentRuntimeHandle>,
     task: &QueuedTask,
@@ -163,17 +200,7 @@ impl AgentManager {
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         };
-        Ok(LiveSessionSnapshot {
-            agent_id: runtime_key.agent_id,
-            slot_id: runtime_key.slot_id,
-            session_id,
-            running: handle.is_running(),
-            active_tasks: handle.active_tasks.load(Ordering::Relaxed),
-            queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
-            current_request_id: handle.control.current_request_id(),
-            execution: live_execution_snapshot(&handle),
-            conflict_policy: handle.control.current_conflict_policy(),
-        })
+        Ok(live_session_snapshot(&runtime_key, &handle, session_id))
     }
 
     pub async fn resume_session(
@@ -190,33 +217,21 @@ impl AgentManager {
                 .find(|(runtime_key, _)| runtime_key.slot_id == requested_slot_id)
                 .cloned()
             {
-                return Ok(LiveSessionSnapshot {
-                    agent_id: runtime_key.agent_id,
-                    slot_id: runtime_key.slot_id,
-                    session_id: session_id.to_string(),
-                    running: handle.is_running(),
-                    active_tasks: handle.active_tasks.load(Ordering::Relaxed),
-                    queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
-                    current_request_id: handle.control.current_request_id(),
-                    execution: live_execution_snapshot(&handle),
-                    conflict_policy: handle.control.current_conflict_policy(),
-                });
+                return Ok(live_session_snapshot(
+                    &runtime_key,
+                    &handle,
+                    session_id.to_string(),
+                ));
             }
         } else {
             match live_matches.as_slice() {
                 [] => {}
                 [(runtime_key, handle)] => {
-                    return Ok(LiveSessionSnapshot {
-                        agent_id: runtime_key.agent_id.clone(),
-                        slot_id: runtime_key.slot_id.clone(),
-                        session_id: session_id.to_string(),
-                        running: handle.is_running(),
-                        active_tasks: handle.active_tasks.load(Ordering::Relaxed),
-                        queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
-                        current_request_id: handle.control.current_request_id(),
-                        execution: live_execution_snapshot(handle),
-                        conflict_policy: handle.control.current_conflict_policy(),
-                    });
+                    return Ok(live_session_snapshot(
+                        runtime_key,
+                        handle,
+                        session_id.to_string(),
+                    ));
                 }
                 _ => {
                     anyhow::bail!(
@@ -261,15 +276,7 @@ impl AgentManager {
 
         let handle = if let Some(handle) = existing {
             if handle.is_running() {
-                if handle.active_tasks.load(Ordering::Relaxed) > 0
-                    || handle.queued_tasks.load(Ordering::Relaxed) > 0
-                {
-                    anyhow::bail!(
-                        "Runtime slot '{}' for agent '{}' is busy",
-                        runtime_key.slot_id,
-                        runtime_key.agent_id
-                    );
-                }
+                ensure_runtime_slot_idle(&runtime_key, &handle)?;
                 handle.control.request_session_resume(
                     session_id.to_string(),
                     super::SessionContextOverrides {
@@ -318,17 +325,11 @@ impl AgentManager {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
 
-        Ok(LiveSessionSnapshot {
-            agent_id: runtime_key.agent_id,
-            slot_id: runtime_key.slot_id,
-            session_id: session_id.to_string(),
-            running: handle.is_running(),
-            active_tasks: handle.active_tasks.load(Ordering::Relaxed),
-            queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
-            current_request_id: handle.control.current_request_id(),
-            execution: live_execution_snapshot(&handle),
-            conflict_policy: handle.control.current_conflict_policy(),
-        })
+        Ok(live_session_snapshot(
+            &runtime_key,
+            &handle,
+            session_id.to_string(),
+        ))
     }
 
     pub async fn reload_session(
@@ -338,15 +339,7 @@ impl AgentManager {
     ) -> Result<LiveSessionSnapshot> {
         let (runtime_key, handle) = self.runtime_by_session_target(session_id, slot_id).await?;
 
-        if handle.active_tasks.load(Ordering::Relaxed) > 0
-            || handle.queued_tasks.load(Ordering::Relaxed) > 0
-        {
-            anyhow::bail!(
-                "Runtime slot '{}' for agent '{}' is busy",
-                runtime_key.slot_id,
-                runtime_key.agent_id
-            );
-        }
+        ensure_runtime_slot_idle(&runtime_key, &handle)?;
 
         let wanted = parse_session_reference(session_id)
             .map(|session_ref| session_ref.public_id)
@@ -384,20 +377,14 @@ impl AgentManager {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
 
-        Ok(LiveSessionSnapshot {
-            agent_id: runtime_key.agent_id,
-            slot_id: runtime_key.slot_id,
-            session_id: handle
+        Ok(live_session_snapshot(
+            &runtime_key,
+            &handle,
+            handle
                 .control
                 .current_session_id()
                 .unwrap_or_else(|| session_id.to_string()),
-            running: handle.is_running(),
-            active_tasks: handle.active_tasks.load(Ordering::Relaxed),
-            queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
-            current_request_id: handle.control.current_request_id(),
-            execution: live_execution_snapshot(&handle),
-            conflict_policy: handle.control.current_conflict_policy(),
-        })
+        ))
     }
 
     pub async fn reload_session_if_live(
@@ -600,17 +587,7 @@ impl AgentManager {
                     return None;
                 }
                 let session_id = handle.control.current_session_id()?;
-                Some(LiveSessionSnapshot {
-                    agent_id: runtime_key.agent_id.clone(),
-                    slot_id: runtime_key.slot_id.clone(),
-                    session_id,
-                    running: handle.is_running(),
-                    active_tasks: handle.active_tasks.load(Ordering::Relaxed),
-                    queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
-                    current_request_id: handle.control.current_request_id(),
-                    execution: live_execution_snapshot(handle),
-                    conflict_policy: handle.control.current_conflict_policy(),
-                })
+                Some(live_session_snapshot(runtime_key, handle, session_id))
             })
             .collect();
         sessions.sort_by(|a, b| {

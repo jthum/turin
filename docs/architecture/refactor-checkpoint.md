@@ -17,6 +17,7 @@ The biggest remaining shipped Rust files are not all equal refactor candidates. 
 These areas have been structurally reviewed, lightly refactored, tested, and mapped:
 
 - Actions
+- Agent manager operations
 - Agent session bindings
 - Channels
 - Code search
@@ -50,9 +51,6 @@ This was the right correction. Several later passes were deliberately small beca
 
 These are worth future passes, but each needs a fresh local read before editing:
 
-- `src/kernel/agent_manager/operations.rs`
-  - Peer/runtime operation orchestration. Could have repeated reload/status/error handling.
-  - Needs agent-manager tests.
 - `src/daemon/state/runtime_sessions.rs` and `src/daemon/state/runtime_tasks.rs`
   - Daemon state API surface. Likely worthwhile after kernel-side semantics settle.
 
@@ -75,4 +73,4 @@ These large files are not part of the current runtime-core refactor pass:
 
 The codebase no longer reads like an unreviewed generated blob in the areas covered by this pass. It still has large files, and not every pass reduced LOC, but the major runtime surfaces now have clearer boundaries, maps, focused tests, and less duplicated decision logic.
 
-The remaining work should be paced as module-specific quality passes, not a second broad sweep. The next best target is probably `src/kernel/agent_manager/operations.rs`, because peer/runtime operation orchestration may still have repeated reload/status/error handling.
+The remaining work should be paced as module-specific quality passes, not a second broad sweep. The next best target is probably the daemon runtime state API surface in `src/daemon/state/runtime_sessions.rs` and `src/daemon/state/runtime_tasks.rs`.

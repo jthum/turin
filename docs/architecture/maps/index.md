@@ -7,6 +7,7 @@ Keep maps concise. They should explain how to work safely in a subsystem, not li
 Maps:
 
 - [Actions](./actions.md)
+- [Agent Manager](./agent-manager.md)
 - [Channels](./channels.md)
 - [Agent Session Bindings](./agent-session-bindings.md)
 - [Code Search](./code-search.md)
