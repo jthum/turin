@@ -12,6 +12,7 @@ Key rules:
 
 Important maps:
 
+- Actions: `docs/architecture/maps/actions.md`
 - Agent session bindings: `docs/architecture/maps/agent-session-bindings.md`
 - Harness system globals: `docs/architecture/maps/harness-system-globals.md`
 - Scheduler and worklists: `docs/architecture/maps/scheduler-worklists.md`

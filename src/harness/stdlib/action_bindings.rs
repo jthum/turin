@@ -251,13 +251,7 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
         ctx.set(
             "complete",
             lua.create_function(move |lua, (_self, value): (Table, Value)| {
-                let value_json = match value {
-                    Value::Nil => None,
-                    value => Some(
-                        object_refs::encode_lua_payload(lua, value)
-                            .map_err(mlua::Error::runtime)?,
-                    ),
-                };
+                let value_json = optional_lua_json(lua, value)?;
                 let result =
                     complete_action(&invocation, value_json).map_err(mlua::Error::runtime)?;
                 object_refs::decode_json_payload(lua, &result)
@@ -270,13 +264,7 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
         ctx.set(
             "fail",
             lua.create_function(move |lua, (_self, value): (Table, Value)| {
-                let value_json = match value {
-                    Value::Nil => None,
-                    value => Some(
-                        object_refs::encode_lua_payload(lua, value)
-                            .map_err(mlua::Error::runtime)?,
-                    ),
-                };
+                let value_json = optional_lua_json(lua, value)?;
                 let result = fail_action(&invocation, value_json).map_err(mlua::Error::runtime)?;
                 object_refs::decode_json_payload(lua, &result)
             })?,
@@ -288,13 +276,7 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
         ctx.set(
             "cancel",
             lua.create_function(move |lua, (_self, value): (Table, Value)| {
-                let value_json = match value {
-                    Value::Nil => None,
-                    value => Some(
-                        object_refs::encode_lua_payload(lua, value)
-                            .map_err(mlua::Error::runtime)?,
-                    ),
-                };
+                let value_json = optional_lua_json(lua, value)?;
                 let result =
                     cancel_action(&invocation, value_json).map_err(mlua::Error::runtime)?;
                 object_refs::decode_json_payload(lua, &result)
@@ -368,6 +350,15 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
     }
 
     Ok(ctx)
+}
+
+fn optional_lua_json(lua: &Lua, value: Value) -> LuaResult<Option<JsonValue>> {
+    match value {
+        Value::Nil => Ok(None),
+        value => object_refs::encode_lua_payload(lua, value)
+            .map(Some)
+            .map_err(mlua::Error::runtime),
+    }
 }
 
 fn checkpoint_proxy(lua: &Lua, checkpoint: JsonValue) -> LuaResult<Table> {
@@ -448,6 +439,21 @@ fn merge_metadata_patch(existing: Option<&str>, patch: JsonValue) -> Result<Opti
     Ok(Some(serde_json::to_string(&merged)?))
 }
 
+fn metadata_value_patch(
+    existing: Option<&str>,
+    key: &str,
+    value: Option<JsonValue>,
+) -> Result<Option<String>> {
+    value
+        .map(|value| {
+            let mut map = JsonMap::new();
+            map.insert(key.to_string(), value);
+            merge_metadata_patch(existing, JsonValue::Object(map))
+        })
+        .transpose()
+        .map(Option::flatten)
+}
+
 fn value_reason(value: Option<&JsonValue>) -> Option<String> {
     match value {
         Some(JsonValue::String(s)) if !s.is_empty() => Some(s.clone()),
@@ -461,21 +467,21 @@ fn value_reason(value: Option<&JsonValue>) -> Option<String> {
     }
 }
 
+fn action_status_result(status: &str, field: Option<(&str, JsonValue)>) -> JsonValue {
+    let mut out = JsonMap::new();
+    out.insert("status".to_string(), JsonValue::String(status.to_string()));
+    if let Some((key, value)) = field {
+        out.insert(key.to_string(), value);
+    }
+    JsonValue::Object(out)
+}
+
 fn complete_action(
     invocation: &ActionInvocationContext,
     value: Option<JsonValue>,
 ) -> Result<JsonValue> {
     if let Some(item) = invocation.work_item.as_ref() {
-        let metadata = value
-            .clone()
-            .map(|value| {
-                let mut map = JsonMap::new();
-                map.insert("output".to_string(), value);
-                JsonValue::Object(map)
-            })
-            .map(|patch| merge_metadata_patch(item.row.metadata.as_deref(), patch))
-            .transpose()?
-            .flatten();
+        let metadata = metadata_value_patch(item.row.metadata.as_deref(), "output", value.clone())?;
         crate::harness::globals::block_on_current(async {
             item.store
                 .complete_work_item(item.row.id, metadata.as_deref())
@@ -483,15 +489,10 @@ fn complete_action(
         })?;
     }
 
-    let mut out = JsonMap::new();
-    out.insert(
-        "status".to_string(),
-        JsonValue::String("completed".to_string()),
-    );
-    if let Some(value) = value {
-        out.insert("result".to_string(), value);
-    }
-    Ok(JsonValue::Object(out))
+    Ok(action_status_result(
+        "completed",
+        value.map(|value| ("result", value)),
+    ))
 }
 
 fn fail_action(
@@ -500,16 +501,8 @@ fn fail_action(
 ) -> Result<JsonValue> {
     if let Some(item) = invocation.work_item.as_ref() {
         let reason = value_reason(value.as_ref());
-        let metadata = value
-            .clone()
-            .map(|value| {
-                let mut map = JsonMap::new();
-                map.insert("failure".to_string(), value);
-                JsonValue::Object(map)
-            })
-            .map(|patch| merge_metadata_patch(item.row.metadata.as_deref(), patch))
-            .transpose()?
-            .flatten();
+        let metadata =
+            metadata_value_patch(item.row.metadata.as_deref(), "failure", value.clone())?;
         crate::harness::globals::block_on_current(async {
             if let Some(metadata) = metadata.as_deref() {
                 item.store
@@ -527,15 +520,10 @@ fn fail_action(
         })?;
     }
 
-    let mut out = JsonMap::new();
-    out.insert(
-        "status".to_string(),
-        JsonValue::String("failed".to_string()),
-    );
-    if let Some(value) = value {
-        out.insert("error".to_string(), value);
-    }
-    Ok(JsonValue::Object(out))
+    Ok(action_status_result(
+        "failed",
+        value.map(|value| ("error", value)),
+    ))
 }
 
 fn cancel_action(
@@ -571,15 +559,10 @@ fn cancel_action(
         })?;
     }
 
-    let mut out = JsonMap::new();
-    out.insert(
-        "status".to_string(),
-        JsonValue::String("cancelled".to_string()),
-    );
-    if let Some(value) = value {
-        out.insert("cancel".to_string(), value);
-    }
-    Ok(JsonValue::Object(out))
+    Ok(action_status_result(
+        "cancelled",
+        value.map(|value| ("cancel", value)),
+    ))
 }
 
 fn pause_action(invocation: &ActionInvocationContext, opts: JsonValue) -> Result<JsonValue> {
