@@ -3,6 +3,7 @@ mod helpers;
 mod registry_ops;
 mod runtime_sessions;
 mod runtime_tasks;
+mod scheduled_execution;
 mod scheduled_jobs;
 #[cfg(test)]
 mod tests;
