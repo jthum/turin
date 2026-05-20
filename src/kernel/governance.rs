@@ -843,13 +843,11 @@ fn match_capability_rule_bool_iter<'a, I>(
 where
     I: IntoIterator<Item = (&'a str, bool)>,
 {
-    let entries: Vec<(&'a str, bool)> = iter.into_iter().collect();
-    if let Some((_, v)) = entries.iter().find(|(rule, _)| *rule == capability) {
-        return (Some(capability.to_string()), false, Some(*v));
-    }
-
     let mut best: Option<(&str, bool)> = None;
-    for (rule, b) in entries {
+    for (rule, b) in iter {
+        if rule == capability {
+            return (Some(capability.to_string()), false, Some(b));
+        }
         let Some(prefix) = rule.strip_suffix(".*") else {
             continue;
         };
