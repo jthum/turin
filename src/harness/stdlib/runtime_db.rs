@@ -14,6 +14,7 @@ use crate::harness::stdlib::policy_support::{policy_u64, runtime_policy_snapshot
 use crate::persistence::manager::{StoreHandleInfo, StoreManager, StorePathScope, StoreSelector};
 use std::collections::HashMap;
 use std::sync::Arc;
+use turso::Connection;
 
 #[derive(Clone, Copy)]
 struct DbRuntimeSettings {
@@ -53,18 +54,79 @@ fn store_handle_infos_to_lua_table(lua: &Lua, handles: Vec<StoreHandleInfo>) -> 
     Ok(out)
 }
 
-async fn open_store_for_query_exec(
+fn resolve_db_target(
+    app_data: &HarnessAppData,
+    opts: Option<Table>,
+) -> LuaResult<(StoreSelector, DbRuntimeSettings)> {
+    let selector = selector_from_db_opts(opts)?;
+    let snapshot = runtime_policy_snapshot(app_data).map_err(mlua::Error::runtime)?;
+    if selector_denied_by_dynamic_open(&snapshot, &selector) {
+        return Err(mlua::Error::runtime(
+            "Policy denial: db.allow_dynamic_open=false",
+        ));
+    }
+    Ok((selector, db_runtime_settings(&snapshot)))
+}
+
+async fn open_connection_for_query_exec(
     manager: Arc<StoreManager>,
     selector: StoreSelector,
     settings: DbRuntimeSettings,
-) -> Result<Arc<crate::persistence::state::StateStore>, String> {
+) -> Result<Connection, String> {
     let _ = manager
         .trim_cache(settings.max_open_handles, settings.idle_close_seconds)
         .await;
-    manager
+    let store = manager
         .open_with_path_scope(&selector, settings.path_scope)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    store.get_connection().await.map_err(|e| e.to_string())
+}
+
+async fn query_sql_rows(
+    manager: Arc<StoreManager>,
+    selector: StoreSelector,
+    settings: DbRuntimeSettings,
+    sql: String,
+    sql_params: SqlParams,
+) -> Result<Vec<serde_json::Value>, String> {
+    let conn = open_connection_for_query_exec(manager, selector, settings).await?;
+    let mut stmt = conn.prepare(&sql).await.map_err(|e| e.to_string())?;
+    let cols = stmt
+        .columns()
+        .into_iter()
+        .map(|c| c.name().to_string())
+        .collect::<Vec<_>>();
+    let mut rows = match sql_params {
+        SqlParams::None => stmt.query(()).await.map_err(|e| e.to_string())?,
+        SqlParams::Positional(v) => stmt.query(v).await.map_err(|e| e.to_string())?,
+        SqlParams::Named(v) => stmt.query(v).await.map_err(|e| e.to_string())?,
+    };
+    let mut out_rows = Vec::<serde_json::Value>::new();
+    while let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
+        let mut obj = serde_json::Map::new();
+        for (idx, col) in cols.iter().enumerate() {
+            let v = row.get_value(idx).map_err(|e| e.to_string())?;
+            obj.insert(col.clone(), sql_value_to_json(v));
+        }
+        out_rows.push(serde_json::Value::Object(obj));
+    }
+    Ok(out_rows)
+}
+
+async fn exec_sql(
+    manager: Arc<StoreManager>,
+    selector: StoreSelector,
+    settings: DbRuntimeSettings,
+    sql: String,
+    sql_params: SqlParams,
+) -> Result<u64, String> {
+    let conn = open_connection_for_query_exec(manager, selector, settings).await?;
+    match sql_params {
+        SqlParams::None => conn.execute(&sql, ()).await.map_err(|e| e.to_string()),
+        SqlParams::Positional(v) => conn.execute(&sql, v).await.map_err(|e| e.to_string()),
+        SqlParams::Named(v) => conn.execute(&sql, v).await.map_err(|e| e.to_string()),
+    }
 }
 
 pub fn register_runtime_db_namespace(
@@ -172,43 +234,14 @@ pub fn register_runtime_db_namespace(
                     {
                         return nil_err(lua, &err);
                     }
-                    let selector = selector_from_db_opts(opts)?;
                     let sql_params = lua_table_to_sql_params(params)?;
-                    let snapshot = runtime_policy_snapshot(&app_data_snapshot)
-                        .map_err(mlua::Error::runtime)?;
-                    if selector_denied_by_dynamic_open(&snapshot, &selector) {
-                        return nil_err(lua, "Policy denial: db.allow_dynamic_open=false");
-                    }
-                    let settings = db_runtime_settings(&snapshot);
+                    let (selector, settings) = match resolve_db_target(&app_data_snapshot, opts) {
+                        Ok(target) => target,
+                        Err(err) => return nil_err(lua, &err.to_string()),
+                    };
                     let manager = manager.clone();
                     let result = bridge_async_result(async move {
-                        let store = open_store_for_query_exec(manager, selector, settings).await?;
-                        let conn = store.get_connection().await.map_err(|e| e.to_string())?;
-                        let mut stmt = conn.prepare(&sql).await.map_err(|e| e.to_string())?;
-                        let cols = stmt
-                            .columns()
-                            .into_iter()
-                            .map(|c| c.name().to_string())
-                            .collect::<Vec<_>>();
-                        let mut rows = match sql_params {
-                            SqlParams::None => stmt.query(()).await.map_err(|e| e.to_string())?,
-                            SqlParams::Positional(v) => {
-                                stmt.query(v).await.map_err(|e| e.to_string())?
-                            }
-                            SqlParams::Named(v) => {
-                                stmt.query(v).await.map_err(|e| e.to_string())?
-                            }
-                        };
-                        let mut out_rows = Vec::<serde_json::Value>::new();
-                        while let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
-                            let mut obj = serde_json::Map::new();
-                            for (idx, col) in cols.iter().enumerate() {
-                                let v = row.get_value(idx).map_err(|e| e.to_string())?;
-                                obj.insert(col.clone(), sql_value_to_json(v));
-                            }
-                            out_rows.push(serde_json::Value::Object(obj));
-                        }
-                        Ok::<_, String>(out_rows)
+                        query_sql_rows(manager, selector, settings, sql, sql_params).await
                     });
                     match result {
                         Ok(rows) => json_ok(lua, &rows),
@@ -230,30 +263,14 @@ pub fn register_runtime_db_namespace(
                     {
                         return nil_err(lua, &err);
                     }
-                    let selector = selector_from_db_opts(opts)?;
                     let sql_params = lua_table_to_sql_params(params)?;
-                    let snapshot = runtime_policy_snapshot(&app_data_snapshot)
-                        .map_err(mlua::Error::runtime)?;
-                    if selector_denied_by_dynamic_open(&snapshot, &selector) {
-                        return nil_err(lua, "Policy denial: db.allow_dynamic_open=false");
-                    }
-                    let settings = db_runtime_settings(&snapshot);
+                    let (selector, settings) = match resolve_db_target(&app_data_snapshot, opts) {
+                        Ok(target) => target,
+                        Err(err) => return nil_err(lua, &err.to_string()),
+                    };
                     let manager = manager.clone();
                     let result = bridge_async_result(async move {
-                        let store = open_store_for_query_exec(manager, selector, settings).await?;
-                        let conn = store.get_connection().await.map_err(|e| e.to_string())?;
-                        let changed = match sql_params {
-                            SqlParams::None => {
-                                conn.execute(&sql, ()).await.map_err(|e| e.to_string())?
-                            }
-                            SqlParams::Positional(v) => {
-                                conn.execute(&sql, v).await.map_err(|e| e.to_string())?
-                            }
-                            SqlParams::Named(v) => {
-                                conn.execute(&sql, v).await.map_err(|e| e.to_string())?
-                            }
-                        };
-                        Ok::<_, String>(changed)
+                        exec_sql(manager, selector, settings, sql, sql_params).await
                     });
                     match result {
                         Ok(changed) => Ok(ok_value(Value::Integer(changed as i64))),

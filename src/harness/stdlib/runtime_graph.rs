@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
+use mlua::{IntoLua, Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{ActiveHarnessExecutionContext, HarnessAppData};
 use crate::harness::stdlib::binding_common::{bridge_async_display_err, nil_err, ok_value};
@@ -124,31 +124,12 @@ fn graph_node_to_lua(lua: &Lua, row: GraphNodeRow) -> LuaResult<Table> {
     let table = lua.create_table()?;
     table.set("id", row.id)?;
     table.set("node_id", bytes_to_simple_uuid(&row.public_id))?;
-    match row.session_id {
-        Some(session_id) => table.set("session_internal_id", session_id)?,
-        None => table.set("session_internal_id", Value::Nil)?,
-    }
+    set_optional(&table, "session_internal_id", row.session_id)?;
     table.set("kind", row.kind)?;
-    match row.label {
-        Some(label) => table.set("label", label)?,
-        None => table.set("label", Value::Nil)?,
-    }
-    match row.origin_task_id {
-        Some(task_id) => table.set("origin_task_id", task_id)?,
-        None => table.set("origin_task_id", Value::Nil)?,
-    }
-    match row.origin_execution_id {
-        Some(execution_id) => table.set("origin_execution_id", execution_id)?,
-        None => table.set("origin_execution_id", Value::Nil)?,
-    }
-    match row
-        .metadata
-        .as_deref()
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-    {
-        Some(metadata) => table.set("metadata", lua.to_value(&metadata)?)?,
-        None => table.set("metadata", Value::Nil)?,
-    }
+    set_optional(&table, "label", row.label)?;
+    set_optional(&table, "origin_task_id", row.origin_task_id)?;
+    set_optional(&table, "origin_execution_id", row.origin_execution_id)?;
+    set_json_metadata(lua, &table, row.metadata.as_deref())?;
     table.set("created_at", row.created_at)?;
     Ok(table)
 }
@@ -164,39 +145,34 @@ fn graph_edge_to_lua(lua: &Lua, row: GraphEdgeRow) -> LuaResult<Table> {
     let table = lua.create_table()?;
     table.set("id", row.id)?;
     table.set("edge_id", bytes_to_simple_uuid(&row.public_id))?;
-    match row.session_id {
-        Some(session_id) => table.set("session_internal_id", session_id)?,
-        None => table.set("session_internal_id", Value::Nil)?,
-    }
+    set_optional(&table, "session_internal_id", row.session_id)?;
     table.set("source", graph_ref_to_lua(lua, row.source)?)?;
     table.set("target", graph_ref_to_lua(lua, row.target)?)?;
     table.set("relation_kind", row.relation_kind)?;
-    match row.source_role {
-        Some(role) => table.set("source_role", role)?,
-        None => table.set("source_role", Value::Nil)?,
-    }
-    match row.target_role {
-        Some(role) => table.set("target_role", role)?,
-        None => table.set("target_role", Value::Nil)?,
-    }
-    match row.origin_task_id {
-        Some(task_id) => table.set("origin_task_id", task_id)?,
-        None => table.set("origin_task_id", Value::Nil)?,
-    }
-    match row.origin_execution_id {
-        Some(execution_id) => table.set("origin_execution_id", execution_id)?,
-        None => table.set("origin_execution_id", Value::Nil)?,
-    }
-    match row
-        .metadata
-        .as_deref()
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-    {
-        Some(metadata) => table.set("metadata", lua.to_value(&metadata)?)?,
-        None => table.set("metadata", Value::Nil)?,
-    }
+    set_optional(&table, "source_role", row.source_role)?;
+    set_optional(&table, "target_role", row.target_role)?;
+    set_optional(&table, "origin_task_id", row.origin_task_id)?;
+    set_optional(&table, "origin_execution_id", row.origin_execution_id)?;
+    set_json_metadata(lua, &table, row.metadata.as_deref())?;
     table.set("created_at", row.created_at)?;
     Ok(table)
+}
+
+fn set_optional<T>(table: &Table, key: &str, value: Option<T>) -> LuaResult<()>
+where
+    T: IntoLua,
+{
+    match value {
+        Some(value) => table.set(key, value),
+        None => table.set(key, Value::Nil),
+    }
+}
+
+fn set_json_metadata(lua: &Lua, table: &Table, raw: Option<&str>) -> LuaResult<()> {
+    match raw.and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok()) {
+        Some(metadata) => table.set("metadata", lua.to_value(&metadata)?),
+        None => table.set("metadata", Value::Nil),
+    }
 }
 
 fn graph_nodes_to_lua(lua: &Lua, rows: Vec<GraphNodeRow>) -> LuaResult<Table> {
