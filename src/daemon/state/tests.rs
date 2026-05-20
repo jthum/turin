@@ -418,6 +418,155 @@ async fn scheduled_daily_job_reschedules_after_submit() -> Result<()> {
 }
 
 #[tokio::test]
+async fn scheduled_skip_overlap_advances_without_queued_rerun() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap_with_mock_response(temp.path(), "delay_ms=1800;slow")?;
+    let mut state = DaemonState::load(&config_path).await?;
+
+    let now_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64;
+    let job = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: Some("Skip overlapping slow run".to_string()),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action: None,
+            persistence: None,
+            next_run_unix_ms: now_unix_ms - 1,
+            interval_seconds: Some(1),
+            recurring_pattern: None,
+            overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            work_key: None,
+            max_concurrency: None,
+            enabled: true,
+        })
+        .await?;
+
+    state.scheduler_tick().await?;
+    sleep(Duration::from_millis(1100)).await;
+    state.scheduler_tick().await?;
+
+    let jobs = state.list_scheduled_jobs().await?;
+    let running = jobs
+        .iter()
+        .find(|entry| entry.id == job.id)
+        .expect("skip-overlap job visible");
+    assert_eq!(running.active_run_count, 1);
+    assert!(
+        !running.pending_rerun,
+        "skip overlap should not queue a follow-up run"
+    );
+    assert!(
+        running.running_task_id.is_some(),
+        "original slow run should remain active"
+    );
+
+    let active_runs = state.runtime_store.list_active_scheduled_job_runs().await?;
+    assert_eq!(
+        active_runs
+            .iter()
+            .filter(|run| run.scheduled_job_id == job.id)
+            .count(),
+        1,
+        "skip overlap should not start another active run"
+    );
+
+    state
+        .set_scheduled_job_enabled(&job.public_id, false)
+        .await?
+        .expect("skip-overlap job should disable for cleanup");
+    let task_id = running.running_task_id.clone().unwrap();
+    let completed = state.wait_for_task(&task_id, Some(5_000)).await?;
+    assert_eq!(completed.state, "completed");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn scheduled_queue_overlap_runs_again_after_active_run_finishes() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap_with_mock_response(temp.path(), "delay_ms=1800;slow")?;
+    let mut state = DaemonState::load(&config_path).await?;
+
+    let now_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64;
+    let job = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: Some("Queue overlapping slow run".to_string()),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action: None,
+            persistence: None,
+            next_run_unix_ms: now_unix_ms - 1,
+            interval_seconds: Some(1),
+            recurring_pattern: None,
+            overlap_policy: ScheduledJobOverlapPolicy::Queue,
+            work_key: None,
+            max_concurrency: None,
+            enabled: true,
+        })
+        .await?;
+
+    state.scheduler_tick().await?;
+    let first_task_id = state
+        .list_scheduled_jobs()
+        .await?
+        .iter()
+        .find(|entry| entry.id == job.id)
+        .and_then(|entry| entry.running_task_id.clone())
+        .expect("first queued-overlap run should start");
+
+    sleep(Duration::from_millis(1100)).await;
+    state.scheduler_tick().await?;
+    let jobs = state.list_scheduled_jobs().await?;
+    let queued = jobs
+        .iter()
+        .find(|entry| entry.id == job.id)
+        .expect("queued-overlap job visible");
+    assert_eq!(queued.active_run_count, 1);
+    assert!(
+        queued.pending_rerun,
+        "queue overlap should remember one follow-up run"
+    );
+    assert_eq!(
+        queued.running_task_id.as_deref(),
+        Some(first_task_id.as_str())
+    );
+
+    let completed = state.wait_for_task(&first_task_id, Some(5_000)).await?;
+    assert_eq!(completed.state, "completed");
+
+    state.scheduler_tick().await?;
+    let jobs = state.list_scheduled_jobs().await?;
+    let rerun = jobs
+        .iter()
+        .find(|entry| entry.id == job.id)
+        .expect("queued-overlap job visible after rerun starts");
+    assert_eq!(rerun.active_run_count, 1);
+    assert!(!rerun.pending_rerun);
+    let second_task_id = rerun
+        .running_task_id
+        .clone()
+        .expect("queued rerun should start after first run finishes");
+    assert_ne!(second_task_id, first_task_id);
+
+    state
+        .set_scheduled_job_enabled(&job.public_id, false)
+        .await?
+        .expect("queued-overlap job should disable for cleanup");
+    let completed = state.wait_for_task(&second_task_id, Some(5_000)).await?;
+    assert_eq!(completed.state, "completed");
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn scheduled_jobs_with_same_work_key_queue_until_capacity_frees() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;
