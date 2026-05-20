@@ -1,18 +1,12 @@
 use std::path::PathBuf;
-use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use serde_json::Value;
-use tokio::sync::watch;
-use tracing_subscriber::EnvFilter;
-use turin_channel_core::{ChannelAuthFlowPollRequest, ChannelAuthFlowStartRequest};
 use turin_channel_runner::{
-    ChannelAccessPolicy, ChannelRunner, RunnerConfig, RunnerPresence, announce_runner_presence,
-    spawn_runner_heartbeat,
+    ChannelAccessPolicy, ChannelSidecarRunArgs, init_channel_tracing, parse_auth_flow_poll_request,
+    parse_auth_flow_start_request, parse_channel_settings_json, prepare_channel_sidecar_run,
 };
 use turin_channel_telegram::TelegramChannelDriver;
-use turin_daemon_client::DaemonClient;
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -62,7 +56,7 @@ struct AuthFlowRequestArgs {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    init_tracing();
+    init_channel_tracing();
     let cli = Cli::parse();
     match cli.command {
         Command::Run(args) => run(args).await,
@@ -74,43 +68,24 @@ async fn main() -> Result<()> {
 }
 
 async fn run(args: RunArgs) -> Result<()> {
-    let settings = parse_settings_json(&args.settings_json)?;
-    let access_policy = ChannelAccessPolicy::from_settings(&settings)?;
-    let tools = turin_channel_runner::tools_config_from_settings(&settings)?;
-    let task_timeout_ms = turin_channel_runner::task_timeout_ms_from_settings(&settings)?;
-    let allow_unconfigured_chats = access_policy.requires_unconfigured_inbound();
-
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let heartbeat_shutdown_rx = shutdown_rx.clone();
-    tokio::spawn(async move {
-        wait_for_shutdown_signal().await;
-        let _ = shutdown_tx.send(true);
-    });
-
-    let daemon = DaemonClient::new(args.daemon_endpoint);
-    let runtime_dir = args
-        .bindings_path
-        .parent()
-        .map(std::path::Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let runner = ChannelRunner::new(
-        daemon.clone(),
-        RunnerConfig {
+    let settings = parse_channel_settings_json(&args.settings_json)?;
+    let sidecar = prepare_channel_sidecar_run(
+        ChannelSidecarRunArgs {
             channel_id: args.channel_id.clone(),
-            state_path: args.bindings_path,
+            daemon_endpoint: args.daemon_endpoint,
+            bindings_path: args.bindings_path,
             access_state_path: args.access_state_path,
-            idle_ttl: args.idle_timeout_seconds.map(Duration::from_secs),
-            access_policy,
-            tools,
+            idle_timeout_seconds: args.idle_timeout_seconds,
         },
-    );
+        &settings,
+    )?;
 
     let mut driver = TelegramChannelDriver::from_settings_with_media_dir(
         &args.channel_id,
         &settings,
-        Some(runtime_dir.join("media")),
-        shutdown_rx,
-        allow_unconfigured_chats,
+        Some(sidecar.runtime_dir.join("media")),
+        sidecar.shutdown_rx.clone(),
+        sidecar.allow_unconfigured_inbound,
     )
     .await
     .with_context(|| {
@@ -120,38 +95,21 @@ async fn run(args: RunArgs) -> Result<()> {
         )
     })?;
 
-    announce_runner_presence(
-        &daemon,
-        &args.channel_id,
-        RunnerPresence {
-            manifest: turin_channel_telegram::adapter_manifest(),
-            runner_binary: Some(env!("CARGO_BIN_NAME").to_string()),
-            runner_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            pid: Some(std::process::id()),
-        },
-    )
-    .await
-    .with_context(|| {
-        format!(
-            "Failed to send runner hello for channel '{}'",
-            args.channel_id
+    sidecar
+        .announce_presence(
+            turin_channel_telegram::adapter_manifest(),
+            Some(env!("CARGO_BIN_NAME").to_string()),
+            Some(env!("CARGO_PKG_VERSION").to_string()),
         )
-    })?;
+        .await?;
 
-    let _heartbeat_task = spawn_runner_heartbeat(
-        daemon.clone(),
-        args.channel_id.clone(),
-        heartbeat_shutdown_rx,
-    );
+    let _heartbeat_task = sidecar.spawn_heartbeat();
 
-    runner
-        .run_driver(&args.agent_id, &mut driver, task_timeout_ms)
-        .await
-        .with_context(|| format!("Channel '{}' runner failed", args.channel_id))
+    sidecar.run_driver(&args.agent_id, &mut driver).await
 }
 
 fn validate_settings(args: ValidateSettingsArgs) -> Result<()> {
-    let settings = parse_settings_json(&args.settings_json)?;
+    let settings = parse_channel_settings_json(&args.settings_json)?;
     let access_policy = ChannelAccessPolicy::from_settings(&settings)?;
     turin_channel_telegram::validate_settings(
         &settings,
@@ -168,8 +126,7 @@ fn describe() -> Result<()> {
 }
 
 fn setup_auth_flow_start(args: AuthFlowRequestArgs) -> Result<()> {
-    let request: ChannelAuthFlowStartRequest =
-        serde_json::from_str(&args.request_json).context("Failed to parse auth flow start JSON")?;
+    let request = parse_auth_flow_start_request(&args.request_json)?;
     println!(
         "{}",
         serde_json::to_string(&turin_channel_telegram::start_auth_flow(&request)?)?
@@ -178,53 +135,10 @@ fn setup_auth_flow_start(args: AuthFlowRequestArgs) -> Result<()> {
 }
 
 fn setup_auth_flow_poll(args: AuthFlowRequestArgs) -> Result<()> {
-    let request: ChannelAuthFlowPollRequest =
-        serde_json::from_str(&args.request_json).context("Failed to parse auth flow poll JSON")?;
+    let request = parse_auth_flow_poll_request(&args.request_json)?;
     println!(
         "{}",
         serde_json::to_string(&turin_channel_telegram::poll_auth_flow(&request)?)?
     );
     Ok(())
-}
-
-fn parse_settings_json(raw: &str) -> Result<Value> {
-    let value: Value =
-        serde_json::from_str(raw).context("Failed to parse channel settings JSON")?;
-    if !value.is_object() {
-        anyhow::bail!("Channel settings must be a JSON object");
-    }
-    Ok(value)
-}
-
-fn init_tracing() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .with_target(true)
-        .try_init();
-}
-
-async fn wait_for_shutdown_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-
-        let mut terminate = signal(SignalKind::terminate()).ok();
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            _ = async {
-                if let Some(signal) = terminate.as_mut() {
-                    signal.recv().await;
-                } else {
-                    std::future::pending::<()>().await;
-                }
-            } => {}
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        let _ = tokio::signal::ctrl_c().await;
-    }
 }
