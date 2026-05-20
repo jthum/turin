@@ -21,6 +21,7 @@ These areas have been structurally reviewed, lightly refactored, tested, and map
 - Agent session bindings
 - Channels
 - Code search
+- Daemon runtime state
 - Governance
 - Harness system globals
 - MCP integration
@@ -49,10 +50,7 @@ This was the right correction. Several later passes were deliberately small beca
 
 ## Remaining Good Candidates
 
-These are worth future passes, but each needs a fresh local read before editing:
-
-- `src/daemon/state/runtime_sessions.rs` and `src/daemon/state/runtime_tasks.rs`
-  - Daemon state API surface. Likely worthwhile after kernel-side semantics settle.
+The main runtime-core candidates from this checkpoint have now had first-pass review, focused cleanup, tests, and maps. Future passes should be driven by a concrete feature, bug, performance profile, or fresh code-quality finding rather than continuing this sweep by inertia.
 
 ## Handle Separately
 
@@ -73,4 +71,4 @@ These large files are not part of the current runtime-core refactor pass:
 
 The codebase no longer reads like an unreviewed generated blob in the areas covered by this pass. It still has large files, and not every pass reduced LOC, but the major runtime surfaces now have clearer boundaries, maps, focused tests, and less duplicated decision logic.
 
-The remaining work should be paced as module-specific quality passes, not a second broad sweep. The next best target is probably the daemon runtime state API surface in `src/daemon/state/runtime_sessions.rs` and `src/daemon/state/runtime_tasks.rs`.
+The remaining work should be paced as module-specific quality passes, not a second broad sweep. At this point, the broad runtime-core refactor sweep can pause unless a concrete next target emerges from tests, profiling, or UI/API work.

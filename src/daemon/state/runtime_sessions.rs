@@ -7,6 +7,7 @@ use super::{
     DaemonState, SessionBranchDetail, SessionDetail, SessionEventDetail, SessionMessageDetail,
     SessionSearchHit, SessionSummary, SessionToolExecutionDetail,
 };
+use crate::kernel::agent_manager::LiveSessionSnapshot;
 use crate::kernel::session_refs::{
     describe_store_selector, format_session_reference, parse_session_reference,
 };
@@ -170,14 +171,7 @@ impl DaemonState {
         session_id: &str,
         title: Option<&str>,
     ) -> Result<Option<SessionSummary>> {
-        let session_ref = parse_session_reference(session_id)?;
-        let public_id = Uuid::parse_str(&session_ref.public_id)
-            .map_err(|_| anyhow!("Invalid session id '{}'", session_ref.public_id))?;
-        // A bare persisted session reference is interpreted against the primary `state` store.
-        // Cross-state access must qualify the session id explicitly, e.g. `<session>@telegram`.
-        let store_selector = session_ref
-            .store_selector
-            .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+        let (store_selector, public_id) = persisted_session_target(session_id)?;
         debug!(
             session_id = %session_id,
             store = %describe_store_selector(&store_selector),
@@ -338,12 +332,7 @@ impl DaemonState {
         &self,
         session_id: &str,
     ) -> Result<Option<(StoreSelector, SessionRow)>> {
-        let session_ref = parse_session_reference(session_id)?;
-        let public_id = Uuid::parse_str(&session_ref.public_id)
-            .map_err(|_| anyhow!("Invalid session id '{}'", session_ref.public_id))?;
-        let store_selector = session_ref
-            .store_selector
-            .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+        let (store_selector, public_id) = persisted_session_target(session_id)?;
         let store = self.kernel.store_manager().open(&store_selector).await?;
         let row = store.get_session_row_by_public_id(public_id).await?;
         Ok(row.map(|row| (store_selector, row)))
@@ -368,23 +357,14 @@ impl DaemonState {
                     slot_id
                 );
             };
-            if snapshot.active_tasks > 0 || snapshot.queued_tasks > 0 {
-                anyhow::bail!(
-                    "Cannot {} for busy live session '{}' in slot '{}'",
-                    action,
-                    session_id,
-                    slot_id
-                );
-            }
+            ensure_live_session_idle(&snapshot, session_id, Some(slot_id), action)?;
             return Ok(Some(snapshot));
         }
 
         match live.as_slice() {
             [] => Ok(None),
             [snapshot] => {
-                if snapshot.active_tasks > 0 || snapshot.queued_tasks > 0 {
-                    anyhow::bail!("Cannot {} for busy live session '{}'", action, session_id);
-                }
+                ensure_live_session_idle(snapshot, session_id, None, action)?;
                 Ok(Some(snapshot.clone()))
             }
             _ => {
@@ -396,6 +376,38 @@ impl DaemonState {
             }
         }
     }
+}
+
+pub(super) fn persisted_session_target(session_id: &str) -> Result<(StoreSelector, Uuid)> {
+    let session_ref = parse_session_reference(session_id)?;
+    let public_id = Uuid::parse_str(&session_ref.public_id)
+        .map_err(|_| anyhow!("Invalid session id '{}'", session_ref.public_id))?;
+    // A bare persisted session reference is interpreted against the primary `state` store.
+    // Cross-state access must qualify the session id explicitly, e.g. `<session>@telegram`.
+    let store_selector = session_ref
+        .store_selector
+        .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+    Ok((store_selector, public_id))
+}
+
+fn ensure_live_session_idle(
+    snapshot: &LiveSessionSnapshot,
+    session_id: &str,
+    slot_id: Option<&str>,
+    action: &str,
+) -> Result<()> {
+    if snapshot.active_tasks == 0 && snapshot.queued_tasks == 0 {
+        return Ok(());
+    }
+    if let Some(slot_id) = slot_id {
+        anyhow::bail!(
+            "Cannot {} for busy live session '{}' in slot '{}'",
+            action,
+            session_id,
+            slot_id
+        );
+    }
+    anyhow::bail!("Cannot {} for busy live session '{}'", action, session_id);
 }
 
 fn store_selector_label_opt(selector: Option<&StoreSelector>) -> String {

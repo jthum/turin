@@ -5,10 +5,12 @@ use anyhow::{Result, anyhow};
 use uuid::Uuid;
 
 use super::DaemonState;
+use super::runtime_sessions::persisted_session_target;
 use crate::daemon::protocol::{
     PromoteTaskParams, SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams,
     SubmitTaskParams,
 };
+use crate::daemon::registry::DiscoveredChannel;
 use crate::kernel::agent_manager::{AgentStatusSnapshot, PromotedTaskBranch, TaskStatusSnapshot};
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::{KernelEvent, TaskBranchOutcome};
@@ -394,15 +396,7 @@ impl DaemonState {
         &self,
         channel_id: Option<&str>,
     ) -> Result<Option<StoreSelector>> {
-        let Some(channel_id) = channel_id else {
-            return Ok(None);
-        };
-        let Some(channel) = self
-            .registry_load
-            .channels
-            .iter()
-            .find(|channel| channel.id == channel_id)
-        else {
+        let Some(channel) = self.discovered_channel(channel_id) else {
             return Ok(None);
         };
         channel
@@ -421,15 +415,7 @@ impl DaemonState {
         &self,
         channel_id: Option<&str>,
     ) -> Result<Option<StoreSelector>> {
-        let Some(channel_id) = channel_id else {
-            return Ok(None);
-        };
-        let Some(channel) = self
-            .registry_load
-            .channels
-            .iter()
-            .find(|channel| channel.id == channel_id)
-        else {
+        let Some(channel) = self.discovered_channel(channel_id) else {
             return Ok(None);
         };
         if channel.persistence.store.is_none() && channel.persistence.state.is_none() {
@@ -445,24 +431,21 @@ impl DaemonState {
         &self,
         channel_id: Option<&str>,
     ) -> InferenceOverrideConfig {
-        channel_id
-            .and_then(|channel_id| {
-                self.registry_load
-                    .channels
-                    .iter()
-                    .find(|channel| channel.id == channel_id)
-            })
+        self.discovered_channel(channel_id)
             .map(|channel| channel.inference.clone())
             .unwrap_or_default()
     }
 
+    fn discovered_channel(&self, channel_id: Option<&str>) -> Option<&DiscoveredChannel> {
+        let channel_id = channel_id?;
+        self.registry_load
+            .channels
+            .iter()
+            .find(|channel| channel.id == channel_id)
+    }
+
     async fn resolve_session_channel_id(&self, session_id: &str) -> Result<Option<String>> {
-        let session_ref = parse_session_reference(session_id)?;
-        let public_id = Uuid::parse_str(&session_ref.public_id)
-            .map_err(|_| anyhow!("Invalid session id '{}'", session_ref.public_id))?;
-        let store_selector = session_ref
-            .store_selector
-            .unwrap_or_else(|| StoreSelector::Alias("state".to_string()));
+        let (store_selector, public_id) = persisted_session_target(session_id)?;
         let store = self.kernel.store_manager().open(&store_selector).await?;
         let Some(row) = store.get_session_row_by_public_id(public_id).await? else {
             return Ok(None);
