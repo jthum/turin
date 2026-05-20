@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use tokio::sync::Mutex as AsyncMutex;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::inference::content::decode_content_json;
 use crate::kernel::config::StoreTargetConfig;
@@ -259,11 +259,37 @@ impl ExecutionHost {
             return;
         }
         let hot_history = &self.config.inference.hot_history;
-        let _ = crate::kernel::hot_history::prune(session, hot_history.effective_max_messages());
-        let _ = crate::kernel::hot_history::trim_payloads(
-            session,
-            hot_history.effective_max_tool_result_bytes(),
-        );
+        let report = crate::kernel::hot_history::apply(session, hot_history);
+        if report.applied() {
+            let dropped_messages = report
+                .prune
+                .map(|report| report.dropped_messages)
+                .unwrap_or(0);
+            let retained_messages = report
+                .prune
+                .map(|report| report.retained_messages)
+                .unwrap_or(session.history.len());
+            let retained_offset = report
+                .prune
+                .map(|report| report.retained_offset)
+                .unwrap_or(session.history_message_offset);
+            let trimmed_tool_results = report
+                .payload_trim
+                .map(|report| report.trimmed_tool_results)
+                .unwrap_or(0);
+            let dropped_payload_bytes = report
+                .payload_trim
+                .map(|report| report.dropped_bytes)
+                .unwrap_or(0);
+            debug!(
+                dropped_messages,
+                retained_messages,
+                retained_offset,
+                trimmed_tool_results,
+                dropped_payload_bytes,
+                "Applied hot-history memory policy"
+            );
+        }
     }
 
     pub async fn select_session_branch_by_name_local(

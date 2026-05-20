@@ -1,4 +1,5 @@
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
+use crate::kernel::config::HotHistoryConfig;
 use crate::kernel::session::SessionState;
 
 const RECENT_PAYLOAD_MESSAGES: usize = 8;
@@ -15,6 +16,25 @@ pub(crate) struct PruneReport {
 pub(crate) struct PayloadTrimReport {
     pub trimmed_tool_results: usize,
     pub dropped_bytes: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct HotHistoryReport {
+    pub prune: Option<PruneReport>,
+    pub payload_trim: Option<PayloadTrimReport>,
+}
+
+impl HotHistoryReport {
+    pub(crate) fn applied(self) -> bool {
+        self.prune.is_some() || self.payload_trim.is_some()
+    }
+}
+
+pub(crate) fn apply(session: &mut SessionState, config: &HotHistoryConfig) -> HotHistoryReport {
+    HotHistoryReport {
+        prune: prune(session, config.effective_max_messages()),
+        payload_trim: trim_payloads(session, config.effective_max_tool_result_bytes()),
+    }
 }
 
 pub(crate) fn prune(
@@ -200,5 +220,39 @@ mod tests {
             }
             other => panic!("expected tool result, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn apply_reports_pruning_and_payload_trimming() {
+        let mut session = SessionState::new();
+        for idx in 0..10 {
+            session.history.push(InferenceMessage {
+                role: InferenceRole::Tool,
+                content: vec![InferenceContent::ToolResult {
+                    tool_use_id: format!("call-{idx}"),
+                    content: "x".repeat(256),
+                    is_error: false,
+                }],
+                tool_call_id: None,
+            });
+        }
+
+        let config = HotHistoryConfig {
+            max_messages: Some(9),
+            max_tool_result_bytes: Some(64),
+            ..HotHistoryConfig::default()
+        };
+        let report = apply(&mut session, &config);
+
+        assert!(report.applied());
+        assert_eq!(report.prune.expect("prune report").dropped_messages, 1);
+        assert_eq!(
+            report
+                .payload_trim
+                .expect("payload trim report")
+                .trimmed_tool_results,
+            1
+        );
+        assert_eq!(session.history_message_offset, 1);
     }
 }

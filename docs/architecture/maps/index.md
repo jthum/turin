@@ -8,3 +8,4 @@ Maps:
 
 - [Channels](./channels.md)
 - [Scheduler and Worklists](./scheduler-worklists.md)
+- [Session Context and Hot History](./session-context-memory.md)
