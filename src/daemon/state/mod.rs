@@ -5,6 +5,7 @@ mod runtime_sessions;
 mod runtime_tasks;
 mod scheduled_execution;
 mod scheduled_jobs;
+mod scheduled_worklist_actions;
 #[cfg(test)]
 mod tests;
 mod types;
