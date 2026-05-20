@@ -40,7 +40,7 @@ fn has_active_session(execution_ctx: &ActiveHarnessExecutionContext) -> bool {
         .unwrap_or(false)
 }
 
-fn memory_search_result(
+pub(crate) fn memory_search_result(
     lua: &Lua,
     manager: Arc<StoreManager>,
     embedding: Option<Arc<dyn EmbeddingProvider>>,
@@ -68,7 +68,7 @@ fn memory_search_result(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn memory_store_result(
+pub(crate) fn memory_store_result(
     lua: &Lua,
     manager: Arc<StoreManager>,
     embedding: Option<Arc<dyn EmbeddingProvider>>,
@@ -97,7 +97,7 @@ fn memory_store_result(
     }
 }
 
-fn memory_feedback_result(
+pub(crate) fn memory_feedback_result(
     lua: &Lua,
     manager: Arc<StoreManager>,
     selector: ContextSelector,
@@ -120,7 +120,7 @@ fn memory_feedback_result(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn memory_correct_result(
+pub(crate) fn memory_correct_result(
     lua: &Lua,
     manager: Arc<StoreManager>,
     embedding: Option<Arc<dyn EmbeddingProvider>>,
@@ -151,7 +151,7 @@ fn memory_correct_result(
     }
 }
 
-fn memory_purge_result(
+pub(crate) fn memory_purge_result(
     lua: &Lua,
     manager: Arc<StoreManager>,
     selector: ContextSelector,
@@ -169,7 +169,7 @@ fn memory_purge_result(
     }
 }
 
-fn kv_get_result(
+pub(crate) fn kv_get_result(
     lua: &Lua,
     manager: Arc<StoreManager>,
     selector: ContextSelector,
@@ -195,7 +195,7 @@ fn kv_get_result(
     }
 }
 
-fn kv_set_result(
+pub(crate) fn kv_set_result(
     lua: &Lua,
     manager: Arc<StoreManager>,
     selector: ContextSelector,
@@ -222,7 +222,7 @@ fn kv_set_result(
     }
 }
 
-fn kv_delete_result(
+pub(crate) fn kv_delete_result(
     lua: &Lua,
     manager: Arc<StoreManager>,
     selector: ContextSelector,
