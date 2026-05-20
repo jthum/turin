@@ -1,15 +1,22 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-use crate::tools::{Tool, ToolContext, ToolError, ToolOutput};
+use crate::tools::{Tool, ToolContext, ToolError, ToolOutput, parse_args};
 use mcp_sdk::client::McpClient;
 use mcp_sdk::transport::StdioTransport;
 use mcp_sdk::types::ToolDefinition;
 
 /// The builtin tool that allows agents to request an MCP server connection.
 pub struct BridgeMcp;
+
+#[derive(Debug, Deserialize)]
+struct BridgeMcpArgs {
+    command: String,
+    args: Vec<String>,
+}
 
 #[async_trait]
 impl Tool for BridgeMcp {
@@ -44,19 +51,18 @@ impl Tool for BridgeMcp {
         params: Value,
         _ctx: &ToolContext,
     ) -> Result<crate::tools::ToolEffect, ToolError> {
-        let command = params["command"]
-            .as_str()
-            .ok_or_else(|| ToolError::InvalidParams("Missing 'command'".to_string()))?
-            .to_string();
+        let args: BridgeMcpArgs = parse_args(params)?;
+        let command = args.command.trim();
+        if command.is_empty() {
+            return Err(ToolError::InvalidParams(
+                "'command' must not be empty".to_string(),
+            ));
+        }
 
-        let args: Vec<String> = params["args"]
-            .as_array()
-            .ok_or_else(|| ToolError::InvalidParams("Missing 'args' array".to_string()))?
-            .iter()
-            .map(|v| v.as_str().unwrap_or_default().to_string())
-            .collect();
-
-        Ok(crate::tools::ToolEffect::SpawnMcp { command, args })
+        Ok(crate::tools::ToolEffect::SpawnMcp {
+            command: command.to_string(),
+            args: args.args,
+        })
     }
 }
 
@@ -107,5 +113,61 @@ impl Tool for McpToolProxy {
         Ok(crate::tools::ToolEffect::Output(ToolOutput::new(
             text_output.trim().to_string(),
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::ToolEffect;
+    use std::collections::BTreeSet;
+
+    fn tool_context() -> ToolContext {
+        ToolContext {
+            workspace_root: std::path::PathBuf::from("."),
+            session_id: "test".to_string(),
+            agent_id: "default".to_string(),
+            store_manager: None,
+            embedding_provider: None,
+            config: None,
+            allowed_native_tools: Arc::new(BTreeSet::from(["bridge_mcp".to_string()])),
+            tools: Arc::new(turin_types::ToolsConfig::default()),
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_mcp_rejects_non_string_args() {
+        let err = BridgeMcp
+            .execute(
+                json!({
+                    "command": "node",
+                    "args": ["server.js", 42],
+                }),
+                &tool_context(),
+            )
+            .await
+            .expect_err("non-string args should fail");
+
+        assert!(matches!(err, ToolError::InvalidParams(_)));
+    }
+
+    #[tokio::test]
+    async fn bridge_mcp_trims_and_preserves_valid_command() {
+        let effect = BridgeMcp
+            .execute(
+                json!({
+                    "command": "  node  ",
+                    "args": ["server.js"],
+                }),
+                &tool_context(),
+            )
+            .await
+            .expect("valid bridge_mcp params should parse");
+
+        let ToolEffect::SpawnMcp { command, args } = effect else {
+            panic!("expected SpawnMcp effect");
+        };
+        assert_eq!(command, "node");
+        assert_eq!(args, vec!["server.js".to_string()]);
     }
 }

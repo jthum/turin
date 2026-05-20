@@ -366,7 +366,7 @@ impl ExecutionHost {
         for (tc, final_args, verdict_str, duration_ms, effect, mut is_error, governance_denial) in
             execution_results
         {
-            let content;
+            let mut content;
             match effect {
                 ExecutionArtifact::Native(effect) => match effect {
                     ToolEffect::Output(o) => {
@@ -385,11 +385,17 @@ impl ExecutionHost {
                     }
                     ToolEffect::SpawnMcp { command, args } => {
                         match self.spawn_mcp_server(&command, &args).await {
-                            Ok(count) => {
+                            Ok(report) => {
                                 content = format!(
-                                    "Successfully connected to MCP server. Loaded {} new tools.",
-                                    count
+                                    "Successfully connected to MCP server. Registered {} new tool(s) from {} listed tool(s).",
+                                    report.registered_tools, report.listed_tools,
                                 );
+                                if report.skipped_existing_tools > 0 {
+                                    content.push_str(&format!(
+                                        " Skipped {} already-registered tool(s).",
+                                        report.skipped_existing_tools
+                                    ));
+                                }
                             }
                             Err(e) => {
                                 content = format!("Failed to connect to MCP server: {}", e);

@@ -36,6 +36,10 @@ impl ToolRegistry {
         self.tools.get(name).cloned()
     }
 
+    pub fn contains(&self, name: &str) -> bool {
+        self.tools.contains_key(name)
+    }
+
     /// Generate JSON tool definitions for the LLM API.
     ///
     /// Returns a Vec of tool definition objects matching the standard format:
