@@ -18,9 +18,11 @@ use turin::inference::provider::{
 };
 use turin::kernel::Kernel;
 use turin::kernel::config::{
-    AgentConfig, EmbeddingConfig, GovernanceConfig, HarnessConfig, InferenceConfig, KernelConfig,
-    PersistenceConfig, ProviderConfig, TurinConfig,
+    AgentConfig, EmbeddingConfig, GovernanceConfig, HarnessConfig, HotHistoryConfig,
+    HotHistoryProfile, InferenceConfig, KernelConfig, PersistenceConfig, ProviderConfig,
+    TurinConfig,
 };
+use turin::persistence::state::{SessionReadTarget, StateStore};
 use turin_channel_core::{
     ChannelConversationKey, ChannelKind, ChannelMessageRef, ChannelSessionScope, ChannelUser,
     InboundEvent, OutboundMessage,
@@ -74,6 +76,25 @@ struct HotHistoryArgs {
     /// Report output directory.
     #[arg(long, default_value = ".workspace/perf-reports")]
     report_dir: PathBuf,
+
+    /// Hot-history profile to apply during the run.
+    #[arg(long, value_enum, default_value_t = PerfHotHistoryProfile::Default)]
+    hot_history_profile: PerfHotHistoryProfile,
+
+    /// Override hot-history resident message limit.
+    #[arg(long)]
+    hot_history_max_messages: Option<usize>,
+
+    /// Override hot-history old tool-result payload byte limit.
+    #[arg(long)]
+    hot_history_max_tool_result_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum PerfHotHistoryProfile {
+    Default,
+    Performance,
+    Debug,
 }
 
 #[derive(Parser)]
@@ -162,9 +183,22 @@ struct Snapshot {
     outbound_messages: Option<usize>,
     active_sessions: Option<usize>,
     messages_per_session: Option<usize>,
+    persisted_messages: Option<usize>,
+    history_message_offset: Option<usize>,
+    hot_window_pruned: Option<bool>,
     history_payload_bytes: Option<usize>,
     tool_results: Option<usize>,
     tool_result_errors: Option<usize>,
+}
+
+impl From<PerfHotHistoryProfile> for HotHistoryProfile {
+    fn from(value: PerfHotHistoryProfile) -> Self {
+        match value {
+            PerfHotHistoryProfile::Default => Self::Default,
+            PerfHotHistoryProfile::Performance => Self::Performance,
+            PerfHotHistoryProfile::Debug => Self::Debug,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -263,7 +297,18 @@ async fn run_hot_history(args: HotHistoryArgs) -> Result<()> {
         )?;
     }
 
-    let config = build_config(&workspace_root, &harness_dir, &state_db_path, args.turns)?;
+    let hot_history_config = HotHistoryConfig {
+        profile: args.hot_history_profile.into(),
+        max_messages: args.hot_history_max_messages,
+        max_tool_result_bytes: args.hot_history_max_tool_result_bytes,
+    };
+    let config = build_config(
+        &workspace_root,
+        &harness_dir,
+        &state_db_path,
+        args.turns,
+        Some(hot_history_config.clone()),
+    )?;
     let responses = Arc::new(Mutex::new(build_responses(
         args.turns,
         args.tool_every,
@@ -284,7 +329,8 @@ async fn run_hot_history(args: HotHistoryArgs) -> Result<()> {
         start,
         &state_db_path,
         &session,
-    )];
+    )
+    .await?];
 
     for index in 0..args.turns {
         kernel
@@ -293,12 +339,15 @@ async fn run_hot_history(args: HotHistoryArgs) -> Result<()> {
             .with_context(|| format!("hot-history turn {index} failed"))?;
 
         if (index + 1) % args.sample_every == 0 || index + 1 == args.turns {
-            snapshots.push(hot_history_snapshot(
+            snapshots.push(
+                hot_history_snapshot(
                 &format!("after-turn-{}", index + 1),
                 start,
                 &state_db_path,
                 &session,
-            ));
+                )
+                .await?,
+            );
         }
     }
 
@@ -308,7 +357,8 @@ async fn run_hot_history(args: HotHistoryArgs) -> Result<()> {
         start,
         &state_db_path,
         &session,
-    ));
+    )
+    .await?);
 
     let report = PerfReport {
         scenario: "hot-history".to_string(),
@@ -319,6 +369,9 @@ async fn run_hot_history(args: HotHistoryArgs) -> Result<()> {
             "tool_every": args.tool_every,
             "expected_tool_calls": expected_tool_calls,
             "sample_every": args.sample_every,
+            "hot_history_profile": format!("{:?}", args.hot_history_profile).to_ascii_lowercase(),
+            "hot_history_effective_max_messages": hot_history_config.effective_max_messages(),
+            "hot_history_effective_max_tool_result_bytes": hot_history_config.effective_max_tool_result_bytes(),
         }),
         workspace_root: workspace_root.display().to_string(),
         state_db_path: state_db_path.display().to_string(),
@@ -685,6 +738,7 @@ fn build_config(
     harness_dir: &Path,
     state_db_path: &Path,
     requested_turns: usize,
+    hot_history: Option<HotHistoryConfig>,
 ) -> Result<TurinConfig> {
     let mut providers = HashMap::new();
     providers.insert(
@@ -696,6 +750,11 @@ fn build_config(
             ..ProviderConfig::default()
         },
     );
+
+    let mut inference = InferenceConfig::default();
+    if let Some(hot_history) = hot_history {
+        inference.hot_history = hot_history;
+    }
 
     Ok(TurinConfig {
         tools: Default::default(),
@@ -722,7 +781,7 @@ fn build_config(
             initial_spawn_depth: 0,
         },
         layout: Default::default(),
-        inference: InferenceConfig::default(),
+        inference,
         persistence: PersistenceConfig::with_state_path(
             state_db_path.to_string_lossy().to_string(),
         ),
@@ -843,18 +902,21 @@ fn snapshot(
         outbound_messages,
         active_sessions,
         messages_per_session,
+        persisted_messages: None,
+        history_message_offset: None,
+        hot_window_pruned: None,
         history_payload_bytes: None,
         tool_results: None,
         tool_result_errors: None,
     }
 }
 
-fn hot_history_snapshot(
+async fn hot_history_snapshot(
     label: &str,
     start: Instant,
     state_db_path: &Path,
     session: &turin::kernel::session::SessionState,
-) -> Snapshot {
+) -> Result<Snapshot> {
     let mut snapshot = snapshot(
         label,
         start,
@@ -869,7 +931,27 @@ fn hot_history_snapshot(
     snapshot.history_payload_bytes = Some(metrics.payload_bytes);
     snapshot.tool_results = Some(metrics.tool_results);
     snapshot.tool_result_errors = Some(metrics.tool_result_errors);
-    snapshot
+    snapshot.history_message_offset = Some(session.history_message_offset);
+    snapshot.hot_window_pruned = Some(session.history_is_pruned());
+    snapshot.persisted_messages = persisted_message_count(state_db_path, session.internal_id).await?;
+    Ok(snapshot)
+}
+
+async fn persisted_message_count(
+    state_db_path: &Path,
+    session_internal_id: Option<i64>,
+) -> Result<Option<usize>> {
+    let Some(session_internal_id) = session_internal_id else {
+        return Ok(None);
+    };
+    let Some(path) = state_db_path.to_str() else {
+        return Ok(None);
+    };
+    let store = StateStore::open(path).await?;
+    let messages = store
+        .get_messages(session_internal_id, &SessionReadTarget::ActiveBranch)
+        .await?;
+    Ok(Some(messages.len()))
 }
 
 #[derive(Debug, Default)]
@@ -1042,12 +1124,12 @@ fn markdown_report(report: &PerfReport) -> String {
     out.push_str(&format!("- workspace_root: `{}`\n", report.workspace_root));
     out.push_str(&format!("- state_db_path: `{}`\n\n", report.state_db_path));
     out.push_str(
-        "| label | elapsed_ms | rss_kb | pss_kb | state_db_main_bytes | state_db_wal_bytes | state_db_shm_bytes | state_db_bytes | turn_index | history_len | history_payload_bytes | tool_results | tool_result_errors | outbound_messages | active_sessions | messages_per_session |\n",
+        "| label | elapsed_ms | rss_kb | pss_kb | state_db_main_bytes | state_db_wal_bytes | state_db_shm_bytes | state_db_bytes | turn_index | persisted_messages | history_len | history_message_offset | hot_window_pruned | history_payload_bytes | tool_results | tool_result_errors | outbound_messages | active_sessions | messages_per_session |\n",
     );
-    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|---:|---:|---:|---:|---:|---:|\n");
     for snapshot in &report.snapshots {
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             snapshot.label,
             snapshot.elapsed_ms,
             display_option(snapshot.rss_kb),
@@ -1057,7 +1139,10 @@ fn markdown_report(report: &PerfReport) -> String {
             snapshot.state_db_shm_bytes,
             snapshot.state_db_bytes,
             display_u32_option(snapshot.turn_index),
+            display_usize_option(snapshot.persisted_messages),
             display_usize_option(snapshot.history_len),
+            display_usize_option(snapshot.history_message_offset),
+            display_bool_option(snapshot.hot_window_pruned),
             display_usize_option(snapshot.history_payload_bytes),
             display_usize_option(snapshot.tool_results),
             display_usize_option(snapshot.tool_result_errors),
@@ -1082,6 +1167,12 @@ fn display_usize_option(value: Option<usize>) -> String {
 }
 
 fn display_u32_option(value: Option<u32>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn display_bool_option(value: Option<bool>) -> String {
     value
         .map(|value| value.to_string())
         .unwrap_or_else(|| "-".to_string())
