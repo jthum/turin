@@ -9,6 +9,7 @@ Maps:
 - [Channels](./channels.md)
 - [Agent Session Bindings](./agent-session-bindings.md)
 - [Code Search](./code-search.md)
+- [Harness System Globals](./harness-system-globals.md)
 - [MCP Integration](./mcp.md)
 - [Memory and Scoped Data](./memory-scoped-data.md)
 - [Runtime DB and Graph](./runtime-db-graph.md)

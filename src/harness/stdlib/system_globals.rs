@@ -93,6 +93,37 @@ pub fn register_import_global(lua: &Lua) -> LuaResult<()> {
 
 const MAX_IMPORT_PROXY_WRAP_DEPTH: usize = 16;
 
+#[derive(Clone, Copy)]
+enum ModulePolicyOp {
+    Import,
+    Use,
+}
+
+impl ModulePolicyOp {
+    fn unscoped_call(self) -> &'static str {
+        match self {
+            Self::Import => "import",
+            Self::Use => "use",
+        }
+    }
+
+    fn scoped_call(self) -> &'static str {
+        match self {
+            Self::Import => "import_scoped",
+            Self::Use => "use_scoped",
+        }
+    }
+
+    fn capability(self, is_scoped_call: bool) -> &'static str {
+        match (self, is_scoped_call) {
+            (Self::Import, true) => "harness.import.scoped",
+            (Self::Import, false) => "harness.import.unscoped",
+            (Self::Use, true) => "harness.use.scoped",
+            (Self::Use, false) => "harness.use.unscoped",
+        }
+    }
+}
+
 fn watch_path(lua: &Lua, path_str: &str) -> LuaResult<()> {
     ensure_load_time(lua, "watch")?;
     let path = resolve_watch_path(lua, path_str)?;
@@ -396,75 +427,14 @@ fn enforce_import_policy(
     requested_root: Option<&str>,
     is_scoped_call: bool,
 ) -> LuaResult<()> {
-    let Some(app_data) = lua.app_data_ref::<crate::harness::globals::HarnessAppData>() else {
-        return Ok(());
-    };
-
-    let gov_cfg = app_data.governance_manager.config().clone();
-    let subject = current_subject(&app_data);
-
-    if gov_cfg.enforcement_enabled {
-        let cap = if is_scoped_call {
-            "harness.import.scoped"
-        } else {
-            "harness.import.unscoped"
-        };
-        app_data
-            .governance_manager
-            .require_capability_for_subject(&subject, cap)
-            .map_err(mlua::Error::runtime)?;
-    }
-
-    if !gov_cfg.enforcement_enabled {
-        return Ok(());
-    }
-
-    let allow_unscoped_open_override =
-        matches!(gov_cfg.profile, GovernanceProfile::Open) && gov_cfg.import.allow_unscoped_in_open;
-
-    match gov_cfg.import.mode {
-        GovernanceImportMode::Legacy => {
-            if is_scoped_call {
-                return Err(mlua::Error::runtime(
-                    "import_scoped is disabled when governance.import.mode=legacy".to_string(),
-                ));
-            }
-        }
-        GovernanceImportMode::Mixed => {}
-        GovernanceImportMode::Scoped => {
-            if !is_scoped_call && !allow_unscoped_open_override {
-                return Err(mlua::Error::runtime(
-                    "unscoped import() is disabled when governance.import.mode=scoped; use import_scoped(...)"
-                        .to_string(),
-                ));
-            }
-            if is_scoped_call && requested_root.is_none() {
-                return Err(mlua::Error::runtime(
-                    "import_scoped(...) requires opts.root or governance.import.default_root when governance.import.mode=scoped"
-                        .to_string(),
-                ));
-            }
-        }
-    }
-
-    if is_scoped_call {
-        // In scoped mode / governed usage, importing a module without root attribution is suspicious.
-        // Keep this as a runtime error only when a root is explicitly requested.
-        if let Some(expected_root) = requested_root {
-            let actual_root = match meta_value {
-                Value::Table(t) => t.get::<String>("root").ok(),
-                _ => None,
-            };
-            if actual_root.is_none() {
-                return Err(mlua::Error::runtime(format!(
-                    "import_scoped root '{}' requested for '{}', but module has no attributed governance root",
-                    expected_root, module_name
-                )));
-            }
-        }
-    }
-
-    Ok(())
+    enforce_module_policy(
+        lua,
+        module_name,
+        meta_value,
+        requested_root,
+        is_scoped_call,
+        ModulePolicyOp::Import,
+    )
 }
 
 fn enforce_use_policy(
@@ -474,6 +444,24 @@ fn enforce_use_policy(
     requested_root: Option<&str>,
     is_scoped_call: bool,
 ) -> LuaResult<()> {
+    enforce_module_policy(
+        lua,
+        module_name,
+        meta_value,
+        requested_root,
+        is_scoped_call,
+        ModulePolicyOp::Use,
+    )
+}
+
+fn enforce_module_policy(
+    lua: &Lua,
+    module_name: &str,
+    meta_value: &Value,
+    requested_root: Option<&str>,
+    is_scoped_call: bool,
+    op: ModulePolicyOp,
+) -> LuaResult<()> {
     let Some(app_data) = lua.app_data_ref::<crate::harness::globals::HarnessAppData>() else {
         return Ok(());
     };
@@ -482,14 +470,9 @@ fn enforce_use_policy(
     let subject = current_subject(&app_data);
 
     if gov_cfg.enforcement_enabled {
-        let cap = if is_scoped_call {
-            "harness.use.scoped"
-        } else {
-            "harness.use.unscoped"
-        };
         app_data
             .governance_manager
-            .require_capability_for_subject(&subject, cap)
+            .require_capability_for_subject(&subject, op.capability(is_scoped_call))
             .map_err(mlua::Error::runtime)?;
     }
 
@@ -503,42 +486,50 @@ fn enforce_use_policy(
     match gov_cfg.import.mode {
         GovernanceImportMode::Legacy => {
             if is_scoped_call {
-                return Err(mlua::Error::runtime(
-                    "use_scoped is disabled when governance.import.mode=legacy".to_string(),
-                ));
+                return Err(mlua::Error::runtime(format!(
+                    "{} is disabled when governance.import.mode=legacy",
+                    op.scoped_call()
+                )));
             }
         }
         GovernanceImportMode::Mixed => {}
         GovernanceImportMode::Scoped => {
             if !is_scoped_call && !allow_unscoped_open_override {
-                return Err(mlua::Error::runtime(
-                    "unscoped use() is disabled when governance.import.mode=scoped; use use_scoped(...)"
-                        .to_string(),
-                ));
+                return Err(mlua::Error::runtime(format!(
+                    "unscoped {}() is disabled when governance.import.mode=scoped; use {}(...)",
+                    op.unscoped_call(),
+                    op.scoped_call()
+                )));
             }
             if is_scoped_call && requested_root.is_none() {
-                return Err(mlua::Error::runtime(
-                    "use_scoped(...) requires opts.root or governance.import.default_root when governance.import.mode=scoped"
-                        .to_string(),
-                ));
+                return Err(mlua::Error::runtime(format!(
+                    "{}(...) requires opts.root or governance.import.default_root when governance.import.mode=scoped",
+                    op.scoped_call()
+                )));
             }
         }
     }
 
-    if is_scoped_call && let Some(expected_root) = requested_root {
-        let actual_root = match meta_value {
-            Value::Table(t) => t.get::<String>("root").ok(),
-            _ => None,
-        };
-        if actual_root.is_none() {
-            return Err(mlua::Error::runtime(format!(
-                "use_scoped root '{}' requested for '{}', but module has no attributed governance root",
-                expected_root, module_name
-            )));
-        }
+    if is_scoped_call
+        && let Some(expected_root) = requested_root
+        && module_root(meta_value).is_none()
+    {
+        return Err(mlua::Error::runtime(format!(
+            "{} root '{}' requested for '{}', but module has no attributed governance root",
+            op.scoped_call(),
+            expected_root,
+            module_name
+        )));
     }
 
     Ok(())
+}
+
+fn module_root(meta_value: &Value) -> Option<String> {
+    match meta_value {
+        Value::Table(t) => t.get::<String>("root").ok(),
+        _ => None,
+    }
 }
 
 fn effective_import_root(lua: &Lua, opts: Option<&Table>, is_scoped_call: bool) -> Option<String> {
@@ -569,10 +560,7 @@ fn wrap_imported_module(
     let Value::Table(module_table) = module_value else {
         return Ok(module_value);
     };
-    let module_root = match &meta_value {
-        Value::Table(t) => t.get::<String>("root").ok(),
-        _ => None,
-    };
+    let module_root = module_root(&meta_value);
     let proxy = wrap_imported_table(
         lua,
         module_name,
@@ -867,7 +855,7 @@ fn current_session_tracking_context(
 
     let store_manager = app_data.store_manager.clone();
     let execution_ctx = app_data.execution_ctx.clone();
-    drop(app_data);
+    let _ = app_data;
 
     let (session_id, store_selector) = execution_ctx
         .lock()
