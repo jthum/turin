@@ -8,6 +8,7 @@ members = [
     "crates/turin-control-client",
     "crates/turin-ui-core",
     "crates/turin-channel-core",
+    "crates/turin-channel-host",
     "crates/turin-channel-runner",
     "crates/turin-channel-fs",
     "crates/turin-channel-discord",
@@ -62,6 +63,7 @@ turin-local-ipc = { path = "crates/turin-local-ipc" }
 turin-daemon-protocol = { path = "crates/turin-daemon-protocol" }
 turin-daemon-client = { path = "crates/turin-daemon-client" }
 turin-channel-core = { path = "crates/turin-channel-core" }
+turin-channel-host = { path = "crates/turin-channel-host" }
 turin-channel-runner = { path = "crates/turin-channel-runner" }
 turin-channel-fs = { path = "crates/turin-channel-fs" }
 turin-code-index = { path = "crates/turin-code-index" }

@@ -32,13 +32,15 @@ Shared protocol and runner crates:
   - Channel streaming modes and progress-preview policy.
 - `crates/turin-channel-runner/src/presence.rs`
   - Runner hello and heartbeat helpers.
+- `crates/turin-channel-host/src/lib.rs`
+  - Host-side sidecar discovery and process invocation used by the daemon and `turin-manager`: binary/env names, workspace fallback, manifest description, settings validation, auth-flow commands, and runner-kind discovery.
 
 Daemon-side runtime:
 
 - `src/daemon/channels.rs`
   - Channel runtime supervisor, runtime snapshots, and named runtime-state transitions.
 - `src/daemon/channel_runners.rs`
-  - Sidecar binary resolution and launch argument construction.
+  - Daemon-facing wrapper around host-side sidecar discovery plus the built-in `fs` manifest.
 - `src/daemon/state/channel_validation.rs`
   - Channel config validation against adapter manifests and runtime state.
 - `src/daemon/server/dispatch/channel.rs`
@@ -96,6 +98,7 @@ Conversation bindings:
 - Platform adapters should own platform normalization and rendering only.
 - Shared access policy belongs in `turin-channel-runner`, not individual adapters.
 - Common sidecar startup behavior belongs in `sidecar.rs`.
+- Host-side sidecar process discovery/invocation belongs in `turin-channel-host`, not separately in the daemon and manager.
 - Optional string-enum settings should use shared settings helpers from `turin-channel-core` when the adapter only needs local allowed-value mapping.
 - Runtime snapshot state changes should use the transition helpers in `src/daemon/channels.rs`; avoid open-coded edits to state, error fields, transition times, counters, and handshake timestamps.
 - Each adapter must validate platform-specific settings without requiring live external credentials.
@@ -180,6 +183,8 @@ git diff --check
 
 The runner crate now owns common sidecar runtime setup. This removed repeated setup code from Telegram, Rocket.Chat, Discord, and WhatsApp sidecar binaries while keeping adapter-specific driver construction in each adapter.
 
+The host crate owns external sidecar discovery and subprocess command helpers. This keeps the daemon and `turin-manager` aligned on env overrides, workspace `cargo run -p` fallback, manifest decoding, settings validation, and auth-flow command behavior.
+
 Shared channel settings helpers cover common optional string-enum parsing. Telegram, Rocket.Chat, and runner access policy use the shared shape while keeping each allowed-value table and error text local.
 
 Daemon channel supervision keeps runtime-state mutation behind named transition helpers. This is meant to prevent drift between start, restart, stale-heartbeat, clean-stop, shutdown, and failure paths.
@@ -189,6 +194,7 @@ The current module split is deliberate:
 - `turin-channel-core` answers "what common channel protocol shapes exist?"
 - `turin-channel-runner` answers "how does a channel event become a daemon task and response?"
 - `turin-channel-runner/src/sidecar.rs` answers "how does a sidecar process start consistently?"
+- `turin-channel-host` answers "how does a Turin host process find and invoke sidecar binaries?"
 - adapter crates answer "how does this platform map to and from Turin channel shapes?"
 - daemon channel modules answer "how are sidecars configured, supervised, and surfaced?"
 
