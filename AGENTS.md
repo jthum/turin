@@ -15,5 +15,6 @@ Important maps:
 - Scheduler and worklists: `docs/architecture/maps/scheduler-worklists.md`
 - Channels: `docs/architecture/maps/channels.md`
 - Code search: `docs/architecture/maps/code-search.md`
+- MCP integration: `docs/architecture/maps/mcp.md`
 - Memory and scoped data: `docs/architecture/maps/memory-scoped-data.md`
 - Session context and hot history: `docs/architecture/maps/session-context-memory.md`

@@ -8,6 +8,7 @@ Maps:
 
 - [Channels](./channels.md)
 - [Code Search](./code-search.md)
+- [MCP Integration](./mcp.md)
 - [Memory and Scoped Data](./memory-scoped-data.md)
 - [Scheduler and Worklists](./scheduler-worklists.md)
 - [Session Context and Hot History](./session-context-memory.md)
