@@ -625,6 +625,22 @@ pub fn optional_session_scope_setting(
         .ok_or_else(|| ChannelConfigError::new(invalid_value_message))
 }
 
+pub fn string_enum_setting<T>(
+    value: Option<&serde_json::Value>,
+    default: T,
+    parse: impl FnOnce(&str) -> Option<T>,
+    invalid_type_message: impl Into<String>,
+    invalid_value_message: impl Into<String>,
+) -> Result<T, ChannelConfigError> {
+    let Some(value) = value else {
+        return Ok(default);
+    };
+    let raw = value
+        .as_str()
+        .ok_or_else(|| ChannelConfigError::new(invalid_type_message))?;
+    parse(raw).ok_or_else(|| ChannelConfigError::new(invalid_value_message))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelAuthFlowKind {

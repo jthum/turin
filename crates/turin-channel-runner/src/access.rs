@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use turin_channel_core::{ChannelConversationKey, ChannelKind, ChannelUser};
+use turin_channel_core::{ChannelConversationKey, ChannelKind, ChannelUser, string_enum_setting};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PairingMode {
@@ -323,18 +323,19 @@ pub(crate) fn unix_seconds(time: SystemTime) -> u64 {
 }
 
 fn parse_pairing_mode(value: Option<&Value>) -> Result<PairingMode> {
-    let Some(value) = value else {
-        return Ok(PairingMode::Off);
-    };
-    let mode = value
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("channel setting 'pairing_mode' must be a string"))?;
-    match mode.trim().to_ascii_lowercase().as_str() {
-        "off" => Ok(PairingMode::Off),
-        "pending" => Ok(PairingMode::Pending),
-        "auto" => Ok(PairingMode::Auto),
-        _ => anyhow::bail!("channel setting 'pairing_mode' must be one of: off, pending, auto"),
-    }
+    string_enum_setting(
+        value,
+        PairingMode::Off,
+        |raw| match raw.trim().to_ascii_lowercase().as_str() {
+            "off" => Some(PairingMode::Off),
+            "pending" => Some(PairingMode::Pending),
+            "auto" => Some(PairingMode::Auto),
+            _ => None,
+        },
+        "channel setting 'pairing_mode' must be a string",
+        "channel setting 'pairing_mode' must be one of: off, pending, auto",
+    )
+    .map_err(Into::into)
 }
 
 fn parse_string_set(value: Option<&Value>, key: &str) -> Result<HashSet<String>> {

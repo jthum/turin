@@ -3,7 +3,7 @@ use std::time::Duration;
 use turin_channel_core::{
     ChannelSessionScope, DEFAULT_MAX_INBOUND_TEXT_CHARS, optional_bool_setting,
     optional_non_empty_setting, optional_session_scope_setting, required_non_empty_setting,
-    session_scope_setting, u64_setting_with_min,
+    session_scope_setting, string_enum_setting, u64_setting_with_min,
 };
 use turin_channel_runner::ChannelStreamMode;
 
@@ -264,76 +264,63 @@ fn read_bool(value: Option<&serde_json::Value>, default: bool, key: &str) -> Res
 }
 
 fn read_respond_mode(value: Option<&serde_json::Value>) -> Result<RocketChatRespondMode> {
-    let raw = match value {
-        None => return Ok(RocketChatRespondMode::Mentions),
-        Some(value) => value.as_str().ok_or_else(|| {
-            anyhow!(
-                "[rocketchat_config_invalid_respond_mode] Rocket.Chat channel setting 'respond_mode' must be a string"
-            )
-        })?,
-    };
-    match raw {
-        "all" => Ok(RocketChatRespondMode::All),
-        "mentions" => Ok(RocketChatRespondMode::Mentions),
-        _ => anyhow::bail!(
-            "[rocketchat_config_invalid_respond_mode] Rocket.Chat channel setting 'respond_mode' must be one of: all, mentions"
-        ),
-    }
+    string_enum_setting(
+        value,
+        RocketChatRespondMode::Mentions,
+        |raw| match raw {
+            "all" => Some(RocketChatRespondMode::All),
+            "mentions" => Some(RocketChatRespondMode::Mentions),
+            _ => None,
+        },
+        "[rocketchat_config_invalid_respond_mode] Rocket.Chat channel setting 'respond_mode' must be a string",
+        "[rocketchat_config_invalid_respond_mode] Rocket.Chat channel setting 'respond_mode' must be one of: all, mentions",
+    )
+    .map_err(Into::into)
 }
 
 fn read_transport_mode(value: Option<&serde_json::Value>) -> Result<RocketChatTransportMode> {
-    let raw = match value {
-        None => return Ok(RocketChatTransportMode::Realtime),
-        Some(value) => value.as_str().ok_or_else(|| {
-            anyhow!(
-                "[rocketchat_config_invalid_transport_mode] Rocket.Chat channel setting 'transport_mode' must be a string"
-            )
-        })?,
-    };
-    match raw {
-        "realtime" => Ok(RocketChatTransportMode::Realtime),
-        "polling" => Ok(RocketChatTransportMode::Polling),
-        _ => anyhow::bail!(
-            "[rocketchat_config_invalid_transport_mode] Rocket.Chat channel setting 'transport_mode' must be one of: realtime, polling"
-        ),
-    }
+    string_enum_setting(
+        value,
+        RocketChatTransportMode::Realtime,
+        |raw| match raw {
+            "realtime" => Some(RocketChatTransportMode::Realtime),
+            "polling" => Some(RocketChatTransportMode::Polling),
+            _ => None,
+        },
+        "[rocketchat_config_invalid_transport_mode] Rocket.Chat channel setting 'transport_mode' must be a string",
+        "[rocketchat_config_invalid_transport_mode] Rocket.Chat channel setting 'transport_mode' must be one of: realtime, polling",
+    )
+    .map_err(Into::into)
 }
 
 fn read_reply_mode(value: Option<&serde_json::Value>) -> Result<RocketChatReplyMode> {
-    let raw = match value {
-        None => return Ok(RocketChatReplyMode::Thread),
-        Some(value) => value.as_str().ok_or_else(|| {
-            anyhow!(
-                "[rocketchat_config_invalid_reply_mode] Rocket.Chat channel setting 'reply_mode' must be a string"
-            )
-        })?,
-    };
-    match raw {
-        "thread" => Ok(RocketChatReplyMode::Thread),
-        "channel" => Ok(RocketChatReplyMode::Channel),
-        "thread_and_channel" => Ok(RocketChatReplyMode::ThreadAndChannel),
-        _ => anyhow::bail!(
-            "[rocketchat_config_invalid_reply_mode] Rocket.Chat channel setting 'reply_mode' must be one of: thread, channel, thread_and_channel"
-        ),
-    }
+    string_enum_setting(
+        value,
+        RocketChatReplyMode::Thread,
+        |raw| match raw {
+            "thread" => Some(RocketChatReplyMode::Thread),
+            "channel" => Some(RocketChatReplyMode::Channel),
+            "thread_and_channel" => Some(RocketChatReplyMode::ThreadAndChannel),
+            _ => None,
+        },
+        "[rocketchat_config_invalid_reply_mode] Rocket.Chat channel setting 'reply_mode' must be a string",
+        "[rocketchat_config_invalid_reply_mode] Rocket.Chat channel setting 'reply_mode' must be one of: thread, channel, thread_and_channel",
+    )
+    .map_err(Into::into)
 }
 
 fn read_stream_mode(value: Option<&serde_json::Value>) -> Result<ChannelStreamMode> {
-    let raw = match value {
-        None => return Ok(ChannelStreamMode::Typing),
-        Some(value) => value.as_str().ok_or_else(|| {
-            anyhow!(
-                "[rocketchat_config_invalid_stream_mode] Rocket.Chat channel setting 'stream_mode' must be a string"
-            )
-        })?,
-    };
-    let mode = ChannelStreamMode::parse(raw)
-        .filter(|mode| mode.is_allowed_by(&[ChannelStreamMode::Off, ChannelStreamMode::Typing]));
-    mode.ok_or_else(|| {
-        anyhow!(
-            "[rocketchat_config_invalid_stream_mode] Rocket.Chat channel setting 'stream_mode' must be one of: off, typing"
-        )
-    })
+    string_enum_setting(
+        value,
+        ChannelStreamMode::Typing,
+        |raw| {
+            ChannelStreamMode::parse(raw)
+                .filter(|mode| mode.is_allowed_by(&[ChannelStreamMode::Off, ChannelStreamMode::Typing]))
+        },
+        "[rocketchat_config_invalid_stream_mode] Rocket.Chat channel setting 'stream_mode' must be a string",
+        "[rocketchat_config_invalid_stream_mode] Rocket.Chat channel setting 'stream_mode' must be one of: off, typing",
+    )
+    .map_err(Into::into)
 }
 
 fn read_session_scope(value: Option<&serde_json::Value>) -> Result<ChannelSessionScope> {

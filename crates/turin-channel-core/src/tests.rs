@@ -287,4 +287,33 @@ fn setting_helpers_parse_reused_json_shapes() {
         .unwrap(),
         None
     );
+    assert_eq!(
+        string_enum_setting(
+            Some(&serde_json::json!("blue")),
+            "red",
+            |raw| match raw {
+                "blue" => Some("blue"),
+                _ => None,
+            },
+            "invalid type",
+            "invalid value",
+        )
+        .unwrap(),
+        "blue"
+    );
+    assert_eq!(
+        string_enum_setting::<&str>(None, "red", |_| None, "invalid type", "invalid value")
+            .unwrap(),
+        "red"
+    );
+    assert!(
+        string_enum_setting(
+            Some(&serde_json::json!(42)),
+            "red",
+            |_| Some("blue"),
+            "invalid type",
+            "invalid value",
+        )
+        .is_err()
+    );
 }

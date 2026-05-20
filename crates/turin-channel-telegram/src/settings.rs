@@ -4,7 +4,7 @@ use std::time::Duration;
 use turin_channel_core::{
     ChannelSessionScope, DEFAULT_MAX_INBOUND_TEXT_CHARS, optional_bool_setting,
     optional_session_scope_setting, positive_usize_setting, required_non_empty_setting,
-    session_scope_setting, u64_setting_with_min,
+    session_scope_setting, string_enum_setting, u64_setting_with_min,
 };
 use turin_channel_runner::ChannelStreamMode;
 
@@ -337,23 +337,20 @@ fn read_chat_id_list(value: &serde_json::Value) -> Result<Vec<String>> {
 }
 
 fn read_respond_mode(value: Option<&serde_json::Value>) -> Result<TelegramRespondMode> {
-    let Some(value) = value else {
-        return Ok(TelegramRespondMode::All);
-    };
-    let mode = value.as_str().ok_or_else(|| {
-        anyhow!(
-            "[telegram_config_invalid_respond_mode] Telegram channel setting 'respond_mode' must be a string"
-        )
-    })?;
-    match mode.trim().to_ascii_lowercase().as_str() {
-        "all" => Ok(TelegramRespondMode::All),
-        "mentions" => Ok(TelegramRespondMode::Mentions),
-        "replies" => Ok(TelegramRespondMode::Replies),
-        "mentions_or_replies" => Ok(TelegramRespondMode::MentionsOrReplies),
-        _ => anyhow::bail!(
-            "[telegram_config_invalid_respond_mode] Telegram channel setting 'respond_mode' must be one of: all, mentions, replies, mentions_or_replies"
-        ),
-    }
+    string_enum_setting(
+        value,
+        TelegramRespondMode::All,
+        |raw| match raw.trim().to_ascii_lowercase().as_str() {
+            "all" => Some(TelegramRespondMode::All),
+            "mentions" => Some(TelegramRespondMode::Mentions),
+            "replies" => Some(TelegramRespondMode::Replies),
+            "mentions_or_replies" => Some(TelegramRespondMode::MentionsOrReplies),
+            _ => None,
+        },
+        "[telegram_config_invalid_respond_mode] Telegram channel setting 'respond_mode' must be a string",
+        "[telegram_config_invalid_respond_mode] Telegram channel setting 'respond_mode' must be one of: all, mentions, replies, mentions_or_replies",
+    )
+    .map_err(Into::into)
 }
 
 fn read_telegram_session_scope(value: Option<&serde_json::Value>) -> Result<ChannelSessionScope> {
@@ -414,17 +411,12 @@ fn reject_deprecated_session_scope_keys(
 }
 
 fn read_stream_mode(value: Option<&serde_json::Value>) -> Result<ChannelStreamMode> {
-    let Some(value) = value else {
-        return Ok(ChannelStreamMode::Off);
-    };
-    let mode = value.as_str().ok_or_else(|| {
-        anyhow!(
-            "[telegram_config_invalid_stream_mode] Telegram channel setting 'stream_mode' must be a string"
-        )
-    })?;
-    ChannelStreamMode::parse(mode).ok_or_else(|| {
-        anyhow!(
-            "[telegram_config_invalid_stream_mode] Telegram channel setting 'stream_mode' must be one of: off, typing, draft, block"
-        )
-    })
+    string_enum_setting(
+        value,
+        ChannelStreamMode::Off,
+        ChannelStreamMode::parse,
+        "[telegram_config_invalid_stream_mode] Telegram channel setting 'stream_mode' must be a string",
+        "[telegram_config_invalid_stream_mode] Telegram channel setting 'stream_mode' must be one of: off, typing, draft, block",
+    )
+    .map_err(Into::into)
 }
