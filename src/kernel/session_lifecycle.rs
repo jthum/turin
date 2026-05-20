@@ -312,10 +312,7 @@ impl ExecutionHost {
             return Ok(false);
         };
 
-        if !session.queue.lock().await.is_empty() {
-            anyhow::bail!("Cannot switch local session branch while tasks are queued");
-        }
-
+        ensure_local_session_target_idle(session, "branch").await?;
         session.set_selected_branch_head_id(Some(branch.id));
         self.refresh_session_from_persistence(session).await?;
         Ok(true)
@@ -341,10 +338,7 @@ impl ExecutionHost {
             return Ok(false);
         }
 
-        if !session.queue.lock().await.is_empty() {
-            anyhow::bail!("Cannot switch local session target while tasks are queued");
-        }
-
+        ensure_local_session_target_idle(session, "target").await?;
         session.set_selected_turn_id(turn_id);
         self.refresh_session_from_persistence(session).await?;
         Ok(true)
@@ -370,10 +364,7 @@ impl ExecutionHost {
             return Ok(false);
         };
 
-        if !session.queue.lock().await.is_empty() {
-            anyhow::bail!("Cannot switch local session target while tasks are queued");
-        }
-
+        ensure_local_session_target_idle(session, "target").await?;
         session.set_context_target(ExecutionContextTarget::ExternalReference {
             reference: format_session_reference(&session_ref.public_id, &store_selector),
         });
@@ -667,6 +658,13 @@ fn session_create_metadata(session: &SessionState) -> Option<String> {
         })
         .to_string(),
     )
+}
+
+async fn ensure_local_session_target_idle(session: &SessionState, target_kind: &str) -> Result<()> {
+    if !session.queue.lock().await.is_empty() {
+        anyhow::bail!("Cannot switch local session {target_kind} while tasks are queued");
+    }
+    Ok(())
 }
 
 fn session_default_store_selector_from_metadata(metadata: Option<&str>) -> Option<StoreSelector> {

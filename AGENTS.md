@@ -22,3 +22,4 @@ Important maps:
 - Memory and scoped data: `docs/architecture/maps/memory-scoped-data.md`
 - Runtime DB and graph: `docs/architecture/maps/runtime-db-graph.md`
 - Session context and hot history: `docs/architecture/maps/session-context-memory.md`
+- Session lifecycle: `docs/architecture/maps/session-lifecycle.md`

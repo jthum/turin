@@ -15,4 +15,5 @@ Maps:
 - [Memory and Scoped Data](./memory-scoped-data.md)
 - [Runtime DB and Graph](./runtime-db-graph.md)
 - [Scheduler and Worklists](./scheduler-worklists.md)
+- [Session Lifecycle](./session-lifecycle.md)
 - [Session Context and Hot History](./session-context-memory.md)
