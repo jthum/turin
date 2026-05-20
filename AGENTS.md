@@ -1,6 +1,7 @@
 # Agent Guidance
 
 This repository is maintained by humans and coding agents. Before editing a subsystem, read the closest durable architecture map under `docs/architecture/maps/`.
+For the current runtime refactor status and remaining candidates, read `docs/architecture/refactor-checkpoint.md`.
 
 Key rules:
 
