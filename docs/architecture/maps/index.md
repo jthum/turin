@@ -7,5 +7,6 @@ Keep maps concise. They should explain how to work safely in a subsystem, not li
 Maps:
 
 - [Channels](./channels.md)
+- [Memory and Scoped Data](./memory-scoped-data.md)
 - [Scheduler and Worklists](./scheduler-worklists.md)
 - [Session Context and Hot History](./session-context-memory.md)
