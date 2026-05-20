@@ -13,6 +13,144 @@ use super::{
     augment_memory_metadata, open_state_store, selector_scope_ref,
 };
 
+struct MemoryEmbedding {
+    vector: Option<Vec<f32>>,
+    config_key: Option<String>,
+    dimensions: Option<usize>,
+}
+
+impl MemoryEmbedding {
+    fn lexical_only() -> Self {
+        Self {
+            vector: None,
+            config_key: None,
+            dimensions: None,
+        }
+    }
+
+    async fn from_provider(
+        provider: &Arc<dyn EmbeddingProvider>,
+        content: &str,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            vector: Some(provider.embed(content).await?.vector),
+            config_key: Some(provider.config_key()),
+            dimensions: Some(provider.dimensions()),
+        })
+    }
+
+    fn vector(&self) -> Option<&[f32]> {
+        self.vector.as_deref()
+    }
+
+    fn config_key(&self) -> Option<&str> {
+        self.config_key.as_deref()
+    }
+}
+
+async fn resolve_store_embedding(
+    operation: &str,
+    embedding_provider: Option<&Arc<dyn EmbeddingProvider>>,
+    content: &str,
+    mode: MemoryStoreMode,
+) -> anyhow::Result<MemoryEmbedding> {
+    match mode {
+        MemoryStoreMode::Auto => match embedding_provider {
+            Some(provider) => MemoryEmbedding::from_provider(provider, content).await,
+            None => Ok(MemoryEmbedding::lexical_only()),
+        },
+        MemoryStoreMode::LexicalOnly => Ok(MemoryEmbedding::lexical_only()),
+        MemoryStoreMode::Embedded => {
+            let provider = embedding_provider.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "runtime.memory.{}: storage='embedded' requires an embedding provider",
+                    operation
+                )
+            })?;
+            MemoryEmbedding::from_provider(provider, content).await
+        }
+    }
+}
+
+fn resolve_search_mode(
+    request: &MemorySearchRequest,
+    has_embedding_provider: bool,
+) -> anyhow::Result<MemorySearchMode> {
+    match request.mode {
+        MemorySearchMode::Auto if has_embedding_provider => Ok(MemorySearchMode::Hybrid),
+        MemorySearchMode::Auto => Ok(MemorySearchMode::Lexical),
+        MemorySearchMode::Lexical => Ok(MemorySearchMode::Lexical),
+        MemorySearchMode::Semantic if has_embedding_provider => Ok(MemorySearchMode::Semantic),
+        MemorySearchMode::Semantic if request.strict => {
+            anyhow::bail!("runtime.memory.search: semantic mode requires an embedding provider")
+        }
+        MemorySearchMode::Semantic => Ok(MemorySearchMode::Lexical),
+        MemorySearchMode::Hybrid if has_embedding_provider => Ok(MemorySearchMode::Hybrid),
+        MemorySearchMode::Hybrid if request.strict => {
+            anyhow::bail!("runtime.memory.search: hybrid mode requires an embedding provider")
+        }
+        MemorySearchMode::Hybrid => Ok(MemorySearchMode::Lexical),
+    }
+}
+
+async fn resolve_search_embedding(
+    embedding_provider: Option<&Arc<dyn EmbeddingProvider>>,
+    query: &str,
+    mode: MemorySearchMode,
+) -> anyhow::Result<MemoryEmbedding> {
+    match mode {
+        MemorySearchMode::Semantic | MemorySearchMode::Hybrid => {
+            let provider = embedding_provider.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "runtime.memory.search: semantic mode requires an embedding provider"
+                )
+            })?;
+            MemoryEmbedding::from_provider(provider, query).await
+        }
+        MemorySearchMode::Auto | MemorySearchMode::Lexical => Ok(MemoryEmbedding::lexical_only()),
+    }
+}
+
+fn lexical_query_for(mode: MemorySearchMode, query: &str) -> Option<&str> {
+    match mode {
+        MemorySearchMode::Lexical | MemorySearchMode::Hybrid | MemorySearchMode::Auto => {
+            Some(query)
+        }
+        MemorySearchMode::Semantic => None,
+    }
+}
+
+fn search_sources(
+    selector: &ContextSelector,
+    request: &MemorySearchRequest,
+) -> anyhow::Result<Vec<MemorySearchSource>> {
+    if !request.sources.is_empty() {
+        return Ok(request.sources.clone());
+    }
+
+    let scope = selector_scope_ref(selector)?;
+    Ok(vec![MemorySearchSource {
+        scope_kind: scope.scope_kind,
+        scope_key: scope.scope_key,
+        raw_scope_key: scope.raw_scope_key.unwrap_or_default(),
+        namespace: scope.namespace,
+        store_selector: request.store_selector.clone(),
+    }])
+}
+
+fn parse_public_memory_id(memory_id: &str, operation: &str) -> anyhow::Result<uuid::Uuid> {
+    uuid::Uuid::parse_str(memory_id)
+        .map_err(|e| anyhow::anyhow!("runtime.memory.{}: invalid memory id: {}", operation, e))
+}
+
+fn feedback_delta(signal: MemoryFeedbackSignal, request: &MemoryFeedbackRequest) -> f64 {
+    match signal {
+        MemoryFeedbackSignal::Up => request.step,
+        MemoryFeedbackSignal::Down => -request.step,
+        MemoryFeedbackSignal::Delta(delta) => delta,
+    }
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) async fn memory_store_backend(
     manager: &StoreManager,
@@ -46,39 +184,17 @@ pub(crate) async fn memory_store_backend_with_request(
 ) -> anyhow::Result<StoredMemoryRow> {
     let store = open_state_store(manager, request.store_selector.as_ref(), path_scope).await?;
     let scope = selector_scope_ref(selector)?;
-    let vector = match request.storage {
-        MemoryStoreMode::Auto => {
-            if let Some(provider) = embedding_provider {
-                Some(provider.embed(content).await?.vector)
-            } else {
-                None
-            }
-        }
-        MemoryStoreMode::LexicalOnly => None,
-        MemoryStoreMode::Embedded => {
-            let provider = embedding_provider.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "runtime.memory.store: storage='embedded' requires an embedding provider"
-                )
-            })?;
-            Some(provider.embed(content).await?.vector)
-        }
-    };
-    let embedding_key = vector
-        .as_ref()
-        .and_then(|_| embedding_provider.map(|provider| provider.config_key()));
-    let embedding_dimensions = vector
-        .as_ref()
-        .and_then(|_| embedding_provider.map(|provider| provider.dimensions()));
+    let embedding =
+        resolve_store_embedding("store", embedding_provider, content, request.storage).await?;
     let metadata = augment_memory_metadata(metadata, request);
     store
         .insert_memory(
             &scope.scope_kind,
             &scope.scope_key,
             content,
-            vector.as_deref(),
-            embedding_key.as_deref(),
-            embedding_dimensions,
+            embedding.vector(),
+            embedding.config_key(),
+            embedding.dimensions,
             &metadata,
         )
         .await
@@ -121,73 +237,10 @@ pub(crate) async fn memory_search_backend_with_request(
         return Ok(Vec::new());
     }
 
-    let effective_mode = match request.mode {
-        MemorySearchMode::Auto => {
-            if embedding_provider.is_some() {
-                MemorySearchMode::Hybrid
-            } else {
-                MemorySearchMode::Lexical
-            }
-        }
-        MemorySearchMode::Lexical => MemorySearchMode::Lexical,
-        MemorySearchMode::Semantic => {
-            if embedding_provider.is_some() {
-                MemorySearchMode::Semantic
-            } else if request.strict {
-                anyhow::bail!(
-                    "runtime.memory.search: semantic mode requires an embedding provider"
-                );
-            } else {
-                MemorySearchMode::Lexical
-            }
-        }
-        MemorySearchMode::Hybrid => {
-            if embedding_provider.is_some() {
-                MemorySearchMode::Hybrid
-            } else if request.strict {
-                anyhow::bail!("runtime.memory.search: hybrid mode requires an embedding provider");
-            } else {
-                MemorySearchMode::Lexical
-            }
-        }
-    };
-
-    let vector = match effective_mode {
-        MemorySearchMode::Semantic | MemorySearchMode::Hybrid => {
-            let provider = embedding_provider.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "runtime.memory.search: semantic mode requires an embedding provider"
-                )
-            })?;
-            Some(provider.embed(query).await?.vector)
-        }
-        MemorySearchMode::Auto | MemorySearchMode::Lexical => None,
-    };
-    let query_embedding_key = vector
-        .as_ref()
-        .and_then(|_| embedding_provider.map(|provider| provider.config_key()));
-    let query_embedding_dimensions = vector
-        .as_ref()
-        .and_then(|_| embedding_provider.map(|provider| provider.dimensions()));
-    let lexical_query = match effective_mode {
-        MemorySearchMode::Lexical | MemorySearchMode::Hybrid | MemorySearchMode::Auto => {
-            Some(query)
-        }
-        MemorySearchMode::Semantic => None,
-    };
-
-    let default_scope = selector_scope_ref(selector)?;
-    let sources = if request.sources.is_empty() {
-        vec![MemorySearchSource {
-            scope_kind: default_scope.scope_kind,
-            scope_key: default_scope.scope_key,
-            raw_scope_key: default_scope.raw_scope_key.unwrap_or_default(),
-            namespace: default_scope.namespace,
-            store_selector: request.store_selector.clone(),
-        }]
-    } else {
-        request.sources.clone()
-    };
+    let effective_mode = resolve_search_mode(request, embedding_provider.is_some())?;
+    let embedding = resolve_search_embedding(embedding_provider, query, effective_mode).await?;
+    let lexical_query = lexical_query_for(effective_mode, query);
+    let sources = search_sources(selector, request)?;
 
     let mut combined = Vec::new();
     for source in &sources {
@@ -196,9 +249,9 @@ pub(crate) async fn memory_search_backend_with_request(
             .search_memories(
                 &source.scope_kind,
                 &source.scope_key,
-                vector.as_deref(),
-                query_embedding_key.as_deref(),
-                query_embedding_dimensions,
+                embedding.vector(),
+                embedding.config_key(),
+                embedding.dimensions,
                 lexical_query,
                 request.limit,
                 request.min_score,
@@ -230,13 +283,8 @@ pub(crate) async fn memory_feedback_backend_with_request(
 ) -> anyhow::Result<MemoryFeedbackState> {
     let store = open_state_store(manager, request.store_selector.as_ref(), path_scope).await?;
     let scope = selector_scope_ref(selector)?;
-    let public_id = uuid::Uuid::parse_str(memory_id)
-        .map_err(|e| anyhow::anyhow!("runtime.memory.feedback: invalid memory id: {}", e))?;
-    let delta = match signal {
-        MemoryFeedbackSignal::Up => request.step,
-        MemoryFeedbackSignal::Down => -request.step,
-        MemoryFeedbackSignal::Delta(delta) => delta,
-    };
+    let public_id = parse_public_memory_id(memory_id, "feedback")?;
+    let delta = feedback_delta(signal, request);
     store
         .apply_memory_feedback(
             &scope.scope_kind,
@@ -264,32 +312,9 @@ pub(crate) async fn memory_correct_backend_with_request(
 ) -> anyhow::Result<MemoryCorrectionRow> {
     let store = open_state_store(manager, request.store_selector.as_ref(), path_scope).await?;
     let scope = selector_scope_ref(selector)?;
-    let public_id = uuid::Uuid::parse_str(memory_id)
-        .map_err(|e| anyhow::anyhow!("runtime.memory.correct: invalid memory id: {}", e))?;
-    let vector = match request.storage {
-        MemoryStoreMode::Auto => {
-            if let Some(provider) = embedding_provider {
-                Some(provider.embed(content).await?.vector)
-            } else {
-                None
-            }
-        }
-        MemoryStoreMode::LexicalOnly => None,
-        MemoryStoreMode::Embedded => {
-            let provider = embedding_provider.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "runtime.memory.correct: storage='embedded' requires an embedding provider"
-                )
-            })?;
-            Some(provider.embed(content).await?.vector)
-        }
-    };
-    let embedding_key = vector
-        .as_ref()
-        .and_then(|_| embedding_provider.map(|provider| provider.config_key()));
-    let embedding_dimensions = vector
-        .as_ref()
-        .and_then(|_| embedding_provider.map(|provider| provider.dimensions()));
+    let public_id = parse_public_memory_id(memory_id, "correct")?;
+    let embedding =
+        resolve_store_embedding("correct", embedding_provider, content, request.storage).await?;
     let metadata = augment_memory_metadata(metadata, request);
     store
         .correct_memory(
@@ -297,9 +322,9 @@ pub(crate) async fn memory_correct_backend_with_request(
             &scope.scope_key,
             public_id,
             content,
-            vector.as_deref(),
-            embedding_key.as_deref(),
-            embedding_dimensions,
+            embedding.vector(),
+            embedding.config_key(),
+            embedding.dimensions,
             &metadata,
         )
         .await
