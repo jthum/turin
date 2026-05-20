@@ -36,7 +36,7 @@ Shared protocol and runner crates:
 Daemon-side runtime:
 
 - `src/daemon/channels.rs`
-  - Channel runtime supervisor and runtime snapshots.
+  - Channel runtime supervisor, runtime snapshots, and named runtime-state transitions.
 - `src/daemon/channel_runners.rs`
   - Sidecar binary resolution and launch argument construction.
 - `src/daemon/state/channel_validation.rs`
@@ -96,6 +96,8 @@ Conversation bindings:
 - Platform adapters should own platform normalization and rendering only.
 - Shared access policy belongs in `turin-channel-runner`, not individual adapters.
 - Common sidecar startup behavior belongs in `sidecar.rs`.
+- Optional string-enum settings should use shared settings helpers from `turin-channel-core` when the adapter only needs local allowed-value mapping.
+- Runtime snapshot state changes should use the transition helpers in `src/daemon/channels.rs`; avoid open-coded edits to state, error fields, transition times, counters, and handshake timestamps.
 - Each adapter must validate platform-specific settings without requiring live external credentials.
 - Auth-flow request parsing should use shared runner helpers so setup commands report consistent parse errors.
 - `ChannelDriver::user_matches_selector` remains adapter-specific because platform identity formats differ.
@@ -137,8 +139,9 @@ Change sidecar startup:
 Change daemon channel supervision:
 
 1. Change `src/daemon/channels.rs` or `src/daemon/channel_runners.rs`.
-2. Run daemon channel tests.
-3. Check runtime snapshot and heartbeat/restart behavior.
+2. Keep runtime state changes behind the snapshot transition helpers.
+3. Run daemon channel tests.
+4. Check runtime snapshot and heartbeat/restart behavior.
 
 ## Tests
 
@@ -160,7 +163,7 @@ cargo test -p turin-channel-whatsapp
 Daemon channel tests:
 
 ```sh
-cargo test -p turin daemon::tests::channels
+cargo test -p turin daemon::channels::tests
 cargo test -p turin channel --lib
 ```
 
@@ -177,6 +180,10 @@ git diff --check
 
 The runner crate now owns common sidecar runtime setup. This removed repeated setup code from Telegram, Rocket.Chat, Discord, and WhatsApp sidecar binaries while keeping adapter-specific driver construction in each adapter.
 
+Shared channel settings helpers cover common optional string-enum parsing. Telegram, Rocket.Chat, and runner access policy use the shared shape while keeping each allowed-value table and error text local.
+
+Daemon channel supervision keeps runtime-state mutation behind named transition helpers. This is meant to prevent drift between start, restart, stale-heartbeat, clean-stop, shutdown, and failure paths.
+
 The current module split is deliberate:
 
 - `turin-channel-core` answers "what common channel protocol shapes exist?"
@@ -187,8 +194,6 @@ The current module split is deliberate:
 
 Likely future cleanup areas:
 
-- compare adapter settings parsing for remaining duplicated range/enum/string handling
-- review daemon channel supervisor state for noisy defensive branches
+- compare adapter settings parsing for remaining duplicated range/string handling
 - consider shared outbound rendering helpers only where platform formatting rules genuinely overlap
 - use perf tests to measure sidecar memory and daemon memory over long channel sessions
-
