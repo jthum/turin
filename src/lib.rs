@@ -5,6 +5,7 @@ pub mod inference;
 pub mod kernel;
 pub mod persistence;
 pub mod remote;
+pub(crate) mod schedule_support;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod tools;

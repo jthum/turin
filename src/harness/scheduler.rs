@@ -3,12 +3,15 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use tokio::sync::Notify;
 use turin_daemon_protocol::{
-    ContextPersistenceParams, ScheduleActionParams, ScheduleCreateParams, ScheduleJobDetail,
-    ScheduleJobRunDetail, ScheduleJobRunList, ScheduleUpdateParams, StoreTargetParams,
+    ScheduleActionParams, ScheduleCreateParams, ScheduleJobDetail, ScheduleJobRunList,
+    ScheduleUpdateParams,
 };
 
-use crate::persistence::schema::ScheduledJobRow;
 use crate::persistence::state::{ScheduledJobInsert, ScheduledJobUpdate, StateStore};
+use crate::schedule_support::{
+    map_scheduled_job_detail, map_scheduled_job_run_detail, parse_json, scheduled_job_action,
+    scheduled_job_persistence, scheduled_job_public_id, serialize_json, serialize_store_target,
+};
 
 #[derive(Clone)]
 pub struct HarnessSchedulerAccess {
@@ -122,9 +125,7 @@ impl HarnessSchedulerAccess {
         else {
             return Ok(None);
         };
-        let public_id = uuid::Uuid::from_slice(&row.public_id)
-            .map(|id| id.to_string())
-            .unwrap_or_else(|_| format_uuid_bytes_simple(&row.public_id));
+        let public_id = scheduled_job_public_id(&row.public_id);
         let runs = self
             .runtime_store
             .list_scheduled_job_runs(row.id, active_only, limit)
@@ -283,130 +284,6 @@ impl HarnessSchedulerAccess {
         }
         Ok(Some(detail))
     }
-}
-
-fn map_scheduled_job_detail(row: ScheduledJobRow) -> ScheduleJobDetail {
-    let public_id = uuid::Uuid::from_slice(&row.public_id)
-        .map(|id| id.to_string())
-        .unwrap_or_else(|_| format_uuid_bytes_simple(&row.public_id));
-    let persistence = scheduled_job_persistence(&row).ok().flatten();
-    let action = scheduled_job_action(&row).ok().flatten();
-    ScheduleJobDetail {
-        id: row.id,
-        public_id: public_id.clone(),
-        agent_id: row.agent_id,
-        kind: row.job_kind,
-        prompt: row.prompt,
-        content: parse_json(row.content.as_deref()).ok().flatten(),
-        tools: parse_json(row.tools.as_deref()).ok().flatten(),
-        conflict_policy: row.conflict_policy,
-        action,
-        persistence,
-        next_run_unix_ms: row.next_run_unix_ms,
-        interval_seconds: row.interval_seconds,
-        recurring_pattern: row.recurring_pattern,
-        overlap_policy: row.overlap_policy,
-        work_key: row.work_key,
-        max_concurrency: row.max_concurrency,
-        enabled: row.enabled,
-        slot_id: scheduled_job_slot_id(&public_id),
-        running_task_id: row.running_task_id,
-        active_run_count: row.active_run_count,
-        pending_rerun: row.pending_rerun,
-        last_run_unix_ms: row.last_run_unix_ms,
-        last_status: row.last_status,
-        last_error_code: row.last_error_code,
-        failure_count: row.failure_count,
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-    }
-}
-
-fn map_scheduled_job_run_detail(
-    row: crate::persistence::schema::ScheduledJobRunRow,
-) -> ScheduleJobRunDetail {
-    ScheduleJobRunDetail {
-        id: row.id,
-        task_id: row.task_id,
-        started_unix_ms: row.started_unix_ms,
-        finished_unix_ms: row.finished_unix_ms,
-        duration_ms: row
-            .finished_unix_ms
-            .and_then(|finished| finished.checked_sub(row.started_unix_ms))
-            .map(|duration| duration as u64),
-        last_status: row.last_status,
-        active: row.finished_unix_ms.is_none(),
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-    }
-}
-
-fn scheduled_job_slot_id(public_id: &str) -> String {
-    format!("sched_{}", public_id.replace('-', ""))
-}
-
-fn format_uuid_bytes_simple(bytes: &[u8]) -> String {
-    uuid::Uuid::from_slice(bytes)
-        .map(|uuid| uuid.simple().to_string())
-        .unwrap_or_else(|_| {
-            let mut out = String::with_capacity(bytes.len() * 2);
-            for byte in bytes {
-                use std::fmt::Write as _;
-                let _ = write!(&mut out, "{:02x}", byte);
-            }
-            out
-        })
-}
-
-fn serialize_store_target(target: Option<&StoreTargetParams>) -> Result<Option<String>> {
-    target
-        .map(serde_json::to_string)
-        .transpose()
-        .map_err(anyhow::Error::from)
-}
-
-fn parse_store_target(raw: Option<&str>) -> Result<Option<StoreTargetParams>> {
-    raw.map(serde_json::from_str)
-        .transpose()
-        .map_err(anyhow::Error::from)
-}
-
-fn parse_json<T>(raw: Option<&str>) -> Result<Option<T>>
-where
-    T: serde::de::DeserializeOwned,
-{
-    raw.map(serde_json::from_str)
-        .transpose()
-        .map_err(anyhow::Error::from)
-}
-
-fn serialize_json<T>(value: Option<&T>) -> Result<Option<String>>
-where
-    T: serde::Serialize,
-{
-    value
-        .map(serde_json::to_string)
-        .transpose()
-        .map_err(anyhow::Error::from)
-}
-
-fn scheduled_job_persistence(job: &ScheduledJobRow) -> Result<Option<ContextPersistenceParams>> {
-    let state = parse_store_target(job.state_target.as_deref())?;
-    let store = parse_store_target(job.store_target.as_deref())?;
-    if state.is_none() && store.is_none() {
-        return Ok(None);
-    }
-    Ok(Some(ContextPersistenceParams { state, store }))
-}
-
-fn scheduled_job_action(job: &ScheduledJobRow) -> Result<Option<ScheduleActionParams>> {
-    let Some(name) = job.action_name.clone() else {
-        return Ok(None);
-    };
-    Ok(Some(ScheduleActionParams {
-        name,
-        params: parse_json(job.action_params.as_deref())?,
-    }))
 }
 
 fn validate_schedule_recurrence(
