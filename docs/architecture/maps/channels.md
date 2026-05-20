@@ -38,7 +38,9 @@ Shared protocol and runner crates:
 Daemon-side runtime:
 
 - `src/daemon/channels.rs`
-  - Channel runtime supervisor, runtime snapshots, and named runtime-state transitions.
+  - Channel runtime supervisor, desired-state sync, sidecar process lifecycle, heartbeat supervision, and runtime event emission.
+- `src/daemon/channels/runtime_state.rs`
+  - Runtime snapshot structs and named runtime-state transitions.
 - `src/daemon/channel_runners.rs`
   - Daemon-facing wrapper around host-side sidecar discovery plus the built-in `fs` manifest.
 - `src/daemon/state/channel_validation.rs`
@@ -100,7 +102,7 @@ Conversation bindings:
 - Common sidecar startup behavior belongs in `sidecar.rs`.
 - Host-side sidecar process discovery/invocation belongs in `turin-channel-host`, not separately in the daemon and manager.
 - Optional string-enum settings should use shared settings helpers from `turin-channel-core` when the adapter only needs local allowed-value mapping.
-- Runtime snapshot state changes should use the transition helpers in `src/daemon/channels.rs`; avoid open-coded edits to state, error fields, transition times, counters, and handshake timestamps.
+- Runtime snapshot state changes should use transition helpers from `src/daemon/channels/runtime_state.rs`; avoid open-coded edits to state, error fields, transition times, counters, and handshake timestamps.
 - Each adapter must validate platform-specific settings without requiring live external credentials.
 - Auth-flow request parsing should use shared runner helpers so setup commands report consistent parse errors.
 - `ChannelDriver::user_matches_selector` remains adapter-specific because platform identity formats differ.
@@ -187,7 +189,7 @@ The host crate owns external sidecar discovery and subprocess command helpers. T
 
 Shared channel settings helpers cover common optional string-enum parsing. Telegram, Rocket.Chat, and runner access policy use the shared shape while keeping each allowed-value table and error text local.
 
-Daemon channel supervision keeps runtime-state mutation behind named transition helpers. This is meant to prevent drift between start, restart, stale-heartbeat, clean-stop, shutdown, and failure paths.
+Daemon channel supervision keeps runtime-state mutation behind named transition helpers in `runtime_state.rs`. This is meant to prevent drift between start, restart, stale-heartbeat, clean-stop, shutdown, and failure paths.
 
 The current module split is deliberate:
 
@@ -196,7 +198,7 @@ The current module split is deliberate:
 - `turin-channel-runner/src/sidecar.rs` answers "how does a sidecar process start consistently?"
 - `turin-channel-host` answers "how does a Turin host process find and invoke sidecar binaries?"
 - adapter crates answer "how does this platform map to and from Turin channel shapes?"
-- daemon channel modules answer "how are sidecars configured, supervised, and surfaced?"
+- daemon channel modules answer "how are sidecars configured, supervised, state-tracked, and surfaced?"
 
 Likely future cleanup areas:
 

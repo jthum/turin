@@ -1,3 +1,5 @@
+mod runtime_state;
+
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -5,7 +7,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use serde::Serialize;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::{Mutex, broadcast};
@@ -15,6 +16,9 @@ use turin_daemon_protocol::{ChannelRunnerHeartbeatParams, ChannelRunnerHelloPara
 use crate::daemon::channel_runners;
 use crate::daemon::protocol::EventEnvelope;
 use crate::daemon::registry::DiscoveredChannel;
+
+pub use runtime_state::{ChannelRunnerHandshakeSnapshot, ChannelRuntimeSnapshot};
+use runtime_state::{STATE_FAILED, STATE_RUNNING, STATE_STARTING, STATE_UNSUPPORTED};
 
 #[cfg(not(test))]
 const CHANNEL_SUPERVISOR_INTERVAL: Duration = Duration::from_secs(5);
@@ -34,120 +38,6 @@ const CHANNEL_RESTART_BACKOFF_BASE: Duration = Duration::from_millis(100);
 const CHANNEL_RESTART_BACKOFF_MAX: Duration = Duration::from_secs(30);
 #[cfg(test)]
 const CHANNEL_RESTART_BACKOFF_MAX: Duration = Duration::from_secs(1);
-
-const STATE_STARTING: &str = "starting";
-const STATE_RUNNING: &str = "running";
-const STATE_STOPPED: &str = "stopped";
-const STATE_FAILED: &str = "failed";
-const STATE_UNSUPPORTED: &str = "unsupported";
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct ChannelRunnerHandshakeSnapshot {
-    pub display_name: String,
-    pub protocol_version: u32,
-    pub runner_binary: Option<String>,
-    pub runner_version: Option<String>,
-    pub pid: Option<u32>,
-    pub last_handshake_unix_ms: u64,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct ChannelRuntimeSnapshot {
-    pub id: String,
-    pub kind: String,
-    pub agent_id: String,
-    pub directory: String,
-    pub state: String,
-    pub last_error: Option<String>,
-    pub last_error_code: Option<String>,
-    pub start_count: u64,
-    pub restart_count: u64,
-    pub failure_count: u64,
-    pub last_transition_unix_ms: u64,
-    pub last_started_unix_ms: Option<u64>,
-    pub last_stopped_unix_ms: Option<u64>,
-    pub handshake: Option<ChannelRunnerHandshakeSnapshot>,
-}
-
-impl ChannelRuntimeSnapshot {
-    fn new_for_channel(channel: &DesiredChannel, state: &'static str, now: u64) -> Self {
-        Self {
-            id: channel.id.clone(),
-            kind: channel.kind.clone(),
-            agent_id: channel.agent_id.clone(),
-            directory: channel.directory.display().to_string(),
-            state: state.to_string(),
-            last_error: None,
-            last_error_code: None,
-            start_count: 0,
-            restart_count: 0,
-            failure_count: 0,
-            last_transition_unix_ms: now,
-            last_started_unix_ms: None,
-            last_stopped_unix_ms: Some(now),
-            handshake: None,
-        }
-    }
-
-    fn refresh_channel_identity(&mut self, channel: &DesiredChannel) {
-        self.kind = channel.kind.clone();
-        self.agent_id = channel.agent_id.clone();
-        self.directory = channel.directory.display().to_string();
-    }
-
-    fn mark_starting(&mut self, channel: &DesiredChannel, now: u64, count_restart: bool) {
-        self.refresh_channel_identity(channel);
-        self.state = STATE_STARTING.to_string();
-        self.last_error = None;
-        self.last_error_code = None;
-        self.start_count = self.start_count.saturating_add(1);
-        if count_restart {
-            self.restart_count = self.restart_count.saturating_add(1);
-        }
-        self.last_transition_unix_ms = now;
-    }
-
-    fn mark_running(&mut self, now: u64) {
-        self.state = STATE_RUNNING.to_string();
-        self.last_error = None;
-        self.last_error_code = None;
-        self.last_transition_unix_ms = now;
-        self.last_started_unix_ms = Some(now);
-    }
-
-    fn mark_stopped(&mut self, now: u64) {
-        self.state = STATE_STOPPED.to_string();
-        self.last_transition_unix_ms = now;
-        self.last_stopped_unix_ms = Some(now);
-    }
-
-    fn mark_clean_stopped(&mut self, now: u64) {
-        self.mark_stopped(now);
-        self.last_error = None;
-        self.last_error_code = None;
-    }
-
-    fn mark_failed(&mut self, error: String, error_code: String, now: u64) {
-        self.state = STATE_FAILED.to_string();
-        self.last_error = Some(error);
-        self.last_error_code = Some(error_code);
-        self.failure_count = self.failure_count.saturating_add(1);
-        self.last_transition_unix_ms = now;
-        self.last_stopped_unix_ms = Some(now);
-    }
-
-    fn mark_unsupported(&mut self, channel: &DesiredChannel, now: u64) {
-        self.refresh_channel_identity(channel);
-        self.state = STATE_UNSUPPORTED.to_string();
-        self.last_error = Some(format!(
-            "No built-in or external runner is available for channel kind '{}'",
-            channel.kind,
-        ));
-        self.last_error_code = Some("channel_kind_unsupported".to_string());
-        self.last_transition_unix_ms = now;
-        self.last_stopped_unix_ms = Some(now);
-    }
-}
 
 struct RuntimeHandle {
     signature: String,
@@ -233,6 +123,19 @@ impl DesiredChannel {
     }
 }
 
+impl From<&DiscoveredChannel> for DesiredChannel {
+    fn from(channel: &DiscoveredChannel) -> Self {
+        Self {
+            id: channel.id.clone(),
+            kind: channel.kind.clone(),
+            agent_id: channel.agent_id.clone(),
+            directory: channel.directory.clone(),
+            idle_timeout_seconds: channel.idle_timeout_seconds,
+            settings: serde_json::to_value(channel.extra.clone()).unwrap_or_default(),
+        }
+    }
+}
+
 struct Inner {
     workspace_root: PathBuf,
     desired_channels: HashMap<String, DiscoveredChannel>,
@@ -285,17 +188,8 @@ impl ChannelRuntimeManager {
             .into_iter()
             .filter(|channel| channel.enabled)
             .collect();
-        let desired: Vec<DesiredChannel> = desired_registry_channels
-            .iter()
-            .map(|channel| DesiredChannel {
-                id: channel.id.clone(),
-                kind: channel.kind.clone(),
-                agent_id: channel.agent_id.clone(),
-                directory: channel.directory.clone(),
-                idle_timeout_seconds: channel.idle_timeout_seconds,
-                settings: serde_json::to_value(channel.extra.clone()).unwrap_or_default(),
-            })
-            .collect();
+        let desired: Vec<DesiredChannel> =
+            desired_registry_channels.iter().map(Into::into).collect();
 
         let desired_ids: HashSet<String> =
             desired.iter().map(|channel| channel.id.clone()).collect();

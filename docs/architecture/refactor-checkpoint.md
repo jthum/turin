@@ -21,6 +21,7 @@ These areas have been structurally reviewed, lightly refactored, tested, and map
 - Agent session bindings
 - Channels
 - Code search
+- Daemon channel supervision
 - Daemon runtime state
 - Governance
 - Harness system globals
@@ -40,13 +41,16 @@ Read the matching files under `docs/architecture/maps/` before editing any of th
 
 The refactor started as a structural extraction pass, then became stricter:
 
-- Avoid splitting files just because they are large.
+- Split god files when they hide distinct responsibilities, repeated policy, or risky change boundaries.
+- Avoid splitting files just because they are large; size is a signal to inspect, not proof of a good boundary.
 - Prefer reductions that remove duplicated policy, parsing, selection, or conversion logic.
 - Keep behavior-preserving refactors separate from semantic changes.
 - Add maps for subsystems while the context is fresh.
 - Commit only tested checkpoints.
 
 This was the right correction. Several later passes were deliberately small because adding a helper would have made the code more abstract without making it more obviously better.
+
+There are no active users yet, so Turin can still afford high-risk or breaking refactors when they buy real long-term quality: cleaner contracts, simpler semantics, better performance/memory behavior, or safer extension points. That freedom should be used deliberately, not as permission to churn stable code without a concrete gain.
 
 ## Remaining Good Candidates
 
