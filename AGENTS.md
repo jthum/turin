@@ -17,4 +17,5 @@ Important maps:
 - Code search: `docs/architecture/maps/code-search.md`
 - MCP integration: `docs/architecture/maps/mcp.md`
 - Memory and scoped data: `docs/architecture/maps/memory-scoped-data.md`
+- Runtime DB and graph: `docs/architecture/maps/runtime-db-graph.md`
 - Session context and hot history: `docs/architecture/maps/session-context-memory.md`
