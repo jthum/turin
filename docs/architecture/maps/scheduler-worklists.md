@@ -25,6 +25,8 @@ This subsystem should preserve two guarantees:
   - Harness runtime worklist API exposed to Lua.
 - `src/harness/stdlib/runtime_worklist_selection.rs`
   - Shared runtime work item selection rules for pending, orphaned, paused, active, next, empty, progress, and child queries.
+- `src/harness/stdlib/runtime_schedule.rs`
+  - Lua-facing `runtime.schedule` API: option parsing, capability gates, agent validation, and scheduler access bridging.
 - `src/harness/stdlib/action_bindings.rs`
   - Built-in action bridge for worklist actions invoked from harness code.
 - `src/persistence/state/scheduler.rs`
@@ -64,6 +66,13 @@ Runtime worklist dispatch:
 2. Prompt rows use the same `work_item_prompt_task` helper as scheduled worklist dispatch.
 3. Action rows invoke declared harness actions through `action_bindings`.
 
+Runtime schedule API:
+
+1. `runtime_schedule.rs` parses Lua options into daemon protocol params.
+2. It checks `runtime.schedule.*` capabilities and validates scheduled agent ids against harness config.
+3. It requires a daemon-managed `HarnessSchedulerAccess`; unmanaged runtimes return a Lua `(nil, err)` pair.
+4. It delegates CRUD, runs, enable/disable, and delete operations to daemon scheduler access.
+
 ## Invariants
 
 - A scheduled job must define exactly one payload kind: prompt or action.
@@ -77,6 +86,7 @@ Runtime worklist dispatch:
 - Scheduled worklist dispatch must not execute nested `worklist.*` actions from work item action payloads.
 - Work item prompt rows should become `QueuedTask`s through `work_item_prompt_task`, not ad hoc row parsing.
 - Worklist filtering should use shared `work_items.rs` helpers so scheduler, daemon, and runtime paths do not drift.
+- `runtime_schedule.rs` should remain a binding/validation layer; scheduler semantics belong in daemon state code.
 
 ## Common Changes
 

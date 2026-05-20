@@ -1,5 +1,5 @@
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use time::format_description::well_known::Rfc3339;
 use time::{Duration as TimeDuration, OffsetDateTime, Time, UtcOffset};
 use turin_daemon_protocol::{
@@ -9,7 +9,7 @@ use turin_daemon_protocol::{
 use turin_types::{TaskInputContent, ToolsConfig};
 
 use crate::harness::globals::HarnessAppData;
-use crate::harness::stdlib::binding_common::{bridge_async_result, nil_err, ok_value};
+use crate::harness::stdlib::binding_common::{bridge_async_result, json_ok, nil_err};
 use crate::harness::stdlib::governance_support::{current_agent_id, require_capability};
 use crate::harness::stdlib::object_refs;
 
@@ -469,6 +469,28 @@ fn scheduler_access(
         .ok_or_else(|| "runtime.schedule requires a daemon-managed runtime".to_string())
 }
 
+fn schedule_result<T: Serialize>(
+    lua: &Lua,
+    result: Result<T, String>,
+) -> LuaResult<(Value, Value)> {
+    match result {
+        Ok(value) => json_ok(lua, &value),
+        Err(err) => nil_err(lua, &err),
+    }
+}
+
+fn optional_schedule_result<T: Serialize>(
+    lua: &Lua,
+    result: Result<Option<T>, String>,
+    not_found: &str,
+) -> LuaResult<(Value, Value)> {
+    match result {
+        Ok(Some(value)) => json_ok(lua, &value),
+        Ok(None) => nil_err(lua, not_found),
+        Err(err) => nil_err(lua, &err),
+    }
+}
+
 pub fn register_runtime_schedule_namespace(
     lua: &Lua,
     runtime_table: &Table,
@@ -504,10 +526,7 @@ pub fn register_runtime_schedule_namespace(
                         .await
                         .map_err(|e| e.to_string())
                 });
-                match result {
-                    Ok(job) => Ok(ok_value(lua.to_value(&job)?)),
-                    Err(err) => nil_err(lua, &err),
-                }
+                schedule_result(lua, result)
             })?,
         )?;
     }
@@ -538,11 +557,7 @@ pub fn register_runtime_schedule_namespace(
                         .await
                         .map_err(|e| e.to_string())
                 });
-                match result {
-                    Ok(Some(job)) => Ok(ok_value(lua.to_value(&job)?)),
-                    Ok(None) => nil_err(lua, "Scheduled job not found"),
-                    Err(err) => nil_err(lua, &err),
-                }
+                optional_schedule_result(lua, result, "Scheduled job not found")
             })?,
         )?;
     }
@@ -572,19 +587,14 @@ pub fn register_runtime_schedule_namespace(
                 let result = bridge_async_result(async move {
                     scheduler.list_jobs().await.map_err(|e| e.to_string())
                 });
-                match result {
-                    Ok(jobs) => {
-                        let jobs: Vec<_> = match parsed.agent {
-                            Some(agent) => jobs
-                                .into_iter()
-                                .filter(|job| job.agent_id == agent)
-                                .collect(),
-                            None => jobs,
-                        };
-                        Ok(ok_value(lua.to_value(&jobs)?))
-                    }
-                    Err(err) => nil_err(lua, &err),
-                }
+                let result = result.map(|jobs| match parsed.agent {
+                    Some(agent) => jobs
+                        .into_iter()
+                        .filter(|job| job.agent_id == agent)
+                        .collect(),
+                    None => jobs,
+                });
+                schedule_result(lua, result)
             })?,
         )?;
     }
@@ -606,11 +616,7 @@ pub fn register_runtime_schedule_namespace(
                         .await
                         .map_err(|e| e.to_string())
                 });
-                match result {
-                    Ok(Some(job)) => Ok(ok_value(lua.to_value(&job)?)),
-                    Ok(None) => nil_err(lua, "scheduled job not found"),
-                    Err(err) => nil_err(lua, &err),
-                }
+                optional_schedule_result(lua, result, "scheduled job not found")
             })?,
         )?;
     }
@@ -643,11 +649,7 @@ pub fn register_runtime_schedule_namespace(
                         .await
                         .map_err(|e| e.to_string())
                 });
-                match result {
-                    Ok(Some(runs)) => Ok(ok_value(lua.to_value(&runs)?)),
-                    Ok(None) => nil_err(lua, "scheduled job not found"),
-                    Err(err) => nil_err(lua, &err),
-                }
+                optional_schedule_result(lua, result, "scheduled job not found")
             })?,
         )?;
     }
@@ -669,11 +671,7 @@ pub fn register_runtime_schedule_namespace(
                         .await
                         .map_err(|e| e.to_string())
                 });
-                match result {
-                    Ok(Some(job)) => Ok(ok_value(lua.to_value(&job)?)),
-                    Ok(None) => nil_err(lua, "scheduled job not found"),
-                    Err(err) => nil_err(lua, &err),
-                }
+                optional_schedule_result(lua, result, "scheduled job not found")
             })?,
         )?;
     }
@@ -695,11 +693,7 @@ pub fn register_runtime_schedule_namespace(
                         .await
                         .map_err(|e| e.to_string())
                 });
-                match result {
-                    Ok(Some(job)) => Ok(ok_value(lua.to_value(&job)?)),
-                    Ok(None) => nil_err(lua, "scheduled job not found"),
-                    Err(err) => nil_err(lua, &err),
-                }
+                optional_schedule_result(lua, result, "scheduled job not found")
             })?,
         )?;
     }
@@ -721,11 +715,7 @@ pub fn register_runtime_schedule_namespace(
                         .await
                         .map_err(|e| e.to_string())
                 });
-                match result {
-                    Ok(Some(job)) => Ok(ok_value(lua.to_value(&job)?)),
-                    Ok(None) => nil_err(lua, "scheduled job not found"),
-                    Err(err) => nil_err(lua, &err),
-                }
+                optional_schedule_result(lua, result, "scheduled job not found")
             })?,
         )?;
     }
