@@ -18,7 +18,6 @@ use crate::harness::stdlib::governance_support::{current_agent_id, require_capab
 use crate::harness::stdlib::object_refs;
 use crate::harness::stdlib::policy_support::runtime_policy_snapshot;
 use crate::kernel::identity::ContextSelector;
-use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask};
 use crate::persistence::manager::{StoreManager, StoreSelector};
 use crate::persistence::schema::{WorkItemRow, WorklistRow};
 use crate::persistence::state::{StateStore, WorkItemInsert, WorkItemUpdate};
@@ -29,6 +28,7 @@ use crate::work_items::{
     work_item_is_orphaned as row_is_orphaned, work_item_matches_where as shared_row_matches_where,
     work_item_pause_due as row_pause_due, work_item_pause_reason as row_pause_reason,
     work_item_pause_until_unix_ms as row_pause_until_unix_ms, work_item_paused as row_paused,
+    work_item_prompt_task,
 };
 
 #[derive(Clone)]
@@ -451,21 +451,8 @@ fn dispatch_prompt_item(
     row: &WorkItemRow,
     app_data: &HarnessAppData,
 ) -> anyhow::Result<serde_json::Value> {
-    let prompt = row
-        .prompt
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("prompt work item '{}' is missing prompt", row.title))?;
     let trace_id = active_trace_id(app_data);
-    let mut task = QueuedTask::ad_hoc(prompt).with_inherited_trace(trace_id.as_deref());
-    task.title = Some(row.title.clone());
-    task.content = parse_json_opt::<Vec<TaskInputContent>>(row.content.as_deref())?;
-    task.tools = parse_json_opt::<ToolsConfig>(row.tools.as_deref())?;
-    task.conflict_policy = row
-        .conflict_policy
-        .as_deref()
-        .map(str::parse::<ExecutionConflictPolicy>)
-        .transpose()
-        .map_err(anyhow::Error::msg)?;
+    let task = work_item_prompt_task(row, trace_id.as_deref())?;
 
     let snapshot = runtime_policy_snapshot(app_data).map_err(anyhow::Error::msg)?;
     let task_id = crate::harness::globals::block_on_current(async {

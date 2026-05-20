@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
+use anyhow::{Result, anyhow};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
+use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask};
 use crate::persistence::schema::WorkItemRow;
 
 pub(crate) enum WorkItemParentId<'a> {
@@ -107,6 +109,28 @@ pub(crate) fn work_item_dependencies_satisfied(
         .all(|dep| status_map.get(&dep).is_some_and(|status| status == "done"))
 }
 
+pub(crate) fn work_item_prompt_task(
+    row: &WorkItemRow,
+    inherited_trace_id: Option<&str>,
+) -> Result<QueuedTask> {
+    let mut task = QueuedTask::ad_hoc(
+        row.prompt
+            .clone()
+            .ok_or_else(|| anyhow!("Prompt work item '{}' is missing prompt", row.title))?,
+    )
+    .with_inherited_trace(inherited_trace_id);
+    task.title = Some(row.title.clone());
+    task.content = parse_json_opt(row.content.as_deref())?;
+    task.tools = parse_json_opt(row.tools.as_deref())?;
+    task.conflict_policy = row
+        .conflict_policy
+        .as_deref()
+        .map(str::parse::<ExecutionConflictPolicy>)
+        .transpose()
+        .map_err(anyhow::Error::msg)?;
+    Ok(task)
+}
+
 pub(crate) fn work_item_matches_where(
     row: &WorkItemRow,
     where_map: Option<&JsonMap<String, JsonValue>>,
@@ -162,4 +186,78 @@ fn metadata_pause_flag(metadata: Option<&JsonValue>) -> bool {
     map.get("paused")
         .and_then(|value| value.as_bool())
         .unwrap_or(false)
+}
+
+fn parse_json_opt<T>(raw: Option<&str>) -> Result<Option<T>>
+where
+    T: serde::de::DeserializeOwned,
+{
+    raw.map(serde_json::from_str)
+        .transpose()
+        .map_err(anyhow::Error::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::session::ExecutionConflictPolicy;
+
+    fn prompt_row() -> WorkItemRow {
+        WorkItemRow {
+            id: 1,
+            public_id: uuid::Uuid::now_v7().into_bytes().to_vec(),
+            worklist_id: 10,
+            parent_item_id: None,
+            title: "Review".to_string(),
+            item_kind: "prompt".to_string(),
+            prompt: Some("Check the report".to_string()),
+            content: None,
+            tools: Some(r#"{"allow":["shell"]}"#.to_string()),
+            conflict_policy: Some("fork_sibling".to_string()),
+            action_name: None,
+            action_params: None,
+            status: "pending".to_string(),
+            priority: 0,
+            after_ids: None,
+            metadata: None,
+            claim_agent_id: None,
+            claim_session_id: None,
+            claim_execution_id: None,
+            claim_heartbeat_unix_ms: None,
+            claimed_at: None,
+            completed_at: None,
+            failure_reason: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        }
+    }
+
+    #[test]
+    fn work_item_prompt_task_maps_prompt_fields() {
+        let task = work_item_prompt_task(&prompt_row(), Some("trace-1")).unwrap();
+
+        assert_eq!(task.title.as_deref(), Some("Review"));
+        assert_eq!(task.prompt, "Check the report");
+        assert_eq!(task.trace_id, "trace-1");
+        assert_eq!(
+            task.conflict_policy,
+            Some(ExecutionConflictPolicy::ForkSibling)
+        );
+        assert_eq!(
+            task.tools
+                .as_ref()
+                .and_then(|tools| tools.selection.allow.as_ref())
+                .cloned(),
+            Some(vec!["shell".to_string()])
+        );
+    }
+
+    #[test]
+    fn work_item_prompt_task_requires_prompt() {
+        let mut row = prompt_row();
+        row.prompt = None;
+
+        let err = work_item_prompt_task(&row, None).unwrap_err();
+        assert!(err.to_string().contains("missing prompt"));
+    }
 }

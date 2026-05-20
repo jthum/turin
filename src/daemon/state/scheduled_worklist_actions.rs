@@ -1,20 +1,19 @@
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use turin_daemon_protocol::ScheduleActionParams;
-use turin_types::ToolsConfig;
 
 use super::DaemonState;
 use super::scheduled_execution::ScheduledJobFailure;
 use crate::kernel::config::InferenceOverrideConfig;
-use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask};
 use crate::persistence::manager::StoreSelector;
-use crate::persistence::schema::WorkItemRow;
-use crate::schedule_support::parse_json;
+use crate::persistence::state::StateStore;
 use crate::work_items::{
     WorkItemParentId, public_id_string as format_work_item_public_id, work_item_claimable_now,
     work_item_dependencies_satisfied, work_item_is_orphaned, work_item_matches_where,
+    work_item_prompt_task,
 };
 
 impl DaemonState {
@@ -23,29 +22,12 @@ impl DaemonState {
         agent_id: &str,
         action: &ScheduleActionParams,
     ) -> std::result::Result<String, ScheduledJobFailure> {
-        let params = scheduled_worklist_action_params(action).map_err(|err| {
-            ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
-        })?;
-        let selector = scheduled_worklist_store_selector(&params).map_err(|err| {
-            ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
-        })?;
-        let store = self
-            .kernel
-            .store_manager()
-            .open(&selector)
+        let context = self.open_scheduled_worklist(action).await?;
+        let rows = context
+            .store
+            .list_work_items(context.worklist_id)
             .await
-            .map_err(|err| {
-                ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
-            })?;
-        let worklist = store
-            .open_worklist(&params.name, params.scope.as_deref().unwrap_or(""), None)
-            .await
-            .map_err(|err| {
-                ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
-            })?;
-        let rows = store.list_work_items(worklist.id).await.map_err(|err| {
-            ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
-        })?;
+            .map_err(builtin_failed)?;
         let status_map = rows
             .iter()
             .map(|row| {
@@ -66,27 +48,25 @@ impl DaemonState {
             .filter(|row| {
                 work_item_matches_where(
                     row,
-                    params.where_filter.as_ref(),
+                    context.params.where_filter.as_ref(),
                     WorkItemParentId::DatabaseId,
                 )
             })
-            .take(params.limit.unwrap_or(usize::MAX))
+            .take(context.params.limit.unwrap_or(usize::MAX))
         {
-            let claimed = store
+            let claimed = context
+                .store
                 .try_claim_work_item(row.id, agent_id, None, Some(&execution_id), now_unix_ms)
                 .await
-                .map_err(|err| {
-                    ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
-                })?;
+                .map_err(builtin_failed)?;
             if !claimed {
                 continue;
             }
-            let refreshed = store
+            let refreshed = context
+                .store
                 .get_work_item_by_id(row.id)
                 .await
-                .map_err(|err| {
-                    ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
-                })?
+                .map_err(builtin_failed)?
                 .ok_or_else(|| {
                     ScheduledJobFailure::new(
                         "schedule_action_builtin_failed",
@@ -130,7 +110,7 @@ impl DaemonState {
                         .open_session(
                             agent_id,
                             Some("worklist"),
-                            Some(selector.clone()),
+                            Some(context.selector.clone()),
                             None,
                             None,
                             InferenceOverrideConfig::default(),
@@ -148,7 +128,7 @@ impl DaemonState {
                         .submit_to_session(
                             &live.session_id,
                             Some(&live.slot_id),
-                            work_item_task(&refreshed).map_err(|err| {
+                            work_item_prompt_task(&refreshed, None).map_err(|err| {
                                 ScheduledJobFailure::new(
                                     "schedule_action_invalid_payload",
                                     err.to_string(),
@@ -175,31 +155,14 @@ impl DaemonState {
         &mut self,
         action: &ScheduleActionParams,
     ) -> std::result::Result<String, ScheduledJobFailure> {
-        let params = scheduled_worklist_action_params(action).map_err(|err| {
-            ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
-        })?;
-        let selector = scheduled_worklist_store_selector(&params).map_err(|err| {
-            ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
-        })?;
-        let store = self
-            .kernel
-            .store_manager()
-            .open(&selector)
+        let context = self.open_scheduled_worklist(action).await?;
+        let stale_before = now_unix_ms()
+            .saturating_sub(context.params.stale_after_seconds.unwrap_or(300) as i64 * 1000);
+        let rows = context
+            .store
+            .list_work_items(context.worklist_id)
             .await
-            .map_err(|err| {
-                ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
-            })?;
-        let worklist = store
-            .open_worklist(&params.name, params.scope.as_deref().unwrap_or(""), None)
-            .await
-            .map_err(|err| {
-                ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
-            })?;
-        let stale_before =
-            now_unix_ms().saturating_sub(params.stale_after_seconds.unwrap_or(300) as i64 * 1000);
-        let rows = store.list_work_items(worklist.id).await.map_err(|err| {
-            ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
-        })?;
+            .map_err(builtin_failed)?;
         let candidates = rows
             .into_iter()
             .filter(|row| row.parent_item_id.is_none())
@@ -207,21 +170,54 @@ impl DaemonState {
             .filter(|row| {
                 work_item_matches_where(
                     row,
-                    params.where_filter.as_ref(),
+                    context.params.where_filter.as_ref(),
                     WorkItemParentId::DatabaseId,
                 )
             })
-            .take(params.limit.unwrap_or(usize::MAX))
+            .take(context.params.limit.unwrap_or(usize::MAX))
             .collect::<Vec<_>>();
         let mut released = 0usize;
         for row in candidates {
-            store.release_work_item(row.id).await.map_err(|err| {
-                ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
-            })?;
+            context
+                .store
+                .release_work_item(row.id)
+                .await
+                .map_err(builtin_failed)?;
             released += 1;
         }
         Ok(format!("completed: released {} stale work items", released))
     }
+
+    async fn open_scheduled_worklist(
+        &self,
+        action: &ScheduleActionParams,
+    ) -> std::result::Result<ScheduledWorklistContext, ScheduledJobFailure> {
+        let params = scheduled_worklist_action_params(action).map_err(invalid_params)?;
+        let selector = scheduled_worklist_store_selector(&params).map_err(invalid_params)?;
+        let store = self
+            .kernel
+            .store_manager()
+            .open(&selector)
+            .await
+            .map_err(builtin_failed)?;
+        let worklist = store
+            .open_worklist(&params.name, params.scope.as_deref().unwrap_or(""), None)
+            .await
+            .map_err(builtin_failed)?;
+        Ok(ScheduledWorklistContext {
+            params,
+            selector,
+            store,
+            worklist_id: worklist.id,
+        })
+    }
+}
+
+struct ScheduledWorklistContext {
+    params: ScheduledWorklistActionParams,
+    selector: StoreSelector,
+    store: Arc<StateStore>,
+    worklist_id: i64,
 }
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -300,28 +296,12 @@ fn parse_store_selector_string(s: &str) -> StoreSelector {
     }
 }
 
-fn work_item_task(row: &WorkItemRow) -> Result<QueuedTask> {
-    let mut task = QueuedTask::ad_hoc(
-        row.prompt
-            .clone()
-            .ok_or_else(|| anyhow!("Prompt work item '{}' is missing prompt", row.title))?,
-    );
-    task.title = Some(row.title.clone());
-    task.content = parse_json(row.content.as_deref())?;
-    if let Some(tools) = parse_json::<ToolsConfig>(row.tools.as_deref())?
-        && !tools.is_empty()
-    {
-        task.tools = Some(tools);
-    }
-    task.conflict_policy = match row.conflict_policy.as_deref() {
-        Some(conflict_policy) => Some(
-            conflict_policy
-                .parse::<ExecutionConflictPolicy>()
-                .map_err(anyhow::Error::msg)?,
-        ),
-        None => None,
-    };
-    Ok(task)
+fn invalid_params(err: anyhow::Error) -> ScheduledJobFailure {
+    ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
+}
+
+fn builtin_failed(err: anyhow::Error) -> ScheduledJobFailure {
+    ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
 }
 
 fn now_unix_ms() -> i64 {
