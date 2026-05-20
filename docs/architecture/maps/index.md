@@ -6,5 +6,5 @@ Keep maps concise. They should explain how to work safely in a subsystem, not li
 
 Maps:
 
+- [Channels](./channels.md)
 - [Scheduler and Worklists](./scheduler-worklists.md)
-

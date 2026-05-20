@@ -13,4 +13,4 @@ Key rules:
 Important maps:
 
 - Scheduler and worklists: `docs/architecture/maps/scheduler-worklists.md`
-
+- Channels: `docs/architecture/maps/channels.md`
