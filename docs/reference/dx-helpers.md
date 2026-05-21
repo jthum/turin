@@ -446,3 +446,13 @@ if not rows then
   log("query failed: " .. tostring(err))
 end
 ```
+
+Use `try(...)` for optional inputs and best-effort work:
+
+```lua
+local spec, err = try(fs.read, "SPEC.md")
+if not spec then
+  log("optional spec missing: " .. tostring(err))
+  spec = ""
+end
+```

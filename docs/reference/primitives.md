@@ -31,6 +31,11 @@ if not rows then
 end
 ```
 
+Reach for `try(...)` when the harness can intentionally continue after a failed
+call. For example, optional files, optional code indexes, or best-effort telemetry
+should usually be wrapped; required state changes should usually use direct calls
+so failures abort loudly.
+
 ## Verdict Constants (for hooks)
 
 - `ALLOW`
@@ -174,7 +179,7 @@ Example:
 
 ```lua
 remember("Compiler errors should stay concise")
-local file, ferr = fs.read("SPEC.md")
+local file = fs.read("SPEC.md")
 local rows = code.find("capability decision")
 local project = scope("project", "my-app", { namespace = "notes" })
 ```

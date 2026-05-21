@@ -8,7 +8,7 @@ This subsystem should preserve four guarantees:
 
 - memory and KV operations resolve to the correct scope and backing store
 - embedding-backed memory is optional unless the caller explicitly requires it
-- Lua APIs return the conventional `(value, err)` shape consistently
+- public Lua APIs follow the shared direct-value / raise-on-failure contract
 - native tools and harness globals share backend policy instead of drifting
 
 ## Files
@@ -61,8 +61,9 @@ Memory search:
 Lua bridge:
 
 1. Namespace registration code owns the public API shape and argument order.
-2. Shared bridge helpers in `memory_kv_bindings/mod.rs` own backend invocation and `(value, err)` conversion.
-3. Backend errors cross Lua boundaries as string errors; successful rows are converted by `binding_common`.
+2. Shared bridge helpers in `memory_kv_bindings/mod.rs` own backend invocation and public result shaping.
+3. Backend errors become Lua runtime errors at the public API boundary; authors can recover with `try(fn, ...)`.
+4. Successful rows are converted by `binding_common`.
 
 ## Invariants
 

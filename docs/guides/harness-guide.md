@@ -944,21 +944,18 @@ The quick success check is simple: `turin-map status` should report `Semantic: e
 Then query it from the harness:
 
 ```lua
-local spec, ferr = fs.read("SPEC.md")
-if not spec then error(ferr) end
+local spec = fs.read("SPEC.md")
 
-local status, serr = runtime.code.search.status(".")
-if not status then error(serr) end
+local status = runtime.code.search.status(".")
 if status.semantic and status.semantic.vector_format then
   log("semantic vectors: " .. status.semantic.vector_format)
 end
 
-local rows, rerr = runtime.code.search.hybrid(".", "capability decision", {
+local rows = runtime.code.search.hybrid(".", "capability decision", {
   languages = { "rust" },
   trace = true,
   strict = false,
 })
-if not rows then error(rerr) end
 if rows[1] and rows[1].trace then
   log("effective mode: " .. rows[1].trace.effective_mode)
 end
@@ -1025,7 +1022,7 @@ runtime.graph.edge.create({
   target_role = "candidate",
 })
 
-local target, terr = runtime.graph.path.select({
+local target = runtime.graph.path.select({
   source = { kind = "graph_node", id = group.node_id },
   relation_kind = "contains",
   target_kind = "branch_head",
@@ -1033,7 +1030,6 @@ local target, terr = runtime.graph.path.select({
   order = "newest_first",
   limit = 1,
 })
-if not target then error(terr) end
 
 agent.sidestep("Analyze this candidate path", {
   target = target,
@@ -1043,13 +1039,12 @@ agent.sidestep("Analyze this candidate path", {
 If the harness already knows the exact sequence it wants, it can skip the graph-edge lookup and materialize an explicit ordered path directly:
 
 ```lua
-local target, terr = runtime.graph.path.select({
+local target = runtime.graph.path.select({
   refs = {
     { kind = "turn", id = "12" },
     { kind = "branch_head", id = branch.branch_id },
   },
 })
-if not target then error(terr) end
 ```
 
 ### Peer-agent orchestration
@@ -1084,9 +1079,9 @@ The fast bootstrap flow lives in `docs/getting-started/harness-cookbook.md`.
 ### Agent-scoped defaults
 
 ```lua
-local ok, err = kv.set("task_state", "working")
-local rows, merr = memory.search("build failure")
-local file, ferr = fs.read("README.md")
+kv.set("task_state", "working")
+local rows = memory.search("build failure")
+local file = fs.read("README.md")
 local hits = code.find("grant validation")
 remember("Release notes should stay terse")
 ```
@@ -1097,8 +1092,8 @@ before falling back to the primary `state` DB.
 ### Session/User scoped aliases
 
 ```lua
-local ok, err = session.kv.set("step", "planning")
-local profile, perr = user.kv.get("profile")
+session.kv.set("step", "planning")
+local profile = user.kv.get("profile")
 ```
 
 These aliases rely on the active runtime identity; `user.*` requires `identity.user_id`.
@@ -1125,8 +1120,7 @@ runtime.governance.grant({
   max_uses = 1,
   reason = "one-shot migration",
 }, function()
-  local changed, e = runtime.db.exec("delete from temp_rows where stale = 1")
-  if not changed then error(e) end
+  runtime.db.exec("delete from temp_rows where stale = 1")
 end)
 ```
 
@@ -1176,6 +1170,25 @@ end
 
 Public harness APIs raise on actual failure.
 Use `try(...)` or `pcall(...)` only when the harness wants to recover explicitly.
+
+`try(fn, ...)` returns `value, err`. It is useful when a missing file, unavailable
+semantic index, denied optional capability, or transient database issue should not
+abort the current turn.
+
+```lua
+local spec, err = try(fs.read, "SPEC.md")
+if not spec then
+  log("SPEC.md unavailable; continuing without it: " .. tostring(err))
+end
+
+local rows, search_err = try(runtime.code.search.hybrid, ".", "capability decision", {
+  strict = false,
+})
+if not rows then
+  log("code search unavailable: " .. tostring(search_err))
+  rows = {}
+end
+```
 
 ## Prefer canonical APIs in new code
 
