@@ -21,6 +21,7 @@ These areas have been structurally reviewed, lightly refactored, tested, and map
 - Agent session bindings
 - Channels
 - Code search
+- Config persistence ownership
 - Daemon channel supervision
 - Daemon runtime state
 - Governance

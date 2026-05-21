@@ -12,6 +12,7 @@ Maps:
 - [Daemon Runtime State](./daemon-runtime-state.md)
 - [Agent Session Bindings](./agent-session-bindings.md)
 - [Code Search](./code-search.md)
+- [Config](./config.md)
 - [Governance](./governance.md)
 - [Harness Context](./harness-context.md)
 - [Harness System Globals](./harness-system-globals.md)
