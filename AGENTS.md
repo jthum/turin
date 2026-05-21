@@ -29,6 +29,7 @@ Important maps:
 - Governance: `docs/architecture/maps/governance.md`
 - Harness context: `docs/architecture/maps/harness-context.md`
 - MCP integration: `docs/architecture/maps/mcp.md`
+- Manager: `docs/architecture/maps/manager.md`
 - Memory and scoped data: `docs/architecture/maps/memory-scoped-data.md`
 - Runtime DB and graph: `docs/architecture/maps/runtime-db-graph.md`
 - Session context and hot history: `docs/architecture/maps/session-context-memory.md`

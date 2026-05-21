@@ -20,6 +20,7 @@ Maps:
 - [Harness System Globals](./harness-system-globals.md)
 - [MCP Integration](./mcp.md)
 - [Memory and Scoped Data](./memory-scoped-data.md)
+- [Manager](./manager.md)
 - [Runtime DB and Graph](./runtime-db-graph.md)
 - [Scheduler and Worklists](./scheduler-worklists.md)
 - [Session Lifecycle](./session-lifecycle.md)
