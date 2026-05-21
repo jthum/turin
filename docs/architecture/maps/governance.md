@@ -10,10 +10,15 @@ This subsystem is security-sensitive. Refactors here should be small, test-backe
 
 - `src/kernel/governance.rs`
   - Governance snapshots.
-  - Capability rule matching and decisions.
+  - Capability decisions.
   - Agent/root/import/grant capability ceilings.
   - Child-agent allowlist enforcement.
   - Temporary grant issue/get/revoke/use validation.
+- `src/kernel/governance/capabilities.rs`
+  - Profile preset capability maps.
+  - Exact/wildcard capability rule matching.
+  - Shared bool-rule ceiling checks used by temporary grants, peer delegation, and import delegation.
+  - Tool-name to capability-name mapping.
 - `src/kernel/config/governance.rs`
   - Governance configuration types and defaults.
 - `src/kernel/config/validation.rs`
@@ -81,4 +86,16 @@ git diff --check
 
 ## Current Shape
 
-The current pass only tightened capability rule matching: it now checks exact and wildcard rules in one pass instead of collecting rules into an intermediate vector. That avoids a small allocation in a policy hot path and preserves precedence.
+The current pass keeps `governance.rs` as the manager and grant lifecycle file, while `governance/capabilities.rs` owns capability preset/matching logic.
+
+This centralized the exact/wildcard bool-rule matcher that had been duplicated in:
+
+- `src/kernel/governance.rs`
+- `src/harness/stdlib/governance_support.rs`
+- `src/harness/stdlib/system_globals/imports.rs`
+
+The shared matcher preserves these security rules with dedicated tests:
+
+- exact capability rules outrank wildcard rules
+- the longest wildcard rule wins
+- wildcard rules match both the prefix capability itself and dotted children

@@ -1,3 +1,5 @@
+mod capabilities;
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -6,6 +8,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::kernel::config::{
     GovernanceAuditMode, GovernanceConfig, GovernanceImportMode, GovernanceProfile,
+};
+
+pub(crate) use capabilities::{capability_allowed_by_bool_rules, tool_capability_name};
+use capabilities::{
+    capability_ceiling_denial_reason_bool_map, capability_ceiling_denial_reason_json_map,
+    match_capability_rule, preset_capabilities_for_profile, profile_name,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -212,10 +220,9 @@ impl GovernanceManager {
         capability: &str,
     ) -> CapabilityDecision {
         let caps = preset_capabilities_for_profile(&self.config.profile);
-        let (matched_rule, matched_via_wildcard, matched_value) =
-            match_capability_rule(&caps, capability);
+        let matched = match_capability_rule(&caps, capability);
 
-        let baseline_allowed = match matched_value {
+        let baseline_allowed = match matched.allowed {
             Some(v) => v,
             None => matches!(self.config.profile, GovernanceProfile::Open),
         };
@@ -301,7 +308,7 @@ impl GovernanceManager {
         } else if baseline_allowed {
             ceiling_denial_reason
         } else {
-            Some(match &matched_rule {
+            Some(match &matched.rule {
                 Some(rule) => format!(
                     "Governance denial: capability '{}' denied by profile '{}' (rule '{}')",
                     capability,
@@ -324,8 +331,8 @@ impl GovernanceManager {
             subject_grant_id: subject.grant_id.clone(),
             profile: self.config.profile.clone(),
             enforcement_enabled: self.config.enforcement_enabled,
-            matched_rule,
-            matched_via_wildcard,
+            matched_rule: matched.rule,
+            matched_via_wildcard: matched.via_wildcard,
             baseline_allowed,
             allowed,
             reason,
@@ -706,251 +713,6 @@ fn ensure_grant_subject_access(
         }
     }
     Ok(())
-}
-
-fn preset_capabilities_for_profile(
-    profile: &GovernanceProfile,
-) -> BTreeMap<String, serde_json::Value> {
-    let mut caps = BTreeMap::new();
-    match profile {
-        GovernanceProfile::Open => {
-            caps.insert("runtime.db.*".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.agent.*".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.graph.*".into(), serde_json::Value::Bool(true));
-            caps.insert(
-                "runtime.code.search.*".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert("runtime.policy.set".into(), serde_json::Value::Bool(true));
-            caps.insert(
-                "runtime.governance.grant.*".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert("harness.import.*".into(), serde_json::Value::Bool(true));
-            caps.insert("harness.use.*".into(), serde_json::Value::Bool(true));
-            caps.insert("fs.read".into(), serde_json::Value::Bool(true));
-            caps.insert("fs.write".into(), serde_json::Value::Bool(true));
-            caps.insert("shell.exec".into(), serde_json::Value::Bool(true));
-        }
-        GovernanceProfile::Balanced => {
-            caps.insert("runtime.db.query".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.db.exec".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.agent.submit".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.agent.await".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.agent.status".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.agent.spawn".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.graph.query".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.graph.write".into(), serde_json::Value::Bool(true));
-            caps.insert(
-                "runtime.code.search.*".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert("runtime.policy.set".into(), serde_json::Value::Bool(true));
-            caps.insert(
-                "runtime.governance.grant.*".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert(
-                "harness.import.unscoped".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert(
-                "harness.import.scoped".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert("harness.use.unscoped".into(), serde_json::Value::Bool(true));
-            caps.insert("harness.use.scoped".into(), serde_json::Value::Bool(true));
-            caps.insert("fs.read".into(), serde_json::Value::Bool(true));
-            caps.insert("fs.write".into(), serde_json::Value::Bool(true));
-            caps.insert("shell.exec".into(), serde_json::Value::Bool(false));
-        }
-        GovernanceProfile::Governed => {
-            caps.insert("runtime.db.query".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.db.exec".into(), serde_json::Value::Bool(false));
-            caps.insert("runtime.agent.submit".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.agent.await".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.agent.status".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.agent.spawn".into(), serde_json::Value::Bool(false));
-            caps.insert("runtime.graph.query".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.graph.write".into(), serde_json::Value::Bool(false));
-            caps.insert(
-                "runtime.code.search.*".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert("runtime.policy.set".into(), serde_json::Value::Bool(false));
-            caps.insert(
-                "runtime.governance.grant.*".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert(
-                "harness.import.unscoped".into(),
-                serde_json::Value::Bool(false),
-            );
-            caps.insert(
-                "harness.import.scoped".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert(
-                "harness.use.unscoped".into(),
-                serde_json::Value::Bool(false),
-            );
-            caps.insert("harness.use.scoped".into(), serde_json::Value::Bool(true));
-            caps.insert("fs.read".into(), serde_json::Value::Bool(true));
-            caps.insert("fs.write".into(), serde_json::Value::Bool(false));
-            caps.insert("shell.exec".into(), serde_json::Value::Bool(false));
-        }
-        GovernanceProfile::Custom => {}
-    }
-    caps
-}
-
-fn match_capability_rule(
-    caps: &BTreeMap<String, serde_json::Value>,
-    capability: &str,
-) -> (Option<String>, bool, Option<bool>) {
-    match_capability_rule_bool_iter(
-        caps.iter()
-            .filter_map(|(rule, value)| value.as_bool().map(|b| (rule.as_str(), b))),
-        capability,
-    )
-}
-
-fn match_capability_rule_json_map(
-    caps: &HashMap<String, serde_json::Value>,
-    capability: &str,
-) -> (Option<String>, bool, Option<bool>) {
-    match_capability_rule_bool_iter(
-        caps.iter()
-            .filter_map(|(rule, value)| value.as_bool().map(|b| (rule.as_str(), b))),
-        capability,
-    )
-}
-
-fn match_capability_rule_bool_map(
-    caps: &BTreeMap<String, bool>,
-    capability: &str,
-) -> (Option<String>, bool, Option<bool>) {
-    match_capability_rule_bool_iter(
-        caps.iter().map(|(rule, value)| (rule.as_str(), *value)),
-        capability,
-    )
-}
-
-fn match_capability_rule_bool_iter<'a, I>(
-    iter: I,
-    capability: &str,
-) -> (Option<String>, bool, Option<bool>)
-where
-    I: IntoIterator<Item = (&'a str, bool)>,
-{
-    let mut best: Option<(&str, bool)> = None;
-    for (rule, b) in iter {
-        if rule == capability {
-            return (Some(capability.to_string()), false, Some(b));
-        }
-        let Some(prefix) = rule.strip_suffix(".*") else {
-            continue;
-        };
-        if capability == prefix || capability.starts_with(&format!("{prefix}.")) {
-            match best {
-                Some((best_rule, _)) if best_rule.len() >= rule.len() => {}
-                _ => best = Some((rule, b)),
-            }
-        }
-    }
-
-    match best {
-        Some((rule, b)) => (Some(rule.to_string()), true, Some(b)),
-        None => (None, false, None),
-    }
-}
-
-fn capability_ceiling_denial_reason_json_map(
-    caps: &HashMap<String, serde_json::Value>,
-    capability: &str,
-    source_kind: &str,
-    source_name: &str,
-    default_deny_on_no_match: bool,
-) -> Option<String> {
-    if caps.is_empty() {
-        return None;
-    }
-    let (matched_rule, _, matched_value) = match_capability_rule_json_map(caps, capability);
-    let allowed = match matched_value {
-        Some(v) => v,
-        None => !default_deny_on_no_match,
-    };
-    if allowed {
-        None
-    } else {
-        Some(match matched_rule {
-            Some(rule) => format!(
-                "Governance denial: capability '{}' denied by {} '{}' (rule '{}')",
-                capability, source_kind, source_name, rule
-            ),
-            None => format!(
-                "Governance denial: capability '{}' denied by {} '{}' (no matching allow rule)",
-                capability, source_kind, source_name
-            ),
-        })
-    }
-}
-
-fn capability_ceiling_denial_reason_bool_map(
-    caps: &BTreeMap<String, bool>,
-    capability: &str,
-    source_kind: &str,
-    source_name: &str,
-    default_deny_on_no_match: bool,
-) -> Option<String> {
-    if caps.is_empty() {
-        return if default_deny_on_no_match {
-            Some(format!(
-                "Governance denial: capability '{}' denied by {} '{}' (empty allowlist)",
-                capability, source_kind, source_name
-            ))
-        } else {
-            None
-        };
-    }
-    let (matched_rule, _, matched_value) = match_capability_rule_bool_map(caps, capability);
-    let allowed = match matched_value {
-        Some(v) => v,
-        None => !default_deny_on_no_match,
-    };
-    if allowed {
-        None
-    } else {
-        Some(match matched_rule {
-            Some(rule) => format!(
-                "Governance denial: capability '{}' denied by {} '{}' (rule '{}')",
-                capability, source_kind, source_name, rule
-            ),
-            None => format!(
-                "Governance denial: capability '{}' denied by {} '{}' (no matching allow rule)",
-                capability, source_kind, source_name
-            ),
-        })
-    }
-}
-
-fn profile_name(profile: &GovernanceProfile) -> &'static str {
-    match profile {
-        GovernanceProfile::Open => "open",
-        GovernanceProfile::Balanced => "balanced",
-        GovernanceProfile::Governed => "governed",
-        GovernanceProfile::Custom => "custom",
-    }
-}
-
-pub(crate) fn tool_capability_name(tool_name: &str) -> Option<&'static str> {
-    match tool_name {
-        "read_file" => Some("fs.read"),
-        "write_file" | "edit_file" | "apply_patch" => Some("fs.write"),
-        "shell_exec" => Some("shell.exec"),
-        "bridge_mcp" => Some("integration.mcp.bridge"),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

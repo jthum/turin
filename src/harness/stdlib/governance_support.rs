@@ -1,6 +1,8 @@
 use crate::harness::globals::HarnessAppData;
 use crate::kernel::event::{AuditEvent, KernelEvent};
-use crate::kernel::governance::{CapabilityDecision, GovernanceSubject};
+use crate::kernel::governance::{
+    CapabilityDecision, GovernanceSubject, capability_allowed_by_bool_rules,
+};
 use crate::kernel::session::{PersistedKernelEvent, PersistedKernelRecord};
 use crate::kernel::session_refs::format_session_reference;
 use mlua::{Result as LuaResult, Table, Value};
@@ -121,7 +123,7 @@ pub(crate) fn apply_active_grant_ceiling_to_peer_delegation(
             if !*allowed {
                 continue;
             }
-            if !capability_allowed_by_ceiling(&grant.capabilities, capability) {
+            if !capability_allowed_by_bool_rules(&grant.capabilities, capability) {
                 return Err(mlua::Error::runtime(format!(
                     "{} cannot grant '{}' beyond active governance grant '{}'",
                     caller_label, capability, grant.grant_id
@@ -163,27 +165,6 @@ pub(crate) fn current_subject(app_data: &HarnessAppData) -> GovernanceSubject {
         grant_id,
         import_capabilities,
     }
-}
-
-fn capability_allowed_by_ceiling(caps: &BTreeMap<String, bool>, capability: &str) -> bool {
-    if let Some(allowed) = caps.get(capability) {
-        return *allowed;
-    }
-
-    let mut best: Option<(&str, bool)> = None;
-    for (rule, allowed) in caps {
-        let Some(prefix) = rule.strip_suffix(".*") else {
-            continue;
-        };
-        if capability == prefix || capability.starts_with(&format!("{prefix}.")) {
-            match best {
-                Some((best_rule, _)) if best_rule.len() >= rule.len() => {}
-                _ => best = Some((rule.as_str(), *allowed)),
-            }
-        }
-    }
-
-    best.map(|(_, allowed)| allowed).unwrap_or(false)
 }
 
 pub(crate) fn emit_governance_audit_event(app_data: &HarnessAppData, audit_event: AuditEvent) {

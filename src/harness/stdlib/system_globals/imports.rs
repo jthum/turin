@@ -9,6 +9,7 @@ use crate::harness::engine::{
 };
 use crate::harness::stdlib::system_globals::resolve_safe_path;
 use crate::kernel::config::{GovernanceImportMode, GovernanceProfile};
+use crate::kernel::governance::capability_allowed_by_bool_rules;
 
 pub fn register_import_global(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
@@ -722,7 +723,7 @@ fn enforce_delegated_capability_subset(
         if !*allowed {
             continue;
         }
-        if !delegated_capability_allowed_by_parent(&parent_caps, capability) {
+        if !capability_allowed_by_bool_rules(&parent_caps, capability) {
             return Err(mlua::Error::runtime(format!(
                 "import_scoped capability delegation cannot grant '{}' beyond importer delegation",
                 capability
@@ -731,28 +732,4 @@ fn enforce_delegated_capability_subset(
     }
 
     Ok(())
-}
-
-fn delegated_capability_allowed_by_parent(
-    parent_caps: &BTreeMap<String, bool>,
-    capability: &str,
-) -> bool {
-    if let Some(allowed) = parent_caps.get(capability) {
-        return *allowed;
-    }
-
-    let mut best: Option<(&str, bool)> = None;
-    for (rule, allowed) in parent_caps {
-        let Some(prefix) = rule.strip_suffix(".*") else {
-            continue;
-        };
-        if capability == prefix || capability.starts_with(&format!("{prefix}.")) {
-            match best {
-                Some((best_rule, _)) if best_rule.len() >= rule.len() => {}
-                _ => best = Some((rule.as_str(), *allowed)),
-            }
-        }
-    }
-
-    best.map(|(_, allowed)| allowed).unwrap_or(false)
 }
