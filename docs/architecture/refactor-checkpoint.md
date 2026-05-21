@@ -24,6 +24,7 @@ These areas have been structurally reviewed, lightly refactored, tested, and map
 - Daemon channel supervision
 - Daemon runtime state
 - Governance
+- Harness context and request options
 - Harness system globals
 - MCP integration
 - Memory and scoped data
@@ -76,3 +77,5 @@ These large files are not part of the current runtime-core refactor pass:
 The codebase no longer reads like an unreviewed generated blob in the areas covered by this pass. It still has large files, and not every pass reduced LOC, but the major runtime surfaces now have clearer boundaries, maps, focused tests, and less duplicated decision logic.
 
 The remaining work should be paced as module-specific quality passes, not a second broad sweep. At this point, the broad runtime-core refactor sweep can pause unless a concrete next target emerges from tests, profiling, or UI/API work.
+
+Latest targeted pass: `harness::context` request-option layering. The pass extracted a shared helper for provider defaults plus harness overrides and removed the duplicate merge logic from normal turn preflight. This is the kind of refactor that should still continue when found: it reduces semantic drift risk between execution paths instead of merely splitting a large file.

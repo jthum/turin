@@ -1,7 +1,7 @@
 use mlua::{LuaSerdeExt, MetaMethod, UserData, UserDataMethods, Value};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
 
 use crate::harness::globals::block_on_current;
 use crate::inference::content::{infer_prompt_from_messages, replace_user_text_content};
@@ -11,16 +11,11 @@ use crate::inference::structured::{
 };
 use crate::kernel::config::{InferenceOverrideConfig, TurinConfig};
 use crate::kernel::estimate_history_input_tokens;
-use std::collections::HashMap;
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct RequestOptionsOverride {
-    #[serde(default)]
-    pub headers: HashMap<String, String>,
-    pub max_retries: Option<u32>,
-    pub request_timeout_seconds: Option<u64>,
-    pub total_timeout_seconds: Option<u64>,
-}
+mod request_options;
+
+pub use request_options::RequestOptionsOverride;
+pub(crate) use request_options::build_merged_request_options;
 
 /// Inner state shareable between Rust and Lua
 #[derive(Clone, Debug)]
@@ -580,7 +575,7 @@ impl UserData for ContextWrapper {
                         }
                     };
 
-                    let request_options = merge_request_options(
+                    let request_options = build_merged_request_options(
                         provider_config,
                         &current_request_options,
                         parsed.request_options.as_ref(),
@@ -679,45 +674,4 @@ fn structured_messages(
     }
 
     Ok(messages.unwrap_or(current_messages))
-}
-
-fn merge_request_options(
-    provider_config: &crate::kernel::config::ProviderConfig,
-    current: &RequestOptionsOverride,
-    override_opts: Option<&RequestOptionsOverride>,
-) -> anyhow::Result<crate::inference::provider::RequestOptions> {
-    let mut options = crate::inference::provider::build_request_options(provider_config)?;
-    options = merge_request_option_override(options, current)?;
-    if let Some(override_opts) = override_opts {
-        options = merge_request_option_override(options, override_opts)?;
-    }
-    Ok(options)
-}
-
-fn merge_request_option_override(
-    mut options: crate::inference::provider::RequestOptions,
-    overrides: &RequestOptionsOverride,
-) -> anyhow::Result<crate::inference::provider::RequestOptions> {
-    for (header_name, header_value) in &overrides.headers {
-        options = options
-            .with_header(header_name, header_value)
-            .map_err(|err| anyhow::anyhow!("invalid request header '{}': {}", header_name, err))?;
-    }
-
-    if let Some(max_retries) = overrides.max_retries {
-        options = options.with_max_retries(max_retries);
-    }
-
-    if overrides.request_timeout_seconds.is_some() || overrides.total_timeout_seconds.is_some() {
-        let mut timeout_policy = options.timeout_policy.clone().unwrap_or_default();
-        if let Some(request_timeout_seconds) = overrides.request_timeout_seconds {
-            timeout_policy.request_timeout = Some(Duration::from_secs(request_timeout_seconds));
-        }
-        if let Some(total_timeout_seconds) = overrides.total_timeout_seconds {
-            timeout_policy.total_timeout = Some(Duration::from_secs(total_timeout_seconds));
-        }
-        options = options.with_timeout_policy(timeout_policy);
-    }
-
-    Ok(options)
 }

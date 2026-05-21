@@ -9,13 +9,10 @@ mod preflight;
 mod streaming;
 mod tool_execution;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::BTreeSet;
 use std::sync::Arc;
-use std::time::Duration;
 
-use crate::harness::context::RequestOptionsOverride;
-use crate::inference::provider::{self};
 use crate::kernel::session::SessionState;
 use crate::tools::ToolContext;
 
@@ -37,34 +34,6 @@ pub(crate) enum TurnOutcome {
     Complete,
     Rejected,
     Cancelled,
-}
-
-fn merge_request_option_overrides(
-    mut options: provider::RequestOptions,
-    overrides: &RequestOptionsOverride,
-) -> Result<provider::RequestOptions> {
-    for (header_name, header_value) in &overrides.headers {
-        options = options
-            .with_header(header_name, header_value)
-            .with_context(|| format!("invalid request header '{}'", header_name))?;
-    }
-
-    if let Some(max_retries) = overrides.max_retries {
-        options = options.with_max_retries(max_retries);
-    }
-
-    if overrides.request_timeout_seconds.is_some() || overrides.total_timeout_seconds.is_some() {
-        let mut timeout_policy = options.timeout_policy.clone().unwrap_or_default();
-        if let Some(request_timeout_seconds) = overrides.request_timeout_seconds {
-            timeout_policy.request_timeout = Some(Duration::from_secs(request_timeout_seconds));
-        }
-        if let Some(total_timeout_seconds) = overrides.total_timeout_seconds {
-            timeout_policy.total_timeout = Some(Duration::from_secs(total_timeout_seconds));
-        }
-        options = options.with_timeout_policy(timeout_policy);
-    }
-
-    Ok(options)
 }
 
 impl ExecutionHost {

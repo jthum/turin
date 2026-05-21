@@ -1,0 +1,87 @@
+# Harness Context Map
+
+## Purpose
+
+`context.rs` exposes the mutable Lua `ctx` userdata used by harness hooks. It is the handoff point between turn preflight, harness code, provider routing, structured inference, and request-option overrides.
+
+Keep this module focused on the Lua-facing context contract. Shared provider request policy should live outside the userdata implementation so normal turn execution and harness-triggered inference cannot drift.
+
+## Files
+
+- `src/harness/context.rs`
+  - `ContextWrapper`, `ContextState`, Lua property accessors, message mutation helpers, summarization, and `ctx:structured`.
+- `src/harness/context/request_options.rs`
+  - `RequestOptionsOverride` and shared provider request-option layering.
+- `src/kernel/turn/preflight.rs`
+  - Builds the normal provider request stream and applies harness `on_turn_prepare` mutations.
+- `src/inference/structured.rs`
+  - Response-format construction, fallback prompt construction, and JSON validation for structured output.
+
+## Data Flow
+
+Turn preflight:
+
+1. `preflight.rs` builds a `ContextWrapper` from the current request state.
+2. Harness `on_turn_prepare` can mutate model/provider/system prompt/messages/thinking/request options.
+3. The mutated context is read back into the provider request state.
+4. Request options are built from provider defaults plus harness overrides.
+
+Structured inference:
+
+1. Lua calls `ctx:structured({...})`.
+2. The call starts from the current context state and optional call-local overrides.
+3. Turin resolves the requested inference route.
+4. Request options are built from provider defaults, current context overrides, then call-local overrides.
+5. Native response-format support is used when available; otherwise Turin falls back to prompt-based JSON validation.
+
+## Invariants
+
+- `RequestOptionsOverride` is a harness-facing data type; keep it serializable and stable for Lua conversion.
+- Provider defaults, context overrides, and call-local overrides must layer in that order.
+- Normal turn preflight and `ctx:structured` must share the same request-option merge semantics.
+- `ctx.prompt` and `ctx.messages` must remain synchronized when either is replaced.
+- Structured calls may define `prompt` or `messages`, not both.
+- Context token counts must be recomputed after message or system prompt mutation.
+
+## Common Changes
+
+Change request-option behavior:
+
+1. Update `src/harness/context/request_options.rs`.
+2. Add or adjust helper tests for layering and validation.
+3. Run the request-options unit tests plus at least one harness request-options integration test.
+
+Change Lua context fields:
+
+1. Update `ContextState`, `ContextWrapper::new`, and the Lua `Index`/`NewIndex` handlers together.
+2. Update preflight readback if the field affects provider requests.
+3. Add a harness integration test that exercises the field through Lua.
+
+Change structured inference:
+
+1. Keep route resolution and provider fallback behavior aligned with normal inference.
+2. Preserve native response-format and fallback validation test coverage.
+3. Avoid moving channel/tool rendering concerns into this module.
+
+## Tests
+
+Focused tests:
+
+```sh
+cargo test -p turin request_options_override --lib
+cargo test -p turin --test harness_tests test_harness_request_options_passthrough
+cargo test -p turin --test session_tests test_on_turn_prepare_structured_output_uses_native_response_format
+cargo test -p turin --test session_tests test_on_turn_prepare_structured_output_falls_back_to_prompt_and_validate
+```
+
+Basic checks:
+
+```sh
+cargo check -p turin --lib
+cargo fmt --all -- --check
+git diff --check
+```
+
+## Current Shape
+
+The current pass extracted request-option layering from `context.rs` and removed the duplicate implementation from turn execution. This is a logic-quality win more than a pure structural split: normal inference and structured harness inference now use the same header/retry/timeout override policy.

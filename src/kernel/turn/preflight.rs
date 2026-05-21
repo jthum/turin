@@ -6,7 +6,9 @@ use futures::Stream;
 use tracing::{debug, error, warn};
 
 use crate::display;
-use crate::harness::context::{ContextWrapper, RequestOptionsOverride};
+use crate::harness::context::{
+    ContextWrapper, RequestOptionsOverride, build_merged_request_options,
+};
 use crate::harness::verdict::Verdict;
 use crate::inference::provider;
 use crate::kernel::config::{
@@ -24,7 +26,7 @@ use crate::kernel::turn::context_window::{
 
 use super::super::event::{KernelEvent, LifecycleEvent};
 use super::super::execution_host::ExecutionHost;
-use super::{TurnContext, merge_request_option_overrides};
+use super::TurnContext;
 
 pub(super) enum TurnPreflight {
     Ready(PreparedTurnStream),
@@ -76,8 +78,7 @@ fn build_candidate_request_options(
     provider_config: &ProviderConfig,
     overrides: &RequestOptionsOverride,
 ) -> Result<provider::RequestOptions> {
-    let options = provider::build_request_options(provider_config)?;
-    merge_request_option_overrides(options, overrides)
+    build_merged_request_options(provider_config, overrides, None)
 }
 
 impl ExecutionHost {
