@@ -2,15 +2,20 @@
 
 ## Purpose
 
-`system_globals.rs` registers the Lua globals that every harness sees: imports, load-time `use`, file access, hashes, JSON, time, logging, and `try`.
+`system_globals` registers the Lua globals that every harness sees: imports, load-time `use`, file access, hashes, JSON, time, logging, and `try`.
 
 This file is security-sensitive because it defines how harness code loads other harness modules and touches the filesystem. Keep policy checks explicit and shared rather than copied per operation.
 
 ## Files
 
 - `src/harness/stdlib/system_globals.rs`
-  - Lua globals: `import`, `import_scoped`, `use`, `use_scoped`, `watch`, `try`, `fs`, `hash`, `json`, `time`, and `log`.
+  - Facade for Lua globals: `try`, `hash`, `json`, `time`, `log`, and subsystem registration.
+  - Shared safe-path and capability helpers used by child modules.
+- `src/harness/stdlib/system_globals/imports.rs`
+  - Lua globals: `import`, `import_scoped`, `use`, `use_scoped`, and `watch`.
   - Import/use policy enforcement and scoped capability delegation.
+- `src/harness/stdlib/system_globals/fs.rs`
+  - Lua global: `fs`.
   - File path safety and `fs.stat` session hash tracking.
 - `src/harness/engine.rs`
   - Module loading, loaded-module registry, load phase, and watch roots.
@@ -73,4 +78,9 @@ git diff --check
 
 ## Current Shape
 
-The current pass keeps the globals in one file but removes duplicate import/use governance logic. `enforce_module_policy` owns the shared decision tree, while `enforce_import_policy` and `enforce_use_policy` keep call sites readable.
+The current pass keeps `system_globals.rs` as the public facade and splits two security-sensitive subdomains into private child modules:
+
+- `imports.rs` owns import/use/watch policy, module resolution, root attribution, and delegated capability wrapping.
+- `fs.rs` owns filesystem globals and session-scoped `fs.stat` hash tracking.
+
+`enforce_module_policy` still owns the shared import/use decision tree, while `enforce_import_policy` and `enforce_use_policy` keep call sites readable.
