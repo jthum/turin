@@ -169,6 +169,40 @@ fn parse_i64_opt(table: &Table, key: &str) -> LuaResult<Option<i64>> {
     }
 }
 
+fn parse_present_string_opt(table: &Table, key: &str) -> LuaResult<Option<Option<String>>> {
+    if table.contains_key(key)? {
+        return parse_string_opt(table, key).map(Some);
+    }
+    Ok(None)
+}
+
+fn parse_present_json_raw(
+    lua: &Lua,
+    table: &Table,
+    key: &str,
+) -> LuaResult<Option<Option<String>>> {
+    if !table.contains_key(key)? {
+        return Ok(None);
+    }
+    match table.get::<Value>(key)? {
+        Value::Nil => Ok(Some(None)),
+        value => Ok(Some(Some(
+            serde_json::to_string(&object_refs::encode_lua_payload(lua, value)?)
+                .map_err(mlua::Error::runtime)?,
+        ))),
+    }
+}
+
+fn parse_present_string_array_raw(table: &Table, key: &str) -> LuaResult<Option<Option<String>>> {
+    if !table.contains_key(key)? {
+        return Ok(None);
+    }
+    parse_json_array_strings(table.get::<Value>(key)?, key)?
+        .map(|values| serde_json::to_string(&values).map_err(mlua::Error::runtime))
+        .transpose()
+        .map(Some)
+}
+
 fn parse_json_array_strings(value: Value, field: &str) -> LuaResult<Option<Vec<String>>> {
     match value {
         Value::Nil => Ok(None),
@@ -515,6 +549,33 @@ fn current_claim_identity(app_data: &HarnessAppData) -> (String, Option<String>,
     (agent_id, session_id, execution_id)
 }
 
+fn load_work_items(handle: &WorklistHandle) -> LuaResult<Vec<WorkItemRow>> {
+    crate::harness::globals::block_on_current(async {
+        handle.store.list_work_items(handle.worklist.id).await
+    })
+    .map_err(mlua::Error::runtime)
+}
+
+fn work_items_table(
+    lua: &Lua,
+    handle: &WorklistHandle,
+    rows: Vec<WorkItemRow>,
+) -> LuaResult<Table> {
+    let out = lua.create_table()?;
+    for (index, row) in rows.into_iter().enumerate() {
+        out.set(index + 1, item_proxy(lua, handle.clone(), row)?)?;
+    }
+    Ok(out)
+}
+
+fn work_items_value(
+    lua: &Lua,
+    handle: &WorklistHandle,
+    rows: Vec<WorkItemRow>,
+) -> LuaResult<Value> {
+    Ok(Value::Table(work_items_table(lua, handle, rows)?))
+}
+
 pub(crate) fn build_work_item_proxy(
     lua: &Lua,
     store: Arc<StateStore>,
@@ -781,90 +842,18 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                 require_capability(&handle.app_data, "runtime.worklist.update")
                     .map_err(mlua::Error::runtime)?;
                 let title = parse_string_opt(&fields, "title")?;
-                let prompt = if fields.contains_key("prompt")? {
-                    Some(parse_string_opt(&fields, "prompt")?)
-                } else {
-                    None
-                };
-                let conflict_policy = if fields.contains_key("conflict_policy")? {
-                    Some(parse_string_opt(&fields, "conflict_policy")?)
-                } else {
-                    None
-                };
-                let action_name = if fields.contains_key("action")? {
-                    Some(parse_string_opt(&fields, "action")?)
-                } else {
-                    None
-                };
-                let action_params = if fields.contains_key("params")? {
-                    Some(match fields.get::<Value>("params")? {
-                        Value::Nil => None,
-                        value => Some(object_refs::encode_lua_payload(lua, value)?),
-                    })
-                } else {
-                    None
-                };
-                let content = if fields.contains_key("content")? {
-                    Some(match fields.get::<Value>("content")? {
-                        Value::Nil => None,
-                        value => Some(
-                            serde_json::to_string(&object_refs::encode_lua_payload(lua, value)?)
-                                .map_err(mlua::Error::runtime)?,
-                        ),
-                    })
-                } else {
-                    None
-                };
-                let tools = if fields.contains_key("tools")? {
-                    Some(match fields.get::<Value>("tools")? {
-                        Value::Nil => None,
-                        value => Some(
-                            serde_json::to_string(&object_refs::encode_lua_payload(lua, value)?)
-                                .map_err(mlua::Error::runtime)?,
-                        ),
-                    })
-                } else {
-                    None
-                };
-                let metadata = if fields.contains_key("metadata")? {
-                    Some(match fields.get::<Value>("metadata")? {
-                        Value::Nil => None,
-                        value => Some(
-                            serde_json::to_string(&object_refs::encode_lua_payload(lua, value)?)
-                                .map_err(mlua::Error::runtime)?,
-                        ),
-                    })
-                } else {
-                    None
-                };
-                let after_ids = if fields.contains_key("after")? {
-                    Some(
-                        parse_json_array_strings(fields.get::<Value>("after")?, "after")?
-                            .map(|values| {
-                                serde_json::to_string(&values).map_err(mlua::Error::runtime)
-                            })
-                            .transpose()?,
-                    )
-                } else {
-                    None
-                };
-                let status = if fields.contains_key("status")? {
-                    Some(
-                        parse_string_opt(&fields, "status")?
-                            .unwrap_or_else(|| "pending".to_string()),
-                    )
-                } else {
-                    None
-                };
-                let failure_reason = if fields.contains_key("failure_reason")? {
-                    Some(parse_string_opt(&fields, "failure_reason")?)
-                } else {
-                    None
-                };
+                let prompt = parse_present_string_opt(&fields, "prompt")?;
+                let conflict_policy = parse_present_string_opt(&fields, "conflict_policy")?;
+                let action_name = parse_present_string_opt(&fields, "action")?;
+                let action_params = parse_present_json_raw(lua, &fields, "params")?;
+                let content = parse_present_json_raw(lua, &fields, "content")?;
+                let tools = parse_present_json_raw(lua, &fields, "tools")?;
+                let metadata = parse_present_json_raw(lua, &fields, "metadata")?;
+                let after_ids = parse_present_string_array_raw(&fields, "after")?;
+                let status = parse_present_string_opt(&fields, "status")?
+                    .map(|value| value.unwrap_or_else(|| "pending".to_string()));
+                let failure_reason = parse_present_string_opt(&fields, "failure_reason")?;
                 let priority = parse_i64_opt(&fields, "priority")?;
-                let action_params_raw = action_params
-                    .map(|value| serialize_json_opt(value.as_ref()).map_err(mlua::Error::runtime))
-                    .transpose()?;
                 let row = crate::harness::globals::block_on_current(async {
                     handle
                         .store
@@ -876,7 +865,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                             tools: tools.as_ref().map(|value| value.as_deref()),
                             conflict_policy: conflict_policy.as_ref().map(|value| value.as_deref()),
                             action_name: action_name.as_ref().map(|value| value.as_deref()),
-                            action_params: action_params_raw.as_ref().map(|value| value.as_deref()),
+                            action_params: action_params.as_ref().map(|value| value.as_deref()),
                             priority,
                             after_ids: after_ids.as_ref().map(|value| value.as_deref()),
                             metadata: metadata.as_ref().map(|value| value.as_deref()),
@@ -897,15 +886,8 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
         proxy.set(
             "children",
             lua.create_function(move |lua, _self: Table| {
-                let rows = crate::harness::globals::block_on_current(async {
-                    handle.store.list_work_items(handle.worklist.id).await
-                })
-                .map_err(mlua::Error::runtime)?;
-                let out = lua.create_table()?;
-                for (index, row) in selection::children(rows, parent_id).into_iter().enumerate() {
-                    out.set(index + 1, item_proxy(lua, handle.clone(), row)?)?;
-                }
-                Ok(Value::Table(out))
+                let rows = selection::children(load_work_items(&handle)?, parent_id);
+                work_items_value(lua, &handle, rows)
             })?,
         )?;
     }
@@ -988,20 +970,13 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
             lua.create_function(move |lua, (_self, opts): (Table, Option<Table>)| {
                 let limit = parse_limit(opts.clone())?;
                 let where_map = parse_where_map(lua, opts)?;
-                let rows = crate::harness::globals::block_on_current(async {
-                    handle.store.list_work_items(handle.worklist.id).await
-                })
-                .map_err(mlua::Error::runtime)?;
-                let out = lua.create_table()?;
                 let selection = selection::WorkItemSelection::new(
                     handle.parent_item_id,
                     where_map.as_ref(),
                     limit,
                 );
-                for (index, row) in selection::all_rows(rows, selection).into_iter().enumerate() {
-                    out.set(index + 1, item_proxy(lua, handle.clone(), row)?)?;
-                }
-                Ok(Value::Table(out))
+                let rows = selection::all_rows(load_work_items(&handle)?, selection);
+                work_items_value(lua, &handle, rows)
             })?,
         )?;
     }
@@ -1013,23 +988,13 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
             lua.create_function(move |lua, (_self, opts): (Table, Option<Table>)| {
                 let limit = parse_limit(opts.clone())?;
                 let where_map = parse_where_map(lua, opts)?;
-                let rows = crate::harness::globals::block_on_current(async {
-                    handle.store.list_work_items(handle.worklist.id).await
-                })
-                .map_err(mlua::Error::runtime)?;
-                let out = lua.create_table()?;
                 let selection = selection::WorkItemSelection::new(
                     handle.parent_item_id,
                     where_map.as_ref(),
                     limit,
                 );
-                for (index, row) in selection::pending_rows(rows, selection)
-                    .into_iter()
-                    .enumerate()
-                {
-                    out.set(index + 1, item_proxy(lua, handle.clone(), row)?)?;
-                }
-                Ok(Value::Table(out))
+                let rows = selection::pending_rows(load_work_items(&handle)?, selection);
+                work_items_value(lua, &handle, rows)
             })?,
         )?;
     }
@@ -1043,23 +1008,14 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                 let stale_after_ms = parse_stale_after_ms(opts.clone())?;
                 let where_map = parse_where_map(lua, opts)?;
                 let stale_before = now_unix_ms().saturating_sub(stale_after_ms);
-                let rows = crate::harness::globals::block_on_current(async {
-                    handle.store.list_work_items(handle.worklist.id).await
-                })
-                .map_err(mlua::Error::runtime)?;
-                let out = lua.create_table()?;
                 let selection = selection::WorkItemSelection::new(
                     handle.parent_item_id,
                     where_map.as_ref(),
                     limit,
                 );
-                for (index, row) in selection::orphaned_rows(rows, selection, stale_before)
-                    .into_iter()
-                    .enumerate()
-                {
-                    out.set(index + 1, item_proxy(lua, handle.clone(), row)?)?;
-                }
-                Ok(Value::Table(out))
+                let rows =
+                    selection::orphaned_rows(load_work_items(&handle)?, selection, stale_before);
+                work_items_value(lua, &handle, rows)
             })?,
         )?;
     }
@@ -1075,25 +1031,22 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                 let stale_after_ms = parse_stale_after_ms(opts.clone())?;
                 let where_map = parse_where_map(lua, opts)?;
                 let stale_before = now_unix_ms().saturating_sub(stale_after_ms);
-                let rows = crate::harness::globals::block_on_current(async {
-                    handle.store.list_work_items(handle.worklist.id).await
-                })
-                .map_err(mlua::Error::runtime)?;
                 let selection = selection::WorkItemSelection::new(
                     handle.parent_item_id,
                     where_map.as_ref(),
                     limit,
                 );
-                let candidates = selection::orphaned_rows(rows, selection, stale_before);
-                let out = lua.create_table()?;
-                for (index, row) in candidates.into_iter().enumerate() {
+                let candidates =
+                    selection::orphaned_rows(load_work_items(&handle)?, selection, stale_before);
+                let mut released_rows = Vec::with_capacity(candidates.len());
+                for row in candidates {
                     let released = crate::harness::globals::block_on_current(async {
                         handle.store.release_work_item(row.id).await
                     })
                     .map_err(mlua::Error::runtime)?;
-                    out.set(index + 1, item_proxy(lua, handle.clone(), released)?)?;
+                    released_rows.push(released);
                 }
-                Ok(Value::Table(out))
+                work_items_value(lua, &handle, released_rows)
             })?,
         )?;
     }
@@ -1134,24 +1087,15 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                 let limit = parse_limit(opts.clone())?;
                 let due_only = parse_bool_flag(opts.clone(), "due_only")?;
                 let where_map = parse_where_map(lua, opts)?;
-                let rows = crate::harness::globals::block_on_current(async {
-                    handle.store.list_work_items(handle.worklist.id).await
-                })
-                .map_err(mlua::Error::runtime)?;
                 let now = now_unix_ms();
-                let out = lua.create_table()?;
                 let selection = selection::WorkItemSelection::new(
                     handle.parent_item_id,
                     where_map.as_ref(),
                     limit,
                 );
-                for (index, row) in selection::paused_rows(rows, selection, due_only, now)
-                    .into_iter()
-                    .enumerate()
-                {
-                    out.set(index + 1, item_proxy(lua, handle.clone(), row)?)?;
-                }
-                Ok(Value::Table(out))
+                let rows =
+                    selection::paused_rows(load_work_items(&handle)?, selection, due_only, now);
+                work_items_value(lua, &handle, rows)
             })?,
         )?;
     }
@@ -1162,12 +1106,8 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
             "active",
             lua.create_function(move |lua, _self: Table| {
                 let (_agent, session_id, execution_id) = current_claim_identity(&handle.app_data);
-                let rows = crate::harness::globals::block_on_current(async {
-                    handle.store.list_work_items(handle.worklist.id).await
-                })
-                .map_err(mlua::Error::runtime)?;
                 match selection::active_for_current_claim(
-                    rows,
+                    load_work_items(&handle)?,
                     handle.parent_item_id,
                     session_id.as_deref(),
                     execution_id.as_deref(),
@@ -1187,10 +1127,7 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                 require_capability(&handle.app_data, "runtime.worklist.next")
                     .map_err(mlua::Error::runtime)?;
                 let where_map = parse_where_map(lua, opts)?;
-                let rows = crate::harness::globals::block_on_current(async {
-                    handle.store.list_work_items(handle.worklist.id).await
-                })
-                .map_err(mlua::Error::runtime)?;
+                let rows = load_work_items(&handle)?;
                 let now = now_unix_ms();
                 let (agent_id, session_id, execution_id) = current_claim_identity(&handle.app_data);
                 for row in selection::next_candidates(
@@ -1249,11 +1186,11 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                 let where_map = parse_where_map(lua, Some(opts))?.ok_or_else(|| {
                     mlua::Error::runtime("worklist.find requires opts.where".to_string())
                 })?;
-                let rows = crate::harness::globals::block_on_current(async {
-                    handle.store.list_work_items(handle.worklist.id).await
-                })
-                .map_err(mlua::Error::runtime)?;
-                match selection::find_matching(rows, handle.parent_item_id, &where_map) {
+                match selection::find_matching(
+                    load_work_items(&handle)?,
+                    handle.parent_item_id,
+                    &where_map,
+                ) {
                     Some(row) => Ok(Value::Table(item_proxy(lua, handle.clone(), row)?)),
                     None => Ok(Value::Nil),
                 }
@@ -1266,10 +1203,7 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
         proxy.set(
             "progress",
             lua.create_function(move |lua, _self: Table| {
-                let rows = crate::harness::globals::block_on_current(async {
-                    handle.store.list_work_items(handle.worklist.id).await
-                })
-                .map_err(mlua::Error::runtime)?;
+                let rows = load_work_items(&handle)?;
                 let (done, total) = selection::progress_counts(&rows, handle.parent_item_id);
                 let out = lua.create_table()?;
                 out.set("done", done)?;
@@ -1284,10 +1218,7 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
         proxy.set(
             "empty",
             lua.create_function(move |_lua, _self: Table| {
-                let rows = crate::harness::globals::block_on_current(async {
-                    handle.store.list_work_items(handle.worklist.id).await
-                })
-                .map_err(mlua::Error::runtime)?;
+                let rows = load_work_items(&handle)?;
                 let now = now_unix_ms();
                 let has_pending = selection::has_pending_work(&rows, handle.parent_item_id, now);
                 Ok(Value::Boolean(!has_pending))

@@ -644,6 +644,25 @@ async fn test_worklist_dx_helpers_support_prompt_and_action_items() {
                 if fix.payload == nil or fix.payload.kind ~= "prompt" then
                     error("expected normalized prompt payload view")
                 end
+                fix = fix:update({
+                    content = {
+                        { type = "text", text = "Updated repro starts on /login" }
+                    },
+                    tools = {
+                        allow = { "shell_exec", "read_file" }
+                    },
+                    conflict_policy = "queue",
+                    metadata = { role = "dev", phase = "triage" }
+                })
+                if fix.content == nil or fix.content[1].text ~= "Updated repro starts on /login" then
+                    error("expected updated structured prompt content to round-trip")
+                end
+                if fix.tools == nil or fix.tools.allow[2] ~= "read_file" then
+                    error("expected updated structured prompt tools to round-trip")
+                end
+                if fix.conflict_policy ~= "queue" then
+                    error("expected updated conflict policy")
+                end
 
                 local qa = tasks:add({
                     title = "Run checkout smoke test",
@@ -664,12 +683,26 @@ async fn test_worklist_dx_helpers_support_prompt_and_action_items() {
                 if qa.payload.action == nil or qa.payload.action.name ~= "qa.run_smoke" then
                     error("expected normalized action payload name")
                 end
+                qa = qa:update({
+                    params = { suite = "payments" },
+                    metadata = { role = "qa", lane = "smoke" },
+                    priority = 20
+                })
+                if qa.params == nil or qa.params.suite ~= "payments" then
+                    error("expected updated action params to round-trip")
+                end
+                if qa.metadata == nil or qa.metadata.lane ~= "smoke" then
+                    error("expected updated action metadata to round-trip")
+                end
+                if qa.priority ~= 20 then
+                    error("expected updated priority")
+                end
 
                 local found = tasks:find({
-                    where = { role = "qa" }
+                    where = { lane = "smoke" }
                 })
                 if found == nil or found.id ~= qa.id then
-                    error("expected find(where=role=qa) to return action item")
+                    error("expected find(where=lane=smoke) to return action item")
                 end
 
                 local claimed = tasks:next({
