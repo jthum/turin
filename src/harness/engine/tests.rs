@@ -2769,6 +2769,47 @@ async fn test_hash_sha256_and_fs_stat_track_changes_per_session() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fs_read_and_stat_reject_oversized_files_before_loading() {
+    let root = TempDir::new().unwrap();
+    let oversized = root.path().join("BIG.txt");
+    let file = std::fs::File::create(&oversized).unwrap();
+    file.set_len((10 * 1024 * 1024 + 1) as u64).unwrap();
+
+    let script = r#"
+        function on_turn_prepare(ctx)
+            local content, read_err = try(fs.read, "BIG.txt")
+            if content ~= nil then
+                return REJECT, "fs.read should reject oversized files"
+            end
+            if read_err == nil or not tostring(read_err):find("File exceeds max size", 1, true) then
+                return REJECT, "fs.read oversized error mismatch: " .. tostring(read_err)
+            end
+
+            local stat, stat_err = try(fs.stat, "BIG.txt")
+            if stat ~= nil then
+                return REJECT, "fs.stat should reject oversized files"
+            end
+            if stat_err == nil or not tostring(stat_err):find("File exceeds max size", 1, true) then
+                return REJECT, "fs.stat oversized error mismatch: " .. tostring(stat_err)
+            end
+
+            return ALLOW
+        end
+    "#;
+
+    let harness_dir = TempDir::new().unwrap();
+    std::fs::write(harness_dir.path().join("oversized.lua"), script).unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data_for_root(root.path().to_path_buf())).unwrap();
+    engine.load_dir(harness_dir.path()).unwrap();
+
+    let verdict = engine
+        .evaluate_userdata("on_turn_prepare", MockContext)
+        .unwrap();
+    assert!(verdict.is_allowed());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fs_summary_reuses_cached_summary_until_file_changes() {
     let root = TempDir::new().unwrap();
     std::fs::write(root.path().join("SPEC.md"), "alpha").unwrap();

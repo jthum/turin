@@ -1,3 +1,4 @@
+use std::fs::Metadata;
 use std::path::Path;
 
 use mlua::{Lua, Result as LuaResult, Value};
@@ -35,6 +36,7 @@ fn current_session_tracking_context(
 
     let store_manager = app_data.store_manager.clone();
     let execution_ctx = app_data.execution_ctx.clone();
+    // Release the Lua app-data borrow before taking the execution-context lock.
     let _ = app_data;
 
     let (session_id, store_selector) = execution_ctx
@@ -89,28 +91,52 @@ fn store_current_session_hash(lua: &Lua, tracking_key: &str, hash: &str) -> Resu
     })
 }
 
+fn reject_oversized_file(metadata: &Metadata, max_file_size: usize) -> Result<(), String> {
+    if metadata.len() > max_file_size as u64 {
+        Err("File exceeds max size".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn read_to_string_bounded(path: &Path, max_file_size: usize) -> Result<String, String> {
+    let metadata = std::fs::metadata(path).map_err(|err| err.to_string())?;
+    reject_oversized_file(&metadata, max_file_size)?;
+    std::fs::read_to_string(path).map_err(|err| err.to_string())
+}
+
+fn read_bytes_and_metadata_bounded(
+    path: &Path,
+    max_file_size: usize,
+) -> Result<(Vec<u8>, Metadata), String> {
+    let metadata = std::fs::metadata(path).map_err(|err| err.to_string())?;
+    reject_oversized_file(&metadata, max_file_size)?;
+    let bytes = std::fs::read(path).map_err(|err| err.to_string())?;
+    Ok((bytes, metadata))
+}
+
 pub(super) fn register_fs_module(lua: &Lua, fs_root: &Path, max_file_size: usize) -> LuaResult<()> {
     let fs_table = lua.create_table()?;
     let root = fs_root.to_path_buf();
 
-    let r1 = root.clone();
+    let read_root = root.clone();
     fs_table.set(
         "read",
         lua.create_function(move |lua, path: String| {
             if let Err(err) = require_capability_for_lua(lua, "fs.read") {
                 return nil_err(lua, &err.to_string());
             }
-            match resolve_safe_path(&r1, &path) {
-                Some(p) => match std::fs::read_to_string(&p) {
+            match resolve_safe_path(&read_root, &path) {
+                Some(p) => match read_to_string_bounded(&p, max_file_size) {
                     Ok(c) => string_ok(lua, &c),
-                    Err(e) => nil_err(lua, &e.to_string()),
+                    Err(e) => nil_err(lua, &e),
                 },
                 None => nil_err(lua, "Unsafe path traversal"),
             }
         })?,
     )?;
 
-    let r2 = root.clone();
+    let write_root = root.clone();
     fs_table.set(
         "write",
         lua.create_function(move |lua, (path, content): (String, String)| {
@@ -120,10 +146,12 @@ pub(super) fn register_fs_module(lua: &Lua, fs_root: &Path, max_file_size: usize
             if content.len() > max_file_size {
                 return bool_err(lua, "File exceeds max size");
             }
-            match resolve_safe_path(&r2, &path) {
+            match resolve_safe_path(&write_root, &path) {
                 Some(p) => {
                     if let Some(parent) = p.parent() {
-                        let _ = std::fs::create_dir_all(parent);
+                        if let Err(err) = std::fs::create_dir_all(parent) {
+                            return bool_err(lua, &err.to_string());
+                        }
                     }
                     match std::fs::write(&p, content) {
                         Ok(_) => Ok(ok_bool()),
@@ -135,37 +163,37 @@ pub(super) fn register_fs_module(lua: &Lua, fs_root: &Path, max_file_size: usize
         })?,
     )?;
 
-    let r3 = root.clone();
+    let exists_root = root.clone();
     fs_table.set(
         "exists",
-        lua.create_function(
-            move |_lua, path: String| match resolve_safe_path(&r3, &path) {
+        lua.create_function(move |_lua, path: String| {
+            match resolve_safe_path(&exists_root, &path) {
                 Some(p) => Ok(p.exists()),
                 None => Ok(false),
-            },
-        )?,
+            }
+        })?,
     )?;
 
-    let r4 = root.clone();
+    let safety_root = root.clone();
     fs_table.set(
         "is_safe_path",
-        lua.create_function(move |_lua, path: String| Ok(resolve_safe_path(&r4, &path).is_some()))?,
+        lua.create_function(move |_lua, path: String| {
+            Ok(resolve_safe_path(&safety_root, &path).is_some())
+        })?,
     )?;
 
-    let r5 = root.clone();
+    let stat_root = root.clone();
     fs_table.set(
         "stat",
         lua.create_function(move |lua, path: String| {
             require_capability_for_lua(lua, "fs.read")?;
 
-            let resolved = resolve_safe_path(&r5, &path)
+            let resolved = resolve_safe_path(&stat_root, &path)
                 .ok_or_else(|| mlua::Error::runtime("Unsafe path traversal".to_string()))?;
-            let bytes =
-                std::fs::read(&resolved).map_err(|err| mlua::Error::runtime(err.to_string()))?;
-            let metadata = std::fs::metadata(&resolved)
-                .map_err(|err| mlua::Error::runtime(err.to_string()))?;
+            let (bytes, metadata) = read_bytes_and_metadata_bounded(&resolved, max_file_size)
+                .map_err(mlua::Error::runtime)?;
             let hash = hash_sha256_hex(&bytes);
-            let tracking_path = normalize_tracking_path(&r5, &resolved);
+            let tracking_path = normalize_tracking_path(&stat_root, &resolved);
             let tracking_key = format!("{FS_STAT_HASH_KEY_PREFIX}{tracking_path}");
             let previous_hash =
                 load_previous_session_hash(lua, &tracking_key).map_err(mlua::Error::runtime)?;

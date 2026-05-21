@@ -747,7 +747,7 @@ Notes:
 
 - `fs.read`/`fs.write` are governance-capability gated (`fs.read`, `fs.write`) when governance enforcement is enabled.
 - `fs.stat(...)` currently uses the same `fs.read` capability gate because it reads file contents to compute a content hash.
-- `fs.write` enforces a max harness write size (kernel constant, default 10MB).
+- `fs.read`, `fs.write`, and `fs.stat` enforce the max harness file size before loading or writing file contents (kernel constant, default 10MB).
 - Path traversal outside `harness.fs_root` is denied.
 
 `fs.stat(path)` shape:

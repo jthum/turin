@@ -210,6 +210,7 @@ Important distinction:
 
 - current file facts such as `bytes`, `hash`, and `modified_at` describe the file now
 - `previous_hash`, `seen_before`, and `changed` are session-relative tracking fields
+- `fs.stat(...)` reads file contents to compute `hash`, so it enforces the same max harness file size as `fs.read(...)`
 
 ## Store / Selector Shapes
 

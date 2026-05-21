@@ -42,7 +42,8 @@ Filesystem globals:
 
 1. `fs.read`, `fs.write`, and `fs.stat` require filesystem capabilities.
 2. Paths must resolve safely under the harness filesystem root.
-3. `fs.stat` hashes content and stores previous hashes in session-scoped KV when a session is active.
+3. `fs.read` and `fs.stat` reject files over the max harness file size before loading contents.
+4. `fs.stat` hashes content and stores previous hashes in session-scoped KV when a session is active.
 
 ## Invariants
 
@@ -53,6 +54,7 @@ Filesystem globals:
 - Delegated import capabilities cannot widen the parent delegation.
 - Imported function wrappers must restore previous module/root/capability context after the call.
 - Filesystem APIs must not bypass safe path resolution.
+- File-content helpers must enforce the max harness file size before reading contents into memory.
 
 ## Tests
 
