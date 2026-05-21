@@ -1129,6 +1129,26 @@ provider = "noop"
             ..Default::default()
         })
         .await?;
+    project_store
+        .create_work_item(crate::persistence::state::WorkItemInsert {
+            public_id: uuid::Uuid::now_v7(),
+            worklist_id: worklist.id,
+            parent_item_id: None,
+            title: "Pending item with stale pause metadata",
+            item_kind: "action",
+            prompt: None,
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action_name: Some("qa.resume"),
+            action_params: Some("{}"),
+            priority: 1,
+            after_ids: None,
+            metadata: Some(
+                r#"{"paused":true,"pause_reason":"stale_metadata","pause_until_unix_ms":1}"#,
+            ),
+        })
+        .await?;
 
     let due_items = state
         .worklist_items(WorklistItemsQuery {
@@ -1147,6 +1167,26 @@ provider = "noop"
     assert_eq!(due_items.items.len(), 1);
     assert_eq!(
         due_items.items[0].public_id,
+        uuid::Uuid::from_slice(&due_paused.public_id)?.to_string()
+    );
+
+    let due_items_without_paused_filter = state
+        .worklist_items(WorklistItemsQuery {
+            public_id: &worklists[0].public_id,
+            persistence: Some(&persistence),
+            status: None,
+            parent_public_id: None,
+            where_filter: None,
+            claimed_only: false,
+            paused_only: false,
+            due_only: true,
+            limit: Some(10),
+        })
+        .await?
+        .expect("due items result present");
+    assert_eq!(due_items_without_paused_filter.items.len(), 1);
+    assert_eq!(
+        due_items_without_paused_filter.items[0].public_id,
         uuid::Uuid::from_slice(&due_paused.public_id)?.to_string()
     );
 

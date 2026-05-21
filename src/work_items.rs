@@ -51,16 +51,6 @@ pub(crate) fn work_item_pause_until_unix_ms(metadata: Option<&JsonValue>) -> Opt
         .and_then(|value| value.as_i64())
 }
 
-pub(crate) fn work_item_metadata_pause_due(metadata: Option<&JsonValue>, now_unix_ms: i64) -> bool {
-    if !metadata_pause_flag(metadata) {
-        return false;
-    }
-    match work_item_pause_until_unix_ms(metadata) {
-        Some(unix_ms) => unix_ms <= now_unix_ms,
-        None => false,
-    }
-}
-
 pub(crate) fn work_item_pause_due(row: &WorkItemRow, now_unix_ms: i64) -> bool {
     if !work_item_paused(row) {
         return false;
@@ -177,15 +167,6 @@ fn parent_id_value(row: &WorkItemRow, parent_id: &WorkItemParentId<'_>) -> JsonV
             .map(JsonValue::String)
             .unwrap_or(JsonValue::Null),
     }
-}
-
-fn metadata_pause_flag(metadata: Option<&JsonValue>) -> bool {
-    let Some(JsonValue::Object(map)) = metadata else {
-        return false;
-    };
-    map.get("paused")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false)
 }
 
 fn parse_json_opt<T>(raw: Option<&str>) -> Result<Option<T>>

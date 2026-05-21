@@ -16,8 +16,8 @@ use crate::persistence::schema::{WorkItemRow, WorklistRow};
 use crate::persistence::state::StateStore;
 use crate::work_items::{
     WorkItemParentId, public_id_string as format_public_id, work_item_matches_where,
-    work_item_metadata, work_item_metadata_pause_due, work_item_pause_reason,
-    work_item_pause_until_unix_ms, work_item_paused,
+    work_item_metadata, work_item_pause_due, work_item_pause_reason, work_item_pause_until_unix_ms,
+    work_item_paused,
 };
 
 pub(crate) struct WorklistItemsQuery<'a> {
@@ -97,10 +97,7 @@ impl DaemonState {
             .filter(|row| query.status.is_none_or(|value| row.status == value))
             .filter(|row| !query.claimed_only || row.claim_execution_id.is_some())
             .filter(|row| !query.paused_only || work_item_paused(row))
-            .filter(|row| {
-                !query.due_only
-                    || work_item_metadata_pause_due(work_item_metadata(row).as_ref(), now_unix_ms)
-            })
+            .filter(|row| !query.due_only || work_item_pause_due(row, now_unix_ms))
             .filter(|row| match (query.parent_public_id, parent_row_id) {
                 (Some(_), Some(parent_row_id)) => row.parent_item_id == Some(parent_row_id),
                 (Some(_), None) => false,
