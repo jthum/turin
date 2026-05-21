@@ -117,113 +117,124 @@ fn read_bytes_and_metadata_bounded(
 
 pub(super) fn register_fs_module(lua: &Lua, fs_root: &Path, max_file_size: usize) -> LuaResult<()> {
     let fs_table = lua.create_table()?;
-    let root = fs_root.to_path_buf();
+    let fs_root = fs_root.to_path_buf();
 
-    let read_root = root.clone();
-    fs_table.set(
-        "read",
-        lua.create_function(move |lua, path: String| {
-            if let Err(err) = require_capability_for_lua(lua, "fs.read") {
-                return nil_err(lua, &err.to_string());
-            }
-            match resolve_safe_path(&read_root, &path) {
-                Some(p) => match read_to_string_bounded(&p, max_file_size) {
-                    Ok(c) => string_ok(lua, &c),
-                    Err(e) => nil_err(lua, &e),
-                },
-                None => nil_err(lua, "Unsafe path traversal"),
-            }
-        })?,
-    )?;
+    {
+        let root = fs_root.clone();
+        fs_table.set(
+            "read",
+            lua.create_function(move |lua, path: String| {
+                if let Err(err) = require_capability_for_lua(lua, "fs.read") {
+                    return nil_err(lua, &err.to_string());
+                }
+                match resolve_safe_path(&root, &path) {
+                    Some(p) => match read_to_string_bounded(&p, max_file_size) {
+                        Ok(c) => string_ok(lua, &c),
+                        Err(e) => nil_err(lua, &e),
+                    },
+                    None => nil_err(lua, "Unsafe path traversal"),
+                }
+            })?,
+        )?;
+    }
 
-    let write_root = root.clone();
-    fs_table.set(
-        "write",
-        lua.create_function(move |lua, (path, content): (String, String)| {
-            if let Err(err) = require_capability_for_lua(lua, "fs.write") {
-                return bool_err(lua, &err.to_string());
-            }
-            if content.len() > max_file_size {
-                return bool_err(lua, "File exceeds max size");
-            }
-            match resolve_safe_path(&write_root, &path) {
-                Some(p) => {
-                    if let Some(parent) = p.parent() {
-                        if let Err(err) = std::fs::create_dir_all(parent) {
+    {
+        let root = fs_root.clone();
+        fs_table.set(
+            "write",
+            lua.create_function(move |lua, (path, content): (String, String)| {
+                if let Err(err) = require_capability_for_lua(lua, "fs.write") {
+                    return bool_err(lua, &err.to_string());
+                }
+                if content.len() > max_file_size {
+                    return bool_err(lua, "File exceeds max size");
+                }
+                match resolve_safe_path(&root, &path) {
+                    Some(p) => {
+                        if let Some(parent) = p.parent()
+                            && let Err(err) = std::fs::create_dir_all(parent)
+                        {
                             return bool_err(lua, &err.to_string());
                         }
+                        match std::fs::write(&p, content) {
+                            Ok(_) => Ok(ok_bool()),
+                            Err(e) => bool_err(lua, &e.to_string()),
+                        }
                     }
-                    match std::fs::write(&p, content) {
-                        Ok(_) => Ok(ok_bool()),
-                        Err(e) => bool_err(lua, &e.to_string()),
-                    }
+                    None => bool_err(lua, "Unsafe path traversal"),
                 }
-                None => bool_err(lua, "Unsafe path traversal"),
-            }
-        })?,
-    )?;
+            })?,
+        )?;
+    }
 
-    let exists_root = root.clone();
-    fs_table.set(
-        "exists",
-        lua.create_function(move |_lua, path: String| {
-            match resolve_safe_path(&exists_root, &path) {
-                Some(p) => Ok(p.exists()),
-                None => Ok(false),
-            }
-        })?,
-    )?;
+    {
+        let root = fs_root.clone();
+        fs_table.set(
+            "exists",
+            lua.create_function(
+                move |_lua, path: String| match resolve_safe_path(&root, &path) {
+                    Some(p) => Ok(p.exists()),
+                    None => Ok(false),
+                },
+            )?,
+        )?;
+    }
 
-    let safety_root = root.clone();
-    fs_table.set(
-        "is_safe_path",
-        lua.create_function(move |_lua, path: String| {
-            Ok(resolve_safe_path(&safety_root, &path).is_some())
-        })?,
-    )?;
+    {
+        let root = fs_root.clone();
+        fs_table.set(
+            "is_safe_path",
+            lua.create_function(move |_lua, path: String| {
+                Ok(resolve_safe_path(&root, &path).is_some())
+            })?,
+        )?;
+    }
 
-    let stat_root = root.clone();
-    fs_table.set(
-        "stat",
-        lua.create_function(move |lua, path: String| {
-            require_capability_for_lua(lua, "fs.read")?;
+    {
+        let root = fs_root.clone();
+        fs_table.set(
+            "stat",
+            lua.create_function(move |lua, path: String| {
+                require_capability_for_lua(lua, "fs.read")?;
 
-            let resolved = resolve_safe_path(&stat_root, &path)
-                .ok_or_else(|| mlua::Error::runtime("Unsafe path traversal".to_string()))?;
-            let (bytes, metadata) = read_bytes_and_metadata_bounded(&resolved, max_file_size)
-                .map_err(mlua::Error::runtime)?;
-            let hash = hash_sha256_hex(&bytes);
-            let tracking_path = normalize_tracking_path(&stat_root, &resolved);
-            let tracking_key = format!("{FS_STAT_HASH_KEY_PREFIX}{tracking_path}");
-            let previous_hash =
-                load_previous_session_hash(lua, &tracking_key).map_err(mlua::Error::runtime)?;
-            store_current_session_hash(lua, &tracking_key, &hash).map_err(mlua::Error::runtime)?;
+                let resolved = resolve_safe_path(&root, &path)
+                    .ok_or_else(|| mlua::Error::runtime("Unsafe path traversal".to_string()))?;
+                let (bytes, metadata) = read_bytes_and_metadata_bounded(&resolved, max_file_size)
+                    .map_err(mlua::Error::runtime)?;
+                let hash = hash_sha256_hex(&bytes);
+                let tracking_path = normalize_tracking_path(&root, &resolved);
+                let tracking_key = format!("{FS_STAT_HASH_KEY_PREFIX}{tracking_path}");
+                let previous_hash =
+                    load_previous_session_hash(lua, &tracking_key).map_err(mlua::Error::runtime)?;
+                store_current_session_hash(lua, &tracking_key, &hash)
+                    .map_err(mlua::Error::runtime)?;
 
-            let stat = lua.create_table()?;
-            stat.set("path", tracking_path)?;
-            stat.set("bytes", bytes.len() as i64)?;
-            stat.set("hash", hash.clone())?;
-            stat.set("previous_hash", previous_hash.clone())?;
-            stat.set("seen_before", previous_hash.is_some())?;
-            stat.set(
-                "changed",
-                previous_hash
-                    .as_ref()
-                    .map(|previous| previous != &hash)
-                    .unwrap_or(true),
-            )?;
+                let stat = lua.create_table()?;
+                stat.set("path", tracking_path)?;
+                stat.set("bytes", bytes.len() as i64)?;
+                stat.set("hash", hash.clone())?;
+                stat.set("previous_hash", previous_hash.clone())?;
+                stat.set("seen_before", previous_hash.is_some())?;
+                stat.set(
+                    "changed",
+                    previous_hash
+                        .as_ref()
+                        .map(|previous| previous != &hash)
+                        .unwrap_or(true),
+                )?;
 
-            if let Ok(modified) = metadata.modified()
-                && let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH)
-            {
-                stat.set("modified_at", duration.as_secs() as i64)?;
-            } else {
-                stat.set("modified_at", Value::Nil)?;
-            }
+                if let Ok(modified) = metadata.modified()
+                    && let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH)
+                {
+                    stat.set("modified_at", duration.as_secs() as i64)?;
+                } else {
+                    stat.set("modified_at", Value::Nil)?;
+                }
 
-            Ok(Value::Table(stat))
-        })?,
-    )?;
+                Ok(Value::Table(stat))
+            })?,
+        )?;
+    }
 
     lua.globals().set("fs", fs_table)?;
     Ok(())
