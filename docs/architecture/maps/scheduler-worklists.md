@@ -141,6 +141,8 @@ The recent refactor intentionally stopped short of pushing scheduler/worklist fi
 
 Runtime worklist list-style methods share option parsing for `where` and `limit` before applying the selection helpers. Keep new list/filter methods on that path so option validation and row selection do not drift.
 
+Runtime worklist proxy methods also share small local helpers for row JSON decoding and harness-runtime async bridging. Keep new proxy fields/methods on those helpers rather than reintroducing repeated `parse_json_opt(...).ok().flatten()` or `block_on_current(...).map_err(...)` plumbing.
+
 The current module split is deliberate:
 
 - `scheduled_jobs.rs` answers "what jobs exist and how are they edited?"
