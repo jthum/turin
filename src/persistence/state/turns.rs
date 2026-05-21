@@ -4,6 +4,28 @@ use super::{
     BranchHeadRow, BranchProvenance, StateStore, TurnRow, TurnWriteError, TurnWriteTarget,
 };
 
+const BRANCH_HEAD_SELECT: &str = r#"
+SELECT bh.id,
+       bh.public_id,
+       bh.session_id,
+       bh.name,
+       bh.head_turn_id,
+       t.branch_depth,
+       bh.created_from_turn_id,
+       bh.origin_kind,
+       bh.origin_task_id,
+       bh.origin_execution_id,
+       bh.origin_metadata,
+       bh.created_at,
+       CASE WHEN s.active_branch_head_id = bh.id THEN 1 ELSE 0 END AS is_active
+FROM branch_heads bh
+JOIN sessions s ON s.id = bh.session_id
+LEFT JOIN turns t ON t.id = bh.head_turn_id
+"#;
+
+const TURN_SELECT: &str =
+    "SELECT id, public_id, session_id, parent_turn_id, branch_depth, created_at FROM turns";
+
 impl StateStore {
     pub async fn initialize_main_branch(&self, session_id: i64) -> Result<BranchHeadRow> {
         let conn = self.connect().await?;
@@ -32,30 +54,11 @@ impl StateStore {
 
     pub async fn get_active_branch_head(&self, session_id: i64) -> Result<Option<BranchHeadRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT bh.id,
-                       bh.public_id,
-                       bh.session_id,
-                       bh.name,
-                       bh.head_turn_id,
-                       t.branch_depth,
-                       bh.created_from_turn_id,
-                       bh.origin_kind,
-                       bh.origin_task_id,
-                       bh.origin_execution_id,
-                       bh.origin_metadata,
-                       bh.created_at,
-                       1 AS is_active
-                FROM sessions s
-                JOIN branch_heads bh ON bh.id = s.active_branch_head_id
-                LEFT JOIN turns t ON t.id = bh.head_turn_id
-                WHERE s.id = ?1
-                "#,
-                [session_id],
-            )
-            .await?;
+        let sql = format!(
+            "{BRANCH_HEAD_SELECT}
+             WHERE s.id = ?1 AND bh.id = s.active_branch_head_id"
+        );
+        let mut rows = conn.query(&sql, [session_id]).await?;
 
         if let Some(row) = rows.next().await? {
             Ok(Some(branch_head_from_row(&row)?))
@@ -70,29 +73,9 @@ impl StateStore {
         branch_id: i64,
     ) -> Result<Option<BranchHeadRow>> {
         let conn = self.connect().await?;
+        let sql = format!("{BRANCH_HEAD_SELECT} WHERE bh.session_id = ?1 AND bh.id = ?2");
         let mut rows = conn
-            .query(
-                r#"
-                SELECT bh.id,
-                       bh.public_id,
-                       bh.session_id,
-                       bh.name,
-                       bh.head_turn_id,
-                       t.branch_depth,
-                       bh.created_from_turn_id,
-                       bh.origin_kind,
-                       bh.origin_task_id,
-                       bh.origin_execution_id,
-                       bh.origin_metadata,
-                       bh.created_at,
-                       CASE WHEN s.active_branch_head_id = bh.id THEN 1 ELSE 0 END AS is_active
-                FROM branch_heads bh
-                JOIN sessions s ON s.id = bh.session_id
-                LEFT JOIN turns t ON t.id = bh.head_turn_id
-                WHERE bh.session_id = ?1 AND bh.id = ?2
-                "#,
-                turso::params![session_id, branch_id],
-            )
+            .query(&sql, turso::params![session_id, branch_id])
             .await?;
 
         if let Some(row) = rows.next().await? {
@@ -108,30 +91,8 @@ impl StateStore {
         name: &str,
     ) -> Result<Option<BranchHeadRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT bh.id,
-                       bh.public_id,
-                       bh.session_id,
-                       bh.name,
-                       bh.head_turn_id,
-                       t.branch_depth,
-                       bh.created_from_turn_id,
-                       bh.origin_kind,
-                       bh.origin_task_id,
-                       bh.origin_execution_id,
-                       bh.origin_metadata,
-                       bh.created_at,
-                       CASE WHEN s.active_branch_head_id = bh.id THEN 1 ELSE 0 END AS is_active
-                FROM branch_heads bh
-                JOIN sessions s ON s.id = bh.session_id
-                LEFT JOIN turns t ON t.id = bh.head_turn_id
-                WHERE bh.session_id = ?1 AND bh.name = ?2
-                "#,
-                turso::params![session_id, name],
-            )
-            .await?;
+        let sql = format!("{BRANCH_HEAD_SELECT} WHERE bh.session_id = ?1 AND bh.name = ?2");
+        let mut rows = conn.query(&sql, turso::params![session_id, name]).await?;
 
         if let Some(row) = rows.next().await? {
             Ok(Some(branch_head_from_row(&row)?))
@@ -146,27 +107,10 @@ impl StateStore {
         public_id: uuid::Uuid,
     ) -> Result<Option<BranchHeadRow>> {
         let conn = self.connect().await?;
+        let sql = format!("{BRANCH_HEAD_SELECT} WHERE bh.session_id = ?1 AND bh.public_id = ?2");
         let mut rows = conn
             .query(
-                r#"
-                SELECT bh.id,
-                       bh.public_id,
-                       bh.session_id,
-                       bh.name,
-                       bh.head_turn_id,
-                       t.branch_depth,
-                       bh.created_from_turn_id,
-                       bh.origin_kind,
-                       bh.origin_task_id,
-                       bh.origin_execution_id,
-                       bh.origin_metadata,
-                       bh.created_at,
-                       CASE WHEN s.active_branch_head_id = bh.id THEN 1 ELSE 0 END AS is_active
-                FROM branch_heads bh
-                JOIN sessions s ON s.id = bh.session_id
-                LEFT JOIN turns t ON t.id = bh.head_turn_id
-                WHERE bh.session_id = ?1 AND bh.public_id = ?2
-                "#,
+                &sql,
                 turso::params![session_id, public_id.into_bytes().to_vec()],
             )
             .await?;
@@ -179,31 +123,9 @@ impl StateStore {
 
     pub async fn list_branch_heads(&self, session_id: i64) -> Result<Vec<BranchHeadRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT bh.id,
-                       bh.public_id,
-                       bh.session_id,
-                       bh.name,
-                       bh.head_turn_id,
-                       t.branch_depth,
-                       bh.created_from_turn_id,
-                       bh.origin_kind,
-                       bh.origin_task_id,
-                       bh.origin_execution_id,
-                       bh.origin_metadata,
-                       bh.created_at,
-                       CASE WHEN s.active_branch_head_id = bh.id THEN 1 ELSE 0 END AS is_active
-                FROM branch_heads bh
-                JOIN sessions s ON s.id = bh.session_id
-                LEFT JOIN turns t ON t.id = bh.head_turn_id
-                WHERE bh.session_id = ?1
-                ORDER BY bh.created_at, bh.id
-                "#,
-                [session_id],
-            )
-            .await?;
+        let sql =
+            format!("{BRANCH_HEAD_SELECT} WHERE bh.session_id = ?1 ORDER BY bh.created_at, bh.id");
+        let mut rows = conn.query(&sql, [session_id]).await?;
 
         let mut out = Vec::new();
         while let Some(row) = rows.next().await? {
@@ -218,30 +140,13 @@ impl StateStore {
         source_turn_id: i64,
     ) -> Result<Vec<BranchHeadRow>> {
         let conn = self.connect().await?;
+        let sql = format!(
+            "{BRANCH_HEAD_SELECT}
+             WHERE bh.session_id = ?1 AND bh.created_from_turn_id = ?2
+             ORDER BY bh.created_at, bh.id"
+        );
         let mut rows = conn
-            .query(
-                r#"
-                SELECT bh.id,
-                       bh.public_id,
-                       bh.session_id,
-                       bh.name,
-                       bh.head_turn_id,
-                       t.branch_depth,
-                       bh.created_from_turn_id,
-                       bh.origin_kind,
-                       bh.origin_task_id,
-                       bh.origin_execution_id,
-                       bh.origin_metadata,
-                       bh.created_at,
-                       CASE WHEN s.active_branch_head_id = bh.id THEN 1 ELSE 0 END AS is_active
-                FROM branch_heads bh
-                JOIN sessions s ON s.id = bh.session_id
-                LEFT JOIN turns t ON t.id = bh.head_turn_id
-                WHERE bh.session_id = ?1 AND bh.created_from_turn_id = ?2
-                ORDER BY bh.created_at, bh.id
-                "#,
-                turso::params![session_id, source_turn_id],
-            )
+            .query(&sql, turso::params![session_id, source_turn_id])
             .await?;
 
         let mut out = Vec::new();
@@ -724,21 +629,10 @@ impl StateStore {
 
     pub(crate) async fn get_turn_row(&self, turn_id: i64) -> Result<Option<TurnRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                "SELECT id, public_id, session_id, parent_turn_id, branch_depth, created_at FROM turns WHERE id = ?1",
-                [turn_id],
-            )
-            .await?;
+        let sql = format!("{TURN_SELECT} WHERE id = ?1");
+        let mut rows = conn.query(&sql, [turn_id]).await?;
         if let Some(row) = rows.next().await? {
-            Ok(Some(TurnRow {
-                id: row.get::<i64>(0)?,
-                public_id: row.get::<Vec<u8>>(1)?,
-                session_id: row.get::<i64>(2)?,
-                parent_turn_id: row.get::<Option<i64>>(3)?,
-                branch_depth: row.get::<i64>(4)? as u32,
-                created_at: row.get::<String>(5)?,
-            }))
+            Ok(Some(turn_row_from_row(&row)?))
         } else {
             Ok(None)
         }
@@ -835,6 +729,17 @@ impl StateStore {
             None => self.get_active_branch_head(session_id).await,
         }
     }
+}
+
+fn turn_row_from_row(row: &turso::Row) -> Result<TurnRow> {
+    Ok(TurnRow {
+        id: row.get::<i64>(0)?,
+        public_id: row.get::<Vec<u8>>(1)?,
+        session_id: row.get::<i64>(2)?,
+        parent_turn_id: row.get::<Option<i64>>(3)?,
+        branch_depth: row.get::<i64>(4)? as u32,
+        created_at: row.get::<String>(5)?,
+    })
 }
 
 fn branch_head_from_row(row: &turso::Row) -> Result<BranchHeadRow> {

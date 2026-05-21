@@ -1,6 +1,11 @@
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
+use turso::Value as SqlValue;
 
 use super::{MessageRow, SessionReadTarget, SessionRow, StateStore, TurnWriteTarget};
+
+const MESSAGE_TURN_QUERY_CHUNK: usize = 500;
 
 impl StateStore {
     pub async fn list_session_rows(&self, limit: usize, offset: usize) -> Result<Vec<SessionRow>> {
@@ -104,27 +109,59 @@ impl StateStore {
         session_id: i64,
         turns: &[super::TurnRow],
     ) -> Result<Vec<MessageRow>> {
+        if turns.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let conn = self.connect().await?;
+        let turn_order = turns
+            .iter()
+            .enumerate()
+            .map(|(index, turn)| (turn.id, (index, turn.branch_depth)))
+            .collect::<HashMap<_, _>>();
         let mut messages = Vec::new();
-        for turn in turns {
-            let mut rows = conn
-                .query(
-                    "SELECT id, role, content, token_count, created_at FROM messages WHERE turn_id = ?1 ORDER BY id",
-                    [turn.id],
-                )
-                .await?;
+        for chunk in turns.chunks(MESSAGE_TURN_QUERY_CHUNK) {
+            let placeholders = (1..=chunk.len())
+                .map(|index| format!("?{index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "SELECT turn_id, id, role, content, token_count, created_at
+                 FROM messages
+                 WHERE turn_id IN ({placeholders})
+                 ORDER BY turn_id, id"
+            );
+            let params = chunk
+                .iter()
+                .map(|turn| SqlValue::Integer(turn.id))
+                .collect::<Vec<_>>();
+            let mut stmt = conn.prepare(&sql).await?;
+            let mut rows = stmt.query(params).await?;
             while let Some(row) = rows.next().await? {
-                messages.push(MessageRow {
-                    id: row.get::<i64>(0)?,
-                    session_id,
-                    turn_index: turn.branch_depth,
-                    role: row.get::<String>(1)?,
-                    content: row.get::<String>(2)?,
-                    token_count: row.get::<Option<i64>>(3)?.map(|t| t as u64),
-                    created_at: row.get::<String>(4)?,
-                });
+                let turn_id = row.get::<i64>(0)?;
+                let (turn_position, turn_index) = turn_order.get(&turn_id).ok_or_else(|| {
+                    anyhow::anyhow!("Message references unexpected turn {}", turn_id)
+                })?;
+                let message_id = row.get::<i64>(1)?;
+                messages.push((
+                    *turn_position,
+                    message_id,
+                    MessageRow {
+                        id: message_id,
+                        session_id,
+                        turn_index: *turn_index,
+                        role: row.get::<String>(2)?,
+                        content: row.get::<String>(3)?,
+                        token_count: row.get::<Option<i64>>(4)?.map(|t| t as u64),
+                        created_at: row.get::<String>(5)?,
+                    },
+                ));
             }
         }
-        Ok(messages)
+        messages.sort_by_key(|(turn_position, message_id, _)| (*turn_position, *message_id));
+        Ok(messages
+            .into_iter()
+            .map(|(_, _, message)| message)
+            .collect())
     }
 }
