@@ -10,8 +10,11 @@ Keep this subsystem small and explicit: action bindings should translate Lua val
 
 - `src/harness/stdlib/action_bindings.rs`
   - Lua `action.define`, `action.define_on`, and `action.run`.
-  - Action context helpers: `ctx:complete`, `ctx:fail`, `ctx:cancel`, `ctx:pause`, `ctx:pause_for`, and `ctx.checkpoint`.
+  - Declared action registry lookup and invocation.
+- `src/harness/stdlib/action_bindings/context.rs`
+  - Action context helpers: `ctx:complete`, `ctx:fail`, `ctx:cancel`, `ctx:pause`, `ctx:pause_for`, `ctx.is_cancelled`, and `ctx.checkpoint`.
   - Work-item metadata patching and scheduled resume creation.
+- `src/harness/stdlib/action_bindings/builtins.rs`
   - Built-in worklist actions: `worklist.dispatch_next`, `worklist.release_stale`.
 - `src/harness/stdlib/runtime_worklist.rs`
   - Worklist proxies and dispatch integration that can invoke declared actions.
@@ -81,6 +84,11 @@ git diff --check
 
 ## Current Shape
 
-The current pass removed repeated Lua value conversion and action-status response construction from `action_bindings.rs`. Optional Lua-to-JSON conversion and object-like option parsing now use shared binding helpers, so action context methods and runtime bindings keep the same nil/table/error semantics.
+The current pass keeps `action_bindings.rs` as the Lua registration and invocation file, while private child modules own helper domains:
+
+- `context.rs` owns action context table construction, checkpoint proxies, status transitions, metadata patching, cancellation checks, pause behavior, and resume scheduling.
+- `builtins.rs` owns built-in worklist action dispatch through the existing `runtime.worklist.open(...)` proxy path.
+
+Optional Lua-to-JSON conversion and object-like option parsing still use shared binding helpers, so action context methods and runtime bindings keep the same nil/table/error semantics.
 
 It deliberately did not split scheduling or worklist branches into a new layer; those branches encode real behavior differences and are easier to audit inline for now.
