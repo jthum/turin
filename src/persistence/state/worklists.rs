@@ -36,19 +36,22 @@ pub struct WorkItemUpdate<'a> {
     pub failure_reason: Option<Option<&'a str>>,
 }
 
+const WORKLIST_SELECT: &str =
+    "SELECT id, public_id, name, scope_ref, metadata, created_at, updated_at FROM worklists";
+
+const WORK_ITEM_SELECT: &str = r#"
+SELECT id, public_id, worklist_id, parent_item_id, title, item_kind, prompt, content, tools,
+       conflict_policy, action_name, action_params, status, priority, after_ids, metadata,
+       claim_agent_id, claim_session_id, claim_execution_id, claim_heartbeat_unix_ms,
+       claimed_at, completed_at, failure_reason, created_at, updated_at
+FROM work_items
+"#;
+
 impl StateStore {
     pub async fn list_worklists(&self) -> Result<Vec<WorklistRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT id, public_id, name, scope_ref, metadata, created_at, updated_at
-                FROM worklists
-                ORDER BY updated_at DESC, id DESC
-                "#,
-                turso::params![],
-            )
-            .await?;
+        let sql = format!("{WORKLIST_SELECT} ORDER BY updated_at DESC, id DESC");
+        let mut rows = conn.query(&sql, ()).await?;
         let mut result = Vec::new();
         while let Some(row) = rows.next().await? {
             result.push(map_worklist_row(&row)?);
@@ -63,17 +66,8 @@ impl StateStore {
         metadata: Option<&str>,
     ) -> Result<WorklistRow> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT id, public_id, name, scope_ref, metadata, created_at, updated_at
-                FROM worklists
-                WHERE name = ?1 AND scope_ref = ?2
-                LIMIT 1
-                "#,
-                turso::params![name, scope_ref],
-            )
-            .await?;
+        let sql = format!("{WORKLIST_SELECT} WHERE name = ?1 AND scope_ref = ?2 LIMIT 1");
+        let mut rows = conn.query(&sql, turso::params![name, scope_ref]).await?;
         if let Some(row) = rows.next().await? {
             return map_worklist_row(&row);
         }
@@ -89,17 +83,7 @@ impl StateStore {
         .await
         .context("Failed to insert worklist")?;
 
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT id, public_id, name, scope_ref, metadata, created_at, updated_at
-                FROM worklists
-                WHERE name = ?1 AND scope_ref = ?2
-                LIMIT 1
-                "#,
-                turso::params![name, scope_ref],
-            )
-            .await?;
+        let mut rows = conn.query(&sql, turso::params![name, scope_ref]).await?;
         let row = rows
             .next()
             .await?
@@ -112,16 +96,9 @@ impl StateStore {
         public_id: uuid::Uuid,
     ) -> Result<Option<WorklistRow>> {
         let conn = self.connect().await?;
+        let sql = format!("{WORKLIST_SELECT} WHERE public_id = ?1 LIMIT 1");
         let mut rows = conn
-            .query(
-                r#"
-                SELECT id, public_id, name, scope_ref, metadata, created_at, updated_at
-                FROM worklists
-                WHERE public_id = ?1
-                LIMIT 1
-                "#,
-                turso::params![public_id.into_bytes().to_vec()],
-            )
+            .query(&sql, turso::params![public_id.into_bytes().to_vec()])
             .await?;
         if let Some(row) = rows.next().await? {
             return Ok(Some(map_worklist_row(&row)?));
@@ -131,17 +108,8 @@ impl StateStore {
 
     pub async fn get_worklist_by_id(&self, id: i64) -> Result<Option<WorklistRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT id, public_id, name, scope_ref, metadata, created_at, updated_at
-                FROM worklists
-                WHERE id = ?1
-                LIMIT 1
-                "#,
-                turso::params![id],
-            )
-            .await?;
+        let sql = format!("{WORKLIST_SELECT} WHERE id = ?1 LIMIT 1");
+        let mut rows = conn.query(&sql, turso::params![id]).await?;
         if let Some(row) = rows.next().await? {
             return Ok(Some(map_worklist_row(&row)?));
         }
@@ -150,20 +118,9 @@ impl StateStore {
 
     pub async fn list_work_items(&self, worklist_id: i64) -> Result<Vec<WorkItemRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT id, public_id, worklist_id, parent_item_id, title, item_kind, prompt, content, tools,
-                       conflict_policy, action_name, action_params, status, priority, after_ids, metadata,
-                       claim_agent_id, claim_session_id, claim_execution_id, claim_heartbeat_unix_ms,
-                       claimed_at, completed_at, failure_reason, created_at, updated_at
-                FROM work_items
-                WHERE worklist_id = ?1
-                ORDER BY priority DESC, id ASC
-                "#,
-                turso::params![worklist_id],
-            )
-            .await?;
+        let sql =
+            format!("{WORK_ITEM_SELECT} WHERE worklist_id = ?1 ORDER BY priority DESC, id ASC");
+        let mut rows = conn.query(&sql, turso::params![worklist_id]).await?;
         let mut result = Vec::new();
         while let Some(row) = rows.next().await? {
             result.push(map_work_item_row(&row)?);
@@ -176,19 +133,9 @@ impl StateStore {
         public_id: uuid::Uuid,
     ) -> Result<Option<WorkItemRow>> {
         let conn = self.connect().await?;
+        let sql = format!("{WORK_ITEM_SELECT} WHERE public_id = ?1 LIMIT 1");
         let mut rows = conn
-            .query(
-                r#"
-                SELECT id, public_id, worklist_id, parent_item_id, title, item_kind, prompt, content, tools,
-                       conflict_policy, action_name, action_params, status, priority, after_ids, metadata,
-                       claim_agent_id, claim_session_id, claim_execution_id, claim_heartbeat_unix_ms,
-                       claimed_at, completed_at, failure_reason, created_at, updated_at
-                FROM work_items
-                WHERE public_id = ?1
-                LIMIT 1
-                "#,
-                turso::params![public_id.into_bytes().to_vec()],
-            )
+            .query(&sql, turso::params![public_id.into_bytes().to_vec()])
             .await?;
         if let Some(row) = rows.next().await? {
             return Ok(Some(map_work_item_row(&row)?));
@@ -198,20 +145,8 @@ impl StateStore {
 
     pub async fn get_work_item_by_id(&self, id: i64) -> Result<Option<WorkItemRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT id, public_id, worklist_id, parent_item_id, title, item_kind, prompt, content, tools,
-                       conflict_policy, action_name, action_params, status, priority, after_ids, metadata,
-                       claim_agent_id, claim_session_id, claim_execution_id, claim_heartbeat_unix_ms,
-                       claimed_at, completed_at, failure_reason, created_at, updated_at
-                FROM work_items
-                WHERE id = ?1
-                LIMIT 1
-                "#,
-                turso::params![id],
-            )
-            .await?;
+        let sql = format!("{WORK_ITEM_SELECT} WHERE id = ?1 LIMIT 1");
+        let mut rows = conn.query(&sql, turso::params![id]).await?;
         if let Some(row) = rows.next().await? {
             return Ok(Some(map_work_item_row(&row)?));
         }
