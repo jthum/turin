@@ -17,7 +17,11 @@ Keep this crate as an operator-facing orchestration layer. It should not duplica
 - `crates/turin-manager/src/setup/doctor.rs`
   - `turin-manager doctor`: config presence, configured channel discovery, sidecar/secret checks, daemon reachability, channel runtime health.
 - `crates/turin-manager/src/setup/channels.rs`
-  - `turin-manager channels list/configure/status`: sidecar discovery, manifest-driven setup prompts, auth-flow polling, channel config rendering, runtime status table.
+  - Channel command facade and run-function re-exports.
+- `crates/turin-manager/src/setup/channels/configure.rs`
+  - `turin-manager channels configure`: manifest-driven setup prompts, validation checks, auth-flow polling, channel config rendering, and optional `.env` updates.
+- `crates/turin-manager/src/setup/channels/inventory.rs`
+  - `turin-manager channels list/status`: sidecar discovery, configured-channel grouping, daemon runtime status lookup, and table rendering.
 - `crates/turin-manager/src/files.rs`
   - Config-path/layout resolution, channel config discovery/rendering, planned writes, TOML/env merge helpers, and redacted diffs.
 - `crates/turin-manager/src/runner.rs`
@@ -67,9 +71,15 @@ Add a manager command:
 
 Change channel setup behavior:
 
-1. Update `setup/channels.rs`.
+1. Update `setup/channels/configure.rs` for interactive setup behavior.
 2. Keep adapter-specific behavior in manifests/sidecars unless the behavior is genuinely generic.
 3. Run manager tests and channel-host checks when sidecar discovery or auth-flow behavior changes.
+
+Change channel inventory/status behavior:
+
+1. Update `setup/channels/inventory.rs`.
+2. Keep runtime status data sourced from `turin-control-client`.
+3. Add focused row/table tests when changing status display precedence.
 
 Change generated config or file rendering:
 
