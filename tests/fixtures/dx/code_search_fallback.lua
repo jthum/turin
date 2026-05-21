@@ -1,8 +1,5 @@
 function on_turn_prepare(ctx)
-  local status, serr = runtime.code.search.status(".")
-  if status == nil then
-    error("expected code search status: " .. tostring(serr))
-  end
+  local status = runtime.code.search.status(".")
   if status.capabilities == nil or status.capabilities.lexical ~= true then
     error("expected lexical capability")
   end

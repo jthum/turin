@@ -7,27 +7,21 @@ return {
     end
 
     local review = reviewer:ask("Review delegated import flow")
-    local changed, derr = runtime.db.exec([[
-      CREATE TABLE IF NOT EXISTS delegated_complete_probe (
+    runtime.db.exec([[
+      CREATE TABLE IF NOT EXISTS delegated_ask_probe (
         id INTEGER PRIMARY KEY,
         review TEXT NOT NULL
       )
     ]])
-    if changed == nil then
-      error("runtime.db.exec create after delegated runtime.agent.ask failed: " .. tostring(derr))
-    end
 
-    changed, derr = runtime.db.exec(
-      "INSERT INTO delegated_complete_probe(review) VALUES (?)",
+    runtime.db.exec(
+      "INSERT INTO delegated_ask_probe(review) VALUES (?)",
       { review }
     )
-    if changed == nil then
-      error("runtime.db.exec insert after delegated runtime.agent.ask failed: " .. tostring(derr))
-    end
 
     local db = access.check("db.exec")
     local policy = access.check("policy.set")
-    local policy_ok, policy_err = runtime.policy.set("dx.import.complete", true)
+    local policy_ok, policy_err = try(runtime.policy.set, "dx.import.ask", true)
 
     return {
       review = review,

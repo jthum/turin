@@ -340,13 +340,13 @@ async fn test_dx_fixture_import_scoped_capability_delegate() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_dx_fixture_import_scoped_complete_delegate() -> Result<()> {
+async fn test_dx_fixture_import_scoped_ask_delegate() -> Result<()> {
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harnesses");
     let reviewer_harness_dir = tmp.path().join("reviewer_harnesses");
     fs::create_dir(&harness_dir)?;
     fs::create_dir(&reviewer_harness_dir)?;
-    copy_fixture_tree("import_scoped_complete_delegate", &harness_dir)?;
+    copy_fixture_tree("import_scoped_ask_delegate", &harness_dir)?;
     copy_fixture(
         "peer_review_worker.lua",
         reviewer_harness_dir.join("peer_review_worker.lua"),
@@ -405,7 +405,7 @@ async fn test_dx_fixture_import_scoped_complete_delegate() -> Result<()> {
     kernel
         .run(
             &mut session,
-            Some("Exercise scoped import delegated complete".to_string()),
+            Some("Exercise scoped import delegated ask".to_string()),
         )
         .await?;
     kernel.end_session(&mut session).await?;
@@ -414,14 +414,14 @@ async fn test_dx_fixture_import_scoped_complete_delegate() -> Result<()> {
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(
-            "SELECT review FROM delegated_complete_probe ORDER BY id DESC LIMIT 1",
+            "SELECT review FROM delegated_ask_probe ORDER BY id DESC LIMIT 1",
             (),
         )
         .await?;
     let row = rows
         .next()
         .await?
-        .expect("expected delegated_complete_probe row");
+        .expect("expected delegated_ask_probe row");
     let review: String = row.get(0)?;
     assert_eq!(review, "REVIEW_OK");
 
@@ -535,19 +535,19 @@ async fn test_dx_fixture_peer_agent_denial() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_dx_fixture_peer_complete_delegated_caps() -> Result<()> {
+async fn test_dx_fixture_peer_ask_delegated_caps() -> Result<()> {
     let tmp = tempdir()?;
     let orchestrator_harness_dir = tmp.path().join("harnesses");
     let reviewer_harness_dir = tmp.path().join("reviewer_harnesses");
     fs::create_dir(&orchestrator_harness_dir)?;
     fs::create_dir(&reviewer_harness_dir)?;
     copy_fixture(
-        "peer_complete_delegated_caps.lua",
-        orchestrator_harness_dir.join("peer_complete_delegated_caps.lua"),
+        "peer_ask_delegated_caps.lua",
+        orchestrator_harness_dir.join("peer_ask_delegated_caps.lua"),
     )?;
     copy_fixture(
-        "peer_complete_delegated_caps_worker.lua",
-        reviewer_harness_dir.join("peer_complete_delegated_caps_worker.lua"),
+        "peer_ask_delegated_caps_worker.lua",
+        reviewer_harness_dir.join("peer_ask_delegated_caps_worker.lua"),
     )?;
 
     let mut providers = HashMap::new();
@@ -594,7 +594,7 @@ async fn test_dx_fixture_peer_complete_delegated_caps() -> Result<()> {
     kernel
         .run(
             &mut session,
-            Some("Exercise delegated caps via runtime.agent(...):complete".to_string()),
+            Some("Exercise delegated caps via runtime.agent(...):ask".to_string()),
         )
         .await?;
     kernel.end_session(&mut session).await?;

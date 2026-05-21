@@ -1,18 +1,12 @@
 function on_turn_prepare(ctx)
   remember("Workspace reviews should mention safety and DX")
 
-  local readme, ferr = fs.read("README.md")
-  if readme == nil then
-    error("expected README content: " .. tostring(ferr))
-  end
+  local readme = fs.read("README.md")
   if not string.find(readme, "DX review fixture", 1, true) then
     error("fs.read missing README content")
   end
 
-  local status, serr = runtime.code.search.status(".")
-  if status == nil then
-    error("expected code search status: " .. tostring(serr))
-  end
+  local status = runtime.code.search.status(".")
   if status.capabilities == nil or status.capabilities.lexical ~= true then
     error("expected lexical capability")
   end

@@ -6,10 +6,7 @@ function on_turn_prepare(ctx)
     error("expected top-level recall hits")
   end
 
-  local file, ferr = fs.read("notes.txt")
-  if file == nil then
-    error("expected fs.read result: " .. tostring(ferr))
-  end
+  local file = fs.read("notes.txt")
   if file ~= "cached text" then
     error("fs.read content mismatch: " .. tostring(file))
   end

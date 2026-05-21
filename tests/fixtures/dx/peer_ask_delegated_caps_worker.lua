@@ -14,7 +14,7 @@ function on_turn_prepare(ctx)
     error("delegated reviewer should have runtime.db.exec denied")
   end
 
-  local changed, err = try(runtime.db.exec, "CREATE TABLE IF NOT EXISTS peer_complete_forbidden (id INTEGER)")
+  local changed, err = try(runtime.db.exec, "CREATE TABLE IF NOT EXISTS peer_ask_forbidden (id INTEGER)")
   if changed ~= nil or err == nil then
     error("delegated reviewer runtime.db.exec should be denied")
   end
