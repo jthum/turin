@@ -4,7 +4,17 @@ This is a repo-local measurement harness. It is intentionally not a member of th
 
 The first scenario stresses hot session history and large tool outputs without using a real inference provider.
 
-For a static source/binary footprint baseline:
+For a static source/binary footprint baseline, prefer the no-build script:
+
+```bash
+tools/footprint-report --top-files 40
+```
+
+It uses standard shell tools, writes JSON and Markdown reports to
+`.workspace/perf-reports/`, and does not compile or link Turin.
+
+The Rust harness also has a `footprint` subcommand for environments where a
+single binary runner is preferable, but it links the perf-suite crate:
 
 ```bash
 cargo run --manifest-path tools/perf-suite/Cargo.toml -- \
@@ -12,7 +22,7 @@ cargo run --manifest-path tools/perf-suite/Cargo.toml -- \
   --top-files 40
 ```
 
-`footprint` scans Rust source roots, excludes obvious test/bench/example
+Both footprint paths scan Rust source roots, exclude obvious test/bench/example
 directories, reports LOC by area, lists the largest shipped source files, and
 records release binary sizes when known artifacts already exist. It does not
 build release binaries by itself.

@@ -1,0 +1,294 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="."
+roots="src,crates"
+top_files=40
+report_dir=".workspace/perf-reports"
+binaries=()
+
+usage() {
+  cat <<'USAGE'
+Usage: tools/footprint-report [options]
+
+Static source/binary footprint report without compiling Turin.
+
+Options:
+  --repo-root PATH     Repository root to scan (default: .)
+  --roots LIST         Comma-separated roots to scan (default: src,crates)
+  --top-files N        Number of largest Rust files to report (default: 40)
+  --report-dir PATH    Report output directory (default: .workspace/perf-reports)
+  --binary PATH        Extra binary path to record if it exists; repeatable
+  -h, --help           Show this help
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo-root)
+      repo_root="${2:?missing value for --repo-root}"
+      shift 2
+      ;;
+    --roots)
+      roots="${2:?missing value for --roots}"
+      shift 2
+      ;;
+    --top-files)
+      top_files="${2:?missing value for --top-files}"
+      shift 2
+      ;;
+    --report-dir)
+      report_dir="${2:?missing value for --report-dir}"
+      shift 2
+      ;;
+    --binary)
+      binaries+=("${2:?missing value for --binary}")
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if ! [[ "$top_files" =~ ^[0-9]+$ ]] || [[ "$top_files" -eq 0 ]]; then
+  echo "--top-files must be a positive integer" >&2
+  exit 2
+fi
+
+repo_root="$(cd "$repo_root" && pwd -P)"
+report_dir_path="$repo_root/$report_dir"
+mkdir -p "$report_dir_path"
+
+stamp="$(date +%s)"
+json_path="$report_dir_path/footprint-$stamp.json"
+md_path="$report_dir_path/footprint-$stamp.md"
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+files_tsv="$tmp_dir/files.tsv"
+areas_tsv="$tmp_dir/areas.tsv"
+top_tsv="$tmp_dir/top.tsv"
+binaries_tsv="$tmp_dir/binaries.tsv"
+: > "$files_tsv"
+: > "$binaries_tsv"
+
+IFS=',' read -r -a root_list <<< "$roots"
+
+trim_path() {
+  local value="$1"
+  value="${value#/}"
+  value="${value%/}"
+  printf '%s\n' "$value"
+}
+
+source_area() {
+  local root="$1"
+  local relative="$2"
+  if [[ "$root" == "crates" && "$relative" == crates/*/* ]]; then
+    local rest="${relative#crates/}"
+    printf 'crates/%s\n' "${rest%%/*}"
+  else
+    printf '%s\n' "$root"
+  fi
+}
+
+count_file() {
+  local root="$1"
+  local file="$2"
+  local relative="${file#$repo_root/}"
+  local area
+  area="$(source_area "$root" "$relative")"
+  awk -v path="$relative" -v area="$area" '
+    function trim(value) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      return value
+    }
+    {
+      total += 1
+      line = trim($0)
+      if (line == "") {
+        blank += 1
+      } else if (line ~ /^(\/\/|\/\*|\*|\*\/)/) {
+        comment += 1
+      } else {
+        code += 1
+      }
+    }
+    END {
+      printf "%s\t%s\t1\t%d\t%d\t%d\t%d\n", path, area, total, blank, comment, code
+    }
+  ' "$file" >> "$files_tsv"
+}
+
+for raw_root in "${root_list[@]}"; do
+  root="$(trim_path "$raw_root")"
+  [[ -n "$root" ]] || continue
+  root_path="$repo_root/$root"
+  [[ -d "$root_path" ]] || continue
+
+  while IFS= read -r -d '' file; do
+    name="$(basename "$file")"
+    case "$name" in
+      tests.rs|test.rs) continue ;;
+    esac
+    count_file "$root" "$file"
+  done < <(
+    find "$root_path" \
+      \( -type d \( -name .git -o -name .workspace -o -name target -o -name tests -o -name benches -o -name examples \) -prune \) \
+      -o -type f -name '*.rs' -print0
+  )
+done
+
+awk -F '\t' '
+  {
+    area = $2
+    files[area] += $3
+    total[area] += $4
+    blank[area] += $5
+    comment[area] += $6
+    code[area] += $7
+  }
+  END {
+    for (area in files) {
+      printf "%s\t%d\t%d\t%d\t%d\t%d\n", area, files[area], total[area], blank[area], comment[area], code[area]
+    }
+  }
+' "$files_tsv" | sort -t $'\t' -k1,1 > "$areas_tsv"
+
+sort -t $'\t' -k7,7nr -k1,1 "$files_tsv" | head -n "$top_files" > "$top_tsv"
+
+default_binaries=(
+  "target/release/turin"
+  "target/release/turin-manager"
+  "target/release/turin-tui"
+  "target/release/turin-map"
+  "target/release/turin-channel-telegram"
+  "target/release/turin-channel-rocketchat"
+  "target/release/turin-channel-whatsapp"
+  "target/release/turin-channel-discord"
+)
+
+all_binaries=("${default_binaries[@]}" "${binaries[@]}")
+seen_binaries="$tmp_dir/seen-binaries"
+: > "$seen_binaries"
+for binary in "${all_binaries[@]}"; do
+  if [[ "$binary" = /* ]]; then
+    binary_path="$binary"
+  else
+    binary_path="$repo_root/$binary"
+  fi
+  [[ -f "$binary_path" ]] || continue
+  relative="${binary_path#$repo_root/}"
+  if grep -Fxq "$relative" "$seen_binaries"; then
+    continue
+  fi
+  printf '%s\n' "$relative" >> "$seen_binaries"
+  bytes="$(wc -c < "$binary_path" | tr -d ' ')"
+  printf "%s\t%s\n" "$relative" "$bytes" >> "$binaries_tsv"
+done
+
+read -r total_files total_lines blank_lines comment_lines code_lines < <(
+  awk -F '\t' '
+    { files += $3; total += $4; blank += $5; comment += $6; code += $7 }
+    END { printf "%d %d %d %d %d\n", files, total, blank, comment, code }
+  ' "$files_tsv"
+)
+
+json_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  printf '%s' "$value"
+}
+
+json_counts() {
+  local files="$1" total="$2" blank="$3" comment="$4" code="$5"
+  printf '{"files":%s,"total_lines":%s,"blank_lines":%s,"comment_lines":%s,"code_lines":%s}' \
+    "$files" "$total" "$blank" "$comment" "$code"
+}
+
+{
+  printf '{\n'
+  printf '  "scenario": "footprint",\n'
+  printf '  "config": {\n'
+  printf '    "repo_root": "%s",\n' "$(json_escape "$repo_root")"
+  printf '    "roots": "%s",\n' "$(json_escape "$roots")"
+  printf '    "top_files": %s,\n' "$top_files"
+  printf '    "collector": "tools/footprint-report",\n'
+  printf '    "note": "Rust source scan excludes directories/files that are clearly tests, benches, examples, target artifacts, or workspace scratch data. Inline #[cfg(test)] modules are not stripped from non-test source files."\n'
+  printf '  },\n'
+  printf '  "totals": %s,\n' "$(json_counts "$total_files" "$total_lines" "$blank_lines" "$comment_lines" "$code_lines")"
+  printf '  "areas": [\n'
+  first=1
+  while IFS=$'\t' read -r area files total blank comment code; do
+    [[ "$first" -eq 1 ]] || printf ',\n'
+    first=0
+    printf '    {"area":"%s","counts":%s}' "$(json_escape "$area")" "$(json_counts "$files" "$total" "$blank" "$comment" "$code")"
+  done < "$areas_tsv"
+  printf '\n  ],\n'
+  printf '  "largest_files": [\n'
+  first=1
+  while IFS=$'\t' read -r path area files total blank comment code; do
+    [[ "$first" -eq 1 ]] || printf ',\n'
+    first=0
+    printf '    {"path":"%s","counts":%s}' "$(json_escape "$path")" "$(json_counts "$files" "$total" "$blank" "$comment" "$code")"
+  done < "$top_tsv"
+  printf '\n  ],\n'
+  printf '  "binaries": [\n'
+  first=1
+  while IFS=$'\t' read -r path bytes; do
+    [[ "$first" -eq 1 ]] || printf ',\n'
+    first=0
+    printf '    {"path":"%s","bytes":%s}' "$(json_escape "$path")" "$bytes"
+  done < "$binaries_tsv"
+  printf '\n  ]\n'
+  printf '}\n'
+} > "$json_path"
+
+{
+  printf '# Footprint Report\n\n'
+  printf -- '- collector: `tools/footprint-report`\n'
+  printf -- '- repo_root: `%s`\n' "$repo_root"
+  printf -- '- roots: `%s`\n' "$roots"
+  printf -- '- top_files: `%s`\n\n' "$top_files"
+  printf '## Totals\n\n'
+  printf '| files | total_lines | blank_lines | comment_lines | code_lines |\n'
+  printf '|---:|---:|---:|---:|---:|\n'
+  printf '| %s | %s | %s | %s | %s |\n\n' "$total_files" "$total_lines" "$blank_lines" "$comment_lines" "$code_lines"
+
+  printf '## Areas\n\n'
+  printf '| area | files | total_lines | blank_lines | comment_lines | code_lines |\n'
+  printf '|---|---:|---:|---:|---:|---:|\n'
+  while IFS=$'\t' read -r area files total blank comment code; do
+    printf '| %s | %s | %s | %s | %s | %s |\n' "$area" "$files" "$total" "$blank" "$comment" "$code"
+  done < "$areas_tsv"
+
+  printf '\n## Largest Files\n\n'
+  printf '| path | files | total_lines | blank_lines | comment_lines | code_lines |\n'
+  printf '|---|---:|---:|---:|---:|---:|\n'
+  while IFS=$'\t' read -r path area files total blank comment code; do
+    printf '| %s | %s | %s | %s | %s | %s |\n' "$path" "$files" "$total" "$blank" "$comment" "$code"
+  done < "$top_tsv"
+
+  if [[ -s "$binaries_tsv" ]]; then
+    printf '\n## Binaries\n\n'
+    printf '| path | bytes |\n'
+    printf '|---|---:|\n'
+    while IFS=$'\t' read -r path bytes; do
+      printf '| %s | %s |\n' "$path" "$bytes"
+    done < "$binaries_tsv"
+  fi
+} > "$md_path"
+
+printf 'json_report=%s\n' "${json_path#$repo_root/}"
+printf 'markdown_report=%s\n' "${md_path#$repo_root/}"
+printf 'code_lines=%s\n' "$code_lines"
