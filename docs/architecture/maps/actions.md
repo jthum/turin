@@ -81,4 +81,6 @@ git diff --check
 
 ## Current Shape
 
-The current pass removed repeated Lua value conversion and action-status response construction from `action_bindings.rs`. It deliberately did not split scheduling or worklist branches into a new layer; those branches encode real behavior differences and are easier to audit inline for now.
+The current pass removed repeated Lua value conversion and action-status response construction from `action_bindings.rs`. Optional Lua-to-JSON conversion and object-like option parsing now use shared binding helpers, so action context methods and runtime bindings keep the same nil/table/error semantics.
+
+It deliberately did not split scheduling or worklist branches into a new layer; those branches encode real behavior differences and are easier to audit inline for now.

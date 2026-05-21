@@ -139,6 +139,8 @@ git diff --check
 
 The recent refactor intentionally stopped short of pushing scheduler/worklist filtering into SQL. Current worklist dispatch paths still load rows and filter in Rust. That is acceptable for the present architecture, but it is the likely future performance/memory improvement area.
 
+Runtime worklist list-style methods share option parsing for `where` and `limit` before applying the selection helpers. Keep new list/filter methods on that path so option validation and row selection do not drift.
+
 The current module split is deliberate:
 
 - `scheduled_jobs.rs` answers "what jobs exist and how are they edited?"

@@ -8,7 +8,9 @@ use turin_daemon_protocol::{ScheduleActionParams, ScheduleCreateParams};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::scheduler::HarnessSchedulerAccess;
-use crate::harness::stdlib::binding_common::wrap_registered_callback;
+use crate::harness::stdlib::binding_common::{
+    optional_lua_json, optional_lua_object_json, wrap_registered_callback,
+};
 use crate::harness::stdlib::object_refs;
 use crate::harness::stdlib::runtime_worklist::{build_work_item_proxy, public_id_string};
 use crate::harness::stdlib::system_globals::ensure_load_time;
@@ -297,18 +299,9 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
         ctx.set(
             "pause",
             lua.create_function(move |lua, (_self, value): (Table, Value)| {
-                let opts = match value {
-                    Value::Table(table) => {
-                        object_refs::encode_lua_payload(lua, Value::Table(table))?
-                    }
-                    other => {
-                        return Err(mlua::Error::runtime(format!(
-                            "ctx:pause requires an object-like table, got {:?}",
-                            other
-                        )));
-                    }
-                };
-                let result = pause_action(&invocation, opts).map_err(mlua::Error::runtime)?;
+                let opts = optional_lua_object_json(lua, Some(value), "ctx:pause")?;
+                let result = pause_action(&invocation, JsonValue::Object(opts))
+                    .map_err(mlua::Error::runtime)?;
                 object_refs::decode_json_payload(lua, &result)
             })?,
         )?;
@@ -320,26 +313,7 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
             "pause_for",
             lua.create_function(
                 move |lua, (_self, seconds, opts): (Table, u64, Option<Value>)| {
-                    let mut opts = match opts {
-                        None | Some(Value::Nil) => JsonMap::new(),
-                        Some(Value::Table(table)) => {
-                            match object_refs::encode_lua_payload(lua, Value::Table(table))? {
-                                JsonValue::Object(map) => map,
-                                _ => {
-                                    return Err(mlua::Error::runtime(
-                                        "ctx:pause_for opts must be an object-like table"
-                                            .to_string(),
-                                    ));
-                                }
-                            }
-                        }
-                        Some(other) => {
-                            return Err(mlua::Error::runtime(format!(
-                                "ctx:pause_for opts must be an object-like table, got {:?}",
-                                other
-                            )));
-                        }
-                    };
+                    let mut opts = optional_lua_object_json(lua, opts, "ctx:pause_for opts")?;
                     opts.insert("resume_in_seconds".to_string(), JsonValue::from(seconds));
                     let result = pause_action(&invocation, JsonValue::Object(opts))
                         .map_err(mlua::Error::runtime)?;
@@ -350,15 +324,6 @@ fn build_action_context(lua: &Lua, invocation: &ActionInvocationContext) -> LuaR
     }
 
     Ok(ctx)
-}
-
-fn optional_lua_json(lua: &Lua, value: Value) -> LuaResult<Option<JsonValue>> {
-    match value {
-        Value::Nil => Ok(None),
-        value => object_refs::encode_lua_payload(lua, value)
-            .map(Some)
-            .map_err(mlua::Error::runtime),
-    }
 }
 
 fn checkpoint_proxy(lua: &Lua, checkpoint: JsonValue) -> LuaResult<Table> {

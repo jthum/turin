@@ -8,7 +8,7 @@ use turin_types::{TaskInputContent, ToolsConfig};
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::action_bindings;
 use crate::harness::stdlib::agent_bindings::{active_trace_id, queue_max, queue_push_one};
-use crate::harness::stdlib::binding_common::resolve_scoped_store_selector;
+use crate::harness::stdlib::binding_common::{optional_lua_json, resolve_scoped_store_selector};
 use crate::harness::stdlib::context_selectors::table_to_selector;
 use crate::harness::stdlib::db_support::{
     selector_denied_by_dynamic_open, store_path_scope_from_snapshot, store_selector_from_fields,
@@ -54,6 +54,17 @@ struct ParsedPayload {
     priority: i64,
     after_ids: Option<Vec<String>>,
     metadata: Option<JsonValue>,
+}
+
+struct ParsedWorkItemQuery {
+    where_map: Option<JsonMap<String, JsonValue>>,
+    limit: Option<usize>,
+}
+
+impl ParsedWorkItemQuery {
+    fn selection(&self, parent_item_id: Option<i64>) -> selection::WorkItemSelection<'_> {
+        selection::WorkItemSelection::new(parent_item_id, self.where_map.as_ref(), self.limit)
+    }
 }
 
 fn now_unix_ms() -> i64 {
@@ -186,10 +197,9 @@ fn parse_present_json_raw(
     }
     match table.get::<Value>(key)? {
         Value::Nil => Ok(Some(None)),
-        value => Ok(Some(Some(
-            serde_json::to_string(&object_refs::encode_lua_payload(lua, value)?)
-                .map_err(mlua::Error::runtime)?,
-        ))),
+        value => serialize_json_opt(optional_lua_json(lua, value)?.as_ref())
+            .map_err(mlua::Error::runtime)
+            .map(Some),
     }
 }
 
@@ -260,12 +270,12 @@ fn parse_payload(lua: &Lua, payload: Value, opts: Option<Table>) -> LuaResult<Pa
                 };
             action_params = match table.get::<Value>("params")? {
                 Value::Nil => None,
-                value => Some(object_refs::encode_lua_payload(lua, value)?),
+                value => optional_lua_json(lua, value)?,
             };
             after_ids = parse_json_array_strings(table.get::<Value>("after")?, "after")?;
             metadata = match table.get::<Value>("metadata")? {
                 Value::Nil => None,
-                value => Some(object_refs::encode_lua_payload(lua, value)?),
+                value => optional_lua_json(lua, value)?,
             };
         }
         other => {
@@ -286,7 +296,7 @@ fn parse_payload(lua: &Lua, payload: Value, opts: Option<Table>) -> LuaResult<Pa
         if metadata.is_none() {
             metadata = match opts.get::<Value>("metadata")? {
                 Value::Nil => None,
-                value => Some(object_refs::encode_lua_payload(lua, value)?),
+                value => optional_lua_json(lua, value)?,
             };
         }
     }
@@ -342,7 +352,7 @@ fn parse_payload(lua: &Lua, payload: Value, opts: Option<Table>) -> LuaResult<Pa
 
 fn parse_where_map(
     lua: &Lua,
-    opts: Option<Table>,
+    opts: Option<&Table>,
 ) -> LuaResult<Option<JsonMap<String, JsonValue>>> {
     let Some(opts) = opts else {
         return Ok(None);
@@ -362,7 +372,7 @@ fn parse_where_map(
     }
 }
 
-fn parse_limit(opts: Option<Table>) -> LuaResult<Option<usize>> {
+fn parse_limit(opts: Option<&Table>) -> LuaResult<Option<usize>> {
     let Some(opts) = opts else {
         return Ok(None);
     };
@@ -377,7 +387,14 @@ fn parse_limit(opts: Option<Table>) -> LuaResult<Option<usize>> {
     }
 }
 
-fn parse_stale_after_ms(opts: Option<Table>) -> LuaResult<i64> {
+fn parse_work_item_query(lua: &Lua, opts: Option<&Table>) -> LuaResult<ParsedWorkItemQuery> {
+    Ok(ParsedWorkItemQuery {
+        where_map: parse_where_map(lua, opts)?,
+        limit: parse_limit(opts)?,
+    })
+}
+
+fn parse_stale_after_ms(opts: Option<&Table>) -> LuaResult<i64> {
     let Some(opts) = opts else {
         return Ok(300_000);
     };
@@ -394,7 +411,7 @@ fn parse_stale_after_ms(opts: Option<Table>) -> LuaResult<i64> {
     }
 }
 
-fn parse_bool_flag(opts: Option<Table>, key: &str) -> LuaResult<bool> {
+fn parse_bool_flag(opts: Option<&Table>, key: &str) -> LuaResult<bool> {
     let Some(opts) = opts else {
         return Ok(false);
     };
@@ -778,10 +795,10 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
             lua.create_function(move |lua, (_self, meta): (Table, Option<Value>)| {
                 require_capability(&handle.app_data, "runtime.worklist.done")
                     .map_err(mlua::Error::runtime)?;
-                let metadata_json = match meta {
-                    Some(Value::Nil) | None => None,
-                    Some(value) => Some(object_refs::encode_lua_payload(lua, value)?),
-                };
+                let metadata_json = meta
+                    .map(|value| optional_lua_json(lua, value))
+                    .transpose()?
+                    .flatten();
                 let metadata_raw =
                     serialize_json_opt(metadata_json.as_ref()).map_err(mlua::Error::runtime)?;
                 let row = crate::harness::globals::block_on_current(async {
@@ -968,14 +985,11 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
         proxy.set(
             "all",
             lua.create_function(move |lua, (_self, opts): (Table, Option<Table>)| {
-                let limit = parse_limit(opts.clone())?;
-                let where_map = parse_where_map(lua, opts)?;
-                let selection = selection::WorkItemSelection::new(
-                    handle.parent_item_id,
-                    where_map.as_ref(),
-                    limit,
+                let query = parse_work_item_query(lua, opts.as_ref())?;
+                let rows = selection::all_rows(
+                    load_work_items(&handle)?,
+                    query.selection(handle.parent_item_id),
                 );
-                let rows = selection::all_rows(load_work_items(&handle)?, selection);
                 work_items_value(lua, &handle, rows)
             })?,
         )?;
@@ -986,14 +1000,11 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
         proxy.set(
             "pending",
             lua.create_function(move |lua, (_self, opts): (Table, Option<Table>)| {
-                let limit = parse_limit(opts.clone())?;
-                let where_map = parse_where_map(lua, opts)?;
-                let selection = selection::WorkItemSelection::new(
-                    handle.parent_item_id,
-                    where_map.as_ref(),
-                    limit,
+                let query = parse_work_item_query(lua, opts.as_ref())?;
+                let rows = selection::pending_rows(
+                    load_work_items(&handle)?,
+                    query.selection(handle.parent_item_id),
                 );
-                let rows = selection::pending_rows(load_work_items(&handle)?, selection);
                 work_items_value(lua, &handle, rows)
             })?,
         )?;
@@ -1004,17 +1015,14 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
         proxy.set(
             "orphaned",
             lua.create_function(move |lua, (_self, opts): (Table, Option<Table>)| {
-                let limit = parse_limit(opts.clone())?;
-                let stale_after_ms = parse_stale_after_ms(opts.clone())?;
-                let where_map = parse_where_map(lua, opts)?;
+                let query = parse_work_item_query(lua, opts.as_ref())?;
+                let stale_after_ms = parse_stale_after_ms(opts.as_ref())?;
                 let stale_before = now_unix_ms().saturating_sub(stale_after_ms);
-                let selection = selection::WorkItemSelection::new(
-                    handle.parent_item_id,
-                    where_map.as_ref(),
-                    limit,
+                let rows = selection::orphaned_rows(
+                    load_work_items(&handle)?,
+                    query.selection(handle.parent_item_id),
+                    stale_before,
                 );
-                let rows =
-                    selection::orphaned_rows(load_work_items(&handle)?, selection, stale_before);
                 work_items_value(lua, &handle, rows)
             })?,
         )?;
@@ -1027,17 +1035,14 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
             lua.create_function(move |lua, (_self, opts): (Table, Option<Table>)| {
                 require_capability(&handle.app_data, "runtime.worklist.release_stale")
                     .map_err(mlua::Error::runtime)?;
-                let limit = parse_limit(opts.clone())?;
-                let stale_after_ms = parse_stale_after_ms(opts.clone())?;
-                let where_map = parse_where_map(lua, opts)?;
+                let query = parse_work_item_query(lua, opts.as_ref())?;
+                let stale_after_ms = parse_stale_after_ms(opts.as_ref())?;
                 let stale_before = now_unix_ms().saturating_sub(stale_after_ms);
-                let selection = selection::WorkItemSelection::new(
-                    handle.parent_item_id,
-                    where_map.as_ref(),
-                    limit,
+                let candidates = selection::orphaned_rows(
+                    load_work_items(&handle)?,
+                    query.selection(handle.parent_item_id),
+                    stale_before,
                 );
-                let candidates =
-                    selection::orphaned_rows(load_work_items(&handle)?, selection, stale_before);
                 let mut released_rows = Vec::with_capacity(candidates.len());
                 for row in candidates {
                     let released = crate::harness::globals::block_on_current(async {
@@ -1084,17 +1089,15 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
         proxy.set(
             "paused",
             lua.create_function(move |lua, (_self, opts): (Table, Option<Table>)| {
-                let limit = parse_limit(opts.clone())?;
-                let due_only = parse_bool_flag(opts.clone(), "due_only")?;
-                let where_map = parse_where_map(lua, opts)?;
+                let query = parse_work_item_query(lua, opts.as_ref())?;
+                let due_only = parse_bool_flag(opts.as_ref(), "due_only")?;
                 let now = now_unix_ms();
-                let selection = selection::WorkItemSelection::new(
-                    handle.parent_item_id,
-                    where_map.as_ref(),
-                    limit,
+                let rows = selection::paused_rows(
+                    load_work_items(&handle)?,
+                    query.selection(handle.parent_item_id),
+                    due_only,
+                    now,
                 );
-                let rows =
-                    selection::paused_rows(load_work_items(&handle)?, selection, due_only, now);
                 work_items_value(lua, &handle, rows)
             })?,
         )?;
@@ -1126,14 +1129,14 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
             lua.create_function(move |lua, (_self, opts): (Table, Option<Table>)| {
                 require_capability(&handle.app_data, "runtime.worklist.next")
                     .map_err(mlua::Error::runtime)?;
-                let where_map = parse_where_map(lua, opts)?;
+                let query = parse_work_item_query(lua, opts.as_ref())?;
                 let rows = load_work_items(&handle)?;
                 let now = now_unix_ms();
                 let (agent_id, session_id, execution_id) = current_claim_identity(&handle.app_data);
                 for row in selection::next_candidates(
                     &rows,
                     handle.parent_item_id,
-                    where_map.as_ref(),
+                    query.where_map.as_ref(),
                     now,
                 ) {
                     let claimed = crate::harness::globals::block_on_current(async {
@@ -1183,7 +1186,7 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
         proxy.set(
             "find",
             lua.create_function(move |lua, (_self, opts): (Table, Table)| {
-                let where_map = parse_where_map(lua, Some(opts))?.ok_or_else(|| {
+                let where_map = parse_where_map(lua, Some(&opts))?.ok_or_else(|| {
                     mlua::Error::runtime("worklist.find requires opts.where".to_string())
                 })?;
                 match selection::find_matching(
@@ -1276,10 +1279,7 @@ pub fn register_runtime_worklist_namespace(
                     .await
                 })
                 .map_err(mlua::Error::runtime)?;
-                let metadata_json = match opts.get::<Value>("metadata")? {
-                    Value::Nil => None,
-                    value => Some(object_refs::encode_lua_payload(lua, value)?),
-                };
+                let metadata_json = optional_lua_json(lua, opts.get::<Value>("metadata")?)?;
                 let metadata_raw =
                     serialize_json_opt(metadata_json.as_ref()).map_err(mlua::Error::runtime)?;
                 let worklist = crate::harness::globals::block_on_current(async {

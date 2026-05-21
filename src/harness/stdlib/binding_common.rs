@@ -11,6 +11,7 @@ use crate::harness::globals::block_on_current;
 use crate::harness::stdlib::db_support::{
     selector_denied_by_dynamic_open, store_path_scope_from_snapshot, store_selector_from_fields,
 };
+use crate::harness::stdlib::object_refs;
 use crate::harness::stdlib::policy_support::runtime_policy_snapshot;
 use crate::harness::stdlib::scoped_data_backend::{
     MemoryFeedbackRequest, MemoryFeedbackSignal, MemoryPurgeRequest, MemorySearchMode,
@@ -101,6 +102,38 @@ pub fn metadata_json_or_empty(lua: &Lua, metadata: Option<Table>) -> LuaResult<s
             .map_err(|e| mlua::Error::runtime(format!("invalid metadata table: {}", e)))
     } else {
         Ok(serde_json::json!({}))
+    }
+}
+
+pub fn optional_lua_json(lua: &Lua, value: Value) -> LuaResult<Option<serde_json::Value>> {
+    match value {
+        Value::Nil => Ok(None),
+        value => object_refs::encode_lua_payload(lua, value)
+            .map(Some)
+            .map_err(mlua::Error::runtime),
+    }
+}
+
+pub fn optional_lua_object_json(
+    lua: &Lua,
+    value: Option<Value>,
+    context: &str,
+) -> LuaResult<serde_json::Map<String, serde_json::Value>> {
+    match value {
+        None | Some(Value::Nil) => Ok(serde_json::Map::new()),
+        Some(Value::Table(table)) => {
+            match object_refs::encode_lua_payload(lua, Value::Table(table))? {
+                serde_json::Value::Object(map) => Ok(map),
+                _ => Err(mlua::Error::runtime(format!(
+                    "{} must be an object-like table",
+                    context
+                ))),
+            }
+        }
+        Some(other) => Err(mlua::Error::runtime(format!(
+            "{} must be an object-like table, got {:?}",
+            context, other
+        ))),
     }
 }
 
