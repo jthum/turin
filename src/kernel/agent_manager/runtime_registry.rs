@@ -154,6 +154,7 @@ impl AgentManager {
 
             info!(agent_id = %agent_id_clone, slot_id = %slot_id_clone, "Peer agent loop ready for tasks");
 
+            let mut processed_task = false;
             loop {
                 let envelope = {
                     let mut queue = queue_bg.lock().expect("agent runtime queue mutex poisoned");
@@ -185,6 +186,10 @@ impl AgentManager {
                             );
                         }
                     }
+                    if !processed_task {
+                        notify_bg.notified().await;
+                        continue;
+                    }
                     let idle_timeout_seconds = manager
                         .resolve_idle_timeout_seconds(
                             &agent_id_clone,
@@ -192,11 +197,13 @@ impl AgentManager {
                         )
                         .await;
                     if let Some(idle_timeout_seconds) = idle_timeout_seconds {
-                        let notified = tokio::time::timeout(
-                            std::time::Duration::from_secs(idle_timeout_seconds),
-                            notify_bg.notified(),
-                        )
-                        .await;
+                        let idle_timeout = if idle_timeout_seconds == 0 {
+                            std::time::Duration::from_millis(1)
+                        } else {
+                            std::time::Duration::from_secs(idle_timeout_seconds)
+                        };
+                        let notified =
+                            tokio::time::timeout(idle_timeout, notify_bg.notified()).await;
                         if notified.is_err() {
                             info!(
                                 agent_id = %agent_id_clone,
@@ -218,6 +225,7 @@ impl AgentManager {
                     manager.mark_task_running(request_id, runtime_task_id).await;
                 }
                 runtime.handle_envelope(envelope).await;
+                processed_task = true;
                 active_tasks_bg.fetch_sub(1, Ordering::Relaxed);
             }
 

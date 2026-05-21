@@ -93,6 +93,23 @@ Channel scenarios default to 256-byte inbound messages and 1 KiB mocked assistan
 responses. To isolate mostly metadata overhead, make both values intentionally
 small, for example `--message-bytes 16 --response-bytes 4`.
 
+The idle runtime scenario submits mocked peer-agent requests, samples memory while
+the runtime is live, then waits for idle hibernation:
+
+```bash
+cargo run --manifest-path tools/perf-suite/Cargo.toml -- \
+  idle-runtime \
+  --requests 25 \
+  --response-bytes 4096 \
+  --idle-timeout-seconds 1 \
+  --max-wait-ms 5000
+```
+
+Use `--idle-timeout-seconds 0` to measure immediate hibernation after each logical
+request; the scenario waits for release between requests in that mode. The report
+uses the `active_sessions` column as the count of live peer runtime sessions for
+this scenario.
+
 ## What It Measures
 
 - process RSS from `/proc`
@@ -107,6 +124,7 @@ small, for example `--message-bytes 16 --response-bytes 4`.
 - elapsed wall time
 - fake channel outbound count, for channel scenarios
 - active logical sessions and messages per session, for scale scenarios
+- live peer runtime session count, for the idle-runtime scenario
 
 ## Compile Cost
 
@@ -136,5 +154,4 @@ Real provider benchmarking can be added as a separate opt-in profile later.
 ## Next Scenarios
 
 - daemon plus mocked sidecar protocol
-- idle-runtime hibernation and memory release
 - concurrent sessions across agents

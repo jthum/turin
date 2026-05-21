@@ -22,6 +22,7 @@ use turin::kernel::config::{
     HotHistoryProfile, InferenceConfig, KernelConfig, PersistenceConfig, ProviderConfig,
     TurinConfig,
 };
+use turin::kernel::session::QueuedTask;
 use turin::persistence::state::{SessionReadTarget, StateStore};
 use turin_channel_core::{
     ChannelConversationKey, ChannelKind, ChannelMessageRef, ChannelSessionScope, ChannelUser,
@@ -47,6 +48,8 @@ enum Command {
     FakeChannel(FakeChannelArgs),
     /// Measure daemon/channel cost across logical session and message-count checkpoints.
     ChannelScale(ChannelScaleArgs),
+    /// Measure peer-runtime memory before and after idle hibernation.
+    IdleRuntime(IdleRuntimeArgs),
 }
 
 #[derive(Parser)]
@@ -174,6 +177,33 @@ struct ChannelScaleArgs {
     /// Target byte size for each mocked assistant response.
     #[arg(long, default_value_t = 1024)]
     response_bytes: usize,
+
+    /// Optional persistent workspace. If omitted, an ephemeral temp dir is used.
+    #[arg(long)]
+    workspace_root: Option<PathBuf>,
+
+    /// Report output directory.
+    #[arg(long, default_value = ".workspace/perf-reports")]
+    report_dir: PathBuf,
+}
+
+#[derive(Parser)]
+struct IdleRuntimeArgs {
+    /// Number of peer-agent requests to submit before waiting for idle release.
+    #[arg(long, default_value_t = 25)]
+    requests: usize,
+
+    /// Target byte size for each mocked assistant response.
+    #[arg(long, default_value_t = 4096)]
+    response_bytes: usize,
+
+    /// Agent idle timeout in seconds. Use 0 to hibernate immediately after each request.
+    #[arg(long, default_value_t = 1)]
+    idle_timeout_seconds: u64,
+
+    /// Maximum milliseconds to wait for the runtime to hibernate.
+    #[arg(long, default_value_t = 5000)]
+    max_wait_ms: u64,
 
     /// Optional persistent workspace. If omitted, an ephemeral temp dir is used.
     #[arg(long)]
@@ -335,6 +365,7 @@ async fn main() -> Result<()> {
         Command::HotHistory(args) => run_hot_history(args).await,
         Command::FakeChannel(args) => run_fake_channel(args).await,
         Command::ChannelScale(args) => run_channel_scale(args).await,
+        Command::IdleRuntime(args) => run_idle_runtime(args).await,
     }
 }
 
@@ -426,6 +457,7 @@ async fn run_hot_history(args: HotHistoryArgs) -> Result<()> {
         &state_db_path,
         args.turns,
         Some(hot_history_config.clone()),
+        Some(0),
     )?;
     let responses = Arc::new(Mutex::new(build_responses(
         args.turns,
@@ -499,6 +531,137 @@ async fn run_hot_history(args: HotHistoryArgs) -> Result<()> {
     write_reports(&args.report_dir, &report)?;
     print_summary(&report);
     Ok(())
+}
+
+async fn run_idle_runtime(args: IdleRuntimeArgs) -> Result<()> {
+    anyhow::ensure!(args.requests > 0, "--requests must be greater than zero");
+    anyhow::ensure!(
+        args.max_wait_ms > 0,
+        "--max-wait-ms must be greater than zero"
+    );
+
+    let (_temp_guard, workspace_root) = prepare_workspace(args.workspace_root)?;
+    let harness_dir = workspace_root.join("harnesses");
+    let state_db_path = workspace_root.join("state.db");
+    fs::create_dir_all(&harness_dir)?;
+    fs::write(harness_dir.join("main.lua"), "-- idle runtime perf harness\n")?;
+
+    let mut config = build_config(
+        &workspace_root,
+        &harness_dir,
+        &state_db_path,
+        args.requests.saturating_add(1),
+        None,
+        Some(args.idle_timeout_seconds),
+    )?;
+    if let Some(provider) = config.providers.get_mut("mock") {
+        provider.base_url = Some(synthetic_text("Idle runtime response.", args.response_bytes));
+    }
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let manager = kernel.agent_manager();
+    let start = Instant::now();
+    let mut snapshots = vec![idle_runtime_snapshot(
+        "after-kernel-init",
+        start,
+        &state_db_path,
+        0,
+    )];
+
+    for index in 0..args.requests {
+        let request_id = manager
+            .submit(
+                "default",
+                QueuedTask::ad_hoc(format!("idle runtime request {index}")),
+                None,
+            )
+            .await?;
+        let result = manager.await_result(&request_id, Some(30_000)).await?;
+        if let Some(err) = result.error {
+            anyhow::bail!("idle-runtime request {index} failed: {err}");
+        }
+        if index == 0 {
+            snapshots.push(idle_runtime_snapshot(
+                "after-first-request",
+                start,
+                &state_db_path,
+                manager.list_live_sessions(None).await.len(),
+            ));
+        }
+        if args.idle_timeout_seconds == 0 && index + 1 < args.requests {
+            let _ = wait_for_peer_runtime_release(
+                &manager,
+                Duration::from_millis(args.max_wait_ms),
+            )
+            .await;
+        }
+    }
+
+    let live_after_requests = manager.list_live_sessions(None).await.len();
+    snapshots.push(idle_runtime_snapshot(
+        "after-all-requests",
+        start,
+        &state_db_path,
+        live_after_requests,
+    ));
+
+    let released =
+        wait_for_peer_runtime_release(&manager, Duration::from_millis(args.max_wait_ms)).await;
+    let live_sessions = manager.list_live_sessions(None).await.len();
+    snapshots.push(idle_runtime_snapshot(
+        if released {
+            "after-idle-release"
+        } else {
+            "after-idle-wait-timeout"
+        },
+        start,
+        &state_db_path,
+        live_sessions,
+    ));
+
+    let report = PerfReport {
+        scenario: "idle-runtime".to_string(),
+        config: serde_json::json!({
+            "requests": args.requests,
+            "response_bytes": args.response_bytes,
+            "idle_timeout_seconds": args.idle_timeout_seconds,
+            "max_wait_ms": args.max_wait_ms,
+            "released": released,
+            "active_sessions_column": "live peer runtime sessions",
+        }),
+        workspace_root: workspace_root.display().to_string(),
+        state_db_path: state_db_path.display().to_string(),
+        snapshots,
+    };
+
+    write_reports(&args.report_dir, &report)?;
+    print_summary(&report);
+    Ok(())
+}
+
+async fn wait_for_peer_runtime_release(
+    manager: &Arc<turin::kernel::agent_manager::AgentManager>,
+    max_wait: Duration,
+) -> bool {
+    let deadline = TokioInstant::now() + max_wait;
+    loop {
+        let live_sessions = manager.list_live_sessions(None).await.len();
+        let running = manager
+            .get_status("default")
+            .await
+            .is_some_and(|status| status.running);
+        if live_sessions == 0 && !running {
+            return true;
+        }
+        if TokioInstant::now() >= deadline {
+            return false;
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
 }
 
 async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
@@ -857,6 +1020,7 @@ fn build_config(
     state_db_path: &Path,
     requested_turns: usize,
     hot_history: Option<HotHistoryConfig>,
+    idle_timeout_seconds: Option<u64>,
 ) -> Result<TurinConfig> {
     let mut providers = HashMap::new();
     providers.insert(
@@ -884,7 +1048,7 @@ fn build_config(
             system_prompt: "Perf scenario. Use the requested tool and then finish.".to_string(),
             thinking: None,
             harness: None,
-            idle_timeout_seconds: Some(0),
+            idle_timeout_seconds,
             inference: Default::default(),
             persistence: Default::default(),
         },
@@ -1027,6 +1191,24 @@ fn snapshot(
         tool_results: None,
         tool_result_errors: None,
     }
+}
+
+fn idle_runtime_snapshot(
+    label: &str,
+    start: Instant,
+    state_db_path: &Path,
+    live_sessions: usize,
+) -> Snapshot {
+    snapshot(
+        label,
+        start,
+        state_db_path,
+        None,
+        None,
+        None,
+        Some(live_sessions),
+        None,
+    )
 }
 
 async fn hot_history_snapshot(

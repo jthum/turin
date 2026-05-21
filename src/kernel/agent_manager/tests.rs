@@ -174,6 +174,47 @@ async fn build_shared_peer_kernel_reuses_configured_tool_registry() -> anyhow::R
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn peer_runtime_idle_zero_waits_for_first_submitted_task() -> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+    std::fs::write(harness_dir.join("main.lua"), "-- idle zero test\n")?;
+
+    let mut config = test_config(tmp.path(), &harness_dir);
+    config.agent.idle_timeout_seconds = Some(0);
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_clients()?;
+    kernel.init_harness().await?;
+
+    let manager = kernel.agent_manager();
+    let request_id = manager
+        .submit("default", QueuedTask::ad_hoc("hello".to_string()), None)
+        .await?;
+    let result = manager.await_result(&request_id, Some(5_000)).await?;
+    assert_eq!(result.status, TaskTerminalStatus::Success);
+    assert_eq!(result.output.as_deref(), Some("Mock response"));
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let running = manager
+            .get_status("default")
+            .await
+            .is_some_and(|status| status.running);
+        if manager.list_live_sessions(None).await.is_empty() && !running {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            anyhow::bail!("timed out waiting for idle-zero peer runtime shutdown");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn cancel_task_removes_queued_work_and_records_terminal_result() -> anyhow::Result<()> {
     let tmp = tempdir()?;
