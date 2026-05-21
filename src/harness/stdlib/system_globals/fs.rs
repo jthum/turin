@@ -117,10 +117,10 @@ fn read_bytes_and_metadata_bounded(
 
 pub(super) fn register_fs_module(lua: &Lua, fs_root: &Path, max_file_size: usize) -> LuaResult<()> {
     let fs_table = lua.create_table()?;
-    let fs_root = fs_root.to_path_buf();
+    let root = fs_root.to_path_buf();
 
     {
-        let root = fs_root.clone();
+        let root = root.clone();
         fs_table.set(
             "read",
             lua.create_function(move |lua, path: String| {
@@ -139,7 +139,7 @@ pub(super) fn register_fs_module(lua: &Lua, fs_root: &Path, max_file_size: usize
     }
 
     {
-        let root = fs_root.clone();
+        let root = root.clone();
         fs_table.set(
             "write",
             lua.create_function(move |lua, (path, content): (String, String)| {
@@ -168,7 +168,7 @@ pub(super) fn register_fs_module(lua: &Lua, fs_root: &Path, max_file_size: usize
     }
 
     {
-        let root = fs_root.clone();
+        let root = root.clone();
         fs_table.set(
             "exists",
             lua.create_function(
@@ -181,7 +181,7 @@ pub(super) fn register_fs_module(lua: &Lua, fs_root: &Path, max_file_size: usize
     }
 
     {
-        let root = fs_root.clone();
+        let root = root.clone();
         fs_table.set(
             "is_safe_path",
             lua.create_function(move |_lua, path: String| {
@@ -191,7 +191,7 @@ pub(super) fn register_fs_module(lua: &Lua, fs_root: &Path, max_file_size: usize
     }
 
     {
-        let root = fs_root.clone();
+        let root = root.clone();
         fs_table.set(
             "stat",
             lua.create_function(move |lua, path: String| {
