@@ -1,4 +1,14 @@
-use super::*;
+use super::html::{
+    decode_duckduckgo_result_url, extract_html_text, extract_html_title,
+    parse_duckduckgo_lite_results,
+};
+use super::search::{
+    BraveSearchResponse, SearxngSearchResponse, TavilySearchResponse, brave_hits_from_response,
+    searxng_hits_from_response, tavily_hits_from_response,
+};
+use super::validate_tools_config;
+use scraper::Html;
+use turin_types::ToolsConfig;
 
 #[test]
 fn duckduckgo_redirects_decode_to_final_urls() {

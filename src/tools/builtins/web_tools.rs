@@ -1,14 +1,10 @@
-use std::env;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
-use reqwest::header::{
-    ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, AUTHORIZATION, CONTENT_TYPE, HeaderValue, USER_AGENT,
-};
+use reqwest::header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, HeaderValue, USER_AGENT};
 use reqwest::redirect::Policy;
 use reqwest::{Client, RequestBuilder};
-use scraper::{Html, Selector};
 use serde::Deserialize;
 use serde_json::Value;
 use turin_types::{ToolsConfig, WebFetchToolSettings, WebSearchToolSettings};
@@ -16,53 +12,30 @@ use url::Url;
 
 use crate::tools::{Tool, ToolContext, ToolEffect, ToolError, ToolOutput, parse_args};
 
+mod html;
+mod search;
+
+use html::{collapse_whitespace, extract_html_text, extract_html_title, truncate_chars};
+use search::{
+    WebSearchProvider, configured_search_providers, normalize_hits_for_output, search_brave,
+    search_duckduckgo_html, search_searxng, search_tavily,
+};
+
 pub struct WebFetchTool;
 pub struct WebSearchTool;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct WebSearchHit {
+    pub(super) title: String,
+    pub(super) url: String,
+    pub(super) snippet: String,
+}
 
 const DEFAULT_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 const DEFAULT_BROWSER_ACCEPT: &str =
     "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
 const DEFAULT_BROWSER_ACCEPT_LANGUAGE: &str = "en-US,en;q=0.5";
 const DEFAULT_BROWSER_ACCEPT_ENCODING: &str = "gzip, deflate, br";
-const DEFAULT_BRAVE_SEARCH_URL: &str = "https://api.search.brave.com/res/v1/web/search";
-const DEFAULT_TAVILY_SEARCH_URL: &str = "https://api.tavily.com/search";
-const DEFAULT_DUCKDUCKGO_SEARCH_URL: &str = "https://lite.duckduckgo.com/lite/";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct WebSearchHit {
-    title: String,
-    url: String,
-    snippet: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WebSearchProvider {
-    Brave,
-    Tavily,
-    Searxng,
-    DuckDuckGoHtml,
-}
-
-impl WebSearchProvider {
-    fn parse(raw: &str) -> Option<Self> {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "brave" => Some(Self::Brave),
-            "tavily" => Some(Self::Tavily),
-            "searxng" => Some(Self::Searxng),
-            "duckduckgo_html" | "duckduckgo" | "duckduckgo_lite" => Some(Self::DuckDuckGoHtml),
-            _ => None,
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Brave => "brave",
-            Self::Tavily => "tavily",
-            Self::Searxng => "searxng",
-            Self::DuckDuckGoHtml => "duckduckgo_html",
-        }
-    }
-}
 
 #[derive(Deserialize)]
 struct WebFetchArgs {
@@ -80,58 +53,6 @@ struct WebSearchArgs {
     limit: usize,
     #[serde(default = "default_fetch_timeout_seconds")]
     timeout_seconds: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct BraveSearchResponse {
-    #[serde(default)]
-    web: Option<BraveWebResultSet>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BraveWebResultSet {
-    #[serde(default)]
-    results: Vec<BraveWebResult>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BraveWebResult {
-    title: String,
-    url: String,
-    #[serde(default)]
-    description: String,
-    #[serde(default)]
-    extra_snippets: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TavilySearchResponse {
-    #[serde(default)]
-    results: Vec<TavilySearchResult>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TavilySearchResult {
-    #[serde(default)]
-    title: String,
-    url: String,
-    #[serde(default)]
-    content: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct SearxngSearchResponse {
-    #[serde(default)]
-    results: Vec<SearxngSearchResult>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SearxngSearchResult {
-    #[serde(default)]
-    title: String,
-    url: String,
-    #[serde(default)]
-    content: String,
 }
 
 fn default_fetch_timeout_seconds() -> u64 {
@@ -237,26 +158,6 @@ fn validate_optional_http_url(value: Option<&str>, key: &str) -> Result<()> {
     Ok(())
 }
 
-fn configured_search_providers(settings: &WebSearchToolSettings) -> Result<Vec<WebSearchProvider>> {
-    let mut providers = Vec::new();
-    match settings.providers.as_ref() {
-        Some(configured) => {
-            for provider in configured {
-                let parsed = WebSearchProvider::parse(provider)
-                    .ok_or_else(|| anyhow::anyhow!("unknown web_search provider '{}'", provider))?;
-                if !providers.contains(&parsed) {
-                    providers.push(parsed);
-                }
-            }
-        }
-        None => providers.push(WebSearchProvider::DuckDuckGoHtml),
-    }
-    if providers.is_empty() {
-        bail!("tools.web_search.providers must not be empty");
-    }
-    Ok(providers)
-}
-
 fn build_http_client(timeout_seconds: u64) -> Result<Client, ToolError> {
     Client::builder()
         .redirect(Policy::limited(10))
@@ -274,116 +175,6 @@ fn validate_web_url(value: &str) -> Result<Url, ToolError> {
             "Unsupported URL scheme '{other}'; expected http or https"
         ))),
     }
-}
-
-fn collapse_whitespace(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn truncate_chars(text: &str, max_chars: usize) -> String {
-    let mut iter = text.chars();
-    let out = iter.by_ref().take(max_chars).collect::<String>();
-    if iter.next().is_some() {
-        format!("{out}...")
-    } else {
-        out
-    }
-}
-
-fn extract_html_title(document: &Html) -> Option<String> {
-    let selector = Selector::parse("title").ok()?;
-    let title = document
-        .select(&selector)
-        .next()?
-        .text()
-        .collect::<Vec<_>>()
-        .join(" ");
-    let title = collapse_whitespace(&title);
-    if title.is_empty() { None } else { Some(title) }
-}
-
-fn extract_html_text(html: &str) -> String {
-    let document = Html::parse_document(html);
-    let selector = Selector::parse("body").expect("valid selector");
-    let body_text = document
-        .select(&selector)
-        .next()
-        .map(|body| body.text().collect::<Vec<_>>().join(" "))
-        .unwrap_or_else(|| document.root_element().text().collect::<Vec<_>>().join(" "));
-    collapse_whitespace(&body_text)
-}
-
-fn decode_duckduckgo_result_url(raw: &str) -> String {
-    let normalized = if raw.starts_with("//") {
-        format!("https:{raw}")
-    } else if raw.starts_with('/') {
-        format!("https://duckduckgo.com{raw}")
-    } else {
-        raw.to_string()
-    };
-
-    let Ok(url) = Url::parse(&normalized) else {
-        return normalized;
-    };
-
-    let is_duckduckgo = url
-        .host_str()
-        .is_some_and(|host| host.eq_ignore_ascii_case("duckduckgo.com"));
-    if !is_duckduckgo {
-        return normalized;
-    }
-
-    for (key, value) in url.query_pairs() {
-        if key == "uddg" {
-            return value.into_owned();
-        }
-    }
-
-    normalized
-}
-
-fn parse_duckduckgo_lite_results(html: &str, limit: usize) -> Vec<WebSearchHit> {
-    let document = Html::parse_document(html);
-    let title_selector = Selector::parse("a.result-link").expect("valid selector");
-    let snippet_selector = Selector::parse("td.result-snippet").expect("valid selector");
-
-    let titles = document
-        .select(&title_selector)
-        .map(|node| {
-            let title = collapse_whitespace(&node.text().collect::<Vec<_>>().join(" "));
-            let url = node.value().attr("href").unwrap_or_default().to_string();
-            (title, decode_duckduckgo_result_url(&url))
-        })
-        .filter(|(title, url)| !title.is_empty() && !url.is_empty())
-        .collect::<Vec<_>>();
-
-    let snippets = document
-        .select(&snippet_selector)
-        .map(|node| collapse_whitespace(&node.text().collect::<Vec<_>>().join(" ")))
-        .collect::<Vec<_>>();
-
-    titles
-        .into_iter()
-        .enumerate()
-        .take(limit)
-        .map(|(index, (title, url))| WebSearchHit {
-            title,
-            url,
-            snippet: snippets.get(index).cloned().unwrap_or_default(),
-        })
-        .collect()
-}
-
-fn normalize_hits_for_output(hits: &[WebSearchHit]) -> Vec<Value> {
-    hits.iter()
-        .map(|hit| {
-            serde_json::json!({
-                "title": hit.title,
-                "url": hit.url,
-                "snippet": hit.snippet,
-            })
-        })
-        .collect()
 }
 
 fn header_value(value: &str, label: &str) -> Result<HeaderValue, ToolError> {
@@ -466,211 +257,6 @@ fn apply_api_headers(
     Ok(request)
 }
 
-fn brave_hits_from_response(response: BraveSearchResponse, limit: usize) -> Vec<WebSearchHit> {
-    response
-        .web
-        .map(|web| {
-            web.results
-                .into_iter()
-                .take(limit)
-                .filter_map(|result| {
-                    if result.title.trim().is_empty() || result.url.trim().is_empty() {
-                        return None;
-                    }
-                    let snippet = if !result.description.trim().is_empty() {
-                        result.description
-                    } else {
-                        result.extra_snippets.into_iter().next().unwrap_or_default()
-                    };
-                    Some(WebSearchHit {
-                        title: collapse_whitespace(&result.title),
-                        url: result.url,
-                        snippet: truncate_chars(&collapse_whitespace(&snippet), 400),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn tavily_hits_from_response(response: TavilySearchResponse, limit: usize) -> Vec<WebSearchHit> {
-    response
-        .results
-        .into_iter()
-        .take(limit)
-        .filter_map(|result| {
-            if result.title.trim().is_empty() || result.url.trim().is_empty() {
-                return None;
-            }
-            Some(WebSearchHit {
-                title: collapse_whitespace(&result.title),
-                url: result.url,
-                snippet: truncate_chars(&collapse_whitespace(&result.content), 400),
-            })
-        })
-        .collect()
-}
-
-fn searxng_hits_from_response(response: SearxngSearchResponse, limit: usize) -> Vec<WebSearchHit> {
-    response
-        .results
-        .into_iter()
-        .take(limit)
-        .filter_map(|result| {
-            if result.title.trim().is_empty() || result.url.trim().is_empty() {
-                return None;
-            }
-            Some(WebSearchHit {
-                title: collapse_whitespace(&result.title),
-                url: result.url,
-                snippet: truncate_chars(&collapse_whitespace(&result.content), 400),
-            })
-        })
-        .collect()
-}
-
-async fn read_json_response<T: for<'de> Deserialize<'de>>(
-    response: reqwest::Response,
-    label: &str,
-) -> Result<T, ToolError> {
-    let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|e| ToolError::ExecutionError(format!("{label} body read failed: {e}")))?;
-    if !status.is_success() {
-        return Err(ToolError::ExecutionError(format!(
-            "{label} request failed with {}: {}",
-            status.as_u16(),
-            truncate_chars(&collapse_whitespace(&body), 400)
-        )));
-    }
-    serde_json::from_str(&body)
-        .map_err(|e| ToolError::ExecutionError(format!("{label} response decode failed: {e}")))
-}
-
-fn load_required_api_key(env_name: &str, provider: &str) -> Result<String, ToolError> {
-    env::var(env_name).map_err(|_| {
-        ToolError::ExecutionError(format!(
-            "{provider} search requires environment variable '{}'",
-            env_name
-        ))
-    })
-}
-
-async fn search_duckduckgo_html(
-    client: &Client,
-    settings: &WebSearchToolSettings,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<WebSearchHit>, ToolError> {
-    let request = client
-        .get(DEFAULT_DUCKDUCKGO_SEARCH_URL)
-        .query(&[("q", query)]);
-    let request = apply_html_search_headers(request, settings)?;
-    let response = request.send().await.map_err(|e| {
-        ToolError::ExecutionError(format!("duckduckgo_html search request failed: {e}"))
-    })?;
-    let html = response.text().await.map_err(|e| {
-        ToolError::ExecutionError(format!("duckduckgo_html search body read failed: {e}"))
-    })?;
-    Ok(parse_duckduckgo_lite_results(&html, limit))
-}
-
-async fn search_brave(
-    client: &Client,
-    settings: &WebSearchToolSettings,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<WebSearchHit>, ToolError> {
-    let env_name =
-        settings.brave.api_key_env.as_deref().ok_or_else(|| {
-            ToolError::ExecutionError("Brave search is not configured".to_string())
-        })?;
-    let api_key = load_required_api_key(env_name, "Brave")?;
-    let request = client
-        .get(
-            settings
-                .brave
-                .base_url
-                .as_deref()
-                .unwrap_or(DEFAULT_BRAVE_SEARCH_URL),
-        )
-        .query(&[("q", query), ("count", &limit.to_string())])
-        .header("X-Subscription-Token", api_key);
-    let request = apply_api_headers(request, settings)?;
-    let response = request
-        .send()
-        .await
-        .map_err(|e| ToolError::ExecutionError(format!("brave search request failed: {e}")))?;
-    let parsed: BraveSearchResponse = read_json_response(response, "brave search").await?;
-    Ok(brave_hits_from_response(parsed, limit))
-}
-
-async fn search_tavily(
-    client: &Client,
-    settings: &WebSearchToolSettings,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<WebSearchHit>, ToolError> {
-    let env_name =
-        settings.tavily.api_key_env.as_deref().ok_or_else(|| {
-            ToolError::ExecutionError("Tavily search is not configured".to_string())
-        })?;
-    let api_key = load_required_api_key(env_name, "Tavily")?;
-    let request = client
-        .post(
-            settings
-                .tavily
-                .base_url
-                .as_deref()
-                .unwrap_or(DEFAULT_TAVILY_SEARCH_URL),
-        )
-        .header(AUTHORIZATION, format!("Bearer {api_key}"))
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .json(&serde_json::json!({
-            "query": query,
-            "search_depth": "basic",
-            "max_results": limit,
-            "include_answer": false,
-            "include_raw_content": false,
-            "include_images": false,
-        }));
-    let request = apply_api_headers(request, settings)?;
-    let response = request
-        .send()
-        .await
-        .map_err(|e| ToolError::ExecutionError(format!("tavily search request failed: {e}")))?;
-    let parsed: TavilySearchResponse = read_json_response(response, "tavily search").await?;
-    Ok(tavily_hits_from_response(parsed, limit))
-}
-
-async fn search_searxng(
-    client: &Client,
-    settings: &WebSearchToolSettings,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<WebSearchHit>, ToolError> {
-    let base_url =
-        settings.searxng.base_url.as_deref().ok_or_else(|| {
-            ToolError::ExecutionError("SearXNG search is not configured".to_string())
-        })?;
-    let mut search_url = validate_web_url(base_url)?;
-    if search_url.path().is_empty() || search_url.path() == "/" {
-        search_url.set_path("/search");
-    }
-    let request = client
-        .get(search_url)
-        .query(&[("q", query), ("format", "json")]);
-    let request = apply_html_search_headers(request, settings)?;
-    let response = request
-        .send()
-        .await
-        .map_err(|e| ToolError::ExecutionError(format!("searxng search request failed: {e}")))?;
-    let parsed: SearxngSearchResponse = read_json_response(response, "searxng search").await?;
-    Ok(searxng_hits_from_response(parsed, limit))
-}
-
 #[async_trait]
 impl Tool for WebFetchTool {
     fn name(&self) -> &str {
@@ -731,8 +317,8 @@ impl Tool for WebFetchTool {
         } else {
             collapse_whitespace(&raw_body)
         };
-        let document = Html::parse_document(&raw_body);
         let title = if content_type.contains("html") {
+            let document = scraper::Html::parse_document(&raw_body);
             extract_html_title(&document)
         } else {
             None
