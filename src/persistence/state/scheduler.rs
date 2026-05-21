@@ -44,6 +44,20 @@ pub struct ScheduledJobUpdate<'a> {
     pub enabled: bool,
 }
 
+const SCHEDULED_JOB_SELECT: &str = r#"
+SELECT id, public_id, agent_id, job_kind, prompt, content, tools, conflict_policy,
+       action_name, action_params, state_target, store_target,
+       next_run_unix_ms, interval_seconds, recurring_pattern,
+       overlap_policy, work_key, max_concurrency, enabled, running_task_id, active_run_count, pending_rerun,
+       last_run_unix_ms, last_status, last_error_code, failure_count, created_at, updated_at
+FROM scheduled_jobs
+"#;
+
+const SCHEDULED_JOB_RUN_SELECT: &str = r#"
+SELECT id, scheduled_job_id, task_id, started_unix_ms, finished_unix_ms, last_status, created_at, updated_at
+FROM scheduled_job_runs
+"#;
+
 impl StateStore {
     pub async fn get_scheduled_job_by_public_id(
         &self,
@@ -51,21 +65,8 @@ impl StateStore {
     ) -> Result<Option<ScheduledJobRow>> {
         let conn = self.connect().await?;
         let public_id_bytes = public_id.into_bytes().to_vec();
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT id, public_id, agent_id, job_kind, prompt, content, tools, conflict_policy,
-                       action_name, action_params, state_target, store_target,
-                       next_run_unix_ms, interval_seconds, recurring_pattern,
-                       overlap_policy, work_key, max_concurrency, enabled, running_task_id, active_run_count, pending_rerun,
-                       last_run_unix_ms, last_status, last_error_code, failure_count, created_at, updated_at
-                FROM scheduled_jobs
-                WHERE public_id = ?1
-                LIMIT 1
-                "#,
-                turso::params![public_id_bytes],
-            )
-            .await?;
+        let sql = format!("{SCHEDULED_JOB_SELECT} WHERE public_id = ?1 LIMIT 1");
+        let mut rows = conn.query(&sql, turso::params![public_id_bytes]).await?;
         if let Some(row) = rows.next().await? {
             return Ok(Some(map_scheduled_job_row(&row)?));
         }
@@ -111,20 +112,8 @@ impl StateStore {
 
     pub async fn list_scheduled_jobs(&self) -> Result<Vec<ScheduledJobRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT id, public_id, agent_id, job_kind, prompt, content, tools, conflict_policy,
-                       action_name, action_params, state_target, store_target,
-                       next_run_unix_ms, interval_seconds, recurring_pattern,
-                       overlap_policy, work_key, max_concurrency, enabled, running_task_id, active_run_count, pending_rerun,
-                       last_run_unix_ms, last_status, last_error_code, failure_count, created_at, updated_at
-                FROM scheduled_jobs
-                ORDER BY id ASC
-                "#,
-                (),
-            )
-            .await?;
+        let sql = format!("{SCHEDULED_JOB_SELECT} ORDER BY id ASC");
+        let mut rows = conn.query(&sql, ()).await?;
         let mut result = Vec::new();
         while let Some(row) = rows.next().await? {
             result.push(map_scheduled_job_row(&row)?);
@@ -138,21 +127,14 @@ impl StateStore {
         limit: usize,
     ) -> Result<Vec<ScheduledJobRow>> {
         let conn = self.connect().await?;
+        let sql = format!(
+            "{SCHEDULED_JOB_SELECT}
+             WHERE enabled = 1 AND next_run_unix_ms <= ?1
+             ORDER BY next_run_unix_ms ASC, id ASC
+             LIMIT ?2"
+        );
         let mut rows = conn
-            .query(
-                r#"
-                SELECT id, public_id, agent_id, job_kind, prompt, content, tools, conflict_policy,
-                       action_name, action_params, state_target, store_target,
-                       next_run_unix_ms, interval_seconds, recurring_pattern,
-                       overlap_policy, work_key, max_concurrency, enabled, running_task_id, active_run_count, pending_rerun,
-                       last_run_unix_ms, last_status, last_error_code, failure_count, created_at, updated_at
-                FROM scheduled_jobs
-                WHERE enabled = 1 AND next_run_unix_ms <= ?1
-                ORDER BY next_run_unix_ms ASC, id ASC
-                LIMIT ?2
-                "#,
-                turso::params![now_unix_ms, limit as i64],
-            )
+            .query(&sql, turso::params![now_unix_ms, limit as i64])
             .await?;
         let mut result = Vec::new();
         while let Some(row) = rows.next().await? {
@@ -178,21 +160,8 @@ impl StateStore {
 
     pub async fn list_running_scheduled_jobs(&self) -> Result<Vec<ScheduledJobRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT id, public_id, agent_id, job_kind, prompt, content, tools, conflict_policy,
-                       action_name, action_params, state_target, store_target,
-                       next_run_unix_ms, interval_seconds, recurring_pattern,
-                       overlap_policy, work_key, max_concurrency, enabled, running_task_id, active_run_count, pending_rerun,
-                       last_run_unix_ms, last_status, last_error_code, failure_count, created_at, updated_at
-                FROM scheduled_jobs
-                WHERE active_run_count > 0
-                ORDER BY id ASC
-                "#,
-                (),
-            )
-            .await?;
+        let sql = format!("{SCHEDULED_JOB_SELECT} WHERE active_run_count > 0 ORDER BY id ASC");
+        let mut rows = conn.query(&sql, ()).await?;
         let mut result = Vec::new();
         while let Some(row) = rows.next().await? {
             result.push(map_scheduled_job_row(&row)?);
@@ -221,17 +190,12 @@ impl StateStore {
 
     pub async fn list_active_scheduled_job_runs(&self) -> Result<Vec<ScheduledJobRunRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT id, scheduled_job_id, task_id, started_unix_ms, finished_unix_ms, last_status, created_at, updated_at
-                FROM scheduled_job_runs
-                WHERE finished_unix_ms IS NULL
-                ORDER BY id ASC
-                "#,
-                (),
-            )
-            .await?;
+        let sql = format!(
+            "{SCHEDULED_JOB_RUN_SELECT}
+             WHERE finished_unix_ms IS NULL
+             ORDER BY id ASC"
+        );
+        let mut rows = conn.query(&sql, ()).await?;
         let mut result = Vec::new();
         while let Some(row) = rows.next().await? {
             result.push(map_scheduled_job_run_row(&row)?);
@@ -246,44 +210,14 @@ impl StateStore {
         limit: Option<u32>,
     ) -> Result<Vec<ScheduledJobRunRow>> {
         let conn = self.connect().await?;
-        let query = match (active_only, limit) {
-            (true, Some(_)) => {
-                r#"
-                SELECT id, scheduled_job_id, task_id, started_unix_ms, finished_unix_ms, last_status, created_at, updated_at
-                FROM scheduled_job_runs
-                WHERE scheduled_job_id = ?1 AND finished_unix_ms IS NULL
-                ORDER BY id DESC
-                LIMIT ?2
-                "#
-            }
-            (true, None) => {
-                r#"
-                SELECT id, scheduled_job_id, task_id, started_unix_ms, finished_unix_ms, last_status, created_at, updated_at
-                FROM scheduled_job_runs
-                WHERE scheduled_job_id = ?1 AND finished_unix_ms IS NULL
-                ORDER BY id DESC
-                "#
-            }
-            (false, Some(_)) => {
-                r#"
-                SELECT id, scheduled_job_id, task_id, started_unix_ms, finished_unix_ms, last_status, created_at, updated_at
-                FROM scheduled_job_runs
-                WHERE scheduled_job_id = ?1
-                ORDER BY id DESC
-                LIMIT ?2
-                "#
-            }
-            (false, None) => {
-                r#"
-                SELECT id, scheduled_job_id, task_id, started_unix_ms, finished_unix_ms, last_status, created_at, updated_at
-                FROM scheduled_job_runs
-                WHERE scheduled_job_id = ?1
-                ORDER BY id DESC
-                "#
-            }
-        };
+        let mut query = format!("{SCHEDULED_JOB_RUN_SELECT} WHERE scheduled_job_id = ?1");
+        if active_only {
+            query.push_str(" AND finished_unix_ms IS NULL");
+        }
+        query.push_str(" ORDER BY id DESC");
         let mut rows = match limit {
             Some(limit) => {
+                query.push_str(" LIMIT ?2");
                 conn.query(query, turso::params![scheduled_job_id, limit as i64])
                     .await?
             }
@@ -317,21 +251,8 @@ impl StateStore {
 
     pub async fn get_scheduled_job_by_id(&self, id: i64) -> Result<Option<ScheduledJobRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT id, public_id, agent_id, job_kind, prompt, content, tools, conflict_policy,
-                       action_name, action_params, state_target, store_target,
-                       next_run_unix_ms, interval_seconds, recurring_pattern,
-                       overlap_policy, work_key, max_concurrency, enabled, running_task_id, active_run_count, pending_rerun,
-                       last_run_unix_ms, last_status, last_error_code, failure_count, created_at, updated_at
-                FROM scheduled_jobs
-                WHERE id = ?1
-                LIMIT 1
-                "#,
-                turso::params![id],
-            )
-            .await?;
+        let sql = format!("{SCHEDULED_JOB_SELECT} WHERE id = ?1 LIMIT 1");
+        let mut rows = conn.query(&sql, turso::params![id]).await?;
         if let Some(row) = rows.next().await? {
             Ok(Some(map_scheduled_job_row(&row)?))
         } else {
