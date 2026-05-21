@@ -1598,6 +1598,10 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
 
     let orchestrator_harness = r#"
         function on_turn_prepare(ctx)
+            if agent.send ~= nil then
+                error("deprecated agent.send should not be registered")
+            end
+
             local blocked_id, blocked_err = runtime.agent.submit("worker_blocked", { prompt = "nope" })
             if blocked_id ~= nil or blocked_err == nil then
                 error("runtime.agent.submit to blocked worker should fail")
@@ -1606,12 +1610,20 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
                 error("blocked runtime.agent.submit should mention allowed_child_agents")
             end
 
-            local complete_out, complete_err = agent.ask("nope", { agent_id = "worker_blocked", timeout_ms = 500 })
-            if complete_out ~= nil or complete_err == nil then
-                error("agent.complete to blocked worker should fail")
+            local blocked_short_id, blocked_short_err = agent.submit("nope", { agent_id = "worker_blocked" })
+            if blocked_short_id ~= nil or blocked_short_err == nil then
+                error("agent.submit to blocked worker should fail")
             end
-            if string.find(tostring(complete_err), "allowed_child_agents", 1, true) == nil then
-                error("blocked agent.complete should mention allowed_child_agents")
+            if string.find(tostring(blocked_short_err), "allowed_child_agents", 1, true) == nil then
+                error("blocked agent.submit should mention allowed_child_agents")
+            end
+
+            local ask_out, ask_err = agent.ask("nope", { agent_id = "worker_blocked", timeout_ms = 500 })
+            if ask_out ~= nil or ask_err == nil then
+                error("agent.ask to blocked worker should fail")
+            end
+            if string.find(tostring(ask_err), "allowed_child_agents", 1, true) == nil then
+                error("blocked agent.ask should mention allowed_child_agents")
             end
 
             local allowed_id, allowed_err = runtime.agent.submit("worker_allowed", { prompt = "say hello" })
@@ -1620,6 +1632,13 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
             if res == nil then error("runtime.agent.await allowed worker failed: " .. tostring(ae)) end
             if res.status ~= "success" then error("allowed worker should succeed") end
             if res.output ~= "worker-ok" then error("allowed worker output mismatch") end
+
+            local short_id, short_err = agent.submit("say hello again", { agent_id = "worker_allowed" })
+            if short_id == nil then error("agent.submit to allowed worker failed: " .. tostring(short_err)) end
+            local short_res, short_await_err = runtime.agent.await(short_id, { timeout_ms = 5000 })
+            if short_res == nil then error("runtime.agent.await after agent.submit failed: " .. tostring(short_await_err)) end
+            if short_res.status ~= "success" then error("agent.submit worker should succeed") end
+            if short_res.output ~= "worker-ok" then error("agent.submit worker output mismatch") end
 
             return ALLOW
         end

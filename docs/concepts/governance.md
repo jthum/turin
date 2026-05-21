@@ -300,8 +300,8 @@ If non-empty, it acts as an allowlist for peer-agent dispatch from that agent.
 Turin enforces this on:
 
 - `runtime.agent.submit(...)`
+- `agent.submit(...)`
 - `agent.ask(...)`
-- `agent.send(...)`
 
 ## Temporary Grants
 

@@ -112,27 +112,6 @@ impl AgentManager {
         Ok(())
     }
 
-    /// Dispatch a task to an agent by ID. If the agent isn't running, it will be started automatically.
-    pub async fn send(
-        self: &Arc<Self>,
-        agent_id: &str,
-        task: QueuedTask,
-        delegated_capabilities: Option<BTreeMap<String, bool>>,
-    ) -> Result<()> {
-        let handle = self.ensure_runtime(agent_id).await?;
-        self.enqueue_runtime_task(
-            &handle,
-            PeerAgentTaskEnvelope {
-                task,
-                request_id: None,
-                result_tx: None,
-                delegated_capabilities,
-            },
-        )
-        .await?;
-        Ok(())
-    }
-
     /// Submit a task to a peer agent and return a request ID for later `await_result`.
     pub async fn submit(
         self: &Arc<Self>,

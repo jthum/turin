@@ -1586,13 +1586,17 @@ Selector-derived scoped data aliases based on the active `RuntimeIdentity`.
 
 ### Peer-agent convenience
 
+- `agent.submit(prompt, opts?) -> task_id`
+  - submits to a peer agent and returns a request id for `runtime.agent.await(...)`
+  - `opts.agent_id` (defaults to current configured agent id)
+  - `opts.capabilities` (delegated ceiling)
+  - `opts.execution`
 - `agent.ask(prompt, opts?) -> output`
   - submits to a peer agent and awaits result in one call
   - `opts.agent_id` (defaults to current configured agent id)
   - `opts.timeout_ms`
   - `opts.capabilities` (delegated ceiling)
-- `agent.send(agent_id, prompt) -> bool`
-  - deprecated fire-and-forget convenience path
+  - `opts.execution`
 
 ### Runtime retention
 

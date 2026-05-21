@@ -312,7 +312,7 @@ This is the current canonical map at the harness level.
 - `identity()`
 - `status(agent_id)`
 - `submit(agent_id, task, opts?)`
-- `ask(agent_id, task, opts?)`
+- `ask(agent_id, prompt, opts?)`
 - `await(task_id, opts?)`
 - `status(task_id, opts?)`
 - `cancel(task_id, opts?)`

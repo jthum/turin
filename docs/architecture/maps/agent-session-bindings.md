@@ -35,7 +35,7 @@ Local queueing:
 
 Peer-agent calls:
 
-1. Lua calls `agent.ask` or deprecated `agent.send`.
+1. Lua calls `agent.submit` or `agent.ask`.
 2. The binding checks submit/await capabilities and child-agent governance.
 3. Delegated capabilities are parsed and capped by active grants.
 4. `AgentManager` owns peer submission and result waiting.
@@ -51,7 +51,7 @@ Session branch helpers:
 ## Invariants
 
 - `agent.spawn` requires `runtime.agent.spawn`.
-- `agent.sidestep`, `agent.promote`, `agent.ask`, and `agent.send` require submit-capable governance.
+- `agent.sidestep`, `agent.promote`, `agent.submit`, and `agent.ask` require submit-capable governance.
 - `agent.ask` also requires `runtime.agent.await`.
 - Child-agent access must pass `allowed_child_agents` checks before peer submission.
 - Delegated capabilities must be capped by active temporary grants.
@@ -83,7 +83,8 @@ cargo test -p turin --test harness_tests test_agent_can_promote_detached_local_s
 Change peer-agent delegation:
 
 1. Keep child-agent and delegated-capability checks before submission.
-2. Run:
+2. Keep `agent.submit(prompt, opts?)` as the top-level request-id-returning counterpart to `agent.ask(prompt, opts?)`; the target agent comes from `opts.agent_id`.
+3. Run:
 
 ```sh
 cargo test -p turin --test harness_tests test_agent_allowed_child_agents_enforced_across_aliases
