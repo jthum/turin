@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 use futures::future::BoxFuture;
 use futures::stream;
 use serde::Serialize;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -39,12 +39,37 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Report static code and artifact footprint for refactor baselines.
+    Footprint(FootprintArgs),
     /// Stress session hot history with mocked inference and large tool outputs.
     HotHistory(HotHistoryArgs),
     /// Drive the real daemon through mocked channel ingress/egress and mocked inference.
     FakeChannel(FakeChannelArgs),
     /// Measure daemon/channel cost across logical session and message-count checkpoints.
     ChannelScale(ChannelScaleArgs),
+}
+
+#[derive(Parser)]
+struct FootprintArgs {
+    /// Repository root to scan.
+    #[arg(long, default_value = ".")]
+    repo_root: PathBuf,
+
+    /// Comma-separated source roots to include.
+    #[arg(long, default_value = "src,crates")]
+    roots: String,
+
+    /// Number of largest source files to include in the report.
+    #[arg(long, default_value_t = 40)]
+    top_files: usize,
+
+    /// Extra binary paths to record if they exist.
+    #[arg(long = "binary")]
+    binaries: Vec<PathBuf>,
+
+    /// Report output directory.
+    #[arg(long, default_value = ".workspace/perf-reports")]
+    report_dir: PathBuf,
 }
 
 #[derive(Parser)]
@@ -169,6 +194,43 @@ struct PerfReport {
 }
 
 #[derive(Debug, Serialize)]
+struct FootprintReport {
+    scenario: String,
+    config: serde_json::Value,
+    totals: LineCounts,
+    areas: Vec<AreaFootprint>,
+    largest_files: Vec<FileFootprint>,
+    binaries: Vec<BinaryFootprint>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+struct LineCounts {
+    files: usize,
+    total_lines: usize,
+    blank_lines: usize,
+    comment_lines: usize,
+    code_lines: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AreaFootprint {
+    area: String,
+    counts: LineCounts,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct FileFootprint {
+    path: String,
+    counts: LineCounts,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BinaryFootprint {
+    path: String,
+    bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
 struct Snapshot {
     label: String,
     elapsed_ms: u128,
@@ -269,10 +331,66 @@ impl InferenceProvider for SequencePerfProvider {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::Footprint(args) => run_footprint(args),
         Command::HotHistory(args) => run_hot_history(args).await,
         Command::FakeChannel(args) => run_fake_channel(args).await,
         Command::ChannelScale(args) => run_channel_scale(args).await,
     }
+}
+
+fn run_footprint(args: FootprintArgs) -> Result<()> {
+    anyhow::ensure!(args.top_files > 0, "--top-files must be greater than zero");
+
+    let repo_root = fs::canonicalize(&args.repo_root)
+        .with_context(|| format!("failed to resolve repo root '{}'", args.repo_root.display()))?;
+    let roots = parse_source_roots(&args.roots)?;
+    let mut area_counts = BTreeMap::<String, LineCounts>::new();
+    let mut file_counts = Vec::<FileFootprint>::new();
+    let mut totals = LineCounts::default();
+
+    for root in &roots {
+        let root_path = repo_root.join(root);
+        if !root_path.exists() {
+            continue;
+        }
+        collect_rust_footprint(&repo_root, root, &root_path, &mut area_counts, &mut file_counts)?;
+    }
+
+    for file in &file_counts {
+        totals.add(&file.counts);
+    }
+
+    file_counts.sort_by(|left, right| {
+        right
+            .counts
+            .code_lines
+            .cmp(&left.counts.code_lines)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    file_counts.truncate(args.top_files);
+
+    let areas = area_counts
+        .into_iter()
+        .map(|(area, counts)| AreaFootprint { area, counts })
+        .collect();
+    let binaries = collect_binary_footprint(&repo_root, &args.binaries);
+    let report = FootprintReport {
+        scenario: "footprint".to_string(),
+        config: serde_json::json!({
+            "repo_root": repo_root.display().to_string(),
+            "roots": roots,
+            "top_files": args.top_files,
+            "note": "Rust source scan excludes directories/files that are clearly tests, benches, examples, target artifacts, or workspace scratch data. Inline #[cfg(test)] modules are not stripped from non-test source files.",
+        }),
+        totals,
+        areas,
+        largest_files: file_counts,
+        binaries,
+    };
+
+    write_footprint_reports(&args.report_dir, &report)?;
+    print_footprint_summary(&report);
+    Ok(())
 }
 
 async fn run_hot_history(args: HotHistoryArgs) -> Result<()> {
@@ -1027,6 +1145,179 @@ fn optional_len(value: Option<&str>) -> usize {
     value.map_or(0, str::len)
 }
 
+fn parse_source_roots(raw: &str) -> Result<Vec<String>> {
+    let roots = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| part.trim_matches('/').to_string())
+        .collect::<Vec<_>>();
+    anyhow::ensure!(!roots.is_empty(), "--roots must include at least one path");
+    Ok(roots)
+}
+
+fn collect_rust_footprint(
+    repo_root: &Path,
+    root: &str,
+    root_path: &Path,
+    area_counts: &mut BTreeMap<String, LineCounts>,
+    file_counts: &mut Vec<FileFootprint>,
+) -> Result<()> {
+    let mut pending = vec![root_path.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        for entry in fs::read_dir(&path)
+            .with_context(|| format!("failed to read directory '{}'", path.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                if should_skip_source_dir(&path) {
+                    continue;
+                }
+                pending.push(path);
+            } else if file_type.is_file() && is_counted_rust_file(&path) {
+                let counts = count_rust_lines(&path)?;
+                let relative = relative_path(repo_root, &path);
+                area_counts
+                    .entry(source_area(root, &relative))
+                    .or_default()
+                    .add(&counts);
+                file_counts.push(FileFootprint {
+                    path: relative,
+                    counts,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn should_skip_source_dir(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    matches!(
+        name,
+        ".git" | ".workspace" | "target" | "tests" | "benches" | "examples"
+    )
+}
+
+fn is_counted_rust_file(path: &Path) -> bool {
+    if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+        return false;
+    }
+    !matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("tests.rs" | "test.rs")
+    )
+}
+
+fn count_rust_lines(path: &Path) -> Result<LineCounts> {
+    let raw = fs::read_to_string(path)
+        .with_context(|| format!("failed to read source file '{}'", path.display()))?;
+    let mut counts = LineCounts {
+        files: 1,
+        ..LineCounts::default()
+    };
+
+    for line in raw.lines() {
+        counts.total_lines += 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            counts.blank_lines += 1;
+        } else if is_comment_line(trimmed) {
+            counts.comment_lines += 1;
+        } else {
+            counts.code_lines += 1;
+        }
+    }
+
+    Ok(counts)
+}
+
+fn is_comment_line(trimmed: &str) -> bool {
+    trimmed.starts_with("//")
+        || trimmed.starts_with("/*")
+        || trimmed.starts_with('*')
+        || trimmed.starts_with("*/")
+}
+
+fn source_area(root: &str, relative: &str) -> String {
+    if root == "crates" {
+        let mut parts = relative.split('/');
+        if matches!(parts.next(), Some("crates"))
+            && let Some(crate_name) = parts.next()
+        {
+            return format!("crates/{crate_name}");
+        }
+    }
+    root.to_string()
+}
+
+fn relative_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn collect_binary_footprint(repo_root: &Path, extra_binaries: &[PathBuf]) -> Vec<BinaryFootprint> {
+    let mut candidates = default_binary_candidates(repo_root);
+    candidates.extend(extra_binaries.iter().map(|path| {
+        if path.is_absolute() {
+            path.clone()
+        } else {
+            repo_root.join(path)
+        }
+    }));
+
+    let mut seen = HashSet::new();
+    let mut binaries = Vec::new();
+    for candidate in candidates {
+        let path_key = candidate.display().to_string();
+        if !seen.insert(path_key.clone()) {
+            continue;
+        }
+        let bytes = file_len(&candidate);
+        if bytes == 0 {
+            continue;
+        }
+        binaries.push(BinaryFootprint {
+            path: relative_path(repo_root, &candidate),
+            bytes,
+        });
+    }
+    binaries.sort_by(|left, right| left.path.cmp(&right.path));
+    binaries
+}
+
+fn default_binary_candidates(repo_root: &Path) -> Vec<PathBuf> {
+    [
+        "target/release/turin",
+        "target/release/turin-manager",
+        "target/release/turin-tui",
+        "target/release/turin-map",
+        "target/release/turin-channel-telegram",
+        "target/release/turin-channel-rocketchat",
+        "target/release/turin-channel-whatsapp",
+        "target/release/turin-channel-discord",
+    ]
+    .into_iter()
+    .map(|path| repo_root.join(path))
+    .collect()
+}
+
+impl LineCounts {
+    fn add(&mut self, other: &Self) {
+        self.files = self.files.saturating_add(other.files);
+        self.total_lines = self.total_lines.saturating_add(other.total_lines);
+        self.blank_lines = self.blank_lines.saturating_add(other.blank_lines);
+        self.comment_lines = self.comment_lines.saturating_add(other.comment_lines);
+        self.code_lines = self.code_lines.saturating_add(other.code_lines);
+    }
+}
+
 impl ScaleRecorder {
     fn record_if_checkpoint(&self, outbound_count: usize) {
         if !self.sample_totals.contains(&outbound_count) {
@@ -1102,10 +1393,7 @@ fn file_len(path: &Path) -> u64 {
 
 fn write_reports(report_dir: &Path, report: &PerfReport) -> Result<()> {
     fs::create_dir_all(report_dir)?;
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .context("system clock is before unix epoch")?
-        .as_secs();
+    let stamp = report_stamp()?;
     let json_path = report_dir.join(format!("{}-{stamp}.json", report.scenario));
     let md_path = report_dir.join(format!("{}-{stamp}.md", report.scenario));
 
@@ -1115,6 +1403,27 @@ fn write_reports(report_dir: &Path, report: &PerfReport) -> Result<()> {
     println!("json_report={}", json_path.display());
     println!("markdown_report={}", md_path.display());
     Ok(())
+}
+
+fn write_footprint_reports(report_dir: &Path, report: &FootprintReport) -> Result<()> {
+    fs::create_dir_all(report_dir)?;
+    let stamp = report_stamp()?;
+    let json_path = report_dir.join(format!("{}-{stamp}.json", report.scenario));
+    let md_path = report_dir.join(format!("{}-{stamp}.md", report.scenario));
+
+    fs::write(&json_path, serde_json::to_vec_pretty(report)?)?;
+    fs::write(&md_path, footprint_markdown_report(report))?;
+
+    println!("json_report={}", json_path.display());
+    println!("markdown_report={}", md_path.display());
+    Ok(())
+}
+
+fn report_stamp() -> Result<u64> {
+    Ok(SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before unix epoch")?
+        .as_secs())
 }
 
 fn markdown_report(report: &PerfReport) -> String {
@@ -1152,6 +1461,56 @@ fn markdown_report(report: &PerfReport) -> String {
         ));
     }
     out
+}
+
+fn footprint_markdown_report(report: &FootprintReport) -> String {
+    let mut out = String::new();
+    out.push_str("# Footprint Report\n\n");
+    out.push_str(&format!("- config: `{}`\n\n", report.config));
+    out.push_str("## Totals\n\n");
+    out.push_str("| files | total_lines | blank_lines | comment_lines | code_lines |\n");
+    out.push_str("|---:|---:|---:|---:|---:|\n");
+    out.push_str(&format!("| {} |\n", line_counts_cells(&report.totals)));
+
+    out.push_str("\n## Areas\n\n");
+    out.push_str("| area | files | total_lines | blank_lines | comment_lines | code_lines |\n");
+    out.push_str("|---|---:|---:|---:|---:|---:|\n");
+    for area in &report.areas {
+        out.push_str(&format!(
+            "| {} | {} |\n",
+            area.area,
+            line_counts_cells(&area.counts)
+        ));
+    }
+
+    out.push_str("\n## Largest Files\n\n");
+    out.push_str("| path | files | total_lines | blank_lines | comment_lines | code_lines |\n");
+    out.push_str("|---|---:|---:|---:|---:|---:|\n");
+    for file in &report.largest_files {
+        out.push_str(&format!(
+            "| {} | {} |\n",
+            file.path,
+            line_counts_cells(&file.counts)
+        ));
+    }
+
+    if !report.binaries.is_empty() {
+        out.push_str("\n## Binaries\n\n");
+        out.push_str("| path | bytes |\n");
+        out.push_str("|---|---:|\n");
+        for binary in &report.binaries {
+            out.push_str(&format!("| {} | {} |\n", binary.path, binary.bytes));
+        }
+    }
+
+    out
+}
+
+fn line_counts_cells(counts: &LineCounts) -> String {
+    format!(
+        "{} | {} | {} | {} | {}",
+        counts.files, counts.total_lines, counts.blank_lines, counts.comment_lines, counts.code_lines
+    )
 }
 
 fn display_option(value: Option<u64>) -> String {
@@ -1351,5 +1710,12 @@ fn print_summary(report: &PerfReport) {
     println!(
         "{}",
         serde_json::to_string_pretty(report).expect("perf report should serialize")
+    );
+}
+
+fn print_footprint_summary(report: &FootprintReport) {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(report).expect("footprint report should serialize")
     );
 }

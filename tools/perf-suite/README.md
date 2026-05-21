@@ -4,6 +4,19 @@ This is a repo-local measurement harness. It is intentionally not a member of th
 
 The first scenario stresses hot session history and large tool outputs without using a real inference provider.
 
+For a static source/binary footprint baseline:
+
+```bash
+cargo run --manifest-path tools/perf-suite/Cargo.toml -- \
+  footprint \
+  --top-files 40
+```
+
+`footprint` scans Rust source roots, excludes obvious test/bench/example
+directories, reports LOC by area, lists the largest shipped source files, and
+records release binary sizes when known artifacts already exist. It does not
+build release binaries by itself.
+
 ```bash
 cargo run --manifest-path tools/perf-suite/Cargo.toml -- \
   hot-history \
