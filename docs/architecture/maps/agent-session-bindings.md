@@ -10,9 +10,17 @@ This surface sits between harness code and core runtime state. It should stay bo
 
 - `src/harness/stdlib/agent_bindings.rs`
   - Lua-facing `agent.*` and `agent.session.*` API.
+  - Registration/orchestration only; helper domains live under `agent_bindings/`.
+- `src/harness/stdlib/agent_bindings/queue.rs`
   - Local queue helpers for `agent.spawn`, `agent.sidestep`, and `agent.session.queue*`.
+- `src/harness/stdlib/agent_bindings/session_store.rs`
   - Session-store lookup helpers for branch/list/load APIs.
-  - Sidestep graph attachment and branch-row Lua conversion.
+- `src/harness/stdlib/agent_bindings/sidestep_graph.rs`
+  - Sidestep graph relation parsing and persisted graph-edge attachment.
+- `src/harness/stdlib/agent_bindings/branch_lua.rs`
+  - Branch-head row to Lua-table conversion.
+- `src/harness/stdlib/agent_bindings/options.rs`
+  - Option parsing for spawn/sidestep/peer/session helper APIs.
 - `src/harness/stdlib/runtime_agent.rs`
   - Lua-facing `runtime.agent.*` API for peer-agent submit, await, status, sidestep, and promotion.
 - `src/kernel/agent_manager/*`
@@ -64,7 +72,7 @@ Session branch helpers:
 
 Change local queue semantics:
 
-1. Update queue helpers in `agent_bindings.rs`.
+1. Update queue helpers in `agent_bindings/queue.rs`.
 2. Preserve trace inheritance and queue depth checks.
 3. Run local sidestep and queue tests.
 
@@ -94,4 +102,12 @@ cargo test -p turin --test harness_tests test_runtime_agent_peer_submit_await_an
 
 ## Current Shape
 
-The current pass keeps agent bindings in one Lua registration file but reduces repeated session-store lookup and Lua result shaping. That is deliberate: this surface is policy-heavy, and splitting it before the runtime agent/session boundary is clearer would add navigation cost without reducing much shipped code.
+The current pass keeps `agent_bindings.rs` as the Lua registration and policy-flow file, while private child modules own mechanical helper domains:
+
+- `queue.rs` owns local queue depth checks, trace inheritance helpers, and queue push operations reused by runtime worklist bindings.
+- `session_store.rs` owns session reference resolution, store opening, current-session matching, and completed-task-cache lookup.
+- `options.rs` owns Lua option-table parsing for local tasks, sidesteps, peer-agent calls, and branch/session helpers.
+- `sidestep_graph.rs` owns optional graph-edge attachment for persisted sidestep siblings.
+- `branch_lua.rs` owns branch-head Lua table shaping.
+
+This is still one client-facing Lua surface. The split is behavior-preserving and intended to make policy flow easier to audit without changing `agent.*` or `agent.session.*` authoring APIs.
