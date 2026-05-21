@@ -99,6 +99,30 @@ pub(crate) fn work_item_dependencies_satisfied(
         .all(|dep| status_map.get(&dep).is_some_and(|status| status == "done"))
 }
 
+pub(crate) fn work_item_next_candidates<'a>(
+    rows: &'a [WorkItemRow],
+    parent_item_id: Option<i64>,
+    where_map: Option<&'a JsonMap<String, JsonValue>>,
+    now_unix_ms: i64,
+) -> Vec<&'a WorkItemRow> {
+    let status_map = work_item_status_map(rows);
+    rows.iter()
+        .filter(|row| row.parent_item_id == parent_item_id)
+        .filter(|row| row.claim_execution_id.is_none())
+        .filter(|row| work_item_claimable_now(row, now_unix_ms))
+        .filter(|row| work_item_dependencies_satisfied(row, &status_map))
+        .filter(|row| work_item_matches_where(row, where_map, WorkItemParentId::DatabaseId))
+        .collect()
+}
+
+pub(crate) fn work_item_status_map<'a>(
+    rows: impl IntoIterator<Item = &'a WorkItemRow>,
+) -> HashMap<String, String> {
+    rows.into_iter()
+        .map(|row| (public_id_string(&row.public_id), row.status.clone()))
+        .collect()
+}
+
 pub(crate) fn work_item_prompt_task(
     row: &WorkItemRow,
     inherited_trace_id: Option<&str>,

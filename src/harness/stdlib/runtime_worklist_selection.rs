@@ -1,11 +1,10 @@
-use std::collections::HashMap;
-
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::persistence::schema::WorkItemRow;
 use crate::work_items::{
-    WorkItemParentId, public_id_string, work_item_claimable_now, work_item_dependencies_satisfied,
-    work_item_is_orphaned, work_item_matches_where, work_item_pause_due, work_item_paused,
+    WorkItemParentId, work_item_claimable_now, work_item_dependencies_satisfied,
+    work_item_is_orphaned, work_item_matches_where, work_item_next_candidates, work_item_pause_due,
+    work_item_paused, work_item_status_map,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -55,7 +54,7 @@ pub(super) fn pending_rows(
     rows: Vec<WorkItemRow>,
     selection: WorkItemSelection<'_>,
 ) -> Vec<WorkItemRow> {
-    let status_map = status_map(&rows);
+    let status_map = work_item_status_map(&rows);
     selection.take_limit(rows.into_iter().filter(|row| {
         selection.in_scope(row)
             && row.status == "pending"
@@ -119,14 +118,7 @@ pub(super) fn next_candidates<'a>(
     where_map: Option<&'a JsonMap<String, JsonValue>>,
     now_unix_ms: i64,
 ) -> Vec<&'a WorkItemRow> {
-    let status_map = status_map(rows);
-    rows.iter()
-        .filter(|row| row.parent_item_id == parent_item_id)
-        .filter(|row| row.claim_execution_id.is_none())
-        .filter(|row| work_item_claimable_now(row, now_unix_ms))
-        .filter(|row| work_item_dependencies_satisfied(row, &status_map))
-        .filter(|row| work_item_matches_where(row, where_map, WorkItemParentId::DatabaseId))
-        .collect()
+    work_item_next_candidates(rows, parent_item_id, where_map, now_unix_ms)
 }
 
 pub(super) fn has_pending_work(
@@ -134,7 +126,7 @@ pub(super) fn has_pending_work(
     parent_item_id: Option<i64>,
     now_unix_ms: i64,
 ) -> bool {
-    let status_map = status_map(rows);
+    let status_map = work_item_status_map(rows);
     rows.iter().any(|row| {
         row.parent_item_id == parent_item_id
             && work_item_claimable_now(row, now_unix_ms)
@@ -149,10 +141,4 @@ pub(super) fn progress_counts(rows: &[WorkItemRow], parent_item_id: Option<i64>)
         .fold((0, 0), |(done, total), row| {
             (done + usize::from(row.status == "done"), total + 1)
         })
-}
-
-fn status_map<'a>(rows: impl IntoIterator<Item = &'a WorkItemRow>) -> HashMap<String, String> {
-    rows.into_iter()
-        .map(|row| (public_id_string(&row.public_id), row.status.clone()))
-        .collect()
 }

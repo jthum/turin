@@ -11,8 +11,7 @@ use crate::kernel::config::InferenceOverrideConfig;
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::state::StateStore;
 use crate::work_items::{
-    WorkItemParentId, public_id_string as format_work_item_public_id, work_item_claimable_now,
-    work_item_dependencies_satisfied, work_item_is_orphaned, work_item_matches_where,
+    WorkItemParentId, work_item_is_orphaned, work_item_matches_where, work_item_next_candidates,
     work_item_prompt_task,
 };
 
@@ -28,31 +27,16 @@ impl DaemonState {
             .list_work_items(context.worklist_id)
             .await
             .map_err(builtin_failed)?;
-        let status_map = rows
-            .iter()
-            .map(|row| {
-                (
-                    format_work_item_public_id(&row.public_id),
-                    row.status.clone(),
-                )
-            })
-            .collect::<std::collections::HashMap<_, _>>();
         let now_unix_ms = now_unix_ms();
         let execution_id = format!("scheduled:worklist:{}", action.name);
-        for row in rows
-            .iter()
-            .filter(|row| row.parent_item_id.is_none())
-            .filter(|row| row.claim_execution_id.is_none())
-            .filter(|row| work_item_claimable_now(row, now_unix_ms))
-            .filter(|row| work_item_dependencies_satisfied(row, &status_map))
-            .filter(|row| {
-                work_item_matches_where(
-                    row,
-                    context.params.where_filter.as_ref(),
-                    WorkItemParentId::DatabaseId,
-                )
-            })
-            .take(context.params.limit.unwrap_or(usize::MAX))
+        for row in work_item_next_candidates(
+            &rows,
+            None,
+            context.params.where_filter.as_ref(),
+            now_unix_ms,
+        )
+        .into_iter()
+        .take(context.params.limit.unwrap_or(usize::MAX))
         {
             let claimed = context
                 .store
