@@ -2,18 +2,26 @@
 
 ## Purpose
 
-`session_lifecycle.rs` owns how an `ExecutionHost` creates, resumes, refreshes, starts, and ends runtime sessions. It also owns local context selection and persisted sidestep preparation.
+`session_lifecycle` owns how an `ExecutionHost` creates, resumes, refreshes, starts, and ends runtime sessions. It also owns local context selection, persisted execution-target materialization, and persisted sidestep preparation.
 
-This file is central runtime plumbing. Prefer small, behavior-preserving cleanups here unless a semantic change has dedicated tests around persistence, branch heads, and resume behavior.
+This module is central runtime plumbing. Prefer small, behavior-preserving cleanups here unless a semantic change has dedicated tests around persistence, branch heads, and resume behavior.
 
 ## Files
 
 - `src/kernel/session_lifecycle.rs`
-  - Session creation/resume/refresh/materialization.
+  - Session creation/resume/refresh orchestration.
   - Hot-history pruning after persisted refresh.
   - Local branch, turn, and external-reference selection.
   - Persistence attachment and background event flushing.
-  - Persisted sidestep target normalization and sibling branch creation.
+  - Session start/end lifecycle hooks.
+- `src/kernel/session_lifecycle/materialization.rs`
+  - Execution-target materialization for branch-head, turn, selected-path, summary-source, and external-reference targets.
+  - Persisted history reconstruction.
+  - Session counter and context compaction checkpoint reconstruction from persisted events.
+- `src/kernel/session_lifecycle/sidestep.rs`
+  - Persisted sidestep target normalization.
+  - Ephemeral sidestep snapshots.
+  - Fork-sibling branch source resolution and hidden sibling branch creation.
 - `src/kernel/session.rs`
   - Session state, execution target, durability, visibility, write policy, and queued task types.
 - `src/kernel/execution_host.rs`
@@ -88,4 +96,9 @@ git diff --check
 
 ## Current Shape
 
-The current pass kept lifecycle logic in one file and made only a small lean cleanup: local branch/turn/external-reference selection now shares the queued-task guard. Larger extraction should wait for a dedicated pass over persisted session materialization and sidestep semantics.
+The current pass keeps lifecycle orchestration in `session_lifecycle.rs` and extracts two private helper boundaries:
+
+- `materialization.rs` owns persisted target materialization and rebuild logic.
+- `sidestep.rs` owns persisted sidestep preparation and branch-source normalization.
+
+This is an organization/context improvement, not a semantic change. Keep future splits tied to similarly clear lifecycle subdomains.
