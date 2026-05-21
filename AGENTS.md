@@ -6,7 +6,10 @@ Working notes, checkpoints, and temporary plans belong under `.workspace/scratch
 Key rules:
 
 - Keep behavior-preserving refactors separate from semantic changes.
+- Do not change client-facing harness/Lua/config authoring APIs without explicit discussion; internal API breaks are acceptable when capability-preserving and tested.
 - Prefer existing domain helpers over duplicating parsing, filtering, mapping, or validation logic.
+- Do not reduce LOC by dropping features, security checks, validation, or deliberate DX surfaces.
+- Add meaningful tests freely when they improve confidence; test LOC is not part of the shipped-runtime LOC budget.
 - Do not widen module visibility unless the boundary is deliberate and local to the subsystem.
 - Run the focused tests listed in the relevant subsystem map before committing.
 - Update the subsystem map when a refactor changes ownership, invariants, or test expectations.
