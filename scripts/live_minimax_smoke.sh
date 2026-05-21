@@ -18,7 +18,7 @@ Options:
   --log-level LEVEL      Turin log level for live runs (default: error)
   --report-json PATH     Write a JSON summary report to PATH (use - for stdout)
   --cases LIST           Comma-separated cases (default: basic,tool_read,tool_error,governed_denial)
-                         Available: basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,peer_complete_caps,queue_steer,runtime_db,grant_flow,token_reject_task,immutable_audit,peer_grant
+                         Available: basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,peer_ask_caps,queue_steer,runtime_db,grant_flow,token_reject_task,immutable_audit,peer_grant
   --debug-requests       Enable SDK request/stream dumps (ANTHROPIC_SDK_DEBUG_REQUESTS / OPENAI_SDK_DEBUG_REQUESTS)
   --keep-tmp             Keep temp directories after success/failure (for debugging)
   -h, --help             Show this help
@@ -132,7 +132,7 @@ if ! [[ "$REPEAT_COUNT" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 SMOKE_CASES="basic,tool_read,tool_error,governed_denial"
-CORE_CASES="basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,peer_complete_caps,queue_steer,runtime_db,grant_flow,token_reject_task,immutable_audit,peer_grant"
+CORE_CASES="basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,peer_ask_caps,queue_steer,runtime_db,grant_flow,token_reject_task,immutable_audit,peer_grant"
 SOAK_CASES="$CORE_CASES"
 SOAK_REPEAT_DEFAULT=3
 ALL_CASES="$SOAK_CASES"
@@ -539,7 +539,7 @@ function on_session_start(event)
     return ALLOW
   end
 
-  local out, err = agent.complete(
+  local out, err = agent.ask(
     "Reply with exactly: PEER_AGENT_WORKER_OK",
     { agent_id = "worker", timeout_ms = 45000 }
   )
@@ -571,9 +571,9 @@ end
   fi
 }
 
-run_peer_complete_caps() {
+run_peer_ask_caps() {
   local dir out prompt
-  dir="$(make_temp_env turin-live-peercompletecaps)"
+  dir="$(make_temp_env turin-live-peeraskcaps)"
   LAST_CASE_TMP="$dir"
   write_config "$dir" "You are a concise assistant. Reply exactly as instructed." 8
   cat >> "$dir/turin.toml" <<EOF_PEER
@@ -600,45 +600,41 @@ function on_turn_prepare(ctx)
   if ident and ident.agent_id == "reviewer" then
     local qdec, qe = runtime.governance.check("runtime.db.query")
     if qdec == nil then
-      log("PEER_COMPLETE_CAPS_WORKER_FAIL:query_check:" .. tostring(qe))
+      log("PEER_ASK_CAPS_WORKER_FAIL:query_check:" .. tostring(qe))
       return REJECT, "query check failed"
     end
     if not qdec.allowed then
-      log("PEER_COMPLETE_CAPS_WORKER_FAIL:query_denied")
+      log("PEER_ASK_CAPS_WORKER_FAIL:query_denied")
       return REJECT, "query should be allowed"
     end
 
-    local rows, qerr = runtime.db.query("SELECT 7 AS n")
-    if rows == nil then
-      log("PEER_COMPLETE_CAPS_WORKER_FAIL:query:" .. tostring(qerr))
-      return REJECT, "runtime.db.query failed"
-    end
+    local rows = runtime.db.query("SELECT 7 AS n")
     if rows[1] == nil or rows[1].n ~= 7 then
-      log("PEER_COMPLETE_CAPS_WORKER_FAIL:query_mismatch")
+      log("PEER_ASK_CAPS_WORKER_FAIL:query_mismatch")
       return REJECT, "runtime.db.query mismatch"
     end
 
     local edec, ee = runtime.governance.check("runtime.db.exec")
     if edec == nil then
-      log("PEER_COMPLETE_CAPS_WORKER_FAIL:exec_check:" .. tostring(ee))
+      log("PEER_ASK_CAPS_WORKER_FAIL:exec_check:" .. tostring(ee))
       return REJECT, "exec check failed"
     end
     if edec.allowed then
-      log("PEER_COMPLETE_CAPS_WORKER_FAIL:exec_allowed")
+      log("PEER_ASK_CAPS_WORKER_FAIL:exec_allowed")
       return REJECT, "runtime.db.exec should be denied"
     end
 
-    local changed, err = runtime.db.exec("CREATE TABLE IF NOT EXISTS peer_complete_caps_forbidden (id INTEGER)")
+    local changed, err = try(runtime.db.exec, "CREATE TABLE IF NOT EXISTS peer_ask_caps_forbidden (id INTEGER)")
     if changed ~= nil or err == nil then
-      log("PEER_COMPLETE_CAPS_WORKER_FAIL:exec_call")
+      log("PEER_ASK_CAPS_WORKER_FAIL:exec_call")
       return REJECT, "runtime.db.exec should be denied"
     end
     if not tostring(err):find("delegated capabilities", 1, true) then
-      log("PEER_COMPLETE_CAPS_WORKER_FAIL:exec_reason:" .. tostring(err))
+      log("PEER_ASK_CAPS_WORKER_FAIL:exec_reason:" .. tostring(err))
       return REJECT, "runtime.db.exec denial should mention delegated capabilities"
     end
 
-    log("PEER_COMPLETE_CAPS_WORKER_OK")
+    log("PEER_ASK_CAPS_WORKER_OK")
     return ALLOW
   end
 
@@ -649,8 +645,8 @@ function on_turn_prepare(ctx)
 
   local reviewer = runtime.agent("reviewer")
   local out, err = pcall(function()
-    return reviewer:complete(
-      "Reply with exactly: PEER_COMPLETE_CAPS_WORKER_REPLY_OK",
+    return reviewer:ask(
+      "Reply with exactly: PEER_ASK_CAPS_WORKER_REPLY_OK",
       {
         timeout_ms = 90000,
         capabilities = {
@@ -661,39 +657,39 @@ function on_turn_prepare(ctx)
   end)
 
   if not out then
-    log("PEER_COMPLETE_CAPS_ORCH_FAIL:complete:" .. tostring(err))
+    log("PEER_ASK_CAPS_ORCH_FAIL:ask:" .. tostring(err))
     return ALLOW
   end
 
-  if type(err) ~= "string" or not string.find(err, "PEER_COMPLETE_CAPS_WORKER_REPLY_OK", 1, true) then
-    log("PEER_COMPLETE_CAPS_ORCH_FAIL:output:" .. tostring(err))
+  if type(err) ~= "string" or not string.find(err, "PEER_ASK_CAPS_WORKER_REPLY_OK", 1, true) then
+    log("PEER_ASK_CAPS_ORCH_FAIL:output:" .. tostring(err))
     return ALLOW
   end
 
-  log("PEER_COMPLETE_CAPS_ORCH_OK")
+  log("PEER_ASK_CAPS_ORCH_OK")
   return ALLOW
 end
 '
   out="$dir/out.txt"
-  prompt='Reply with exactly: PEER_COMPLETE_CAPS_MAIN_OK'
+  prompt='Reply with exactly: PEER_ASK_CAPS_MAIN_OK'
 
-  printf '\n[CASE] peer_complete_caps\n'
+  printf '\n[CASE] peer_ask_caps\n'
   run_turin_capture "$out" \
     "$BINARY" run --config "$dir/turin.toml" --prompt "$prompt" --log-level "$LOG_LEVEL"
 
-  if ! qmatch '^\[harness\] PEER_COMPLETE_CAPS_WORKER_OK$' "$out"; then
-    printf '[FAIL] peer_complete_caps (tmp=%s) missing worker capability sentinel\n' "$dir" >&2
+  if ! qmatch '^\[harness\] PEER_ASK_CAPS_WORKER_OK$' "$out"; then
+    printf '[FAIL] peer_ask_caps (tmp=%s) missing worker capability sentinel\n' "$dir" >&2
     return 1
   fi
-  if ! qmatch '^\[harness\] PEER_COMPLETE_CAPS_ORCH_OK$' "$out"; then
-    printf '[FAIL] peer_complete_caps (tmp=%s) missing orchestrator success sentinel\n' "$dir" >&2
+  if ! qmatch '^\[harness\] PEER_ASK_CAPS_ORCH_OK$' "$out"; then
+    printf '[FAIL] peer_ask_caps (tmp=%s) missing orchestrator success sentinel\n' "$dir" >&2
     return 1
   fi
-  if ! qmatch '^PEER_COMPLETE_CAPS_MAIN_OK$' "$out"; then
-    printf '[FAIL] peer_complete_caps (tmp=%s) main response mismatch\n' "$dir" >&2
+  if ! qmatch '^PEER_ASK_CAPS_MAIN_OK$' "$out"; then
+    printf '[FAIL] peer_ask_caps (tmp=%s) main response mismatch\n' "$dir" >&2
     return 1
   fi
-  printf '[PASS] peer_complete_caps (tmp=%s)\n' "$dir"
+  printf '[PASS] peer_ask_caps (tmp=%s)\n' "$dir"
 }
 
 run_queue_steer() {

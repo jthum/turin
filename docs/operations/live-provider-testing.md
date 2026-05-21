@@ -131,7 +131,7 @@ scripts/live_minimax_smoke.sh --env-file ~/Documents/minimax.env --api-format op
 - `tool_write_read` — multi-tool (`write_file` + `read_file`) roundtrip
 - `governed_denial` — harness-driven governance denial sentinel + successful inference turn
 - `peer_agent` — harness-driven peer-agent `agent.ask(...)` roundtrip + successful main-agent turn
-- `peer_complete_caps` — DX `runtime.agent(...):ask(...)` with explicit delegated `runtime.db.query` ceiling and worker-side denial of `runtime.db.exec`
+- `peer_ask_caps` — DX `runtime.agent(...):ask(...)` with explicit delegated `runtime.db.query` ceiling and worker-side denial of `runtime.db.exec`
 - `queue_steer` — harness-driven queue steering via `on_all_tasks_complete` follow-up prompt injection
 - `runtime_db` — harness-driven `runtime.db.open/list/exec/query/close` + sqlite verification
 - `grant_flow` — temporary grant issue/use/revoke + durable audit event verification
@@ -144,7 +144,7 @@ Run specific cases:
 ```bash
 scripts/live_minimax_smoke.sh \
   --env-file ~/Documents/minimax.env \
-  --cases basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,peer_complete_caps,queue_steer
+  --cases basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,peer_ask_caps,queue_steer
 ```
 
 ### What `core` covers (confidence-building set)
@@ -294,7 +294,7 @@ Passed cases:
 
 Additional standalone validation recorded on: `2026-02-28T06:01:02Z`
 
-- `peer_complete_caps` — `1 passed, 0 failed`
+- `peer_ask_caps` — `1 passed, 0 failed`
 
 This baseline demonstrates end-to-end live validation across Turin’s core runtime value surface:
 

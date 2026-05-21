@@ -88,7 +88,7 @@ Change peer-agent delegation:
 
 ```sh
 cargo test -p turin --test harness_tests test_agent_allowed_child_agents_enforced_across_aliases
-cargo test -p turin --test harness_tests test_agent_complete_applies_delegated_capability_ceiling
+cargo test -p turin --test harness_tests test_agent_ask_applies_delegated_capability_ceiling
 cargo test -p turin --test harness_tests test_runtime_agent_peer_submit_await_and_status
 ```
 

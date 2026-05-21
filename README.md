@@ -418,7 +418,7 @@ Turin’s harness surface is split between **canonical runtime APIs** and **ergo
 - `runtime.db`
   - `open`, `close`, `list`, `query`, `exec`
 - `runtime.agent`
-  - `list`, `get_status`, `submit`, `await`
+  - `list`, `get_status`, `submit`, `await`, `ask`
 - `runtime.schedule`
   - `create`, `get`, `list`, `runs`, `update`, `enable`, `disable`, `delete`
 - `runtime.worklist`
@@ -435,7 +435,7 @@ Turin’s harness surface is split between **canonical runtime APIs** and **ergo
 - `memory.as(ctx)` / `kv.as(ctx)` for scoped proxies
 - `remember`, `recall`, `scope(...)`, `graph.*`, `schedule.*`, `worklist(...)`, `fs.summary`, `code.find`
 - `session.memory/kv.*`, `user.memory/kv.*`
-- `agent.spawn`, `agent.ask`, `agent.send`, `agent.session.*`
+- `agent.spawn`, `agent.submit`, `agent.ask`, `agent.session.*`
 - `fs`, `json`, `time`, `log`, `import`, `import_scoped`, `use`, `use_scoped`, `watch`
 
 See `docs/reference/primitives.md` for the full surface.
@@ -554,7 +554,7 @@ Current live cases include:
 - `tool_write_read`
 - `governed_denial`
 - `peer_agent`
-- `peer_complete_caps`
+- `peer_ask_caps`
 - `queue_steer`
 - `runtime_db`
 - `grant_flow`
@@ -567,7 +567,7 @@ Run a custom case set:
 ```bash
 scripts/live_minimax_smoke.sh \
   --env-file ~/Documents/minimax.env \
-  --cases basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,peer_complete_caps,queue_steer,runtime_db,grant_flow
+  --cases basic,tool_read,tool_error,tool_write_read,governed_denial,peer_agent,peer_ask_caps,queue_steer,runtime_db,grant_flow
 ```
 
 OpenAI-compatible endpoint examples (MiniMax):

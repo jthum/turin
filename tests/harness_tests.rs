@@ -1770,9 +1770,9 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_agent_complete_applies_delegated_capability_ceiling() -> Result<()> {
+async fn test_agent_ask_applies_delegated_capability_ceiling() -> Result<()> {
     let tmp = tempdir()?;
-    let db_path = tmp.path().join("test_agent_complete_peer_delegation.db");
+    let db_path = tmp.path().join("test_agent_ask_peer_delegation.db");
     let orchestrator_harness_dir = tmp.path().join("harnesses_orchestrator");
     let worker_harness_dir = tmp.path().join("harnesses_worker");
     std::fs::create_dir(&orchestrator_harness_dir)?;
@@ -1913,7 +1913,7 @@ async fn test_agent_complete_applies_delegated_capability_ceiling() -> Result<()
     kernel
         .run(
             &mut session,
-            Some("exercise agent.complete delegation".to_string()),
+            Some("exercise agent.ask delegation".to_string()),
         )
         .await?;
     kernel.end_session(&mut session).await?;
@@ -6836,9 +6836,9 @@ async fn test_agent_can_promote_detached_local_sidestep_result() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Result<()> {
+async fn test_runtime_agent_ask_allows_post_ask_side_effects() -> Result<()> {
     let tmp = tempdir()?;
-    let db_path = tmp.path().join("test_runtime_agent_complete.db");
+    let db_path = tmp.path().join("test_runtime_agent_ask.db");
     let orchestrator_harness_dir = tmp.path().join("harnesses_orchestrator");
     let worker_harness_dir = tmp.path().join("harnesses_worker");
     std::fs::create_dir(&orchestrator_harness_dir)?;
@@ -6861,11 +6861,11 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
                 error("runtime.agent.ask output mismatch: " .. tostring(review))
             end
 
-            local ok, err = fs.write(".turin/runtime/peer-complete.txt", review)
+            local ok, err = fs.write(".turin/runtime/peer-ask.txt", review)
             if not ok then error("fs.write after runtime.agent.ask failed: " .. tostring(err)) end
 
             local changed, derr = runtime.db.exec([[
-                CREATE TABLE IF NOT EXISTS peer_complete_probe (
+                CREATE TABLE IF NOT EXISTS peer_ask_probe (
                     id INTEGER PRIMARY KEY,
                     review TEXT NOT NULL
                 )
@@ -6873,7 +6873,7 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
             if changed == nil then error("runtime.db.exec create after runtime.agent.ask failed: " .. tostring(derr)) end
 
             changed, derr = runtime.db.exec(
-                "INSERT INTO peer_complete_probe(review) VALUES (?)",
+                "INSERT INTO peer_ask_probe(review) VALUES (?)",
                 { review }
             )
             if changed == nil then error("runtime.db.exec insert after runtime.agent.ask failed: " .. tostring(derr)) end
@@ -6885,8 +6885,8 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
             if pgerr ~= nil then error("runtime.policy.get after runtime.agent.ask failed: " .. tostring(pgerr)) end
             if pval ~= 77 then error("runtime.policy.get after runtime.agent.ask mismatch: " .. tostring(pval)) end
 
-            session.set("peer_complete_marker", "done")
-            local marker = session.get("peer_complete_marker")
+            session.set("peer_ask_marker", "done")
+            local marker = session.get("peer_ask_marker")
             if marker ~= "done" then error("session.get after runtime.agent.ask mismatch: " .. tostring(marker)) end
             return ALLOW
         end
@@ -6985,10 +6985,7 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
 
     let mut session = kernel.create_session().await;
     kernel
-        .run(
-            &mut session,
-            Some("exercise runtime agent complete".to_string()),
-        )
+        .run(&mut session, Some("exercise runtime agent ask".to_string()))
         .await?;
     kernel.end_session(&mut session).await?;
 
@@ -6996,25 +6993,19 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
         .path()
         .join(".turin")
         .join("runtime")
-        .join("peer-complete.txt");
-    assert!(
-        artifact.exists(),
-        "expected post-complete artifact to exist"
-    );
+        .join("peer-ask.txt");
+    assert!(artifact.exists(), "expected post-ask artifact to exist");
     assert_eq!(std::fs::read_to_string(&artifact)?, "worker-ok");
 
     let store = kernel.store_manager().get_default().await?;
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(
-            "SELECT review FROM peer_complete_probe ORDER BY id DESC LIMIT 1",
+            "SELECT review FROM peer_ask_probe ORDER BY id DESC LIMIT 1",
             (),
         )
         .await?;
-    let row = rows
-        .next()
-        .await?
-        .expect("expected peer_complete_probe row");
+    let row = rows.next().await?.expect("expected peer_ask_probe row");
     let stored_review: String = row.get(0)?;
     assert_eq!(stored_review, "worker-ok");
 
@@ -7026,11 +7017,7 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
 
     let session_store = kernel.store_manager().get_default().await?;
     let marker = session_store
-        .kv_get(
-            "session",
-            session.identity.session_id(),
-            "peer_complete_marker",
-        )
+        .kv_get("session", session.identity.session_id(), "peer_ask_marker")
         .await?;
     assert_eq!(marker.as_deref(), Some("done"));
 
@@ -7038,11 +7025,9 @@ async fn test_runtime_agent_complete_allows_post_complete_side_effects() -> Resu
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_runtime_agent_complete_preserves_nested_grant_context() -> Result<()> {
+async fn test_runtime_agent_ask_preserves_nested_grant_context() -> Result<()> {
     let tmp = tempdir()?;
-    let db_path = tmp
-        .path()
-        .join("test_runtime_agent_complete_nested_grant.db");
+    let db_path = tmp.path().join("test_runtime_agent_ask_nested_grant.db");
     let orchestrator_harness_dir = tmp.path().join("harnesses_orchestrator");
     let worker_harness_dir = tmp.path().join("harnesses_worker");
     std::fs::create_dir(&orchestrator_harness_dir)?;
@@ -7103,7 +7088,7 @@ async fn test_runtime_agent_complete_preserves_nested_grant_context() -> Result<
                     end
 
                     local changed, derr = runtime.db.exec([[
-                        CREATE TABLE IF NOT EXISTS nested_complete_probe (
+                        CREATE TABLE IF NOT EXISTS nested_ask_probe (
                             id INTEGER PRIMARY KEY,
                             review TEXT NOT NULL,
                             outer_grant_id TEXT NOT NULL,
@@ -7115,7 +7100,7 @@ async fn test_runtime_agent_complete_preserves_nested_grant_context() -> Result<
                     end
 
                     changed, derr = runtime.db.exec(
-                        "INSERT INTO nested_complete_probe(review, outer_grant_id, inner_grant_id) VALUES (?, ?, ?)",
+                        "INSERT INTO nested_ask_probe(review, outer_grant_id, inner_grant_id) VALUES (?, ?, ?)",
                         { review, outer_gid, inner_gid }
                     )
                     if changed == nil then
@@ -7248,7 +7233,7 @@ async fn test_runtime_agent_complete_preserves_nested_grant_context() -> Result<
     kernel
         .run(
             &mut session,
-            Some("exercise runtime agent complete nested grant".to_string()),
+            Some("exercise runtime agent ask nested grant".to_string()),
         )
         .await?;
     kernel.end_session(&mut session).await?;
@@ -7257,14 +7242,11 @@ async fn test_runtime_agent_complete_preserves_nested_grant_context() -> Result<
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(
-            "SELECT review, outer_grant_id, inner_grant_id FROM nested_complete_probe ORDER BY id DESC LIMIT 1",
+            "SELECT review, outer_grant_id, inner_grant_id FROM nested_ask_probe ORDER BY id DESC LIMIT 1",
             (),
         )
         .await?;
-    let row = rows
-        .next()
-        .await?
-        .expect("expected nested_complete_probe row");
+    let row = rows.next().await?.expect("expected nested_ask_probe row");
     let stored_review: String = row.get(0)?;
     let outer_grant_id: String = row.get(1)?;
     let inner_grant_id: String = row.get(2)?;
