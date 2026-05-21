@@ -1,7 +1,7 @@
 # Agent Guidance
 
 This repository is maintained by humans and coding agents. Before editing a subsystem, read the closest durable architecture map under `docs/architecture/maps/`.
-For the current runtime refactor status and remaining candidates, read `docs/architecture/refactor-checkpoint.md`.
+Working notes, checkpoints, and temporary plans belong under `.workspace/scratchpad/` and should not be treated as permanent docs.
 
 Key rules:
 
@@ -19,7 +19,10 @@ Important maps:
 - Scheduler and worklists: `docs/architecture/maps/scheduler-worklists.md`
 - Channels: `docs/architecture/maps/channels.md`
 - Code search: `docs/architecture/maps/code-search.md`
+- Config: `docs/architecture/maps/config.md`
+- Daemon runtime state: `docs/architecture/maps/daemon-runtime-state.md`
 - Governance: `docs/architecture/maps/governance.md`
+- Harness context: `docs/architecture/maps/harness-context.md`
 - MCP integration: `docs/architecture/maps/mcp.md`
 - Memory and scoped data: `docs/architecture/maps/memory-scoped-data.md`
 - Runtime DB and graph: `docs/architecture/maps/runtime-db-graph.md`
