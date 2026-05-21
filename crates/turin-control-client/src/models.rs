@@ -1,0 +1,346 @@
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use turin_channel_core::ChannelAdapterManifest;
+use turin_daemon_protocol::SessionSearchHitKind;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonStatus {
+    pub config_path: String,
+    pub workspace_root: String,
+    pub endpoint: String,
+    pub registry: RegistrySnapshot,
+    #[serde(default)]
+    pub harnesses: Vec<HarnessRuntime>,
+    #[serde(default)]
+    pub agent_runtimes: Vec<AgentRuntime>,
+    #[serde(default)]
+    pub live_sessions: Vec<LiveSession>,
+    #[serde(default)]
+    pub channel_runtimes: Vec<ChannelRuntime>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistrySnapshot {
+    #[serde(default)]
+    pub agents: Vec<AgentSummary>,
+    #[serde(default)]
+    pub shared_harnesses: Vec<SharedHarnessSummary>,
+    #[serde(default)]
+    pub channels: Vec<ChannelSummary>,
+    #[serde(default)]
+    pub issues: Vec<Issue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSummary {
+    pub id: String,
+    pub enabled: bool,
+    pub provider: String,
+    pub model: String,
+    pub harness_ref: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedHarnessSummary {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelSummary {
+    pub id: String,
+    pub enabled: bool,
+    pub kind: String,
+    pub agent_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HarnessRuntime {
+    pub harness_id: String,
+    #[serde(default)]
+    pub bound_agents: Vec<String>,
+    #[serde(default)]
+    pub watched_roots: Vec<String>,
+    #[serde(default)]
+    pub loaded_scripts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRuntime {
+    pub agent_id: String,
+    pub running: bool,
+    pub active_tasks: usize,
+    pub queued_tasks: usize,
+    pub awaiting_results: usize,
+    pub current_session_id: Option<String>,
+    pub current_request_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Issue {
+    pub path: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IssueList {
+    #[serde(default)]
+    pub issues: Vec<Issue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentDetail {
+    pub id: String,
+    pub directory: String,
+    pub enabled: bool,
+    pub provider: String,
+    pub model: String,
+    pub system_prompt: Option<String>,
+    pub harness: Option<String>,
+    pub idle_timeout_seconds: Option<u64>,
+    pub has_local_harness: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelDetail {
+    pub id: String,
+    pub directory: String,
+    pub enabled: bool,
+    pub kind: String,
+    pub agent_id: String,
+    pub idle_timeout_seconds: Option<u64>,
+    pub settings: Value,
+    #[serde(default)]
+    pub adapter: Option<ChannelAdapterManifest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelRunnerHandshake {
+    pub display_name: String,
+    pub protocol_version: u32,
+    pub runner_binary: Option<String>,
+    pub runner_version: Option<String>,
+    pub pid: Option<u32>,
+    pub last_handshake_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelRuntime {
+    pub id: String,
+    pub kind: String,
+    pub agent_id: String,
+    pub directory: String,
+    pub state: String,
+    pub last_error: Option<String>,
+    pub last_error_code: Option<String>,
+    pub start_count: u64,
+    pub restart_count: u64,
+    pub failure_count: u64,
+    pub last_transition_unix_ms: u64,
+    pub last_started_unix_ms: Option<u64>,
+    pub last_stopped_unix_ms: Option<u64>,
+    #[serde(default)]
+    pub handshake: Option<ChannelRunnerHandshake>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelAccessRoom {
+    pub channel: String,
+    pub workspace_id: String,
+    pub room_id: Option<String>,
+    pub thread_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovedChannelRoom {
+    pub room: ChannelAccessRoom,
+    pub approved_at_unix_seconds: u64,
+    pub approved_by_user_id: Option<String>,
+    pub approved_by_username: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingChannelRoom {
+    pub room: ChannelAccessRoom,
+    pub first_seen_unix_seconds: u64,
+    pub last_seen_unix_seconds: u64,
+    pub sample_user_id: Option<String>,
+    pub sample_username: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ChannelAccessState {
+    #[serde(default)]
+    pub approved_rooms: Vec<ApprovedChannelRoom>,
+    #[serde(default)]
+    pub pending_rooms: Vec<PendingChannelRoom>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskStatus {
+    pub request_id: String,
+    pub agent_id: String,
+    pub slot_id: String,
+    pub trace_id: String,
+    pub state: String,
+    pub runtime_task_id: Option<String>,
+    pub execution: LiveExecution,
+    pub status: Option<String>,
+    pub task_turn_count: Option<u32>,
+    pub branch_outcome: Option<Value>,
+    pub promotion_candidate: Option<TaskPromotionCandidate>,
+    pub promoted_branch: Option<SessionBranchDetail>,
+    pub output: Option<String>,
+    #[serde(default)]
+    pub assistant_content: Option<Vec<turin_types::TaskInputContent>>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskPromotionCandidate {
+    pub session_id: String,
+    pub source_turn_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct TaskList {
+    pub(crate) tasks: Vec<TaskStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub internal_id: i64,
+    pub session_id: String,
+    pub agent_id: String,
+    pub metadata: Option<Value>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SessionList {
+    pub(crate) sessions: Vec<SessionSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveExecution {
+    pub execution_id: String,
+    pub context_target: Value,
+    pub visibility: String,
+    pub durability: String,
+    pub write_policy: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveSession {
+    pub agent_id: String,
+    pub slot_id: String,
+    pub session_id: String,
+    pub running: bool,
+    pub active_tasks: usize,
+    pub queued_tasks: usize,
+    pub current_request_id: Option<String>,
+    pub execution: LiveExecution,
+    pub conflict_policy: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct LiveSessionList {
+    pub(crate) sessions: Vec<LiveSession>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionEventDetail {
+    pub id: i64,
+    pub event_type: String,
+    pub payload: Value,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionMessageDetail {
+    pub id: i64,
+    pub turn_index: u32,
+    pub role: String,
+    pub content: Value,
+    pub token_count: Option<u64>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionToolExecutionDetail {
+    pub id: i64,
+    pub turn_index: u32,
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub args: Value,
+    pub output: Option<Value>,
+    pub is_error: bool,
+    pub duration_ms: Option<u64>,
+    pub verdict: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionBranchDetail {
+    pub branch_id: String,
+    pub name: String,
+    pub head_turn_index: Option<u32>,
+    pub source_turn_id: Option<i64>,
+    #[serde(default)]
+    pub origin_kind: String,
+    #[serde(default)]
+    pub origin_task_id: Option<String>,
+    #[serde(default)]
+    pub origin_execution_id: Option<String>,
+    #[serde(default)]
+    pub origin_metadata: Option<Value>,
+    pub active: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionDetail {
+    pub session: SessionSummary,
+    #[serde(default)]
+    pub branches: Vec<SessionBranchDetail>,
+    #[serde(default)]
+    pub events: Vec<SessionEventDetail>,
+    #[serde(default)]
+    pub messages: Vec<SessionMessageDetail>,
+    #[serde(default)]
+    pub tool_executions: Vec<SessionToolExecutionDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SessionBranchList {
+    pub(crate) branches: Vec<SessionBranchDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionActionResult {
+    pub agent_id: String,
+    #[serde(default)]
+    pub slot_id: Option<String>,
+    pub session_id: String,
+    pub action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSearchHit {
+    pub kind: SessionSearchHitKind,
+    pub score: i64,
+    pub session_id: String,
+    pub agent_id: String,
+    pub title: Option<String>,
+    pub created_at: String,
+    pub turn_index: Option<u32>,
+    pub role: Option<String>,
+    pub tool_name: Option<String>,
+    pub event_type: Option<String>,
+    pub summary: String,
+    pub snippet: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SessionSearchResultList {
+    pub(crate) hits: Vec<SessionSearchHit>,
+}
