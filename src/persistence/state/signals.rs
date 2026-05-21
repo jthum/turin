@@ -1,7 +1,10 @@
 use anyhow::Result;
+use turso::Value as SqlValue;
 
 use super::StateStore;
 use crate::persistence::schema::SignalRow;
+
+const SIGNAL_COLUMNS: &str = "id, public_id, topic, source_agent_id, target_agent_id, payload, attempt_count, last_attempted_at, last_error, created_at";
 
 #[derive(Debug, Clone)]
 pub struct SignalInsert {
@@ -80,31 +83,18 @@ impl StateStore {
         limit: usize,
     ) -> Result<Vec<SignalRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                "SELECT id, public_id, topic, source_agent_id, target_agent_id, payload, attempt_count, last_attempted_at, last_error, created_at
-                 FROM signals
-                 WHERE target_agent_id = ?1
-                 ORDER BY id ASC
-                 LIMIT ?2",
-                (agent_id, limit as i64),
-            )
-            .await?;
+        let sql = format!(
+            "SELECT {SIGNAL_COLUMNS}
+             FROM signals
+             WHERE target_agent_id = ?1
+             ORDER BY id ASC
+             LIMIT ?2"
+        );
+        let mut rows = conn.query(&sql, (agent_id, limit as i64)).await?;
 
         let mut out = Vec::new();
         while let Some(row) = rows.next().await? {
-            out.push(SignalRow {
-                id: row.get(0)?,
-                public_id: row.get(1)?,
-                topic: row.get(2)?,
-                source_agent_id: row.get(3)?,
-                target_agent_id: row.get(4)?,
-                payload: row.get(5)?,
-                attempt_count: row.get::<i64>(6)? as u64,
-                last_attempted_at: row.get(7)?,
-                last_error: row.get(8)?,
-                created_at: row.get(9)?,
-            });
+            out.push(map_signal_row(&row)?);
         }
 
         Ok(out)
@@ -118,102 +108,35 @@ impl StateStore {
         limit: usize,
     ) -> Result<Vec<SignalRow>> {
         let conn = self.connect().await?;
-        let mut rows = match (topic, source_agent_id, target_agent_id) {
-            (Some(topic), Some(source), Some(target)) => conn
-                .query(
-                    "SELECT id, public_id, topic, source_agent_id, target_agent_id, payload, attempt_count, last_attempted_at, last_error, created_at
-                     FROM signals
-                     WHERE topic = ?1 AND source_agent_id = ?2 AND target_agent_id = ?3
-                     ORDER BY id ASC
-                     LIMIT ?4",
-                    (topic, source, target, limit as i64),
-                )
-                .await?,
-            (Some(topic), Some(source), None) => conn
-                .query(
-                    "SELECT id, public_id, topic, source_agent_id, target_agent_id, payload, attempt_count, last_attempted_at, last_error, created_at
-                     FROM signals
-                     WHERE topic = ?1 AND source_agent_id = ?2
-                     ORDER BY id ASC
-                     LIMIT ?3",
-                    (topic, source, limit as i64),
-                )
-                .await?,
-            (Some(topic), None, Some(target)) => conn
-                .query(
-                    "SELECT id, public_id, topic, source_agent_id, target_agent_id, payload, attempt_count, last_attempted_at, last_error, created_at
-                     FROM signals
-                     WHERE topic = ?1 AND target_agent_id = ?2
-                     ORDER BY id ASC
-                     LIMIT ?3",
-                    (topic, target, limit as i64),
-                )
-                .await?,
-            (None, Some(source), Some(target)) => conn
-                .query(
-                    "SELECT id, public_id, topic, source_agent_id, target_agent_id, payload, attempt_count, last_attempted_at, last_error, created_at
-                     FROM signals
-                     WHERE source_agent_id = ?1 AND target_agent_id = ?2
-                     ORDER BY id ASC
-                     LIMIT ?3",
-                    (source, target, limit as i64),
-                )
-                .await?,
-            (Some(topic), None, None) => conn
-                .query(
-                    "SELECT id, public_id, topic, source_agent_id, target_agent_id, payload, attempt_count, last_attempted_at, last_error, created_at
-                     FROM signals
-                     WHERE topic = ?1
-                     ORDER BY id ASC
-                     LIMIT ?2",
-                    (topic, limit as i64),
-                )
-                .await?,
-            (None, Some(source), None) => conn
-                .query(
-                    "SELECT id, public_id, topic, source_agent_id, target_agent_id, payload, attempt_count, last_attempted_at, last_error, created_at
-                     FROM signals
-                     WHERE source_agent_id = ?1
-                     ORDER BY id ASC
-                     LIMIT ?2",
-                    (source, limit as i64),
-                )
-                .await?,
-            (None, None, Some(target)) => conn
-                .query(
-                    "SELECT id, public_id, topic, source_agent_id, target_agent_id, payload, attempt_count, last_attempted_at, last_error, created_at
-                     FROM signals
-                     WHERE target_agent_id = ?1
-                     ORDER BY id ASC
-                     LIMIT ?2",
-                    (target, limit as i64),
-                )
-                .await?,
-            (None, None, None) => conn
-                .query(
-                    "SELECT id, public_id, topic, source_agent_id, target_agent_id, payload, attempt_count, last_attempted_at, last_error, created_at
-                     FROM signals
-                     ORDER BY id ASC
-                     LIMIT ?1",
-                    [limit as i64],
-                )
-                .await?,
-        };
+        let mut sql = format!("SELECT {SIGNAL_COLUMNS} FROM signals");
+        let mut clauses = Vec::new();
+        let mut params = Vec::new();
+        push_signal_filter(&mut clauses, &mut params, "topic", topic);
+        push_signal_filter(
+            &mut clauses,
+            &mut params,
+            "source_agent_id",
+            source_agent_id,
+        );
+        push_signal_filter(
+            &mut clauses,
+            &mut params,
+            "target_agent_id",
+            target_agent_id,
+        );
+        if !clauses.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&clauses.join(" AND "));
+        }
+        sql.push_str(&format!(" ORDER BY id ASC LIMIT ?{}", params.len() + 1));
+        params.push(SqlValue::Integer(limit as i64));
+
+        let mut stmt = conn.prepare(&sql).await?;
+        let mut rows = stmt.query(params).await?;
 
         let mut out = Vec::new();
         while let Some(row) = rows.next().await? {
-            out.push(SignalRow {
-                id: row.get(0)?,
-                public_id: row.get(1)?,
-                topic: row.get(2)?,
-                source_agent_id: row.get(3)?,
-                target_agent_id: row.get(4)?,
-                payload: row.get(5)?,
-                attempt_count: row.get::<i64>(6)? as u64,
-                last_attempted_at: row.get(7)?,
-                last_error: row.get(8)?,
-                created_at: row.get(9)?,
-            });
+            out.push(map_signal_row(&row)?);
         }
         Ok(out)
     }
@@ -250,4 +173,31 @@ impl StateStore {
             .await?;
         Ok(())
     }
+}
+
+fn push_signal_filter(
+    clauses: &mut Vec<String>,
+    params: &mut Vec<SqlValue>,
+    column: &'static str,
+    value: Option<&str>,
+) {
+    if let Some(value) = value {
+        params.push(SqlValue::Text(value.to_string()));
+        clauses.push(format!("{column} = ?{}", params.len()));
+    }
+}
+
+fn map_signal_row(row: &turso::Row) -> Result<SignalRow> {
+    Ok(SignalRow {
+        id: row.get(0)?,
+        public_id: row.get(1)?,
+        topic: row.get(2)?,
+        source_agent_id: row.get(3)?,
+        target_agent_id: row.get(4)?,
+        payload: row.get(5)?,
+        attempt_count: row.get::<i64>(6)? as u64,
+        last_attempted_at: row.get(7)?,
+        last_error: row.get(8)?,
+        created_at: row.get(9)?,
+    })
 }
