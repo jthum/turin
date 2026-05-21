@@ -74,6 +74,43 @@ fn structured_outbound_message_keeps_code_blocks() {
 }
 
 #[test]
+fn plain_text_renderer_keeps_text_and_code_blocks() {
+    let blocks = vec![
+        MessageBlock::Text {
+            text: "answer".into(),
+        },
+        MessageBlock::Text { text: "  ".into() },
+        MessageBlock::CodeBlock {
+            language: Some("rust".into()),
+            code: "fn main() {}".into(),
+        },
+    ];
+
+    assert_eq!(
+        render_plain_text_blocks(&blocks),
+        "answer\n\n```rust\nfn main() {}\n```"
+    );
+}
+
+#[test]
+fn line_splitter_packs_lines_and_splits_long_lines() {
+    assert_eq!(
+        split_text_lines_to_char_limit("aa\nbbb\ncccccc", 5),
+        vec![
+            "aa".to_string(),
+            "bbb".to_string(),
+            "ccccc".to_string(),
+            "c".to_string()
+        ]
+    );
+}
+
+#[test]
+fn line_splitter_trims_empty_content() {
+    assert!(split_text_lines_to_char_limit(" \n\t ", 4).is_empty());
+}
+
+#[test]
 fn shared_scope_prompt_includes_sender_label() {
     let key = key();
     let event = InboundEvent {

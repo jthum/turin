@@ -1,4 +1,6 @@
-use turin_channel_core::{ChannelConversationKey, MessageBlock, OutboundMessage};
+use turin_channel_core::{
+    ChannelConversationKey, MessageBlock, OutboundMessage, split_text_lines_to_char_limit,
+};
 
 use crate::RocketChatReplyMode;
 
@@ -239,53 +241,11 @@ fn is_markdown_table_separator(line: &str) -> bool {
 }
 
 pub(crate) fn split_for_rocketchat_content(content: String) -> Vec<String> {
-    let trimmed = content.trim();
-    if trimmed.is_empty() {
+    let chunks = split_text_lines_to_char_limit(&content, ROCKETCHAT_MESSAGE_MAX_LEN);
+    if chunks.is_empty() {
         return vec![" ".to_string()];
     }
-
-    let mut out = Vec::new();
-    let mut current = String::new();
-    for line in trimmed.lines() {
-        if line.chars().count() > ROCKETCHAT_MESSAGE_MAX_LEN {
-            if !current.is_empty() {
-                out.push(current.clone());
-                current.clear();
-            }
-            let mut segment = String::new();
-            for ch in line.chars() {
-                segment.push(ch);
-                if segment.chars().count() >= ROCKETCHAT_MESSAGE_MAX_LEN {
-                    out.push(segment.clone());
-                    segment.clear();
-                }
-            }
-            if !segment.is_empty() {
-                out.push(segment);
-            }
-            continue;
-        }
-
-        let tentative = if current.is_empty() {
-            line.to_string()
-        } else {
-            format!("{current}\n{line}")
-        };
-        if tentative.chars().count() > ROCKETCHAT_MESSAGE_MAX_LEN {
-            if !current.is_empty() {
-                out.push(current.clone());
-            }
-            current = line.to_string();
-        } else {
-            current = tentative;
-        }
-    }
-
-    if !current.is_empty() {
-        out.push(current);
-    }
-
-    out
+    chunks
 }
 
 #[cfg(test)]

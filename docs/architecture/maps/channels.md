@@ -102,6 +102,7 @@ Conversation bindings:
 - Common sidecar startup behavior belongs in `sidecar.rs`.
 - Host-side sidecar process discovery/invocation belongs in `turin-channel-host`, not separately in the daemon and manager.
 - Optional string-enum settings should use shared settings helpers from `turin-channel-core` when the adapter only needs local allowed-value mapping.
+- Plain text/code-block rendering and line-aware message splitting should use shared helpers from `turin-channel-core` when the adapter has no platform-specific formatting rule for that step.
 - Runtime snapshot state changes should use transition helpers from `src/daemon/channels/runtime_state.rs`; avoid open-coded edits to state, error fields, transition times, counters, and handshake timestamps.
 - Each adapter must validate platform-specific settings without requiring live external credentials.
 - Auth-flow request parsing should use shared runner helpers so setup commands report consistent parse errors.
@@ -188,6 +189,8 @@ The runner crate now owns common sidecar runtime setup. This removed repeated se
 The host crate owns external sidecar discovery and subprocess command helpers. This keeps the daemon and `turin-manager` aligned on env overrides, workspace `cargo run -p` fallback, manifest decoding, settings validation, and auth-flow command behavior.
 
 Shared channel settings helpers cover common optional string-enum parsing. Telegram, Rocket.Chat, and runner access policy use the shared shape while keeping each allowed-value table and error text local.
+
+Shared outbound text helpers cover plain text/code-block rendering and line-aware content splitting. Telegram, Discord, and Rocket.Chat use those helpers where their behavior is identical; Telegram HTML rendering, Rocket.Chat table wrapping/reply quoting, Discord embeds/components/files, and WhatsApp plain rendering stay adapter-owned.
 
 Daemon channel supervision keeps runtime-state mutation behind named transition helpers in `runtime_state.rs`. This is meant to prevent drift between start, restart, stale-heartbeat, clean-stop, shutdown, and failure paths.
 

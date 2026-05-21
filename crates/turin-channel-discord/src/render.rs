@@ -1,7 +1,9 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
-use turin_channel_core::{MessageBlock, OutboundMessage};
+use turin_channel_core::{
+    OutboundMessage, render_plain_text_blocks, split_text_lines_to_char_limit,
+};
 
 pub(crate) const DISCORD_CONTENT_MAX_LEN: usize = 2_000;
 const DISCORD_EMBEDS_MAX: usize = 10;
@@ -23,7 +25,10 @@ pub(crate) struct DiscordSendMessage {
 }
 
 pub(crate) fn render_outbound_messages(message: OutboundMessage) -> Vec<DiscordSendMessage> {
-    let mut text_chunks = split_for_discord_content(render_text_blocks(&message.blocks));
+    let mut text_chunks = split_text_lines_to_char_limit(
+        &render_plain_text_blocks(&message.blocks),
+        DISCORD_CONTENT_MAX_LEN,
+    );
     let mut embeds = message.embeds;
     if embeds.is_empty() {
         embeds = extract_embeds_from_metadata(&message.metadata);
@@ -51,7 +56,10 @@ pub(crate) fn render_outbound_messages(message: OutboundMessage) -> Vec<DiscordS
     if !remote_attachment_urls.is_empty() {
         let urls = remote_attachment_urls.join("\n");
         if !urls.trim().is_empty() {
-            text_chunks.extend(split_for_discord_content(urls));
+            text_chunks.extend(split_text_lines_to_char_limit(
+                &urls,
+                DISCORD_CONTENT_MAX_LEN,
+            ));
         }
     }
 
@@ -112,72 +120,6 @@ pub(crate) fn render_outbound_messages(message: OutboundMessage) -> Vec<DiscordS
     }
 
     output
-}
-
-fn render_text_blocks(blocks: &[MessageBlock]) -> String {
-    let mut chunks = Vec::new();
-    for block in blocks {
-        match block {
-            MessageBlock::Text { text } => {
-                if !text.trim().is_empty() {
-                    chunks.push(text.clone());
-                }
-            }
-            MessageBlock::CodeBlock { language, code } => {
-                let prefix = language.clone().unwrap_or_default();
-                chunks.push(format!("```{}\n{}\n```", prefix, code));
-            }
-        }
-    }
-    chunks.join("\n\n")
-}
-
-fn split_for_discord_content(content: String) -> Vec<String> {
-    let mut out = Vec::new();
-    let trimmed = content.trim();
-    if trimmed.is_empty() {
-        return out;
-    }
-
-    let mut current = String::new();
-    for line in trimmed.lines() {
-        if line.chars().count() > DISCORD_CONTENT_MAX_LEN {
-            if !current.is_empty() {
-                out.push(current.clone());
-                current.clear();
-            }
-            let mut segment = String::new();
-            for ch in line.chars() {
-                segment.push(ch);
-                if segment.chars().count() >= DISCORD_CONTENT_MAX_LEN {
-                    out.push(segment.clone());
-                    segment.clear();
-                }
-            }
-            if !segment.is_empty() {
-                out.push(segment);
-            }
-            continue;
-        }
-
-        let tentative = if current.is_empty() {
-            line.to_string()
-        } else {
-            format!("{current}\n{line}")
-        };
-        if tentative.chars().count() > DISCORD_CONTENT_MAX_LEN {
-            if !current.is_empty() {
-                out.push(current.clone());
-            }
-            current = line.to_string();
-        } else {
-            current = tentative;
-        }
-    }
-    if !current.is_empty() {
-        out.push(current);
-    }
-    out
 }
 
 fn extract_embeds_from_metadata(

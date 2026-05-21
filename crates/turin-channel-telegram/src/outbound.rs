@@ -1,7 +1,10 @@
 use anyhow::{Result, anyhow};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use std::path::{Path, PathBuf};
-use turin_channel_core::{ChannelAttachment, MessageBlock, OutboundMessage};
+use turin_channel_core::{
+    ChannelAttachment, MessageBlock, OutboundMessage, render_plain_text_blocks,
+    split_text_lines_to_char_limit,
+};
 
 use crate::inbound::{TelegramAttachmentKind, TelegramAudio};
 
@@ -107,7 +110,7 @@ fn render_telegram_message(message: &OutboundMessage) -> Result<TelegramRendered
 
     let mut chunks = match render_mode {
         TelegramRenderMode::PlainText => {
-            let mut rendered = render_text_blocks(&message.blocks);
+            let mut rendered = render_plain_text_blocks(&message.blocks);
             if let Some(thinking) = final_thinking {
                 rendered = prepend_final_thinking_text(&rendered, thinking);
             }
@@ -144,24 +147,6 @@ fn resolve_render_mode(message: &OutboundMessage) -> TelegramRenderMode {
         return TelegramRenderMode::PlainText;
     }
     TelegramRenderMode::Html
-}
-
-fn render_text_blocks(blocks: &[MessageBlock]) -> String {
-    let mut chunks = Vec::new();
-    for block in blocks {
-        match block {
-            MessageBlock::Text { text } => {
-                if !text.trim().is_empty() {
-                    chunks.push(text.clone());
-                }
-            }
-            MessageBlock::CodeBlock { language, code } => {
-                let prefix = language.clone().unwrap_or_default();
-                chunks.push(format!("```{}\n{}\n```", prefix, code));
-            }
-        }
-    }
-    chunks.join("\n\n")
 }
 
 fn render_html_chunks(message: &OutboundMessage, final_thinking: Option<&str>) -> Vec<String> {
@@ -720,54 +705,7 @@ fn escape_html(input: &str) -> String {
 }
 
 fn split_for_telegram_message(content: String) -> Vec<String> {
-    let mut out = Vec::new();
-    let trimmed = content.trim();
-    if trimmed.is_empty() {
-        return out;
-    }
-
-    let mut current = String::new();
-    for line in trimmed.lines() {
-        if line.chars().count() > TELEGRAM_MESSAGE_MAX_LEN {
-            if !current.is_empty() {
-                out.push(current.clone());
-                current.clear();
-            }
-
-            let mut segment = String::new();
-            for ch in line.chars() {
-                segment.push(ch);
-                if segment.chars().count() >= TELEGRAM_MESSAGE_MAX_LEN {
-                    out.push(segment.clone());
-                    segment.clear();
-                }
-            }
-            if !segment.is_empty() {
-                out.push(segment);
-            }
-            continue;
-        }
-
-        let tentative = if current.is_empty() {
-            line.to_string()
-        } else {
-            format!("{current}\n{line}")
-        };
-        if tentative.chars().count() > TELEGRAM_MESSAGE_MAX_LEN {
-            if !current.is_empty() {
-                out.push(current.clone());
-            }
-            current = line.to_string();
-        } else {
-            current = tentative;
-        }
-    }
-
-    if !current.is_empty() {
-        out.push(current);
-    }
-
-    out
+    split_text_lines_to_char_limit(&content, TELEGRAM_MESSAGE_MAX_LEN)
 }
 
 pub(crate) fn telegram_payload(

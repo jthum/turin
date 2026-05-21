@@ -240,6 +240,86 @@ impl ChannelUser {
     }
 }
 
+pub fn render_plain_text_blocks(blocks: &[MessageBlock]) -> String {
+    let mut chunks = Vec::new();
+    for block in blocks {
+        match block {
+            MessageBlock::Text { text } => {
+                if !text.trim().is_empty() {
+                    chunks.push(text.clone());
+                }
+            }
+            MessageBlock::CodeBlock { language, code } => {
+                let prefix = language.as_deref().unwrap_or_default();
+                chunks.push(format!("```{}\n{}\n```", prefix, code));
+            }
+        }
+    }
+    chunks.join("\n\n")
+}
+
+pub fn split_text_lines_to_char_limit(content: &str, limit: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let trimmed = content.trim();
+    if trimmed.is_empty() || limit == 0 {
+        return out;
+    }
+
+    let mut current = String::new();
+    let mut current_chars = 0usize;
+    for line in trimmed.lines() {
+        let line_chars = line.chars().count();
+        if line_chars > limit {
+            if !current.is_empty() {
+                out.push(std::mem::take(&mut current));
+                current_chars = 0;
+            }
+            split_long_line(line, limit, &mut out);
+            continue;
+        }
+
+        let tentative_chars = if current.is_empty() {
+            line_chars
+        } else {
+            current_chars + 1 + line_chars
+        };
+        if tentative_chars > limit {
+            if !current.is_empty() {
+                out.push(std::mem::take(&mut current));
+            }
+            current.push_str(line);
+            current_chars = line_chars;
+        } else {
+            if !current.is_empty() {
+                current.push('\n');
+            }
+            current.push_str(line);
+            current_chars = tentative_chars;
+        }
+    }
+
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
+}
+
+fn split_long_line(line: &str, limit: usize, out: &mut Vec<String>) {
+    let mut segment = String::new();
+    let mut segment_chars = 0usize;
+    for ch in line.chars() {
+        segment.push(ch);
+        segment_chars += 1;
+        if segment_chars >= limit {
+            out.push(std::mem::take(&mut segment));
+            segment_chars = 0;
+        }
+    }
+    if !segment.is_empty() {
+        out.push(segment);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ChannelCapabilities {
     pub rich_formatting: bool,
