@@ -31,6 +31,7 @@ Keep top-level `config.rs` as the entry point for `TurinConfig`, agent/provider/
 - Persistence target resolution should stay in `config/persistence.rs`; call sites should not duplicate alias/path selection rules.
 - `from_file` normalizes runtime paths after loading the adjacent env file and before validation.
 - `from_str` parses and validates without filesystem path normalization.
+- Plain daemon filesystem paths share one normalization helper; the daemon endpoint stays separate because local IPC endpoint resolution has different semantics.
 
 ## Common Changes
 

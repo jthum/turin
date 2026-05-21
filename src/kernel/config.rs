@@ -560,38 +560,30 @@ impl TurinConfig {
             }
         }
 
-        if self.daemon.agents_dir == default_daemon_agents_dir() {
-            self.daemon.agents_dir = layout.agents_dir.display().to_string();
-        } else if Path::new(&self.daemon.agents_dir).is_relative() {
-            self.daemon.agents_dir = workspace_root
-                .join(&self.daemon.agents_dir)
-                .display()
-                .to_string();
-        }
-        if self.daemon.harnesses_dir == default_daemon_harnesses_dir() {
-            self.daemon.harnesses_dir = layout.harnesses_dir.display().to_string();
-        } else if Path::new(&self.daemon.harnesses_dir).is_relative() {
-            self.daemon.harnesses_dir = workspace_root
-                .join(&self.daemon.harnesses_dir)
-                .display()
-                .to_string();
-        }
-        if self.daemon.channels_dir == default_daemon_channels_dir() {
-            self.daemon.channels_dir = layout.channels_dir.display().to_string();
-        } else if Path::new(&self.daemon.channels_dir).is_relative() {
-            self.daemon.channels_dir = workspace_root
-                .join(&self.daemon.channels_dir)
-                .display()
-                .to_string();
-        }
-        if self.daemon.runtime_db == default_daemon_runtime_db() {
-            self.daemon.runtime_db = layout.data_dir.join("runtime.db").display().to_string();
-        } else if Path::new(&self.daemon.runtime_db).is_relative() {
-            self.daemon.runtime_db = workspace_root
-                .join(&self.daemon.runtime_db)
-                .display()
-                .to_string();
-        }
+        normalize_workspace_runtime_path(
+            &mut self.daemon.agents_dir,
+            default_daemon_agents_dir().as_str(),
+            &layout.agents_dir,
+            &workspace_root,
+        );
+        normalize_workspace_runtime_path(
+            &mut self.daemon.harnesses_dir,
+            default_daemon_harnesses_dir().as_str(),
+            &layout.harnesses_dir,
+            &workspace_root,
+        );
+        normalize_workspace_runtime_path(
+            &mut self.daemon.channels_dir,
+            default_daemon_channels_dir().as_str(),
+            &layout.channels_dir,
+            &workspace_root,
+        );
+        normalize_workspace_runtime_path(
+            &mut self.daemon.runtime_db,
+            default_daemon_runtime_db().as_str(),
+            &layout.data_dir.join("runtime.db"),
+            &workspace_root,
+        );
         if self.daemon.endpoint == default_daemon_endpoint() {
             self.daemon.endpoint = layout.daemon_socket.display().to_string();
         } else if Path::new(&self.daemon.endpoint).is_relative() {
@@ -603,6 +595,19 @@ impl TurinConfig {
             .display()
             .to_string();
         }
+    }
+}
+
+fn normalize_workspace_runtime_path(
+    value: &mut String,
+    default_value: &str,
+    default_path: &Path,
+    workspace_root: &Path,
+) {
+    if value == default_value {
+        *value = default_path.display().to_string();
+    } else if Path::new(value.as_str()).is_relative() {
+        *value = workspace_root.join(value.as_str()).display().to_string();
     }
 }
 
