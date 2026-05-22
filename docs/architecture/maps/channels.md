@@ -15,7 +15,17 @@ This subsystem should preserve three guarantees:
 Shared protocol and runner crates:
 
 - `crates/turin-channel-core/src/lib.rs`
-  - Common channel protocol types: manifests, auth-flow requests/responses, conversations, users, attachments, inbound events, outbound messages, routing decisions, and settings helpers.
+  - Crate-root facade that re-exports common channel protocol, manifest, settings, auth-flow, and routing types.
+- `crates/turin-channel-core/src/messages.rs`
+  - Channel kind/conversation keys, users, attachments, inbound events, outbound messages, text bounds, prompt labels, and shared plain-text rendering/splitting helpers.
+- `crates/turin-channel-core/src/manifest.rs`
+  - Adapter/runtime/setup manifest shapes, setup-field helper constructors, adapter manifest validation, and protocol-version defaults.
+- `crates/turin-channel-core/src/settings.rs`
+  - Reusable JSON settings parsers for required/optional strings, booleans, numeric limits, session scopes, and string enums.
+- `crates/turin-channel-core/src/auth.rs`
+  - Auth-flow request/response/display DTOs shared by adapters, host, runner, and manager setup.
+- `crates/turin-channel-core/src/routing.rs`
+  - Conversation binding rows, TTL/reset-aware routing decisions, and binding timestamp helpers.
 - `crates/turin-channel-runner/src/lib.rs`
   - Public runner API and `ChannelDriver` trait.
 - `crates/turin-channel-runner/src/sidecar.rs`
@@ -204,7 +214,12 @@ Daemon channel supervision keeps runtime-state mutation behind named transition 
 
 The current module split is deliberate:
 
-- `turin-channel-core` answers "what common channel protocol shapes exist?"
+- `turin-channel-core` answers "what common channel protocol shapes exist?" while keeping its public crate-root API stable through re-exports.
+- `turin-channel-core/src/messages.rs` answers "what is a normalized channel event or outbound message?"
+- `turin-channel-core/src/manifest.rs` answers "what does an adapter expose to manager/daemon setup?"
+- `turin-channel-core/src/settings.rs` answers "how do adapters parse shared JSON setting shapes?"
+- `turin-channel-core/src/auth.rs` answers "how do setup auth-flow commands communicate?"
+- `turin-channel-core/src/routing.rs` answers "should this conversation reuse or start a session?"
 - `turin-channel-runner` answers "how does a channel event become a daemon task and response?"
 - `turin-channel-runner/src/sidecar.rs` answers "how does a sidecar process start consistently?"
 - `turin-channel-host` answers "how does a Turin host process find and invoke sidecar binaries?"
