@@ -281,11 +281,8 @@ impl DaemonClient {
     }
 
     pub async fn schedule_get(&self, id: impl Into<String>) -> Result<ScheduleJobDetail> {
-        self.request_ok(
-            None,
-            DaemonRequest::ScheduleGet(EntityIdParams { id: id.into() }),
-        )
-        .await
+        self.request_ok(None, DaemonRequest::ScheduleGet(entity_id(id)))
+            .await
     }
 
     pub async fn schedule_update(&self, params: ScheduleUpdateParams) -> Result<ScheduleJobDetail> {
@@ -318,27 +315,18 @@ impl DaemonClient {
     }
 
     pub async fn schedule_enable(&self, id: impl Into<String>) -> Result<ScheduleJobDetail> {
-        self.request_ok(
-            None,
-            DaemonRequest::ScheduleEnable(EntityIdParams { id: id.into() }),
-        )
-        .await
+        self.request_ok(None, DaemonRequest::ScheduleEnable(entity_id(id)))
+            .await
     }
 
     pub async fn schedule_disable(&self, id: impl Into<String>) -> Result<ScheduleJobDetail> {
-        self.request_ok(
-            None,
-            DaemonRequest::ScheduleDisable(EntityIdParams { id: id.into() }),
-        )
-        .await
+        self.request_ok(None, DaemonRequest::ScheduleDisable(entity_id(id)))
+            .await
     }
 
     pub async fn schedule_delete(&self, id: impl Into<String>) -> Result<ScheduleJobDetail> {
-        self.request_ok(
-            None,
-            DaemonRequest::ScheduleDelete(EntityIdParams { id: id.into() }),
-        )
-        .await
+        self.request_ok(None, DaemonRequest::ScheduleDelete(entity_id(id)))
+            .await
     }
 
     pub async fn worklist_list(&self, params: WorklistListParams) -> Result<Vec<WorklistDetail>> {
@@ -546,6 +534,10 @@ pub fn decode_ok<T: DeserializeOwned>(response: ResponseEnvelope) -> Result<T> {
 
 pub fn encode_params<T: Serialize>(value: T) -> Value {
     serde_json::to_value(value).expect("daemon params must serialize")
+}
+
+fn entity_id(id: impl Into<String>) -> EntityIdParams {
+    EntityIdParams { id: id.into() }
 }
 
 pub fn ensure_compatible_handshake(handshake: &DaemonHandshake) -> Result<()> {
