@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use turso::Value as SqlValue;
 
 use super::{MessageRow, SessionReadTarget, SessionRow, StateStore, TurnWriteTarget};
+use crate::persistence::state::sessions::map_session_row;
 
 const MESSAGE_TURN_QUERY_CHUNK: usize = 500;
 
@@ -26,14 +27,7 @@ impl StateStore {
 
         let mut sessions = Vec::new();
         while let Some(row) = rows.next().await? {
-            sessions.push(SessionRow {
-                id: row.get::<i64>(0)?,
-                public_id: row.get::<Vec<u8>>(1)?,
-                agent_id: row.get::<String>(2)?,
-                metadata: row.get::<Option<String>>(3)?,
-                active_branch_head_id: row.get::<Option<i64>>(4)?,
-                created_at: row.get::<String>(5)?,
-            });
+            sessions.push(map_session_row(&row)?);
         }
         Ok(sessions)
     }

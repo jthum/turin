@@ -160,7 +160,7 @@ impl StateStore {
     }
 }
 
-fn map_session_row(row: &turso::Row) -> Result<SessionRow> {
+pub(super) fn map_session_row(row: &turso::Row) -> Result<SessionRow> {
     Ok(SessionRow {
         id: row.get::<i64>(0)?,
         public_id: row.get::<Vec<u8>>(1)?,
