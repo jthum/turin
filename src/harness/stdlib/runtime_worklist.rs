@@ -262,6 +262,19 @@ fn work_items_value(
     Ok(Value::Table(work_items_table(lua, handle, rows)?))
 }
 
+fn item_value(lua: &Lua, handle: &WorklistHandle, row: WorkItemRow) -> LuaResult<Value> {
+    Ok(Value::Table(item_proxy(lua, handle.clone(), row)?))
+}
+
+fn load_required_item(
+    handle: &WorklistHandle,
+    item_id: i64,
+    missing_message: &'static str,
+) -> LuaResult<WorkItemRow> {
+    bridge_async_lua(async { handle.store.get_work_item_by_id(item_id).await })?
+        .ok_or_else(|| mlua::Error::runtime(missing_message.to_string()))
+}
+
 pub(crate) fn build_work_item_proxy(
     lua: &Lua,
     store: Arc<StateStore>,
@@ -367,13 +380,11 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                         )
                         .await
                 })?;
-                let row =
-                    bridge_async_lua(async { handle.store.get_work_item_by_id(item_id).await })?
-                        .ok_or_else(|| mlua::Error::runtime("work item not found".to_string()))?;
+                let row = load_required_item(&handle, item_id, "work item not found")?;
                 if !claimed && row.claim_execution_id.as_deref() != execution_id.as_deref() {
                     return Ok(Value::Nil);
                 }
-                Ok(Value::Table(item_proxy(lua, handle.clone(), row)?))
+                item_value(lua, &handle, row)
             })?,
         )?;
     }
@@ -405,7 +416,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                         "work item is not actively claimed by this execution".to_string(),
                     )
                 })?;
-                Ok(Value::Table(item_proxy(lua, handle.clone(), row)?))
+                item_value(lua, &handle, row)
             })?,
         )?;
     }
@@ -418,9 +429,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
             lua.create_function(move |lua, (_self, _opts): (Table, Option<Table>)| {
                 require_capability(&handle.app_data, "runtime.worklist.dispatch")
                     .map_err(mlua::Error::runtime)?;
-                let row =
-                    bridge_async_lua(async { handle.store.get_work_item_by_id(item_id).await })?
-                        .ok_or_else(|| mlua::Error::runtime("work item not found".to_string()))?;
+                let row = load_required_item(&handle, item_id, "work item not found")?;
                 dispatch_item_result(lua, &row, &handle)
             })?,
         )?;
@@ -446,7 +455,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                         .complete_work_item(item_id, metadata_raw.as_deref())
                         .await
                 })?;
-                Ok(Value::Table(item_proxy(lua, handle.clone(), row)?))
+                item_value(lua, &handle, row)
             })?,
         )?;
     }
@@ -465,7 +474,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                         .fail_work_item(item_id, reason.as_deref())
                         .await
                 })?;
-                Ok(Value::Table(item_proxy(lua, handle.clone(), row)?))
+                item_value(lua, &handle, row)
             })?,
         )?;
     }
@@ -480,7 +489,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                     .map_err(mlua::Error::runtime)?;
                 let row =
                     bridge_async_lua(async { handle.store.release_work_item(item_id).await })?;
-                Ok(Value::Table(item_proxy(lua, handle.clone(), row)?))
+                item_value(lua, &handle, row)
             })?,
         )?;
     }
@@ -526,7 +535,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                         })
                         .await
                 })?;
-                Ok(Value::Table(item_proxy(lua, handle.clone(), row)?))
+                item_value(lua, &handle, row)
             })?,
         )?;
     }
@@ -607,7 +616,7 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                             })
                             .await
                     })?;
-                    Ok(Value::Table(item_proxy(lua, handle.clone(), row)?))
+                    item_value(lua, &handle, row)
                 },
             )?,
         )?;
@@ -746,7 +755,7 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     session_id.as_deref(),
                     execution_id.as_deref(),
                 ) {
-                    Some(row) => Ok(Value::Table(item_proxy(lua, handle.clone(), row)?)),
+                    Some(row) => item_value(lua, &handle, row),
                     None => Ok(Value::Nil),
                 }
             })?,
@@ -783,13 +792,9 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                             .await
                     })?;
                     if claimed {
-                        let refreshed = bridge_async_lua(async {
-                            handle.store.get_work_item_by_id(row.id).await
-                        })?
-                        .ok_or_else(|| {
-                            mlua::Error::runtime("claimed work item vanished".to_string())
-                        })?;
-                        return Ok(Value::Table(item_proxy(lua, handle.clone(), refreshed)?));
+                        let refreshed =
+                            load_required_item(&handle, row.id, "claimed work item vanished")?;
+                        return item_value(lua, &handle, refreshed);
                     }
                 }
                 Ok(Value::Nil)
@@ -823,7 +828,7 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     handle.parent_item_id,
                     &where_map,
                 ) {
-                    Some(row) => Ok(Value::Table(item_proxy(lua, handle.clone(), row)?)),
+                    Some(row) => item_value(lua, &handle, row),
                     None => Ok(Value::Nil),
                 }
             })?,
@@ -933,24 +938,31 @@ pub fn register_runtime_worklist_namespace(
     Ok(())
 }
 
+fn open_ref_store(
+    app_data: &HarnessAppData,
+    selector: StoreSelector,
+) -> anyhow::Result<Arc<StateStore>> {
+    let (path_scope, max_open_handles, idle_close_seconds) =
+        runtime_store_settings(app_data).map_err(anyhow::Error::msg)?;
+    bridge_async_anyhow(async {
+        open_store(
+            app_data.store_manager.clone(),
+            selector,
+            path_scope,
+            max_open_handles,
+            idle_close_seconds,
+        )
+        .await
+    })
+}
+
 pub(crate) fn hydrate_worklist_ref(
     lua: &Lua,
     app_data: &HarnessAppData,
     ref_obj: &JsonMap<String, JsonValue>,
 ) -> anyhow::Result<Table> {
     let selector = object_refs::store_selector_from_json(ref_obj.get("store"));
-    let (path_scope, max_open_handles, idle_close_seconds) =
-        runtime_store_settings(app_data).map_err(anyhow::Error::msg)?;
-    let store = bridge_async_anyhow(async {
-        open_store(
-            app_data.store_manager.clone(),
-            selector.clone(),
-            path_scope,
-            max_open_handles,
-            idle_close_seconds,
-        )
-        .await
-    })?;
+    let store = open_ref_store(app_data, selector.clone())?;
 
     let row = if let Some(id) = ref_obj.get("id").and_then(|value| value.as_str()) {
         let uuid = uuid::Uuid::parse_str(id)?;
@@ -987,18 +999,7 @@ pub(crate) fn hydrate_workitem_ref(
     ref_obj: &JsonMap<String, JsonValue>,
 ) -> anyhow::Result<Table> {
     let selector = object_refs::store_selector_from_json(ref_obj.get("store"));
-    let (path_scope, max_open_handles, idle_close_seconds) =
-        runtime_store_settings(app_data).map_err(anyhow::Error::msg)?;
-    let store = bridge_async_anyhow(async {
-        open_store(
-            app_data.store_manager.clone(),
-            selector.clone(),
-            path_scope,
-            max_open_handles,
-            idle_close_seconds,
-        )
-        .await
-    })?;
+    let store = open_ref_store(app_data, selector.clone())?;
     let id = ref_obj
         .get("id")
         .and_then(|value| value.as_str())
