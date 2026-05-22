@@ -64,10 +64,7 @@ impl StateStore {
         let public_id_bytes = public_id.into_bytes().to_vec();
         let sql = format!("{SCHEDULED_JOB_SELECT} WHERE public_id = ?1 LIMIT 1");
         let mut rows = conn.query(&sql, turso::params![public_id_bytes]).await?;
-        if let Some(row) = rows.next().await? {
-            return Ok(Some(map_scheduled_job_row(&row)?));
-        }
-        Ok(None)
+        next_scheduled_job_row(&mut rows).await
     }
 
     pub async fn create_scheduled_job(&self, job: ScheduledJobInsert<'_>) -> Result<i64> {
@@ -110,12 +107,8 @@ impl StateStore {
     pub async fn list_scheduled_jobs(&self) -> Result<Vec<ScheduledJobRow>> {
         let conn = self.connect().await?;
         let sql = format!("{SCHEDULED_JOB_SELECT} ORDER BY id ASC");
-        let mut rows = conn.query(&sql, ()).await?;
-        let mut result = Vec::new();
-        while let Some(row) = rows.next().await? {
-            result.push(map_scheduled_job_row(&row)?);
-        }
-        Ok(result)
+        let rows = conn.query(&sql, ()).await?;
+        collect_scheduled_job_rows(rows).await
     }
 
     pub async fn list_due_scheduled_jobs(
@@ -130,14 +123,10 @@ impl StateStore {
              ORDER BY next_run_unix_ms ASC, id ASC
              LIMIT ?2"
         );
-        let mut rows = conn
+        let rows = conn
             .query(&sql, turso::params![now_unix_ms, limit as i64])
             .await?;
-        let mut result = Vec::new();
-        while let Some(row) = rows.next().await? {
-            result.push(map_scheduled_job_row(&row)?);
-        }
-        Ok(result)
+        collect_scheduled_job_rows(rows).await
     }
 
     pub async fn next_scheduled_due_unix_ms(&self) -> Result<Option<i64>> {
@@ -158,12 +147,8 @@ impl StateStore {
     pub async fn list_running_scheduled_jobs(&self) -> Result<Vec<ScheduledJobRow>> {
         let conn = self.connect().await?;
         let sql = format!("{SCHEDULED_JOB_SELECT} WHERE active_run_count > 0 ORDER BY id ASC");
-        let mut rows = conn.query(&sql, ()).await?;
-        let mut result = Vec::new();
-        while let Some(row) = rows.next().await? {
-            result.push(map_scheduled_job_row(&row)?);
-        }
-        Ok(result)
+        let rows = conn.query(&sql, ()).await?;
+        collect_scheduled_job_rows(rows).await
     }
 
     pub async fn count_running_scheduled_jobs_for_work_key(&self, work_key: &str) -> Result<u32> {
@@ -189,11 +174,7 @@ impl StateStore {
         let conn = self.connect().await?;
         let sql = format!("{SCHEDULED_JOB_SELECT} WHERE id = ?1 LIMIT 1");
         let mut rows = conn.query(&sql, turso::params![id]).await?;
-        if let Some(row) = rows.next().await? {
-            Ok(Some(map_scheduled_job_row(&row)?))
-        } else {
-            Ok(None)
-        }
+        next_scheduled_job_row(&mut rows).await
     }
 
     pub async fn mark_scheduled_job_overlap(
@@ -505,6 +486,21 @@ impl StateStore {
         .context("Failed to delete scheduled job")?;
         Ok(())
     }
+}
+
+async fn next_scheduled_job_row(rows: &mut turso::Rows) -> Result<Option<ScheduledJobRow>> {
+    rows.next()
+        .await?
+        .map(|row| map_scheduled_job_row(&row))
+        .transpose()
+}
+
+async fn collect_scheduled_job_rows(mut rows: turso::Rows) -> Result<Vec<ScheduledJobRow>> {
+    let mut result = Vec::new();
+    while let Some(row) = rows.next().await? {
+        result.push(map_scheduled_job_row(&row)?);
+    }
+    Ok(result)
 }
 
 fn map_scheduled_job_row(row: &turso::Row) -> Result<ScheduledJobRow> {
