@@ -7,7 +7,6 @@ use tracing::{debug, info, warn};
 mod materialization;
 mod sidestep;
 
-use crate::kernel::config::StoreTargetConfig;
 use crate::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::identity::RuntimeIdentity;
@@ -20,6 +19,10 @@ use crate::kernel::session_lifecycle::materialization::{
     rebuild_session_counters,
 };
 pub(crate) use crate::kernel::session_lifecycle::sidestep::prepare_persisted_session_sidestep;
+use crate::kernel::session_metadata::{
+    create_session_metadata, session_channel_id_from_metadata,
+    session_default_store_selector_from_metadata,
+};
 use crate::kernel::session_refs::{
     describe_store_selector, format_session_reference, parse_session_reference,
 };
@@ -356,7 +359,10 @@ impl ExecutionHost {
             if create_row
                 && let Ok(public_id) = uuid::Uuid::parse_str(session.identity.session_id())
             {
-                let metadata = session_create_metadata(session);
+                let metadata = create_session_metadata(
+                    session.default_store_selector.as_ref(),
+                    session.identity.channel_id(),
+                );
                 match store
                     .create_session(public_id, session.identity.agent_id(), metadata.as_deref())
                     .await
@@ -641,47 +647,11 @@ impl ExecutionHost {
     }
 }
 
-fn session_create_metadata(session: &SessionState) -> Option<String> {
-    let mut turin_meta = serde_json::Map::new();
-    if let Some(default_store) = session
-        .default_store_selector
-        .as_ref()
-        .and_then(store_target_from_selector)
-    {
-        turin_meta.insert(
-            "default_store".to_string(),
-            serde_json::json!(default_store),
-        );
-    }
-    if let Some(channel_id) = session.identity.channel_id() {
-        turin_meta.insert("channel_id".to_string(), serde_json::json!(channel_id));
-    }
-    if turin_meta.is_empty() {
-        return None;
-    }
-    Some(
-        serde_json::json!({
-            "_turin": turin_meta,
-        })
-        .to_string(),
-    )
-}
-
 async fn ensure_local_session_target_idle(session: &SessionState, target_kind: &str) -> Result<()> {
     if !session.queue.lock().await.is_empty() {
         anyhow::bail!("Cannot switch local session {target_kind} while tasks are queued");
     }
     Ok(())
-}
-
-fn session_default_store_selector_from_metadata(metadata: Option<&str>) -> Option<StoreSelector> {
-    let parsed = metadata
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-        .and_then(|value| value.get("_turin").cloned())
-        .and_then(|value| value.get("default_store").cloned())
-        .and_then(|value| serde_json::from_value::<StoreTargetConfig>(value).ok());
-
-    parsed.and_then(store_selector_from_target)
 }
 
 fn resolved_execution_context_target(
@@ -695,29 +665,5 @@ fn resolved_execution_context_target(
             branch_head_id: row.active_branch_head_id,
         },
         _ => current.clone(),
-    }
-}
-
-fn session_channel_id_from_metadata(metadata: Option<&str>) -> Option<String> {
-    metadata
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-        .and_then(|value| value.get("_turin").cloned())
-        .and_then(|value| value.get("channel_id").cloned())
-        .and_then(|value| value.as_str().map(ToString::to_string))
-}
-
-fn store_target_from_selector(selector: &StoreSelector) -> Option<StoreTargetConfig> {
-    match selector {
-        StoreSelector::Alias(alias) => Some(StoreTargetConfig::from_alias(alias.clone())),
-        StoreSelector::Path(path) => Some(StoreTargetConfig::from_path(path.clone())),
-        StoreSelector::Handle(_) => None,
-    }
-}
-
-fn store_selector_from_target(target: StoreTargetConfig) -> Option<StoreSelector> {
-    if let Some(path) = target.path {
-        Some(StoreSelector::Path(path))
-    } else {
-        target.alias.map(StoreSelector::Alias)
     }
 }

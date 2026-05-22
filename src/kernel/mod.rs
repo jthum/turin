@@ -16,6 +16,7 @@ pub mod policy;
 mod run_loop;
 pub mod session;
 mod session_lifecycle;
+pub(crate) mod session_metadata;
 pub mod session_refs;
 mod task_execution;
 mod task_lifecycle;

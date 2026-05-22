@@ -18,6 +18,7 @@ use crate::kernel::session::{
     ExecutionConflictPolicy, ExecutionContextTarget, PreparedSidestepExecution, QueuedTask,
     SidestepMode, TaskExecutionOverrides,
 };
+use crate::kernel::session_metadata::session_channel_id_from_metadata;
 use crate::kernel::session_refs::session_reference_matches_public_id;
 use crate::persistence::manager::StoreSelector;
 use turin_types::{TaskInputContent, ToolsConfig};
@@ -448,10 +449,7 @@ impl DaemonState {
             return Ok(None);
         };
 
-        Ok(row
-            .metadata
-            .as_deref()
-            .and_then(session_channel_id_from_metadata))
+        Ok(session_channel_id_from_metadata(row.metadata.as_deref()))
     }
 
     pub(super) async fn live_session_snapshots(
@@ -512,13 +510,4 @@ fn execution_context_target_from_params(
             ExecutionContextTarget::SummarySource { source_turn_id }
         }
     }
-}
-
-fn session_channel_id_from_metadata(metadata: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(metadata)
-        .ok()?
-        .get("_turin")?
-        .get("channel_id")?
-        .as_str()
-        .map(ToOwned::to_owned)
 }
