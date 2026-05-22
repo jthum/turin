@@ -26,7 +26,9 @@ This subsystem should preserve two guarantees:
 - `src/harness/stdlib/runtime_worklist_selection.rs`
   - Shared runtime work item selection rules for pending, orphaned, paused, active, next, empty, progress, and child queries.
 - `src/harness/stdlib/runtime_schedule.rs`
-  - Lua-facing `runtime.schedule` API: option parsing, capability gates, agent validation, and scheduler access bridging.
+  - Lua-facing `runtime.schedule` API registration, capability gates, agent validation, result shaping, and scheduler access bridging.
+- `src/harness/stdlib/runtime_schedule/params.rs`
+  - Lua option decoding for schedule create/update, persistence target parsing, schedule action parsing, and next-run time parsing.
 - `src/harness/stdlib/action_bindings.rs`
   - Built-in action bridge for worklist actions invoked from harness code.
 - `src/persistence/state/scheduler.rs`
@@ -68,8 +70,8 @@ Runtime worklist dispatch:
 
 Runtime schedule API:
 
-1. `runtime_schedule.rs` parses Lua options into daemon protocol params.
-2. It checks `runtime.schedule.*` capabilities and validates scheduled agent ids against harness config.
+1. `runtime_schedule/params.rs` parses Lua create/update options into daemon protocol params.
+2. `runtime_schedule.rs` checks `runtime.schedule.*` capabilities and validates scheduled agent ids against harness config.
 3. It requires a daemon-managed `HarnessSchedulerAccess`; unmanaged runtimes return a Lua `(nil, err)` pair.
 4. It delegates CRUD, runs, enable/disable, and delete operations to daemon scheduler access.
 
@@ -151,3 +153,4 @@ The current module split is deliberate:
 - `work_items.rs` answers "what are the shared row-level work item rules?"
 - `runtime_worklist_selection.rs` answers "which runtime-visible work items match this proxy method?"
 - `runtime_worklist.rs` answers "how is the Lua worklist API registered and converted to/from proxies?"
+- `runtime_schedule/params.rs` answers "how do Lua schedule options become daemon protocol params?"
