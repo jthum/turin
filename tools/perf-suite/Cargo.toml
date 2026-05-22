@@ -21,3 +21,4 @@ turin-channel-core = { path = "../../crates/turin-channel-core" }
 turin-channel-runner = { path = "../../crates/turin-channel-runner" }
 turin-daemon-client = { path = "../../crates/turin-daemon-client" }
 turin-daemon-protocol = { path = "../../crates/turin-daemon-protocol" }
+turso = { version = "0.6", default-features = false }

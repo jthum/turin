@@ -160,6 +160,10 @@ struct FakeChannelArgs {
     #[arg(long, default_value_t = 0)]
     post_run_idle_wait_ms: u64,
 
+    /// Run PRAGMA wal_checkpoint(TRUNCATE) after the post-run idle wait.
+    #[arg(long)]
+    checkpoint_state_db_after_idle: bool,
+
     /// Call malloc_trim(0) after the post-run idle wait and record another snapshot.
     #[arg(long)]
     trim_allocator_after_idle: bool,
@@ -210,6 +214,10 @@ struct ChannelScaleArgs {
     /// Milliseconds to wait after the driver finishes before taking an idle snapshot.
     #[arg(long, default_value_t = 0)]
     post_run_idle_wait_ms: u64,
+
+    /// Run PRAGMA wal_checkpoint(TRUNCATE) after the post-run idle wait.
+    #[arg(long)]
+    checkpoint_state_db_after_idle: bool,
 
     /// Call malloc_trim(0) after the post-run idle wait and record another snapshot.
     #[arg(long)]
@@ -800,6 +808,21 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
         ));
     }
 
+    if args.checkpoint_state_db_after_idle {
+        checkpoint_state_db(&state_db_path).await?;
+        snapshots.push(snapshot(
+            "after-db-checkpoint",
+            start,
+            &state_db_path,
+            None,
+            None,
+            Some(outbound_count),
+            None,
+            Some(daemon.live_session_count().await?),
+            None,
+        ));
+    }
+
     if args.trim_allocator_after_idle {
         let _ = trim_allocator();
         snapshots.push(snapshot(
@@ -836,6 +859,7 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
             "mock_response_bytes": mock_response.len(),
             "agent_idle_timeout_seconds": args.agent_idle_timeout_seconds,
             "post_run_idle_wait_ms": args.post_run_idle_wait_ms,
+            "checkpoint_state_db_after_idle": args.checkpoint_state_db_after_idle,
             "trim_allocator_after_idle": args.trim_allocator_after_idle,
             "allocator_trim_supported": allocator_trim_supported(),
         }),
@@ -959,6 +983,24 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
             .push(after_idle_wait);
     }
 
+    if args.checkpoint_state_db_after_idle {
+        checkpoint_state_db(&state_db_path).await?;
+        let after_db_checkpoint = channel_scale_snapshot(
+            "after-db-checkpoint",
+            start,
+            &state_db_path,
+            Some(outbound_count),
+            Some(args.sessions),
+            Some(args.messages_per_session),
+            Some(daemon.live_session_count().await?),
+        )
+        .await?;
+        snapshots
+            .lock()
+            .expect("scale snapshots lock poisoned")
+            .push(after_db_checkpoint);
+    }
+
     if args.trim_allocator_after_idle {
         let _ = trim_allocator();
         let after_allocator_trim = channel_scale_snapshot(
@@ -1003,6 +1045,7 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
             "mock_response_bytes": mock_response.len(),
             "agent_idle_timeout_seconds": args.agent_idle_timeout_seconds,
             "post_run_idle_wait_ms": args.post_run_idle_wait_ms,
+            "checkpoint_state_db_after_idle": args.checkpoint_state_db_after_idle,
             "trim_allocator_after_idle": args.trim_allocator_after_idle,
             "allocator_trim_supported": allocator_trim_supported(),
         }),
@@ -1546,6 +1589,34 @@ async fn persisted_message_count_for_all_sessions(state_db_path: &Path) -> Resul
         total = total.saturating_add(messages.len());
     }
     Ok(Some(total))
+}
+
+async fn checkpoint_state_db(state_db_path: &Path) -> Result<()> {
+    if !state_db_path.exists() {
+        return Ok(());
+    }
+    let Some(path) = state_db_path.to_str() else {
+        return Ok(());
+    };
+
+    let db = turso::Builder::new_local(path)
+        .experimental_index_method(true)
+        .build()
+        .await
+        .with_context(|| {
+            format!(
+                "failed to open '{}' for WAL checkpoint",
+                state_db_path.display()
+            )
+        })?;
+    let conn = db.connect()?;
+    conn.execute("PRAGMA busy_timeout = 5000;", ()).await.ok();
+    let mut rows = conn
+        .query("PRAGMA wal_checkpoint(TRUNCATE);", ())
+        .await
+        .with_context(|| format!("failed to checkpoint '{}'", state_db_path.display()))?;
+    while rows.next().await?.is_some() {}
+    Ok(())
 }
 
 #[derive(Debug, Default)]
