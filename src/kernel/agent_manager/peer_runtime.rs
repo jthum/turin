@@ -217,17 +217,7 @@ impl PeerRuntime {
                 .await?;
             self.sync_control_execution_state();
             self.clear_capability_ceiling();
-            return Ok(PeerRunOutcome {
-                runtime_task_id: task.task_id,
-                execution: ExecutionStatusSnapshot::from_session(&self.session),
-                status: TaskTerminalStatus::Error,
-                task_turn_count: 0,
-                branch_outcome: None,
-                promotion_candidate: None,
-                output: None,
-                assistant_content: None,
-                promotion_input_content: None,
-            });
+            return Ok(self.empty_outcome(task.task_id, TaskTerminalStatus::Error));
         }
         self.sync_control_execution_state();
         let outcome = async {
@@ -290,17 +280,7 @@ impl PeerRuntime {
                             None,
                         )
                         .await?;
-                    return Ok(PeerRunOutcome {
-                        runtime_task_id: task.task_id,
-                        execution: ExecutionStatusSnapshot::from_session(&self.session),
-                        status: TaskTerminalStatus::Rejected,
-                        task_turn_count: 0,
-                        branch_outcome: None,
-                        promotion_candidate: None,
-                        output: None,
-                        assistant_content: None,
-                        promotion_input_content: None,
-                    });
+                    return Ok(self.empty_outcome(task.task_id, TaskTerminalStatus::Rejected));
                 }
                 Verdict::Modify(val) => {
                     if let Some(obj) = val.as_object() {
@@ -329,17 +309,7 @@ impl PeerRuntime {
                             None,
                         )
                         .await?;
-                    return Ok(PeerRunOutcome {
-                        runtime_task_id: task.task_id,
-                        execution: ExecutionStatusSnapshot::from_session(&self.session),
-                        status: TaskTerminalStatus::Rejected,
-                        task_turn_count: 0,
-                        branch_outcome: None,
-                        promotion_candidate: None,
-                        output: None,
-                        assistant_content: None,
-                        promotion_input_content: None,
-                    });
+                    return Ok(self.empty_outcome(task.task_id, TaskTerminalStatus::Rejected));
                 }
                 Verdict::Allow => {}
             }
@@ -384,17 +354,7 @@ impl PeerRuntime {
                     self.host
                         .apply_pending_branch_checkout(&mut self.session)
                         .await?;
-                    return Ok(PeerRunOutcome {
-                        runtime_task_id: task.task_id,
-                        execution: ExecutionStatusSnapshot::from_session(&self.session),
-                        status,
-                        task_turn_count: 0,
-                        branch_outcome: None,
-                        promotion_candidate: None,
-                        output: None,
-                        assistant_content: None,
-                        promotion_input_content: None,
-                    });
+                    return Ok(self.empty_outcome(task.task_id, status));
                 }
                 TaskRunAttempt::Error {
                     error,
@@ -415,17 +375,7 @@ impl PeerRuntime {
                         .apply_pending_branch_checkout(&mut self.session)
                         .await?;
                     if recovered {
-                        return Ok(PeerRunOutcome {
-                            runtime_task_id: task.task_id,
-                            execution: ExecutionStatusSnapshot::from_session(&self.session),
-                            status: TaskTerminalStatus::Error,
-                            task_turn_count: 0,
-                            branch_outcome: None,
-                            promotion_candidate: None,
-                            output: None,
-                            assistant_content: None,
-                            promotion_input_content: None,
-                        });
+                        return Ok(self.empty_outcome(task.task_id, TaskTerminalStatus::Error));
                     }
                     return Err(error);
                 }
@@ -459,6 +409,21 @@ impl PeerRuntime {
         finish_scope?;
         outcome
     }
+
+    fn empty_outcome(&self, runtime_task_id: String, status: TaskTerminalStatus) -> PeerRunOutcome {
+        PeerRunOutcome {
+            runtime_task_id,
+            execution: ExecutionStatusSnapshot::from_session(&self.session),
+            status,
+            task_turn_count: 0,
+            branch_outcome: None,
+            promotion_candidate: None,
+            output: None,
+            assistant_content: None,
+            promotion_input_content: None,
+        }
+    }
+
     fn set_capability_ceiling(&self, caps: Option<BTreeMap<String, bool>>) {
         if let Some(harness) = self.host.session_harness_engine(&self.session) {
             let engine = harness.lock().expect("session harness mutex poisoned");
