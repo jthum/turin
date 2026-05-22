@@ -16,13 +16,8 @@ impl ControlClient {
     }
 
     pub async fn get_task(&self, request_id: &str) -> Result<TaskStatus> {
-        self.request_ok(
-            None,
-            DaemonRequest::TaskGet(TaskIdParams {
-                request_id: request_id.to_string(),
-            }),
-        )
-        .await
+        self.request_ok(None, DaemonRequest::TaskGet(task_id(request_id)))
+            .await
     }
 
     pub async fn submit_task_in_slot(
@@ -106,13 +101,8 @@ impl ControlClient {
     }
 
     pub async fn cancel_task(&self, request_id: &str) -> Result<TaskStatus> {
-        self.request_ok(
-            None,
-            DaemonRequest::TaskCancel(TaskIdParams {
-                request_id: request_id.to_string(),
-            }),
-        )
-        .await
+        self.request_ok(None, DaemonRequest::TaskCancel(task_id(request_id)))
+            .await
     }
 
     pub async fn promote_task(
@@ -128,5 +118,11 @@ impl ControlClient {
             }),
         )
         .await
+    }
+}
+
+fn task_id(request_id: &str) -> TaskIdParams {
+    TaskIdParams {
+        request_id: request_id.to_string(),
     }
 }
