@@ -444,7 +444,7 @@ impl DaemonState {
     }
 
     async fn resolve_session_channel_id(&self, session_id: &str) -> Result<Option<String>> {
-        let Some((_, row)) = self.resolve_persisted_session(session_id).await? else {
+        let Some((_, _, row)) = self.resolve_persisted_session(session_id).await? else {
             return Ok(None);
         };
 

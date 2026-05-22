@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::{Result, anyhow};
 use tracing::{debug, info, instrument};
 use turin_daemon_protocol::SessionSearchScope;
@@ -13,7 +15,7 @@ use crate::kernel::session_refs::{
 };
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{BranchHeadRow, SessionRow};
-use crate::persistence::state::SessionReadTarget;
+use crate::persistence::state::{SessionReadTarget, StateStore};
 
 impl DaemonState {
     #[instrument(skip(self), fields(store = %store_selector_label_opt(store_selector.as_ref())))]
@@ -93,14 +95,14 @@ impl DaemonState {
 
     #[instrument(skip(self), fields(session_id = %session_id))]
     pub async fn get_session(&self, session_id: &str) -> Result<Option<SessionDetail>> {
-        let Some((store_selector, row)) = self.resolve_persisted_session(session_id).await? else {
+        let Some((store_selector, store, row)) = self.resolve_persisted_session(session_id).await?
+        else {
             return Ok(None);
         };
         debug!(
             store = %describe_store_selector(&store_selector),
             "Resolved persisted session detail target"
         );
-        let store = self.kernel.store_manager().open(&store_selector).await?;
         let active_branch = SessionReadTarget::ActiveBranch;
 
         let events = store
@@ -189,14 +191,14 @@ impl DaemonState {
         &self,
         session_id: &str,
     ) -> Result<Option<Vec<SessionBranchDetail>>> {
-        let Some((store_selector, row)) = self.resolve_persisted_session(session_id).await? else {
+        let Some((store_selector, store, row)) = self.resolve_persisted_session(session_id).await?
+        else {
             return Ok(None);
         };
         debug!(
             store = %describe_store_selector(&store_selector),
             "Listing session branches"
         );
-        let store = self.kernel.store_manager().open(&store_selector).await?;
         let branches = store
             .list_branch_heads(row.id)
             .await?
@@ -212,14 +214,14 @@ impl DaemonState {
         session_id: &str,
         source_turn_id: i64,
     ) -> Result<Option<Vec<SessionBranchDetail>>> {
-        let Some((store_selector, row)) = self.resolve_persisted_session(session_id).await? else {
+        let Some((store_selector, store, row)) = self.resolve_persisted_session(session_id).await?
+        else {
             return Ok(None);
         };
         debug!(
             store = %describe_store_selector(&store_selector),
             "Listing session branch siblings"
         );
-        let store = self.kernel.store_manager().open(&store_selector).await?;
         let branches = store
             .list_branch_heads_from_source_turn(row.id, source_turn_id)
             .await?
@@ -247,7 +249,8 @@ impl DaemonState {
         from_turn_index: Option<u32>,
         activate: bool,
     ) -> Result<Option<SessionBranchDetail>> {
-        let Some((store_selector, row)) = self.resolve_persisted_session(session_id).await? else {
+        let Some((store_selector, store, row)) = self.resolve_persisted_session(session_id).await?
+        else {
             return Ok(None);
         };
         let live_snapshot = if activate {
@@ -261,7 +264,6 @@ impl DaemonState {
             live_session = live_snapshot.is_some(),
             "Creating session branch"
         );
-        let store = self.kernel.store_manager().open(&store_selector).await?;
         let branch = store
             .create_branch_head_from_turn_index(row.id, name, from_turn_index, activate)
             .await?;
@@ -289,7 +291,8 @@ impl DaemonState {
         branch: &str,
         slot_id: Option<&str>,
     ) -> Result<Option<SessionBranchDetail>> {
-        let Some((store_selector, row)) = self.resolve_persisted_session(session_id).await? else {
+        let Some((store_selector, store, row)) = self.resolve_persisted_session(session_id).await?
+        else {
             return Ok(None);
         };
         let live_snapshot = self
@@ -300,7 +303,6 @@ impl DaemonState {
             live_session = live_snapshot.is_some(),
             "Checking out session branch"
         );
-        let store = self.kernel.store_manager().open(&store_selector).await?;
         let branch = if let Ok(branch_id) = Uuid::parse_str(branch) {
             store
                 .checkout_branch_head_by_public_id(row.id, branch_id)
@@ -331,11 +333,11 @@ impl DaemonState {
     pub(super) async fn resolve_persisted_session(
         &self,
         session_id: &str,
-    ) -> Result<Option<(StoreSelector, SessionRow)>> {
+    ) -> Result<Option<(StoreSelector, Arc<StateStore>, SessionRow)>> {
         let (store_selector, public_id) = persisted_session_target(session_id)?;
         let store = self.kernel.store_manager().open(&store_selector).await?;
         let row = store.get_session_row_by_public_id(public_id).await?;
-        Ok(row.map(|row| (store_selector, row)))
+        Ok(row.map(|row| (store_selector, store, row)))
     }
 
     async fn resolve_live_branch_target(
