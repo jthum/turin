@@ -384,7 +384,13 @@ fn run_footprint(args: FootprintArgs) -> Result<()> {
         if !root_path.exists() {
             continue;
         }
-        collect_rust_footprint(&repo_root, root, &root_path, &mut area_counts, &mut file_counts)?;
+        collect_rust_footprint(
+            &repo_root,
+            root,
+            &root_path,
+            &mut area_counts,
+            &mut file_counts,
+        )?;
     }
 
     for file in &file_counts {
@@ -474,13 +480,7 @@ async fn run_hot_history(args: HotHistoryArgs) -> Result<()> {
     let mut session = kernel.create_session().await;
     let start = Instant::now();
     let expected_tool_calls = tool_call_count(args.turns, args.tool_every);
-    let mut snapshots = vec![hot_history_snapshot(
-        "start",
-        start,
-        &state_db_path,
-        &session,
-    )
-    .await?];
+    let mut snapshots = vec![hot_history_snapshot("start", start, &state_db_path, &session).await?];
 
     for index in 0..args.turns {
         kernel
@@ -491,10 +491,10 @@ async fn run_hot_history(args: HotHistoryArgs) -> Result<()> {
         if (index + 1) % args.sample_every == 0 || index + 1 == args.turns {
             snapshots.push(
                 hot_history_snapshot(
-                &format!("after-turn-{}", index + 1),
-                start,
-                &state_db_path,
-                &session,
+                    &format!("after-turn-{}", index + 1),
+                    start,
+                    &state_db_path,
+                    &session,
                 )
                 .await?,
             );
@@ -502,13 +502,8 @@ async fn run_hot_history(args: HotHistoryArgs) -> Result<()> {
     }
 
     kernel.end_session(&mut session).await?;
-    snapshots.push(hot_history_snapshot(
-        "after-end-session",
-        start,
-        &state_db_path,
-        &session,
-    )
-    .await?);
+    snapshots
+        .push(hot_history_snapshot("after-end-session", start, &state_db_path, &session).await?);
 
     let report = PerfReport {
         scenario: "hot-history".to_string(),
@@ -544,7 +539,10 @@ async fn run_idle_runtime(args: IdleRuntimeArgs) -> Result<()> {
     let harness_dir = workspace_root.join("harnesses");
     let state_db_path = workspace_root.join("state.db");
     fs::create_dir_all(&harness_dir)?;
-    fs::write(harness_dir.join("main.lua"), "-- idle runtime perf harness\n")?;
+    fs::write(
+        harness_dir.join("main.lua"),
+        "-- idle runtime perf harness\n",
+    )?;
 
     let mut config = build_config(
         &workspace_root,
@@ -555,7 +553,10 @@ async fn run_idle_runtime(args: IdleRuntimeArgs) -> Result<()> {
         Some(args.idle_timeout_seconds),
     )?;
     if let Some(provider) = config.providers.get_mut("mock") {
-        provider.base_url = Some(synthetic_text("Idle runtime response.", args.response_bytes));
+        provider.base_url = Some(synthetic_text(
+            "Idle runtime response.",
+            args.response_bytes,
+        ));
     }
 
     let mut kernel = Kernel::builder(config).build()?;
@@ -593,11 +594,9 @@ async fn run_idle_runtime(args: IdleRuntimeArgs) -> Result<()> {
             ));
         }
         if args.idle_timeout_seconds == 0 && index + 1 < args.requests {
-            let _ = wait_for_peer_runtime_release(
-                &manager,
-                Duration::from_millis(args.max_wait_ms),
-            )
-            .await;
+            let _ =
+                wait_for_peer_runtime_release(&manager, Duration::from_millis(args.max_wait_ms))
+                    .await;
         }
     }
 
@@ -1233,7 +1232,8 @@ async fn hot_history_snapshot(
     snapshot.tool_result_errors = Some(metrics.tool_result_errors);
     snapshot.history_message_offset = Some(session.history_message_offset);
     snapshot.hot_window_pruned = Some(session.history_is_pruned());
-    snapshot.persisted_messages = persisted_message_count(state_db_path, session.internal_id).await?;
+    snapshot.persisted_messages =
+        persisted_message_count(state_db_path, session.internal_id).await?;
     Ok(snapshot)
 }
 
@@ -1614,6 +1614,7 @@ fn markdown_report(report: &PerfReport) -> String {
     out.push_str(&format!("- config: `{}`\n", report.config));
     out.push_str(&format!("- workspace_root: `{}`\n", report.workspace_root));
     out.push_str(&format!("- state_db_path: `{}`\n\n", report.state_db_path));
+    push_snapshot_summary(&mut out, &report.snapshots);
     out.push_str(
         "| label | elapsed_ms | rss_kb | pss_kb | state_db_main_bytes | state_db_wal_bytes | state_db_shm_bytes | state_db_bytes | turn_index | persisted_messages | history_len | history_message_offset | hot_window_pruned | history_payload_bytes | tool_results | tool_result_errors | outbound_messages | active_sessions | messages_per_session |\n",
     );
@@ -1643,6 +1644,142 @@ fn markdown_report(report: &PerfReport) -> String {
         ));
     }
     out
+}
+
+fn push_snapshot_summary(out: &mut String, snapshots: &[Snapshot]) {
+    let Some((first, last)) = snapshots.first().zip(snapshots.last()) else {
+        return;
+    };
+
+    out.push_str("## Summary\n\n");
+    out.push_str("| metric | first | last | delta | peak |\n");
+    out.push_str("|---|---:|---:|---:|---:|\n");
+    push_summary_row(
+        out,
+        "elapsed_ms",
+        first.elapsed_ms.to_string(),
+        last.elapsed_ms.to_string(),
+        display_i128_delta(first.elapsed_ms, last.elapsed_ms),
+        display_u128_option(snapshots.iter().map(|snapshot| snapshot.elapsed_ms).max()),
+    );
+    push_summary_row(
+        out,
+        "rss_kb",
+        display_option(first.rss_kb),
+        display_option(last.rss_kb),
+        display_optional_i128_delta(first.rss_kb, last.rss_kb),
+        display_option(
+            snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.rss_kb)
+                .max(),
+        ),
+    );
+    push_summary_row(
+        out,
+        "pss_kb",
+        display_option(first.pss_kb),
+        display_option(last.pss_kb),
+        display_optional_i128_delta(first.pss_kb, last.pss_kb),
+        display_option(
+            snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.pss_kb)
+                .max(),
+        ),
+    );
+    push_summary_row(
+        out,
+        "state_db_bytes",
+        first.state_db_bytes.to_string(),
+        last.state_db_bytes.to_string(),
+        display_optional_i128_delta(Some(first.state_db_bytes), Some(last.state_db_bytes)),
+        display_option(
+            snapshots
+                .iter()
+                .map(|snapshot| snapshot.state_db_bytes)
+                .max(),
+        ),
+    );
+    push_summary_row(
+        out,
+        "persisted_messages",
+        display_usize_option(first.persisted_messages),
+        display_usize_option(last.persisted_messages),
+        display_optional_isize_delta(first.persisted_messages, last.persisted_messages),
+        display_usize_option(
+            snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.persisted_messages)
+                .max(),
+        ),
+    );
+    push_summary_row(
+        out,
+        "history_len",
+        display_usize_option(first.history_len),
+        display_usize_option(last.history_len),
+        display_optional_isize_delta(first.history_len, last.history_len),
+        display_usize_option(
+            snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.history_len)
+                .max(),
+        ),
+    );
+    push_summary_row(
+        out,
+        "history_payload_bytes",
+        display_usize_option(first.history_payload_bytes),
+        display_usize_option(last.history_payload_bytes),
+        display_optional_isize_delta(first.history_payload_bytes, last.history_payload_bytes),
+        display_usize_option(
+            snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.history_payload_bytes)
+                .max(),
+        ),
+    );
+    push_summary_row(
+        out,
+        "outbound_messages",
+        display_usize_option(first.outbound_messages),
+        display_usize_option(last.outbound_messages),
+        display_optional_isize_delta(first.outbound_messages, last.outbound_messages),
+        display_usize_option(
+            snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.outbound_messages)
+                .max(),
+        ),
+    );
+    push_summary_row(
+        out,
+        "active_sessions",
+        display_usize_option(first.active_sessions),
+        display_usize_option(last.active_sessions),
+        display_optional_isize_delta(first.active_sessions, last.active_sessions),
+        display_usize_option(
+            snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.active_sessions)
+                .max(),
+        ),
+    );
+    out.push('\n');
+}
+
+fn push_summary_row(
+    out: &mut String,
+    label: &str,
+    first: String,
+    last: String,
+    delta: String,
+    peak: String,
+) {
+    out.push_str(&format!(
+        "| {label} | {first} | {last} | {delta} | {peak} |\n"
+    ));
 }
 
 fn footprint_markdown_report(report: &FootprintReport) -> String {
@@ -1691,7 +1828,11 @@ fn footprint_markdown_report(report: &FootprintReport) -> String {
 fn line_counts_cells(counts: &LineCounts) -> String {
     format!(
         "{} | {} | {} | {} | {}",
-        counts.files, counts.total_lines, counts.blank_lines, counts.comment_lines, counts.code_lines
+        counts.files,
+        counts.total_lines,
+        counts.blank_lines,
+        counts.comment_lines,
+        counts.code_lines
     )
 }
 
@@ -1699,6 +1840,38 @@ fn display_option(value: Option<u64>) -> String {
     value
         .map(|value| value.to_string())
         .unwrap_or_else(|| "-".to_string())
+}
+
+fn display_u128_option(value: Option<u128>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn display_i128_delta(first: u128, last: u128) -> String {
+    signed_delta(last as i128 - first as i128)
+}
+
+fn display_optional_i128_delta(first: Option<u64>, last: Option<u64>) -> String {
+    match (first, last) {
+        (Some(first), Some(last)) => signed_delta(last as i128 - first as i128),
+        _ => "-".to_string(),
+    }
+}
+
+fn display_optional_isize_delta(first: Option<usize>, last: Option<usize>) -> String {
+    match (first, last) {
+        (Some(first), Some(last)) => signed_delta(last as i128 - first as i128),
+        _ => "-".to_string(),
+    }
+}
+
+fn signed_delta(delta: i128) -> String {
+    if delta >= 0 {
+        format!("+{delta}")
+    } else {
+        delta.to_string()
+    }
 }
 
 fn display_usize_option(value: Option<usize>) -> String {

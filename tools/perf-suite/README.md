@@ -66,6 +66,9 @@ a larger resident window, and debug to compare against effectively unbounded hot
 history.
 
 Reports are written to `.workspace/perf-reports/` by default as JSON and Markdown.
+JSON reports keep the raw snapshots. Markdown reports add a short summary table
+with first, final, delta, and peak values for the main memory, storage, and
+session-volume metrics.
 
 The fake channel scenario starts the real daemon, uses the channel runner with an in-process mock driver, and keeps inference mocked:
 
