@@ -140,6 +140,16 @@ fn recompute_token_count(state: &mut ContextState) {
     state.token_count = estimate_history_input_tokens(&state.system_prompt, &state.messages);
 }
 
+fn refresh_message_state(state: &mut ContextState) {
+    state.prompt = infer_prompt_from_messages(&state.messages);
+    recompute_token_count(state);
+}
+
+fn replace_messages(state: &mut ContextState, messages: Vec<InferenceMessage>) {
+    state.messages = messages;
+    refresh_message_state(state);
+}
+
 impl UserData for ContextWrapper {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // Properties
@@ -242,9 +252,7 @@ impl UserData for ContextWrapper {
             let messages: Vec<InferenceMessage> =
                 lua.from_value(val).map_err(mlua::Error::external)?;
             let mut state = this.lock_state();
-            state.prompt = infer_prompt_from_messages(&messages);
-            state.messages = messages;
-            recompute_token_count(&mut state);
+            replace_messages(&mut state, messages);
             Ok(())
         });
 
@@ -391,9 +399,7 @@ impl UserData for ContextWrapper {
                         let msgs: Vec<InferenceMessage> =
                             lua.from_value(val).map_err(mlua::Error::external)?;
                         let mut state = this.lock_state();
-                        state.prompt = infer_prompt_from_messages(&msgs);
-                        state.messages = msgs;
-                        recompute_token_count(&mut state);
+                        replace_messages(&mut state, msgs);
                         Ok(())
                     }
                     _ => Err(mlua::Error::RuntimeError(format!(
@@ -409,8 +415,7 @@ impl UserData for ContextWrapper {
             let msg: InferenceMessage = lua.from_value(val).map_err(mlua::Error::external)?;
             let mut state = this.lock_state();
             state.messages.push(msg);
-            state.prompt = infer_prompt_from_messages(&state.messages);
-            recompute_token_count(&mut state);
+            refresh_message_state(&mut state);
             Ok(())
         });
 
@@ -419,8 +424,7 @@ impl UserData for ContextWrapper {
             // Lua is 1-indexed, Rust is 0-indexed
             if idx > 0 && idx <= state.messages.len() {
                 state.messages.remove(idx - 1);
-                state.prompt = infer_prompt_from_messages(&state.messages);
-                recompute_token_count(&mut state);
+                refresh_message_state(&mut state);
                 Ok(())
             } else {
                 Err(mlua::Error::RuntimeError(format!(
