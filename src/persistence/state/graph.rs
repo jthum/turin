@@ -2,6 +2,37 @@ use anyhow::{Context, Result};
 
 use super::{GraphEdgeCreate, GraphEdgeRow, GraphNodeRow, GraphProvenance, GraphRef, StateStore};
 
+const GRAPH_NODE_SELECT: &str = r#"
+SELECT id,
+       public_id,
+       session_id,
+       kind,
+       label,
+       origin_task_id,
+       origin_execution_id,
+       metadata,
+       created_at
+FROM graph_nodes
+"#;
+
+const GRAPH_EDGE_SELECT: &str = r#"
+SELECT id,
+       public_id,
+       session_id,
+       source_kind,
+       source_id,
+       target_kind,
+       target_id,
+       relation_kind,
+       source_role,
+       target_role,
+       origin_task_id,
+       origin_execution_id,
+       metadata,
+       created_at
+FROM graph_edges
+"#;
+
 impl StateStore {
     pub async fn create_graph_node(
         &self,
@@ -48,24 +79,8 @@ impl StateStore {
 
     pub async fn get_graph_node(&self, node_id: i64) -> Result<Option<GraphNodeRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT id,
-                       public_id,
-                       session_id,
-                       kind,
-                       label,
-                       origin_task_id,
-                       origin_execution_id,
-                       metadata,
-                       created_at
-                FROM graph_nodes
-                WHERE id = ?1
-                "#,
-                [node_id],
-            )
-            .await?;
+        let sql = format!("{GRAPH_NODE_SELECT} WHERE id = ?1");
+        let mut rows = conn.query(&sql, [node_id]).await?;
 
         if let Some(row) = rows.next().await? {
             Ok(Some(graph_node_from_row(&row)?))
@@ -76,25 +91,8 @@ impl StateStore {
 
     pub async fn list_graph_nodes_for_session(&self, session_id: i64) -> Result<Vec<GraphNodeRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT id,
-                       public_id,
-                       session_id,
-                       kind,
-                       label,
-                       origin_task_id,
-                       origin_execution_id,
-                       metadata,
-                       created_at
-                FROM graph_nodes
-                WHERE session_id = ?1
-                ORDER BY created_at, id
-                "#,
-                [session_id],
-            )
-            .await?;
+        let sql = format!("{GRAPH_NODE_SELECT} WHERE session_id = ?1 ORDER BY created_at, id");
+        let mut rows = conn.query(&sql, [session_id]).await?;
 
         let mut nodes = Vec::new();
         while let Some(row) = rows.next().await? {
@@ -156,29 +154,8 @@ impl StateStore {
 
     pub async fn get_graph_edge(&self, edge_id: i64) -> Result<Option<GraphEdgeRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT id,
-                       public_id,
-                       session_id,
-                       source_kind,
-                       source_id,
-                       target_kind,
-                       target_id,
-                       relation_kind,
-                       source_role,
-                       target_role,
-                       origin_task_id,
-                       origin_execution_id,
-                       metadata,
-                       created_at
-                FROM graph_edges
-                WHERE id = ?1
-                "#,
-                [edge_id],
-            )
-            .await?;
+        let sql = format!("{GRAPH_EDGE_SELECT} WHERE id = ?1");
+        let mut rows = conn.query(&sql, [edge_id]).await?;
 
         if let Some(row) = rows.next().await? {
             Ok(Some(graph_edge_from_row(&row)?))
@@ -194,29 +171,13 @@ impl StateStore {
 
     pub async fn list_graph_edges_from(&self, source: &GraphRef) -> Result<Vec<GraphEdgeRow>> {
         let conn = self.connect().await?;
+        let sql = format!(
+            "{GRAPH_EDGE_SELECT}
+            WHERE source_kind = ?1 AND source_id = ?2
+            ORDER BY created_at, id"
+        );
         let mut rows = conn
-            .query(
-                r#"
-                SELECT id,
-                       public_id,
-                       session_id,
-                       source_kind,
-                       source_id,
-                       target_kind,
-                       target_id,
-                       relation_kind,
-                       source_role,
-                       target_role,
-                       origin_task_id,
-                       origin_execution_id,
-                       metadata,
-                       created_at
-                FROM graph_edges
-                WHERE source_kind = ?1 AND source_id = ?2
-                ORDER BY created_at, id
-                "#,
-                turso::params![source.kind.clone(), source.id.clone()],
-            )
+            .query(&sql, turso::params![source.kind.clone(), source.id.clone()])
             .await?;
 
         let mut edges = Vec::new();
@@ -228,29 +189,13 @@ impl StateStore {
 
     pub async fn list_graph_edges_to(&self, target: &GraphRef) -> Result<Vec<GraphEdgeRow>> {
         let conn = self.connect().await?;
+        let sql = format!(
+            "{GRAPH_EDGE_SELECT}
+            WHERE target_kind = ?1 AND target_id = ?2
+            ORDER BY created_at, id"
+        );
         let mut rows = conn
-            .query(
-                r#"
-                SELECT id,
-                       public_id,
-                       session_id,
-                       source_kind,
-                       source_id,
-                       target_kind,
-                       target_id,
-                       relation_kind,
-                       source_role,
-                       target_role,
-                       origin_task_id,
-                       origin_execution_id,
-                       metadata,
-                       created_at
-                FROM graph_edges
-                WHERE target_kind = ?1 AND target_id = ?2
-                ORDER BY created_at, id
-                "#,
-                turso::params![target.kind.clone(), target.id.clone()],
-            )
+            .query(&sql, turso::params![target.kind.clone(), target.id.clone()])
             .await?;
 
         let mut edges = Vec::new();
@@ -267,25 +212,9 @@ impl StateStore {
     ) -> Result<Vec<GraphEdgeRow>> {
         let conn = self.connect().await?;
         let sql = format!(
-            r#"
-            SELECT id,
-                   public_id,
-                   session_id,
-                   source_kind,
-                   source_id,
-                   target_kind,
-                   target_id,
-                   relation_kind,
-                   source_role,
-                   target_role,
-                   origin_task_id,
-                   origin_execution_id,
-                   metadata,
-                   created_at
-            FROM graph_edges
+            "{GRAPH_EDGE_SELECT}
             WHERE {where_clause}
-            ORDER BY created_at, id
-            "#
+            ORDER BY created_at, id"
         );
         let mut rows = conn.query(&sql, params).await?;
 
