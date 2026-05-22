@@ -105,12 +105,15 @@ Channel scenarios also accept:
 ```bash
 --agent-idle-timeout-seconds 1
 --post-run-idle-wait-ms 1500
+--trim-allocator-after-idle
 ```
 
 Use these together to separate persisted storage growth from live daemon runtime
 retention. Channel reports include `live_sessions` for daemon-held runtime
 sessions; `active_sessions` remains the planned number of logical channel
-conversations in scale scenarios.
+conversations in scale scenarios. `--trim-allocator-after-idle` is a diagnostic
+knob for Linux/glibc builds: it records whether retained PSS looks like allocator
+retention after live sessions have been released.
 
 The idle runtime scenario submits mocked peer-agent requests, samples memory while
 the runtime is live, then waits for idle hibernation:

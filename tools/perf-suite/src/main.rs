@@ -160,6 +160,10 @@ struct FakeChannelArgs {
     #[arg(long, default_value_t = 0)]
     post_run_idle_wait_ms: u64,
 
+    /// Call malloc_trim(0) after the post-run idle wait and record another snapshot.
+    #[arg(long)]
+    trim_allocator_after_idle: bool,
+
     /// Report output directory.
     #[arg(long, default_value = ".workspace/perf-reports")]
     report_dir: PathBuf,
@@ -206,6 +210,10 @@ struct ChannelScaleArgs {
     /// Milliseconds to wait after the driver finishes before taking an idle snapshot.
     #[arg(long, default_value_t = 0)]
     post_run_idle_wait_ms: u64,
+
+    /// Call malloc_trim(0) after the post-run idle wait and record another snapshot.
+    #[arg(long)]
+    trim_allocator_after_idle: bool,
 
     /// Report output directory.
     #[arg(long, default_value = ".workspace/perf-reports")]
@@ -792,6 +800,21 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
         ));
     }
 
+    if args.trim_allocator_after_idle {
+        let _ = trim_allocator();
+        snapshots.push(snapshot(
+            "after-allocator-trim",
+            start,
+            &state_db_path,
+            None,
+            None,
+            Some(outbound_count),
+            None,
+            Some(daemon.live_session_count().await?),
+            None,
+        ));
+    }
+
     daemon.stop().await?;
     snapshots.push(snapshot(
         "after-daemon-stop",
@@ -813,6 +836,8 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
             "mock_response_bytes": mock_response.len(),
             "agent_idle_timeout_seconds": args.agent_idle_timeout_seconds,
             "post_run_idle_wait_ms": args.post_run_idle_wait_ms,
+            "trim_allocator_after_idle": args.trim_allocator_after_idle,
+            "allocator_trim_supported": allocator_trim_supported(),
         }),
         workspace_root: workspace_root.display().to_string(),
         state_db_path: state_db_path.display().to_string(),
@@ -934,6 +959,24 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
             .push(after_idle_wait);
     }
 
+    if args.trim_allocator_after_idle {
+        let _ = trim_allocator();
+        let after_allocator_trim = channel_scale_snapshot(
+            "after-allocator-trim",
+            start,
+            &state_db_path,
+            Some(outbound_count),
+            Some(args.sessions),
+            Some(args.messages_per_session),
+            Some(daemon.live_session_count().await?),
+        )
+        .await?;
+        snapshots
+            .lock()
+            .expect("scale snapshots lock poisoned")
+            .push(after_allocator_trim);
+    }
+
     daemon.stop().await?;
     let after_daemon_stop = channel_scale_snapshot(
         "after-daemon-stop",
@@ -960,6 +1003,8 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
             "mock_response_bytes": mock_response.len(),
             "agent_idle_timeout_seconds": args.agent_idle_timeout_seconds,
             "post_run_idle_wait_ms": args.post_run_idle_wait_ms,
+            "trim_allocator_after_idle": args.trim_allocator_after_idle,
+            "allocator_trim_supported": allocator_trim_supported(),
         }),
         workspace_root: workspace_root.display().to_string(),
         state_db_path: state_db_path.display().to_string(),
@@ -1822,6 +1867,20 @@ fn sibling_len(path: &Path, suffix: &str) -> u64 {
 
 fn file_len(path: &Path) -> u64 {
     path.metadata().map(|metadata| metadata.len()).unwrap_or(0)
+}
+
+fn allocator_trim_supported() -> bool {
+    cfg!(all(target_os = "linux", target_env = "gnu"))
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn trim_allocator() -> bool {
+    unsafe { libc::malloc_trim(0) != 0 }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn trim_allocator() -> bool {
+    false
 }
 
 fn write_reports(report_dir: &Path, report: &PerfReport) -> Result<()> {
