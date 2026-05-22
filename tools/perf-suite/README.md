@@ -70,6 +70,10 @@ JSON reports keep the raw snapshots. Markdown reports add a short summary table
 with first, final, delta, and peak values for the main memory, storage, and
 session-volume metrics.
 
+Runtime scenarios suppress streamed turn output by default so long runs do not
+flood the terminal. Add `--verbose-turn-output` to hot-history, fake-channel,
+channel-scale, or idle-runtime when debugging the mocked conversation itself.
+
 The fake channel scenario starts the real daemon, uses the channel runner with an in-process mock driver, and keeps inference mocked:
 
 ```bash

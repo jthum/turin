@@ -6,6 +6,7 @@ use futures::stream;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -116,6 +117,10 @@ struct HotHistoryArgs {
     /// Override hot-history old tool-result payload byte limit.
     #[arg(long)]
     hot_history_max_tool_result_bytes: Option<usize>,
+
+    /// Print streamed turn output while the scenario runs.
+    #[arg(long)]
+    verbose_turn_output: bool,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -150,6 +155,10 @@ struct FakeChannelArgs {
     /// Report output directory.
     #[arg(long, default_value = ".workspace/perf-reports")]
     report_dir: PathBuf,
+
+    /// Print streamed turn output while the scenario runs.
+    #[arg(long)]
+    verbose_turn_output: bool,
 }
 
 #[derive(Parser)]
@@ -185,6 +194,10 @@ struct ChannelScaleArgs {
     /// Report output directory.
     #[arg(long, default_value = ".workspace/perf-reports")]
     report_dir: PathBuf,
+
+    /// Print streamed turn output while the scenario runs.
+    #[arg(long)]
+    verbose_turn_output: bool,
 }
 
 #[derive(Parser)]
@@ -212,6 +225,10 @@ struct IdleRuntimeArgs {
     /// Report output directory.
     #[arg(long, default_value = ".workspace/perf-reports")]
     report_dir: PathBuf,
+
+    /// Print streamed turn output while the scenario runs.
+    #[arg(long)]
+    verbose_turn_output: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -482,26 +499,30 @@ async fn run_hot_history(args: HotHistoryArgs) -> Result<()> {
     let expected_tool_calls = tool_call_count(args.turns, args.tool_every);
     let mut snapshots = vec![hot_history_snapshot("start", start, &state_db_path, &session).await?];
 
-    for index in 0..args.turns {
-        kernel
-            .run(&mut session, Some(format!("Process payload {index}.")))
-            .await
-            .with_context(|| format!("hot-history turn {index} failed"))?;
+    {
+        let _stdout_guard = StdoutSilencer::new(!args.verbose_turn_output)?;
+        for index in 0..args.turns {
+            kernel
+                .run(&mut session, Some(format!("Process payload {index}.")))
+                .await
+                .with_context(|| format!("hot-history turn {index} failed"))?;
 
-        if (index + 1) % args.sample_every == 0 || index + 1 == args.turns {
-            snapshots.push(
-                hot_history_snapshot(
-                    &format!("after-turn-{}", index + 1),
-                    start,
-                    &state_db_path,
-                    &session,
-                )
-                .await?,
-            );
+            if (index + 1) % args.sample_every == 0 || index + 1 == args.turns {
+                snapshots.push(
+                    hot_history_snapshot(
+                        &format!("after-turn-{}", index + 1),
+                        start,
+                        &state_db_path,
+                        &session,
+                    )
+                    .await?,
+                );
+            }
         }
+
+        kernel.end_session(&mut session).await?;
     }
 
-    kernel.end_session(&mut session).await?;
     snapshots
         .push(hot_history_snapshot("after-end-session", start, &state_db_path, &session).await?);
 
@@ -573,30 +594,35 @@ async fn run_idle_runtime(args: IdleRuntimeArgs) -> Result<()> {
         0,
     )];
 
-    for index in 0..args.requests {
-        let request_id = manager
-            .submit(
-                "default",
-                QueuedTask::ad_hoc(format!("idle runtime request {index}")),
-                None,
-            )
-            .await?;
-        let result = manager.await_result(&request_id, Some(30_000)).await?;
-        if let Some(err) = result.error {
-            anyhow::bail!("idle-runtime request {index} failed: {err}");
-        }
-        if index == 0 {
-            snapshots.push(idle_runtime_snapshot(
-                "after-first-request",
-                start,
-                &state_db_path,
-                manager.list_live_sessions(None).await.len(),
-            ));
-        }
-        if args.idle_timeout_seconds == 0 && index + 1 < args.requests {
-            let _ =
-                wait_for_peer_runtime_release(&manager, Duration::from_millis(args.max_wait_ms))
-                    .await;
+    {
+        let _stdout_guard = StdoutSilencer::new(!args.verbose_turn_output)?;
+        for index in 0..args.requests {
+            let request_id = manager
+                .submit(
+                    "default",
+                    QueuedTask::ad_hoc(format!("idle runtime request {index}")),
+                    None,
+                )
+                .await?;
+            let result = manager.await_result(&request_id, Some(30_000)).await?;
+            if let Some(err) = result.error {
+                anyhow::bail!("idle-runtime request {index} failed: {err}");
+            }
+            if index == 0 {
+                snapshots.push(idle_runtime_snapshot(
+                    "after-first-request",
+                    start,
+                    &state_db_path,
+                    manager.list_live_sessions(None).await.len(),
+                ));
+            }
+            if args.idle_timeout_seconds == 0 && index + 1 < args.requests {
+                let _ = wait_for_peer_runtime_release(
+                    &manager,
+                    Duration::from_millis(args.max_wait_ms),
+                )
+                .await;
+            }
         }
     }
 
@@ -701,9 +727,12 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
     let mut driver = MockChannelDriver::new(sample_events(args.messages, args.message_bytes));
     let sent = Arc::clone(&driver.sent);
 
-    runner
-        .run_driver("default", &mut driver, Some(30_000))
-        .await?;
+    {
+        let _stdout_guard = StdoutSilencer::new(!args.verbose_turn_output)?;
+        runner
+            .run_driver("default", &mut driver, Some(30_000))
+            .await?;
+    }
 
     let outbound_count = sent.lock().expect("sent lock poisoned").len();
     snapshots.push(snapshot(
@@ -805,9 +834,12 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
     let mut driver = MockChannelDriver::with_scale_recorder(events, recorder);
     let sent = Arc::clone(&driver.sent);
 
-    runner
-        .run_driver("default", &mut driver, Some(120_000))
-        .await?;
+    {
+        let _stdout_guard = StdoutSilencer::new(!args.verbose_turn_output)?;
+        runner
+            .run_driver("default", &mut driver, Some(120_000))
+            .await?;
+    }
 
     let outbound_count = sent.lock().expect("sent lock poisoned").len();
     drop(driver);
@@ -871,6 +903,71 @@ fn prepare_workspace(workspace_root: Option<PathBuf>) -> Result<(Option<TempDir>
     let temp = tempfile::tempdir().context("failed to create perf workspace")?;
     let path = temp.path().to_path_buf();
     Ok((Some(temp), path))
+}
+
+#[cfg(unix)]
+struct StdoutSilencer {
+    saved_stdout: Option<i32>,
+}
+
+#[cfg(unix)]
+impl StdoutSilencer {
+    fn new(enabled: bool) -> Result<Self> {
+        if !enabled {
+            return Ok(Self { saved_stdout: None });
+        }
+
+        io::stdout().flush().ok();
+        let saved_stdout = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        if saved_stdout < 0 {
+            return Err(io::Error::last_os_error()).context("failed to save stdout");
+        }
+
+        let dev_null = fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/null")
+            .context("failed to open /dev/null")?;
+        let result = unsafe {
+            libc::dup2(
+                std::os::fd::AsRawFd::as_raw_fd(&dev_null),
+                libc::STDOUT_FILENO,
+            )
+        };
+        if result < 0 {
+            let err = io::Error::last_os_error();
+            unsafe {
+                libc::close(saved_stdout);
+            }
+            return Err(err).context("failed to silence stdout");
+        }
+
+        Ok(Self {
+            saved_stdout: Some(saved_stdout),
+        })
+    }
+}
+
+#[cfg(unix)]
+impl Drop for StdoutSilencer {
+    fn drop(&mut self) {
+        if let Some(saved_stdout) = self.saved_stdout.take() {
+            io::stdout().flush().ok();
+            unsafe {
+                libc::dup2(saved_stdout, libc::STDOUT_FILENO);
+                libc::close(saved_stdout);
+            }
+        }
+    }
+}
+
+#[cfg(not(unix))]
+struct StdoutSilencer;
+
+#[cfg(not(unix))]
+impl StdoutSilencer {
+    fn new(_enabled: bool) -> Result<Self> {
+        Ok(Self)
+    }
 }
 
 impl ChannelDaemonHarness {
