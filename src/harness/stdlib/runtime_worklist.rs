@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -9,7 +8,9 @@ use turin_types::{TaskInputContent, ToolsConfig};
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::action_bindings;
 use crate::harness::stdlib::agent_bindings::{active_trace_id, queue_max, queue_push_one};
-use crate::harness::stdlib::binding_common::{optional_lua_json, resolve_scoped_store_selector};
+use crate::harness::stdlib::binding_common::{
+    bridge_async_anyhow, bridge_async_lua, optional_lua_json, resolve_scoped_store_selector,
+};
 use crate::harness::stdlib::db_support::{
     selector_denied_by_dynamic_open, store_path_scope_from_snapshot, store_selector_from_fields,
 };
@@ -134,15 +135,6 @@ fn row_json_payload_value(lua: &Lua, raw: Option<&str>) -> LuaResult<Value> {
     }
 }
 
-fn block_on_lua<F, T, E>(future: F) -> LuaResult<T>
-where
-    F: Future<Output = Result<T, E>>,
-    E: std::fmt::Display,
-{
-    crate::harness::globals::block_on_current(future)
-        .map_err(|err| mlua::Error::runtime(err.to_string()))
-}
-
 fn item_payload_value(lua: &Lua, row: &WorkItemRow) -> LuaResult<Value> {
     let payload = lua.create_table()?;
     payload.set("kind", row.item_kind.clone())?;
@@ -180,7 +172,7 @@ fn dispatch_prompt_item(
     let task = work_item_prompt_task(row, trace_id.as_deref())?;
 
     let snapshot = runtime_policy_snapshot(app_data).map_err(anyhow::Error::msg)?;
-    let task_id = block_on_lua(async {
+    let task_id = bridge_async_lua(async {
         queue_push_one(&app_data.execution_ctx, task, queue_max(&snapshot), false).await
     })?;
 
@@ -247,7 +239,7 @@ fn current_claim_identity(app_data: &HarnessAppData) -> (String, Option<String>,
 }
 
 fn load_work_items(handle: &WorklistHandle) -> LuaResult<Vec<WorkItemRow>> {
-    block_on_lua(async { handle.store.list_work_items(handle.worklist.id).await })
+    bridge_async_lua(async { handle.store.list_work_items(handle.worklist.id).await })
 }
 
 fn work_items_table(
@@ -363,7 +355,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                 require_capability(&handle.app_data, "runtime.worklist.claim")
                     .map_err(mlua::Error::runtime)?;
                 let (agent_id, session_id, execution_id) = current_claim_identity(&handle.app_data);
-                let claimed = block_on_lua(async {
+                let claimed = bridge_async_lua(async {
                     handle
                         .store
                         .try_claim_work_item(
@@ -375,8 +367,9 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                         )
                         .await
                 })?;
-                let row = block_on_lua(async { handle.store.get_work_item_by_id(item_id).await })?
-                    .ok_or_else(|| mlua::Error::runtime("work item not found".to_string()))?;
+                let row =
+                    bridge_async_lua(async { handle.store.get_work_item_by_id(item_id).await })?
+                        .ok_or_else(|| mlua::Error::runtime("work item not found".to_string()))?;
                 if !claimed && row.claim_execution_id.as_deref() != execution_id.as_deref() {
                     return Ok(Value::Nil);
                 }
@@ -401,7 +394,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                             .to_string(),
                     )
                 })?;
-                let row = block_on_lua(async {
+                let row = bridge_async_lua(async {
                     handle
                         .store
                         .heartbeat_work_item_claim(item_id, &execution_id, now_unix_ms())
@@ -425,8 +418,9 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
             lua.create_function(move |lua, (_self, _opts): (Table, Option<Table>)| {
                 require_capability(&handle.app_data, "runtime.worklist.dispatch")
                     .map_err(mlua::Error::runtime)?;
-                let row = block_on_lua(async { handle.store.get_work_item_by_id(item_id).await })?
-                    .ok_or_else(|| mlua::Error::runtime("work item not found".to_string()))?;
+                let row =
+                    bridge_async_lua(async { handle.store.get_work_item_by_id(item_id).await })?
+                        .ok_or_else(|| mlua::Error::runtime("work item not found".to_string()))?;
                 dispatch_item_result(lua, &row, &handle)
             })?,
         )?;
@@ -446,7 +440,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                     .flatten();
                 let metadata_raw =
                     serialize_json_opt(metadata_json.as_ref()).map_err(mlua::Error::runtime)?;
-                let row = block_on_lua(async {
+                let row = bridge_async_lua(async {
                     handle
                         .store
                         .complete_work_item(item_id, metadata_raw.as_deref())
@@ -465,7 +459,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
             lua.create_function(move |lua, (_self, reason): (Table, Option<String>)| {
                 require_capability(&handle.app_data, "runtime.worklist.fail")
                     .map_err(mlua::Error::runtime)?;
-                let row = block_on_lua(async {
+                let row = bridge_async_lua(async {
                     handle
                         .store
                         .fail_work_item(item_id, reason.as_deref())
@@ -484,7 +478,8 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
             lua.create_function(move |lua, _self: Table| {
                 require_capability(&handle.app_data, "runtime.worklist.requeue")
                     .map_err(mlua::Error::runtime)?;
-                let row = block_on_lua(async { handle.store.release_work_item(item_id).await })?;
+                let row =
+                    bridge_async_lua(async { handle.store.release_work_item(item_id).await })?;
                 Ok(Value::Table(item_proxy(lua, handle.clone(), row)?))
             })?,
         )?;
@@ -511,7 +506,7 @@ fn item_proxy(lua: &Lua, handle: WorklistHandle, row: WorkItemRow) -> LuaResult<
                     .map(|value| value.unwrap_or_else(|| "pending".to_string()));
                 let failure_reason = parse_present_string_opt(&fields, "failure_reason")?;
                 let priority = parse_i64_opt(&fields, "priority")?;
-                let row = block_on_lua(async {
+                let row = bridge_async_lua(async {
                     handle
                         .store
                         .update_work_item(WorkItemUpdate {
@@ -591,7 +586,7 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                         .map_err(mlua::Error::runtime)?;
                     let metadata = serialize_json_opt(parsed.metadata.as_ref())
                         .map_err(mlua::Error::runtime)?;
-                    let row = block_on_lua(async {
+                    let row = bridge_async_lua(async {
                         handle
                             .store
                             .create_work_item(WorkItemInsert {
@@ -684,7 +679,7 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                 let mut released_rows = Vec::with_capacity(candidates.len());
                 for row in candidates {
                     let released =
-                        block_on_lua(async { handle.store.release_work_item(row.id).await })?;
+                        bridge_async_lua(async { handle.store.release_work_item(row.id).await })?;
                     released_rows.push(released);
                 }
                 work_items_value(lua, &handle, released_rows)
@@ -775,7 +770,7 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                     query.where_map.as_ref(),
                     now,
                 ) {
-                    let claimed = block_on_lua(async {
+                    let claimed = bridge_async_lua(async {
                         handle
                             .store
                             .try_claim_work_item(
@@ -788,11 +783,12 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
                             .await
                     })?;
                     if claimed {
-                        let refreshed =
-                            block_on_lua(async { handle.store.get_work_item_by_id(row.id).await })?
-                                .ok_or_else(|| {
-                                    mlua::Error::runtime("claimed work item vanished".to_string())
-                                })?;
+                        let refreshed = bridge_async_lua(async {
+                            handle.store.get_work_item_by_id(row.id).await
+                        })?
+                        .ok_or_else(|| {
+                            mlua::Error::runtime("claimed work item vanished".to_string())
+                        })?;
                         return Ok(Value::Table(item_proxy(lua, handle.clone(), refreshed)?));
                     }
                 }
@@ -901,7 +897,7 @@ pub fn register_runtime_worklist_namespace(
                     runtime_store_settings(&app_data)?;
                 let manager = app_data.store_manager.clone();
                 let store_selector = selector.clone();
-                let store = block_on_lua(async move {
+                let store = bridge_async_lua(async move {
                     open_store(
                         manager,
                         selector,
@@ -914,7 +910,7 @@ pub fn register_runtime_worklist_namespace(
                 let metadata_json = optional_lua_json(lua, opts.get::<Value>("metadata")?)?;
                 let metadata_raw =
                     serialize_json_opt(metadata_json.as_ref()).map_err(mlua::Error::runtime)?;
-                let worklist = block_on_lua(async {
+                let worklist = bridge_async_lua(async {
                     store
                         .open_worklist(&name, &scope_ref(scope.as_ref()), metadata_raw.as_deref())
                         .await
@@ -945,7 +941,7 @@ pub(crate) fn hydrate_worklist_ref(
     let selector = object_refs::store_selector_from_json(ref_obj.get("store"));
     let (path_scope, max_open_handles, idle_close_seconds) =
         runtime_store_settings(app_data).map_err(anyhow::Error::msg)?;
-    let store = crate::harness::globals::block_on_current(async {
+    let store = bridge_async_anyhow(async {
         open_store(
             app_data.store_manager.clone(),
             selector.clone(),
@@ -958,10 +954,8 @@ pub(crate) fn hydrate_worklist_ref(
 
     let row = if let Some(id) = ref_obj.get("id").and_then(|value| value.as_str()) {
         let uuid = uuid::Uuid::parse_str(id)?;
-        crate::harness::globals::block_on_current(async {
-            store.get_worklist_by_public_id(uuid).await
-        })?
-        .ok_or_else(|| anyhow::anyhow!("worklist ref '{}' not found", id))?
+        bridge_async_anyhow(async { store.get_worklist_by_public_id(uuid).await })?
+            .ok_or_else(|| anyhow::anyhow!("worklist ref '{}' not found", id))?
     } else {
         let name = ref_obj
             .get("name")
@@ -971,9 +965,7 @@ pub(crate) fn hydrate_worklist_ref(
             .get("scope_ref")
             .and_then(|value| value.as_str())
             .unwrap_or("");
-        crate::harness::globals::block_on_current(async {
-            store.open_worklist(name, scope_ref, None).await
-        })?
+        bridge_async_anyhow(async { store.open_worklist(name, scope_ref, None).await })?
     };
 
     worklist_proxy(
@@ -997,7 +989,7 @@ pub(crate) fn hydrate_workitem_ref(
     let selector = object_refs::store_selector_from_json(ref_obj.get("store"));
     let (path_scope, max_open_handles, idle_close_seconds) =
         runtime_store_settings(app_data).map_err(anyhow::Error::msg)?;
-    let store = crate::harness::globals::block_on_current(async {
+    let store = bridge_async_anyhow(async {
         open_store(
             app_data.store_manager.clone(),
             selector.clone(),
@@ -1012,14 +1004,10 @@ pub(crate) fn hydrate_workitem_ref(
         .and_then(|value| value.as_str())
         .ok_or_else(|| anyhow::anyhow!("workitem ref requires id"))?;
     let uuid = uuid::Uuid::parse_str(id)?;
-    let row = crate::harness::globals::block_on_current(async {
-        store.get_work_item_by_public_id(uuid).await
-    })?
-    .ok_or_else(|| anyhow::anyhow!("workitem ref '{}' not found", id))?;
-    let worklist = crate::harness::globals::block_on_current(async {
-        store.get_worklist_by_id(row.worklist_id).await
-    })?
-    .ok_or_else(|| anyhow::anyhow!("worklist for workitem ref '{}' not found", id))?;
+    let row = bridge_async_anyhow(async { store.get_work_item_by_public_id(uuid).await })?
+        .ok_or_else(|| anyhow::anyhow!("workitem ref '{}' not found", id))?;
+    let worklist = bridge_async_anyhow(async { store.get_worklist_by_id(row.worklist_id).await })?
+        .ok_or_else(|| anyhow::anyhow!("worklist for workitem ref '{}' not found", id))?;
     item_proxy(
         lua,
         WorklistHandle {

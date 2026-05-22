@@ -51,6 +51,22 @@ where
     block_on_current(async move { fut.await.map_err(|e| e.to_string()) })
 }
 
+pub fn bridge_async_lua<F, T, E>(fut: F) -> LuaResult<T>
+where
+    F: Future<Output = Result<T, E>>,
+    E: Display,
+{
+    bridge_async_display_err(fut).map_err(mlua::Error::runtime)
+}
+
+pub fn bridge_async_anyhow<F, T, E>(fut: F) -> anyhow::Result<T>
+where
+    F: Future<Output = Result<T, E>>,
+    E: Display,
+{
+    bridge_async_display_err(fut).map_err(anyhow::Error::msg)
+}
+
 pub fn ok_bool() -> (Value, Value) {
     (Value::Boolean(true), Value::Nil)
 }
