@@ -183,16 +183,12 @@ impl StateStore {
         .await
         .context("Failed to insert work item")?;
         let row_id = conn.last_insert_rowid();
-        self.get_work_item_by_id(row_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Work item {} created but not visible", row_id))
+        self.require_visible_work_item_after(row_id, "created")
+            .await
     }
 
     pub async fn update_work_item(&self, update: WorkItemUpdate<'_>) -> Result<WorkItemRow> {
-        let current = self
-            .get_work_item_by_id(update.id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Work item {} not found", update.id))?;
+        let current = self.require_work_item(update.id).await?;
         let conn = self.connect().await?;
         conn.execute(
             r#"
@@ -236,9 +232,8 @@ impl StateStore {
         )
         .await
         .context("Failed to update work item")?;
-        self.get_work_item_by_id(update.id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Work item {} updated but not visible", update.id))
+        self.require_visible_work_item_after(update.id, "updated")
+            .await
     }
 
     pub async fn try_claim_work_item(
@@ -281,10 +276,7 @@ impl StateStore {
     }
 
     pub async fn release_work_item(&self, id: i64) -> Result<WorkItemRow> {
-        let current = self
-            .get_work_item_by_id(id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Work item {} not found", id))?;
+        let current = self.require_work_item(id).await?;
         let metadata = clear_pause_metadata(current.metadata.as_deref())?;
         let conn = self.connect().await?;
         conn.execute(
@@ -306,16 +298,11 @@ impl StateStore {
         )
         .await
         .context("Failed to release work item")?;
-        self.get_work_item_by_id(id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Work item {} released but not visible", id))
+        self.require_visible_work_item_after(id, "released").await
     }
 
     pub async fn pause_work_item(&self, id: i64, metadata: Option<&str>) -> Result<WorkItemRow> {
-        let current = self
-            .get_work_item_by_id(id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Work item {} not found", id))?;
+        let current = self.require_work_item(id).await?;
         let conn = self.connect().await?;
         conn.execute(
             r#"
@@ -336,9 +323,7 @@ impl StateStore {
         )
         .await
         .context("Failed to pause work item")?;
-        self.get_work_item_by_id(id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Work item {} paused but not visible", id))
+        self.require_visible_work_item_after(id, "paused").await
     }
 
     pub async fn heartbeat_work_item_claim(
@@ -369,10 +354,7 @@ impl StateStore {
     }
 
     pub async fn complete_work_item(&self, id: i64, metadata: Option<&str>) -> Result<WorkItemRow> {
-        let current = self
-            .get_work_item_by_id(id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Work item {} not found", id))?;
+        let current = self.require_work_item(id).await?;
         let conn = self.connect().await?;
         conn.execute(
             r#"
@@ -393,9 +375,7 @@ impl StateStore {
         )
         .await
         .context("Failed to complete work item")?;
-        self.get_work_item_by_id(id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Work item {} completed but not visible", id))
+        self.require_visible_work_item_after(id, "completed").await
     }
 
     pub async fn fail_work_item(&self, id: i64, reason: Option<&str>) -> Result<WorkItemRow> {
@@ -418,9 +398,19 @@ impl StateStore {
         )
         .await
         .context("Failed to fail work item")?;
+        self.require_visible_work_item_after(id, "failed").await
+    }
+
+    async fn require_work_item(&self, id: i64) -> Result<WorkItemRow> {
         self.get_work_item_by_id(id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Work item {} failed but not visible", id))
+            .ok_or_else(|| anyhow::anyhow!("Work item {} not found", id))
+    }
+
+    async fn require_visible_work_item_after(&self, id: i64, action: &str) -> Result<WorkItemRow> {
+        self.get_work_item_by_id(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Work item {} {} but not visible", id, action))
     }
 }
 
