@@ -3,7 +3,7 @@ use std::fmt::Display;
 use std::future::Future;
 
 use mlua::{Function, Lua, LuaSerdeExt, MultiValue, Result as LuaResult, Table, Value};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
 use crate::harness::globals::HarnessAppData;
@@ -134,6 +134,24 @@ pub fn optional_lua_object_json(
             "{} must be an object-like table, got {:?}",
             context, other
         ))),
+    }
+}
+
+pub fn parse_lua_table<T>(lua: &Lua, table: &Table, context: &str) -> LuaResult<T>
+where
+    T: DeserializeOwned,
+{
+    lua.from_value::<T>(Value::Table(table.clone()))
+        .map_err(|err| mlua::Error::runtime(format!("invalid {}: {}", context, err)))
+}
+
+pub fn parse_optional_lua_table<T>(lua: &Lua, table: Option<&Table>, context: &str) -> LuaResult<T>
+where
+    T: DeserializeOwned + Default,
+{
+    match table {
+        Some(table) => parse_lua_table(lua, table, context),
+        None => Ok(T::default()),
     }
 }
 
@@ -295,9 +313,7 @@ pub(crate) fn memory_search_request_from_opt(
             ..MemorySearchRequest::default()
         }),
         Some(Value::Table(t)) => {
-            let parsed = lua
-                .from_value::<LuaMemorySearchOpts>(Value::Table(t.clone()))
-                .map_err(|e| mlua::Error::runtime(format!("invalid memory search opts: {}", e)))?;
+            let parsed = parse_lua_table::<LuaMemorySearchOpts>(lua, &t, "memory search opts")?;
             let _ = parsed.trace;
             let store_selector = store_selector_from_fields(&t)?;
             let sources = memory_search_sources_from_table(&t)?;
@@ -325,9 +341,7 @@ pub(crate) fn memory_store_request_from_opts(
     match opts {
         None => Ok(MemoryStoreRequest::default()),
         Some(t) => {
-            let parsed = lua
-                .from_value::<LuaMemoryStoreOpts>(Value::Table(t.clone()))
-                .map_err(|e| mlua::Error::runtime(format!("invalid memory store opts: {}", e)))?;
+            let parsed = parse_lua_table::<LuaMemoryStoreOpts>(lua, &t, "memory store opts")?;
             let _ = parsed.trace;
             let store_selector = store_selector_from_fields(&t)?;
             Ok(MemoryStoreRequest {
@@ -376,11 +390,7 @@ pub(crate) fn memory_feedback_request_from_opts(
     match opts {
         None => Ok(MemoryFeedbackRequest::default()),
         Some(t) => {
-            let parsed = lua
-                .from_value::<LuaMemoryFeedbackOpts>(Value::Table(t.clone()))
-                .map_err(|e| {
-                    mlua::Error::runtime(format!("invalid memory feedback opts: {}", e))
-                })?;
+            let parsed = parse_lua_table::<LuaMemoryFeedbackOpts>(lua, &t, "memory feedback opts")?;
             let _ = parsed.trace;
             let store_selector = store_selector_from_fields(&t)?;
             let clamp = parsed.clamp.unwrap_or_default();
@@ -431,9 +441,7 @@ pub(crate) fn memory_purge_request_from_opts(
     match opts {
         None => Ok(MemoryPurgeRequest::default()),
         Some(t) => {
-            let parsed = lua
-                .from_value::<LuaMemoryPurgeOpts>(Value::Table(t.clone()))
-                .map_err(|e| mlua::Error::runtime(format!("invalid memory purge opts: {}", e)))?;
+            let parsed = parse_lua_table::<LuaMemoryPurgeOpts>(lua, &t, "memory purge opts")?;
             let _ = parsed.trace;
             let store_selector = store_selector_from_fields(&t)?;
             Ok(MemoryPurgeRequest {

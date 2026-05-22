@@ -1,10 +1,12 @@
 mod params;
 
-use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
+use mlua::{Lua, Result as LuaResult, Table, Value};
 use serde::{Deserialize, Serialize};
 
 use crate::harness::globals::HarnessAppData;
-use crate::harness::stdlib::binding_common::{bridge_async_result, json_ok, nil_err};
+use crate::harness::stdlib::binding_common::{
+    bridge_async_result, json_ok, nil_err, parse_optional_lua_table,
+};
 use crate::harness::stdlib::governance_support::{current_agent_id, require_capability};
 use params::{schedule_create_params, schedule_update_params};
 
@@ -137,17 +139,11 @@ pub fn register_runtime_schedule_namespace(
                     Ok(scheduler) => scheduler,
                     Err(err) => return nil_err(lua, &err),
                 };
-                let parsed = match opts {
-                    Some(opts) => lua
-                        .from_value::<LuaScheduleListOpts>(Value::Table(opts))
-                        .map_err(|e| {
-                            mlua::Error::runtime(format!(
-                                "invalid runtime.schedule.list opts: {}",
-                                e
-                            ))
-                        })?,
-                    None => LuaScheduleListOpts::default(),
-                };
+                let parsed = parse_optional_lua_table::<LuaScheduleListOpts>(
+                    lua,
+                    opts.as_ref(),
+                    "runtime.schedule.list opts",
+                )?;
                 let result = bridge_async_result(async move {
                     scheduler.list_jobs().await.map_err(|e| e.to_string())
                 });
@@ -196,17 +192,11 @@ pub fn register_runtime_schedule_namespace(
                     Ok(scheduler) => scheduler,
                     Err(err) => return nil_err(lua, &err),
                 };
-                let parsed = match opts {
-                    Some(opts) => lua
-                        .from_value::<LuaScheduleRunsOpts>(Value::Table(opts))
-                        .map_err(|e| {
-                            mlua::Error::runtime(format!(
-                                "invalid runtime.schedule.runs opts: {}",
-                                e
-                            ))
-                        })?,
-                    None => LuaScheduleRunsOpts::default(),
-                };
+                let parsed = parse_optional_lua_table::<LuaScheduleRunsOpts>(
+                    lua,
+                    opts.as_ref(),
+                    "runtime.schedule.runs opts",
+                )?;
                 let result = bridge_async_result(async move {
                     scheduler
                         .list_job_runs(&public_id, parsed.active_only, parsed.limit)

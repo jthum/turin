@@ -7,7 +7,9 @@ use crate::code_index_reader::{
     search as code_search, status as code_status,
 };
 use crate::harness::globals::HarnessAppData;
-use crate::harness::stdlib::binding_common::{bridge_async_result, nil_err, ok_value};
+use crate::harness::stdlib::binding_common::{
+    bridge_async_result, nil_err, ok_value, parse_optional_lua_table,
+};
 use crate::harness::stdlib::governance_support::require_capability as require_governance_capability;
 use crate::inference::embeddings::EmbeddingProvider;
 use turin_code_index::metadata::CodeIndexSemanticStatus;
@@ -307,12 +309,8 @@ fn codebase_selector_from_value(value: Value) -> LuaResult<CodebaseSelector> {
 }
 
 fn code_search_request_from_opts(lua: &Lua, opts: Option<Table>) -> LuaResult<CodeSearchRequest> {
-    let parsed = match opts {
-        None => LuaCodeSearchOpts::default(),
-        Some(table) => lua
-            .from_value::<LuaCodeSearchOpts>(Value::Table(table))
-            .map_err(|e| mlua::Error::runtime(format!("invalid code search opts: {e}")))?,
-    };
+    let parsed =
+        parse_optional_lua_table::<LuaCodeSearchOpts>(lua, opts.as_ref(), "code search opts")?;
     let _ = parsed.trace;
     Ok(CodeSearchRequest {
         limit: parsed.limit.unwrap_or(10).max(1) as usize,
@@ -325,12 +323,11 @@ fn code_search_request_from_opts(lua: &Lua, opts: Option<Table>) -> LuaResult<Co
 }
 
 fn parse_status_opts(lua: &Lua, opts: Option<Table>) -> LuaResult<LuaCodeStatusOpts> {
-    let parsed = match opts {
-        None => LuaCodeStatusOpts::default(),
-        Some(table) => lua
-            .from_value::<LuaCodeStatusOpts>(Value::Table(table))
-            .map_err(|e| mlua::Error::runtime(format!("invalid code search status opts: {e}")))?,
-    };
+    let parsed = parse_optional_lua_table::<LuaCodeStatusOpts>(
+        lua,
+        opts.as_ref(),
+        "code search status opts",
+    )?;
     let _ = parsed.trace;
     Ok(parsed)
 }

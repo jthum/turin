@@ -3,7 +3,9 @@ use serde::Deserialize;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::harness::globals::HarnessAppData;
-use crate::harness::stdlib::binding_common::{bridge_async_display_err, wrap_registered_callback};
+use crate::harness::stdlib::binding_common::{
+    bridge_async_display_err, parse_optional_lua_table, wrap_registered_callback,
+};
 use crate::harness::stdlib::governance_support::{
     current_agent_id, require_capability, require_child_agent,
 };
@@ -153,17 +155,11 @@ pub fn register_runtime_signal_namespace(
                     ));
                 };
 
-                let parsed = match opts {
-                    Some(opts) => lua
-                        .from_value::<LuaRuntimeSignalListOpts>(Value::Table(opts))
-                        .map_err(|e| {
-                            mlua::Error::runtime(format!(
-                                "invalid runtime.signals.list opts: {}",
-                                e
-                            ))
-                        })?,
-                    None => LuaRuntimeSignalListOpts::default(),
-                };
+                let parsed = parse_optional_lua_table::<LuaRuntimeSignalListOpts>(
+                    lua,
+                    opts.as_ref(),
+                    "runtime.signals.list opts",
+                )?;
 
                 let target_agent = parsed.target_agent.or(parsed.agent);
                 let limit = parsed.limit.unwrap_or(100) as usize;
