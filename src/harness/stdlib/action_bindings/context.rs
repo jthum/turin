@@ -75,43 +75,9 @@ pub(crate) fn build_action_context(
         None => ctx.set("item", Value::Nil)?,
     }
 
-    {
-        let invocation = invocation.clone();
-        ctx.set(
-            "complete",
-            lua.create_function(move |lua, (_self, value): (Table, Value)| {
-                let value_json = optional_lua_json(lua, value)?;
-                let result =
-                    complete_action(&invocation, value_json).map_err(mlua::Error::runtime)?;
-                object_refs::decode_json_payload(lua, &result)
-            })?,
-        )?;
-    }
-
-    {
-        let invocation = invocation.clone();
-        ctx.set(
-            "fail",
-            lua.create_function(move |lua, (_self, value): (Table, Value)| {
-                let value_json = optional_lua_json(lua, value)?;
-                let result = fail_action(&invocation, value_json).map_err(mlua::Error::runtime)?;
-                object_refs::decode_json_payload(lua, &result)
-            })?,
-        )?;
-    }
-
-    {
-        let invocation = invocation.clone();
-        ctx.set(
-            "cancel",
-            lua.create_function(move |lua, (_self, value): (Table, Value)| {
-                let value_json = optional_lua_json(lua, value)?;
-                let result =
-                    cancel_action(&invocation, value_json).map_err(mlua::Error::runtime)?;
-                object_refs::decode_json_payload(lua, &result)
-            })?,
-        )?;
-    }
+    set_value_action_method(lua, &ctx, "complete", invocation, complete_action)?;
+    set_value_action_method(lua, &ctx, "fail", invocation, fail_action)?;
+    set_value_action_method(lua, &ctx, "cancel", invocation, cancel_action)?;
 
     {
         let invocation = invocation.clone();
@@ -151,6 +117,24 @@ pub(crate) fn build_action_context(
     }
 
     Ok(ctx)
+}
+
+fn set_value_action_method(
+    lua: &Lua,
+    ctx: &Table,
+    name: &str,
+    invocation: &ActionInvocationContext,
+    action: fn(&ActionInvocationContext, Option<JsonValue>) -> Result<JsonValue>,
+) -> LuaResult<()> {
+    let invocation = invocation.clone();
+    ctx.set(
+        name,
+        lua.create_function(move |lua, (_self, value): (Table, Value)| {
+            let value_json = optional_lua_json(lua, value)?;
+            let result = action(&invocation, value_json).map_err(mlua::Error::runtime)?;
+            object_refs::decode_json_payload(lua, &result)
+        })?,
+    )
 }
 
 fn checkpoint_proxy(lua: &Lua, checkpoint: JsonValue) -> LuaResult<Table> {
@@ -469,32 +453,16 @@ fn schedule_action_resume(
     let Some(scheduler) = scheduler else {
         return Ok(None);
     };
-    let next_run_unix_ms =
-        now_unix_ms().saturating_add((after_seconds.saturating_mul(1000)) as i64);
-    let job = crate::harness::globals::block_on_current(async {
-        scheduler
-            .create_job(ScheduleCreateParams {
-                agent_id,
-                prompt: None,
-                content: None,
-                tools: None,
-                conflict_policy: None,
-                action: Some(ScheduleActionParams {
-                    name: action_name.to_string(),
-                    params: Some(params),
-                }),
-                persistence: None,
-                next_run_unix_ms,
-                interval_seconds: None,
-                recurring_pattern: None,
-                overlap_policy: Some("skip".to_string()),
-                work_key: None,
-                max_concurrency: None,
-                enabled: true,
-            })
-            .await
-    })?;
-    Ok(Some(job.public_id))
+    let job_id = create_resume_job(
+        scheduler,
+        agent_id,
+        ScheduleActionParams {
+            name: action_name.to_string(),
+            params: Some(params),
+        },
+        after_seconds,
+    )?;
+    Ok(Some(job_id))
 }
 
 fn store_selector_json(selector: &StoreSelector) -> JsonValue {
@@ -514,13 +482,38 @@ fn schedule_worklist_resume(
     let Some(scheduler) = scheduler else {
         return Ok(None);
     };
-    let next_run_unix_ms =
-        now_unix_ms().saturating_add((after_seconds.saturating_mul(1000)) as i64);
     let scope = if item.worklist.scope_ref.is_empty() {
         JsonValue::Null
     } else {
         JsonValue::String(item.worklist.scope_ref.clone())
     };
+    let action = ScheduleActionParams {
+        name: "worklist.dispatch_next".to_string(),
+        params: Some(serde_json::json!({
+            "name": item.worklist.name,
+            "scope": scope,
+            "store": store_selector_json(&item.store_selector),
+            "where": {
+                "id": public_id_string(&item.row.public_id)
+            }
+        })),
+    };
+    Ok(Some(create_resume_job(
+        scheduler,
+        agent_id,
+        action,
+        after_seconds,
+    )?))
+}
+
+fn create_resume_job(
+    scheduler: &HarnessSchedulerAccess,
+    agent_id: String,
+    action: ScheduleActionParams,
+    after_seconds: u64,
+) -> Result<String> {
+    let next_run_unix_ms =
+        now_unix_ms().saturating_add((after_seconds.saturating_mul(1000)) as i64);
     let job = crate::harness::globals::block_on_current(async {
         scheduler
             .create_job(ScheduleCreateParams {
@@ -529,17 +522,7 @@ fn schedule_worklist_resume(
                 content: None,
                 tools: None,
                 conflict_policy: None,
-                action: Some(ScheduleActionParams {
-                    name: "worklist.dispatch_next".to_string(),
-                    params: Some(serde_json::json!({
-                        "name": item.worklist.name,
-                        "scope": scope,
-                        "store": store_selector_json(&item.store_selector),
-                        "where": {
-                            "id": public_id_string(&item.row.public_id)
-                        }
-                    })),
-                }),
+                action: Some(action),
                 persistence: None,
                 next_run_unix_ms,
                 interval_seconds: None,
@@ -551,5 +534,5 @@ fn schedule_worklist_resume(
             })
             .await
     })?;
-    Ok(Some(job.public_id))
+    Ok(job.public_id)
 }
