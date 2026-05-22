@@ -55,25 +55,13 @@ pub(crate) fn work_item_pause_due(row: &WorkItemRow, now_unix_ms: i64) -> bool {
     if !work_item_paused(row) {
         return false;
     }
-    match work_item_pause_until_unix_ms(work_item_metadata(row).as_ref()) {
-        Some(pause_until_unix_ms) => pause_until_unix_ms <= now_unix_ms,
-        None => false,
-    }
-}
-
-pub(crate) fn work_item_is_paused(row: &WorkItemRow, now_unix_ms: i64) -> bool {
-    if !work_item_paused(row) {
-        return false;
-    }
-    match work_item_pause_until_unix_ms(work_item_metadata(row).as_ref()) {
-        Some(pause_until_unix_ms) => pause_until_unix_ms > now_unix_ms,
-        None => true,
-    }
+    work_item_pause_until_unix_ms(work_item_metadata(row).as_ref())
+        .is_some_and(|pause_until_unix_ms| pause_until_unix_ms <= now_unix_ms)
 }
 
 pub(crate) fn work_item_claimable_now(row: &WorkItemRow, now_unix_ms: i64) -> bool {
     match row.status.as_str() {
-        "pending" => !work_item_is_paused(row, now_unix_ms),
+        "pending" => true,
         "paused" => work_item_pause_due(row, now_unix_ms),
         _ => false,
     }
