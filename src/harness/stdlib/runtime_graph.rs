@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use mlua::{IntoLua, Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::{ActiveHarnessExecutionContext, HarnessAppData};
-use crate::harness::stdlib::binding_common::{bridge_async_display_err, nil_err, ok_value};
+use crate::harness::stdlib::binding_common::{bridge_async_display_err, lua_table_result, nil_err};
 use crate::harness::stdlib::governance_support::require_capability as require_governance_capability;
 use crate::kernel::session_refs::{SessionReference, parse_session_reference};
 use crate::persistence::manager::{StoreManager, StoreSelector};
@@ -425,10 +425,7 @@ pub fn register_runtime_graph_namespace(
                         )
                         .await
                 });
-                match result {
-                    Ok(row) => Ok(ok_value(Value::Table(graph_node_to_lua(lua, row)?))),
-                    Err(err) => nil_err(lua, &err),
-                }
+                lua_table_result(lua, result, graph_node_to_lua)
             })?,
         )?;
     }
@@ -524,12 +521,7 @@ pub fn register_runtime_graph_namespace(
                         _ => unreachable!("selected_path mode was validated before async bridge"),
                     }
                 });
-                match result {
-                    Ok(turn_ids) => {
-                        Ok(ok_value(Value::Table(selected_path_to_lua(lua, turn_ids)?)))
-                    }
-                    Err(err) => nil_err(lua, &err),
-                }
+                lua_table_result(lua, result, selected_path_to_lua)
             })?,
         )?;
     }
@@ -576,10 +568,7 @@ pub fn register_runtime_graph_namespace(
                     edge.session_id = Some(session.internal_id);
                     session.store.create_graph_edge(edge).await
                 });
-                match result {
-                    Ok(row) => Ok(ok_value(Value::Table(graph_edge_to_lua(lua, row)?))),
-                    Err(err) => nil_err(lua, &err),
-                }
+                lua_table_result(lua, result, graph_edge_to_lua)
             })?,
         )?;
     }
@@ -609,10 +598,7 @@ pub fn register_runtime_graph_namespace(
                         .list_graph_nodes_for_session(session.internal_id)
                         .await
                 });
-                match result {
-                    Ok(rows) => Ok(ok_value(Value::Table(graph_nodes_to_lua(lua, rows)?))),
-                    Err(err) => nil_err(lua, &err),
-                }
+                lua_table_result(lua, result, graph_nodes_to_lua)
             })?,
         )?;
     }
@@ -658,10 +644,7 @@ pub fn register_runtime_graph_namespace(
                         }
                     }
                 });
-                match result {
-                    Ok(rows) => Ok(ok_value(Value::Table(graph_edges_to_lua(lua, rows)?))),
-                    Err(err) => nil_err(lua, &err),
-                }
+                lua_table_result(lua, result, graph_edges_to_lua)
             })?,
         )?;
     }

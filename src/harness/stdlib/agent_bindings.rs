@@ -8,8 +8,8 @@ use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{
-    bridge_async, bridge_async_display_err, bridge_async_result, nil_err, nil_ok, ok_value,
-    string_ok,
+    bridge_async, bridge_async_display_err, bridge_async_result, lua_table_result, nil_err, nil_ok,
+    ok_value, string_ok,
 };
 use crate::harness::stdlib::governance_support::{
     apply_active_grant_ceiling_to_peer_delegation, parse_delegated_capabilities,
@@ -541,12 +541,9 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                         .await
                         .map_err(|e| e.to_string())
                 });
-                match result {
-                    Ok(rows) => Ok(ok_value(Value::Table(branch_rows_to_lua_table(
-                        lua, &rows,
-                    )?))),
-                    Err(err) => nil_err(lua, &err),
-                }
+                lua_table_result(lua, result, |lua, rows| {
+                    branch_rows_to_lua_table(lua, &rows)
+                })
             })?,
         )?;
     }
@@ -600,12 +597,9 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     }
                     Ok::<_, String>((branch, activate && is_current_session))
                 });
-                match result {
-                    Ok((branch, deferred)) => Ok(ok_value(Value::Table(branch_row_to_lua_table(
-                        lua, &branch, deferred,
-                    )?))),
-                    Err(err) => nil_err(lua, &err),
-                }
+                lua_table_result(lua, result, |lua, (branch, deferred)| {
+                    branch_row_to_lua_table(lua, &branch, deferred)
+                })
             })?,
         )?;
     }
@@ -629,12 +623,9 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                         .await
                         .map_err(|e| e.to_string())
                 });
-                match result {
-                    Ok(rows) => Ok(ok_value(Value::Table(branch_rows_to_lua_table(
-                        lua, &rows,
-                    )?))),
-                    Err(err) => nil_err(lua, &err),
-                }
+                lua_table_result(lua, result, |lua, rows| {
+                    branch_rows_to_lua_table(lua, &rows)
+                })
             })?,
         )?;
     }
@@ -689,12 +680,9 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                         .map_err(|e| e.to_string())?;
                     Ok::<_, String>((branch_row, false))
                 });
-                match result {
-                    Ok((branch, deferred)) => Ok(ok_value(Value::Table(branch_row_to_lua_table(
-                        lua, &branch, deferred,
-                    )?))),
-                    Err(err) => nil_err(lua, &err),
-                }
+                lua_table_result(lua, result, |lua, (branch, deferred)| {
+                    branch_row_to_lua_table(lua, &branch, deferred)
+                })
             })?,
         )?;
     }
