@@ -424,28 +424,14 @@ fn prompt_field(field: &ChannelConfigField) -> Result<Value> {
                 input = input.default(default);
             }
             let value = input.interact_text()?;
-            if field.required && value.trim().is_empty() {
-                anyhow::bail!("Field '{}' must not be empty", field.key);
-            }
-            if value.trim().is_empty() {
-                Ok(Value::Null)
-            } else {
-                Ok(Value::String(value))
-            }
+            text_field_value(field, value)
         }
         "secret" => {
             let value = Password::new()
                 .with_prompt(prompt)
                 .allow_empty_password(!field.required)
                 .interact()?;
-            if field.required && value.trim().is_empty() {
-                anyhow::bail!("Field '{}' must not be empty", field.key);
-            }
-            if value.trim().is_empty() {
-                Ok(Value::Null)
-            } else {
-                Ok(Value::String(value))
-            }
+            text_field_value(field, value)
         }
         "boolean" => {
             let default = field
@@ -487,11 +473,7 @@ fn prompt_field(field: &ChannelConfigField) -> Result<Value> {
             if field.options.is_empty() {
                 anyhow::bail!("Field '{}' has no select options", field.key);
             }
-            let labels: Vec<String> = field
-                .options
-                .iter()
-                .map(|option| option.label.clone().unwrap_or_else(|| option.value.clone()))
-                .collect();
+            let labels = option_labels(field);
             let default_value = field.default.as_ref().and_then(Value::as_str);
             let default_index = default_value
                 .and_then(|wanted| {
@@ -512,11 +494,7 @@ fn prompt_field(field: &ChannelConfigField) -> Result<Value> {
             if field.options.is_empty() {
                 anyhow::bail!("Field '{}' has no multi-select options", field.key);
             }
-            let labels: Vec<String> = field
-                .options
-                .iter()
-                .map(|option| option.label.clone().unwrap_or_else(|| option.value.clone()))
-                .collect();
+            let labels = option_labels(field);
             let default_values = field
                 .default
                 .as_ref()
@@ -564,6 +542,25 @@ fn prompt_field(field: &ChannelConfigField) -> Result<Value> {
         }
         other => anyhow::bail!("Unsupported field type '{}'", other),
     }
+}
+
+fn text_field_value(field: &ChannelConfigField, value: String) -> Result<Value> {
+    if field.required && value.trim().is_empty() {
+        anyhow::bail!("Field '{}' must not be empty", field.key);
+    }
+    if value.trim().is_empty() {
+        Ok(Value::Null)
+    } else {
+        Ok(Value::String(value))
+    }
+}
+
+fn option_labels(field: &ChannelConfigField) -> Vec<String> {
+    field
+        .options
+        .iter()
+        .map(|option| option.label.clone().unwrap_or_else(|| option.value.clone()))
+        .collect()
 }
 
 fn apply_target_value(
