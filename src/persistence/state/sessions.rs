@@ -10,6 +10,9 @@ struct RankedSessionSearchHit {
     sort_id: i64,
 }
 
+const SESSION_SELECT: &str =
+    "SELECT id, public_id, agent_id, metadata, active_branch_head_id, created_at FROM sessions";
+
 impl StateStore {
     pub async fn create_session(
         &self,
@@ -52,22 +55,11 @@ impl StateStore {
 
     pub async fn get_session_row(&self, session_id: i64) -> Result<Option<SessionRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                "SELECT id, public_id, agent_id, metadata, active_branch_head_id, created_at FROM sessions WHERE id = ?1",
-                [session_id],
-            )
-            .await?;
+        let sql = format!("{SESSION_SELECT} WHERE id = ?1");
+        let mut rows = conn.query(&sql, [session_id]).await?;
 
         if let Some(row) = rows.next().await? {
-            Ok(Some(SessionRow {
-                id: row.get::<i64>(0)?,
-                public_id: row.get::<Vec<u8>>(1)?,
-                agent_id: row.get::<String>(2)?,
-                metadata: row.get::<Option<String>>(3)?,
-                active_branch_head_id: row.get::<Option<i64>>(4)?,
-                created_at: row.get::<String>(5)?,
-            }))
+            Ok(Some(map_session_row(&row)?))
         } else {
             Ok(None)
         }
@@ -79,22 +71,11 @@ impl StateStore {
     ) -> Result<Option<SessionRow>> {
         let conn = self.connect().await?;
         let public_id_bytes = public_id.into_bytes().to_vec();
-        let mut rows = conn
-            .query(
-                "SELECT id, public_id, agent_id, metadata, active_branch_head_id, created_at FROM sessions WHERE public_id = ?1",
-                turso::params![public_id_bytes],
-            )
-            .await?;
+        let sql = format!("{SESSION_SELECT} WHERE public_id = ?1");
+        let mut rows = conn.query(&sql, turso::params![public_id_bytes]).await?;
 
         if let Some(row) = rows.next().await? {
-            Ok(Some(SessionRow {
-                id: row.get::<i64>(0)?,
-                public_id: row.get::<Vec<u8>>(1)?,
-                agent_id: row.get::<String>(2)?,
-                metadata: row.get::<Option<String>>(3)?,
-                active_branch_head_id: row.get::<Option<i64>>(4)?,
-                created_at: row.get::<String>(5)?,
-            }))
+            Ok(Some(map_session_row(&row)?))
         } else {
             Ok(None)
         }
@@ -177,6 +158,17 @@ impl StateStore {
             .map(|hit| hit.row)
             .collect())
     }
+}
+
+fn map_session_row(row: &turso::Row) -> Result<SessionRow> {
+    Ok(SessionRow {
+        id: row.get::<i64>(0)?,
+        public_id: row.get::<Vec<u8>>(1)?,
+        agent_id: row.get::<String>(2)?,
+        metadata: row.get::<Option<String>>(3)?,
+        active_branch_head_id: row.get::<Option<i64>>(4)?,
+        created_at: row.get::<String>(5)?,
+    })
 }
 
 impl StateStore {
