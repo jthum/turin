@@ -16,6 +16,7 @@ Maps:
 - [Config](./config.md)
 - [Control Client](./control-client.md)
 - [Daemon CLI Render](./daemon-render.md)
+- [Daemon Protocol](./daemon-protocol.md)
 - [Daemon Registry](./daemon-registry.md)
 - [Governance](./governance.md)
 - [Harness Context](./harness-context.md)

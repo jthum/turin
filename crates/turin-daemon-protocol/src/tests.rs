@@ -1,5 +1,6 @@
 use super::*;
 use serde_json::json;
+use turin_types::{TaskInputContent, ToolsConfig};
 
 #[test]
 fn request_envelope_round_trips_typed_shape() {
