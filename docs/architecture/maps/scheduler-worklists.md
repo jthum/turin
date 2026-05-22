@@ -32,7 +32,9 @@ This subsystem should preserve two guarantees:
 - `src/harness/stdlib/action_bindings.rs`
   - Built-in action bridge for worklist actions invoked from harness code.
 - `src/persistence/state/scheduler.rs`
-  - Scheduled job and scheduled job run persistence operations.
+  - Scheduled job persistence operations: CRUD, due/running queries, overlap state, recurrence/failure status, enable/disable, and deletion.
+- `src/persistence/state/scheduler/runs.rs`
+  - Scheduled job run persistence operations: active/history queries, run start insertion, active-run counts, and run completion bookkeeping.
 - `src/persistence/state/worklists.rs`
   - Worklist and work item persistence operations.
 
@@ -154,3 +156,4 @@ The current module split is deliberate:
 - `runtime_worklist_selection.rs` answers "which runtime-visible work items match this proxy method?"
 - `runtime_worklist.rs` answers "how is the Lua worklist API registered and converted to/from proxies?"
 - `runtime_schedule/params.rs` answers "how do Lua schedule options become daemon protocol params?"
+- `persistence/state/scheduler/runs.rs` answers "how are scheduled job run rows recorded and reconciled with active job state?"
