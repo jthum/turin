@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use futures::future::BoxFuture;
 use futures::stream;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{self, Write};
@@ -152,6 +152,14 @@ struct FakeChannelArgs {
     #[arg(long)]
     workspace_root: Option<PathBuf>,
 
+    /// Agent runtime idle timeout written to the mock daemon config.
+    #[arg(long, default_value_t = 20)]
+    agent_idle_timeout_seconds: u64,
+
+    /// Milliseconds to wait after the driver finishes before taking an idle snapshot.
+    #[arg(long, default_value_t = 0)]
+    post_run_idle_wait_ms: u64,
+
     /// Report output directory.
     #[arg(long, default_value = ".workspace/perf-reports")]
     report_dir: PathBuf,
@@ -190,6 +198,14 @@ struct ChannelScaleArgs {
     /// Optional persistent workspace. If omitted, an ephemeral temp dir is used.
     #[arg(long)]
     workspace_root: Option<PathBuf>,
+
+    /// Agent runtime idle timeout written to the mock daemon config.
+    #[arg(long, default_value_t = 20)]
+    agent_idle_timeout_seconds: u64,
+
+    /// Milliseconds to wait after the driver finishes before taking an idle snapshot.
+    #[arg(long, default_value_t = 0)]
+    post_run_idle_wait_ms: u64,
 
     /// Report output directory.
     #[arg(long, default_value = ".workspace/perf-reports")]
@@ -291,6 +307,7 @@ struct Snapshot {
     history_len: Option<usize>,
     outbound_messages: Option<usize>,
     active_sessions: Option<usize>,
+    live_sessions: Option<usize>,
     messages_per_session: Option<usize>,
     persisted_messages: Option<usize>,
     history_message_offset: Option<usize>,
@@ -339,6 +356,11 @@ struct ChannelDaemonHarness {
     join: JoinHandle<Result<()>>,
 }
 
+#[derive(Debug, Deserialize)]
+struct LiveSessionsResponse {
+    sessions: Vec<serde_json::Value>,
+}
+
 struct MockChannelDriver {
     events: VecDeque<InboundEvent>,
     sent: Arc<Mutex<Vec<OutboundMessage>>>,
@@ -352,6 +374,7 @@ struct ScaleRecorder {
     state_db_path: PathBuf,
     sample_totals: HashSet<usize>,
     active_sessions: usize,
+    daemon: turin_daemon_client::DaemonClient,
 }
 
 impl InferenceProvider for SequencePerfProvider {
@@ -656,7 +679,7 @@ async fn run_idle_runtime(args: IdleRuntimeArgs) -> Result<()> {
             "idle_timeout_seconds": args.idle_timeout_seconds,
             "max_wait_ms": args.max_wait_ms,
             "released": released,
-            "active_sessions_column": "live peer runtime sessions",
+            "live_sessions_column": "live peer runtime sessions",
         }),
         workspace_root: workspace_root.display().to_string(),
         state_db_path: state_db_path.display().to_string(),
@@ -707,11 +730,17 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
         Some(0),
         None,
         None,
+        None,
     )];
 
     let mock_response = synthetic_text(&args.mock_response, args.response_bytes);
-    let daemon =
-        ChannelDaemonHarness::start(workspace_root.clone(), &state_db_path, &mock_response).await?;
+    let daemon = ChannelDaemonHarness::start(
+        workspace_root.clone(),
+        &state_db_path,
+        &mock_response,
+        args.agent_idle_timeout_seconds,
+    )
+    .await?;
     snapshots.push(snapshot(
         "after-daemon-start",
         start,
@@ -720,6 +749,7 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
         None,
         Some(0),
         None,
+        Some(daemon.live_session_count().await?),
         None,
     ));
 
@@ -743,8 +773,24 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
         None,
         Some(outbound_count),
         None,
+        Some(daemon.live_session_count().await?),
         None,
     ));
+
+    if args.post_run_idle_wait_ms > 0 {
+        sleep(Duration::from_millis(args.post_run_idle_wait_ms)).await;
+        snapshots.push(snapshot(
+            "after-idle-wait",
+            start,
+            &state_db_path,
+            None,
+            None,
+            Some(outbound_count),
+            None,
+            Some(daemon.live_session_count().await?),
+            None,
+        ));
+    }
 
     daemon.stop().await?;
     snapshots.push(snapshot(
@@ -756,6 +802,7 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
         Some(outbound_count),
         None,
         None,
+        None,
     ));
 
     let report = PerfReport {
@@ -764,6 +811,8 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
             "messages": args.messages,
             "message_bytes": args.message_bytes,
             "mock_response_bytes": mock_response.len(),
+            "agent_idle_timeout_seconds": args.agent_idle_timeout_seconds,
+            "post_run_idle_wait_ms": args.post_run_idle_wait_ms,
         }),
         workspace_root: workspace_root.display().to_string(),
         state_db_path: state_db_path.display().to_string(),
@@ -797,27 +846,33 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
             Some(0),
             Some(0),
             Some(0),
+            Some(0),
         )
         .await?,
     ]));
 
     let mock_response = synthetic_text(&args.mock_response, args.response_bytes);
-    let daemon =
-        ChannelDaemonHarness::start(workspace_root.clone(), &state_db_path, &mock_response).await?;
+    let daemon = ChannelDaemonHarness::start(
+        workspace_root.clone(),
+        &state_db_path,
+        &mock_response,
+        args.agent_idle_timeout_seconds,
+    )
+    .await?;
+    let after_daemon_start = channel_scale_snapshot(
+        "after-daemon-start",
+        start,
+        &state_db_path,
+        Some(0),
+        Some(0),
+        Some(0),
+        Some(daemon.live_session_count().await?),
+    )
+    .await?;
     snapshots
         .lock()
         .expect("scale snapshots lock poisoned")
-        .push(
-            channel_scale_snapshot(
-                "after-daemon-start",
-                start,
-                &state_db_path,
-                Some(0),
-                Some(0),
-                Some(0),
-            )
-            .await?,
-        );
+        .push(after_daemon_start);
 
     let sample_totals = checkpoints
         .iter()
@@ -829,6 +884,7 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
         state_db_path: state_db_path.clone(),
         sample_totals,
         active_sessions: args.sessions,
+        daemon: daemon.client(),
     };
 
     let runner = daemon.runner();
@@ -845,36 +901,54 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
 
     let outbound_count = sent.lock().expect("sent lock poisoned").len();
     drop(driver);
+    let after_runner = channel_scale_snapshot(
+        "after-runner",
+        start,
+        &state_db_path,
+        Some(outbound_count),
+        Some(args.sessions),
+        Some(args.messages_per_session),
+        Some(daemon.live_session_count().await?),
+    )
+    .await?;
     snapshots
         .lock()
         .expect("scale snapshots lock poisoned")
-        .push(
-            channel_scale_snapshot(
-                "after-runner",
-                start,
-                &state_db_path,
-                Some(outbound_count),
-                Some(args.sessions),
-                Some(args.messages_per_session),
-            )
-            .await?,
-        );
+        .push(after_runner);
+
+    if args.post_run_idle_wait_ms > 0 {
+        sleep(Duration::from_millis(args.post_run_idle_wait_ms)).await;
+        let after_idle_wait = channel_scale_snapshot(
+            "after-idle-wait",
+            start,
+            &state_db_path,
+            Some(outbound_count),
+            Some(args.sessions),
+            Some(args.messages_per_session),
+            Some(daemon.live_session_count().await?),
+        )
+        .await?;
+        snapshots
+            .lock()
+            .expect("scale snapshots lock poisoned")
+            .push(after_idle_wait);
+    }
 
     daemon.stop().await?;
+    let after_daemon_stop = channel_scale_snapshot(
+        "after-daemon-stop",
+        start,
+        &state_db_path,
+        Some(outbound_count),
+        Some(args.sessions),
+        Some(args.messages_per_session),
+        None,
+    )
+    .await?;
     snapshots
         .lock()
         .expect("scale snapshots lock poisoned")
-        .push(
-            channel_scale_snapshot(
-                "after-daemon-stop",
-                start,
-                &state_db_path,
-                Some(outbound_count),
-                Some(args.sessions),
-                Some(args.messages_per_session),
-            )
-            .await?,
-        );
+        .push(after_daemon_stop);
 
     let report = PerfReport {
         scenario: "channel-scale".to_string(),
@@ -884,6 +958,8 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
             "message_bytes": args.message_bytes,
             "checkpoints": checkpoints,
             "mock_response_bytes": mock_response.len(),
+            "agent_idle_timeout_seconds": args.agent_idle_timeout_seconds,
+            "post_run_idle_wait_ms": args.post_run_idle_wait_ms,
         }),
         workspace_root: workspace_root.display().to_string(),
         state_db_path: state_db_path.display().to_string(),
@@ -979,8 +1055,14 @@ impl ChannelDaemonHarness {
         workspace_root: PathBuf,
         state_db_path: &Path,
         mock_response: &str,
+        agent_idle_timeout_seconds: u64,
     ) -> Result<Self> {
-        let config_path = write_mock_runtime_config(&workspace_root, state_db_path, mock_response)?;
+        let config_path = write_mock_runtime_config(
+            &workspace_root,
+            state_db_path,
+            mock_response,
+            agent_idle_timeout_seconds,
+        )?;
         let endpoint = workspace_daemon_socket(&workspace_root);
         let serve_config_path = config_path.clone();
         let join =
@@ -1019,7 +1101,7 @@ impl ChannelDaemonHarness {
 
     fn runner(&self) -> ChannelRunner {
         ChannelRunner::new(
-            turin_daemon_client::DaemonClient::new(&self.endpoint),
+            self.client(),
             RunnerConfig {
                 channel_id: "mock".to_string(),
                 state_path: channel_runtime_dir(&self.workspace_root, "mock").join("bindings.json"),
@@ -1032,8 +1114,16 @@ impl ChannelDaemonHarness {
         )
     }
 
+    fn client(&self) -> turin_daemon_client::DaemonClient {
+        turin_daemon_client::DaemonClient::new(&self.endpoint)
+    }
+
+    async fn live_session_count(&self) -> Result<usize> {
+        live_session_count(&self.client()).await
+    }
+
     async fn stop(self) -> Result<()> {
-        let client = turin_daemon_client::DaemonClient::new(&self.endpoint);
+        let client = self.client();
         let _: serde_json::Value = client
             .request_ok(
                 None,
@@ -1045,6 +1135,16 @@ impl ChannelDaemonHarness {
             .context("timed out waiting for daemon to exit")??;
         Ok(())
     }
+}
+
+async fn live_session_count(client: &turin_daemon_client::DaemonClient) -> Result<usize> {
+    let response: LiveSessionsResponse = client
+        .request_ok(
+            None,
+            turin_daemon_protocol::DaemonRequest::SessionListLive(Default::default()),
+        )
+        .await?;
+    Ok(response.sessions.len())
 }
 
 impl MockChannelDriver {
@@ -1266,6 +1366,7 @@ fn snapshot(
     history_len: Option<usize>,
     outbound_messages: Option<usize>,
     active_sessions: Option<usize>,
+    live_sessions: Option<usize>,
     messages_per_session: Option<usize>,
 ) -> Snapshot {
     let memory = read_process_memory();
@@ -1283,6 +1384,7 @@ fn snapshot(
         history_len,
         outbound_messages,
         active_sessions,
+        live_sessions,
         messages_per_session,
         persisted_messages: None,
         history_message_offset: None,
@@ -1306,6 +1408,7 @@ fn idle_runtime_snapshot(
         None,
         None,
         None,
+        None,
         Some(live_sessions),
         None,
     )
@@ -1323,6 +1426,7 @@ async fn hot_history_snapshot(
         state_db_path,
         Some(session.turn_index),
         Some(session.history.len()),
+        None,
         None,
         None,
         None,
@@ -1362,6 +1466,7 @@ async fn channel_scale_snapshot(
     outbound_messages: Option<usize>,
     active_sessions: Option<usize>,
     messages_per_session: Option<usize>,
+    live_sessions: Option<usize>,
 ) -> Result<Snapshot> {
     let mut snapshot = snapshot(
         label,
@@ -1371,6 +1476,7 @@ async fn channel_scale_snapshot(
         None,
         outbound_messages,
         active_sessions,
+        live_sessions,
         messages_per_session,
     );
     snapshot.persisted_messages = persisted_message_count_for_all_sessions(state_db_path).await?;
@@ -1660,6 +1766,7 @@ impl ScaleRecorder {
             Some(outbound_count),
             Some(self.active_sessions),
             Some(messages_per_session),
+            Some(live_session_count(&self.daemon).await?),
         )
         .await?;
         self.snapshots
@@ -1760,12 +1867,12 @@ fn markdown_report(report: &PerfReport) -> String {
     out.push_str(&format!("- state_db_path: `{}`\n\n", report.state_db_path));
     push_snapshot_summary(&mut out, &report.snapshots);
     out.push_str(
-        "| label | elapsed_ms | rss_kb | pss_kb | state_db_main_bytes | state_db_wal_bytes | state_db_shm_bytes | state_db_bytes | turn_index | persisted_messages | history_len | history_message_offset | hot_window_pruned | history_payload_bytes | tool_results | tool_result_errors | outbound_messages | active_sessions | messages_per_session |\n",
+        "| label | elapsed_ms | rss_kb | pss_kb | state_db_main_bytes | state_db_wal_bytes | state_db_shm_bytes | state_db_bytes | turn_index | persisted_messages | history_len | history_message_offset | hot_window_pruned | history_payload_bytes | tool_results | tool_result_errors | outbound_messages | active_sessions | live_sessions | messages_per_session |\n",
     );
-    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|---:|---:|---:|---:|---:|---:|\n");
+    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|---:|---:|---:|---:|---:|---:|---:|\n");
     for snapshot in &report.snapshots {
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             snapshot.label,
             snapshot.elapsed_ms,
             display_option(snapshot.rss_kb),
@@ -1784,6 +1891,7 @@ fn markdown_report(report: &PerfReport) -> String {
             display_usize_option(snapshot.tool_result_errors),
             display_usize_option(snapshot.outbound_messages),
             display_usize_option(snapshot.active_sessions),
+            display_usize_option(snapshot.live_sessions),
             display_usize_option(snapshot.messages_per_session)
         ));
     }
@@ -1907,6 +2015,19 @@ fn push_snapshot_summary(out: &mut String, snapshots: &[Snapshot]) {
             snapshots
                 .iter()
                 .filter_map(|snapshot| snapshot.active_sessions)
+                .max(),
+        ),
+    );
+    push_summary_row(
+        out,
+        "live_sessions",
+        display_usize_option(first.live_sessions),
+        display_usize_option(last.live_sessions),
+        display_optional_isize_delta(first.live_sessions, last.live_sessions),
+        display_usize_option(
+            snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.live_sessions)
                 .max(),
         ),
     );
@@ -2058,6 +2179,7 @@ fn write_mock_runtime_config(
     workspace_root: &Path,
     state_db_path: &Path,
     mock_response: &str,
+    agent_idle_timeout_seconds: u64,
 ) -> Result<PathBuf> {
     let turin_root = workspace_turin_root(workspace_root);
     let harness_dir = turin_root.join("harnesses");
@@ -2072,6 +2194,7 @@ id = "default"
 model = "mock-model"
 provider = "mock"
 system_prompt = "Fake channel perf scenario"
+idle_timeout_seconds = {agent_idle_timeout_seconds}
 
 [kernel]
 workspace_root = "{workspace_root}"
@@ -2096,6 +2219,7 @@ bind = "127.0.0.1:0"
         workspace_root = toml_escape_path(workspace_root),
         state_db_path = toml_escape_path(state_db_path),
         mock_response = toml_escape(mock_response),
+        agent_idle_timeout_seconds = agent_idle_timeout_seconds,
     );
     fs::write(&config_path, config_toml)?;
     Ok(config_path)

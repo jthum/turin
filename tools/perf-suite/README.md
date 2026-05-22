@@ -100,6 +100,18 @@ Channel scenarios default to 256-byte inbound messages and 1 KiB mocked assistan
 responses. To isolate mostly metadata overhead, make both values intentionally
 small, for example `--message-bytes 16 --response-bytes 4`.
 
+Channel scenarios also accept:
+
+```bash
+--agent-idle-timeout-seconds 1
+--post-run-idle-wait-ms 1500
+```
+
+Use these together to separate persisted storage growth from live daemon runtime
+retention. Channel reports include `live_sessions` for daemon-held runtime
+sessions; `active_sessions` remains the planned number of logical channel
+conversations in scale scenarios.
+
 The idle runtime scenario submits mocked peer-agent requests, samples memory while
 the runtime is live, then waits for idle hibernation:
 
@@ -131,7 +143,7 @@ this scenario.
 - elapsed wall time
 - fake channel outbound count, for channel scenarios
 - active logical sessions and messages per session, for scale scenarios
-- live peer runtime session count, for the idle-runtime scenario
+- live daemon runtime session count, for channel and idle-runtime scenarios
 
 ## Compile Cost
 
