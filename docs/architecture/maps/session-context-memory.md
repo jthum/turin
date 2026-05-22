@@ -19,7 +19,9 @@ This subsystem should preserve three guarantees:
 - `src/kernel/hot_history.rs`
   - In-memory hot-window pruning, older tool-result payload trimming, and hot-history reports.
 - `src/kernel/turn/preflight.rs`
-  - Turn preparation, harness `on_turn_prepare`, context checkpoint refresh, and provider request context construction.
+  - Turn preparation, harness `on_turn_start`/`on_turn_prepare`, provider route fallback, stream preparation, and provider client initialization.
+- `src/kernel/turn/preflight/compaction.rs`
+  - Context-window estimation, context checkpoint refresh, summary generation, and provider request context compaction for turn preflight.
 - `src/kernel/turn/context_window.rs`
   - Token estimation, effective request context, checkpoint summary request construction, structural request compaction, and context-window trimming.
 - `src/kernel/config/inference.rs`
@@ -126,7 +128,8 @@ The current module split is deliberate:
 
 - `hot_history.rs` answers "what stays hot in resident session memory?"
 - `context_window.rs` answers "what fits into this provider request?"
-- `preflight.rs` answers "when do we refresh summaries, build request context, and try provider route candidates?"
+- `preflight.rs` answers "when do turn hooks run and how do we try provider route candidates?"
+- `preflight/compaction.rs` answers "when do we refresh summaries and build compacted provider request context?"
 - `session_lifecycle.rs` answers "when do we restore, materialize, and re-prune persisted history?"
 
 Likely future cleanup areas:
