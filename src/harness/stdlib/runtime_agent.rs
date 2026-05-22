@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::HarnessAppData;
@@ -195,6 +197,33 @@ fn parse_conflict_policy(raw: &str) -> LuaResult<ExecutionConflictPolicy> {
     raw.parse().map_err(mlua::Error::runtime)
 }
 
+fn require_submit_to_agent(
+    app_data: &HarnessAppData,
+    agent_id: &str,
+) -> LuaResult<Result<(), String>> {
+    if let Err(err) = require_governance_capability(app_data, "runtime.agent.submit") {
+        return Ok(Err(err));
+    }
+    if let Err(err) = require_child_agent_governance(app_data, agent_id) {
+        return Ok(Err(err));
+    }
+    let snapshot = runtime_policy_snapshot(app_data).map_err(mlua::Error::runtime)?;
+    if !policy_bool(&snapshot, "spawn.enabled", true) {
+        return Ok(Err("Policy denial: spawn.enabled=false".to_string()));
+    }
+    Ok(Ok(()))
+}
+
+fn delegated_capabilities_from_opts(
+    app_data: &HarnessAppData,
+    opts: Option<&Table>,
+    caller_label: &str,
+) -> LuaResult<Option<BTreeMap<String, bool>>> {
+    let delegated_capabilities =
+        parse_delegated_capabilities(app_data, opts, "capabilities", caller_label)?;
+    apply_active_grant_ceiling_to_peer_delegation(app_data, delegated_capabilities, caller_label)
+}
+
 pub fn register_runtime_agent_namespace(
     lua: &Lua,
     runtime_table: &Table,
@@ -245,19 +274,8 @@ pub fn register_runtime_agent_namespace(
             "submit",
             lua.create_function(
                 move |lua, (agent_id, task_val, opts): (String, Value, Option<Table>)| {
-                    if let Err(err) =
-                        require_governance_capability(&app_data_snapshot, "runtime.agent.submit")
-                    {
+                    if let Err(err) = require_submit_to_agent(&app_data_snapshot, &agent_id)? {
                         return nil_err(lua, &err);
-                    }
-                    if let Err(err) = require_child_agent_governance(&app_data_snapshot, &agent_id)
-                    {
-                        return nil_err(lua, &err);
-                    }
-                    let snapshot = runtime_policy_snapshot(&app_data_snapshot)
-                        .map_err(mlua::Error::runtime)?;
-                    if !policy_bool(&snapshot, "spawn.enabled", true) {
-                        return nil_err(lua, "Policy denial: spawn.enabled=false");
                     }
 
                     let task = match task_val {
@@ -275,15 +293,9 @@ pub fn register_runtime_agent_namespace(
                     if task.execution.is_none() {
                         task.execution = execution_overrides_from_opts(lua, opts.as_ref())?;
                     }
-                    let delegated_capabilities = parse_delegated_capabilities(
+                    let delegated_capabilities = delegated_capabilities_from_opts(
                         &app_data_snapshot,
                         opts.as_ref(),
-                        "capabilities",
-                        "runtime.agent.submit",
-                    )?;
-                    let delegated_capabilities = apply_active_grant_ceiling_to_peer_delegation(
-                        &app_data_snapshot,
-                        delegated_capabilities,
                         "runtime.agent.submit",
                     )?;
 
@@ -309,19 +321,8 @@ pub fn register_runtime_agent_namespace(
             lua.create_function(
                 move |lua, (agent_id, prompt, opts_value): (String, String, Option<Value>)| {
                     let opts = sidestep_opts_table_from_value(lua, opts_value)?;
-                    if let Err(err) =
-                        require_governance_capability(&app_data_snapshot, "runtime.agent.submit")
-                    {
+                    if let Err(err) = require_submit_to_agent(&app_data_snapshot, &agent_id)? {
                         return nil_err(lua, &err);
-                    }
-                    if let Err(err) = require_child_agent_governance(&app_data_snapshot, &agent_id)
-                    {
-                        return nil_err(lua, &err);
-                    }
-                    let snapshot = runtime_policy_snapshot(&app_data_snapshot)
-                        .map_err(mlua::Error::runtime)?;
-                    if !policy_bool(&snapshot, "spawn.enabled", true) {
-                        return nil_err(lua, "Policy denial: spawn.enabled=false");
                     }
 
                     let sidestep_mode = sidestep_mode_from_opts(opts.as_ref())?;
@@ -333,15 +334,9 @@ pub fn register_runtime_agent_namespace(
                         .as_ref()
                         .and_then(|table| table.get::<String>("slot_id").ok());
                     let title = title_from_opts(opts.as_ref());
-                    let delegated_capabilities = parse_delegated_capabilities(
+                    let delegated_capabilities = delegated_capabilities_from_opts(
                         &app_data_snapshot,
                         opts.as_ref(),
-                        "capabilities",
-                        "runtime.agent.submit",
-                    )?;
-                    let delegated_capabilities = apply_active_grant_ceiling_to_peer_delegation(
-                        &app_data_snapshot,
-                        delegated_capabilities,
                         "runtime.agent.submit",
                     )?;
                     let trace_id = active_trace_id(&app_data_snapshot);
@@ -457,23 +452,12 @@ pub fn register_runtime_agent_namespace(
             lua.create_function(
                 move |lua, (agent_id, prompt, opts): (String, String, Option<Table>)| {
                     if let Err(err) =
-                        require_governance_capability(&app_data_snapshot, "runtime.agent.submit")
-                    {
-                        return nil_err(lua, &err);
-                    }
-                    if let Err(err) =
                         require_governance_capability(&app_data_snapshot, "runtime.agent.await")
                     {
                         return nil_err(lua, &err);
                     }
-                    if let Err(err) = require_child_agent_governance(&app_data_snapshot, &agent_id)
-                    {
+                    if let Err(err) = require_submit_to_agent(&app_data_snapshot, &agent_id)? {
                         return nil_err(lua, &err);
-                    }
-                    let snapshot = runtime_policy_snapshot(&app_data_snapshot)
-                        .map_err(mlua::Error::runtime)?;
-                    if !policy_bool(&snapshot, "spawn.enabled", true) {
-                        return nil_err(lua, "Policy denial: spawn.enabled=false");
                     }
 
                     let mut task = QueuedTask::ad_hoc(prompt)
@@ -482,15 +466,9 @@ pub fn register_runtime_agent_namespace(
                     task.conflict_policy = conflict_policy_from_opts(opts.as_ref())?;
                     task.execution = execution_overrides_from_opts(lua, opts.as_ref())?;
                     let timeout_ms = timeout_ms_from_opts(opts.as_ref());
-                    let delegated_capabilities = parse_delegated_capabilities(
+                    let delegated_capabilities = delegated_capabilities_from_opts(
                         &app_data_snapshot,
                         opts.as_ref(),
-                        "capabilities",
-                        "runtime.agent.ask",
-                    )?;
-                    let delegated_capabilities = apply_active_grant_ceiling_to_peer_delegation(
-                        &app_data_snapshot,
-                        delegated_capabilities,
                         "runtime.agent.ask",
                     )?;
 
