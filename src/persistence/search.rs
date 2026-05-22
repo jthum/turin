@@ -41,10 +41,7 @@ impl StateStore {
                     embedding_key.context("Missing embedding key for embedded memory")?;
                 let embedding_dimensions = embedding_dimensions
                     .context("Missing embedding dimensions for embedded memory")?;
-                let mut vector_bytes = Vec::with_capacity(vector.len() * 4);
-                for &val in vector {
-                    vector_bytes.extend_from_slice(&val.to_le_bytes());
-                }
+                let vector_bytes = vector_to_le_bytes(vector);
 
                 conn.execute(
                     "INSERT INTO memories (public_id, scope_kind, scope_key, content, embedding, embedding_key, embedding_dimensions, metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -144,10 +141,7 @@ impl StateStore {
             let query_embedding_dimensions = query_embedding_dimensions
                 .context("Missing embedding dimensions for semantic memory search")?;
             // Convert to bytes
-            let mut vector_bytes = Vec::with_capacity(vec.len() * 4);
-            for &val in vec {
-                vector_bytes.extend_from_slice(&val.to_le_bytes());
-            }
+            let vector_bytes = vector_to_le_bytes(vec);
 
             let (sql, params) = if include_superseded {
                 (
@@ -197,27 +191,10 @@ impl StateStore {
                 let age_seconds: f64 = row.get::<Option<f64>>(11)?.unwrap_or(0.0);
                 let distance: f64 = row.get(12)?;
 
-                // Track row data if not seen
                 if let std::collections::hash_map::Entry::Vacant(e) = rows_data.entry(id) {
-                    e.insert(MemoryRow {
-                        id,
-                        public_id: row.get(1)?,
-                        scope_kind: row.get(2)?,
-                        scope_key: row.get(3)?,
-                        content: row.get(4)?,
-                        metadata: include_metadata
-                            .then(|| row.get::<Option<String>>(5))
-                            .transpose()?
-                            .flatten(),
-                        created_at: row.get(6)?,
-                        score: 0.0,
-                        lexical_score: None,
-                        semantic_score: Some(1.0 / (1.0 + distance.max(0.0))),
-                        weight: row.get(7)?,
-                        retrieval_count: row.get::<i64>(8)? as u64,
-                        last_retrieved_at: row.get(9)?,
-                        superseded_at: row.get(10)?,
-                    });
+                    let mut memory = memory_row_from_search_row(&row, id, include_metadata)?;
+                    memory.semantic_score = Some(1.0 / (1.0 + distance.max(0.0)));
+                    e.insert(memory);
                     recency_boosts.insert(id, recency_boost(age_seconds));
                 } else if let Some(existing) = rows_data.get_mut(&id) {
                     existing.semantic_score = Some(1.0 / (1.0 + distance.max(0.0)));
@@ -273,25 +250,9 @@ impl StateStore {
                     let lexical_score: f64 = row.get(12)?;
 
                     if let std::collections::hash_map::Entry::Vacant(e) = rows_data.entry(id) {
-                        e.insert(MemoryRow {
-                            id,
-                            public_id: row.get(1)?,
-                            scope_kind: row.get(2)?,
-                            scope_key: row.get(3)?,
-                            content: row.get(4)?,
-                            metadata: include_metadata
-                                .then(|| row.get::<Option<String>>(5))
-                                .transpose()?
-                                .flatten(),
-                            created_at: row.get(6)?,
-                            score: 0.0,
-                            lexical_score: Some(lexical_score),
-                            semantic_score: None,
-                            weight: row.get(7)?,
-                            retrieval_count: row.get::<i64>(8)? as u64,
-                            last_retrieved_at: row.get(9)?,
-                            superseded_at: row.get(10)?,
-                        });
+                        let mut memory = memory_row_from_search_row(&row, id, include_metadata)?;
+                        memory.lexical_score = Some(lexical_score);
+                        e.insert(memory);
                         recency_boosts.insert(id, recency_boost(age_seconds));
                     } else if let Some(existing) = rows_data.get_mut(&id) {
                         existing.lexical_score = Some(lexical_score);
@@ -542,6 +503,40 @@ impl StateStore {
 fn recency_boost(age_seconds: f64) -> f64 {
     let age_days = age_seconds.max(0.0) / 86_400.0;
     1.0 + (0.05 / (1.0 + age_days))
+}
+
+fn vector_to_le_bytes(vector: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(vector.len() * 4);
+    for &val in vector {
+        bytes.extend_from_slice(&val.to_le_bytes());
+    }
+    bytes
+}
+
+fn memory_row_from_search_row(
+    row: &turso::Row,
+    id: i64,
+    include_metadata: bool,
+) -> Result<MemoryRow> {
+    Ok(MemoryRow {
+        id,
+        public_id: row.get(1)?,
+        scope_kind: row.get(2)?,
+        scope_key: row.get(3)?,
+        content: row.get(4)?,
+        metadata: include_metadata
+            .then(|| row.get::<Option<String>>(5))
+            .transpose()?
+            .flatten(),
+        created_at: row.get(6)?,
+        score: 0.0,
+        lexical_score: None,
+        semantic_score: None,
+        weight: row.get(7)?,
+        retrieval_count: row.get::<i64>(8)? as u64,
+        last_retrieved_at: row.get(9)?,
+        superseded_at: row.get(10)?,
+    })
 }
 
 async fn current_utc_timestamp(conn: &turso::Connection) -> Result<String> {
