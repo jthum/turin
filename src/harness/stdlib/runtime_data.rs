@@ -4,8 +4,8 @@ use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{
     memory_feedback_request_from_opts, memory_feedback_signal_from_value,
     memory_purge_request_from_opts, memory_search_request_from_opt, memory_store_request_from_opts,
-    metadata_json_or_empty, resolve_memory_search_request, resolve_scoped_store_selector,
-    scoped_state_path_scope, scoped_state_path_scope_for_selectors, store_selector_from_opts_table,
+    metadata_json_or_empty, resolve_memory_search_request, resolve_scoped_store_and_path_scope,
+    scoped_state_path_scope_for_selectors, store_selector_from_opts_table,
 };
 use crate::harness::stdlib::context_selectors::table_to_selector;
 use crate::harness::stdlib::memory_kv_bindings::{
@@ -76,15 +76,12 @@ pub fn register_runtime_data_namespaces(
                     let selector = table_to_selector(ctx)?;
                     let metadata_json = metadata_json_or_empty(lua, metadata)?;
                     let mut request = memory_store_request_from_opts(lua, opts)?;
-                    request.store_selector = resolve_scoped_store_selector(
+                    let (store_selector, path_scope) = resolve_scoped_store_and_path_scope(
                         &app_data_snapshot,
                         &selector,
                         request.store_selector.clone(),
                     )?;
-                    let path_scope = scoped_state_path_scope(
-                        &app_data_snapshot,
-                        request.store_selector.as_ref(),
-                    )?;
+                    request.store_selector = store_selector;
                     memory_store_result(
                         lua,
                         manager.clone(),
@@ -109,13 +106,12 @@ pub fn register_runtime_data_namespaces(
                     let selector = table_to_selector(ctx)?;
                     let signal = memory_feedback_signal_from_value(signal)?;
                     let mut request = memory_feedback_request_from_opts(lua, opts)?;
-                    request.store_selector = resolve_scoped_store_selector(
+                    let (store_selector, path_scope) = resolve_scoped_store_and_path_scope(
                         &app_data_snapshot,
                         &selector,
                         request.store_selector.clone(),
                     )?;
-                    let path_scope =
-                        scoped_state_path_scope(&app_data_snapshot, request.store_selector.as_ref())?;
+                    request.store_selector = store_selector;
                     memory_feedback_result(
                         lua,
                         manager.clone(),
@@ -147,15 +143,12 @@ pub fn register_runtime_data_namespaces(
                     let selector = table_to_selector(ctx)?;
                     let metadata_json = metadata_json_or_empty(lua, metadata)?;
                     let mut request = memory_store_request_from_opts(lua, opts)?;
-                    request.store_selector = resolve_scoped_store_selector(
+                    let (store_selector, path_scope) = resolve_scoped_store_and_path_scope(
                         &app_data_snapshot,
                         &selector,
                         request.store_selector.clone(),
                     )?;
-                    let path_scope = scoped_state_path_scope(
-                        &app_data_snapshot,
-                        request.store_selector.as_ref(),
-                    )?;
+                    request.store_selector = store_selector;
                     memory_correct_result(
                         lua,
                         manager.clone(),
@@ -179,13 +172,12 @@ pub fn register_runtime_data_namespaces(
             lua.create_function(move |lua, (ctx, opts): (Table, Option<Table>)| {
                 let selector = table_to_selector(ctx)?;
                 let mut request = memory_purge_request_from_opts(lua, opts)?;
-                request.store_selector = resolve_scoped_store_selector(
+                let (store_selector, path_scope) = resolve_scoped_store_and_path_scope(
                     &app_data_snapshot,
                     &selector,
                     request.store_selector.clone(),
                 )?;
-                let path_scope =
-                    scoped_state_path_scope(&app_data_snapshot, request.store_selector.as_ref())?;
+                request.store_selector = store_selector;
                 memory_purge_result(lua, manager.clone(), selector, request, path_scope)
             })?,
         )?;
@@ -202,13 +194,11 @@ pub fn register_runtime_data_namespaces(
             lua.create_function(
                 move |lua, (key, ctx, opts): (String, Table, Option<Table>)| {
                     let selector = table_to_selector(ctx)?;
-                    let store_selector = resolve_scoped_store_selector(
+                    let (store_selector, path_scope) = resolve_scoped_store_and_path_scope(
                         &app_data_snapshot,
                         &selector,
                         store_selector_from_opts_table(opts)?,
                     )?;
-                    let path_scope =
-                        scoped_state_path_scope(&app_data_snapshot, store_selector.as_ref())?;
                     kv_get_result(
                         lua,
                         manager.clone(),
@@ -229,13 +219,11 @@ pub fn register_runtime_data_namespaces(
             lua.create_function(
                 move |lua, (key, value, ctx, opts): (String, String, Table, Option<Table>)| {
                     let selector = table_to_selector(ctx)?;
-                    let store_selector = resolve_scoped_store_selector(
+                    let (store_selector, path_scope) = resolve_scoped_store_and_path_scope(
                         &app_data_snapshot,
                         &selector,
                         store_selector_from_opts_table(opts)?,
                     )?;
-                    let path_scope =
-                        scoped_state_path_scope(&app_data_snapshot, store_selector.as_ref())?;
                     kv_set_result(
                         lua,
                         manager.clone(),
@@ -257,13 +245,11 @@ pub fn register_runtime_data_namespaces(
             lua.create_function(
                 move |lua, (key, ctx, opts): (String, Table, Option<Table>)| {
                     let selector = table_to_selector(ctx)?;
-                    let store_selector = resolve_scoped_store_selector(
+                    let (store_selector, path_scope) = resolve_scoped_store_and_path_scope(
                         &app_data_snapshot,
                         &selector,
                         store_selector_from_opts_table(opts)?,
                     )?;
-                    let path_scope =
-                        scoped_state_path_scope(&app_data_snapshot, store_selector.as_ref())?;
                     kv_delete_result(
                         lua,
                         manager.clone(),

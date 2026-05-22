@@ -5,8 +5,7 @@ use super::{
 };
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{
-    bool_err, nil_err, resolve_scoped_store_selector, scoped_state_path_scope,
-    store_selector_from_opts_table,
+    bool_err, nil_err, resolve_scoped_store_and_path_scope, store_selector_from_opts_table,
 };
 use crate::harness::stdlib::context_selectors::table_to_selector;
 
@@ -24,13 +23,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
                     return nil_err(lua, "No active session context");
                 }
                 let selector = default_agent_selector(&app_data_snapshot)?;
-                let store_selector = resolve_scoped_store_selector(
+                let (store_selector, path_scope) = resolve_scoped_store_and_path_scope(
                     &app_data_snapshot,
                     &selector,
                     store_selector_from_opts_table(opts)?,
                 )?;
-                let path_scope =
-                    scoped_state_path_scope(&app_data_snapshot, store_selector.as_ref())?;
                 kv_get_result(
                     lua,
                     manager.clone(),
@@ -55,13 +52,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
                         return bool_err(lua, "No active session context");
                     }
                     let selector = default_agent_selector(&app_data_snapshot)?;
-                    let store_selector = resolve_scoped_store_selector(
+                    let (store_selector, path_scope) = resolve_scoped_store_and_path_scope(
                         &app_data_snapshot,
                         &selector,
                         store_selector_from_opts_table(opts)?,
                     )?;
-                    let path_scope =
-                        scoped_state_path_scope(&app_data_snapshot, store_selector.as_ref())?;
                     kv_set_result(
                         lua,
                         manager.clone(),
@@ -87,13 +82,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
                     return bool_err(lua, "No active session context");
                 }
                 let selector = default_agent_selector(&app_data_snapshot)?;
-                let store_selector = resolve_scoped_store_selector(
+                let (store_selector, path_scope) = resolve_scoped_store_and_path_scope(
                     &app_data_snapshot,
                     &selector,
                     store_selector_from_opts_table(opts)?,
                 )?;
-                let path_scope =
-                    scoped_state_path_scope(&app_data_snapshot, store_selector.as_ref())?;
                 kv_delete_result(
                     lua,
                     manager.clone(),
@@ -121,13 +114,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
                 proxy.set(
                     "get",
                     lua.create_function(move |lua, (key, opts): (String, Option<Table>)| {
-                        let store_selector = resolve_scoped_store_selector(
+                        let (store_selector, path_scope) = resolve_scoped_store_and_path_scope(
                             &app_data_get,
                             &sel_get,
                             store_selector_from_opts_table(opts)?,
                         )?;
-                        let path_scope =
-                            scoped_state_path_scope(&app_data_get, store_selector.as_ref())?;
                         kv_get_result(
                             lua,
                             m_get.clone(),
@@ -146,13 +137,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
                     "set",
                     lua.create_function(
                         move |lua, (key, value, opts): (String, String, Option<Table>)| {
-                            let store_selector = resolve_scoped_store_selector(
+                            let (store_selector, path_scope) = resolve_scoped_store_and_path_scope(
                                 &app_data_set,
                                 &sel_set,
                                 store_selector_from_opts_table(opts)?,
                             )?;
-                            let path_scope =
-                                scoped_state_path_scope(&app_data_set, store_selector.as_ref())?;
                             kv_set_result(
                                 lua,
                                 m_set.clone(),
@@ -172,13 +161,11 @@ pub fn register_kv_module(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()>
                 proxy.set(
                     "delete",
                     lua.create_function(move |lua, (key, opts): (String, Option<Table>)| {
-                        let store_selector = resolve_scoped_store_selector(
+                        let (store_selector, path_scope) = resolve_scoped_store_and_path_scope(
                             &app_data_delete,
                             &sel_del,
                             store_selector_from_opts_table(opts)?,
                         )?;
-                        let path_scope =
-                            scoped_state_path_scope(&app_data_delete, store_selector.as_ref())?;
                         kv_delete_result(
                             lua,
                             m_del.clone(),

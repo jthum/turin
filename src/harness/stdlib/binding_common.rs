@@ -562,6 +562,16 @@ pub(crate) fn resolve_scoped_store_selector(
     )
 }
 
+pub(crate) fn resolve_scoped_store_and_path_scope(
+    app_data: &HarnessAppData,
+    selector: &ContextSelector,
+    explicit: Option<StoreSelector>,
+) -> LuaResult<(Option<StoreSelector>, StorePathScope)> {
+    let store_selector = resolve_scoped_store_selector(app_data, selector, explicit)?;
+    let path_scope = scoped_state_path_scope(app_data, store_selector.as_ref())?;
+    Ok((store_selector, path_scope))
+}
+
 pub(crate) fn resolve_contextual_store_selector(
     app_data: &HarnessAppData,
     scope_kind: &str,
