@@ -7,6 +7,7 @@ use tracing::{debug, info, warn};
 mod materialization;
 mod sidestep;
 
+use crate::kernel::config::ContextPersistenceConfig;
 use crate::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::identity::RuntimeIdentity;
@@ -455,17 +456,9 @@ impl ExecutionHost {
     }
 
     pub(crate) fn resolve_agent_state_selector(&self, agent_id: &str) -> StoreSelector {
-        let context = if agent_id == self.config.agent.id {
-            Some(&self.config.agent.persistence)
-        } else {
-            self.config
-                .agents
-                .get(agent_id)
-                .map(|agent| &agent.persistence)
-        };
         self.config
             .persistence
-            .resolve_context_state_selector(context)
+            .resolve_context_state_selector(self.agent_persistence_context(agent_id))
             .unwrap_or_else(|err| {
                 warn!(
                     agent_id = %agent_id,
@@ -480,15 +473,7 @@ impl ExecutionHost {
         &self,
         agent_id: &str,
     ) -> Option<StoreSelector> {
-        let context = if agent_id == self.config.agent.id {
-            Some(&self.config.agent.persistence)
-        } else {
-            self.config
-                .agents
-                .get(agent_id)
-                .map(|agent| &agent.persistence)
-        };
-        let context = context?;
+        let context = self.agent_persistence_context(agent_id)?;
         if context.store.is_none() && context.state.is_none() {
             return None;
         }
@@ -504,6 +489,17 @@ impl ExecutionHost {
                 );
                 None
             })
+    }
+
+    fn agent_persistence_context(&self, agent_id: &str) -> Option<&ContextPersistenceConfig> {
+        if agent_id == self.config.agent.id {
+            Some(&self.config.agent.persistence)
+        } else {
+            self.config
+                .agents
+                .get(agent_id)
+                .map(|agent| &agent.persistence)
+        }
     }
 
     /// Start a new session.
