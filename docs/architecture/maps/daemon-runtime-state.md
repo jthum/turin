@@ -20,6 +20,12 @@ This subsystem should preserve three guarantees:
   - Daemon task request handlers.
 - `src/daemon/server/dispatch/session.rs`
   - Daemon session request handlers.
+- `src/daemon/server/events.rs`
+  - Runtime event subscription loop, initial snapshot emission, session kernel-event forwarding, and task-update polling.
+- `src/daemon/server/events/filter.rs`
+  - Event subscription filters for agent/session/slot scoped streams.
+- `src/daemon/server/events/scope.rs`
+  - Scoped runtime snapshot projection and registry issue filtering.
 - `src/kernel/agent_manager/operations.rs`
   - Live runtime/session/task operations called by this layer.
 - `src/persistence/state/*`
@@ -106,3 +112,5 @@ git diff --check
 ## Current Shape
 
 The current pass centralizes channel lookup, persisted session target resolution, and live-branch busy checks. It intentionally keeps daemon task and session files separate because task submission and persisted session inspection have different contracts even though both touch live runtime state.
+
+Runtime event streaming is split so the async subscription loop stays in `events.rs`, while filter matching and scoped snapshot projection live in focused child modules.

@@ -13,12 +13,16 @@ This subsystem is security-sensitive. Refactors here should be small, test-backe
   - Capability decisions.
   - Agent/root/import/grant capability ceilings.
   - Child-agent allowlist enforcement.
-  - Temporary grant issue/get/revoke/use validation.
+  - Temporary grant issue/get/revoke/use manager methods.
 - `src/kernel/governance/capabilities.rs`
   - Profile preset capability maps.
   - Exact/wildcard capability rule matching.
   - Shared bool-rule ceiling checks used by temporary grants, peer delegation, and import delegation.
   - Tool-name to capability-name mapping.
+- `src/kernel/governance/grants.rs`
+  - Temporary grant snapshot DTO.
+  - Active grant storage entry.
+  - Grant expiry, subject access, and delegation ancestry validation.
 - `src/kernel/config/governance.rs`
   - Governance configuration types and defaults.
 - `src/kernel/config/validation.rs`
@@ -86,7 +90,10 @@ git diff --check
 
 ## Current Shape
 
-The current pass keeps `governance.rs` as the manager and grant lifecycle file, while `governance/capabilities.rs` owns capability preset/matching logic.
+The current pass keeps `governance.rs` as the policy manager and public decision surface, while:
+
+- `governance/capabilities.rs` owns capability preset/matching logic.
+- `governance/grants.rs` owns temporary grant data and chain validation helpers.
 
 This centralized the exact/wildcard bool-rule matcher that had been duplicated in:
 
