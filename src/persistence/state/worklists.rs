@@ -51,12 +51,8 @@ impl StateStore {
     pub async fn list_worklists(&self) -> Result<Vec<WorklistRow>> {
         let conn = self.connect().await?;
         let sql = format!("{WORKLIST_SELECT} ORDER BY updated_at DESC, id DESC");
-        let mut rows = conn.query(&sql, ()).await?;
-        let mut result = Vec::new();
-        while let Some(row) = rows.next().await? {
-            result.push(map_worklist_row(&row)?);
-        }
-        Ok(result)
+        let rows = conn.query(&sql, ()).await?;
+        collect_mapped_rows(rows, map_worklist_row).await
     }
 
     pub async fn open_worklist(
@@ -100,32 +96,22 @@ impl StateStore {
         let mut rows = conn
             .query(&sql, turso::params![public_id.into_bytes().to_vec()])
             .await?;
-        if let Some(row) = rows.next().await? {
-            return Ok(Some(map_worklist_row(&row)?));
-        }
-        Ok(None)
+        next_mapped_row(&mut rows, map_worklist_row).await
     }
 
     pub async fn get_worklist_by_id(&self, id: i64) -> Result<Option<WorklistRow>> {
         let conn = self.connect().await?;
         let sql = format!("{WORKLIST_SELECT} WHERE id = ?1 LIMIT 1");
         let mut rows = conn.query(&sql, turso::params![id]).await?;
-        if let Some(row) = rows.next().await? {
-            return Ok(Some(map_worklist_row(&row)?));
-        }
-        Ok(None)
+        next_mapped_row(&mut rows, map_worklist_row).await
     }
 
     pub async fn list_work_items(&self, worklist_id: i64) -> Result<Vec<WorkItemRow>> {
         let conn = self.connect().await?;
         let sql =
             format!("{WORK_ITEM_SELECT} WHERE worklist_id = ?1 ORDER BY priority DESC, id ASC");
-        let mut rows = conn.query(&sql, turso::params![worklist_id]).await?;
-        let mut result = Vec::new();
-        while let Some(row) = rows.next().await? {
-            result.push(map_work_item_row(&row)?);
-        }
-        Ok(result)
+        let rows = conn.query(&sql, turso::params![worklist_id]).await?;
+        collect_mapped_rows(rows, map_work_item_row).await
     }
 
     pub async fn get_work_item_by_public_id(
@@ -137,20 +123,14 @@ impl StateStore {
         let mut rows = conn
             .query(&sql, turso::params![public_id.into_bytes().to_vec()])
             .await?;
-        if let Some(row) = rows.next().await? {
-            return Ok(Some(map_work_item_row(&row)?));
-        }
-        Ok(None)
+        next_mapped_row(&mut rows, map_work_item_row).await
     }
 
     pub async fn get_work_item_by_id(&self, id: i64) -> Result<Option<WorkItemRow>> {
         let conn = self.connect().await?;
         let sql = format!("{WORK_ITEM_SELECT} WHERE id = ?1 LIMIT 1");
         let mut rows = conn.query(&sql, turso::params![id]).await?;
-        if let Some(row) = rows.next().await? {
-            return Ok(Some(map_work_item_row(&row)?));
-        }
-        Ok(None)
+        next_mapped_row(&mut rows, map_work_item_row).await
     }
 
     pub async fn create_work_item(&self, item: WorkItemInsert<'_>) -> Result<WorkItemRow> {
@@ -432,6 +412,24 @@ fn clear_pause_metadata(metadata: Option<&str>) -> Result<Option<String>> {
         return Ok(None);
     }
     Ok(Some(serde_json::to_string(&value)?))
+}
+
+async fn next_mapped_row<T>(
+    rows: &mut turso::Rows,
+    mapper: fn(&turso::Row) -> Result<T>,
+) -> Result<Option<T>> {
+    rows.next().await?.map(|row| mapper(&row)).transpose()
+}
+
+async fn collect_mapped_rows<T>(
+    mut rows: turso::Rows,
+    mapper: fn(&turso::Row) -> Result<T>,
+) -> Result<Vec<T>> {
+    let mut result = Vec::new();
+    while let Some(row) = rows.next().await? {
+        result.push(mapper(&row)?);
+    }
+    Ok(result)
 }
 
 fn map_worklist_row(row: &turso::Row) -> Result<WorklistRow> {
