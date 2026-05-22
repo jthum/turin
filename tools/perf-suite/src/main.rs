@@ -789,16 +789,17 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
     fs::create_dir_all(&channel_runtime_dir)?;
 
     let start = Instant::now();
-    let snapshots = Arc::new(Mutex::new(vec![snapshot(
-        "fresh-start",
-        start,
-        &state_db_path,
-        None,
-        None,
-        Some(0),
-        Some(0),
-        Some(0),
-    )]));
+    let snapshots = Arc::new(Mutex::new(vec![
+        channel_scale_snapshot(
+            "fresh-start",
+            start,
+            &state_db_path,
+            Some(0),
+            Some(0),
+            Some(0),
+        )
+        .await?,
+    ]));
 
     let mock_response = synthetic_text(&args.mock_response, args.response_bytes);
     let daemon =
@@ -806,16 +807,17 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
     snapshots
         .lock()
         .expect("scale snapshots lock poisoned")
-        .push(snapshot(
-            "after-daemon-start",
-            start,
-            &state_db_path,
-            None,
-            None,
-            Some(0),
-            Some(0),
-            Some(0),
-        ));
+        .push(
+            channel_scale_snapshot(
+                "after-daemon-start",
+                start,
+                &state_db_path,
+                Some(0),
+                Some(0),
+                Some(0),
+            )
+            .await?,
+        );
 
     let sample_totals = checkpoints
         .iter()
@@ -846,31 +848,33 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
     snapshots
         .lock()
         .expect("scale snapshots lock poisoned")
-        .push(snapshot(
-            "after-runner",
-            start,
-            &state_db_path,
-            None,
-            None,
-            Some(outbound_count),
-            Some(args.sessions),
-            Some(args.messages_per_session),
-        ));
+        .push(
+            channel_scale_snapshot(
+                "after-runner",
+                start,
+                &state_db_path,
+                Some(outbound_count),
+                Some(args.sessions),
+                Some(args.messages_per_session),
+            )
+            .await?,
+        );
 
     daemon.stop().await?;
     snapshots
         .lock()
         .expect("scale snapshots lock poisoned")
-        .push(snapshot(
-            "after-daemon-stop",
-            start,
-            &state_db_path,
-            None,
-            None,
-            Some(outbound_count),
-            Some(args.sessions),
-            Some(args.messages_per_session),
-        ));
+        .push(
+            channel_scale_snapshot(
+                "after-daemon-stop",
+                start,
+                &state_db_path,
+                Some(outbound_count),
+                Some(args.sessions),
+                Some(args.messages_per_session),
+            )
+            .await?,
+        );
 
     let report = PerfReport {
         scenario: "channel-scale".to_string(),
@@ -1092,7 +1096,7 @@ impl ChannelDriver for MockChannelDriver {
             sent.len()
         };
         if let Some(recorder) = &self.scale_recorder {
-            recorder.record_if_checkpoint(outbound_count);
+            recorder.record_if_checkpoint(outbound_count).await?;
         }
         Ok(())
     }
@@ -1351,6 +1355,48 @@ async fn persisted_message_count(
     Ok(Some(messages.len()))
 }
 
+async fn channel_scale_snapshot(
+    label: &str,
+    start: Instant,
+    state_db_path: &Path,
+    outbound_messages: Option<usize>,
+    active_sessions: Option<usize>,
+    messages_per_session: Option<usize>,
+) -> Result<Snapshot> {
+    let mut snapshot = snapshot(
+        label,
+        start,
+        state_db_path,
+        None,
+        None,
+        outbound_messages,
+        active_sessions,
+        messages_per_session,
+    );
+    snapshot.persisted_messages = persisted_message_count_for_all_sessions(state_db_path).await?;
+    Ok(snapshot)
+}
+
+async fn persisted_message_count_for_all_sessions(state_db_path: &Path) -> Result<Option<usize>> {
+    if !state_db_path.exists() {
+        return Ok(Some(0));
+    }
+    let Some(path) = state_db_path.to_str() else {
+        return Ok(None);
+    };
+
+    let store = StateStore::open(path).await?;
+    let sessions = store.list_session_rows(usize::MAX, 0).await?;
+    let mut total = 0usize;
+    for session in sessions {
+        let messages = store
+            .get_messages(session.id, &SessionReadTarget::ActiveBranch)
+            .await?;
+        total = total.saturating_add(messages.len());
+    }
+    Ok(Some(total))
+}
+
 #[derive(Debug, Default)]
 struct HistoryMetrics {
     payload_bytes: usize,
@@ -1598,28 +1644,29 @@ impl LineCounts {
 }
 
 impl ScaleRecorder {
-    fn record_if_checkpoint(&self, outbound_count: usize) {
+    async fn record_if_checkpoint(&self, outbound_count: usize) -> Result<()> {
         if !self.sample_totals.contains(&outbound_count) {
-            return;
+            return Ok(());
         }
 
         let messages_per_session = outbound_count / self.active_sessions;
+        let snapshot = channel_scale_snapshot(
+            &format!(
+                "after-{}-sessions-x{}-messages",
+                self.active_sessions, messages_per_session
+            ),
+            self.start,
+            &self.state_db_path,
+            Some(outbound_count),
+            Some(self.active_sessions),
+            Some(messages_per_session),
+        )
+        .await?;
         self.snapshots
             .lock()
             .expect("scale snapshots lock poisoned")
-            .push(snapshot(
-                &format!(
-                    "after-{}-sessions-x{}-messages",
-                    self.active_sessions, messages_per_session
-                ),
-                self.start,
-                &self.state_db_path,
-                None,
-                None,
-                Some(outbound_count),
-                Some(self.active_sessions),
-                Some(messages_per_session),
-            ));
+            .push(snapshot);
+        Ok(())
     }
 }
 
