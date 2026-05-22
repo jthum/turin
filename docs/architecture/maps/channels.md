@@ -64,6 +64,7 @@ Adapter crates:
 
 - `crates/turin-channel-telegram/src/*`
   - Telegram settings, polling/API, inbound normalization, media handling, delivery, outbound rendering.
+  - `outbound/html.rs` owns Telegram HTML/Markdown segment rendering; `outbound.rs` owns Telegram payload metadata, attachment preview, media naming, stream previews, and message batch construction.
 - `crates/turin-channel-rocketchat/src/*`
   - Rocket.Chat settings, REST/realtime transport, inbound normalization, outbound rendering.
 - `crates/turin-channel-discord/src/*`
