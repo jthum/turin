@@ -23,7 +23,11 @@ This module is central runtime plumbing. Prefer small, behavior-preserving clean
   - Ephemeral sidestep snapshots.
   - Fork-sibling branch source resolution and hidden sibling branch creation.
 - `src/kernel/session.rs`
-  - Session state, execution target, durability, visibility, write policy, and queued task types.
+  - Session state, execution target, durability, visibility, write policy, plan progress, persistence record, and compaction checkpoint types.
+- `src/kernel/session/completed_tasks.rs`
+  - In-memory completed local task result cache and bounded promotion/result retention.
+- `src/kernel/session/queued_tasks.rs`
+  - Queued task DTO and constructor helpers for ad hoc, planned, inherited-trace, conflict-policy, execution, and branch-outcome task creation.
 - `src/kernel/execution_host.rs`
   - Host construction, persistence locks, run-loop entry points, and task execution coordination.
 - `src/persistence/state/*`
@@ -100,5 +104,7 @@ The current pass keeps lifecycle orchestration in `session_lifecycle.rs` and ext
 
 - `materialization.rs` owns persisted target materialization and rebuild logic.
 - `sidestep.rs` owns persisted sidestep preparation and branch-source normalization.
+
+`session.rs` remains the public facade for session-domain types. Completed-task retention and queued-task construction live in child modules and are re-exported at the original `crate::kernel::session::*` paths.
 
 This is an organization/context improvement, not a semantic change. Keep future splits tied to similarly clear lifecycle subdomains.
