@@ -27,7 +27,9 @@ This subsystem should preserve three guarantees:
 - `src/persistence/state/messages.rs`
   - Durable turn-scoped message loading.
 - `src/persistence/state/turns.rs`
-  - Active branch path and selected turn path resolution.
+  - Turn allocation, active branch path, selected turn path, and turn-row resolution.
+- `src/persistence/state/turns/branch_heads.rs`
+  - Main branch initialization, branch-head lookup/listing, branch creation, checkout, and branch source resolution.
 
 ## Data Flow
 
