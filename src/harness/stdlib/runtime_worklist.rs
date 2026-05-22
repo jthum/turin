@@ -262,6 +262,22 @@ fn work_items_value(
     Ok(Value::Table(work_items_table(lua, handle, rows)?))
 }
 
+fn queried_work_items<F>(
+    lua: &Lua,
+    handle: &WorklistHandle,
+    opts: Option<&Table>,
+    select: F,
+) -> LuaResult<Vec<WorkItemRow>>
+where
+    F: FnOnce(Vec<WorkItemRow>, selection::WorkItemSelection<'_>) -> Vec<WorkItemRow>,
+{
+    let query = parse_work_item_query(lua, opts)?;
+    Ok(select(
+        load_work_items(handle)?,
+        query.selection(handle.parent_item_id),
+    ))
+}
+
 fn item_value(lua: &Lua, handle: &WorklistHandle, row: WorkItemRow) -> LuaResult<Value> {
     Ok(Value::Table(item_proxy(lua, handle.clone(), row)?))
 }
@@ -627,11 +643,7 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
         proxy.set(
             "all",
             lua.create_function(move |lua, (_self, opts): (Table, Option<Table>)| {
-                let query = parse_work_item_query(lua, opts.as_ref())?;
-                let rows = selection::all_rows(
-                    load_work_items(&handle)?,
-                    query.selection(handle.parent_item_id),
-                );
+                let rows = queried_work_items(lua, &handle, opts.as_ref(), selection::all_rows)?;
                 work_items_value(lua, &handle, rows)
             })?,
         )?;
@@ -642,11 +654,8 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
         proxy.set(
             "pending",
             lua.create_function(move |lua, (_self, opts): (Table, Option<Table>)| {
-                let query = parse_work_item_query(lua, opts.as_ref())?;
-                let rows = selection::pending_rows(
-                    load_work_items(&handle)?,
-                    query.selection(handle.parent_item_id),
-                );
+                let rows =
+                    queried_work_items(lua, &handle, opts.as_ref(), selection::pending_rows)?;
                 work_items_value(lua, &handle, rows)
             })?,
         )?;
@@ -657,14 +666,11 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
         proxy.set(
             "orphaned",
             lua.create_function(move |lua, (_self, opts): (Table, Option<Table>)| {
-                let query = parse_work_item_query(lua, opts.as_ref())?;
                 let stale_after_ms = parse_stale_after_ms(opts.as_ref())?;
                 let stale_before = now_unix_ms().saturating_sub(stale_after_ms);
-                let rows = selection::orphaned_rows(
-                    load_work_items(&handle)?,
-                    query.selection(handle.parent_item_id),
-                    stale_before,
-                );
+                let rows = queried_work_items(lua, &handle, opts.as_ref(), |rows, query| {
+                    selection::orphaned_rows(rows, query, stale_before)
+                })?;
                 work_items_value(lua, &handle, rows)
             })?,
         )?;
@@ -677,14 +683,11 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
             lua.create_function(move |lua, (_self, opts): (Table, Option<Table>)| {
                 require_capability(&handle.app_data, "runtime.worklist.release_stale")
                     .map_err(mlua::Error::runtime)?;
-                let query = parse_work_item_query(lua, opts.as_ref())?;
                 let stale_after_ms = parse_stale_after_ms(opts.as_ref())?;
                 let stale_before = now_unix_ms().saturating_sub(stale_after_ms);
-                let candidates = selection::orphaned_rows(
-                    load_work_items(&handle)?,
-                    query.selection(handle.parent_item_id),
-                    stale_before,
-                );
+                let candidates = queried_work_items(lua, &handle, opts.as_ref(), |rows, query| {
+                    selection::orphaned_rows(rows, query, stale_before)
+                })?;
                 let mut released_rows = Vec::with_capacity(candidates.len());
                 for row in candidates {
                     let released =
@@ -729,15 +732,11 @@ fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Table> {
         proxy.set(
             "paused",
             lua.create_function(move |lua, (_self, opts): (Table, Option<Table>)| {
-                let query = parse_work_item_query(lua, opts.as_ref())?;
                 let due_only = parse_bool_flag(opts.as_ref(), "due_only")?;
                 let now = now_unix_ms();
-                let rows = selection::paused_rows(
-                    load_work_items(&handle)?,
-                    query.selection(handle.parent_item_id),
-                    due_only,
-                    now,
-                );
+                let rows = queried_work_items(lua, &handle, opts.as_ref(), |rows, query| {
+                    selection::paused_rows(rows, query, due_only, now)
+                })?;
                 work_items_value(lua, &handle, rows)
             })?,
         )?;
