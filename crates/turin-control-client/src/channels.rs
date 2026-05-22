@@ -10,23 +10,13 @@ use crate::models::{AgentDetail, ChannelAccessState, ChannelDetail, ChannelRunti
 
 impl ControlClient {
     pub async fn get_agent(&self, agent_id: &str) -> Result<AgentDetail> {
-        self.request_ok(
-            None,
-            DaemonRequest::AgentGet(EntityIdParams {
-                id: agent_id.to_string(),
-            }),
-        )
-        .await
+        self.request_ok(None, DaemonRequest::AgentGet(entity_id(agent_id)))
+            .await
     }
 
     pub async fn get_channel(&self, channel_id: &str) -> Result<ChannelDetail> {
-        self.request_ok(
-            None,
-            DaemonRequest::ChannelGet(EntityIdParams {
-                id: channel_id.to_string(),
-            }),
-        )
-        .await
+        self.request_ok(None, DaemonRequest::ChannelGet(entity_id(channel_id)))
+            .await
     }
 
     pub async fn update_channel_settings(
@@ -48,13 +38,8 @@ impl ControlClient {
     }
 
     pub async fn channel_status(&self, channel_id: &str) -> Result<ChannelRuntime> {
-        self.request_ok(
-            None,
-            DaemonRequest::ChannelStatus(EntityIdParams {
-                id: channel_id.to_string(),
-            }),
-        )
-        .await
+        self.request_ok(None, DaemonRequest::ChannelStatus(entity_id(channel_id)))
+            .await
     }
 
     pub async fn channel_access(&self, channel_id: &str) -> Result<ChannelAccessState> {
@@ -123,4 +108,8 @@ impl ControlClient {
         )
         .await
     }
+}
+
+fn entity_id(id: &str) -> EntityIdParams {
+    EntityIdParams { id: id.to_string() }
 }

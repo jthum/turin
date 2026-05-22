@@ -13,11 +13,8 @@ impl ControlClient {
     }
 
     pub async fn get_schedule(&self, id: impl Into<String>) -> Result<ScheduleJobDetail> {
-        self.request_ok(
-            None,
-            DaemonRequest::ScheduleGet(EntityIdParams { id: id.into() }),
-        )
-        .await
+        self.request_ok(None, DaemonRequest::ScheduleGet(entity_id(id)))
+            .await
     }
 
     pub async fn update_schedule(&self, params: ScheduleUpdateParams) -> Result<ScheduleJobDetail> {
@@ -50,26 +47,21 @@ impl ControlClient {
     }
 
     pub async fn enable_schedule(&self, id: impl Into<String>) -> Result<ScheduleJobDetail> {
-        self.request_ok(
-            None,
-            DaemonRequest::ScheduleEnable(EntityIdParams { id: id.into() }),
-        )
-        .await
+        self.request_ok(None, DaemonRequest::ScheduleEnable(entity_id(id)))
+            .await
     }
 
     pub async fn disable_schedule(&self, id: impl Into<String>) -> Result<ScheduleJobDetail> {
-        self.request_ok(
-            None,
-            DaemonRequest::ScheduleDisable(EntityIdParams { id: id.into() }),
-        )
-        .await
+        self.request_ok(None, DaemonRequest::ScheduleDisable(entity_id(id)))
+            .await
     }
 
     pub async fn delete_schedule(&self, id: impl Into<String>) -> Result<ScheduleJobDetail> {
-        self.request_ok(
-            None,
-            DaemonRequest::ScheduleDelete(EntityIdParams { id: id.into() }),
-        )
-        .await
+        self.request_ok(None, DaemonRequest::ScheduleDelete(entity_id(id)))
+            .await
     }
+}
+
+fn entity_id(id: impl Into<String>) -> EntityIdParams {
+    EntityIdParams { id: id.into() }
 }
