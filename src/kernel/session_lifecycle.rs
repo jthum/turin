@@ -25,6 +25,7 @@ use crate::kernel::session_refs::{
 };
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::SessionRow;
+use crate::persistence::state::StateStore;
 
 impl ExecutionHost {
     /// Create a new session.
@@ -164,20 +165,12 @@ impl ExecutionHost {
     }
 
     pub async fn refresh_session_from_persistence(&self, session: &mut SessionState) -> Result<()> {
-        let internal_id = session
-            .internal_id
-            .ok_or_else(|| anyhow!("Session has no internal persistence id"))?;
-        let store = self
-            .store_manager
-            .open(&session.store_selector)
-            .await
-            .context("Session refresh requires a configured persistent state store")?;
-        let row = store.get_session_row(internal_id).await?.ok_or_else(|| {
-            anyhow!(
-                "Persisted session '{}' not found",
-                session.identity.session_id()
+        let (store, row) = self
+            .load_current_session_row(
+                session,
+                "Session refresh requires a configured persistent state store",
             )
-        })?;
+            .await?;
 
         let context_target = resolved_execution_context_target(session.context_target(), &row);
         let materialized = materialize_execution_target(
@@ -222,22 +215,12 @@ impl ExecutionHost {
         if !session.history_is_pruned() {
             return Ok(());
         }
-        let internal_id = session
-            .internal_id
-            .ok_or_else(|| anyhow!("Session has no internal persistence id"))?;
-        let store = self
-            .store_manager
-            .open(&session.store_selector)
-            .await
-            .context(
+        let (store, row) = self
+            .load_current_session_row(
+                session,
                 "Session history materialization requires a configured persistent state store",
-            )?;
-        let row = store.get_session_row(internal_id).await?.ok_or_else(|| {
-            anyhow!(
-                "Persisted session '{}' not found",
-                session.identity.session_id()
             )
-        })?;
+            .await?;
         let context_target = resolved_execution_context_target(session.context_target(), &row);
         let materialized = materialize_execution_target(
             self,
@@ -297,9 +280,7 @@ impl ExecutionHost {
         session: &mut SessionState,
         branch_name: &str,
     ) -> Result<bool> {
-        let internal_id = session
-            .internal_id
-            .ok_or_else(|| anyhow!("Session has no internal persistence id"))?;
+        let internal_id = require_persisted_session_id(session)?;
         let store = self
             .store_manager
             .open(&session.store_selector)
@@ -323,9 +304,7 @@ impl ExecutionHost {
         session: &mut SessionState,
         turn_id: i64,
     ) -> Result<bool> {
-        let internal_id = session
-            .internal_id
-            .ok_or_else(|| anyhow!("Session has no internal persistence id"))?;
+        let internal_id = require_persisted_session_id(session)?;
         let store = self
             .store_manager
             .open(&session.store_selector)
@@ -631,6 +610,34 @@ impl ExecutionHost {
         session.status = SessionStatus::Inactive;
         self.clear_session_harness_engine(session);
         Ok(())
+    }
+}
+
+fn require_persisted_session_id(session: &SessionState) -> Result<i64> {
+    session
+        .internal_id
+        .ok_or_else(|| anyhow!("Session has no internal persistence id"))
+}
+
+impl ExecutionHost {
+    async fn load_current_session_row(
+        &self,
+        session: &SessionState,
+        context: &'static str,
+    ) -> Result<(Arc<StateStore>, SessionRow)> {
+        let internal_id = require_persisted_session_id(session)?;
+        let store = self
+            .store_manager
+            .open(&session.store_selector)
+            .await
+            .context(context)?;
+        let row = store.get_session_row(internal_id).await?.ok_or_else(|| {
+            anyhow!(
+                "Persisted session '{}' not found",
+                session.identity.session_id()
+            )
+        })?;
+        Ok((store, row))
     }
 }
 
