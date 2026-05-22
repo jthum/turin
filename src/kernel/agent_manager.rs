@@ -2,6 +2,7 @@ mod cancellation;
 mod operations;
 mod peer_runtime;
 mod runtime_registry;
+mod tasks;
 #[cfg(test)]
 mod tests;
 

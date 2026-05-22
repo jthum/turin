@@ -15,7 +15,9 @@ This subsystem should preserve three guarantees:
 - `src/kernel/agent_manager.rs`
   - Core types, runtime handles, task/result records, runtime control state, and manager construction.
 - `src/kernel/agent_manager/operations.rs`
-  - Public operation surface: open/resume/reload sessions, submit/await tasks, list statuses/live sessions/tasks, promote completed work, and runtime lookup helpers.
+  - Live session operation surface: open/resume/reload sessions, list statuses/live sessions, session event subscription, and runtime lookup helpers.
+- `src/kernel/agent_manager/tasks.rs`
+  - Peer task operation surface: submit/await tasks, task status snapshots, completed-result cache updates, promotion, pending-result bookkeeping, and runtime queue enqueueing.
 - `src/kernel/agent_manager/cancellation.rs`
   - Runtime, session, and task cancellation/kill behavior.
 - `src/kernel/agent_manager/runtime_registry.rs`
@@ -34,11 +36,11 @@ Session open/resume/reload:
 
 Task submission:
 
-1. `submit` or `submit_to_session` resolves a runtime slot.
-2. `submit_to_runtime` creates a request id and pending result receiver.
+1. `tasks.rs` resolves the target runtime slot through direct agent id or session target.
+2. It creates a request id and pending result receiver.
 3. The task is enqueued into the runtime handle queue.
 4. `peer_runtime.rs` executes the task and reports a `PeerAgentTaskResult`.
-5. Completed results move into the bounded completed-result cache.
+5. `tasks.rs` removes pending state and moves completed results into the bounded completed-result cache.
 
 Session targeting:
 
@@ -71,7 +73,7 @@ Change cancellation behavior:
 
 Change peer task result shape:
 
-1. Update `peer_runtime.rs` and related snapshot structs in `agent_manager.rs`.
+1. Update `peer_runtime.rs`, `tasks.rs`, and related snapshot structs in `agent_manager.rs`.
 2. Keep `list_tasks`, `await_result`, and completed-result promotion aligned.
 3. Run agent-manager and daemon runtime-task tests.
 
