@@ -1,5 +1,10 @@
 use super::*;
+use anyhow::Result;
+use std::fs;
+use std::path::Path;
 use tempfile::tempdir;
+
+use crate::kernel::config::TurinConfig;
 
 fn bootstrap_config(root: &Path) -> TurinConfig {
     let mut config = TurinConfig::default();
