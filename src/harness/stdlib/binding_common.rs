@@ -126,6 +126,20 @@ where
     }
 }
 
+pub fn lua_value_result<T, F>(
+    lua: &Lua,
+    result: Result<T, String>,
+    to_value: F,
+) -> LuaResult<(Value, Value)>
+where
+    F: FnOnce(&Lua, T) -> LuaResult<Value>,
+{
+    match result {
+        Ok(value) => Ok(ok_value(to_value(lua, value)?)),
+        Err(err) => nil_err(lua, &err),
+    }
+}
+
 pub fn metadata_json_or_empty(lua: &Lua, metadata: Option<Table>) -> LuaResult<serde_json::Value> {
     if let Some(tbl) = metadata {
         lua.from_value::<serde_json::Value>(Value::Table(tbl))

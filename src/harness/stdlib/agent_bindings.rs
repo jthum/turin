@@ -10,8 +10,8 @@ use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{
-    bridge_async, bridge_async_display_err, bridge_async_result, lua_table_result, nil_err, nil_ok,
-    ok_value, string_ok,
+    bridge_async, bridge_async_display_err, bridge_async_result, lua_table_result,
+    lua_value_result, nil_err, nil_ok, ok_value, string_ok,
 };
 use crate::harness::stdlib::governance_support::{
     apply_active_grant_ceiling_to_peer_delegation, parse_delegated_capabilities,
@@ -294,10 +294,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     .mark_promoted(&task_id, branch.clone());
                 Ok::<_, anyhow::Error>(branch)
             });
-            match result {
-                Ok(branch) => Ok(ok_value(lua.to_value(&branch)?)),
-                Err(err) => nil_err(lua, &err),
-            }
+            lua_value_result(lua, result, |lua, branch| lua.to_value(&branch))
         })?,
     )?;
 

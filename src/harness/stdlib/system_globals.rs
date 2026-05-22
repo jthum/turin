@@ -9,7 +9,7 @@ mod imports;
 pub(crate) use imports::ensure_load_time;
 pub use imports::register_import_global;
 
-use crate::harness::stdlib::binding_common::{nil_err, ok_value, string_ok, string_value};
+use crate::harness::stdlib::binding_common::{lua_value_result, nil_err, string_ok, string_value};
 use crate::harness::stdlib::governance_support::require_capability as require_governance_capability;
 
 pub fn register_system_globals(lua: &Lua, fs_root: &Path, max_file_size: usize) -> LuaResult<()> {
@@ -99,10 +99,8 @@ fn register_json_module(lua: &Lua) -> LuaResult<()> {
     json_table.set(
         "decode",
         lua.create_function(|lua, s: String| {
-            match serde_json::from_str::<serde_json::Value>(&s) {
-                Ok(j) => Ok(ok_value(lua.to_value(&j)?)),
-                Err(e) => nil_err(lua, &e.to_string()),
-            }
+            let result = serde_json::from_str::<serde_json::Value>(&s).map_err(|e| e.to_string());
+            lua_value_result(lua, result, |lua, json| lua.to_value(&json))
         })?,
     )?;
     lua.globals().set("json", json_table)?;

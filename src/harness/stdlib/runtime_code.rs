@@ -8,7 +8,7 @@ use crate::code_index_reader::{
 };
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{
-    bridge_async_result, nil_err, ok_value, parse_optional_lua_table,
+    bridge_async_result, lua_value_result, nil_err, parse_optional_lua_table,
 };
 use crate::harness::stdlib::governance_support::require_capability as require_governance_capability;
 use crate::inference::embeddings::EmbeddingProvider;
@@ -57,10 +57,11 @@ pub fn register_runtime_code_namespace(
                         .await
                         .map_err(|e| e.to_string())
                 });
-                match result {
-                    Ok(status) => Ok(ok_value(lua.to_value(&status)?)),
-                    Err(err) => nil_err(lua, &format!("runtime.code.search.status: {err}")),
-                }
+                lua_value_result(
+                    lua,
+                    result.map_err(|err| format!("runtime.code.search.status: {err}")),
+                    |lua, status| lua.to_value(&status),
+                )
             })?,
         )?;
     }
@@ -165,10 +166,11 @@ fn run_code_search(
         }
         Ok(rows)
     });
-    match result {
-        Ok(rows) => Ok(ok_value(lua.to_value(&rows)?)),
-        Err(err) => nil_err(lua, &format!("{label}: {err}")),
-    }
+    lua_value_result(
+        lua,
+        result.map_err(|err| format!("{label}: {err}")),
+        |lua, rows| lua.to_value(&rows),
+    )
 }
 
 struct RuntimeCodeEmbedding {
