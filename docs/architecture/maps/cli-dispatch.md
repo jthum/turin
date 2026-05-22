@@ -13,7 +13,9 @@ This subsystem should preserve three guarantees:
 ## Files
 
 - `src/cli.rs`
-  - Top-level `Cli`, root commands, daemon subcommand shape, harness commands, and shared daemon argument groups.
+  - Top-level `Cli`, root commands, harness commands, and root command argument groups.
+- `src/cli/daemon.rs`
+  - Daemon command shape, daemon subcommands, and shared daemon argument groups.
 - `src/dispatch.rs`
   - Top-level command routing: run/repl/script/init/quickstart/check/harness/daemon.
 - `src/dispatch/daemon.rs`
@@ -45,7 +47,7 @@ Add a root command:
 
 Add a daemon subcommand:
 
-1. Add the shape in `src/cli.rs`.
+1. Add the shape in `src/cli/daemon.rs`.
 2. Add routing in `src/dispatch/daemon.rs`.
 3. Prefer an existing `commands::daemon::*` helper or add one there.
 
