@@ -5,7 +5,6 @@ use anyhow::{Result, anyhow};
 use uuid::Uuid;
 
 use super::DaemonState;
-use super::runtime_sessions::persisted_session_target;
 use crate::daemon::protocol::{
     PromoteTaskParams, SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams,
     SubmitTaskParams,
@@ -445,9 +444,7 @@ impl DaemonState {
     }
 
     async fn resolve_session_channel_id(&self, session_id: &str) -> Result<Option<String>> {
-        let (store_selector, public_id) = persisted_session_target(session_id)?;
-        let store = self.kernel.store_manager().open(&store_selector).await?;
-        let Some(row) = store.get_session_row_by_public_id(public_id).await? else {
+        let Some((_, row)) = self.resolve_persisted_session(session_id).await? else {
             return Ok(None);
         };
 

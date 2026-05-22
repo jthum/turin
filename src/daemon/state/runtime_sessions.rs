@@ -328,7 +328,7 @@ impl DaemonState {
         Ok(branch.map(branch_detail_from_row))
     }
 
-    async fn resolve_persisted_session(
+    pub(super) async fn resolve_persisted_session(
         &self,
         session_id: &str,
     ) -> Result<Option<(StoreSelector, SessionRow)>> {
