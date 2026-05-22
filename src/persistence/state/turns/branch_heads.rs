@@ -54,12 +54,7 @@ impl StateStore {
              WHERE s.id = ?1 AND bh.id = s.active_branch_head_id"
         );
         let mut rows = conn.query(&sql, [session_id]).await?;
-
-        if let Some(row) = rows.next().await? {
-            Ok(Some(branch_head_from_row(&row)?))
-        } else {
-            Ok(None)
-        }
+        next_branch_head_row(&mut rows).await
     }
 
     pub async fn get_branch_head(
@@ -72,12 +67,7 @@ impl StateStore {
         let mut rows = conn
             .query(&sql, turso::params![session_id, branch_id])
             .await?;
-
-        if let Some(row) = rows.next().await? {
-            Ok(Some(branch_head_from_row(&row)?))
-        } else {
-            Ok(None)
-        }
+        next_branch_head_row(&mut rows).await
     }
 
     pub async fn get_branch_head_by_name(
@@ -88,12 +78,7 @@ impl StateStore {
         let conn = self.connect().await?;
         let sql = format!("{BRANCH_HEAD_SELECT} WHERE bh.session_id = ?1 AND bh.name = ?2");
         let mut rows = conn.query(&sql, turso::params![session_id, name]).await?;
-
-        if let Some(row) = rows.next().await? {
-            Ok(Some(branch_head_from_row(&row)?))
-        } else {
-            Ok(None)
-        }
+        next_branch_head_row(&mut rows).await
     }
 
     pub async fn get_branch_head_by_public_id(
@@ -109,24 +94,15 @@ impl StateStore {
                 turso::params![session_id, public_id.into_bytes().to_vec()],
             )
             .await?;
-        if let Some(row) = rows.next().await? {
-            Ok(Some(branch_head_from_row(&row)?))
-        } else {
-            Ok(None)
-        }
+        next_branch_head_row(&mut rows).await
     }
 
     pub async fn list_branch_heads(&self, session_id: i64) -> Result<Vec<BranchHeadRow>> {
         let conn = self.connect().await?;
         let sql =
             format!("{BRANCH_HEAD_SELECT} WHERE bh.session_id = ?1 ORDER BY bh.created_at, bh.id");
-        let mut rows = conn.query(&sql, [session_id]).await?;
-
-        let mut out = Vec::new();
-        while let Some(row) = rows.next().await? {
-            out.push(branch_head_from_row(&row)?);
-        }
-        Ok(out)
+        let rows = conn.query(&sql, [session_id]).await?;
+        collect_branch_head_rows(rows).await
     }
 
     pub async fn list_branch_heads_from_source_turn(
@@ -140,15 +116,10 @@ impl StateStore {
              WHERE bh.session_id = ?1 AND bh.created_from_turn_id = ?2
              ORDER BY bh.created_at, bh.id"
         );
-        let mut rows = conn
+        let rows = conn
             .query(&sql, turso::params![session_id, source_turn_id])
             .await?;
-
-        let mut out = Vec::new();
-        while let Some(row) = rows.next().await? {
-            out.push(branch_head_from_row(&row)?);
-        }
-        Ok(out)
+        collect_branch_head_rows(rows).await
     }
 
     pub async fn create_branch_head_from_turn_index(
@@ -421,6 +392,21 @@ impl StateStore {
                 .map(|turn| turn.id)),
         }
     }
+}
+
+async fn next_branch_head_row(rows: &mut turso::Rows) -> Result<Option<BranchHeadRow>> {
+    rows.next()
+        .await?
+        .map(|row| branch_head_from_row(&row))
+        .transpose()
+}
+
+async fn collect_branch_head_rows(mut rows: turso::Rows) -> Result<Vec<BranchHeadRow>> {
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await? {
+        out.push(branch_head_from_row(&row)?);
+    }
+    Ok(out)
 }
 
 fn branch_head_from_row(row: &turso::Row) -> Result<BranchHeadRow> {
