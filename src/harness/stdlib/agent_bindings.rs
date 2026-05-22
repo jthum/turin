@@ -4,6 +4,8 @@ mod queue;
 mod session_store;
 mod sidestep_graph;
 
+use std::collections::BTreeMap;
+
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::HarnessAppData;
@@ -37,6 +39,53 @@ use session_store::{
     lookup_session_store, require_session_store,
 };
 use sidestep_graph::{attach_sidestep_graph_relation, opt_sidestep_graph_relation};
+
+struct PreparedPeerSubmission {
+    target_agent: String,
+    task: QueuedTask,
+    delegated_capabilities: Option<BTreeMap<String, bool>>,
+}
+
+fn prepare_peer_submission(
+    lua: &Lua,
+    app_data: &HarnessAppData,
+    default_agent: &str,
+    prompt: String,
+    opts: Option<&Table>,
+    caller_label: &str,
+) -> LuaResult<Result<PreparedPeerSubmission, String>> {
+    if let Err(err) = require_governance_capability(app_data, "runtime.agent.submit") {
+        return Ok(Err(err));
+    }
+
+    let snapshot = runtime_policy_snapshot(app_data).map_err(mlua::Error::runtime)?;
+    if !policy_bool(&snapshot, "spawn.enabled", true) {
+        return Ok(Err("Policy denial: spawn.enabled=false".to_string()));
+    }
+
+    let target_agent = opt_peer_agent_id(opts, default_agent);
+    if let Err(err) = require_child_agent_governance(app_data, &target_agent) {
+        return Ok(Err(err));
+    }
+
+    let delegated_capabilities =
+        parse_delegated_capabilities(app_data, opts, "capabilities", caller_label)?;
+    let delegated_capabilities = apply_active_grant_ceiling_to_peer_delegation(
+        app_data,
+        delegated_capabilities,
+        caller_label,
+    )?;
+    let task = match peer_prompt_task(lua, app_data, prompt, opts) {
+        Ok(task) => task,
+        Err(err) => return Ok(Err(err)),
+    };
+
+    Ok(Ok(PreparedPeerSubmission {
+        target_agent,
+        task,
+        delegated_capabilities,
+    }))
+}
 
 pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
     let agent_table = lua.create_table()?;
@@ -287,43 +336,26 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
         agent_table.set(
             "submit",
             lua.create_function(move |lua, (prompt, opts): (String, Option<Table>)| {
-                if let Err(err) =
-                    require_governance_capability(&submit_policy_snapshot, "runtime.agent.submit")
-                {
-                    return nil_err(lua, &err);
-                }
-                let snapshot = runtime_policy_snapshot(&submit_policy_snapshot)
-                    .map_err(mlua::Error::runtime)?;
-                if !policy_bool(&snapshot, "spawn.enabled", true) {
-                    return nil_err(lua, "Policy denial: spawn.enabled=false");
-                }
-                let target_agent = opt_peer_agent_id(opts.as_ref(), &default_agent);
-                if let Err(err) =
-                    require_child_agent_governance(&submit_policy_snapshot, &target_agent)
-                {
-                    return nil_err(lua, &err);
-                }
-                let delegated_capabilities = parse_delegated_capabilities(
+                let prepared = match prepare_peer_submission(
+                    lua,
                     &submit_policy_snapshot,
+                    &default_agent,
+                    prompt,
                     opts.as_ref(),
-                    "capabilities",
                     "agent.submit",
-                )?;
-                let delegated_capabilities = apply_active_grant_ceiling_to_peer_delegation(
-                    &submit_policy_snapshot,
-                    delegated_capabilities,
-                    "agent.submit",
-                )?;
-                let task =
-                    match peer_prompt_task(lua, &submit_policy_snapshot, prompt, opts.as_ref()) {
-                        Ok(task) => task,
-                        Err(err) => return nil_err(lua, &err),
-                    };
+                )? {
+                    Ok(prepared) => prepared,
+                    Err(err) => return nil_err(lua, &err),
+                };
 
                 let manager = manager.clone();
                 let result = bridge_async_display_err(async move {
                     manager
-                        .submit(&target_agent, task, delegated_capabilities)
+                        .submit(
+                            &prepared.target_agent,
+                            prepared.task,
+                            prepared.delegated_capabilities,
+                        )
                         .await
                 });
                 match result {
@@ -343,48 +375,31 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             "ask",
             lua.create_function(move |lua, (prompt, opts): (String, Option<Table>)| {
                 if let Err(err) =
-                    require_governance_capability(&complete_policy_snapshot, "runtime.agent.submit")
-                {
-                    return nil_err(lua, &err);
-                }
-                if let Err(err) =
                     require_governance_capability(&complete_policy_snapshot, "runtime.agent.await")
                 {
                     return nil_err(lua, &err);
                 }
-                let snapshot = runtime_policy_snapshot(&complete_policy_snapshot)
-                    .map_err(mlua::Error::runtime)?;
-                if !policy_bool(&snapshot, "spawn.enabled", true) {
-                    return nil_err(lua, "Policy denial: spawn.enabled=false");
-                }
-                let target_agent = opt_peer_agent_id(opts.as_ref(), &default_agent);
-                if let Err(err) =
-                    require_child_agent_governance(&complete_policy_snapshot, &target_agent)
-                {
-                    return nil_err(lua, &err);
-                }
-                let delegated_capabilities = parse_delegated_capabilities(
+                let prepared = match prepare_peer_submission(
+                    lua,
                     &complete_policy_snapshot,
+                    &default_agent,
+                    prompt,
                     opts.as_ref(),
-                    "capabilities",
                     "agent.ask",
-                )?;
-                let delegated_capabilities = apply_active_grant_ceiling_to_peer_delegation(
-                    &complete_policy_snapshot,
-                    delegated_capabilities,
-                    "agent.ask",
-                )?;
+                )? {
+                    Ok(prepared) => prepared,
+                    Err(err) => return nil_err(lua, &err),
+                };
                 let timeout_ms = opts.as_ref().and_then(|t| t.get::<u64>("timeout_ms").ok());
-                let task =
-                    match peer_prompt_task(lua, &complete_policy_snapshot, prompt, opts.as_ref()) {
-                        Ok(task) => task,
-                        Err(err) => return nil_err(lua, &err),
-                    };
 
                 let manager_submit = manager.clone();
                 let request_id = bridge_async_display_err(async move {
                     manager_submit
-                        .submit(&target_agent, task, delegated_capabilities)
+                        .submit(
+                            &prepared.target_agent,
+                            prepared.task,
+                            prepared.delegated_capabilities,
+                        )
                         .await
                 });
                 let request_id = match request_id {
