@@ -38,9 +38,11 @@ Shared protocol and runner crates:
 Daemon-side runtime:
 
 - `src/daemon/channels.rs`
-  - Channel runtime supervisor, desired-state sync, sidecar process lifecycle, heartbeat supervision, and runtime event emission.
+  - Channel runtime manager, desired-state sync, heartbeat supervision, restart/backoff decisions, and runtime event emission.
 - `src/daemon/channels/runtime_state.rs`
   - Runtime snapshot structs and named runtime-state transitions.
+- `src/daemon/channels/runner_process.rs`
+  - Built-in fs runner task startup and external sidecar process execution/shutdown/stderr handling.
 - `src/daemon/channel_runners.rs`
   - Daemon-facing wrapper around host-side sidecar discovery plus the built-in `fs` manifest.
 - `src/daemon/state/channel_validation.rs`
@@ -148,6 +150,12 @@ Change daemon channel supervision:
 2. Keep runtime state changes behind the snapshot transition helpers.
 3. Run daemon channel tests.
 4. Check runtime snapshot and heartbeat/restart behavior.
+
+Change sidecar process execution:
+
+1. Change `src/daemon/channels/runner_process.rs`.
+2. Preserve command-line shape expected by channel sidecars.
+3. Run daemon channel tests, including external runner supervision tests.
 
 ## Tests
 
