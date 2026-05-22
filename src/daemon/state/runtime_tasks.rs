@@ -18,7 +18,7 @@ use crate::kernel::session::{
     ExecutionConflictPolicy, ExecutionContextTarget, PreparedSidestepExecution, QueuedTask,
     SidestepMode, TaskExecutionOverrides,
 };
-use crate::kernel::session_refs::parse_session_reference;
+use crate::kernel::session_refs::session_reference_matches_public_id;
 use crate::persistence::manager::StoreSelector;
 use turin_types::{TaskInputContent, ToolsConfig};
 
@@ -464,11 +464,7 @@ impl DaemonState {
             .list_live_sessions(None)
             .await
             .into_iter()
-            .filter(|snapshot| {
-                parse_session_reference(&snapshot.session_id)
-                    .map(|session_ref| session_ref.public_id == wanted)
-                    .unwrap_or_else(|_| snapshot.session_id == wanted)
-            })
+            .filter(|snapshot| session_reference_matches_public_id(&snapshot.session_id, &wanted))
             .collect()
     }
 

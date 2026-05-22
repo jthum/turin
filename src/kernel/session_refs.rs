@@ -60,6 +60,22 @@ pub fn parse_session_reference(raw: &str) -> Result<SessionReference> {
     })
 }
 
+pub fn session_reference_matches_public_id(raw: &str, public_id: &str) -> bool {
+    parse_session_reference(raw)
+        .map(|session_ref| session_ref.public_id == public_id)
+        .unwrap_or_else(|_| raw == public_id)
+}
+
+pub fn session_references_match(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    let Ok(right_ref) = parse_session_reference(right) else {
+        return false;
+    };
+    session_reference_matches_public_id(left, &right_ref.public_id)
+}
+
 fn parse_store_selector_qualifier(raw: &str) -> Result<StoreSelector> {
     anyhow::ensure!(
         !raw.eq_ignore_ascii_case("handle"),
@@ -118,5 +134,28 @@ mod tests {
                 ".turin/channels/telegram.db".to_string()
             ))
         );
+    }
+
+    #[test]
+    fn session_reference_matching_accepts_qualified_same_public_id() {
+        let public_id = "018f1f4f1f4f4f4f8f8f8f8f8f8f8f8f";
+        assert!(session_reference_matches_public_id(
+            &format!("{public_id}@.turin/channels/telegram.db"),
+            public_id
+        ));
+        assert!(session_references_match(
+            &format!("{public_id}@telegram"),
+            public_id
+        ));
+    }
+
+    #[test]
+    fn session_reference_matching_preserves_exact_fallback_for_invalid_ids() {
+        assert!(session_references_match("legacy-session", "legacy-session"));
+        assert!(!session_references_match("legacy-session", "other-session"));
+        assert!(session_reference_matches_public_id(
+            "legacy-session",
+            "legacy-session"
+        ));
     }
 }

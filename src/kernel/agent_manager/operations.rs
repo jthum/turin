@@ -10,7 +10,7 @@ use crate::kernel::session::{
     ExecutionContextTarget, ExecutionDurability, ExecutionStatusSnapshot, ExecutionVisibility,
     ExecutionWritePolicy,
 };
-use crate::kernel::session_refs::parse_session_reference;
+use crate::kernel::session_refs::{parse_session_reference, session_references_match};
 use crate::persistence::manager::StoreSelector;
 
 use super::{
@@ -257,9 +257,6 @@ impl AgentManager {
 
         ensure_runtime_slot_idle(&runtime_key, &handle)?;
 
-        let wanted = parse_session_reference(session_id)
-            .map(|session_ref| session_ref.public_id)
-            .unwrap_or_else(|_| session_id.to_string());
         let generation = handle.control.session_generation();
         let context = handle.control.current_session_context();
         handle
@@ -273,11 +270,7 @@ impl AgentManager {
                 .control
                 .current_session_id()
                 .as_deref()
-                .map(|current| {
-                    parse_session_reference(current)
-                        .map(|session_ref| session_ref.public_id == wanted)
-                        .unwrap_or(current == wanted)
-                })
+                .map(|current| session_references_match(current, session_id))
                 .unwrap_or(false);
             if current_matches && handle.control.session_generation() > generation {
                 break;
@@ -429,18 +422,12 @@ impl AgentManager {
         &self,
         session_id: &str,
     ) -> Vec<(RuntimeSlotKey, Arc<AgentRuntimeHandle>)> {
-        let wanted = parse_session_reference(session_id)
-            .map(|session_ref| session_ref.public_id)
-            .ok();
         let runtimes = self.runtimes.read().await;
         let mut matches: Vec<_> = runtimes
             .iter()
             .filter_map(|(runtime_key, handle)| {
                 let current = handle.control.current_session_id()?;
-                let current_public_id = parse_session_reference(&current)
-                    .map(|session_ref| session_ref.public_id)
-                    .ok();
-                if current == session_id || (wanted.is_some() && wanted == current_public_id) {
+                if session_references_match(&current, session_id) {
                     Some((runtime_key.clone(), Arc::clone(handle)))
                 } else {
                     None
