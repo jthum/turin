@@ -14,6 +14,8 @@ This file is security-sensitive because it defines how harness code loads other 
 - `src/harness/stdlib/system_globals/imports.rs`
   - Lua globals: `import`, `import_scoped`, `use`, `use_scoped`, and `watch`.
   - Import/use policy enforcement and scoped capability delegation.
+- `src/harness/stdlib/system_globals/imports/delegation.rs`
+  - Imported module proxy wrapping, active module/root context restoration, and delegated import capability parsing/ceiling checks.
 - `src/harness/stdlib/system_globals/fs.rs`
   - Lua global: `fs`.
   - File path safety and `fs.stat` session hash tracking.
@@ -82,7 +84,8 @@ git diff --check
 
 The current pass keeps `system_globals.rs` as the public facade and splits two security-sensitive subdomains into private child modules:
 
-- `imports.rs` owns import/use/watch policy, module resolution, root attribution, and delegated capability wrapping.
+- `imports.rs` owns import/use/watch registration, module resolution/loading, root attribution, and import/use policy decisions.
+- `imports/delegation.rs` owns imported function/table wrapping plus delegated capability context.
 - `fs.rs` owns filesystem globals and session-scoped `fs.stat` hash tracking.
 
 `enforce_module_policy` still owns the shared import/use decision tree, while `enforce_import_policy` and `enforce_use_policy` keep call sites readable.
