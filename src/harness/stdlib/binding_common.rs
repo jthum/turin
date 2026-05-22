@@ -109,6 +109,13 @@ pub fn lua_bool_result<T>(lua: &Lua, result: Result<T, String>) -> LuaResult<(Va
     }
 }
 
+pub fn lua_string_result(lua: &Lua, result: Result<String, String>) -> LuaResult<(Value, Value)> {
+    match result {
+        Ok(value) => string_ok(lua, &value),
+        Err(err) => nil_err(lua, &err),
+    }
+}
+
 pub fn json_ok<T>(lua: &Lua, value: &T) -> LuaResult<(Value, Value)>
 where
     T: Serialize + ?Sized,
@@ -117,6 +124,16 @@ where
         .to_value(value)
         .map_err(|e| mlua::Error::runtime(e.to_string()))?;
     Ok((lua_v, Value::Nil))
+}
+
+pub fn lua_json_result<T>(lua: &Lua, result: Result<T, String>) -> LuaResult<(Value, Value)>
+where
+    T: Serialize,
+{
+    match result {
+        Ok(value) => json_ok(lua, &value),
+        Err(err) => nil_err(lua, &err),
+    }
 }
 
 pub fn lua_table_result<T, F>(

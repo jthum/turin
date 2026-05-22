@@ -4,7 +4,8 @@ use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{
-    bridge_async, bridge_async_display_err, json_ok, nil_err, nil_ok, string_ok,
+    bridge_async, bridge_async_display_err, json_ok, lua_json_result, lua_string_result, nil_err,
+    nil_ok,
 };
 use crate::harness::stdlib::governance_support::{
     apply_active_grant_ceiling_to_peer_delegation, parse_delegated_capabilities,
@@ -305,10 +306,7 @@ pub fn register_runtime_agent_namespace(
                             .submit(&agent_id, task, delegated_capabilities)
                             .await
                     });
-                    match result {
-                        Ok(task_id) => string_ok(lua, &task_id),
-                        Err(err) => nil_err(lua, &err),
-                    }
+                    lua_string_result(lua, result)
                 },
             )?,
         )?;
@@ -378,10 +376,7 @@ pub fn register_runtime_agent_namespace(
                             )
                             .await
                     });
-                    match result {
-                        Ok(task_id) => string_ok(lua, &task_id),
-                        Err(err) => nil_err(lua, &err),
-                    }
+                    lua_string_result(lua, result)
                 },
             )?,
         )?;
@@ -402,10 +397,7 @@ pub fn register_runtime_agent_namespace(
                 let result = bridge_async_display_err(async move {
                     manager.await_result(&task_id, timeout_ms).await
                 });
-                match result {
-                    Ok(res) => json_ok(lua, &res),
-                    Err(err) => nil_err(lua, &err),
-                }
+                lua_json_result(lua, result)
             })?,
         )?;
     }
@@ -437,10 +429,7 @@ pub fn register_runtime_agent_namespace(
                         .promote_completed_task(&task_id, branch_name.as_deref())
                         .await
                 });
-                match result {
-                    Ok(branch) => json_ok(lua, &branch),
-                    Err(err) => nil_err(lua, &err),
-                }
+                lua_json_result(lua, result)
             })?,
         )?;
     }
@@ -483,10 +472,7 @@ pub fn register_runtime_agent_namespace(
                         }
                         Ok(result.output.unwrap_or_default())
                     });
-                    match result {
-                        Ok(output) => string_ok(lua, &output),
-                        Err(err) => nil_err(lua, &err),
-                    }
+                    lua_string_result(lua, result)
                 },
             )?,
         )?;

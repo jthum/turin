@@ -2,8 +2,8 @@ use mlua::{Lua, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{
-    bool_err, bool_value_ok, bridge_async, bridge_async_display_err, bridge_async_result, json_ok,
-    lua_table_result, lua_value_result, nil_err, ok_value,
+    bool_err, bool_value_ok, bridge_async, bridge_async_display_err, bridge_async_result,
+    lua_json_result, lua_table_result, lua_value_result, nil_err, ok_value,
 };
 use crate::harness::stdlib::db_support::{
     SqlParams, lua_table_to_sql_params, selector_denied_by_dynamic_open, selector_from_db_opts,
@@ -238,10 +238,7 @@ pub fn register_runtime_db_namespace(
                     let result = bridge_async_result(async move {
                         query_sql_rows(manager, selector, settings, sql, sql_params).await
                     });
-                    match result {
-                        Ok(rows) => json_ok(lua, &rows),
-                        Err(err) => nil_err(lua, &err),
-                    }
+                    lua_json_result(lua, result)
                 },
             )?,
         )?;

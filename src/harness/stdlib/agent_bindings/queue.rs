@@ -1,7 +1,4 @@
-use mlua::{Lua, Result as LuaResult, Value};
-
 use crate::harness::globals::{ActiveHarnessExecutionContext, HarnessAppData};
-use crate::harness::stdlib::binding_common::{nil_err, string_ok};
 use crate::harness::stdlib::policy_support::policy_u64;
 use crate::kernel::session::QueuedTask;
 
@@ -22,16 +19,6 @@ pub(crate) fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
 
 pub(crate) fn queue_max(snapshot: &std::collections::HashMap<String, serde_json::Value>) -> usize {
     policy_u64(snapshot, "queue.max_depth", 1024) as usize
-}
-
-pub(super) fn lua_string_result(
-    lua: &Lua,
-    result: Result<String, String>,
-) -> LuaResult<(Value, Value)> {
-    match result {
-        Ok(value) => string_ok(lua, &value),
-        Err(err) => nil_err(lua, &err),
-    }
 }
 
 pub(crate) async fn queue_push_one(

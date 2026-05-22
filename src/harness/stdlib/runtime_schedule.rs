@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{
-    bridge_async_result, json_ok, nil_err, parse_optional_lua_table,
+    bridge_async_result, json_ok, lua_json_result, nil_err, parse_optional_lua_table,
 };
 use crate::harness::stdlib::governance_support::{current_agent_id, require_capability};
 use params::{schedule_create_params, schedule_update_params};
@@ -31,16 +31,6 @@ fn scheduler_access(
         .scheduler
         .clone()
         .ok_or_else(|| "runtime.schedule requires a daemon-managed runtime".to_string())
-}
-
-fn schedule_result<T: Serialize>(
-    lua: &Lua,
-    result: Result<T, String>,
-) -> LuaResult<(Value, Value)> {
-    match result {
-        Ok(value) => json_ok(lua, &value),
-        Err(err) => nil_err(lua, &err),
-    }
 }
 
 fn optional_schedule_result<T: Serialize>(
@@ -93,7 +83,7 @@ pub fn register_runtime_schedule_namespace(
                         .await
                         .map_err(|e| e.to_string())
                 });
-                schedule_result(lua, result)
+                lua_json_result(lua, result)
             })?,
         )?;
     }
@@ -154,7 +144,7 @@ pub fn register_runtime_schedule_namespace(
                         .collect(),
                     None => jobs,
                 });
-                schedule_result(lua, result)
+                lua_json_result(lua, result)
             })?,
         )?;
     }
