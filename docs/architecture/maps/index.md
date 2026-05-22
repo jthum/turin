@@ -9,6 +9,7 @@ Maps:
 - [Actions](./actions.md)
 - [Agent Manager](./agent-manager.md)
 - [Channels](./channels.md)
+- [CLI Dispatch](./cli-dispatch.md)
 - [Daemon Runtime State](./daemon-runtime-state.md)
 - [Agent Session Bindings](./agent-session-bindings.md)
 - [Code Search](./code-search.md)
