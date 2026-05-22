@@ -26,7 +26,7 @@ pub use routing::{ConversationBinding, RoutingDecision, decide_routing};
 pub use settings::{
     ChannelConfigError, optional_bool_setting, optional_non_empty_setting,
     optional_session_scope_setting, positive_usize_setting, required_non_empty_setting,
-    session_scope_setting, string_enum_setting, u64_setting_with_min,
+    session_scope_setting, string_enum_setting, u64_setting_in_range, u64_setting_with_min,
 };
 
 pub const CHANNEL_ADAPTER_PROTOCOL_VERSION: u32 = 2;

@@ -3,7 +3,7 @@ use std::time::Duration;
 use turin_channel_core::{
     ChannelSessionScope, DEFAULT_MAX_INBOUND_TEXT_CHARS, optional_bool_setting,
     optional_non_empty_setting, positive_usize_setting, required_non_empty_setting,
-    session_scope_setting, u64_setting_with_min,
+    session_scope_setting, u64_setting_in_range, u64_setting_with_min,
 };
 
 use crate::{DEFAULT_BASE_URL, DEFAULT_GATEWAY_INTENTS, DEFAULT_GATEWAY_URL, DiscordTransportMode};
@@ -105,17 +105,15 @@ pub(crate) fn parse_settings(settings: &serde_json::Value) -> Result<DiscordChan
         "[discord_config_invalid_poll_interval] Discord channel setting 'poll_interval_ms' must be >= 100",
     )?;
 
-    let max_messages_per_poll = u64_setting_with_min(
+    let max_messages_per_poll = u64_setting_in_range(
         settings.get("max_messages_per_poll"),
         25,
         1,
+        100,
         "[discord_config_invalid_max_messages] Discord channel setting 'max_messages_per_poll' must be a positive integer",
+        "[discord_config_invalid_max_messages] Discord channel setting 'max_messages_per_poll' must be a positive integer",
+        "[discord_config_invalid_max_messages] Discord channel setting 'max_messages_per_poll' must be in 1..=100",
     )?;
-    if max_messages_per_poll > 100 {
-        anyhow::bail!(
-            "[discord_config_invalid_max_messages] Discord channel setting 'max_messages_per_poll' must be in 1..=100"
-        );
-    }
 
     let max_inbound_text_chars = positive_usize_setting(
         settings.get("max_inbound_text_chars"),

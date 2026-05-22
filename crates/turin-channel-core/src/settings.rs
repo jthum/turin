@@ -84,6 +84,35 @@ pub fn u64_setting_with_min(
     }
 }
 
+pub fn u64_setting_in_range(
+    value: Option<&serde_json::Value>,
+    default: u64,
+    min: u64,
+    max: u64,
+    invalid_type_message: impl Into<String>,
+    below_min_message: impl Into<String>,
+    above_max_message: impl Into<String>,
+) -> Result<u64, ChannelConfigError> {
+    let invalid_type_message = invalid_type_message.into();
+    let below_min_message = below_min_message.into();
+    let above_max_message = above_max_message.into();
+    match value {
+        None => Ok(default),
+        Some(value) => {
+            let parsed = value
+                .as_u64()
+                .ok_or_else(|| ChannelConfigError::new(invalid_type_message))?;
+            if parsed < min {
+                return Err(ChannelConfigError::new(below_min_message));
+            }
+            if parsed > max {
+                return Err(ChannelConfigError::new(above_max_message));
+            }
+            Ok(parsed)
+        }
+    }
+}
+
 pub fn positive_usize_setting(
     value: Option<&serde_json::Value>,
     default: usize,

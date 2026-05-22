@@ -283,6 +283,31 @@ fn setting_helpers_parse_reused_json_shapes() {
     assert!(
         u64_setting_with_min(settings.get("poll_interval_ms"), 1_000, 500, "too small").is_err()
     );
+    assert_eq!(
+        u64_setting_in_range(
+            settings.get("poll_interval_ms"),
+            1_000,
+            1,
+            500,
+            "invalid",
+            "too small",
+            "too large"
+        )
+        .unwrap(),
+        250
+    );
+    assert!(
+        u64_setting_in_range(
+            settings.get("poll_interval_ms"),
+            1_000,
+            251,
+            500,
+            "invalid",
+            "too small",
+            "too large"
+        )
+        .is_err()
+    );
     assert!(optional_bool_setting(settings.get("enabled"), false, "invalid").unwrap());
     assert_eq!(
         positive_usize_setting(

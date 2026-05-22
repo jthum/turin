@@ -2,8 +2,9 @@ use anyhow::{Result, anyhow};
 use std::time::Duration;
 use turin_channel_core::{
     ChannelSessionScope, DEFAULT_MAX_INBOUND_TEXT_CHARS, optional_bool_setting,
-    optional_non_empty_setting, optional_session_scope_setting, required_non_empty_setting,
-    session_scope_setting, string_enum_setting, u64_setting_with_min,
+    optional_non_empty_setting, optional_session_scope_setting, positive_usize_setting,
+    required_non_empty_setting, session_scope_setting, string_enum_setting, u64_setting_in_range,
+    u64_setting_with_min,
 };
 use turin_channel_runner::ChannelStreamMode;
 
@@ -178,29 +179,22 @@ pub(crate) fn parse_settings(
         "[rocketchat_config_invalid_poll_interval] Rocket.Chat channel setting 'poll_interval_ms' must be a positive integer >= 100",
     )?;
 
-    let max_messages_per_poll = u64_setting_with_min(
+    let max_messages_per_poll = u64_setting_in_range(
         settings.get("max_messages_per_poll"),
         DEFAULT_MAX_MESSAGES_PER_POLL as u64,
         1,
+        MAX_MESSAGES_PER_POLL as u64,
+        "[rocketchat_config_invalid_max_messages] Rocket.Chat channel setting 'max_messages_per_poll' must be in 1..=100",
+        "[rocketchat_config_invalid_max_messages] Rocket.Chat channel setting 'max_messages_per_poll' must be in 1..=100",
         "[rocketchat_config_invalid_max_messages] Rocket.Chat channel setting 'max_messages_per_poll' must be in 1..=100",
     )?;
-    if max_messages_per_poll > MAX_MESSAGES_PER_POLL as u64 {
-        anyhow::bail!(
-            "[rocketchat_config_invalid_max_messages] Rocket.Chat channel setting 'max_messages_per_poll' must be in 1..=100"
-        );
-    }
 
-    let max_inbound_text_chars = u64_setting_with_min(
+    let max_inbound_text_chars = positive_usize_setting(
         settings.get("max_inbound_text_chars"),
-        DEFAULT_MAX_INBOUND_TEXT_CHARS as u64,
-        1,
+        DEFAULT_MAX_INBOUND_TEXT_CHARS,
         "[rocketchat_config_invalid_max_inbound_text_chars] Rocket.Chat channel setting 'max_inbound_text_chars' must be a positive integer",
+        "[rocketchat_config_invalid_max_inbound_text_chars] Rocket.Chat channel setting 'max_inbound_text_chars' is too large",
     )?;
-    let max_inbound_text_chars = usize::try_from(max_inbound_text_chars).map_err(|_| {
-        anyhow!(
-            "[rocketchat_config_invalid_max_inbound_text_chars] Rocket.Chat channel setting 'max_inbound_text_chars' is too large"
-        )
-    })?;
 
     Ok(RocketChatChannelSettings {
         token_env,

@@ -4,7 +4,7 @@ use std::time::Duration;
 use turin_channel_core::{
     ChannelSessionScope, DEFAULT_MAX_INBOUND_TEXT_CHARS, optional_bool_setting,
     optional_session_scope_setting, positive_usize_setting, required_non_empty_setting,
-    session_scope_setting, string_enum_setting, u64_setting_with_min,
+    session_scope_setting, string_enum_setting, u64_setting_in_range, u64_setting_with_min,
 };
 use turin_channel_runner::ChannelStreamMode;
 
@@ -142,22 +142,15 @@ fn parse_settings(
         }
     };
 
-    let poll_timeout_seconds = match settings.get("poll_timeout_seconds") {
-        None => 30,
-        Some(value) => {
-            let timeout = value.as_u64().ok_or_else(|| {
-                anyhow!(
-                    "[telegram_config_invalid_poll_timeout] Telegram channel setting 'poll_timeout_seconds' must be a non-negative integer"
-                )
-            })?;
-            if timeout > 50 {
-                anyhow::bail!(
-                    "[telegram_config_invalid_poll_timeout] Telegram channel setting 'poll_timeout_seconds' must be <= 50"
-                );
-            }
-            timeout
-        }
-    };
+    let poll_timeout_seconds = u64_setting_in_range(
+        settings.get("poll_timeout_seconds"),
+        30,
+        0,
+        50,
+        "[telegram_config_invalid_poll_timeout] Telegram channel setting 'poll_timeout_seconds' must be a non-negative integer",
+        "[telegram_config_invalid_poll_timeout] Telegram channel setting 'poll_timeout_seconds' must be <= 50",
+        "[telegram_config_invalid_poll_timeout] Telegram channel setting 'poll_timeout_seconds' must be <= 50",
+    )?;
 
     let poll_interval_ms = u64_setting_with_min(
         settings.get("poll_interval_ms"),
@@ -166,22 +159,15 @@ fn parse_settings(
         "[telegram_config_invalid_poll_interval] Telegram channel setting 'poll_interval_ms' must be >= 25",
     )?;
 
-    let max_updates_per_poll = match settings.get("max_updates_per_poll") {
-        None => 25,
-        Some(value) => {
-            let max = value.as_u64().ok_or_else(|| {
-                anyhow!(
-                    "[telegram_config_invalid_max_updates] Telegram channel setting 'max_updates_per_poll' must be a positive integer"
-                )
-            })?;
-            if !(1..=100).contains(&max) {
-                anyhow::bail!(
-                    "[telegram_config_invalid_max_updates] Telegram channel setting 'max_updates_per_poll' must be in 1..=100"
-                );
-            }
-            max as u8
-        }
-    };
+    let max_updates_per_poll = u64_setting_in_range(
+        settings.get("max_updates_per_poll"),
+        25,
+        1,
+        100,
+        "[telegram_config_invalid_max_updates] Telegram channel setting 'max_updates_per_poll' must be a positive integer",
+        "[telegram_config_invalid_max_updates] Telegram channel setting 'max_updates_per_poll' must be in 1..=100",
+        "[telegram_config_invalid_max_updates] Telegram channel setting 'max_updates_per_poll' must be in 1..=100",
+    )? as u8;
 
     let max_inbound_text_chars = positive_usize_setting(
         settings.get("max_inbound_text_chars"),
