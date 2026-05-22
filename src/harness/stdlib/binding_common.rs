@@ -102,6 +102,13 @@ pub fn bool_err(lua: &Lua, err: &str) -> LuaResult<(Value, Value)> {
     ))
 }
 
+pub fn lua_bool_result<T>(lua: &Lua, result: Result<T, String>) -> LuaResult<(Value, Value)> {
+    match result {
+        Ok(_) => Ok(ok_bool()),
+        Err(err) => bool_err(lua, &err),
+    }
+}
+
 pub fn json_ok<T>(lua: &Lua, value: &T) -> LuaResult<(Value, Value)>
 where
     T: Serialize + ?Sized,

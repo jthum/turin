@@ -10,7 +10,7 @@ use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{
-    bridge_async, bridge_async_display_err, bridge_async_result, lua_table_result,
+    bridge_async, bridge_async_display_err, bridge_async_result, lua_bool_result, lua_table_result,
     lua_value_result, nil_err, nil_ok, ok_value, string_ok,
 };
 use crate::harness::stdlib::governance_support::{
@@ -33,7 +33,7 @@ use options::{
     peer_prompt_task, sidestep_opts_table_from_value,
 };
 pub(crate) use queue::{active_trace_id, queue_max, queue_push_one};
-use queue::{lua_bool_result, lua_string_result, queue_push_many};
+use queue::{lua_string_result, queue_push_many};
 use session_store::{
     current_completed_task_results, current_session_matches, current_session_store_selector,
     lookup_session_store, require_session_store,

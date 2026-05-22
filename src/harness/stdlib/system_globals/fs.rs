@@ -5,7 +5,7 @@ use mlua::{Lua, Result as LuaResult, Value};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::globals::block_on_current;
-use crate::harness::stdlib::binding_common::{bool_err, nil_err, ok_bool, string_ok};
+use crate::harness::stdlib::binding_common::{bool_err, lua_bool_result, nil_err, string_ok};
 use crate::harness::stdlib::scoped_data_backend::encode_scope_key;
 use crate::persistence::manager::{StorePathScope, StoreSelector};
 
@@ -156,10 +156,8 @@ pub(super) fn register_fs_module(lua: &Lua, fs_root: &Path, max_file_size: usize
                         {
                             return bool_err(lua, &err.to_string());
                         }
-                        match std::fs::write(&p, content) {
-                            Ok(_) => Ok(ok_bool()),
-                            Err(e) => bool_err(lua, &e.to_string()),
-                        }
+                        let result = std::fs::write(&p, content).map_err(|e| e.to_string());
+                        lua_bool_result(lua, result)
                     }
                     None => bool_err(lua, "Unsafe path traversal"),
                 }

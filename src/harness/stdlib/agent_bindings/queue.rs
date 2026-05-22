@@ -1,7 +1,7 @@
 use mlua::{Lua, Result as LuaResult, Value};
 
 use crate::harness::globals::{ActiveHarnessExecutionContext, HarnessAppData};
-use crate::harness::stdlib::binding_common::{bool_err, nil_err, ok_bool, string_ok};
+use crate::harness::stdlib::binding_common::{nil_err, string_ok};
 use crate::harness::stdlib::policy_support::policy_u64;
 use crate::kernel::session::QueuedTask;
 
@@ -31,16 +31,6 @@ pub(super) fn lua_string_result(
     match result {
         Ok(value) => string_ok(lua, &value),
         Err(err) => nil_err(lua, &err),
-    }
-}
-
-pub(super) fn lua_bool_result<T>(
-    lua: &Lua,
-    result: Result<T, String>,
-) -> LuaResult<(Value, Value)> {
-    match result {
-        Ok(_) => Ok(ok_bool()),
-        Err(err) => bool_err(lua, &err),
     }
 }
 

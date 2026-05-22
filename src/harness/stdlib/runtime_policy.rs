@@ -2,7 +2,7 @@ use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::HarnessAppData;
 use crate::harness::stdlib::binding_common::{
-    bool_err, bridge_async_display_err, json_ok, nil_err, nil_ok, ok_bool,
+    bool_err, bridge_async_display_err, json_ok, lua_bool_result, nil_err, nil_ok,
 };
 use crate::harness::stdlib::governance_support::require_capability as require_governance_capability;
 use crate::harness::stdlib::policy_support::policy_scope_from_value;
@@ -52,10 +52,7 @@ pub fn register_runtime_policy_namespace(
                     let result = bridge_async_display_err(async move {
                         policy_manager.set(&key, json_value, &scope).await
                     });
-                    match result {
-                        Ok(()) => Ok(ok_bool()),
-                        Err(err) => bool_err(lua, &err),
-                    }
+                    lua_bool_result(lua, result)
                 },
             )?,
         )?;

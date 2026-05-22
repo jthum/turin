@@ -8,10 +8,10 @@ use mlua::{Lua, Result as LuaResult, Value};
 
 use crate::harness::globals::{ActiveHarnessExecutionContext, HarnessAppData};
 use crate::harness::stdlib::binding_common::{
-    bool_err, bridge_async_result, lua_table_result, lua_value_result,
+    bridge_async_result, lua_bool_result, lua_table_result, lua_value_result,
     memory_correction_row_to_lua_value, memory_feedback_state_to_lua_value,
     memory_purge_report_to_lua_value, memory_rows_to_lua_table, memory_store_row_to_lua_value,
-    nil_err, nil_ok, ok_bool, string_ok,
+    nil_err, nil_ok, string_ok,
 };
 use crate::harness::stdlib::scoped_data_backend::{
     MemoryFeedbackRequest, MemoryFeedbackSignal, MemoryPurgeRequest, MemorySearchRequest,
@@ -202,10 +202,7 @@ pub(crate) fn kv_set_result(
         .await
         .map_err(|e| e.to_string())
     });
-    match result {
-        Ok(_) => Ok(ok_bool()),
-        Err(err) => bool_err(lua, &err),
-    }
+    lua_bool_result(lua, result)
 }
 
 pub(crate) fn kv_delete_result(
@@ -227,8 +224,5 @@ pub(crate) fn kv_delete_result(
         .await
         .map_err(|e| e.to_string())
     });
-    match result {
-        Ok(_) => Ok(ok_bool()),
-        Err(err) => bool_err(lua, &err),
-    }
+    lua_bool_result(lua, result)
 }
