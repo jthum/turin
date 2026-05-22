@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
-use crate::harness::globals::HarnessAppData;
+use crate::harness::globals::{ActiveHarnessExecutionContext, HarnessAppData};
 use crate::harness::stdlib::binding_common::{
     bridge_async, bridge_async_display_err, bridge_async_result, lua_bool_result,
     lua_string_result, lua_table_result, lua_value_result, nil_err, nil_ok, ok_value, string_ok,
@@ -85,6 +85,28 @@ fn prepare_peer_submission(
         task,
         delegated_capabilities,
     }))
+}
+
+fn queue_command_result(
+    lua: &Lua,
+    execution_ctx: ActiveHarnessExecutionContext,
+    app_data: &HarnessAppData,
+    cmd: String,
+    push_front: bool,
+) -> LuaResult<(Value, Value)> {
+    let snapshot = runtime_policy_snapshot(app_data).map_err(mlua::Error::runtime)?;
+    let queue_max = queue_max(&snapshot);
+    let trace_id = active_trace_id(app_data);
+    let res = bridge_async_result(async move {
+        queue_push_one(
+            &execution_ctx,
+            QueuedTask::ad_hoc(cmd).with_inherited_trace(trace_id.as_deref()),
+            queue_max,
+            push_front,
+        )
+        .await
+    });
+    lua_bool_result(lua, res)
 }
 
 pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResult<()> {
@@ -439,21 +461,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
     session_ns.set(
         "queue",
         lua.create_function(move |lua, cmd: String| {
-            let aq = aq.clone();
-            let snapshot =
-                runtime_policy_snapshot(&queue_policy_snapshot).map_err(mlua::Error::runtime)?;
-            let queue_max = queue_max(&snapshot);
-            let trace_id = active_trace_id(&queue_policy_snapshot);
-            let res = bridge_async_result(async move {
-                queue_push_one(
-                    &aq,
-                    QueuedTask::ad_hoc(cmd).with_inherited_trace(trace_id.as_deref()),
-                    queue_max,
-                    false,
-                )
-                .await
-            });
-            lua_bool_result(lua, res)
+            queue_command_result(lua, aq.clone(), &queue_policy_snapshot, cmd, false)
         })?,
     )?;
 
@@ -463,21 +471,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
     session_ns.set(
         "queue_next",
         lua.create_function(move |lua, cmd: String| {
-            let aq = aq2.clone();
-            let snapshot = runtime_policy_snapshot(&queue_next_policy_snapshot)
-                .map_err(mlua::Error::runtime)?;
-            let queue_max = queue_max(&snapshot);
-            let trace_id = active_trace_id(&queue_next_policy_snapshot);
-            let res = bridge_async_result(async move {
-                queue_push_one(
-                    &aq,
-                    QueuedTask::ad_hoc(cmd).with_inherited_trace(trace_id.as_deref()),
-                    queue_max,
-                    true,
-                )
-                .await
-            });
-            lua_bool_result(lua, res)
+            queue_command_result(lua, aq2.clone(), &queue_next_policy_snapshot, cmd, true)
         })?,
     )?;
 
