@@ -347,12 +347,7 @@ async fn handle_daemon_channel_command(command: DaemonChannelCommands) -> Result
         } => {
             commands::daemon::run_channel_approve(
                 &args.config.config,
-                serde_json::json!({
-                    "id": id,
-                    "workspace_id": workspace_id,
-                    "room_id": room_id,
-                    "thread_id": thread_id,
-                }),
+                channel_access_room_payload(id, workspace_id, room_id, thread_id),
                 args.json,
             )
             .await
@@ -366,12 +361,7 @@ async fn handle_daemon_channel_command(command: DaemonChannelCommands) -> Result
         } => {
             commands::daemon::run_channel_reject(
                 &args.config.config,
-                serde_json::json!({
-                    "id": id,
-                    "workspace_id": workspace_id,
-                    "room_id": room_id,
-                    "thread_id": thread_id,
-                }),
+                channel_access_room_payload(id, workspace_id, room_id, thread_id),
                 args.json,
             )
             .await
@@ -385,12 +375,7 @@ async fn handle_daemon_channel_command(command: DaemonChannelCommands) -> Result
         } => {
             commands::daemon::run_channel_revoke(
                 &args.config.config,
-                serde_json::json!({
-                    "id": id,
-                    "workspace_id": workspace_id,
-                    "room_id": room_id,
-                    "thread_id": thread_id,
-                }),
+                channel_access_room_payload(id, workspace_id, room_id, thread_id),
                 args.json,
             )
             .await
@@ -516,6 +501,20 @@ async fn handle_daemon_session_command(command: DaemonSessionCommands) -> Result
             .await
         }
     }
+}
+
+fn channel_access_room_payload(
+    id: String,
+    workspace_id: String,
+    room_id: Option<String>,
+    thread_id: String,
+) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "workspace_id": workspace_id,
+        "room_id": room_id,
+        "thread_id": thread_id,
+    })
 }
 
 fn parse_cli_settings(entries: &[String]) -> Result<serde_json::Value> {

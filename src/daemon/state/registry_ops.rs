@@ -374,21 +374,13 @@ impl DaemonState {
         room_id: Option<String>,
         thread_id: String,
     ) -> Result<Option<ChannelAccessSnapshot>> {
-        let Some(channel) = self.channel_detail(channel_id) else {
+        let Some((store, room)) =
+            self.channel_access_target(channel_id, workspace_id, room_id, thread_id)?
+        else {
             return Ok(None);
         };
-        let store = FileAccessStateStore::new(self.channel_access_state_path(channel_id));
         let snapshot = store
-            .approve(
-                &ChannelRoomRef {
-                    channel: parse_channel_kind(&channel.kind)?,
-                    workspace_id,
-                    room_id,
-                    thread_id,
-                },
-                None,
-                Some("operator".to_string()),
-            )
+            .approve(&room, None, Some("operator".to_string()))
             .await?;
         Ok(Some(snapshot))
     }
@@ -400,18 +392,12 @@ impl DaemonState {
         room_id: Option<String>,
         thread_id: String,
     ) -> Result<Option<ChannelAccessSnapshot>> {
-        let Some(channel) = self.channel_detail(channel_id) else {
+        let Some((store, room)) =
+            self.channel_access_target(channel_id, workspace_id, room_id, thread_id)?
+        else {
             return Ok(None);
         };
-        let store = FileAccessStateStore::new(self.channel_access_state_path(channel_id));
-        let snapshot = store
-            .reject_pending(&ChannelRoomRef {
-                channel: parse_channel_kind(&channel.kind)?,
-                workspace_id,
-                room_id,
-                thread_id,
-            })
-            .await?;
+        let snapshot = store.reject_pending(&room).await?;
         Ok(Some(snapshot))
     }
 
@@ -422,19 +408,33 @@ impl DaemonState {
         room_id: Option<String>,
         thread_id: String,
     ) -> Result<Option<ChannelAccessSnapshot>> {
+        let Some((store, room)) =
+            self.channel_access_target(channel_id, workspace_id, room_id, thread_id)?
+        else {
+            return Ok(None);
+        };
+        let snapshot = store.revoke(&room).await?;
+        Ok(Some(snapshot))
+    }
+
+    fn channel_access_target(
+        &self,
+        channel_id: &str,
+        workspace_id: String,
+        room_id: Option<String>,
+        thread_id: String,
+    ) -> Result<Option<(FileAccessStateStore, ChannelRoomRef)>> {
         let Some(channel) = self.channel_detail(channel_id) else {
             return Ok(None);
         };
         let store = FileAccessStateStore::new(self.channel_access_state_path(channel_id));
-        let snapshot = store
-            .revoke(&ChannelRoomRef {
-                channel: parse_channel_kind(&channel.kind)?,
-                workspace_id,
-                room_id,
-                thread_id,
-            })
-            .await?;
-        Ok(Some(snapshot))
+        let room = ChannelRoomRef {
+            channel: parse_channel_kind(&channel.kind)?,
+            workspace_id,
+            room_id,
+            thread_id,
+        };
+        Ok(Some((store, room)))
     }
 
     pub async fn create_channel(&mut self, input: CreateChannelInput) -> Result<ChannelDetail> {
