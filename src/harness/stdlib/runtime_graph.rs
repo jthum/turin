@@ -33,6 +33,11 @@ struct SelectedPathSourceOptions {
     limit: Option<usize>,
 }
 
+enum SelectedPathRequest {
+    Refs(Vec<GraphRef>),
+    Source(GraphRef, SelectedPathSourceOptions),
+}
+
 fn bytes_to_simple_uuid(bytes: &[u8]) -> String {
     uuid::Uuid::from_slice(bytes)
         .map(|uuid| uuid.simple().to_string())
@@ -79,6 +84,64 @@ fn selected_path_order(table: &Table) -> LuaResult<SelectedPathOrder> {
         Some(other) => Err(mlua::Error::runtime(format!(
             "selected_path order must be 'oldest_first' or 'newest_first', got '{other}'"
         ))),
+    }
+}
+
+fn selected_path_request(opts: &Table) -> LuaResult<SelectedPathRequest> {
+    let refs = match opts.get::<Value>("refs") {
+        Ok(Value::Nil) | Err(_) => None,
+        Ok(Value::Table(table)) => Some(graph_refs_from_sequence(table)?),
+        Ok(_) => {
+            return Err(mlua::Error::runtime(
+                "selected_path refs must be an array of graph refs",
+            ));
+        }
+    };
+    let source = match opts.get::<Value>("source") {
+        Ok(Value::Nil) | Err(_) => None,
+        Ok(Value::Table(table)) => Some(graph_ref_from_table(table)?),
+        Ok(_) => {
+            return Err(mlua::Error::runtime(
+                "selected_path source must be a graph ref table",
+            ));
+        }
+    };
+    let relation_kind = opt_string(opts, "relation_kind");
+    let target_kind = opt_string(opts, "target_kind");
+    let target_role = opt_string(opts, "target_role");
+    let order = selected_path_order(opts)?;
+    let limit = opt_positive_usize(opts, "limit")?;
+
+    match (refs, source) {
+        (Some(_), Some(_)) => Err(mlua::Error::runtime(
+            "selected_path accepts either refs or source, not both",
+        )),
+        (None, None) => Err(mlua::Error::runtime(
+            "selected_path requires either refs or source",
+        )),
+        (Some(refs), None) => {
+            if relation_kind.is_some()
+                || target_kind.is_some()
+                || target_role.is_some()
+                || !matches!(order, SelectedPathOrder::OldestFirst)
+                || limit.is_some()
+            {
+                return Err(mlua::Error::runtime(
+                    "selected_path refs mode does not accept relation_kind, target_kind, target_role, order, or limit",
+                ));
+            }
+            Ok(SelectedPathRequest::Refs(refs))
+        }
+        (None, Some(source)) => Ok(SelectedPathRequest::Source(
+            source,
+            SelectedPathSourceOptions {
+                relation_kind,
+                target_kind,
+                target_role,
+                order,
+                limit,
+            },
+        )),
     }
 }
 
@@ -291,10 +354,7 @@ async fn selected_path_from_graph_edges(
             continue;
         }
         let turn_id = graph_ref_to_turn_id(store, session_id, &edge.target).await?;
-        if turn_ids.contains(&turn_id) {
-            anyhow::bail!("Graph selected path contains duplicate turn {}", turn_id);
-        }
-        turn_ids.push(turn_id);
+        push_unique_selected_turn(&mut turn_ids, turn_id)?;
     }
     if turn_ids.is_empty() {
         let mut detail = format!("source={}#{}", source.kind, source.id);
@@ -312,6 +372,14 @@ async fn selected_path_from_graph_edges(
     Ok(turn_ids)
 }
 
+fn push_unique_selected_turn(turn_ids: &mut Vec<i64>, turn_id: i64) -> Result<()> {
+    if turn_ids.contains(&turn_id) {
+        anyhow::bail!("Graph selected path contains duplicate turn {}", turn_id);
+    }
+    turn_ids.push(turn_id);
+    Ok(())
+}
+
 async fn selected_path_from_graph_refs(
     store: &StateStore,
     session_id: i64,
@@ -320,10 +388,7 @@ async fn selected_path_from_graph_refs(
     let mut turn_ids = Vec::with_capacity(refs.len());
     for graph_ref in refs {
         let turn_id = graph_ref_to_turn_id(store, session_id, &graph_ref).await?;
-        if turn_ids.contains(&turn_id) {
-            anyhow::bail!("Graph selected path contains duplicate turn {}", turn_id);
-        }
-        turn_ids.push(turn_id);
+        push_unique_selected_turn(&mut turn_ids, turn_id)?;
     }
     Ok(turn_ids)
 }
@@ -442,74 +507,22 @@ pub fn register_runtime_graph_namespace(
                 {
                     return nil_err(lua, &err);
                 }
-                let refs = match opts.get::<Value>("refs") {
-                    Ok(Value::Nil) | Err(_) => None,
-                    Ok(Value::Table(table)) => match graph_refs_from_sequence(table) {
-                        Ok(refs) => Some(refs),
-                        Err(err) => return nil_err(lua, &err.to_string()),
-                    },
-                    Ok(_) => return nil_err(lua, "selected_path refs must be an array of graph refs"),
-                };
-                let source = match opts.get::<Value>("source") {
-                    Ok(Value::Nil) | Err(_) => None,
-                    Ok(Value::Table(table)) => match graph_ref_from_table(table) {
-                        Ok(source) => Some(source),
-                        Err(err) => return nil_err(lua, &err.to_string()),
-                    },
-                    Ok(_) => return nil_err(lua, "selected_path source must be a graph ref table"),
-                };
-                let relation_kind = opt_string(&opts, "relation_kind");
-                let target_kind = opt_string(&opts, "target_kind");
-                let target_role = opt_string(&opts, "target_role");
-                let order = match selected_path_order(&opts) {
-                    Ok(order) => order,
+                let request = match selected_path_request(&opts) {
+                    Ok(request) => request,
                     Err(err) => return nil_err(lua, &err.to_string()),
                 };
-                let limit = match opt_positive_usize(&opts, "limit") {
-                    Ok(limit) => limit,
-                    Err(err) => return nil_err(lua, &err.to_string()),
-                };
-                match (&refs, &source) {
-                    (Some(_), Some(_)) => {
-                        return nil_err(lua, "selected_path accepts either refs or source, not both");
-                    }
-                    (None, None) => {
-                        return nil_err(lua, "selected_path requires either refs or source");
-                    }
-                    (Some(_), None) => {
-                        if relation_kind.is_some()
-                            || target_kind.is_some()
-                            || target_role.is_some()
-                            || !matches!(order, SelectedPathOrder::OldestFirst)
-                            || limit.is_some()
-                        {
-                            return nil_err(
-                                lua,
-                                "selected_path refs mode does not accept relation_kind, target_kind, target_role, order, or limit",
-                            );
-                        }
-                    }
-                    (None, Some(_)) => {}
-                }
                 let session_id = opt_string(&opts, "session_id");
                 let store_manager = store_manager.clone();
                 let execution_ctx = execution_ctx.clone();
                 let result = bridge_async_display_err(async move {
                     let session =
                         resolve_graph_session(store_manager, execution_ctx, session_id).await?;
-                    match (refs, source) {
-                        (Some(refs), None) => {
+                    match request {
+                        SelectedPathRequest::Refs(refs) => {
                             selected_path_from_graph_refs(&session.store, session.internal_id, refs)
                                 .await
                         }
-                        (None, Some(source)) => {
-                            let source_opts = SelectedPathSourceOptions {
-                                relation_kind,
-                                target_kind,
-                                target_role,
-                                order,
-                                limit,
-                            };
+                        SelectedPathRequest::Source(source, source_opts) => {
                             selected_path_from_graph_edges(
                                 &session.store,
                                 session.internal_id,
@@ -518,7 +531,6 @@ pub fn register_runtime_graph_namespace(
                             )
                             .await
                         }
-                        _ => unreachable!("selected_path mode was validated before async bridge"),
                     }
                 });
                 lua_table_result(lua, result, selected_path_to_lua)
