@@ -4,8 +4,8 @@ use crate::daemon::protocol::{
 };
 
 use super::{
-    DispatchContext, not_found_error, serialize_response, serialize_response_with_event,
-    validation_error,
+    DispatchContext, optional_response, optional_response_with_event,
+    serialize_response_with_event, validation_error,
 };
 use crate::daemon::state::{
     CreateScheduledJobInput, ScheduledJobOverlapPolicy, UpdateScheduledJobInput,
@@ -73,7 +73,7 @@ pub(super) async fn update(
     };
 
     let guard = ctx.state.read().await;
-    match guard
+    let result = guard
         .update_scheduled_job(
             &params.id,
             UpdateScheduledJobInput {
@@ -93,22 +93,16 @@ pub(super) async fn update(
                 enabled: params.enabled,
             },
         )
-        .await
-    {
-        Ok(Some(job)) => serialize_response_with_event(
-            id,
-            job,
-            "updated scheduled job",
-            &ctx.event_tx,
-            "schedule.updated",
-        ),
-        Ok(None) => not_found_error(
-            id,
-            ErrorCode::ScheduleNotFound,
-            format!("Scheduled job '{}' not found", params.id),
-        ),
-        Err(err) => validation_error(id, err),
-    }
+        .await;
+    optional_response_with_event(
+        id,
+        result,
+        "updated scheduled job",
+        &ctx.event_tx,
+        "schedule.updated",
+        ErrorCode::ScheduleNotFound,
+        || format!("Scheduled job '{}' not found", params.id),
+    )
 }
 
 pub(super) async fn get(
@@ -117,15 +111,14 @@ pub(super) async fn get(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
-    match guard.scheduled_job_detail(&params.id).await {
-        Ok(Some(job)) => serialize_response(id, job, "scheduled job detail"),
-        Ok(None) => not_found_error(
-            id,
-            ErrorCode::ScheduleNotFound,
-            format!("Scheduled job '{}' not found", params.id),
-        ),
-        Err(err) => validation_error(id, err),
-    }
+    let result = guard.scheduled_job_detail(&params.id).await;
+    optional_response(
+        id,
+        result,
+        "scheduled job detail",
+        ErrorCode::ScheduleNotFound,
+        || format!("Scheduled job '{}' not found", params.id),
+    )
 }
 
 pub(super) async fn list(
@@ -165,18 +158,16 @@ pub(super) async fn runs(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
-    match guard
+    let result = guard
         .scheduled_job_runs(&params.id, params.active_only, params.limit)
-        .await
-    {
-        Ok(Some(runs)) => serialize_response(id, runs, "scheduled job runs"),
-        Ok(None) => not_found_error(
-            id,
-            ErrorCode::ScheduleNotFound,
-            format!("Scheduled job '{}' not found", params.id),
-        ),
-        Err(err) => validation_error(id, err),
-    }
+        .await;
+    optional_response(
+        id,
+        result,
+        "scheduled job runs",
+        ErrorCode::ScheduleNotFound,
+        || format!("Scheduled job '{}' not found", params.id),
+    )
 }
 
 async fn set_enabled(
@@ -186,25 +177,20 @@ async fn set_enabled(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
-    match guard.set_scheduled_job_enabled(&public_id, enabled).await {
-        Ok(Some(job)) => serialize_response_with_event(
-            id,
-            job,
-            "scheduled job toggle result",
-            &ctx.event_tx,
-            if enabled {
-                "schedule.enabled"
-            } else {
-                "schedule.disabled"
-            },
-        ),
-        Ok(None) => not_found_error(
-            id,
-            ErrorCode::ScheduleNotFound,
-            format!("Scheduled job '{}' not found", public_id),
-        ),
-        Err(err) => validation_error(id, err),
-    }
+    let result = guard.set_scheduled_job_enabled(&public_id, enabled).await;
+    optional_response_with_event(
+        id,
+        result,
+        "scheduled job toggle result",
+        &ctx.event_tx,
+        if enabled {
+            "schedule.enabled"
+        } else {
+            "schedule.disabled"
+        },
+        ErrorCode::ScheduleNotFound,
+        || format!("Scheduled job '{}' not found", public_id),
+    )
 }
 
 pub(super) async fn delete(
@@ -213,19 +199,14 @@ pub(super) async fn delete(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
-    match guard.delete_scheduled_job(&params.id).await {
-        Ok(Some(job)) => serialize_response_with_event(
-            id,
-            job,
-            "deleted scheduled job",
-            &ctx.event_tx,
-            "schedule.deleted",
-        ),
-        Ok(None) => not_found_error(
-            id,
-            ErrorCode::ScheduleNotFound,
-            format!("Scheduled job '{}' not found", params.id),
-        ),
-        Err(err) => validation_error(id, err),
-    }
+    let result = guard.delete_scheduled_job(&params.id).await;
+    optional_response_with_event(
+        id,
+        result,
+        "deleted scheduled job",
+        &ctx.event_tx,
+        "schedule.deleted",
+        ErrorCode::ScheduleNotFound,
+        || format!("Scheduled job '{}' not found", params.id),
+    )
 }

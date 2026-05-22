@@ -201,6 +201,36 @@ pub(super) fn not_found_error(
     ResponseEnvelope::err(id, code, message, None)
 }
 
+pub(super) fn optional_response<T: Serialize>(
+    id: Option<String>,
+    result: Result<Option<T>, impl std::fmt::Display>,
+    context: &str,
+    not_found_code: ErrorCode,
+    not_found_message: impl FnOnce() -> String,
+) -> ResponseEnvelope {
+    match result {
+        Ok(Some(value)) => serialize_response(id, value, context),
+        Ok(None) => not_found_error(id, not_found_code, not_found_message()),
+        Err(err) => validation_error(id, err),
+    }
+}
+
+pub(super) fn optional_response_with_event<T: Serialize>(
+    id: Option<String>,
+    result: Result<Option<T>, impl std::fmt::Display>,
+    context: &str,
+    event_tx: &broadcast::Sender<EventEnvelope>,
+    event_name: &str,
+    not_found_code: ErrorCode,
+    not_found_message: impl FnOnce() -> String,
+) -> ResponseEnvelope {
+    match result {
+        Ok(Some(value)) => serialize_response_with_event(id, value, context, event_tx, event_name),
+        Ok(None) => not_found_error(id, not_found_code, not_found_message()),
+        Err(err) => validation_error(id, err),
+    }
+}
+
 pub(super) fn validation_error(
     id: Option<String>,
     err: impl std::fmt::Display,

@@ -4,7 +4,7 @@ use crate::daemon::protocol::{
 };
 use crate::daemon::state::WorklistItemsQuery;
 
-use super::{DispatchContext, not_found_error, serialize_response, validation_error};
+use super::{DispatchContext, optional_response, serialize_response, validation_error};
 
 pub(super) async fn list(
     id: Option<String>,
@@ -31,18 +31,16 @@ pub(super) async fn get(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
-    match guard
+    let result = guard
         .worklist_detail(&params.id, params.persistence.as_ref())
-        .await
-    {
-        Ok(Some(worklist)) => serialize_response(id, worklist, "worklist detail"),
-        Ok(None) => not_found_error(
-            id,
-            ErrorCode::WorklistNotFound,
-            format!("Worklist '{}' not found", params.id),
-        ),
-        Err(err) => validation_error(id, err),
-    }
+        .await;
+    optional_response(
+        id,
+        result,
+        "worklist detail",
+        ErrorCode::WorklistNotFound,
+        || format!("Worklist '{}' not found", params.id),
+    )
 }
 
 pub(super) async fn items(
@@ -51,7 +49,7 @@ pub(super) async fn items(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
-    match guard
+    let result = guard
         .worklist_items(WorklistItemsQuery {
             public_id: &params.id,
             persistence: params.persistence.as_ref(),
@@ -63,16 +61,14 @@ pub(super) async fn items(
             due_only: params.due_only,
             limit: params.limit,
         })
-        .await
-    {
-        Ok(Some(items)) => serialize_response(id, items, "worklist items"),
-        Ok(None) => not_found_error(
-            id,
-            ErrorCode::WorklistNotFound,
-            format!("Worklist '{}' not found", params.id),
-        ),
-        Err(err) => validation_error(id, err),
-    }
+        .await;
+    optional_response(
+        id,
+        result,
+        "worklist items",
+        ErrorCode::WorklistNotFound,
+        || format!("Worklist '{}' not found", params.id),
+    )
 }
 
 pub(super) async fn item_get(
@@ -81,16 +77,14 @@ pub(super) async fn item_get(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
-    match guard
+    let result = guard
         .work_item_detail(&params.id, params.persistence.as_ref())
-        .await
-    {
-        Ok(Some(item)) => serialize_response(id, item, "work item detail"),
-        Ok(None) => not_found_error(
-            id,
-            ErrorCode::WorkItemNotFound,
-            format!("Work item '{}' not found", params.id),
-        ),
-        Err(err) => validation_error(id, err),
-    }
+        .await;
+    optional_response(
+        id,
+        result,
+        "work item detail",
+        ErrorCode::WorkItemNotFound,
+        || format!("Work item '{}' not found", params.id),
+    )
 }

@@ -6,7 +6,7 @@ use crate::daemon::protocol::{
 use crate::daemon::state::session_store_selector_from_filters;
 
 use super::{
-    DispatchContext, emit_event, not_found_error, serialize_response,
+    DispatchContext, emit_event, not_found_error, optional_response, optional_response_with_event,
     serialize_response_with_event, validation_error,
 };
 use crate::daemon::protocol::ErrorCode;
@@ -127,15 +127,14 @@ pub(super) async fn get(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
-    match guard.get_session(&params.session_id).await {
-        Ok(Some(session)) => serialize_response(id, session, "session detail"),
-        Ok(None) => not_found_error(
-            id,
-            ErrorCode::SessionNotFound,
-            format!("Session '{}' not found", params.session_id),
-        ),
-        Err(err) => validation_error(id, err),
-    }
+    let result = guard.get_session(&params.session_id).await;
+    optional_response(
+        id,
+        result,
+        "session detail",
+        ErrorCode::SessionNotFound,
+        || format!("Session '{}' not found", params.session_id),
+    )
 }
 
 pub(super) async fn set_title(
@@ -144,24 +143,18 @@ pub(super) async fn set_title(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
-    match guard
+    let result = guard
         .set_session_title(&params.session_id, params.title.as_deref())
-        .await
-    {
-        Ok(Some(session)) => serialize_response_with_event(
-            id,
-            session,
-            "updated session title",
-            &ctx.event_tx,
-            "session.title_updated",
-        ),
-        Ok(None) => not_found_error(
-            id,
-            ErrorCode::SessionNotFound,
-            format!("Session '{}' not found", params.session_id),
-        ),
-        Err(err) => validation_error(id, err),
-    }
+        .await;
+    optional_response_with_event(
+        id,
+        result,
+        "updated session title",
+        &ctx.event_tx,
+        "session.title_updated",
+        ErrorCode::SessionNotFound,
+        || format!("Session '{}' not found", params.session_id),
+    )
 }
 
 pub(super) async fn branch_list(
@@ -187,7 +180,7 @@ pub(super) async fn branch_create(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
-    match guard
+    let result = guard
         .create_session_branch(
             &params.session_id,
             &params.name,
@@ -195,22 +188,16 @@ pub(super) async fn branch_create(
             params.from_turn_index,
             params.activate,
         )
-        .await
-    {
-        Ok(Some(branch)) => serialize_response_with_event(
-            id,
-            branch,
-            "created session branch",
-            &ctx.event_tx,
-            "session.branch_created",
-        ),
-        Ok(None) => not_found_error(
-            id,
-            ErrorCode::SessionNotFound,
-            format!("Session '{}' not found", params.session_id),
-        ),
-        Err(err) => validation_error(id, err),
-    }
+        .await;
+    optional_response_with_event(
+        id,
+        result,
+        "created session branch",
+        &ctx.event_tx,
+        "session.branch_created",
+        ErrorCode::SessionNotFound,
+        || format!("Session '{}' not found", params.session_id),
+    )
 }
 
 pub(super) async fn branch_checkout(
@@ -219,31 +206,27 @@ pub(super) async fn branch_checkout(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
-    match guard
+    let result = guard
         .checkout_session_branch(
             &params.session_id,
             &params.branch,
             params.slot_id.as_deref(),
         )
-        .await
-    {
-        Ok(Some(branch)) => serialize_response_with_event(
-            id,
-            branch,
-            "checked out session branch",
-            &ctx.event_tx,
-            "session.branch_checked_out",
-        ),
-        Ok(None) => not_found_error(
-            id,
-            ErrorCode::SessionNotFound,
+        .await;
+    optional_response_with_event(
+        id,
+        result,
+        "checked out session branch",
+        &ctx.event_tx,
+        "session.branch_checked_out",
+        ErrorCode::SessionNotFound,
+        || {
             format!(
                 "Session '{}' or branch '{}' not found",
                 params.session_id, params.branch
-            ),
-        ),
-        Err(err) => validation_error(id, err),
-    }
+            )
+        },
+    )
 }
 
 pub(super) async fn branch_siblings(
