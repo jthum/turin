@@ -202,7 +202,7 @@ fn map_worklist_detail(
         public_id: format_public_id(&row.public_id),
         name: row.name,
         scope_ref: row.scope_ref,
-        metadata: parse_json(row.metadata.as_deref()).ok().flatten(),
+        metadata: parse_json_lossy(row.metadata.as_deref()),
         persistence,
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -229,8 +229,8 @@ fn map_work_item_detail(
         title: row.title,
         kind: row.item_kind,
         prompt: row.prompt,
-        content: parse_json(row.content.as_deref()).ok().flatten(),
-        tools: parse_json(row.tools.as_deref()).ok().flatten(),
+        content: parse_json_lossy(row.content.as_deref()),
+        tools: parse_json_lossy(row.tools.as_deref()),
         conflict_policy: row.conflict_policy,
         action: scheduled_action(row.action_name, row.action_params),
         status: row.status,
@@ -238,7 +238,7 @@ fn map_work_item_detail(
         pause_reason,
         pause_until_unix_ms,
         priority: row.priority,
-        after: parse_json(row.after_ids.as_deref()).ok().flatten(),
+        after: parse_json_lossy(row.after_ids.as_deref()),
         metadata,
         claim_agent_id: row.claim_agent_id,
         claim_session_id: row.claim_session_id,
@@ -255,13 +255,10 @@ fn map_work_item_detail(
 fn scheduled_action(name: Option<String>, params: Option<String>) -> Option<ScheduleActionParams> {
     name.map(|name| ScheduleActionParams {
         name,
-        params: parse_json(params.as_deref()).ok().flatten(),
+        params: parse_json_lossy(params.as_deref()),
     })
 }
 
-fn parse_json<T: serde::de::DeserializeOwned>(value: Option<&str>) -> Result<Option<T>> {
-    match value {
-        Some(value) => Ok(Some(serde_json::from_str::<T>(value)?)),
-        None => Ok(None),
-    }
+fn parse_json_lossy<T: serde::de::DeserializeOwned>(value: Option<&str>) -> Option<T> {
+    value.and_then(|value| serde_json::from_str(value).ok())
 }
