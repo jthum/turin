@@ -420,8 +420,7 @@ fn encode_proxy_ref(lua: &Lua, table: &Table) -> LuaResult<Option<JsonValue>> {
     ref_obj.insert("type".to_string(), JsonValue::String(proxy_type.clone()));
     match proxy_type.as_str() {
         PROXY_SCOPE => {
-            let selector: Value = table.get(SCOPE_SELECTOR_KEY)?;
-            ref_obj.insert("selector".to_string(), encode_lua_value(lua, selector)?);
+            insert_encoded_lua_field(lua, &mut ref_obj, "selector", table, SCOPE_SELECTOR_KEY)?;
             if let Value::String(kind) = table.get::<Value>(SCOPE_KIND_KEY)? {
                 ref_obj.insert(
                     "kind".to_string(),
@@ -430,40 +429,42 @@ fn encode_proxy_ref(lua: &Lua, table: &Table) -> LuaResult<Option<JsonValue>> {
             }
         }
         PROXY_WORKLIST => {
-            let store: Value = table.get(STORE_SELECTOR_KEY)?;
-            ref_obj.insert("store".to_string(), encode_lua_value(lua, store)?);
-            ref_obj.insert(
-                "id".to_string(),
-                JsonValue::String(table.get::<String>(WORKLIST_PUBLIC_ID_KEY)?),
-            );
-            ref_obj.insert(
-                "name".to_string(),
-                JsonValue::String(table.get::<String>(WORKLIST_NAME_KEY)?),
-            );
-            ref_obj.insert(
-                "scope_ref".to_string(),
-                JsonValue::String(table.get::<String>(WORKLIST_SCOPE_REF_KEY)?),
-            );
+            insert_encoded_lua_field(lua, &mut ref_obj, "store", table, STORE_SELECTOR_KEY)?;
+            insert_lua_string_field(&mut ref_obj, "id", table, WORKLIST_PUBLIC_ID_KEY)?;
+            insert_lua_string_field(&mut ref_obj, "name", table, WORKLIST_NAME_KEY)?;
+            insert_lua_string_field(&mut ref_obj, "scope_ref", table, WORKLIST_SCOPE_REF_KEY)?;
         }
         PROXY_WORKITEM => {
-            let store: Value = table.get(STORE_SELECTOR_KEY)?;
-            ref_obj.insert("store".to_string(), encode_lua_value(lua, store)?);
-            ref_obj.insert(
-                "id".to_string(),
-                JsonValue::String(table.get::<String>(WORKITEM_PUBLIC_ID_KEY)?),
-            );
-            ref_obj.insert(
-                "worklist_id".to_string(),
-                JsonValue::String(table.get::<String>(WORKLIST_PUBLIC_ID_KEY)?),
-            );
-            ref_obj.insert(
-                "worklist".to_string(),
-                JsonValue::String(table.get::<String>(WORKLIST_NAME_KEY)?),
-            );
+            insert_encoded_lua_field(lua, &mut ref_obj, "store", table, STORE_SELECTOR_KEY)?;
+            insert_lua_string_field(&mut ref_obj, "id", table, WORKITEM_PUBLIC_ID_KEY)?;
+            insert_lua_string_field(&mut ref_obj, "worklist_id", table, WORKLIST_PUBLIC_ID_KEY)?;
+            insert_lua_string_field(&mut ref_obj, "worklist", table, WORKLIST_NAME_KEY)?;
         }
         _ => return Ok(None),
     }
     Ok(Some(JsonValue::Object(ref_obj)))
+}
+
+fn insert_encoded_lua_field(
+    lua: &Lua,
+    object: &mut JsonMap<String, JsonValue>,
+    key: &str,
+    table: &Table,
+    table_key: &str,
+) -> LuaResult<()> {
+    let value: Value = table.get(table_key)?;
+    object.insert(key.to_string(), encode_lua_value(lua, value)?);
+    Ok(())
+}
+
+fn insert_lua_string_field(
+    object: &mut JsonMap<String, JsonValue>,
+    key: &str,
+    table: &Table,
+    table_key: &str,
+) -> LuaResult<()> {
+    object.insert(key.to_string(), JsonValue::String(table.get(table_key)?));
+    Ok(())
 }
 
 pub(crate) fn decode_json_payload(lua: &Lua, value: &JsonValue) -> LuaResult<Value> {
