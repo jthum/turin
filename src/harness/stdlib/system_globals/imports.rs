@@ -144,13 +144,7 @@ fn use_module(lua: &Lua, name: &str, opts: Option<Table>, is_scoped_call: bool) 
     )?;
     ensure_root_match(name, &meta_value, requested_root.as_deref(), "use_scoped")?;
 
-    let source = std::fs::read_to_string(&path).map_err(|e| {
-        mlua::Error::runtime(format!(
-            "use failed: could not read '{}' ({})",
-            path.display(),
-            e
-        ))
-    })?;
+    let source = read_module_source("use", &path)?;
     let module_name = next_used_module_name(lua, name)?;
     load_module_from_source(
         lua,
@@ -259,13 +253,7 @@ fn ensure_importable_module_loaded(
     enforce_import_policy(lua, name, &meta_value, requested_root, is_scoped_call)?;
     ensure_root_match(name, &meta_value, requested_root, "import_scoped")?;
 
-    let source = std::fs::read_to_string(&path).map_err(|e| {
-        mlua::Error::runtime(format!(
-            "import failed: could not read '{}' ({})",
-            path.display(),
-            e
-        ))
-    })?;
+    let source = read_module_source("import", &path)?;
     load_module_from_source(
         lua,
         name,
@@ -305,6 +293,17 @@ fn get_module_and_meta(lua: &Lua, name: &str) -> LuaResult<Option<(Value, Value)
         .and_then(|t| t.get::<Value>(name).ok())
         .unwrap_or(Value::Nil);
     Ok(Some((module_value, meta_value)))
+}
+
+fn read_module_source(op_name: &str, path: &Path) -> LuaResult<String> {
+    std::fs::read_to_string(path).map_err(|e| {
+        mlua::Error::runtime(format!(
+            "{} failed: could not read '{}' ({})",
+            op_name,
+            path.display(),
+            e
+        ))
+    })
 }
 
 fn next_used_module_name(lua: &Lua, spec: &str) -> LuaResult<String> {
