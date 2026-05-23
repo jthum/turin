@@ -14,6 +14,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant as TokioInstant, sleep, timeout};
+use turin::inference::content::encode_content_json;
 use turin::inference::provider::{
     InferenceContent, InferenceEvent, InferenceMessage, InferenceProvider, InferenceRequest,
     InferenceStream, ProviderClient, RequestOptions, SdkError,
@@ -25,7 +26,7 @@ use turin::kernel::config::{
     TurinConfig,
 };
 use turin::kernel::session::QueuedTask;
-use turin::persistence::state::{SessionReadTarget, StateStore};
+use turin::persistence::state::{SessionReadTarget, StateStore, TurnWriteTarget};
 use turin_channel_core::{
     ChannelConversationKey, ChannelKind, ChannelMessageRef, ChannelSessionScope, ChannelUser,
     InboundEvent, OutboundMessage,
@@ -56,6 +57,8 @@ enum Command {
     BlackboxChannelScale(BlackboxChannelScaleArgs),
     /// Measure daemon task execution without the channel runner layer.
     BlackboxTaskScale(BlackboxTaskScaleArgs),
+    /// Measure StateStore write/read scaling without daemon or provider runtime.
+    PersistenceScale(PersistenceScaleArgs),
     /// Measure peer-runtime memory before and after idle hibernation.
     IdleRuntime(IdleRuntimeArgs),
 }
@@ -338,6 +341,37 @@ struct BlackboxTaskScaleArgs {
 }
 
 #[derive(Parser)]
+struct PersistenceScaleArgs {
+    /// Number of synthetic task turns to persist into one session.
+    #[arg(long, default_value_t = 1000)]
+    tasks: usize,
+
+    /// Target byte size for each user prompt message.
+    #[arg(long, default_value_t = 32)]
+    prompt_bytes: usize,
+
+    /// Target byte size for each assistant response message.
+    #[arg(long, default_value_t = 1024)]
+    response_bytes: usize,
+
+    /// Comma-separated task-count checkpoints.
+    #[arg(long, default_value = "10,100,200,1000")]
+    checkpoints: String,
+
+    /// Also materialize the active branch at each checkpoint, then drop it before sampling.
+    #[arg(long)]
+    read_active_branch_at_checkpoints: bool,
+
+    /// Optional persistent workspace. If omitted, an ephemeral temp dir is used.
+    #[arg(long)]
+    workspace_root: Option<PathBuf>,
+
+    /// Report output directory.
+    #[arg(long, default_value = ".workspace/perf-reports")]
+    report_dir: PathBuf,
+}
+
+#[derive(Parser)]
 struct IdleRuntimeArgs {
     /// Number of peer-agent requests to submit before waiting for idle release.
     #[arg(long, default_value_t = 25)]
@@ -588,6 +622,7 @@ async fn main() -> Result<()> {
         Command::ChannelScale(args) => run_channel_scale(args).await,
         Command::BlackboxChannelScale(args) => run_blackbox_channel_scale(args).await,
         Command::BlackboxTaskScale(args) => run_blackbox_task_scale(args).await,
+        Command::PersistenceScale(args) => run_persistence_scale(args).await,
         Command::IdleRuntime(args) => run_idle_runtime(args).await,
     }
 }
@@ -1629,6 +1664,130 @@ async fn blackbox_task_scale_snapshot(
     .await?;
     snapshot.set_live_session_diagnostics(diagnostics);
     Ok(snapshot)
+}
+
+async fn run_persistence_scale(args: PersistenceScaleArgs) -> Result<()> {
+    anyhow::ensure!(args.tasks > 0, "--tasks must be greater than zero");
+    let checkpoints = parse_checkpoints(&args.checkpoints, args.tasks)?;
+    let checkpoint_set = checkpoints.iter().copied().collect::<HashSet<_>>();
+    let (_temp_guard, workspace_root) = prepare_workspace(args.workspace_root)?;
+    let state_db_path = workspace_root.join("state.db");
+    let start = Instant::now();
+
+    let mut snapshots = Vec::new();
+    snapshots.push(persistence_scale_snapshot(
+        "fresh-start",
+        start,
+        &state_db_path,
+        0,
+        None,
+    ));
+
+    let store = StateStore::open(
+        state_db_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("state DB path is not valid UTF-8"))?,
+    )
+    .await?;
+    let session_id = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await?;
+    snapshots.push(persistence_scale_snapshot(
+        "after-session-create",
+        start,
+        &state_db_path,
+        0,
+        None,
+    ));
+
+    let user_content = vec![InferenceContent::Text {
+        text: synthetic_text("task", args.prompt_bytes),
+    }];
+    let assistant_content = vec![InferenceContent::Text {
+        text: synthetic_text("response", args.response_bytes),
+    }];
+    let user_json = encode_content_json(&user_content);
+    let assistant_json = encode_content_json(&assistant_content);
+
+    for completed in 1..=args.tasks {
+        let turn_index = (completed - 1) as u32;
+        let target = TurnWriteTarget::active_branch(turn_index);
+        store
+            .insert_message(session_id, target, "user", &user_json, None)
+            .await?;
+        store
+            .insert_message(session_id, target, "assistant", &assistant_json, None)
+            .await?;
+
+        if checkpoint_set.contains(&completed) {
+            let read_len = if args.read_active_branch_at_checkpoints {
+                let messages = store
+                    .get_messages(session_id, &SessionReadTarget::ActiveBranch)
+                    .await?;
+                let len = messages.len();
+                drop(messages);
+                Some(len)
+            } else {
+                None
+            };
+            snapshots.push(persistence_scale_snapshot(
+                &format!("after-{completed}-tasks"),
+                start,
+                &state_db_path,
+                completed,
+                read_len,
+            ));
+        }
+    }
+
+    snapshots.push(persistence_scale_snapshot(
+        "after-writes",
+        start,
+        &state_db_path,
+        args.tasks,
+        None,
+    ));
+
+    let report = PerfReport {
+        scenario: "persistence-scale".to_string(),
+        config: serde_json::json!({
+            "tasks": args.tasks,
+            "prompt_bytes": args.prompt_bytes,
+            "response_bytes": args.response_bytes,
+            "checkpoints": checkpoints,
+            "read_active_branch_at_checkpoints": args.read_active_branch_at_checkpoints,
+            "memory_target": "perf-suite process",
+        }),
+        workspace_root: workspace_root.display().to_string(),
+        state_db_path: state_db_path.display().to_string(),
+        snapshots,
+    };
+
+    write_reports(&args.report_dir, &report)?;
+    print_summary(&report);
+    Ok(())
+}
+
+fn persistence_scale_snapshot(
+    label: &str,
+    start: Instant,
+    state_db_path: &Path,
+    completed_tasks: usize,
+    read_history_len: Option<usize>,
+) -> Snapshot {
+    let mut snapshot = snapshot(
+        label,
+        start,
+        state_db_path,
+        None,
+        read_history_len,
+        Some(completed_tasks),
+        Some(1),
+        None,
+        Some(completed_tasks),
+    );
+    snapshot.persisted_messages = Some(completed_tasks.saturating_mul(2));
+    snapshot
 }
 
 fn prepare_workspace(workspace_root: Option<PathBuf>) -> Result<(Option<TempDir>, PathBuf)> {

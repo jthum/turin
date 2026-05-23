@@ -141,6 +141,23 @@ history diagnostics, this scenario also records the current hot-history length
 and message offset so long-session memory growth can be compared against the
 bounded hot window.
 
+The persistence scale scenario measures the state-store path without daemon,
+channel runner, peer runtime, or provider execution:
+
+```bash
+CARGO_TARGET_DIR=target cargo run --manifest-path tools/perf-suite/Cargo.toml -- \
+  persistence-scale \
+  --tasks 5000 \
+  --checkpoints 1000,5000 \
+  --prompt-bytes 32 \
+  --response-bytes 1024
+```
+
+By default it writes the same user/assistant message shape without materializing
+the active branch. Add `--read-active-branch-at-checkpoints` to read and drop the
+full active branch before each checkpoint, which helps separate write-path
+retention from read/materialization retention.
+
 Channel scenarios default to 256-byte inbound messages and 1 KiB mocked assistant
 responses. To isolate mostly metadata overhead, make both values intentionally
 small, for example `--message-bytes 16 --response-bytes 4`.
