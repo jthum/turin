@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use super::super::{AgentDetailView, AgentRuntimeView, DaemonStatusView, HarnessDetailView};
 use super::common::{print_indented, print_issue_list, print_table, yes_no};
+use super::types::{
+    AgentDetailView, AgentRuntimeView, DaemonStatusView, HarnessDetailView, HarnessRuntimeView,
+};
 
 pub(in crate::commands::daemon) fn print_daemon_status(status: DaemonStatusView) {
     println!("Config:    {}", status.config_path);
@@ -231,7 +233,7 @@ pub(in crate::commands::daemon) fn print_harness_detail(harness: HarnessDetailVi
     }
 }
 
-fn print_harness_runtime_table(harnesses: Vec<super::super::HarnessRuntimeView>) {
+fn print_harness_runtime_table(harnesses: Vec<HarnessRuntimeView>) {
     let mut rows = Vec::new();
     rows.push(vec![
         "HARNESS".to_string(),

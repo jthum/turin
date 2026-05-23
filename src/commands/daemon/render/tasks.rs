@@ -1,5 +1,5 @@
-use super::super::{LiveSessionListView, LiveSessionView, TaskListView, TaskStatusView};
 use super::common::{format_context_target, print_indented, print_table, yes_no};
+use super::types::{LiveSessionListView, LiveSessionView, TaskListView, TaskStatusView};
 
 pub(in crate::commands::daemon) fn print_task_status(title: &str, task: &TaskStatusView) {
     println!("{}", title);

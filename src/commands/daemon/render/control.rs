@@ -1,7 +1,7 @@
 use anyhow::Result;
 
-use super::super::{DaemonHealthReport, DaemonStartReport};
 use super::common::yes_no;
+use super::types::{DaemonHealthReport, DaemonStartReport};
 
 pub(in crate::commands::daemon) fn print_health_report(
     report: &DaemonHealthReport,

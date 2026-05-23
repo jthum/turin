@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use turin::daemon::protocol::{ErrorCode, ErrorEnvelope, ResponseEnvelope};
 
-use super::super::IssueView;
+use super::types::IssueView;
 
 pub(in crate::commands::daemon) fn print_response(
     response: ResponseEnvelope,

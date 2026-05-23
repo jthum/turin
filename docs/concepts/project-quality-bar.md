@@ -105,6 +105,21 @@ Agents perform worse when:
 
 Hand-crafted code is therefore not only a human aesthetic goal. It is a maintenance strategy for agent-assisted development.
 
+### Small-Model Friendliness
+
+The repo should be workable for smaller coding models, not only frontier models. That means optimizing for predictable local patterns as much as file discovery.
+
+High-value properties:
+
+- one concept, one stable name
+- one blessed shape for similar options and payloads
+- current examples that match preferred style
+- short architecture maps for complex subsystems
+- narrow APIs with visible ownership and invariants
+- tests that encode the real contract
+
+When smaller models fail repeatedly, treat the failure as useful feedback. Look for misleading names, stale examples, duplicate abstractions, missing maps, weak tests, or unclear ownership before assuming the model simply needs a stronger prompt.
+
 ## Rules Of Thumb
 
 - No new god files.

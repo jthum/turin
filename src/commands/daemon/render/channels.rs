@@ -1,5 +1,5 @@
-use super::super::{ChannelDetailView, ChannelRuntimeView, DaemonStatusView};
 use super::common::{print_indented, print_table, yes_no};
+use super::types::{ChannelDetailView, ChannelRuntimeView, DaemonStatusView};
 
 pub(in crate::commands::daemon) fn print_channel_list(status: DaemonStatusView) {
     let mut rows = Vec::new();

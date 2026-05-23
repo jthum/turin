@@ -10,6 +10,8 @@
   - Facade that re-exports renderer functions to sibling command modules.
 - `src/commands/daemon/render/common.rs`
   - Response decoding, JSON passthrough/error handling, shared table/indent/snippet helpers, and execution-target formatting.
+- `src/commands/daemon/render/types.rs`
+  - Local re-exports of daemon CLI view DTOs so child render modules do not reach through nested parent paths.
 - `src/commands/daemon/render/agents.rs`
   - Daemon status, agents, agent runtime status, harness list/detail, and issue summary rendering.
 - `src/commands/daemon/render/channels.rs`

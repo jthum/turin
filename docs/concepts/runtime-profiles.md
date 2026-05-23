@@ -151,6 +151,23 @@ Risk posture:
 - High-risk profiles should emit strong audit events.
 - Profile defaults must be tested.
 
+## Memory Posture
+
+Turin should stay lean by default. The durable transcript in the state DB is the
+source of truth; live runtimes should keep only a bounded hot working set unless
+the operator explicitly chooses a higher-memory profile.
+
+That means default runtime memory should scale primarily with:
+
+- live runtime count
+- current turn working set
+- bounded hot-history and task caches
+
+It should not scale with total historical transcript volume. Larger hot windows
+and debug-style all-hot-history behavior are useful for development or
+latency-sensitive deployments, but they should be opt-in tradeoffs rather than
+the standard baseline.
+
 ## Mapping To Current Config
 
 Current Turin configuration can approximate these profiles through:
@@ -164,4 +181,3 @@ Current Turin configuration can approximate these profiles through:
 - provider/inference routing settings
 
 Future work could make these first-class profile presets.
-

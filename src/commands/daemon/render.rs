@@ -4,6 +4,7 @@ mod common;
 mod control;
 mod sessions;
 mod tasks;
+mod types;
 
 pub(in crate::commands::daemon) use agents::*;
 pub(in crate::commands::daemon) use channels::*;

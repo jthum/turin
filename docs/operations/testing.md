@@ -6,6 +6,50 @@ For major runtime/subsystem refactors, use `docs/operations/refactor-guardrails.
 alongside this page. That page defines the capability inventory, characterization
 tests, and perf baselines expected before each refactor phase.
 
+## Testing Philosophy
+
+Turin's tests are meant to protect capabilities, security boundaries, and
+authoring contracts while still allowing aggressive internal refactors. Test
+LOC is not part of the shipped-runtime LOC budget, so prefer meaningful coverage
+over minimal coverage.
+
+Use tests to answer four questions:
+
+- does the public capability still work after internal code moves?
+- does a risky input fail safely and explicitly?
+- does a durable protocol/storage/harness contract keep its shape?
+- does a performance-sensitive change preserve behavior before it changes
+  footprint or latency?
+
+Do not add tests only to raise counts. Add tests when they lock down behavior a
+future maintainer or agent could plausibly break.
+
+## Test Categories
+
+Use the smallest layer that proves the intended behavior:
+
+- Unit tests: pure helpers, parsers, policy matching, recurrence math, path
+  normalization, result shaping.
+- Integration tests: harness + kernel + persistence, daemon state, channel
+  runner, scheduler/worklist dispatch, session lifecycle.
+- Characterization/conformance tests: stable subsystem contracts such as daemon
+  protocol shapes, harness namespace behavior, channel sidecar handshake, tool
+  policy inheritance, and security defaults.
+- Golden/fixture tests: user-visible rendering, generated config, examples, and
+  manifest output where stable formatting matters.
+- Property tests: invariants over broad input spaces, especially path safety,
+  capability ceilings, branch graph paths, schedule recurrence, worklist state
+  transitions, and tool-policy subset rules.
+- Security negative tests: traversal, denied capabilities/tools, malicious
+  imports, unauthorized channel users, invalid config, oversized inputs, and
+  remote exposure checks.
+- Smoke/live tests: real providers and live channels. These are manual or
+  explicitly opt-in, never part of ordinary `cargo test`.
+
+Embedded tests are fine for private helpers. Move scenario-heavy, fixture-heavy,
+or public-contract tests into integration tests or crate-level test modules so
+production files remain readable.
+
 ## Test Layers
 
 Turin validation is layered on purpose.

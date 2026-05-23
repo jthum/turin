@@ -1,7 +1,7 @@
-use super::super::{
+use super::common::{json_snippet, print_table, yes_no};
+use super::types::{
     SessionBranchDetailView, SessionBranchListView, SessionDetailView, SessionListView,
 };
-use super::common::{json_snippet, print_table, yes_no};
 
 pub(in crate::commands::daemon) fn print_session_list(sessions: SessionListView) {
     let mut rows = Vec::new();
