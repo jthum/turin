@@ -1,3 +1,4 @@
+mod allocator;
 mod cancellation;
 mod operations;
 mod peer_runtime;

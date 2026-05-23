@@ -138,6 +138,18 @@ WAL/checkpoint effects from runtime memory. `--trim-allocator-after-idle` is a
 diagnostic knob for Linux/glibc builds: it records whether retained PSS looks
 like allocator retention after live sessions have been released.
 
+For black-box daemon runs, `--trim-allocator-after-idle` cannot trim the child
+daemon process. To test daemon-side peer-runtime idle trimming, run the daemon
+profile with:
+
+```bash
+TURIN_TRIM_ALLOCATOR_ON_PEER_IDLE=1
+```
+
+That opt-in daemon setting calls `malloc_trim(0)` after a peer runtime releases
+its session on idle shutdown. It is intended for diagnostics and low-memory
+deployments where lower retained RSS/PSS is worth the trim cost.
+
 The idle runtime scenario submits mocked peer-agent requests, samples memory while
 the runtime is live, then waits for idle hibernation:
 

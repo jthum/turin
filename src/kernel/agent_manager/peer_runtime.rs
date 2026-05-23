@@ -173,6 +173,7 @@ impl PeerRuntime {
             crate::kernel::session::ExecutionConflictPolicy::Reject,
         );
         self.host.shutdown_mcp_clients().await;
+        super::allocator::trim_after_peer_idle_if_enabled();
         info!(agent_id = %self.agent_id, "Peer runtime shut down");
     }
 

@@ -1322,6 +1322,7 @@ async fn run_blackbox_channel_scale(args: BlackboxChannelScaleArgs) -> Result<()
             "post_run_idle_wait_ms": args.post_run_idle_wait_ms,
             "checkpoint_state_db_after_stop": args.checkpoint_state_db_after_idle,
             "memory_target": "daemon child process",
+            "turin_trim_allocator_on_peer_idle": std::env::var("TURIN_TRIM_ALLOCATOR_ON_PEER_IDLE").ok(),
         }),
         workspace_root: workspace_root.display().to_string(),
         state_db_path: state_db_path.display().to_string(),

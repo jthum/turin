@@ -114,3 +114,5 @@ git diff --check
 The current pass centralizes channel lookup, persisted session target resolution, and live-branch busy checks. It intentionally keeps daemon task and session files separate because task submission and persisted session inspection have different contracts even though both touch live runtime state.
 
 Runtime event streaming is split so the async subscription loop stays in `events.rs`, while filter matching and scoped snapshot projection live in focused child modules.
+
+Peer runtime idle shutdown supports an opt-in allocator diagnostic: when `TURIN_TRIM_ALLOCATOR_ON_PEER_IDLE` is truthy, Linux builds call `malloc_trim(0)` after the peer runtime has ended its session and shut down MCP clients. This is deliberately environment-gated so normal daemon behavior does not pay the trim cost unless a deployment or perf run asks for the lower retained-RSS profile.
