@@ -117,6 +117,27 @@ In black-box mode, live DB reads can be unavailable while the daemon owns the
 state DB lock. The scenario samples daemon memory while live and applies the
 optional DB checkpoint after daemon shutdown.
 
+The black-box task scale scenario measures the daemon task path without the
+channel runner layer. It launches the same already-built daemon binary, opens
+one live session, submits direct daemon tasks, waits for each task, and samples
+the daemon child process at task-count checkpoints:
+
+```bash
+CARGO_TARGET_DIR=target cargo run --manifest-path tools/perf-suite/Cargo.toml -- \
+  blackbox-task-scale \
+  --turin-binary target/release/turin \
+  --tasks 1000 \
+  --checkpoints 10,100,200,1000 \
+  --prompt-bytes 32 \
+  --response-bytes 1024 \
+  --agent-idle-timeout-seconds 1 \
+  --post-run-idle-wait-ms 1500 \
+  --checkpoint-state-db-after-idle
+```
+
+Use it against `blackbox-channel-scale` to separate channel-runner overhead from
+core daemon task/runtime/persistence overhead.
+
 Channel scenarios default to 256-byte inbound messages and 1 KiB mocked assistant
 responses. To isolate mostly metadata overhead, make both values intentionally
 small, for example `--message-bytes 16 --response-bytes 4`.

@@ -54,6 +54,8 @@ enum Command {
     ChannelScale(ChannelScaleArgs),
     /// Measure an already-built daemon binary as a separate process.
     BlackboxChannelScale(BlackboxChannelScaleArgs),
+    /// Measure daemon task execution without the channel runner layer.
+    BlackboxTaskScale(BlackboxTaskScaleArgs),
     /// Measure peer-runtime memory before and after idle hibernation.
     IdleRuntime(IdleRuntimeArgs),
 }
@@ -289,6 +291,53 @@ struct BlackboxChannelScaleArgs {
 }
 
 #[derive(Parser)]
+struct BlackboxTaskScaleArgs {
+    /// Turin binary to launch as the daemon under measurement.
+    #[arg(long, default_value = "target/release/turin")]
+    turin_binary: PathBuf,
+
+    /// Number of direct daemon tasks to submit into one live session.
+    #[arg(long, default_value_t = 1000)]
+    tasks: usize,
+
+    /// Target byte size for each task prompt.
+    #[arg(long, default_value_t = 256)]
+    prompt_bytes: usize,
+
+    /// Comma-separated task-count checkpoints.
+    #[arg(long, default_value = "10,100,200,1000")]
+    checkpoints: String,
+
+    /// Mock model response returned by the daemon's configured provider.
+    #[arg(long, default_value = "PONG")]
+    mock_response: String,
+
+    /// Target byte size for each mocked assistant response.
+    #[arg(long, default_value_t = 1024)]
+    response_bytes: usize,
+
+    /// Optional persistent workspace. If omitted, an ephemeral temp dir is used.
+    #[arg(long)]
+    workspace_root: Option<PathBuf>,
+
+    /// Agent runtime idle timeout written to the mock daemon config.
+    #[arg(long, default_value_t = 20)]
+    agent_idle_timeout_seconds: u64,
+
+    /// Milliseconds to wait after the driver finishes before taking an idle snapshot.
+    #[arg(long, default_value_t = 0)]
+    post_run_idle_wait_ms: u64,
+
+    /// Run PRAGMA wal_checkpoint(TRUNCATE) after the post-run idle wait.
+    #[arg(long)]
+    checkpoint_state_db_after_idle: bool,
+
+    /// Report output directory.
+    #[arg(long, default_value = ".workspace/perf-reports")]
+    report_dir: PathBuf,
+}
+
+#[derive(Parser)]
 struct IdleRuntimeArgs {
     /// Number of peer-agent requests to submit before waiting for idle release.
     #[arg(long, default_value_t = 25)]
@@ -453,6 +502,12 @@ struct BlackboxDaemonHarness {
 }
 
 #[derive(Debug, Deserialize)]
+struct OpenedSessionResponse {
+    session_id: String,
+    slot_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct LiveSessionsResponse {
     sessions: Vec<serde_json::Value>,
 }
@@ -514,6 +569,7 @@ async fn main() -> Result<()> {
         Command::FakeChannel(args) => run_fake_channel(args).await,
         Command::ChannelScale(args) => run_channel_scale(args).await,
         Command::BlackboxChannelScale(args) => run_blackbox_channel_scale(args).await,
+        Command::BlackboxTaskScale(args) => run_blackbox_task_scale(args).await,
         Command::IdleRuntime(args) => run_idle_runtime(args).await,
     }
 }
@@ -1330,6 +1386,202 @@ async fn run_blackbox_channel_scale(args: BlackboxChannelScaleArgs) -> Result<()
             .map_err(|_| anyhow::anyhow!("scale snapshot recorder still has references"))?
             .into_inner()
             .expect("scale snapshots lock poisoned"),
+    };
+
+    write_reports(&args.report_dir, &report)?;
+    print_summary(&report);
+    Ok(())
+}
+
+async fn run_blackbox_task_scale(args: BlackboxTaskScaleArgs) -> Result<()> {
+    anyhow::ensure!(args.tasks > 0, "--tasks must be greater than zero");
+    anyhow::ensure!(
+        args.turin_binary.exists(),
+        "turin binary '{}' does not exist; build it first or pass --turin-binary",
+        args.turin_binary.display()
+    );
+
+    let checkpoints = parse_checkpoints(&args.checkpoints, args.tasks)?;
+    let checkpoint_set = checkpoints.iter().copied().collect::<HashSet<_>>();
+    let (_temp_guard, workspace_root) = prepare_workspace(args.workspace_root)?;
+    let state_db_path = workspace_root.join("state.db");
+    let start = Instant::now();
+
+    let mut fresh_start = channel_scale_snapshot(
+        "fresh-start",
+        start,
+        &state_db_path,
+        Some(0),
+        Some(0),
+        Some(0),
+        Some(0),
+        MemoryTarget::CurrentProcess,
+    )
+    .await?;
+    fresh_start.rss_kb = None;
+    fresh_start.pss_kb = None;
+    fresh_start.pss_anon_kb = None;
+    fresh_start.pss_file_kb = None;
+    fresh_start.pss_shmem_kb = None;
+    let mut snapshots = vec![fresh_start];
+
+    let mock_response = synthetic_text(&args.mock_response, args.response_bytes);
+    let daemon = BlackboxDaemonHarness::start(
+        args.turin_binary.clone(),
+        workspace_root.clone(),
+        &state_db_path,
+        &mock_response,
+        args.agent_idle_timeout_seconds,
+    )
+    .await?;
+    let memory_target = MemoryTarget::Pid(daemon.pid());
+    let client = daemon.client();
+
+    snapshots.push(
+        channel_scale_snapshot(
+            "after-daemon-start",
+            start,
+            &state_db_path,
+            Some(0),
+            Some(1),
+            Some(0),
+            Some(daemon.live_session_count().await?),
+            memory_target,
+        )
+        .await?,
+    );
+
+    let opened: OpenedSessionResponse = client
+        .request_ok(
+            None,
+            turin_daemon_protocol::DaemonRequest::SessionOpen(
+                turin_daemon_protocol::OpenSessionParams {
+                    agent_id: "default".to_string(),
+                    slot_id: Some("direct".to_string()),
+                    channel_id: None,
+                },
+            ),
+        )
+        .await?;
+
+    let prompt = synthetic_text("task", args.prompt_bytes);
+    for completed in 1..=args.tasks {
+        let submitted: TaskSnapshot = client
+            .request_ok(
+                None,
+                turin_daemon_protocol::DaemonRequest::TaskSubmit(
+                    turin_daemon_protocol::SubmitTaskParams {
+                        agent_id: None,
+                        session_id: Some(opened.session_id.clone()),
+                        slot_id: Some(opened.slot_id.clone()),
+                        prompt: prompt.clone(),
+                        content: None,
+                        tools: None,
+                        conflict_policy: None,
+                    },
+                ),
+            )
+            .await?;
+        let _: TaskSnapshot = client
+            .request_ok(
+                None,
+                turin_daemon_protocol::DaemonRequest::TaskWait(
+                    turin_daemon_protocol::WaitTaskParams {
+                        request_id: submitted.request_id,
+                        timeout_ms: Some(120_000),
+                    },
+                ),
+            )
+            .await?;
+
+        if checkpoint_set.contains(&completed) {
+            snapshots.push(
+                channel_scale_snapshot(
+                    &format!("after-{completed}-tasks"),
+                    start,
+                    &state_db_path,
+                    Some(completed),
+                    Some(1),
+                    Some(completed),
+                    Some(daemon.live_session_count().await?),
+                    memory_target,
+                )
+                .await?,
+            );
+        }
+    }
+
+    let mut after_runner = channel_scale_snapshot(
+        "after-runner",
+        start,
+        &state_db_path,
+        Some(args.tasks),
+        Some(1),
+        Some(args.tasks),
+        Some(daemon.live_session_count().await?),
+        memory_target,
+    )
+    .await?;
+    if let Ok(metrics) = daemon_task_metrics(&client).await {
+        after_runner.set_daemon_task_metrics(metrics);
+    }
+    snapshots.push(after_runner);
+
+    if args.post_run_idle_wait_ms > 0 {
+        sleep(Duration::from_millis(args.post_run_idle_wait_ms)).await;
+        let mut after_idle_wait = channel_scale_snapshot(
+            "after-idle-wait",
+            start,
+            &state_db_path,
+            Some(args.tasks),
+            Some(1),
+            Some(args.tasks),
+            Some(daemon.live_session_count().await?),
+            memory_target,
+        )
+        .await?;
+        if let Ok(metrics) = daemon_task_metrics(&client).await {
+            after_idle_wait.set_daemon_task_metrics(metrics);
+        }
+        snapshots.push(after_idle_wait);
+    }
+
+    let pid = daemon.pid();
+    daemon.stop().await?;
+    if args.checkpoint_state_db_after_idle {
+        checkpoint_state_db(&state_db_path).await?;
+    }
+    snapshots.push(
+        channel_scale_snapshot(
+            "after-daemon-stop",
+            start,
+            &state_db_path,
+            Some(args.tasks),
+            Some(1),
+            Some(args.tasks),
+            None,
+            MemoryTarget::Pid(pid),
+        )
+        .await?,
+    );
+
+    let report = PerfReport {
+        scenario: "blackbox-task-scale".to_string(),
+        config: serde_json::json!({
+            "turin_binary": args.turin_binary.display().to_string(),
+            "tasks": args.tasks,
+            "prompt_bytes": args.prompt_bytes,
+            "checkpoints": checkpoints,
+            "mock_response_bytes": mock_response.len(),
+            "agent_idle_timeout_seconds": args.agent_idle_timeout_seconds,
+            "post_run_idle_wait_ms": args.post_run_idle_wait_ms,
+            "checkpoint_state_db_after_stop": args.checkpoint_state_db_after_idle,
+            "memory_target": "daemon child process",
+            "turin_trim_allocator_on_peer_idle": std::env::var("TURIN_TRIM_ALLOCATOR_ON_PEER_IDLE").ok(),
+        }),
+        workspace_root: workspace_root.display().to_string(),
+        state_db_path: state_db_path.display().to_string(),
+        snapshots,
     };
 
     write_reports(&args.report_dir, &report)?;
