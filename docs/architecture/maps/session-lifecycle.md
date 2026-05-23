@@ -76,6 +76,7 @@ End session:
 - Hot-history pruning only applies to persisted branch-head sessions with `AdvanceBranchHead` write policy.
 - Ending a session must drain the durability lane before marking the session inactive.
 - Fork-sibling sidesteps must not mutate the persisted active head.
+- The background durability lane should reuse its event writer/connection for sequential event writes, but must recreate it after a write error so connection-local failures do not poison the lane.
 
 ## Tests
 

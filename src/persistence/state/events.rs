@@ -2,9 +2,35 @@ use std::collections::HashSet;
 
 use anyhow::{Context, Result};
 
-use super::{EventRow, SessionReadTarget, StateStore, TurnWriteTarget};
+use super::{EventRow, SessionReadTarget, StateStore, TurnRow, TurnWriteTarget};
+
+pub(crate) struct EventWriter {
+    store: StateStore,
+    conn: turso::Connection,
+}
+
+impl EventWriter {
+    pub async fn insert_event(
+        &self,
+        session_id: i64,
+        target: Option<TurnWriteTarget>,
+        event_type: &str,
+        payload: &serde_json::Value,
+    ) -> Result<()> {
+        self.store
+            .insert_event_with_conn(&self.conn, session_id, target, event_type, payload)
+            .await
+    }
+}
 
 impl StateStore {
+    pub(crate) async fn event_writer(&self) -> Result<EventWriter> {
+        Ok(EventWriter {
+            store: self.clone(),
+            conn: self.connect().await?,
+        })
+    }
+
     pub async fn insert_event(
         &self,
         session_id: i64,
@@ -13,14 +39,23 @@ impl StateStore {
         payload: &serde_json::Value,
     ) -> Result<()> {
         let conn = self.connect().await?;
+        self.insert_event_with_conn(&conn, session_id, target, event_type, payload)
+            .await
+    }
+
+    async fn insert_event_with_conn(
+        &self,
+        conn: &turso::Connection,
+        session_id: i64,
+        target: Option<TurnWriteTarget>,
+        event_type: &str,
+        payload: &serde_json::Value,
+    ) -> Result<()> {
         let payload_str = serde_json::to_string(payload)?;
-        let turn_id = match target {
-            Some(target) => self
-                .resolve_turn_for_write_target(session_id, target)
-                .await?
-                .map(|turn| turn.id),
-            None => None,
-        };
+        let turn_id = self
+            .resolve_event_turn_with_conn(conn, session_id, target)
+            .await?
+            .map(|turn| turn.id);
         conn.execute(
             "INSERT INTO events (session_id, turn_id, event_type, payload) VALUES (?1, ?2, ?3, ?4)",
             turso::params![session_id, turn_id, event_type, payload_str],
@@ -28,6 +63,38 @@ impl StateStore {
         .await
         .with_context(|| format!("Failed to insert event for session: {}", session_id))?;
         Ok(())
+    }
+
+    async fn resolve_event_turn_with_conn(
+        &self,
+        conn: &turso::Connection,
+        session_id: i64,
+        target: Option<TurnWriteTarget>,
+    ) -> Result<Option<TurnRow>> {
+        match target {
+            None => Ok(None),
+            Some(TurnWriteTarget::ExistingTurn {
+                turn_id,
+                turn_index,
+            }) => {
+                let Some(turn) = self.get_turn_row_with_conn(conn, turn_id).await? else {
+                    anyhow::bail!("Turn {} could not be loaded", turn_id);
+                };
+                if turn.session_id != session_id {
+                    anyhow::bail!("Turn {} does not belong to session {}", turn_id, session_id);
+                }
+                if turn.branch_depth != turn_index {
+                    anyhow::bail!(
+                        "Turn {} depth mismatch: expected {}, found {}",
+                        turn_id,
+                        turn_index,
+                        turn.branch_depth
+                    );
+                }
+                Ok(Some(turn))
+            }
+            Some(target) => self.resolve_turn_for_write_target(session_id, target).await,
+        }
     }
 
     pub async fn get_all_events(&self, session_id: i64) -> Result<Vec<EventRow>> {

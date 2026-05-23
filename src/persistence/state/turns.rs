@@ -256,6 +256,14 @@ impl StateStore {
 
     pub(crate) async fn get_turn_row(&self, turn_id: i64) -> Result<Option<TurnRow>> {
         let conn = self.connect().await?;
+        self.get_turn_row_with_conn(&conn, turn_id).await
+    }
+
+    pub(super) async fn get_turn_row_with_conn(
+        &self,
+        conn: &turso::Connection,
+        turn_id: i64,
+    ) -> Result<Option<TurnRow>> {
         let sql = format!("{TURN_SELECT} WHERE id = ?1");
         let mut rows = conn.query(&sql, [turn_id]).await?;
         if let Some(row) = rows.next().await? {

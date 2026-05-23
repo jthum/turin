@@ -426,6 +426,7 @@ impl ExecutionHost {
             let store_clone = store.clone();
             let persistence_lock = Arc::clone(&session.persistence_lock);
             let handle = tokio::spawn(async move {
+                let mut event_writer = None;
                 while let Some(record) = durability_rx.recv().await {
                     match record {
                         PersistedKernelRecord::Event(record) => {
@@ -434,11 +435,24 @@ impl ExecutionHost {
                             let payload = serde_json::to_value(&event).unwrap_or_default();
                             if let Some(iid) = record.internal_id {
                                 let _guard = persistence_lock.lock().await;
-                                if let Err(e) = store_clone
+                                if event_writer.is_none() {
+                                    match store_clone.event_writer().await {
+                                        Ok(writer) => event_writer = Some(writer),
+                                        Err(e) => {
+                                            warn!(error = %e, "Background persistence error");
+                                            continue;
+                                        }
+                                    }
+                                }
+                                let writer = event_writer
+                                    .as_ref()
+                                    .expect("event writer initialized before insert");
+                                if let Err(e) = writer
                                     .insert_event(iid, record.turn_target, &event_type, &payload)
                                     .await
                                 {
                                     warn!(error = %e, "Background persistence error");
+                                    event_writer = None;
                                 }
                             } else {
                                 warn!("Dropping event: no internal_id for session");
