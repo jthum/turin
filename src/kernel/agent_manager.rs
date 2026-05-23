@@ -8,7 +8,7 @@ mod tasks;
 mod tests;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, AtomicUsize};
+use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex, OnceLock, RwLock as StdRwLock};
 
 use crate::harness::scheduler::HarnessSchedulerAccess;
@@ -193,33 +193,60 @@ struct PendingTaskRecord {
 }
 
 pub(crate) struct RuntimeControl {
-    current_session_id: StdRwLock<Option<String>>,
-    current_session_events: StdRwLock<Option<SessionEventSender>>,
-    current_session_context: StdRwLock<SessionContextOverrides>,
-    current_execution: StdRwLock<Option<ExecutionStatusSnapshot>>,
-    current_conflict_policy: StdRwLock<ExecutionConflictPolicy>,
-    current_history: StdRwLock<Option<LiveSessionHistorySnapshot>>,
-    current_request_id: StdRwLock<Option<String>>,
-    current_runtime_task_id: StdRwLock<Option<String>>,
-    current_cancel_token: Mutex<Option<CancellationToken>>,
+    state: StdRwLock<RuntimeControlState>,
     session_reset_request: Mutex<Option<SessionResetRequest>>,
-    session_generation: AtomicU64,
+}
+
+#[derive(Clone)]
+pub(crate) struct RuntimeControlSnapshot {
+    session_id: Option<String>,
+    session_events: Option<SessionEventSender>,
+    session_context: SessionContextOverrides,
+    execution: Option<ExecutionStatusSnapshot>,
+    conflict_policy: ExecutionConflictPolicy,
+    history: Option<LiveSessionHistorySnapshot>,
+    request_id: Option<String>,
+    runtime_task_id: Option<String>,
+    cancel_token: Option<CancellationToken>,
+    generation: u64,
+}
+
+#[derive(Clone)]
+struct RuntimeControlState {
+    session_id: Option<String>,
+    session_events: Option<SessionEventSender>,
+    session_context: SessionContextOverrides,
+    execution: Option<ExecutionStatusSnapshot>,
+    conflict_policy: ExecutionConflictPolicy,
+    history: Option<LiveSessionHistorySnapshot>,
+    request_id: Option<String>,
+    runtime_task_id: Option<String>,
+    cancel_token: Option<CancellationToken>,
+    generation: u64,
+}
+
+impl Default for RuntimeControlState {
+    fn default() -> Self {
+        Self {
+            session_id: None,
+            session_events: None,
+            session_context: SessionContextOverrides::default(),
+            execution: None,
+            conflict_policy: ExecutionConflictPolicy::Reject,
+            history: None,
+            request_id: None,
+            runtime_task_id: None,
+            cancel_token: None,
+            generation: 0,
+        }
+    }
 }
 
 impl Default for RuntimeControl {
     fn default() -> Self {
         Self {
-            current_session_id: StdRwLock::new(None),
-            current_session_events: StdRwLock::new(None),
-            current_session_context: StdRwLock::new(SessionContextOverrides::default()),
-            current_execution: StdRwLock::new(None),
-            current_conflict_policy: StdRwLock::new(ExecutionConflictPolicy::Reject),
-            current_history: StdRwLock::new(None),
-            current_request_id: StdRwLock::new(None),
-            current_runtime_task_id: StdRwLock::new(None),
-            current_cancel_token: Mutex::new(None),
+            state: StdRwLock::new(RuntimeControlState::default()),
             session_reset_request: Mutex::new(None),
-            session_generation: AtomicU64::new(0),
         }
     }
 }
@@ -249,32 +276,14 @@ impl RuntimeControl {
         conflict_policy: ExecutionConflictPolicy,
         history: Option<LiveSessionHistorySnapshot>,
     ) {
-        *self
-            .current_session_id
-            .write()
-            .expect("runtime control session lock poisoned") = session_id;
-        *self
-            .current_session_events
-            .write()
-            .expect("runtime control session events lock poisoned") = event_tx;
-        *self
-            .current_session_context
-            .write()
-            .expect("runtime control session context lock poisoned") = context;
-        *self
-            .current_execution
-            .write()
-            .expect("runtime control execution snapshot lock poisoned") = execution;
-        *self
-            .current_conflict_policy
-            .write()
-            .expect("runtime control conflict policy lock poisoned") = conflict_policy;
-        *self
-            .current_history
-            .write()
-            .expect("runtime control history lock poisoned") = history;
-        self.session_generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut state = self.write_state();
+        state.session_id = session_id;
+        state.session_events = event_tx;
+        state.session_context = context;
+        state.execution = execution;
+        state.conflict_policy = conflict_policy;
+        state.history = history;
+        state.generation = state.generation.wrapping_add(1);
     }
 
     #[cfg(test)]
@@ -290,64 +299,35 @@ impl RuntimeControl {
     }
 
     fn current_session_id(&self) -> Option<String> {
-        self.current_session_id
-            .read()
-            .expect("runtime control session lock poisoned")
-            .clone()
+        self.snapshot().session_id
     }
 
     fn session_generation(&self) -> u64 {
-        self.session_generation
-            .load(std::sync::atomic::Ordering::Relaxed)
+        self.snapshot().generation
     }
 
     fn current_session_context(&self) -> SessionContextOverrides {
-        self.current_session_context
-            .read()
-            .expect("runtime control session context lock poisoned")
-            .clone()
+        self.snapshot().session_context
     }
 
     fn current_execution(&self) -> Option<ExecutionStatusSnapshot> {
-        self.current_execution
-            .read()
-            .expect("runtime control execution snapshot lock poisoned")
-            .clone()
+        self.snapshot().execution
     }
 
     fn set_current_conflict_policy(&self, conflict_policy: ExecutionConflictPolicy) {
-        *self
-            .current_conflict_policy
-            .write()
-            .expect("runtime control conflict policy lock poisoned") = conflict_policy;
+        self.write_state().conflict_policy = conflict_policy;
     }
 
     fn current_conflict_policy(&self) -> ExecutionConflictPolicy {
-        *self
-            .current_conflict_policy
-            .read()
-            .expect("runtime control conflict policy lock poisoned")
-    }
-
-    fn current_history(&self) -> Option<LiveSessionHistorySnapshot> {
-        self.current_history
-            .read()
-            .expect("runtime control history lock poisoned")
-            .clone()
+        self.snapshot().conflict_policy
     }
 
     fn set_current_execution_snapshot(&self, execution: ExecutionStatusSnapshot) {
-        *self
-            .current_execution
-            .write()
-            .expect("runtime control execution snapshot lock poisoned") = Some(execution);
+        self.write_state().execution = Some(execution);
     }
 
     fn set_current_history_snapshot(&self, history: LiveSessionHistorySnapshot) {
-        *self
-            .current_history
-            .write()
-            .expect("runtime control history lock poisoned") = Some(history);
+        self.write_state().history = Some(history);
     }
 
     #[cfg(test)]
@@ -356,9 +336,8 @@ impl RuntimeControl {
     }
 
     fn subscribe_current_session_events(&self) -> Option<SessionEventReceiver> {
-        self.current_session_events
-            .read()
-            .expect("runtime control session events lock poisoned")
+        self.snapshot()
+            .session_events
             .as_ref()
             .map(SessionEventSender::subscribe)
     }
@@ -369,55 +348,29 @@ impl RuntimeControl {
         runtime_task_id: String,
         cancel_token: CancellationToken,
     ) {
-        *self
-            .current_request_id
-            .write()
-            .expect("runtime control request lock poisoned") = request_id;
-        *self
-            .current_runtime_task_id
-            .write()
-            .expect("runtime control task id lock poisoned") = Some(runtime_task_id);
-        *self
-            .current_cancel_token
-            .lock()
-            .expect("runtime control cancel lock poisoned") = Some(cancel_token);
+        let mut state = self.write_state();
+        state.request_id = request_id;
+        state.runtime_task_id = Some(runtime_task_id);
+        state.cancel_token = Some(cancel_token);
     }
 
     fn clear_active_task(&self) {
-        *self
-            .current_request_id
-            .write()
-            .expect("runtime control request lock poisoned") = None;
-        *self
-            .current_runtime_task_id
-            .write()
-            .expect("runtime control task id lock poisoned") = None;
-        *self
-            .current_cancel_token
-            .lock()
-            .expect("runtime control cancel lock poisoned") = None;
+        let mut state = self.write_state();
+        state.request_id = None;
+        state.runtime_task_id = None;
+        state.cancel_token = None;
     }
 
     fn current_request_id(&self) -> Option<String> {
-        self.current_request_id
-            .read()
-            .expect("runtime control request lock poisoned")
-            .clone()
+        self.snapshot().request_id
     }
 
     fn current_runtime_task_id(&self) -> Option<String> {
-        self.current_runtime_task_id
-            .read()
-            .expect("runtime control task id lock poisoned")
-            .clone()
+        self.snapshot().runtime_task_id
     }
 
     fn request_task_cancel(&self) -> bool {
-        let token = self
-            .current_cancel_token
-            .lock()
-            .expect("runtime control cancel lock poisoned")
-            .clone();
+        let token = self.snapshot().cancel_token;
         if let Some(token) = token {
             token.cancel();
             true
@@ -451,6 +404,34 @@ impl RuntimeControl {
             .lock()
             .expect("runtime control session reset lock poisoned")
             .take()
+    }
+
+    pub(crate) fn snapshot(&self) -> RuntimeControlSnapshot {
+        let state = self.read_state();
+        RuntimeControlSnapshot {
+            session_id: state.session_id.clone(),
+            session_events: state.session_events.clone(),
+            session_context: state.session_context.clone(),
+            execution: state.execution.clone(),
+            conflict_policy: state.conflict_policy,
+            history: state.history.clone(),
+            request_id: state.request_id.clone(),
+            runtime_task_id: state.runtime_task_id.clone(),
+            cancel_token: state.cancel_token.clone(),
+            generation: state.generation,
+        }
+    }
+
+    fn read_state(&self) -> std::sync::RwLockReadGuard<'_, RuntimeControlState> {
+        self.state
+            .read()
+            .expect("runtime control state lock poisoned")
+    }
+
+    fn write_state(&self) -> std::sync::RwLockWriteGuard<'_, RuntimeControlState> {
+        self.state
+            .write()
+            .expect("runtime control state lock poisoned")
     }
 }
 

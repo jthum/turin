@@ -149,6 +149,51 @@ fn test_execution_snapshot() -> ExecutionStatusSnapshot {
     )
 }
 
+#[test]
+fn runtime_control_publishes_coherent_snapshots() {
+    let control = RuntimeControl::default();
+    let (event_tx, _event_rx) = tokio::sync::broadcast::channel(8);
+    let cancel_token = CancellationToken::new();
+    let execution = test_execution_snapshot();
+
+    control.set_current_session(
+        Some("session-1".to_string()),
+        Some(event_tx),
+        SessionContextOverrides {
+            channel_id: Some("channel-1".to_string()),
+            inference: Default::default(),
+        },
+        Some(execution.clone()),
+        ExecutionConflictPolicy::Detached,
+        Some(LiveSessionHistorySnapshot {
+            len: 7,
+            message_offset: 3,
+        }),
+    );
+    control.activate_task(
+        Some("request-1".to_string()),
+        "task-1".to_string(),
+        cancel_token.clone(),
+    );
+
+    let snapshot = control.snapshot();
+    assert_eq!(snapshot.session_id.as_deref(), Some("session-1"));
+    assert_eq!(
+        snapshot.session_context.channel_id.as_deref(),
+        Some("channel-1")
+    );
+    assert_eq!(snapshot.execution, Some(execution));
+    assert_eq!(snapshot.conflict_policy, ExecutionConflictPolicy::Detached);
+    assert_eq!(snapshot.request_id.as_deref(), Some("request-1"));
+    assert_eq!(snapshot.runtime_task_id.as_deref(), Some("task-1"));
+    assert_eq!(
+        snapshot.history.as_ref().map(|history| history.len),
+        Some(7)
+    );
+    assert!(control.request_task_cancel());
+    assert!(cancel_token.is_cancelled());
+}
+
 #[tokio::test]
 async fn build_shared_peer_kernel_reuses_configured_tool_registry() -> anyhow::Result<()> {
     let tmp = tempdir()?;

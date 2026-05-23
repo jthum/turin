@@ -14,13 +14,14 @@ use crate::kernel::session_refs::{parse_session_reference, session_references_ma
 use crate::persistence::manager::StoreSelector;
 
 use super::{
-    AgentManager, AgentRuntimeHandle, AgentStatusSnapshot, LiveSessionSnapshot, RuntimeSlotKey,
+    AgentManager, AgentRuntimeHandle, AgentStatusSnapshot, LiveSessionSnapshot,
+    RuntimeControlSnapshot, RuntimeSlotKey,
 };
 
-fn live_execution_snapshot(handle: &Arc<AgentRuntimeHandle>) -> ExecutionStatusSnapshot {
-    handle
-        .control
-        .current_execution()
+fn live_execution_snapshot(snapshot: &RuntimeControlSnapshot) -> ExecutionStatusSnapshot {
+    snapshot
+        .execution
+        .clone()
         .unwrap_or(ExecutionStatusSnapshot {
             execution_id: String::new(),
             context_target: ExecutionContextTarget::BranchHead {
@@ -37,6 +38,17 @@ fn live_session_snapshot(
     handle: &Arc<AgentRuntimeHandle>,
     session_id: String,
 ) -> LiveSessionSnapshot {
+    let control = handle.control.snapshot();
+    live_session_snapshot_from_control(runtime_key, handle, session_id, control)
+}
+
+fn live_session_snapshot_from_control(
+    runtime_key: &RuntimeSlotKey,
+    handle: &Arc<AgentRuntimeHandle>,
+    session_id: String,
+    control: RuntimeControlSnapshot,
+) -> LiveSessionSnapshot {
+    let execution = live_execution_snapshot(&control);
     LiveSessionSnapshot {
         agent_id: runtime_key.agent_id.clone(),
         slot_id: runtime_key.slot_id.clone(),
@@ -44,10 +56,10 @@ fn live_session_snapshot(
         running: handle.is_running(),
         active_tasks: handle.active_tasks.load(Ordering::Relaxed),
         queued_tasks: handle.queued_tasks.load(Ordering::Relaxed),
-        current_request_id: handle.control.current_request_id(),
-        execution: live_execution_snapshot(handle),
-        conflict_policy: handle.control.current_conflict_policy(),
-        history: handle.control.current_history(),
+        current_request_id: control.request_id,
+        execution,
+        conflict_policy: control.conflict_policy,
+        history: control.history,
     }
 }
 
@@ -267,13 +279,13 @@ impl AgentManager {
 
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
-            let current_matches = handle
-                .control
-                .current_session_id()
+            let control = handle.control.snapshot();
+            let current_matches = control
+                .session_id
                 .as_deref()
                 .map(|current| session_references_match(current, session_id))
                 .unwrap_or(false);
-            if current_matches && handle.control.session_generation() > generation {
+            if current_matches && control.generation > generation {
                 break;
             }
             if tokio::time::Instant::now() >= deadline {
@@ -292,7 +304,8 @@ impl AgentManager {
             &handle,
             handle
                 .control
-                .current_session_id()
+                .snapshot()
+                .session_id
                 .unwrap_or_else(|| session_id.to_string()),
         ))
     }
@@ -378,14 +391,17 @@ impl AgentManager {
                     None
                 };
                 let display_handle = default_handle.or(single_handle);
+                let display_snapshot = display_handle.map(|h| h.control.snapshot());
                 AgentStatusSnapshot {
                     agent_id,
                     running,
                     active_tasks,
                     queued_tasks,
                     awaiting_results,
-                    current_session_id: display_handle.and_then(|h| h.control.current_session_id()),
-                    current_request_id: display_handle.and_then(|h| h.control.current_request_id()),
+                    current_session_id: display_snapshot
+                        .as_ref()
+                        .and_then(|snapshot| snapshot.session_id.clone()),
+                    current_request_id: display_snapshot.and_then(|snapshot| snapshot.request_id),
                 }
             })
             .collect()
@@ -399,8 +415,14 @@ impl AgentManager {
                 if agent_id.is_some_and(|wanted| runtime_key.agent_id != wanted) {
                     return None;
                 }
-                let session_id = handle.control.current_session_id()?;
-                Some(live_session_snapshot(runtime_key, handle, session_id))
+                let control = handle.control.snapshot();
+                let session_id = control.session_id.clone()?;
+                Some(live_session_snapshot_from_control(
+                    runtime_key,
+                    handle,
+                    session_id,
+                    control,
+                ))
             })
             .collect();
         sessions.sort_by(|a, b| {

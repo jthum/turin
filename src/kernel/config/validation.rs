@@ -2,145 +2,117 @@ use anyhow::{Context, Result};
 
 use super::*;
 
+fn require_non_empty(value: &str, label: impl std::fmt::Display) -> Result<()> {
+    anyhow::ensure!(!value.trim().is_empty(), "{} must not be empty", label);
+    Ok(())
+}
+
+fn require_non_empty_with_message(value: &str, message: impl std::fmt::Display) -> Result<()> {
+    anyhow::ensure!(!value.trim().is_empty(), "{}", message);
+    Ok(())
+}
+
+fn require_optional_non_empty(value: Option<&str>, label: impl std::fmt::Display) -> Result<()> {
+    if let Some(value) = value {
+        anyhow::ensure!(
+            !value.trim().is_empty(),
+            "{} must not be empty when set",
+            label
+        );
+    }
+    Ok(())
+}
+
+fn require_positive<T>(value: T, label: impl std::fmt::Display) -> Result<()>
+where
+    T: Copy + From<u8> + PartialOrd,
+{
+    anyhow::ensure!(value > T::from(0), "{} must be greater than 0", label);
+    Ok(())
+}
+
+fn require_optional_positive<T>(value: Option<T>, label: impl std::fmt::Display) -> Result<()>
+where
+    T: Copy + From<u8> + PartialOrd,
+{
+    if let Some(value) = value {
+        require_positive(value, label)?;
+    }
+    Ok(())
+}
+
 impl TurinConfig {
     /// Validate semantic invariants that serde can't enforce.
     pub fn validate(&self) -> Result<()> {
-        anyhow::ensure!(
-            !self.agent.model.trim().is_empty(),
-            "agent.model must not be empty"
-        );
+        require_non_empty(&self.agent.model, "agent.model")?;
         if !self.providers.contains_key(&self.agent.provider) {
             anyhow::bail!(
                 "Provider '{}' configured in [agent] but not found in [providers]",
                 self.agent.provider
             );
         }
-        anyhow::ensure!(
-            self.kernel.max_turns > 0,
-            "kernel.max_turns must be greater than 0"
-        );
-        anyhow::ensure!(
-            self.kernel.heartbeat_interval_seconds > 0,
-            "kernel.heartbeat_interval_seconds must be greater than 0"
-        );
-        if let Some(root) = self.layout.root.as_ref() {
-            anyhow::ensure!(
-                !root.trim().is_empty(),
-                "layout.root must not be empty when set"
-            );
-        }
-        anyhow::ensure!(
-            !self.layout.data_dir.trim().is_empty(),
-            "layout.data_dir must not be empty"
-        );
-        anyhow::ensure!(
-            !self.layout.states_dir.trim().is_empty(),
-            "layout.states_dir must not be empty"
-        );
-        anyhow::ensure!(
-            !self.layout.stores_dir.trim().is_empty(),
-            "layout.stores_dir must not be empty"
-        );
-        anyhow::ensure!(
-            !self.layout.harnesses_dir.trim().is_empty(),
-            "layout.harnesses_dir must not be empty"
-        );
-        anyhow::ensure!(
-            !self.layout.agents_dir.trim().is_empty(),
-            "layout.agents_dir must not be empty"
-        );
-        anyhow::ensure!(
-            !self.layout.channels_dir.trim().is_empty(),
-            "layout.channels_dir must not be empty"
-        );
-        anyhow::ensure!(
-            !self.layout.scopes_dir.trim().is_empty(),
-            "layout.scopes_dir must not be empty"
-        );
-        anyhow::ensure!(
-            !self.layout.env_file.trim().is_empty(),
-            "layout.env_file must not be empty"
-        );
-        anyhow::ensure!(
-            !self.layout.daemon_socket.trim().is_empty(),
-            "layout.daemon_socket must not be empty"
-        );
+        require_positive(self.kernel.max_turns, "kernel.max_turns")?;
+        require_positive(
+            self.kernel.heartbeat_interval_seconds,
+            "kernel.heartbeat_interval_seconds",
+        )?;
+        require_optional_non_empty(self.layout.root.as_deref(), "layout.root")?;
+        require_non_empty(&self.layout.data_dir, "layout.data_dir")?;
+        require_non_empty(&self.layout.states_dir, "layout.states_dir")?;
+        require_non_empty(&self.layout.stores_dir, "layout.stores_dir")?;
+        require_non_empty(&self.layout.harnesses_dir, "layout.harnesses_dir")?;
+        require_non_empty(&self.layout.agents_dir, "layout.agents_dir")?;
+        require_non_empty(&self.layout.channels_dir, "layout.channels_dir")?;
+        require_non_empty(&self.layout.scopes_dir, "layout.scopes_dir")?;
+        require_non_empty(&self.layout.env_file, "layout.env_file")?;
+        require_non_empty(&self.layout.daemon_socket, "layout.daemon_socket")?;
 
-        anyhow::ensure!(
-            !self.harness.directory.trim().is_empty(),
-            "harness.directory must not be empty"
-        );
-        anyhow::ensure!(
-            self.harness.memory_limit_mb > 0,
-            "harness.memory_limit_mb must be greater than 0"
-        );
-        anyhow::ensure!(
-            !self.daemon.agents_dir.trim().is_empty(),
-            "daemon.agents_dir must not be empty"
-        );
-        anyhow::ensure!(
-            !self.daemon.harnesses_dir.trim().is_empty(),
-            "daemon.harnesses_dir must not be empty"
-        );
-        anyhow::ensure!(
-            !self.daemon.channels_dir.trim().is_empty(),
-            "daemon.channels_dir must not be empty"
-        );
-        anyhow::ensure!(
-            !self.daemon.runtime_db.trim().is_empty(),
-            "daemon.runtime_db must not be empty"
-        );
-        anyhow::ensure!(
-            !self.daemon.endpoint.trim().is_empty(),
-            "daemon.endpoint must not be empty"
-        );
-        anyhow::ensure!(
-            !self.remote.bind.trim().is_empty(),
-            "remote.bind must not be empty"
-        );
-        anyhow::ensure!(
-            !self.remote.auth_token_env.trim().is_empty(),
-            "remote.auth_token_env must not be empty"
-        );
-        anyhow::ensure!(
-            self.remote.event_keepalive_seconds > 0,
-            "remote.event_keepalive_seconds must be greater than 0"
-        );
+        require_non_empty(&self.harness.directory, "harness.directory")?;
+        require_positive(self.harness.memory_limit_mb, "harness.memory_limit_mb")?;
+        require_non_empty(&self.daemon.agents_dir, "daemon.agents_dir")?;
+        require_non_empty(&self.daemon.harnesses_dir, "daemon.harnesses_dir")?;
+        require_non_empty(&self.daemon.channels_dir, "daemon.channels_dir")?;
+        require_non_empty(&self.daemon.runtime_db, "daemon.runtime_db")?;
+        require_non_empty(&self.daemon.endpoint, "daemon.endpoint")?;
+        require_non_empty(&self.remote.bind, "remote.bind")?;
+        require_non_empty(&self.remote.auth_token_env, "remote.auth_token_env")?;
+        require_positive(
+            self.remote.event_keepalive_seconds,
+            "remote.event_keepalive_seconds",
+        )?;
         self.persistence.state.validate("persistence.state")?;
         if let Some(store) = &self.persistence.store {
             store.validate("persistence.store")?;
         }
         for (state_name, state) in &self.persistence.states {
-            anyhow::ensure!(
-                !state_name.trim().is_empty(),
-                "persistence.states contains an empty state name"
-            );
+            require_non_empty_with_message(
+                state_name,
+                "persistence.states contains an empty state name",
+            )?;
             anyhow::ensure!(
                 state_name != "state" && state_name != "store",
                 "persistence.states.{} is reserved",
                 state_name
             );
-            anyhow::ensure!(
-                !state.path.trim().is_empty(),
-                "persistence.states.{}.path must not be empty",
-                state_name
-            );
+            require_non_empty(
+                &state.path,
+                format!("persistence.states.{}.path", state_name),
+            )?;
         }
         for (store_name, store) in &self.persistence.stores {
-            anyhow::ensure!(
-                !store_name.trim().is_empty(),
-                "persistence.stores contains an empty store name"
-            );
+            require_non_empty_with_message(
+                store_name,
+                "persistence.stores contains an empty store name",
+            )?;
             anyhow::ensure!(
                 store_name != "state" && store_name != "store",
                 "persistence.stores.{} is reserved",
                 store_name
             );
-            anyhow::ensure!(
-                !store.path.trim().is_empty(),
-                "persistence.stores.{}.path must not be empty",
-                store_name
-            );
+            require_non_empty(
+                &store.path,
+                format!("persistence.stores.{}.path", store_name),
+            )?;
         }
         for state_name in self.persistence.states.keys() {
             anyhow::ensure!(
@@ -151,30 +123,22 @@ impl TurinConfig {
             );
         }
         for (idx, placement) in self.persistence.placements.iter().enumerate() {
-            anyhow::ensure!(
-                !placement.scope_kind.trim().is_empty(),
-                "persistence.placements[{}].scope_kind must not be empty",
-                idx
-            );
-            if let Some(scope_key) = &placement.scope_key {
-                anyhow::ensure!(
-                    !scope_key.trim().is_empty(),
-                    "persistence.placements[{}].scope_key must not be empty when set",
-                    idx
-                );
-            }
-            if let Some(namespace) = &placement.namespace {
-                anyhow::ensure!(
-                    !namespace.trim().is_empty(),
-                    "persistence.placements[{}].namespace must not be empty when set",
-                    idx
-                );
-            }
-            anyhow::ensure!(
-                !placement.store.trim().is_empty(),
-                "persistence.placements[{}].store must not be empty",
-                idx
-            );
+            require_non_empty(
+                &placement.scope_kind,
+                format!("persistence.placements[{}].scope_kind", idx),
+            )?;
+            require_optional_non_empty(
+                placement.scope_key.as_deref(),
+                format!("persistence.placements[{}].scope_key", idx),
+            )?;
+            require_optional_non_empty(
+                placement.namespace.as_deref(),
+                format!("persistence.placements[{}].namespace", idx),
+            )?;
+            require_non_empty(
+                &placement.store,
+                format!("persistence.placements[{}].store", idx),
+            )?;
             anyhow::ensure!(
                 placement.store == "state"
                     || self.persistence.states.contains_key(&placement.store)
@@ -186,50 +150,34 @@ impl TurinConfig {
         }
 
         for (harness_id, harness_cfg) in &self.harnesses {
-            anyhow::ensure!(
-                !harness_id.trim().is_empty(),
-                "harnesses contains an empty harness id"
-            );
+            require_non_empty_with_message(harness_id, "harnesses contains an empty harness id")?;
             anyhow::ensure!(
                 harness_id != "default",
                 "harnesses.default is reserved; use [harness] for the default harness"
             );
-            anyhow::ensure!(
-                !harness_cfg.directory.trim().is_empty(),
-                "harnesses.{}.directory must not be empty",
-                harness_id
-            );
-            anyhow::ensure!(
-                harness_cfg.memory_limit_mb > 0,
-                "harnesses.{}.memory_limit_mb must be greater than 0",
-                harness_id
-            );
+            require_non_empty(
+                &harness_cfg.directory,
+                format!("harnesses.{}.directory", harness_id),
+            )?;
+            require_positive(
+                harness_cfg.memory_limit_mb,
+                format!("harnesses.{}.memory_limit_mb", harness_id),
+            )?;
         }
 
         for (provider_name, provider) in &self.providers {
-            if let Some(timeout_seconds) = provider.request_timeout_seconds {
-                anyhow::ensure!(
-                    timeout_seconds > 0,
-                    "providers.{}.request_timeout_seconds must be greater than 0",
-                    provider_name
-                );
-            }
-
-            if let Some(timeout_seconds) = provider.total_timeout_seconds {
-                anyhow::ensure!(
-                    timeout_seconds > 0,
-                    "providers.{}.total_timeout_seconds must be greater than 0",
-                    provider_name
-                );
-            }
-
-            if let Some(context_window_tokens) = provider.context_window_tokens {
-                anyhow::ensure!(
-                    context_window_tokens > 0,
-                    "providers.{}.context_window_tokens must be greater than 0",
-                    provider_name
-                );
-            }
+            require_optional_positive(
+                provider.request_timeout_seconds,
+                format!("providers.{}.request_timeout_seconds", provider_name),
+            )?;
+            require_optional_positive(
+                provider.total_timeout_seconds,
+                format!("providers.{}.total_timeout_seconds", provider_name),
+            )?;
+            require_optional_positive(
+                provider.context_window_tokens,
+                format!("providers.{}.context_window_tokens", provider_name),
+            )?;
 
             if let (Some(request_seconds), Some(total_seconds)) = (
                 provider.request_timeout_seconds,
@@ -243,53 +191,45 @@ impl TurinConfig {
             }
 
             for header in provider.headers.keys() {
-                anyhow::ensure!(
-                    !header.trim().is_empty(),
-                    "providers.{}.headers contains an empty header name",
-                    provider_name
-                );
+                require_non_empty_with_message(
+                    header,
+                    format!(
+                        "providers.{}.headers contains an empty header name",
+                        provider_name
+                    ),
+                )?;
             }
         }
 
         self.inference
             .validate_complete(&self.providers, "inference")?;
-        if let Some(max_messages) = self.inference.hot_history.max_messages {
-            anyhow::ensure!(
-                max_messages > 0,
-                "inference.hot_history.max_messages must be greater than 0"
-            );
-        }
-        if let Some(max_tool_result_bytes) = self.inference.hot_history.max_tool_result_bytes {
-            anyhow::ensure!(
-                max_tool_result_bytes > 0,
-                "inference.hot_history.max_tool_result_bytes must be greater than 0"
-            );
-        }
+        require_optional_positive(
+            self.inference.hot_history.max_messages,
+            "inference.hot_history.max_messages",
+        )?;
+        require_optional_positive(
+            self.inference.hot_history.max_tool_result_bytes,
+            "inference.hot_history.max_tool_result_bytes",
+        )?;
 
-        if let Some(ttl_ms) = self.governance.grants.max_ttl_ms {
-            anyhow::ensure!(
-                ttl_ms > 0,
-                "governance.grants.max_ttl_ms must be greater than 0"
-            );
-        }
+        require_optional_positive(
+            self.governance.grants.max_ttl_ms,
+            "governance.grants.max_ttl_ms",
+        )?;
 
         for (root_name, root) in &self.governance.roots {
-            anyhow::ensure!(
-                !root_name.trim().is_empty(),
-                "governance.roots contains an empty root name"
-            );
-            anyhow::ensure!(
-                !root.path.trim().is_empty(),
-                "governance.roots.{}.path must not be empty",
-                root_name
-            );
+            require_non_empty_with_message(
+                root_name,
+                "governance.roots contains an empty root name",
+            )?;
+            require_non_empty(&root.path, format!("governance.roots.{}.path", root_name))?;
         }
 
         for profile_name in self.governance.capability_profiles.keys() {
-            anyhow::ensure!(
-                !profile_name.trim().is_empty(),
-                "governance.capability_profiles contains an empty profile name"
-            );
+            require_non_empty_with_message(
+                profile_name,
+                "governance.capability_profiles contains an empty profile name",
+            )?;
         }
 
         for (agent_id, agent_cfg) in &self.governance.agents {
