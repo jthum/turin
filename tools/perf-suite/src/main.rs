@@ -362,6 +362,10 @@ struct PersistenceScaleArgs {
     #[arg(long)]
     read_active_branch_at_checkpoints: bool,
 
+    /// Also persist representative daemon task, turn, and stream events for each task.
+    #[arg(long)]
+    include_daemon_events: bool,
+
     /// Optional persistent workspace. If omitted, an ephemeral temp dir is used.
     #[arg(long)]
     workspace_root: Option<PathBuf>,
@@ -473,6 +477,8 @@ struct Snapshot {
     history_payload_bytes: Option<usize>,
     tool_results: Option<usize>,
     tool_result_errors: Option<usize>,
+    persisted_events: Option<usize>,
+    persisted_event_payload_bytes: Option<usize>,
     daemon_tasks: Option<usize>,
     daemon_completed_tasks: Option<usize>,
     daemon_task_output_bytes: Option<usize>,
@@ -562,6 +568,12 @@ struct LiveSessionDiagnostics {
     count: usize,
     total_history_len: Option<usize>,
     max_history_message_offset: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EventMetrics {
+    count: usize,
+    payload_bytes: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1681,6 +1693,10 @@ async fn run_persistence_scale(args: PersistenceScaleArgs) -> Result<()> {
         &state_db_path,
         0,
         None,
+        Some(EventMetrics {
+            count: 0,
+            payload_bytes: 0,
+        }),
     ));
 
     let store = StateStore::open(
@@ -1698,6 +1714,7 @@ async fn run_persistence_scale(args: PersistenceScaleArgs) -> Result<()> {
         &state_db_path,
         0,
         None,
+        event_metrics_if_enabled(args.include_daemon_events, &state_db_path).await?,
     ));
 
     let user_content = vec![InferenceContent::Text {
@@ -1711,13 +1728,29 @@ async fn run_persistence_scale(args: PersistenceScaleArgs) -> Result<()> {
 
     for completed in 1..=args.tasks {
         let turn_index = (completed - 1) as u32;
-        let target = TurnWriteTarget::active_branch(turn_index);
+        let target = store
+            .prepare_turn_write_target(session_id, TurnWriteTarget::active_branch(turn_index))
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!("No active branch head available for session {session_id}")
+            })?;
         store
             .insert_message(session_id, target, "user", &user_json, None)
             .await?;
         store
             .insert_message(session_id, target, "assistant", &assistant_json, None)
             .await?;
+        if args.include_daemon_events {
+            insert_representative_daemon_task_events(
+                &store,
+                session_id,
+                target,
+                completed,
+                &user_content,
+                &assistant_content,
+            )
+            .await?;
+        }
 
         if checkpoint_set.contains(&completed) {
             let read_len = if args.read_active_branch_at_checkpoints {
@@ -1736,6 +1769,7 @@ async fn run_persistence_scale(args: PersistenceScaleArgs) -> Result<()> {
                 &state_db_path,
                 completed,
                 read_len,
+                event_metrics_if_enabled(args.include_daemon_events, &state_db_path).await?,
             ));
         }
     }
@@ -1746,6 +1780,7 @@ async fn run_persistence_scale(args: PersistenceScaleArgs) -> Result<()> {
         &state_db_path,
         args.tasks,
         None,
+        event_metrics_if_enabled(args.include_daemon_events, &state_db_path).await?,
     ));
 
     let report = PerfReport {
@@ -1756,6 +1791,7 @@ async fn run_persistence_scale(args: PersistenceScaleArgs) -> Result<()> {
             "response_bytes": args.response_bytes,
             "checkpoints": checkpoints,
             "read_active_branch_at_checkpoints": args.read_active_branch_at_checkpoints,
+            "include_daemon_events": args.include_daemon_events,
             "memory_target": "perf-suite process",
         }),
         workspace_root: workspace_root.display().to_string(),
@@ -1774,6 +1810,7 @@ fn persistence_scale_snapshot(
     state_db_path: &Path,
     completed_tasks: usize,
     read_history_len: Option<usize>,
+    event_metrics: Option<EventMetrics>,
 ) -> Snapshot {
     let mut snapshot = snapshot(
         label,
@@ -1787,7 +1824,213 @@ fn persistence_scale_snapshot(
         Some(completed_tasks),
     );
     snapshot.persisted_messages = Some(completed_tasks.saturating_mul(2));
+    if let Some(metrics) = event_metrics {
+        snapshot.persisted_events = Some(metrics.count);
+        snapshot.persisted_event_payload_bytes = Some(metrics.payload_bytes);
+    }
     snapshot
+}
+
+async fn insert_representative_daemon_task_events(
+    store: &StateStore,
+    session_id: i64,
+    turn_target: TurnWriteTarget,
+    task_number: usize,
+    user_content: &[InferenceContent],
+    assistant_content: &[InferenceContent],
+) -> Result<()> {
+    let turn_index = (task_number - 1) as u32;
+    let task_id = format!("t_{task_number}");
+    let trace_id = format!("trace-{task_number}");
+    let prompt = first_text_content(user_content).unwrap_or_default();
+    let response = first_text_content(assistant_content).unwrap_or_default();
+    let identity = serde_json::json!({
+        "session_id": format!("perf-session-{session_id}"),
+        "agent_id": "default",
+    });
+    let execution = serde_json::json!({
+        "execution_id": "ex_perf",
+        "context_target": {
+            "kind": "branch_head",
+            "branch_head_id": null,
+        },
+        "visibility": "visible",
+        "durability": "durable",
+        "write_policy": "advance_branch_head",
+    });
+
+    store
+        .insert_event(
+            session_id,
+            None,
+            "task_start",
+            &serde_json::json!({
+                "type": "task_start",
+                "identity": identity,
+                "task_id": task_id,
+                "trace_id": trace_id,
+                "plan_id": null,
+                "title": null,
+                "prompt": prompt,
+                "queue_depth": 0,
+                "execution": execution,
+            }),
+        )
+        .await?;
+    store
+        .insert_event(
+            session_id,
+            Some(turn_target),
+            "turn_start",
+            &serde_json::json!({
+                "type": "turn_start",
+                "identity": identity,
+                "turn_index": turn_index,
+                "task_id": task_id,
+                "trace_id": trace_id,
+                "task_turn_index": 0,
+            }),
+        )
+        .await?;
+    store
+        .insert_event(
+            session_id,
+            Some(turn_target),
+            "turn_prepare",
+            &serde_json::json!({
+                "type": "turn_prepare",
+                "identity": identity,
+                "turn_index": turn_index,
+                "task_id": task_id,
+                "trace_id": trace_id,
+                "task_turn_index": 0,
+            }),
+        )
+        .await?;
+    store
+        .insert_event(
+            session_id,
+            Some(turn_target),
+            "message_start",
+            &serde_json::json!({
+                "type": "message_start",
+                "role": "assistant",
+                "model": "mock-model",
+            }),
+        )
+        .await?;
+    store
+        .insert_event(
+            session_id,
+            Some(turn_target),
+            "message_delta",
+            &serde_json::json!({
+                "type": "message_delta",
+                "content_delta": response,
+            }),
+        )
+        .await?;
+    store
+        .insert_event(
+            session_id,
+            Some(turn_target),
+            "message_end",
+            &serde_json::json!({
+                "type": "message_end",
+                "role": "assistant",
+                "input_tokens": 10,
+                "output_tokens": 5,
+            }),
+        )
+        .await?;
+    store
+        .insert_event(
+            session_id,
+            Some(turn_target),
+            "turn_end",
+            &serde_json::json!({
+                "type": "turn_end",
+                "identity": identity,
+                "turn_index": turn_index,
+                "task_id": task_id,
+                "trace_id": trace_id,
+                "task_turn_index": 0,
+                "has_tool_calls": false,
+            }),
+        )
+        .await?;
+    store
+        .insert_event(
+            session_id,
+            None,
+            "task_complete",
+            &serde_json::json!({
+                "type": "task_complete",
+                "identity": identity,
+                "task_id": task_id,
+                "trace_id": trace_id,
+                "plan_id": null,
+                "status": "success",
+                "task_turn_count": 1,
+                "execution": execution,
+                "error": null,
+            }),
+        )
+        .await?;
+    Ok(())
+}
+
+fn first_text_content(content: &[InferenceContent]) -> Option<&str> {
+    content.iter().find_map(|part| match part {
+        InferenceContent::Text { text } => Some(text.as_str()),
+        _ => None,
+    })
+}
+
+async fn event_metrics_if_enabled(enabled: bool, state_db_path: &Path) -> Result<Option<EventMetrics>> {
+    if enabled {
+        persisted_event_metrics(state_db_path).await.map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+async fn persisted_event_metrics(state_db_path: &Path) -> Result<EventMetrics> {
+    if !state_db_path.exists() {
+        return Ok(EventMetrics {
+            count: 0,
+            payload_bytes: 0,
+        });
+    }
+    let Some(path) = state_db_path.to_str() else {
+        return Ok(EventMetrics {
+            count: 0,
+            payload_bytes: 0,
+        });
+    };
+    let db = turso::Builder::new_local(path)
+        .experimental_index_method(true)
+        .build()
+        .await
+        .with_context(|| format!("failed to open '{}' for event metrics", state_db_path.display()))?;
+    let conn = db.connect()?;
+    conn.execute("PRAGMA busy_timeout = 5000;", ()).await.ok();
+    let mut rows = conn
+        .query(
+            "SELECT COUNT(*), COALESCE(SUM(LENGTH(payload)), 0) FROM events",
+            (),
+        )
+        .await?;
+    let Some(row) = rows.next().await? else {
+        return Ok(EventMetrics {
+            count: 0,
+            payload_bytes: 0,
+        });
+    };
+    Ok(EventMetrics {
+        count: row.get::<i64>(0)? as usize,
+        payload_bytes: row.get::<i64>(1)? as usize,
+    })
 }
 
 fn prepare_workspace(workspace_root: Option<PathBuf>) -> Result<(Option<TempDir>, PathBuf)> {
@@ -2385,6 +2628,8 @@ fn snapshot(
         history_payload_bytes: None,
         tool_results: None,
         tool_result_errors: None,
+        persisted_events: None,
+        persisted_event_payload_bytes: None,
         daemon_tasks: None,
         daemon_completed_tasks: None,
         daemon_task_output_bytes: None,
@@ -2965,12 +3210,12 @@ fn markdown_report(report: &PerfReport) -> String {
     out.push_str(&format!("- state_db_path: `{}`\n\n", report.state_db_path));
     push_snapshot_summary(&mut out, &report.snapshots);
     out.push_str(
-        "| label | elapsed_ms | rss_kb | pss_kb | pss_anon_kb | pss_file_kb | pss_shmem_kb | state_db_main_bytes | state_db_wal_bytes | state_db_shm_bytes | state_db_bytes | turn_index | persisted_messages | history_len | history_message_offset | hot_window_pruned | history_payload_bytes | tool_results | tool_result_errors | outbound_messages | active_sessions | live_sessions | messages_per_session | daemon_tasks | daemon_completed_tasks | daemon_task_output_bytes | daemon_task_assistant_content_bytes |\n",
+        "| label | elapsed_ms | rss_kb | pss_kb | pss_anon_kb | pss_file_kb | pss_shmem_kb | state_db_main_bytes | state_db_wal_bytes | state_db_shm_bytes | state_db_bytes | turn_index | persisted_messages | persisted_events | persisted_event_payload_bytes | history_len | history_message_offset | hot_window_pruned | history_payload_bytes | tool_results | tool_result_errors | outbound_messages | active_sessions | live_sessions | messages_per_session | daemon_tasks | daemon_completed_tasks | daemon_task_output_bytes | daemon_task_assistant_content_bytes |\n",
     );
-    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     for snapshot in &report.snapshots {
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             snapshot.label,
             snapshot.elapsed_ms,
             display_option(snapshot.rss_kb),
@@ -2984,6 +3229,8 @@ fn markdown_report(report: &PerfReport) -> String {
             snapshot.state_db_bytes,
             display_u32_option(snapshot.turn_index),
             display_usize_option(snapshot.persisted_messages),
+            display_usize_option(snapshot.persisted_events),
+            display_usize_option(snapshot.persisted_event_payload_bytes),
             display_usize_option(snapshot.history_len),
             display_usize_option(snapshot.history_message_offset),
             display_bool_option(snapshot.hot_window_pruned),
@@ -3107,6 +3354,35 @@ fn push_snapshot_summary(out: &mut String, snapshots: &[Snapshot]) {
             snapshots
                 .iter()
                 .filter_map(|snapshot| snapshot.persisted_messages)
+                .max(),
+        ),
+    );
+    push_summary_row(
+        out,
+        "persisted_events",
+        display_usize_option(first.persisted_events),
+        display_usize_option(last.persisted_events),
+        display_optional_isize_delta(first.persisted_events, last.persisted_events),
+        display_usize_option(
+            snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.persisted_events)
+                .max(),
+        ),
+    );
+    push_summary_row(
+        out,
+        "persisted_event_payload_bytes",
+        display_usize_option(first.persisted_event_payload_bytes),
+        display_usize_option(last.persisted_event_payload_bytes),
+        display_optional_isize_delta(
+            first.persisted_event_payload_bytes,
+            last.persisted_event_payload_bytes,
+        ),
+        display_usize_option(
+            snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.persisted_event_payload_bytes)
                 .max(),
         ),
     );

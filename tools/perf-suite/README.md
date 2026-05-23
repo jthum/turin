@@ -158,6 +158,11 @@ the active branch. Add `--read-active-branch-at-checkpoints` to read and drop th
 full active branch before each checkpoint, which helps separate write-path
 retention from read/materialization retention.
 
+Add `--include-daemon-events` to also persist representative task, turn, and
+stream event rows for each task. Those reports include `persisted_events` and
+`persisted_event_payload_bytes`, which help compare state DB growth from message
+content versus lifecycle/stream metadata.
+
 Channel scenarios default to 256-byte inbound messages and 1 KiB mocked assistant
 responses. To isolate mostly metadata overhead, make both values intentionally
 small, for example `--message-bytes 16 --response-bytes 4`.
