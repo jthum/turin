@@ -96,6 +96,27 @@ cargo run --release --manifest-path tools/perf-suite/Cargo.toml -- \
   --response-bytes 1024
 ```
 
+The black-box channel scale scenario measures an already-built `turin` daemon
+binary as a separate child process instead of measuring the perf-suite process:
+
+```bash
+CARGO_TARGET_DIR=target cargo run --manifest-path tools/perf-suite/Cargo.toml -- \
+  blackbox-channel-scale \
+  --turin-binary target/release/turin \
+  --sessions 2 \
+  --messages-per-session 200 \
+  --checkpoints 10,100,200 \
+  --message-bytes 512 \
+  --response-bytes 1024 \
+  --agent-idle-timeout-seconds 1 \
+  --post-run-idle-wait-ms 1500 \
+  --checkpoint-state-db-after-idle
+```
+
+In black-box mode, live DB reads can be unavailable while the daemon owns the
+state DB lock. The scenario samples daemon memory while live and applies the
+optional DB checkpoint after daemon shutdown.
+
 Channel scenarios default to 256-byte inbound messages and 1 KiB mocked assistant
 responses. To isolate mostly metadata overhead, make both values intentionally
 small, for example `--message-bytes 16 --response-bytes 4`.
@@ -138,6 +159,7 @@ this scenario.
 
 - process RSS from `/proc`
 - process PSS from `/proc/self/smaps_rollup` when available
+- daemon child RSS/PSS from `/proc/<pid>/smaps_rollup` in black-box scenarios
 - state DB size, split into main DB, WAL, SHM, and total bytes
 - session history length
 - persisted active-branch message count

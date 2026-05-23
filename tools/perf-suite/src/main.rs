@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command as StdCommand, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
@@ -49,6 +50,8 @@ enum Command {
     FakeChannel(FakeChannelArgs),
     /// Measure daemon/channel cost across logical session and message-count checkpoints.
     ChannelScale(ChannelScaleArgs),
+    /// Measure an already-built daemon binary as a separate process.
+    BlackboxChannelScale(BlackboxChannelScaleArgs),
     /// Measure peer-runtime memory before and after idle hibernation.
     IdleRuntime(IdleRuntimeArgs),
 }
@@ -233,6 +236,57 @@ struct ChannelScaleArgs {
 }
 
 #[derive(Parser)]
+struct BlackboxChannelScaleArgs {
+    /// Turin binary to launch as the daemon under measurement.
+    #[arg(long, default_value = "target/release/turin")]
+    turin_binary: PathBuf,
+
+    /// Number of logical channel conversations/sessions to keep active.
+    #[arg(long, default_value_t = 1)]
+    sessions: usize,
+
+    /// Number of inbound messages to send to each logical session.
+    #[arg(long, default_value_t = 1000)]
+    messages_per_session: usize,
+
+    /// Target byte size for each inbound channel text payload.
+    #[arg(long, default_value_t = 256)]
+    message_bytes: usize,
+
+    /// Comma-separated checkpoints, measured as messages per session.
+    #[arg(long, default_value = "10,100,200,1000")]
+    checkpoints: String,
+
+    /// Mock model response returned by the daemon's configured provider.
+    #[arg(long, default_value = "PONG")]
+    mock_response: String,
+
+    /// Target byte size for each mocked assistant response.
+    #[arg(long, default_value_t = 1024)]
+    response_bytes: usize,
+
+    /// Optional persistent workspace. If omitted, an ephemeral temp dir is used.
+    #[arg(long)]
+    workspace_root: Option<PathBuf>,
+
+    /// Agent runtime idle timeout written to the mock daemon config.
+    #[arg(long, default_value_t = 20)]
+    agent_idle_timeout_seconds: u64,
+
+    /// Milliseconds to wait after the driver finishes before taking an idle snapshot.
+    #[arg(long, default_value_t = 0)]
+    post_run_idle_wait_ms: u64,
+
+    /// Run PRAGMA wal_checkpoint(TRUNCATE) after the post-run idle wait.
+    #[arg(long)]
+    checkpoint_state_db_after_idle: bool,
+
+    /// Report output directory.
+    #[arg(long, default_value = ".workspace/perf-reports")]
+    report_dir: PathBuf,
+}
+
+#[derive(Parser)]
 struct IdleRuntimeArgs {
     /// Number of peer-agent requests to submit before waiting for idle release.
     #[arg(long, default_value_t = 25)]
@@ -372,6 +426,12 @@ struct ChannelDaemonHarness {
     join: JoinHandle<Result<()>>,
 }
 
+struct BlackboxDaemonHarness {
+    endpoint: PathBuf,
+    workspace_root: PathBuf,
+    child: Child,
+}
+
 #[derive(Debug, Deserialize)]
 struct LiveSessionsResponse {
     sessions: Vec<serde_json::Value>,
@@ -391,6 +451,13 @@ struct ScaleRecorder {
     sample_totals: HashSet<usize>,
     active_sessions: usize,
     daemon: turin_daemon_client::DaemonClient,
+    memory_target: MemoryTarget,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MemoryTarget {
+    CurrentProcess,
+    Pid(u32),
 }
 
 impl InferenceProvider for SequencePerfProvider {
@@ -421,6 +488,7 @@ async fn main() -> Result<()> {
         Command::HotHistory(args) => run_hot_history(args).await,
         Command::FakeChannel(args) => run_fake_channel(args).await,
         Command::ChannelScale(args) => run_channel_scale(args).await,
+        Command::BlackboxChannelScale(args) => run_blackbox_channel_scale(args).await,
         Command::IdleRuntime(args) => run_idle_runtime(args).await,
     }
 }
@@ -896,6 +964,7 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
             Some(0),
             Some(0),
             Some(0),
+            MemoryTarget::CurrentProcess,
         )
         .await?,
     ]));
@@ -916,6 +985,7 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
         Some(0),
         Some(0),
         Some(daemon.live_session_count().await?),
+        MemoryTarget::CurrentProcess,
     )
     .await?;
     snapshots
@@ -934,6 +1004,7 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
         sample_totals,
         active_sessions: args.sessions,
         daemon: daemon.client(),
+        memory_target: MemoryTarget::CurrentProcess,
     };
 
     let runner = daemon.runner();
@@ -958,6 +1029,7 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
         Some(args.sessions),
         Some(args.messages_per_session),
         Some(daemon.live_session_count().await?),
+        MemoryTarget::CurrentProcess,
     )
     .await?;
     snapshots
@@ -975,6 +1047,7 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
             Some(args.sessions),
             Some(args.messages_per_session),
             Some(daemon.live_session_count().await?),
+            MemoryTarget::CurrentProcess,
         )
         .await?;
         snapshots
@@ -993,6 +1066,7 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
             Some(args.sessions),
             Some(args.messages_per_session),
             Some(daemon.live_session_count().await?),
+            MemoryTarget::CurrentProcess,
         )
         .await?;
         snapshots
@@ -1011,6 +1085,7 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
             Some(args.sessions),
             Some(args.messages_per_session),
             Some(daemon.live_session_count().await?),
+            MemoryTarget::CurrentProcess,
         )
         .await?;
         snapshots
@@ -1028,6 +1103,7 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
         Some(args.sessions),
         Some(args.messages_per_session),
         None,
+        MemoryTarget::CurrentProcess,
     )
     .await?;
     snapshots
@@ -1048,6 +1124,173 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
             "checkpoint_state_db_after_idle": args.checkpoint_state_db_after_idle,
             "trim_allocator_after_idle": args.trim_allocator_after_idle,
             "allocator_trim_supported": allocator_trim_supported(),
+        }),
+        workspace_root: workspace_root.display().to_string(),
+        state_db_path: state_db_path.display().to_string(),
+        snapshots: Arc::try_unwrap(snapshots)
+            .map_err(|_| anyhow::anyhow!("scale snapshot recorder still has references"))?
+            .into_inner()
+            .expect("scale snapshots lock poisoned"),
+    };
+
+    write_reports(&args.report_dir, &report)?;
+    print_summary(&report);
+    Ok(())
+}
+
+async fn run_blackbox_channel_scale(args: BlackboxChannelScaleArgs) -> Result<()> {
+    anyhow::ensure!(args.sessions > 0, "--sessions must be greater than zero");
+    anyhow::ensure!(
+        args.messages_per_session > 0,
+        "--messages-per-session must be greater than zero"
+    );
+    anyhow::ensure!(
+        args.turin_binary.exists(),
+        "turin binary '{}' does not exist; build it first or pass --turin-binary",
+        args.turin_binary.display()
+    );
+
+    let checkpoints = parse_checkpoints(&args.checkpoints, args.messages_per_session)?;
+    let (_temp_guard, workspace_root) = prepare_workspace(args.workspace_root)?;
+    let state_db_path = workspace_root.join("state.db");
+    let channel_runtime_dir = channel_runtime_dir(&workspace_root, "mock");
+    fs::create_dir_all(&channel_runtime_dir)?;
+
+    let start = Instant::now();
+    let mut snapshots = Vec::new();
+    let mut fresh_start = channel_scale_snapshot(
+        "fresh-start",
+        start,
+        &state_db_path,
+        Some(0),
+        Some(0),
+        Some(0),
+        Some(0),
+        MemoryTarget::CurrentProcess,
+    )
+    .await?;
+    fresh_start.rss_kb = None;
+    fresh_start.pss_kb = None;
+    snapshots.push(fresh_start);
+
+    let mock_response = synthetic_text(&args.mock_response, args.response_bytes);
+    let daemon = BlackboxDaemonHarness::start(
+        args.turin_binary.clone(),
+        workspace_root.clone(),
+        &state_db_path,
+        &mock_response,
+        args.agent_idle_timeout_seconds,
+    )
+    .await?;
+    let memory_target = MemoryTarget::Pid(daemon.pid());
+    snapshots.push(
+        channel_scale_snapshot(
+            "after-daemon-start",
+            start,
+            &state_db_path,
+            Some(0),
+            Some(0),
+            Some(0),
+            Some(daemon.live_session_count().await?),
+            memory_target,
+        )
+        .await?,
+    );
+
+    let snapshots = Arc::new(Mutex::new(snapshots));
+    let sample_totals = checkpoints
+        .iter()
+        .map(|checkpoint| checkpoint * args.sessions)
+        .collect::<HashSet<_>>();
+    let recorder = ScaleRecorder {
+        snapshots: Arc::clone(&snapshots),
+        start,
+        state_db_path: state_db_path.clone(),
+        sample_totals,
+        active_sessions: args.sessions,
+        daemon: daemon.client(),
+        memory_target,
+    };
+
+    let runner = daemon.runner();
+    let events = scale_events(args.sessions, args.messages_per_session, args.message_bytes);
+    let mut driver = MockChannelDriver::with_scale_recorder(events, recorder);
+    let sent = Arc::clone(&driver.sent);
+    runner
+        .run_driver("default", &mut driver, Some(120_000))
+        .await?;
+
+    let outbound_count = sent.lock().expect("sent lock poisoned").len();
+    drop(driver);
+    let after_runner = channel_scale_snapshot(
+        "after-runner",
+        start,
+        &state_db_path,
+        Some(outbound_count),
+        Some(args.sessions),
+        Some(args.messages_per_session),
+        Some(daemon.live_session_count().await?),
+        memory_target,
+    )
+    .await?;
+    snapshots
+        .lock()
+        .expect("scale snapshots lock poisoned")
+        .push(after_runner);
+
+    if args.post_run_idle_wait_ms > 0 {
+        sleep(Duration::from_millis(args.post_run_idle_wait_ms)).await;
+        let after_idle_wait = channel_scale_snapshot(
+            "after-idle-wait",
+            start,
+            &state_db_path,
+            Some(outbound_count),
+            Some(args.sessions),
+            Some(args.messages_per_session),
+            Some(daemon.live_session_count().await?),
+            memory_target,
+        )
+        .await?;
+        snapshots
+            .lock()
+            .expect("scale snapshots lock poisoned")
+            .push(after_idle_wait);
+    }
+
+    let pid = daemon.pid();
+    daemon.stop().await?;
+    if args.checkpoint_state_db_after_idle {
+        checkpoint_state_db(&state_db_path).await?;
+    }
+    let after_daemon_stop = channel_scale_snapshot(
+        "after-daemon-stop",
+        start,
+        &state_db_path,
+        Some(outbound_count),
+        Some(args.sessions),
+        Some(args.messages_per_session),
+        None,
+        MemoryTarget::Pid(pid),
+    )
+    .await?;
+    snapshots
+        .lock()
+        .expect("scale snapshots lock poisoned")
+        .push(after_daemon_stop);
+
+    let report = PerfReport {
+        scenario: "blackbox-channel-scale".to_string(),
+        config: serde_json::json!({
+            "turin_binary": args.turin_binary.display().to_string(),
+            "sessions": args.sessions,
+            "messages_per_session": args.messages_per_session,
+            "message_bytes": args.message_bytes,
+            "checkpoints": checkpoints,
+            "mock_response_bytes": mock_response.len(),
+            "agent_idle_timeout_seconds": args.agent_idle_timeout_seconds,
+            "post_run_idle_wait_ms": args.post_run_idle_wait_ms,
+            "checkpoint_state_db_after_stop": args.checkpoint_state_db_after_idle,
+            "memory_target": "daemon child process",
         }),
         workspace_root: workspace_root.display().to_string(),
         state_db_path: state_db_path.display().to_string(),
@@ -1222,6 +1465,123 @@ impl ChannelDaemonHarness {
             .await
             .context("timed out waiting for daemon to exit")??;
         Ok(())
+    }
+}
+
+impl BlackboxDaemonHarness {
+    async fn start(
+        turin_binary: PathBuf,
+        workspace_root: PathBuf,
+        state_db_path: &Path,
+        mock_response: &str,
+        agent_idle_timeout_seconds: u64,
+    ) -> Result<Self> {
+        let config_path = write_mock_runtime_config(
+            &workspace_root,
+            state_db_path,
+            mock_response,
+            agent_idle_timeout_seconds,
+        )?;
+        let endpoint = workspace_daemon_socket(&workspace_root);
+        let child = StdCommand::new(&turin_binary)
+            .arg("--log-level")
+            .arg("error")
+            .arg("daemon")
+            .arg("start")
+            .arg("--config")
+            .arg(&config_path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .with_context(|| format!("failed to start '{}'", turin_binary.display()))?;
+
+        let mut harness = Self {
+            endpoint,
+            workspace_root,
+            child,
+        };
+        harness.wait_until_ready().await?;
+        Ok(harness)
+    }
+
+    fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    fn client(&self) -> turin_daemon_client::DaemonClient {
+        turin_daemon_client::DaemonClient::new(&self.endpoint)
+    }
+
+    fn runner(&self) -> ChannelRunner {
+        ChannelRunner::new(
+            self.client(),
+            RunnerConfig {
+                channel_id: "mock".to_string(),
+                state_path: channel_runtime_dir(&self.workspace_root, "mock").join("bindings.json"),
+                access_state_path: channel_runtime_dir(&self.workspace_root, "mock")
+                    .join("access.json"),
+                idle_ttl: Some(Duration::from_secs(600)),
+                access_policy: Default::default(),
+                tools: Default::default(),
+            },
+        )
+    }
+
+    async fn live_session_count(&self) -> Result<usize> {
+        live_session_count(&self.client()).await
+    }
+
+    async fn wait_until_ready(&mut self) -> Result<()> {
+        let deadline = TokioInstant::now() + Duration::from_secs(10);
+        let client = self.client();
+        loop {
+            if client.handshake().await.is_ok() {
+                return Ok(());
+            }
+            if let Some(status) = self.child.try_wait()? {
+                anyhow::bail!("daemon child exited before endpoint bind: {status}");
+            }
+            if TokioInstant::now() >= deadline {
+                let _ = self.child.kill();
+                anyhow::bail!(
+                    "timed out waiting for daemon endpoint '{}'",
+                    self.endpoint.display()
+                );
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    async fn stop(mut self) -> Result<()> {
+        let _ = self
+            .client()
+            .request_ok::<serde_json::Value>(
+                None,
+                turin_daemon_protocol::DaemonRequest::DaemonStop(Default::default()),
+            )
+            .await;
+
+        let deadline = TokioInstant::now() + Duration::from_secs(5);
+        loop {
+            if self.child.try_wait()?.is_some() {
+                return Ok(());
+            }
+            if TokioInstant::now() >= deadline {
+                self.child.kill().context("failed to kill daemon child")?;
+                let _ = self.child.wait();
+                anyhow::bail!("timed out waiting for daemon child to exit");
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+    }
+}
+
+impl Drop for BlackboxDaemonHarness {
+    fn drop(&mut self) {
+        if matches!(self.child.try_wait(), Ok(None)) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
     }
 }
 
@@ -1555,6 +1915,7 @@ async fn channel_scale_snapshot(
     active_sessions: Option<usize>,
     messages_per_session: Option<usize>,
     live_sessions: Option<usize>,
+    memory_target: MemoryTarget,
 ) -> Result<Snapshot> {
     let mut snapshot = snapshot(
         label,
@@ -1567,7 +1928,18 @@ async fn channel_scale_snapshot(
         live_sessions,
         messages_per_session,
     );
-    snapshot.persisted_messages = persisted_message_count_for_all_sessions(state_db_path).await?;
+    let memory = read_process_memory_for_target(memory_target);
+    snapshot.rss_kb = memory.rss_kb;
+    snapshot.pss_kb = memory.pss_kb;
+    snapshot.persisted_messages = match memory_target {
+        MemoryTarget::CurrentProcess => {
+            persisted_message_count_for_all_sessions(state_db_path).await?
+        }
+        MemoryTarget::Pid(_) => persisted_message_count_for_all_sessions(state_db_path)
+            .await
+            .ok()
+            .flatten(),
+    };
     Ok(snapshot)
 }
 
@@ -1883,6 +2255,7 @@ impl ScaleRecorder {
             Some(self.active_sessions),
             Some(messages_per_session),
             Some(live_session_count(&self.daemon).await?),
+            self.memory_target,
         )
         .await?;
         self.snapshots
@@ -1894,10 +2267,23 @@ impl ScaleRecorder {
 }
 
 fn read_process_memory() -> ProcessMemory {
+    read_process_memory_for_target(MemoryTarget::CurrentProcess)
+}
+
+fn read_process_memory_for_target(target: MemoryTarget) -> ProcessMemory {
+    match target {
+        MemoryTarget::CurrentProcess => read_process_memory_from_proc(Path::new("/proc/self")),
+        MemoryTarget::Pid(pid) => {
+            read_process_memory_from_proc(&PathBuf::from(format!("/proc/{pid}")))
+        }
+    }
+}
+
+fn read_process_memory_from_proc(proc_path: &Path) -> ProcessMemory {
     let mut rss_kb = None;
     let mut pss_kb = None;
 
-    if let Ok(raw) = fs::read_to_string("/proc/self/smaps_rollup") {
+    if let Ok(raw) = fs::read_to_string(proc_path.join("smaps_rollup")) {
         for line in raw.lines() {
             rss_kb = rss_kb.or_else(|| parse_kb_line(line, "Rss:"));
             pss_kb = pss_kb.or_else(|| parse_kb_line(line, "Pss:"));
@@ -1905,7 +2291,7 @@ fn read_process_memory() -> ProcessMemory {
     }
 
     if rss_kb.is_none() {
-        if let Ok(raw) = fs::read_to_string("/proc/self/status") {
+        if let Ok(raw) = fs::read_to_string(proc_path.join("status")) {
             for line in raw.lines() {
                 rss_kb = rss_kb.or_else(|| parse_kb_line(line, "VmRSS:"));
             }
