@@ -369,6 +369,9 @@ struct Snapshot {
     elapsed_ms: u128,
     rss_kb: Option<u64>,
     pss_kb: Option<u64>,
+    pss_anon_kb: Option<u64>,
+    pss_file_kb: Option<u64>,
+    pss_shmem_kb: Option<u64>,
     state_db_main_bytes: u64,
     state_db_wal_bytes: u64,
     state_db_shm_bytes: u64,
@@ -401,6 +404,9 @@ impl From<PerfHotHistoryProfile> for HotHistoryProfile {
 struct ProcessMemory {
     rss_kb: Option<u64>,
     pss_kb: Option<u64>,
+    pss_anon_kb: Option<u64>,
+    pss_file_kb: Option<u64>,
+    pss_shmem_kb: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -1171,6 +1177,9 @@ async fn run_blackbox_channel_scale(args: BlackboxChannelScaleArgs) -> Result<()
     .await?;
     fresh_start.rss_kb = None;
     fresh_start.pss_kb = None;
+    fresh_start.pss_anon_kb = None;
+    fresh_start.pss_file_kb = None;
+    fresh_start.pss_shmem_kb = None;
     snapshots.push(fresh_start);
 
     let mock_response = synthetic_text(&args.mock_response, args.response_bytes);
@@ -1824,6 +1833,9 @@ fn snapshot(
         elapsed_ms: start.elapsed().as_millis(),
         rss_kb: memory.rss_kb,
         pss_kb: memory.pss_kb,
+        pss_anon_kb: memory.pss_anon_kb,
+        pss_file_kb: memory.pss_file_kb,
+        pss_shmem_kb: memory.pss_shmem_kb,
         state_db_main_bytes: state_store_size.main_bytes,
         state_db_wal_bytes: state_store_size.wal_bytes,
         state_db_shm_bytes: state_store_size.shm_bytes,
@@ -1931,6 +1943,9 @@ async fn channel_scale_snapshot(
     let memory = read_process_memory_for_target(memory_target);
     snapshot.rss_kb = memory.rss_kb;
     snapshot.pss_kb = memory.pss_kb;
+    snapshot.pss_anon_kb = memory.pss_anon_kb;
+    snapshot.pss_file_kb = memory.pss_file_kb;
+    snapshot.pss_shmem_kb = memory.pss_shmem_kb;
     snapshot.persisted_messages = match memory_target {
         MemoryTarget::CurrentProcess => {
             persisted_message_count_for_all_sessions(state_db_path).await?
@@ -2282,11 +2297,17 @@ fn read_process_memory_for_target(target: MemoryTarget) -> ProcessMemory {
 fn read_process_memory_from_proc(proc_path: &Path) -> ProcessMemory {
     let mut rss_kb = None;
     let mut pss_kb = None;
+    let mut pss_anon_kb = None;
+    let mut pss_file_kb = None;
+    let mut pss_shmem_kb = None;
 
     if let Ok(raw) = fs::read_to_string(proc_path.join("smaps_rollup")) {
         for line in raw.lines() {
             rss_kb = rss_kb.or_else(|| parse_kb_line(line, "Rss:"));
             pss_kb = pss_kb.or_else(|| parse_kb_line(line, "Pss:"));
+            pss_anon_kb = pss_anon_kb.or_else(|| parse_kb_line(line, "Pss_Anon:"));
+            pss_file_kb = pss_file_kb.or_else(|| parse_kb_line(line, "Pss_File:"));
+            pss_shmem_kb = pss_shmem_kb.or_else(|| parse_kb_line(line, "Pss_Shmem:"));
         }
     }
 
@@ -2298,7 +2319,13 @@ fn read_process_memory_from_proc(proc_path: &Path) -> ProcessMemory {
         }
     }
 
-    ProcessMemory { rss_kb, pss_kb }
+    ProcessMemory {
+        rss_kb,
+        pss_kb,
+        pss_anon_kb,
+        pss_file_kb,
+        pss_shmem_kb,
+    }
 }
 
 fn parse_kb_line(line: &str, key: &str) -> Option<u64> {
@@ -2383,16 +2410,19 @@ fn markdown_report(report: &PerfReport) -> String {
     out.push_str(&format!("- state_db_path: `{}`\n\n", report.state_db_path));
     push_snapshot_summary(&mut out, &report.snapshots);
     out.push_str(
-        "| label | elapsed_ms | rss_kb | pss_kb | state_db_main_bytes | state_db_wal_bytes | state_db_shm_bytes | state_db_bytes | turn_index | persisted_messages | history_len | history_message_offset | hot_window_pruned | history_payload_bytes | tool_results | tool_result_errors | outbound_messages | active_sessions | live_sessions | messages_per_session |\n",
+        "| label | elapsed_ms | rss_kb | pss_kb | pss_anon_kb | pss_file_kb | pss_shmem_kb | state_db_main_bytes | state_db_wal_bytes | state_db_shm_bytes | state_db_bytes | turn_index | persisted_messages | history_len | history_message_offset | hot_window_pruned | history_payload_bytes | tool_results | tool_result_errors | outbound_messages | active_sessions | live_sessions | messages_per_session |\n",
     );
-    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|---:|---:|---:|---:|---:|---:|---:|\n");
     for snapshot in &report.snapshots {
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             snapshot.label,
             snapshot.elapsed_ms,
             display_option(snapshot.rss_kb),
             display_option(snapshot.pss_kb),
+            display_option(snapshot.pss_anon_kb),
+            display_option(snapshot.pss_file_kb),
+            display_option(snapshot.pss_shmem_kb),
             snapshot.state_db_main_bytes,
             snapshot.state_db_wal_bytes,
             snapshot.state_db_shm_bytes,
@@ -2453,6 +2483,45 @@ fn push_snapshot_summary(out: &mut String, snapshots: &[Snapshot]) {
             snapshots
                 .iter()
                 .filter_map(|snapshot| snapshot.pss_kb)
+                .max(),
+        ),
+    );
+    push_summary_row(
+        out,
+        "pss_anon_kb",
+        display_option(first.pss_anon_kb),
+        display_option(last.pss_anon_kb),
+        display_optional_i128_delta(first.pss_anon_kb, last.pss_anon_kb),
+        display_option(
+            snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.pss_anon_kb)
+                .max(),
+        ),
+    );
+    push_summary_row(
+        out,
+        "pss_file_kb",
+        display_option(first.pss_file_kb),
+        display_option(last.pss_file_kb),
+        display_optional_i128_delta(first.pss_file_kb, last.pss_file_kb),
+        display_option(
+            snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.pss_file_kb)
+                .max(),
+        ),
+    );
+    push_summary_row(
+        out,
+        "pss_shmem_kb",
+        display_option(first.pss_shmem_kb),
+        display_option(last.pss_shmem_kb),
+        display_optional_i128_delta(first.pss_shmem_kb, last.pss_shmem_kb),
+        display_option(
+            snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.pss_shmem_kb)
                 .max(),
         ),
     );
