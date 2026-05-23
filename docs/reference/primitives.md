@@ -495,6 +495,9 @@ example, `target.workitem("tickets")` is more specific than `target.workitem()`.
 
 ### DX `worklist`
 
+For conceptual guidance and workflow examples, see
+`docs/concepts/worklists.md`.
+
 - `worklist(name, opts?) -> list_proxy`
 
 `opts` for `worklist(...)`:

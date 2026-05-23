@@ -486,6 +486,9 @@ end)
 
 ### Durable worklists
 
+For the design model behind worklists, see
+`docs/concepts/worklists.md`.
+
 ```lua
 function on_turn_prepare(turn)
   local sprint = worklist("sprint", {

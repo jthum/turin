@@ -11,6 +11,7 @@ This is the documentation landing page for Turin.
 - `docs/concepts/security-model.md` — trust boundaries, high-risk surfaces, and hardening guidance
 - `docs/concepts/runtime-profiles.md` — recommended operating profiles and risk posture
 - `docs/concepts/memory-vs-kv.md` — convention for choosing between searchable memory and exact KV state
+- `docs/concepts/worklists.md` — durable work coordination model, core operations, and workflow examples
 - `docs/guides/inference-routing.md` — named inference profiles, context-window management, and compaction policy
 - `docs/guides/multimodal.md` — multimodal Phase 1 input, attachment persistence, and current channel/provider support
 - `docs/operations/daemon.md` — daemon mode, filesystem-backed dynamic state, and control API surface
@@ -38,8 +39,9 @@ This is the documentation landing page for Turin.
 5. `docs/reference/hooks.md`
 6. `docs/reference/primitives.md`
 7. `docs/concepts/memory-vs-kv.md`
-8. `docs/guides/inference-routing.md`
-9. `docs/guides/multimodal.md`
+8. `docs/concepts/worklists.md`
+9. `docs/guides/inference-routing.md`
+10. `docs/guides/multimodal.md`
 
 ### For contributors
 
@@ -51,8 +53,9 @@ This is the documentation landing page for Turin.
 6. `docs/operations/daemon.md`
 7. `docs/reference/hooks.md`
 8. `docs/reference/primitives.md`
-9. `docs/guides/inference-routing.md`
-10. `docs/guides/multimodal.md`
+9. `docs/concepts/worklists.md`
+10. `docs/guides/inference-routing.md`
+11. `docs/guides/multimodal.md`
 
 ### For governance-heavy deployments
 
