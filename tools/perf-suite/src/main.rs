@@ -509,7 +509,25 @@ struct OpenedSessionResponse {
 
 #[derive(Debug, Deserialize)]
 struct LiveSessionsResponse {
-    sessions: Vec<serde_json::Value>,
+    sessions: Vec<LiveSessionResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiveSessionResponse {
+    history: Option<LiveSessionHistoryResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiveSessionHistoryResponse {
+    len: usize,
+    message_offset: usize,
+}
+
+#[derive(Debug, Default)]
+struct LiveSessionDiagnostics {
+    count: usize,
+    total_history_len: Option<usize>,
+    max_history_message_offset: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1437,19 +1455,17 @@ async fn run_blackbox_task_scale(args: BlackboxTaskScaleArgs) -> Result<()> {
     let memory_target = MemoryTarget::Pid(daemon.pid());
     let client = daemon.client();
 
-    snapshots.push(
-        channel_scale_snapshot(
-            "after-daemon-start",
-            start,
-            &state_db_path,
-            Some(0),
-            Some(1),
-            Some(0),
-            Some(daemon.live_session_count().await?),
-            memory_target,
-        )
-        .await?,
-    );
+    snapshots.push(blackbox_task_scale_snapshot(
+        &daemon,
+        "after-daemon-start",
+        start,
+        &state_db_path,
+        Some(0),
+        Some(1),
+        Some(0),
+        memory_target,
+    )
+    .await?);
 
     let opened: OpenedSessionResponse = client
         .request_ok(
@@ -1496,14 +1512,14 @@ async fn run_blackbox_task_scale(args: BlackboxTaskScaleArgs) -> Result<()> {
 
         if checkpoint_set.contains(&completed) {
             snapshots.push(
-                channel_scale_snapshot(
+                blackbox_task_scale_snapshot(
+                    &daemon,
                     &format!("after-{completed}-tasks"),
                     start,
                     &state_db_path,
                     Some(completed),
                     Some(1),
                     Some(completed),
-                    Some(daemon.live_session_count().await?),
                     memory_target,
                 )
                 .await?,
@@ -1511,14 +1527,14 @@ async fn run_blackbox_task_scale(args: BlackboxTaskScaleArgs) -> Result<()> {
         }
     }
 
-    let mut after_runner = channel_scale_snapshot(
+    let mut after_runner = blackbox_task_scale_snapshot(
+        &daemon,
         "after-runner",
         start,
         &state_db_path,
         Some(args.tasks),
         Some(1),
         Some(args.tasks),
-        Some(daemon.live_session_count().await?),
         memory_target,
     )
     .await?;
@@ -1529,14 +1545,14 @@ async fn run_blackbox_task_scale(args: BlackboxTaskScaleArgs) -> Result<()> {
 
     if args.post_run_idle_wait_ms > 0 {
         sleep(Duration::from_millis(args.post_run_idle_wait_ms)).await;
-        let mut after_idle_wait = channel_scale_snapshot(
+        let mut after_idle_wait = blackbox_task_scale_snapshot(
+            &daemon,
             "after-idle-wait",
             start,
             &state_db_path,
             Some(args.tasks),
             Some(1),
             Some(args.tasks),
-            Some(daemon.live_session_count().await?),
             memory_target,
         )
         .await?;
@@ -1587,6 +1603,32 @@ async fn run_blackbox_task_scale(args: BlackboxTaskScaleArgs) -> Result<()> {
     write_reports(&args.report_dir, &report)?;
     print_summary(&report);
     Ok(())
+}
+
+async fn blackbox_task_scale_snapshot(
+    daemon: &BlackboxDaemonHarness,
+    label: &str,
+    start: Instant,
+    state_db_path: &Path,
+    completed_tasks: Option<usize>,
+    active_sessions: Option<usize>,
+    messages_per_session: Option<usize>,
+    memory_target: MemoryTarget,
+) -> Result<Snapshot> {
+    let diagnostics = daemon.live_session_diagnostics().await?;
+    let mut snapshot = channel_scale_snapshot(
+        label,
+        start,
+        state_db_path,
+        completed_tasks,
+        active_sessions,
+        messages_per_session,
+        Some(diagnostics.count),
+        memory_target,
+    )
+    .await?;
+    snapshot.set_live_session_diagnostics(diagnostics);
+    Ok(snapshot)
 }
 
 fn prepare_workspace(workspace_root: Option<PathBuf>) -> Result<(Option<TempDir>, PathBuf)> {
@@ -1815,6 +1857,10 @@ impl BlackboxDaemonHarness {
         live_session_count(&self.client()).await
     }
 
+    async fn live_session_diagnostics(&self) -> Result<LiveSessionDiagnostics> {
+        live_session_diagnostics(&self.client()).await
+    }
+
     async fn wait_until_ready(&mut self) -> Result<()> {
         let deadline = TokioInstant::now() + Duration::from_secs(10);
         let client = self.client();
@@ -1870,13 +1916,37 @@ impl Drop for BlackboxDaemonHarness {
 }
 
 async fn live_session_count(client: &turin_daemon_client::DaemonClient) -> Result<usize> {
+    Ok(live_session_diagnostics(client).await?.count)
+}
+
+async fn live_session_diagnostics(
+    client: &turin_daemon_client::DaemonClient,
+) -> Result<LiveSessionDiagnostics> {
     let response: LiveSessionsResponse = client
         .request_ok(
             None,
             turin_daemon_protocol::DaemonRequest::SessionListLive(Default::default()),
         )
         .await?;
-    Ok(response.sessions.len())
+    let mut diagnostics = LiveSessionDiagnostics {
+        count: response.sessions.len(),
+        ..LiveSessionDiagnostics::default()
+    };
+    let mut saw_history = false;
+    let mut total_history_len = 0usize;
+    let mut max_history_message_offset = 0usize;
+    for session in response.sessions {
+        if let Some(history) = session.history {
+            saw_history = true;
+            total_history_len = total_history_len.saturating_add(history.len);
+            max_history_message_offset = max_history_message_offset.max(history.message_offset);
+        }
+    }
+    if saw_history {
+        diagnostics.total_history_len = Some(total_history_len);
+        diagnostics.max_history_message_offset = Some(max_history_message_offset);
+    }
+    Ok(diagnostics)
 }
 
 async fn daemon_task_metrics(
@@ -2169,6 +2239,15 @@ impl Snapshot {
         self.daemon_completed_tasks = Some(metrics.completed_tasks);
         self.daemon_task_output_bytes = Some(metrics.output_bytes);
         self.daemon_task_assistant_content_bytes = Some(metrics.assistant_content_bytes);
+    }
+
+    fn set_live_session_diagnostics(&mut self, diagnostics: LiveSessionDiagnostics) {
+        self.live_sessions = Some(diagnostics.count);
+        self.history_len = diagnostics.total_history_len;
+        self.history_message_offset = diagnostics.max_history_message_offset;
+        self.hot_window_pruned = diagnostics
+            .max_history_message_offset
+            .map(|offset| offset > 0);
     }
 }
 

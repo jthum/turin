@@ -69,6 +69,7 @@ Full materialization:
 
 - Hot-history pruning must not run for ephemeral or non-branch-advancing execution contexts.
 - `history_message_offset` must increase when hot messages are dropped and reset when full history is materialized.
+- Live session snapshots expose hot-history length and offset for diagnostics; these values are observational and must not drive runtime pruning decisions.
 - Tool-result messages at the hot-window boundary should keep their preceding assistant/tool-use context.
 - Hot-history payload trimming should affect only older successful tool results, not recent payloads or error payloads.
 - Durable persistence must keep the full message content even when hot memory uses an omission marker.
@@ -131,10 +132,10 @@ The current module split is deliberate:
 - `preflight.rs` answers "when do turn hooks run and how do we try provider route candidates?"
 - `preflight/compaction.rs` answers "when do we refresh summaries and build compacted provider request context?"
 - `session_lifecycle.rs` answers "when do we restore, materialize, and re-prune persisted history?"
+- `LiveSessionSnapshot.history` answers "how much hot history is currently resident in a live runtime?"
 
 Likely future cleanup areas:
 
-- expose hot-history report data in perf-suite long-session reports
 - add a long-session fake-inference benchmark that checks RSS and hot-window size together
 - consider a persistence query that materializes only the needed recent branch suffix instead of always rebuilding full history before pruning
 - tune default profile values after measurement, not by guesswork

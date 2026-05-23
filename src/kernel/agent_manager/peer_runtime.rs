@@ -14,8 +14,8 @@ use crate::persistence::schema::SignalRow;
 use turin_types::TaskInputContent;
 
 use super::{
-    AgentManager, ExecutionStatusSnapshot, PeerAgentTaskEnvelope, PeerAgentTaskResult,
-    RuntimeControl, SessionContextOverrides, TaskPromotionCandidate,
+    AgentManager, ExecutionStatusSnapshot, LiveSessionHistorySnapshot, PeerAgentTaskEnvelope,
+    PeerAgentTaskResult, RuntimeControl, SessionContextOverrides, TaskPromotionCandidate,
 };
 
 pub(super) struct PeerRuntime {
@@ -87,6 +87,7 @@ impl PeerRuntime {
             session_context_from_session(&session),
             Some(ExecutionStatusSnapshot::from_session(&session)),
             session.execution.conflict_policy,
+            Some(LiveSessionHistorySnapshot::from_session(&session)),
         );
 
         Ok(Self {
@@ -171,6 +172,7 @@ impl PeerRuntime {
             SessionContextOverrides::default(),
             None,
             crate::kernel::session::ExecutionConflictPolicy::Reject,
+            None,
         );
         self.host.shutdown_mcp_clients().await;
         super::allocator::trim_after_peer_idle_if_enabled();
@@ -513,6 +515,7 @@ impl PeerRuntime {
             session_context_from_session(&session),
             Some(ExecutionStatusSnapshot::from_session(&session)),
             session.execution.conflict_policy,
+            Some(LiveSessionHistorySnapshot::from_session(&session)),
         );
         self.session = session;
         Ok(())
@@ -542,6 +545,7 @@ impl PeerRuntime {
             session_context_from_session(&session),
             Some(ExecutionStatusSnapshot::from_session(&session)),
             session.execution.conflict_policy,
+            Some(LiveSessionHistorySnapshot::from_session(&session)),
         );
         self.session = session;
         Ok(())
@@ -552,6 +556,8 @@ impl PeerRuntime {
             .set_current_execution_snapshot(ExecutionStatusSnapshot::from_session(&self.session));
         self.control
             .set_current_conflict_policy(self.session.effective_conflict_policy());
+        self.control
+            .set_current_history_snapshot(LiveSessionHistorySnapshot::from_session(&self.session));
     }
 
     async fn dispatch_signal(&mut self, signal: &SignalRow) -> Result<usize> {

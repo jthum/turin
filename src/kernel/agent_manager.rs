@@ -22,7 +22,7 @@ use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_manager::HarnessManager;
 use crate::kernel::policy::RuntimePolicyManager;
 pub use crate::kernel::session::ExecutionStatusSnapshot;
-use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask};
+use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask, SessionState};
 pub use crate::kernel::task_promotion::{PromotedTaskBranch, TaskPromotionCandidate};
 use crate::persistence::manager::StoreManager;
 use crate::tools::registry::ToolRegistry;
@@ -96,6 +96,23 @@ pub struct LiveSessionSnapshot {
     pub current_request_id: Option<String>,
     pub execution: ExecutionStatusSnapshot,
     pub conflict_policy: ExecutionConflictPolicy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub history: Option<LiveSessionHistorySnapshot>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LiveSessionHistorySnapshot {
+    pub len: usize,
+    pub message_offset: usize,
+}
+
+impl LiveSessionHistorySnapshot {
+    fn from_session(session: &SessionState) -> Self {
+        Self {
+            len: session.history.len(),
+            message_offset: session.history_message_offset,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -137,6 +154,7 @@ pub(crate) struct RuntimeControl {
     current_session_context: StdRwLock<SessionContextOverrides>,
     current_execution: StdRwLock<Option<ExecutionStatusSnapshot>>,
     current_conflict_policy: StdRwLock<ExecutionConflictPolicy>,
+    current_history: StdRwLock<Option<LiveSessionHistorySnapshot>>,
     current_request_id: StdRwLock<Option<String>>,
     current_runtime_task_id: StdRwLock<Option<String>>,
     current_cancel_token: Mutex<Option<CancellationToken>>,
@@ -152,6 +170,7 @@ impl Default for RuntimeControl {
             current_session_context: StdRwLock::new(SessionContextOverrides::default()),
             current_execution: StdRwLock::new(None),
             current_conflict_policy: StdRwLock::new(ExecutionConflictPolicy::Reject),
+            current_history: StdRwLock::new(None),
             current_request_id: StdRwLock::new(None),
             current_runtime_task_id: StdRwLock::new(None),
             current_cancel_token: Mutex::new(None),
@@ -184,6 +203,7 @@ impl RuntimeControl {
         context: SessionContextOverrides,
         execution: Option<ExecutionStatusSnapshot>,
         conflict_policy: ExecutionConflictPolicy,
+        history: Option<LiveSessionHistorySnapshot>,
     ) {
         *self
             .current_session_id
@@ -205,6 +225,10 @@ impl RuntimeControl {
             .current_conflict_policy
             .write()
             .expect("runtime control conflict policy lock poisoned") = conflict_policy;
+        *self
+            .current_history
+            .write()
+            .expect("runtime control history lock poisoned") = history;
         self.session_generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
@@ -217,6 +241,7 @@ impl RuntimeControl {
             SessionContextOverrides::default(),
             None,
             ExecutionConflictPolicy::Reject,
+            None,
         );
     }
 
@@ -260,11 +285,25 @@ impl RuntimeControl {
             .expect("runtime control conflict policy lock poisoned")
     }
 
+    fn current_history(&self) -> Option<LiveSessionHistorySnapshot> {
+        self.current_history
+            .read()
+            .expect("runtime control history lock poisoned")
+            .clone()
+    }
+
     fn set_current_execution_snapshot(&self, execution: ExecutionStatusSnapshot) {
         *self
             .current_execution
             .write()
             .expect("runtime control execution snapshot lock poisoned") = Some(execution);
+    }
+
+    fn set_current_history_snapshot(&self, history: LiveSessionHistorySnapshot) {
+        *self
+            .current_history
+            .write()
+            .expect("runtime control history lock poisoned") = Some(history);
     }
 
     #[cfg(test)]

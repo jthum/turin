@@ -136,7 +136,10 @@ CARGO_TARGET_DIR=target cargo run --manifest-path tools/perf-suite/Cargo.toml --
 ```
 
 Use it against `blackbox-channel-scale` to separate channel-runner overhead from
-core daemon task/runtime/persistence overhead.
+core daemon task/runtime/persistence overhead. When the daemon supports live
+history diagnostics, this scenario also records the current hot-history length
+and message offset so long-session memory growth can be compared against the
+bounded hot window.
 
 Channel scenarios default to 256-byte inbound messages and 1 KiB mocked assistant
 responses. To isolate mostly metadata overhead, make both values intentionally

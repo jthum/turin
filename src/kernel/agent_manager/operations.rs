@@ -47,6 +47,7 @@ fn live_session_snapshot(
         current_request_id: handle.control.current_request_id(),
         execution: live_execution_snapshot(handle),
         conflict_policy: handle.control.current_conflict_policy(),
+        history: handle.control.current_history(),
     }
 }
 

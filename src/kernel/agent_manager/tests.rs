@@ -734,6 +734,10 @@ async fn live_session_snapshots_expose_effective_conflict_policy() -> anyhow::Re
         write_policy: crate::kernel::session::ExecutionWritePolicy::AdvanceBranchHead,
     });
     control.set_current_execution_conflict_policy(ExecutionConflictPolicy::Detached);
+    control.set_current_history_snapshot(LiveSessionHistorySnapshot {
+        len: 64,
+        message_offset: 1936,
+    });
 
     manager.runtimes.write().await.insert(
         RuntimeSlotKey::default_for("default"),
@@ -752,6 +756,9 @@ async fn live_session_snapshots_expose_effective_conflict_policy() -> anyhow::Re
     assert_eq!(live[0].session_id, session_id);
     assert_eq!(live[0].execution.execution_id, "ex_live_conflict");
     assert_eq!(live[0].conflict_policy, ExecutionConflictPolicy::Detached);
+    let history = live[0].history.as_ref().expect("history snapshot");
+    assert_eq!(history.len, 64);
+    assert_eq!(history.message_offset, 1936);
 
     Ok(())
 }

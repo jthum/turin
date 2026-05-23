@@ -284,6 +284,7 @@ mod tests {
                             crate::kernel::session::ExecutionWritePolicy::AdvanceBranchHead,
                     },
                     conflict_policy: ExecutionConflictPolicy::Reject,
+                    history: None,
                 },
                 LiveSessionSnapshot {
                     agent_id: "writer".into(),
@@ -303,6 +304,7 @@ mod tests {
                         write_policy: crate::kernel::session::ExecutionWritePolicy::Detached,
                     },
                     conflict_policy: ExecutionConflictPolicy::Detached,
+                    history: None,
                 },
             ],
             channel_runtimes: vec![
