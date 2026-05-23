@@ -85,6 +85,50 @@ pub struct TaskStatusSnapshot {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TaskStatusFingerprint {
+    pub(crate) request_id: String,
+    state: &'static str,
+    runtime_task_id: Option<String>,
+    status: Option<TaskTerminalStatus>,
+    task_turn_count: Option<u32>,
+    branch_outcome: Option<TaskBranchOutcomeFingerprint>,
+    promotion_candidate: Option<(String, i64)>,
+    promoted_branch: Option<PromotedTaskBranchFingerprint>,
+    output_bytes: usize,
+    assistant_content_items: usize,
+    assistant_content_bytes: usize,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TaskBranchOutcomeFingerprint {
+    ForkSibling {
+        branch_id: i64,
+        branch_public_id: String,
+        source_turn_id: Option<i64>,
+        persisted_active_head_unchanged: bool,
+    },
+    SidestepSibling {
+        branch_id: i64,
+        branch_public_id: String,
+        source_turn_id: Option<i64>,
+        persisted_active_head_unchanged: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PromotedTaskBranchFingerprint {
+    branch_id: String,
+    name: String,
+    head_turn_index: Option<u32>,
+    source_turn_id: Option<i64>,
+    origin_kind: String,
+    origin_task_id: Option<String>,
+    origin_execution_id: Option<String>,
+    active: bool,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct LiveSessionSnapshot {
     pub agent_id: String,

@@ -10,7 +10,9 @@ use crate::daemon::protocol::{
     SubmitTaskParams,
 };
 use crate::daemon::registry::DiscoveredChannel;
-use crate::kernel::agent_manager::{AgentStatusSnapshot, PromotedTaskBranch, TaskStatusSnapshot};
+use crate::kernel::agent_manager::{
+    AgentStatusSnapshot, PromotedTaskBranch, TaskStatusFingerprint, TaskStatusSnapshot,
+};
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::{KernelEvent, TaskBranchOutcome};
 use crate::kernel::prepare_persisted_session_sidestep;
@@ -34,6 +36,8 @@ struct TaskSubmissionRequest<'a> {
     execution: Option<TaskExecutionOverrides>,
     branch_outcome: Option<TaskBranchOutcome>,
 }
+
+const TASK_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 impl DaemonState {
     pub async fn agent_runtime_status(
@@ -193,6 +197,10 @@ impl DaemonState {
         self.kernel.agent_manager().list_tasks().await
     }
 
+    pub(crate) async fn list_task_fingerprints(&self) -> Vec<TaskStatusFingerprint> {
+        self.kernel.agent_manager().list_task_fingerprints().await
+    }
+
     pub async fn get_task(&self, request_id: &str) -> Option<TaskStatusSnapshot> {
         self.kernel.agent_manager().get_task(request_id).await
     }
@@ -239,7 +247,7 @@ impl DaemonState {
                 anyhow::bail!("Timed out waiting for task '{}'", request_id);
             }
 
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            tokio::time::sleep(TASK_WAIT_POLL_INTERVAL).await;
         }
     }
 

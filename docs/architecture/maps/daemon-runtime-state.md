@@ -38,7 +38,7 @@ Task submission:
 1. Daemon task handlers build `SubmitTaskParams` or `SidestepTaskParams`.
 2. `runtime_tasks.rs` converts request params into `QueuedTask` and execution overrides.
 3. Agent-manager methods enqueue the work by agent id or live session target.
-4. `wait_for_task` polls task snapshots until completion or timeout.
+4. `wait_for_task` polls the targeted task snapshot until completion or timeout; it must not materialize the full task list for each wait.
 
 Live session open/resume:
 
@@ -114,5 +114,9 @@ git diff --check
 The current pass centralizes channel lookup, persisted session target resolution, and live-branch busy checks. It intentionally keeps daemon task and session files separate because task submission and persisted session inspection have different contracts even though both touch live runtime state.
 
 Runtime event streaming is split so the async subscription loop stays in `events.rs`, while filter matching and scoped snapshot projection live in focused child modules.
+
+Task lookup is intentionally direct. `task.get` and `task.wait` should look up one pending/completed task by request id, not build `task.list` and search it. This keeps large completed-task payloads from being cloned repeatedly during sequential task workloads.
+
+The task event poller compares lightweight task fingerprints first, then fetches and serializes the full task snapshot only when the public `task.updated` payload actually needs to be emitted. The emitted event shape remains the full task snapshot.
 
 Peer runtime idle shutdown supports an opt-in allocator diagnostic: when `TURIN_TRIM_ALLOCATOR_ON_PEER_IDLE` is truthy, Linux builds call `malloc_trim(0)` after the peer runtime has ended its session and shut down MCP clients. This is deliberately environment-gated so normal daemon behavior does not pay the trim cost unless a deployment or perf run asks for the lower retained-RSS profile.

@@ -194,7 +194,7 @@ pub(super) fn start_task_event_poller(
     mut shutdown_rx: watch::Receiver<bool>,
 ) {
     tokio::spawn(async move {
-        let mut seen: HashMap<String, serde_json::Value> = HashMap::new();
+        let mut seen = HashMap::new();
 
         loop {
             tokio::select! {
@@ -204,23 +204,38 @@ pub(super) fn start_task_event_poller(
                     }
                 }
                 _ = tokio::time::sleep(Duration::from_millis(250)) => {
-                    let tasks = {
+                    let changed_tasks = {
                         let guard = state.read().await;
-                        guard.list_tasks().await
+                        let fingerprints = guard.list_task_fingerprints().await;
+                        let changed_fingerprints: Vec<_> = fingerprints
+                            .into_iter()
+                            .filter_map(|fingerprint| {
+                                let changed = seen
+                                    .get(&fingerprint.request_id)
+                                    .map(|previous| previous != &fingerprint)
+                                    .unwrap_or(true);
+                                changed.then(|| {
+                                    let request_id = fingerprint.request_id.clone();
+                                    (request_id, fingerprint)
+                                })
+                            })
+                            .collect();
+
+                        let mut tasks = Vec::with_capacity(changed_fingerprints.len());
+                        for (request_id, fingerprint) in changed_fingerprints {
+                            if let Some(task) = guard.get_task(&request_id).await {
+                                tasks.push((fingerprint, task));
+                            }
+                        }
+                        tasks
                     };
 
-                    for task in tasks {
+                    for (fingerprint, task) in changed_tasks {
                         let Ok(value) = serde_json::to_value(&task) else {
                             continue;
                         };
-                        let changed = seen
-                            .get(&task.request_id)
-                            .map(|previous| previous != &value)
-                            .unwrap_or(true);
-                        if changed {
-                            emit_event(&event_tx, "task.updated", value.clone());
-                            seen.insert(task.request_id.clone(), value);
-                        }
+                        emit_event(&event_tx, "task.updated", value);
+                        seen.insert(fingerprint.request_id.clone(), fingerprint);
                     }
                 }
             }
