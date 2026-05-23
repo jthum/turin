@@ -139,7 +139,8 @@ Use it against `blackbox-channel-scale` to separate channel-runner overhead from
 core daemon task/runtime/persistence overhead. When the daemon supports live
 history diagnostics, this scenario also records the current hot-history length
 and message offset so long-session memory growth can be compared against the
-bounded hot window.
+bounded hot window. After-runner/after-idle rows include daemon task-cache
+metrics, including total serialized task snapshot bytes.
 
 The persistence scale scenario measures the state-store path without daemon,
 channel runner, peer runtime, or provider execution:

@@ -481,6 +481,7 @@ struct Snapshot {
     persisted_event_payload_bytes: Option<usize>,
     daemon_tasks: Option<usize>,
     daemon_completed_tasks: Option<usize>,
+    daemon_task_snapshot_bytes: Option<usize>,
     daemon_task_output_bytes: Option<usize>,
     daemon_task_assistant_content_bytes: Option<usize>,
 }
@@ -508,6 +509,7 @@ struct ProcessMemory {
 struct DaemonTaskMetrics {
     tasks: usize,
     completed_tasks: usize,
+    snapshot_bytes: usize,
     output_bytes: usize,
     assistant_content_bytes: usize,
 }
@@ -2365,6 +2367,9 @@ async fn daemon_task_metrics(
         ..DaemonTaskMetrics::default()
     };
     for task in response.tasks {
+        metrics.snapshot_bytes = metrics
+            .snapshot_bytes
+            .saturating_add(serde_json::to_vec(&task).map_or(0, |json| json.len()));
         if task.state == "completed" {
             metrics.completed_tasks = metrics.completed_tasks.saturating_add(1);
         }
@@ -2632,6 +2637,7 @@ fn snapshot(
         persisted_event_payload_bytes: None,
         daemon_tasks: None,
         daemon_completed_tasks: None,
+        daemon_task_snapshot_bytes: None,
         daemon_task_output_bytes: None,
         daemon_task_assistant_content_bytes: None,
     }
@@ -2641,6 +2647,7 @@ impl Snapshot {
     fn set_daemon_task_metrics(&mut self, metrics: DaemonTaskMetrics) {
         self.daemon_tasks = Some(metrics.tasks);
         self.daemon_completed_tasks = Some(metrics.completed_tasks);
+        self.daemon_task_snapshot_bytes = Some(metrics.snapshot_bytes);
         self.daemon_task_output_bytes = Some(metrics.output_bytes);
         self.daemon_task_assistant_content_bytes = Some(metrics.assistant_content_bytes);
     }
@@ -3210,12 +3217,12 @@ fn markdown_report(report: &PerfReport) -> String {
     out.push_str(&format!("- state_db_path: `{}`\n\n", report.state_db_path));
     push_snapshot_summary(&mut out, &report.snapshots);
     out.push_str(
-        "| label | elapsed_ms | rss_kb | pss_kb | pss_anon_kb | pss_file_kb | pss_shmem_kb | state_db_main_bytes | state_db_wal_bytes | state_db_shm_bytes | state_db_bytes | turn_index | persisted_messages | persisted_events | persisted_event_payload_bytes | history_len | history_message_offset | hot_window_pruned | history_payload_bytes | tool_results | tool_result_errors | outbound_messages | active_sessions | live_sessions | messages_per_session | daemon_tasks | daemon_completed_tasks | daemon_task_output_bytes | daemon_task_assistant_content_bytes |\n",
+        "| label | elapsed_ms | rss_kb | pss_kb | pss_anon_kb | pss_file_kb | pss_shmem_kb | state_db_main_bytes | state_db_wal_bytes | state_db_shm_bytes | state_db_bytes | turn_index | persisted_messages | persisted_events | persisted_event_payload_bytes | history_len | history_message_offset | hot_window_pruned | history_payload_bytes | tool_results | tool_result_errors | outbound_messages | active_sessions | live_sessions | messages_per_session | daemon_tasks | daemon_completed_tasks | daemon_task_snapshot_bytes | daemon_task_output_bytes | daemon_task_assistant_content_bytes |\n",
     );
-    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     for snapshot in &report.snapshots {
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             snapshot.label,
             snapshot.elapsed_ms,
             display_option(snapshot.rss_kb),
@@ -3243,6 +3250,7 @@ fn markdown_report(report: &PerfReport) -> String {
             display_usize_option(snapshot.messages_per_session),
             display_usize_option(snapshot.daemon_tasks),
             display_usize_option(snapshot.daemon_completed_tasks),
+            display_usize_option(snapshot.daemon_task_snapshot_bytes),
             display_usize_option(snapshot.daemon_task_output_bytes),
             display_usize_option(snapshot.daemon_task_assistant_content_bytes)
         ));
@@ -3477,6 +3485,22 @@ fn push_snapshot_summary(out: &mut String, snapshots: &[Snapshot]) {
             snapshots
                 .iter()
                 .filter_map(|snapshot| snapshot.daemon_task_output_bytes)
+                .max(),
+        ),
+    );
+    push_summary_row(
+        out,
+        "daemon_task_snapshot_bytes",
+        display_usize_option(first.daemon_task_snapshot_bytes),
+        display_usize_option(last.daemon_task_snapshot_bytes),
+        display_optional_isize_delta(
+            first.daemon_task_snapshot_bytes,
+            last.daemon_task_snapshot_bytes,
+        ),
+        display_usize_option(
+            snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.daemon_task_snapshot_bytes)
                 .max(),
         ),
     );
