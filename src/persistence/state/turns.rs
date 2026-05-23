@@ -4,8 +4,10 @@ use anyhow::{Context, Result, anyhow};
 
 use super::{StateStore, TurnRow, TurnWriteError, TurnWriteTarget};
 
-const TURN_SELECT: &str =
-    "SELECT id, public_id, session_id, parent_turn_id, branch_depth, created_at FROM turns";
+const TURN_SELECT_BY_ID: &str = concat!(
+    "SELECT id, public_id, session_id, parent_turn_id, branch_depth, created_at ",
+    "FROM turns WHERE id = ?1"
+);
 
 impl StateStore {
     pub async fn active_branch_turn_count(&self, session_id: i64) -> Result<u32> {
@@ -264,8 +266,8 @@ impl StateStore {
         conn: &turso::Connection,
         turn_id: i64,
     ) -> Result<Option<TurnRow>> {
-        let sql = format!("{TURN_SELECT} WHERE id = ?1");
-        let mut rows = conn.query(&sql, [turn_id]).await?;
+        let mut stmt = conn.prepare_cached(TURN_SELECT_BY_ID).await?;
+        let mut rows = stmt.query([turn_id]).await?;
         if let Some(row) = rows.next().await? {
             Ok(Some(turn_row_from_row(&row)?))
         } else {

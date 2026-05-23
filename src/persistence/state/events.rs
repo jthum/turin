@@ -4,6 +4,9 @@ use anyhow::{Context, Result};
 
 use super::{EventRow, SessionReadTarget, StateStore, TurnRow, TurnWriteTarget};
 
+const INSERT_EVENT_SQL: &str =
+    "INSERT INTO events (session_id, turn_id, event_type, payload) VALUES (?1, ?2, ?3, ?4)";
+
 pub(crate) struct EventWriter {
     store: StateStore,
     conn: turso::Connection,
@@ -56,12 +59,10 @@ impl StateStore {
             .resolve_event_turn_with_conn(conn, session_id, target)
             .await?
             .map(|turn| turn.id);
-        conn.execute(
-            "INSERT INTO events (session_id, turn_id, event_type, payload) VALUES (?1, ?2, ?3, ?4)",
-            turso::params![session_id, turn_id, event_type, payload_str],
-        )
-        .await
-        .with_context(|| format!("Failed to insert event for session: {}", session_id))?;
+        let mut stmt = conn.prepare_cached(INSERT_EVENT_SQL).await?;
+        stmt.execute(turso::params![session_id, turn_id, event_type, payload_str])
+            .await
+            .with_context(|| format!("Failed to insert event for session: {}", session_id))?;
         Ok(())
     }
 
