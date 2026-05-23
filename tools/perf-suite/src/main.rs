@@ -30,7 +30,9 @@ use turin_channel_core::{
     ChannelConversationKey, ChannelKind, ChannelMessageRef, ChannelSessionScope, ChannelUser,
     InboundEvent, OutboundMessage,
 };
-use turin_channel_runner::{ChannelDriver, ChannelProgressUpdate, ChannelRunner, RunnerConfig};
+use turin_channel_runner::{
+    ChannelDriver, ChannelProgressUpdate, ChannelRunner, RunnerConfig, TaskSnapshot,
+};
 
 #[derive(Parser)]
 #[command(name = "turin-perf-suite")]
@@ -388,6 +390,10 @@ struct Snapshot {
     history_payload_bytes: Option<usize>,
     tool_results: Option<usize>,
     tool_result_errors: Option<usize>,
+    daemon_tasks: Option<usize>,
+    daemon_completed_tasks: Option<usize>,
+    daemon_task_output_bytes: Option<usize>,
+    daemon_task_assistant_content_bytes: Option<usize>,
 }
 
 impl From<PerfHotHistoryProfile> for HotHistoryProfile {
@@ -407,6 +413,14 @@ struct ProcessMemory {
     pss_anon_kb: Option<u64>,
     pss_file_kb: Option<u64>,
     pss_shmem_kb: Option<u64>,
+}
+
+#[derive(Debug, Default)]
+struct DaemonTaskMetrics {
+    tasks: usize,
+    completed_tasks: usize,
+    output_bytes: usize,
+    assistant_content_bytes: usize,
 }
 
 #[derive(Debug)]
@@ -441,6 +455,11 @@ struct BlackboxDaemonHarness {
 #[derive(Debug, Deserialize)]
 struct LiveSessionsResponse {
     sessions: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TaskListResponse {
+    tasks: Vec<TaskSnapshot>,
 }
 
 struct MockChannelDriver {
@@ -1249,7 +1268,7 @@ async fn run_blackbox_channel_scale(args: BlackboxChannelScaleArgs) -> Result<()
 
     if args.post_run_idle_wait_ms > 0 {
         sleep(Duration::from_millis(args.post_run_idle_wait_ms)).await;
-        let after_idle_wait = channel_scale_snapshot(
+        let mut after_idle_wait = channel_scale_snapshot(
             "after-idle-wait",
             start,
             &state_db_path,
@@ -1260,6 +1279,9 @@ async fn run_blackbox_channel_scale(args: BlackboxChannelScaleArgs) -> Result<()
             memory_target,
         )
         .await?;
+        if let Ok(metrics) = daemon_task_metrics(&daemon.client()).await {
+            after_idle_wait.set_daemon_task_metrics(metrics);
+        }
         snapshots
             .lock()
             .expect("scale snapshots lock poisoned")
@@ -1604,6 +1626,35 @@ async fn live_session_count(client: &turin_daemon_client::DaemonClient) -> Resul
     Ok(response.sessions.len())
 }
 
+async fn daemon_task_metrics(
+    client: &turin_daemon_client::DaemonClient,
+) -> Result<DaemonTaskMetrics> {
+    let response: TaskListResponse = client
+        .request_ok(
+            None,
+            turin_daemon_protocol::DaemonRequest::TaskList(Default::default()),
+        )
+        .await?;
+    let mut metrics = DaemonTaskMetrics {
+        tasks: response.tasks.len(),
+        ..DaemonTaskMetrics::default()
+    };
+    for task in response.tasks {
+        if task.state == "completed" {
+            metrics.completed_tasks = metrics.completed_tasks.saturating_add(1);
+        }
+        metrics.output_bytes = metrics
+            .output_bytes
+            .saturating_add(task.output.as_deref().map_or(0, str::len));
+        if let Some(content) = task.assistant_content.as_deref() {
+            metrics.assistant_content_bytes = metrics
+                .assistant_content_bytes
+                .saturating_add(serde_json::to_string(content).map_or(0, |json| json.len()));
+        }
+    }
+    Ok(metrics)
+}
+
 impl MockChannelDriver {
     fn new(events: Vec<InboundEvent>) -> Self {
         Self {
@@ -1852,6 +1903,19 @@ fn snapshot(
         history_payload_bytes: None,
         tool_results: None,
         tool_result_errors: None,
+        daemon_tasks: None,
+        daemon_completed_tasks: None,
+        daemon_task_output_bytes: None,
+        daemon_task_assistant_content_bytes: None,
+    }
+}
+
+impl Snapshot {
+    fn set_daemon_task_metrics(&mut self, metrics: DaemonTaskMetrics) {
+        self.daemon_tasks = Some(metrics.tasks);
+        self.daemon_completed_tasks = Some(metrics.completed_tasks);
+        self.daemon_task_output_bytes = Some(metrics.output_bytes);
+        self.daemon_task_assistant_content_bytes = Some(metrics.assistant_content_bytes);
     }
 }
 
@@ -2410,12 +2474,12 @@ fn markdown_report(report: &PerfReport) -> String {
     out.push_str(&format!("- state_db_path: `{}`\n\n", report.state_db_path));
     push_snapshot_summary(&mut out, &report.snapshots);
     out.push_str(
-        "| label | elapsed_ms | rss_kb | pss_kb | pss_anon_kb | pss_file_kb | pss_shmem_kb | state_db_main_bytes | state_db_wal_bytes | state_db_shm_bytes | state_db_bytes | turn_index | persisted_messages | history_len | history_message_offset | hot_window_pruned | history_payload_bytes | tool_results | tool_result_errors | outbound_messages | active_sessions | live_sessions | messages_per_session |\n",
+        "| label | elapsed_ms | rss_kb | pss_kb | pss_anon_kb | pss_file_kb | pss_shmem_kb | state_db_main_bytes | state_db_wal_bytes | state_db_shm_bytes | state_db_bytes | turn_index | persisted_messages | history_len | history_message_offset | hot_window_pruned | history_payload_bytes | tool_results | tool_result_errors | outbound_messages | active_sessions | live_sessions | messages_per_session | daemon_tasks | daemon_completed_tasks | daemon_task_output_bytes | daemon_task_assistant_content_bytes |\n",
     );
-    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     for snapshot in &report.snapshots {
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             snapshot.label,
             snapshot.elapsed_ms,
             display_option(snapshot.rss_kb),
@@ -2438,7 +2502,11 @@ fn markdown_report(report: &PerfReport) -> String {
             display_usize_option(snapshot.outbound_messages),
             display_usize_option(snapshot.active_sessions),
             display_usize_option(snapshot.live_sessions),
-            display_usize_option(snapshot.messages_per_session)
+            display_usize_option(snapshot.messages_per_session),
+            display_usize_option(snapshot.daemon_tasks),
+            display_usize_option(snapshot.daemon_completed_tasks),
+            display_usize_option(snapshot.daemon_task_output_bytes),
+            display_usize_option(snapshot.daemon_task_assistant_content_bytes)
         ));
     }
     out
@@ -2613,6 +2681,51 @@ fn push_snapshot_summary(out: &mut String, snapshots: &[Snapshot]) {
             snapshots
                 .iter()
                 .filter_map(|snapshot| snapshot.live_sessions)
+                .max(),
+        ),
+    );
+    push_summary_row(
+        out,
+        "daemon_tasks",
+        display_usize_option(first.daemon_tasks),
+        display_usize_option(last.daemon_tasks),
+        display_optional_isize_delta(first.daemon_tasks, last.daemon_tasks),
+        display_usize_option(
+            snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.daemon_tasks)
+                .max(),
+        ),
+    );
+    push_summary_row(
+        out,
+        "daemon_task_output_bytes",
+        display_usize_option(first.daemon_task_output_bytes),
+        display_usize_option(last.daemon_task_output_bytes),
+        display_optional_isize_delta(
+            first.daemon_task_output_bytes,
+            last.daemon_task_output_bytes,
+        ),
+        display_usize_option(
+            snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.daemon_task_output_bytes)
+                .max(),
+        ),
+    );
+    push_summary_row(
+        out,
+        "daemon_task_assistant_content_bytes",
+        display_usize_option(first.daemon_task_assistant_content_bytes),
+        display_usize_option(last.daemon_task_assistant_content_bytes),
+        display_optional_isize_delta(
+            first.daemon_task_assistant_content_bytes,
+            last.daemon_task_assistant_content_bytes,
+        ),
+        display_usize_option(
+            snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.daemon_task_assistant_content_bytes)
                 .max(),
         ),
     );
