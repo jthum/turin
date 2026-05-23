@@ -42,6 +42,9 @@ path = "src/bin/turin_remote.rs"
 name = "turin"
 path = "src/lib.rs"
 
+[features]
+heap-profile = ["dep:dhat"]
+
 [dependencies]
 # CLI
 clap = { version = "4.5", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
@@ -103,6 +106,7 @@ tracing = { version = "0.1.44", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.22", features = ["fmt", "env-filter", "ansi", "json"] }
 tracing-appender = "0.2.4"
 libc = "0.2"
+dhat = { version = "0.3", optional = true }
 base64 = "0.22"
 bytes = "1.0"
 http = "1.0"
@@ -144,3 +148,8 @@ lto = true          # Enable Link Time Optimization
 codegen-units = 1   # Reduce parallel codegen to improve optimization
 panic = "abort"     # Remove panic unwinding to save space
 strip = true        # Automatically strip symbols from binary
+
+[profile.profiling]
+inherits = "release"
+debug = 1
+strip = false

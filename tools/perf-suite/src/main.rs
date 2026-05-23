@@ -2295,7 +2295,7 @@ impl BlackboxDaemonHarness {
             )
             .await;
 
-        let deadline = TokioInstant::now() + Duration::from_secs(5);
+        let deadline = TokioInstant::now() + Duration::from_secs(30);
         loop {
             if self.child.try_wait()?.is_some() {
                 return Ok(());

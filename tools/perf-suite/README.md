@@ -142,6 +142,20 @@ and message offset so long-session memory growth can be compared against the
 bounded hot window. After-runner/after-idle rows include daemon task-cache
 metrics, including total serialized task snapshot bytes.
 
+For heap attribution when aggregate counters are not enough, build a temporary
+profiling daemon:
+
+```bash
+CARGO_TARGET_DIR=target cargo build --profile profiling -p turin --bin turin --features heap-profile
+```
+
+Then run a black-box scenario against `target/profiling/turin`. The
+`heap-profile` feature is off by default and uses `dhat` to write
+`dhat-heap.json` when the daemon exits. Set
+`TURIN_HEAP_PROFILE_PATH=/path/to/dhat-heap.json` to keep the heap file beside
+the perf report. Keep this for local perf work only; normal release binaries
+should not enable it.
+
 The persistence scale scenario measures the state-store path without daemon,
 channel runner, peer runtime, or provider execution:
 
